@@ -10,6 +10,31 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-20 - Bound agentic RAG stages with a shared deadline
+
+- Summary:
+  - Added a lightweight `RagDeadline` helper and wired agentic RAG query understanding, warm vector/BM25 retrieval, retrieval rounds, context compression, and answer generation to a shared request deadline.
+  - Query understanding timeouts now record `timeout_stage` and continue with the raw query plus any completed warm retrieval results.
+  - Warm retrieval timeouts now cancel the sidecar future, skip seeded timing rows for timed-out work, and fall back to normal round retrieval.
+  - If the total deadline is exhausted before retrieval or generation can continue, RAG returns an insufficient-evidence handoff with `deadline_exhausted`.
+- Reason:
+  - The RAG client already has HTTP timeout and recovery, but the service could keep waiting on internal futures after the caller stopped waiting.
+  - Stage waits need to respect the same remaining request budget so long-running query understanding or warm retrieval does not consume RAG service threads unnecessarily.
+- Affected files/config:
+  - `backend/services/rag_deadline.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_deadline.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime timeout/deadline behavior and trace fields change.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_uses_agentic_hybrid_pipeline backend/tests/test_rag_deadline.py backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_query_understanding_timeout_uses_raw_query_without_blocking backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_warm_retrieval_timeout_degrades_to_round_retrieval backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_deadline_exhausted_before_generation_returns_handoff -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py backend/tests/test_rag_deadline.py -q` (`131 passed`)
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py backend/tests/test_rag_deadline.py backend/tests/test_rag_agentic.py -q` (`187 passed` after refreshing with `origin/main`)
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_deadline.py backend/services/rag_qa.py backend/tests/test_rag_deadline.py backend/tests/test_rag_qa.py`
+
 ## 2026-05-20 - Split first-stage agentic RAG query orchestration helpers
 
 - Summary:
