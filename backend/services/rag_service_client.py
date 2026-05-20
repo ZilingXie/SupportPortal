@@ -12,6 +12,7 @@ import urllib.request
 from dataclasses import dataclass, replace
 from typing import Any
 
+from backend.services.rag_evidence_verdict import evidence_verdict_from_payload, evidence_verdict_to_payload
 from backend.services.rag_evidence_summary import build_rag_evidence_summary
 from backend.services.rag_request_body_evidence import REQUEST_BODY_INSUFFICIENT_REASON
 
@@ -99,6 +100,31 @@ def with_rag_detail_diagnostics(
     return replace(detail, evidence_summary=merged_evidence or None)
 
 
+def _evidence_summary_with_payload_verdict(
+    evidence_summary: dict[str, Any] | None,
+    *payloads: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    verdict_payload: dict[str, Any] | None = None
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        verdict = evidence_verdict_from_payload(payload)
+        if verdict is not None:
+            verdict_payload = evidence_verdict_to_payload(verdict)
+            break
+    if verdict_payload is None:
+        return evidence_summary
+    merged_evidence = dict(evidence_summary or {}) if isinstance(evidence_summary, dict) else {}
+    diagnostics = (
+        dict(merged_evidence.get("diagnostics"))
+        if isinstance(merged_evidence.get("diagnostics"), dict)
+        else {}
+    )
+    diagnostics["evidence_verdict"] = verdict_payload
+    merged_evidence["diagnostics"] = diagnostics
+    return merged_evidence
+
+
 def map_rag_payload_to_ticket_answer_detail(
     payload: dict[str, Any],
     *,
@@ -107,6 +133,7 @@ def map_rag_payload_to_ticket_answer_detail(
     decision = str(payload.get("decision") or "").strip().lower()
     raw_reason = str(payload.get("reason") or "").strip()
     evidence_summary = payload.get("evidence_summary") if isinstance(payload.get("evidence_summary"), dict) else None
+    evidence_summary = _evidence_summary_with_payload_verdict(evidence_summary, payload)
     packed_evidence = payload.get("packed_evidence") if isinstance(payload.get("packed_evidence"), dict) else None
     if decision == "answer":
         answer = str(payload.get("answer") or "").strip()
@@ -206,6 +233,7 @@ def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> 
         if isinstance(payload.get("evidence_summary"), dict)
         else _synthesize_live_detail_evidence_summary(primary)
     )
+    evidence_summary = _evidence_summary_with_payload_verdict(evidence_summary, primary, payload)
     packed_evidence = (
         primary.get("packed_evidence")
         if isinstance(primary.get("packed_evidence"), dict)

@@ -250,6 +250,19 @@ class RagApiTests(unittest.TestCase):
         self.assertTrue(quality_signals.get("light_path_used"))
         self.assertEqual(quality_signals.get("generation_mode"), "structured_answer")
         self.assertEqual(quality_signals.get("selected_doc_count"), 1)
+        verdict = payload["evidence_verdict"]
+        self.assertEqual(verdict["decision"], "answer")
+        self.assertEqual(verdict["risk_level"], "low")
+        self.assertFalse(verdict["needs_human"])
+        self.assertEqual(verdict["confidence"], 0.92)
+        self.assertEqual(verdict["citation_count"], 1)
+        self.assertEqual(verdict["citation_coverage_ratio"], 1.0)
+        self.assertEqual(verdict["selected_doc_count"], 1)
+        self.assertEqual(verdict["generation_mode"], "structured_answer")
+        self.assertEqual(
+            payload["evidence_summary"]["diagnostics"]["evidence_verdict"],
+            verdict,
+        )
 
     def _direct_ingest_result(
         self,
@@ -526,6 +539,16 @@ class RagApiTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "insufficient_evidence")
         self.assertEqual(payload["evidence_summary"]["quality_signals"]["generation_mode"], "extractive_fallback")
         self.assertTrue(payload["evidence_summary"]["quality_signals"]["needs_human"])
+        verdict = payload["evidence_verdict"]
+        self.assertEqual(verdict["decision"], "escalate")
+        self.assertEqual(verdict["risk_level"], "high")
+        self.assertTrue(verdict["needs_human"])
+        self.assertEqual(verdict["handoff_reason"], "insufficient_evidence")
+        self.assertEqual(verdict["generation_mode"], "extractive_fallback")
+        self.assertEqual(
+            payload["evidence_summary"]["diagnostics"]["evidence_verdict"],
+            verdict,
+        )
 
     def test_internal_rag_query_returns_rag_unavailable_when_knowledge_index_guard_trips(self) -> None:
         repository = _TrackingKnowledgeRepository()
