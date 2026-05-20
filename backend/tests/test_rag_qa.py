@@ -4,6 +4,7 @@ import io
 import json
 import os
 import threading
+import time
 import urllib.error
 import unittest
 from pathlib import Path
@@ -1254,6 +1255,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertGreaterEqual(result.trace.bm25_candidates_count, 1)
         self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-1")
         self.assertTrue(result.trace.agent_enabled)
+        self.assertFalse(result.trace.deadline_exhausted)
+        self.assertIsNone(result.trace.timeout_stage)
         self.assertEqual(result.trace.reranker_provider, "siliconflow")
         self.assertEqual(result.trace.reranker_model, "BAAI/bge-reranker-v2-m3")
         self.assertTrue(result.trace.retrieval_candidates)
@@ -6398,6 +6401,377 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                 run_rag_query("How do I join a channel in Node.js with a token?")
 
         self.assertEqual(understanding_observed_parallel_retrieval, [True])
+
+    def test_run_rag_query_agentic_query_understanding_timeout_uses_raw_query_without_blocking(self) -> None:
+        message = "Please explain the recommended SDK audio profile configuration for production deployments"
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-raw-query",
+            text="Configure the SDK audio profile before production deployment.",
+            source_path="official/audio-profile.md",
+            similarity=0.88,
+        )
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="query-understanding-v1",
+            glossary_version="glossary-v1",
+            self_query_version="self-query-v1",
+            normalized_query=message,
+            canonical_terms=[],
+            glossary_hits=[],
+            dictionary_hits=[],
+            rewritten_queries=["sdk audio profile configuration"],
+            decomposition_subqueries=[],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="sdk audio profile configuration",
+                rewritten_queries=["sdk audio profile configuration"],
+            ),
+            fallback_mode="none",
+        )
+
+        def slow_understand(_: str, **_kwargs):
+            time.sleep(0.4)
+            return understanding
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "low",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 1.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+            }
+            started_at = time.perf_counter()
+            with patch.dict(
+                os.environ,
+                {"RAG_AGENT_ENABLED": "1", "RAG_AGENT_QUERY_EXPANSION_TIMEOUT_SECONDS": "0.02"},
+                clear=False,
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                side_effect=slow_understand,
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                return_value=[bm25_chunk],
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                return_value={
+                    "query_class": "configuration",
+                    "first_pass_tools": ["p_bm25"],
+                    "query_variants": [("original", message)],
+                    "decomposition_targets": [],
+                    "evidence_goal": "configuration_support",
+                    "recovery_bias": "lexical",
+                },
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                return_value=(
+                    [bm25_chunk],
+                    {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                return_value=[bm25_chunk],
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                return_value=(
+                    {
+                        "answer": "Configure the SDK audio profile.",
+                        "key_steps": [],
+                        "citations": ["bm25-raw-query"],
+                        "insufficient_evidence": False,
+                    },
+                    10,
+                    5,
+                    "gpt-5.4",
+                ),
+            ):
+                result = run_rag_query(message)
+            elapsed = time.perf_counter() - started_at
+
+        self.assertLess(elapsed, 0.25)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertFalse(result.trace.needs_human)
+        self.assertFalse(result.trace.query_understanding_enabled)
+        self.assertFalse(result.trace.deadline_exhausted)
+        self.assertEqual(result.trace.timeout_stage, "query_understanding")
+        self.assertEqual(result.trace.selected_chunk_ids, ["bm25-raw-query"])
+
+    def test_run_rag_query_agentic_warm_retrieval_timeout_degrades_to_round_retrieval(self) -> None:
+        message = "Please explain the recommended SDK audio profile configuration for production deployments"
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-round",
+            text="Configure the SDK audio profile before production deployment.",
+            source_path="official/audio-profile.md",
+            similarity=0.89,
+        )
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="query-understanding-v1",
+            glossary_version="glossary-v1",
+            self_query_version="self-query-v1",
+            normalized_query=message,
+            canonical_terms=[],
+            glossary_hits=[],
+            dictionary_hits=[],
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            retrieval_plan=RetrievalPlan(semantic_query=message),
+            fallback_mode="none",
+        )
+        bm25_calls = 0
+        bm25_lock = threading.Lock()
+
+        def bm25_with_slow_warmup(*_args, **_kwargs):
+            nonlocal bm25_calls
+            with bm25_lock:
+                bm25_calls += 1
+                call_number = bm25_calls
+            if call_number == 1:
+                time.sleep(0.3)
+            return [bm25_chunk]
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "low",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 1.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+            }
+            with patch.dict(
+                os.environ,
+                {"RAG_AGENT_ENABLED": "1", "RAG_AGENT_QUERY_EXPANSION_TIMEOUT_SECONDS": "0.02"},
+                clear=False,
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=understanding,
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=bm25_with_slow_warmup,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                return_value={
+                    "query_class": "configuration",
+                    "first_pass_tools": ["p_bm25"],
+                    "query_variants": [("original", message)],
+                    "decomposition_targets": [],
+                    "evidence_goal": "configuration_support",
+                    "recovery_bias": "lexical",
+                },
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                return_value=(
+                    [bm25_chunk],
+                    {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                return_value=[bm25_chunk],
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                return_value=(
+                    {
+                        "answer": "Configure the SDK audio profile.",
+                        "key_steps": [],
+                        "citations": ["bm25-round"],
+                        "insufficient_evidence": False,
+                    },
+                    10,
+                    5,
+                    "gpt-5.4",
+                ),
+            ):
+                result = run_rag_query(message)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertFalse(result.trace.needs_human)
+        self.assertFalse(result.trace.deadline_exhausted)
+        self.assertEqual(result.trace.timeout_stage, "warm_original_bm25")
+        self.assertEqual(result.trace.selected_chunk_ids, ["bm25-round"])
+        self.assertGreaterEqual(bm25_calls, 2)
+        self.assertFalse(
+            any(
+                timing.get("used_seed_tool")
+                for timing in result.trace.retrieval_tool_timings
+                if timing.get("tool_name") == "p_bm25"
+            )
+        )
+
+    def test_run_rag_query_agentic_deadline_exhausted_before_generation_returns_handoff(self) -> None:
+        message = "Please explain the recommended SDK audio profile configuration for production deployments"
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-deadline",
+            text="Configure the SDK audio profile before production deployment.",
+            source_path="official/audio-profile.md",
+            similarity=0.91,
+        )
+        answer_mock = None
+
+        def slow_bm25(*_args, **_kwargs):
+            time.sleep(0.08)
+            return [bm25_chunk]
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "low",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 0.05,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+            }
+            with patch.dict(
+                os.environ,
+                {"RAG_AGENT_ENABLED": "1", "RAG_QUERY_UNDERSTANDING_ENABLED": "0"},
+                clear=False,
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=slow_bm25,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                return_value={
+                    "query_class": "configuration",
+                    "first_pass_tools": ["p_bm25"],
+                    "query_variants": [("original", message)],
+                    "decomposition_targets": [],
+                    "evidence_goal": "configuration_support",
+                    "recovery_bias": "lexical",
+                },
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                return_value=(
+                    [bm25_chunk],
+                    {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                return_value=[bm25_chunk],
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                return_value=(
+                    {
+                        "answer": "Configure the SDK audio profile.",
+                        "key_steps": [],
+                        "citations": ["bm25-deadline"],
+                        "insufficient_evidence": False,
+                    },
+                    10,
+                    5,
+                    "gpt-5.4",
+                ),
+            ) as answer_mock:
+                result = run_rag_query(message)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.trace.needs_human)
+        self.assertEqual(result.trace.handoff_reason, "deadline_exhausted")
+        self.assertTrue(result.trace.deadline_exhausted)
+        self.assertEqual(result.trace.timeout_stage, "answer_generation")
+        self.assertEqual(result.answer.answer, INSUFFICIENT_EVIDENCE_REPLY)
+        answer_mock.assert_not_called()
 
     def test_run_rag_query_long_how_to_faq_uses_generic_join_pinned_chunks_without_light_path(self) -> None:
         join_chunk = RetrievedChunk(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import json
 import logging
 import os
@@ -50,6 +50,7 @@ from backend.services.rag_context_budget import (
     estimate_text_tokens,
     model_context_window,
 )
+from backend.services.rag_deadline import RagDeadline
 from backend.services.rag_request_body_evidence import (
     RequestBodyEvidenceResult,
     detect_request_body_evidence_query,
@@ -3847,6 +3848,7 @@ def _execute_agentic_round(
     recovery_action: str | None = None,
     seed_tool_results: dict[str, list[RetrievedChunk]] | None = None,
     lexical_result_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] | None = None,
+    deadline: RagDeadline | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> AgenticRoundResult:
@@ -4223,7 +4225,9 @@ def _execute_agentic_round(
             troubleshooting_original_support_weak = True
     elif plan.light_path and round_index == 1 and len(query_variants) == 1 and set(tool_names) == {"p_bm25", "p_fts"}:
         query_kind, query_text = query_variants[0]
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        executor = ThreadPoolExecutor(max_workers=2)
+        tool_future_timed_out = False
+        try:
             future_map: dict[
                 Future[tuple[str, list[RetrievedChunk], float, float, float, float, bool, bool]],
                 tuple[str, str, str],
@@ -4247,14 +4251,28 @@ def _execute_agentic_round(
                     )
                 ] = (tool_name, family, index_role)
             for future, (tool_name, family, index_role) in future_map.items():
+                try:
+                    result = (
+                        future.result(timeout=deadline.remaining_seconds(f"round_{round_index}_retrieval"))
+                        if deadline is not None
+                        else future.result()
+                    )
+                except FutureTimeoutError:
+                    if deadline is not None:
+                        deadline.mark_timeout(f"round_{round_index}_retrieval")
+                    future.cancel()
+                    tool_future_timed_out = True
+                    continue
                 _consume_tool_result(
                     family=family,
                     tool_name=tool_name,
                     query_kind=query_kind,
                     query_text=query_text,
                     index_role=index_role,
-                    result=future.result(),
+                    result=result,
                 )
+        finally:
+            executor.shutdown(wait=not tool_future_timed_out, cancel_futures=tool_future_timed_out)
     else:
         for tool_name in tool_names:
             family = _tool_family(tool_name)
@@ -8547,6 +8565,42 @@ def _run_rag_query_agentic_single(
     if not config["dsn"] or not _rag_config_llm_available(config):
         return None
 
+    def _positive_seconds(value: Any, default: float) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            parsed = float(default)
+        if parsed <= 0:
+            parsed = float(default)
+        return max(0.001, parsed)
+
+    total_deadline_seconds = _positive_seconds(
+        config.get("request_timeout_seconds"),
+        resolve_model_profile(RAG_ANSWER_SCENARIO).timeout_seconds,
+    )
+    query_stage_timeout_seconds = min(
+        total_deadline_seconds,
+        _positive_seconds(
+            resolve_model_profile(QUERY_EXPANSION_SCENARIO).timeout_seconds,
+            total_deadline_seconds,
+        ),
+    )
+    deadline = RagDeadline(
+        started_at=request_started_at,
+        total_seconds=total_deadline_seconds,
+        stage_timeout_seconds={
+            "query_understanding": query_stage_timeout_seconds,
+            "warm_original_vector": query_stage_timeout_seconds,
+            "warm_original_bm25": query_stage_timeout_seconds,
+        },
+    )
+
+    def _deadline_exhausted(stage: str) -> bool:
+        if deadline.is_exhausted():
+            deadline.mark_timeout(stage)
+            return True
+        return False
+
     effective_question, follow_up_inheritance = _resolve_effective_question(message, ticket_context)
     query_type = _infer_query_type(effective_question)
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
@@ -8695,24 +8749,70 @@ def _run_rag_query_agentic_single(
                 limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
                 index_role="primary",
             )
-    if query_understanding_future is not None:
+    sidecar_future_timed_out = False
+
+    def _wait_for_sidecar_future(future: Future[Any], stage: str, *, wait_if_pending: bool = True) -> Any | None:
+        nonlocal sidecar_future_timed_out
+        if not wait_if_pending and not future.done():
+            future.cancel()
+            return None
+        timeout_seconds = deadline.remaining_seconds(stage)
+        if timeout_seconds <= 0:
+            deadline.mark_timeout(stage)
+            future.cancel()
+            sidecar_future_timed_out = True
+            return None
         try:
-            query_understanding = query_understanding_future.result()
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            deadline.mark_timeout(stage)
+            future.cancel()
+            sidecar_future_timed_out = True
+            logger.warning("RAG %s timed out after %.3fs", stage, timeout_seconds)
+            return None
+
+    if query_understanding_future is not None:
+        query_understanding_timed_out = False
+        try:
+            query_understanding_result = _wait_for_sidecar_future(
+                query_understanding_future,
+                "query_understanding",
+            )
+            if isinstance(query_understanding_result, QueryUnderstandingResult):
+                query_understanding = query_understanding_result
+            elif deadline.timeout_stage == "query_understanding":
+                query_understanding_timed_out = True
         except Exception as exc:
             logger.warning("RAG query understanding failed: %s", exc)
+        wait_for_warm_retrieval = not query_understanding_timed_out
         if warm_original_vector_future is not None:
             try:
-                warm_original_vector_chunks, warm_original_vector_latency_ms = warm_original_vector_future.result()
+                warm_vector_result = _wait_for_sidecar_future(
+                    warm_original_vector_future,
+                    "warm_original_vector",
+                    wait_if_pending=wait_for_warm_retrieval,
+                )
+                if warm_vector_result is not None:
+                    warm_original_vector_chunks, warm_original_vector_latency_ms = warm_vector_result
             except Exception as exc:
                 config["_vector_runtime_available"] = False
                 logger.warning("Agentic warm vector retrieval failed: %s", exc)
         if warm_original_bm25_future is not None:
             try:
-                warm_original_bm25_chunks, warm_original_bm25_latency_ms = warm_original_bm25_future.result()
+                warm_bm25_result = _wait_for_sidecar_future(
+                    warm_original_bm25_future,
+                    "warm_original_bm25",
+                    wait_if_pending=wait_for_warm_retrieval,
+                )
+                if warm_bm25_result is not None:
+                    warm_original_bm25_chunks, warm_original_bm25_latency_ms = warm_bm25_result
             except Exception as exc:
                 logger.warning("Agentic warm BM25 retrieval failed: %s", exc)
         if query_understanding_executor is not None:
-            query_understanding_executor.shutdown(wait=True)
+            query_understanding_executor.shutdown(
+                wait=not sidecar_future_timed_out,
+                cancel_futures=sidecar_future_timed_out,
+            )
     if query_understanding is not None:
         effective_hard_filters = dict(query_understanding.retrieval_plan.hard_filters)
         effective_soft_signals = dict(query_understanding.retrieval_plan.soft_signals)
@@ -8779,6 +8879,13 @@ def _run_rag_query_agentic_single(
                 should_cancel=should_cancel,
                 record_stage=record_cancel_stage,
             )
+        if _deadline_exhausted(f"round_{round_index}_retrieval"):
+            final_judge = AgenticJudgeDecision(
+                decision="escalate",
+                reason="deadline_exhausted",
+                confidence=0.0,
+            )
+            break
         previous_reranked_chunks = list(reranked_chunks)
         previous_final_chunks = list(final_chunks)
         previous_rerank_info = dict(final_rerank_info)
@@ -8794,6 +8901,7 @@ def _run_rag_query_agentic_single(
             recovery_action=recovery_action,
             seed_tool_results=warm_seed_tool_results if round_index == 1 else None,
             lexical_result_cache=lexical_result_cache,
+            deadline=deadline,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -9077,6 +9185,8 @@ def _run_rag_query_agentic_single(
             retrieval_tool_timings=list(retrieval_tool_timings),
             variant_candidate_counts=_variant_candidate_counts_from_timings(retrieval_tool_timings),
             variant_zero_yield_reasons=_variant_zero_yield_reasons_from_timings(retrieval_tool_timings),
+            deadline_exhausted=deadline.is_exhausted(),
+            timeout_stage=deadline.timeout_stage,
             anchor_hits=extract_anchor_hits(message),
             doc_family_mix=_doc_family_mix_for_chunks(final_chunks),
             generic_join_primary_chunk_found=generic_join_primary_chunk_found,
@@ -9093,6 +9203,28 @@ def _run_rag_query_agentic_single(
             ),
             **_request_body_trace_values(request_body_evidence_result),
         )
+
+    def _deadline_handoff_result(stage: str) -> RagQueryResult:
+        deadline.mark_timeout(stage)
+        answer = RagAnswer(
+            answer=INSUFFICIENT_EVIDENCE_REPLY,
+            confidence=0.55,
+            sources=[],
+            citations=[],
+        )
+        return RagQueryResult(
+            answer=answer,
+            trace=_trace_for(
+                answer,
+                needs_human=True,
+                handoff_reason="deadline_exhausted",
+                generation_mode="insufficient_evidence",
+                extractive_fallback_used=False,
+            ),
+        )
+
+    if deadline.is_exhausted():
+        return _deadline_handoff_result("answer_generation")
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
         answer = RagAnswer(
@@ -9218,12 +9350,18 @@ def _run_rag_query_agentic_single(
         allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
         grounded_overlap = _has_grounded_keyword_overlap(effective_question, final_chunks)
     if final_chunks and bool(config.get("context_budget_enabled")):
+        if deadline.is_exhausted():
+            return _deadline_handoff_result("answer_generation")
         _raise_if_cancelled(
             "answer_generation",
             should_cancel=should_cancel,
             record_stage=record_cancel_stage,
         )
         compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
+        compression_timeout_seconds = min(
+            float(compression_defaults.timeout_seconds),
+            max(0.001, deadline.remaining_seconds("answer_generation")),
+        )
         compression_profile = ModelProfile(
             scenario=RAG_CONTEXT_COMPRESSION_SCENARIO,
             provider="openai",
@@ -9233,7 +9371,7 @@ def _run_rag_query_agentic_single(
             reasoning_effort=str(config.get("context_compression_reasoning_effort") or "").strip()
             or compression_defaults.reasoning_effort,
             temperature=0.0,
-            timeout_seconds=compression_defaults.timeout_seconds,
+            timeout_seconds=compression_timeout_seconds,
             max_retries=compression_defaults.max_retries,
             fallback_models=tuple(compression_defaults.fallback_models),
             fallback_profiles=tuple(compression_defaults.fallback_profiles),
@@ -9275,12 +9413,27 @@ def _run_rag_query_agentic_single(
         else None
     )
     primary_answer_profile = _build_answer_profile(generation_config, query_class=plan.query_class)
+    def _profile_with_remaining_budget(profile: ModelProfile) -> ModelProfile | None:
+        if deadline.is_exhausted():
+            return None
+        remaining_timeout_seconds = deadline.remaining_seconds("answer_generation")
+        if remaining_timeout_seconds <= 0:
+            deadline.mark_timeout("answer_generation")
+            return None
+        return replace(
+            profile,
+            timeout_seconds=min(float(profile.timeout_seconds), max(0.001, remaining_timeout_seconds)),
+        )
+
     _raise_if_cancelled(
         "answer_generation",
         should_cancel=should_cancel,
         record_stage=record_cancel_stage,
     )
     initial_profile = fast_answer_profile or primary_answer_profile
+    initial_profile_with_deadline = _profile_with_remaining_budget(initial_profile)
+    if initial_profile_with_deadline is None:
+        return _deadline_handoff_result("answer_generation")
     payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
         effective_question,
         final_chunks,
@@ -9288,9 +9441,9 @@ def _run_rag_query_agentic_single(
         strict_retry=False,
         packed_evidence=packed_evidence,
         product=product,
-        profile_override=initial_profile,
+        profile_override=initial_profile_with_deadline,
     )
-    answer_profile_used = model_name or initial_profile.model
+    answer_profile_used = model_name or initial_profile_with_deadline.model
     retry_required = (
         payload is None
         or not _is_valid_response(payload, allowed_chunk_ids)
@@ -9303,6 +9456,9 @@ def _run_rag_query_agentic_single(
             should_cancel=should_cancel,
             record_stage=record_cancel_stage,
         )
+        primary_profile_with_deadline = _profile_with_remaining_budget(primary_answer_profile)
+        if primary_profile_with_deadline is None:
+            return _deadline_handoff_result("answer_generation")
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
@@ -9310,12 +9466,12 @@ def _run_rag_query_agentic_single(
             strict_retry=False,
             packed_evidence=packed_evidence,
             product=product,
-            profile_override=primary_answer_profile,
+            profile_override=primary_profile_with_deadline,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
         model_name = retry_model_name or model_name
-        answer_profile_used = model_name or primary_answer_profile.model
+        answer_profile_used = model_name or primary_profile_with_deadline.model
         payload = retry_payload
         retry_required = (
             payload is None
@@ -9329,6 +9485,9 @@ def _run_rag_query_agentic_single(
             should_cancel=should_cancel,
             record_stage=record_cancel_stage,
         )
+        primary_profile_with_deadline = _profile_with_remaining_budget(primary_answer_profile)
+        if primary_profile_with_deadline is None:
+            return _deadline_handoff_result("answer_generation")
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
@@ -9336,12 +9495,12 @@ def _run_rag_query_agentic_single(
             strict_retry=True,
             packed_evidence=packed_evidence,
             product=product,
-            profile_override=primary_answer_profile,
+            profile_override=primary_profile_with_deadline,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
         model_name = retry_model_name or model_name
-        answer_profile_used = model_name or primary_answer_profile.model
+        answer_profile_used = model_name or primary_profile_with_deadline.model
         payload = retry_payload
     if (
         not api_semantics_fast_path
@@ -9361,6 +9520,9 @@ def _run_rag_query_agentic_single(
             should_cancel=should_cancel,
             record_stage=record_cancel_stage,
         )
+        primary_profile_with_deadline = _profile_with_remaining_budget(primary_answer_profile)
+        if primary_profile_with_deadline is None:
+            return _deadline_handoff_result("answer_generation")
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
@@ -9368,14 +9530,14 @@ def _run_rag_query_agentic_single(
             strict_retry=True,
             packed_evidence=packed_evidence,
             product=product,
-            profile_override=primary_answer_profile,
+            profile_override=primary_profile_with_deadline,
             citation_retry=True,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
         if retry_payload is not None and _is_valid_response(retry_payload, allowed_chunk_ids):
             model_name = retry_model_name or model_name
-            answer_profile_used = model_name or primary_answer_profile.model
+            answer_profile_used = model_name or primary_profile_with_deadline.model
             payload = retry_payload
     generation_latency_ms = (time.perf_counter() - generation_started_at) * 1000
 
