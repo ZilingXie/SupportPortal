@@ -10,6 +10,27 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-20 - Split first-stage agentic RAG query orchestration helpers
+
+- Summary:
+  - Extracted first-stage helper functions from `_run_rag_query_agentic_single` for query classification flags, agentic feature flag resolution, warm original retrieval seed construction, and one-round recovery gating.
+  - Added characterization coverage for the extracted helper contracts and refreshed existing agentic tests that had drifted from current answer formatting and short black-screen release-note behavior on `main`.
+- Reason:
+  - `_run_rag_query_agentic_single` mixed setup, classification, feature flag handling, warm retrieval seeding, round control, answer generation, and trace construction in one large function.
+  - This behavior-preserving split reduces local responsibility complexity without changing route/RAG parallelism, request-body schema evidence overrides, special-case strategy handling, or judge thresholds.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; runtime retrieval and answer behavior are intended to remain unchanged.
+- Verification:
+  - `env PATH=/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin:$PATH python3 -m pytest backend/tests/test_rag_agentic.py -k 'classify_agentic_query_flags or resolve_agentic_feature_flags or build_warm_seed_tool_results or should_recover_agentic_round'`
+  - `env PATH=/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin:$PATH python3 -m pytest backend/tests/test_rag_agentic.py::RagAgenticTests::test_run_rag_query_agentic_single_uses_api_semantics_grounded_answer_without_llm backend/tests/test_rag_agentic.py::RagAgenticTests::test_run_rag_query_records_agentic_trace_and_ticket_context_across_recovery backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_short_how_to_faq_uses_lexical_light_path_before_any_vector_recovery`
+  - `env PATH=/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin:$PATH python3 -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py`
+  - `env PATH=/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin:$PATH python3 -m py_compile backend/services/rag_qa.py backend/tests/test_rag_agentic.py`
+
 ## 2026-05-19 - Prefer corrected request-body JSON blocks over incorrect examples
 
 - Summary:
