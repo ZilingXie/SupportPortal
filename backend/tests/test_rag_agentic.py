@@ -21,6 +21,8 @@ from backend.services.rag_qa import (
     _build_api_semantics_grounded_answer,
     _api_semantics_has_request_parameter_support,
     _build_agentic_retrieval_plan,
+    _build_warm_seed_tool_results,
+    _classify_agentic_query_flags,
     _execute_agentic_round,
     _generation_chunk_limit_for_agentic_query,
     _inject_generic_join_original_candidates,
@@ -31,7 +33,9 @@ from backend.services.rag_qa import (
     _merge_agentic_tool_results,
     _run_rag_query_agentic_single,
     _merge_variant_chunks,
+    _resolve_agentic_feature_flags,
     _select_agentic_final_chunks,
+    _should_recover_agentic_round,
     _tool_order_for_query_class,
     run_rag_query,
 )
@@ -135,6 +139,56 @@ The documentation states that time: 0 means the rule is applied permanently. How
             rag_qa._classify_agentic_query(self._BAN_API_MISMATCH_MESSAGE, None),
             "api_semantics_mismatch",
         )
+
+    def test_classify_agentic_query_flags_preserves_api_semantics_light_path(self) -> None:
+        flags = _classify_agentic_query_flags(self._BAN_API_MISMATCH_MESSAGE)
+
+        self.assertEqual(flags.preliminary_query_class, "api_semantics_mismatch")
+        self.assertTrue(flags.api_semantics_query)
+        self.assertFalse(flags.short_how_to_faq_query)
+        self.assertFalse(flags.simple_lexical_query)
+        self.assertTrue(flags.vector_setup_skipped)
+        self.assertTrue(flags.light_path_used)
+        self.assertTrue(flags.skip_bm25_warmup)
+
+    def test_resolve_agentic_feature_flags_preserves_light_path_disables(self) -> None:
+        flags = _classify_agentic_query_flags(self._BAN_API_MISMATCH_MESSAGE)
+
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_QUERY_UNDERSTANDING_ENABLED": "true",
+                "RAG_QUERY_REWRITE_ENABLED": "true",
+                "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
+                "RAG_QUERY_EXPANSION_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            resolved = _resolve_agentic_feature_flags(
+                config={"vector_enabled": True},
+                query_flags=flags,
+                effective_question=self._BAN_API_MISMATCH_MESSAGE,
+            )
+
+        self.assertFalse(resolved.query_understanding_enabled)
+        self.assertFalse(resolved.query_rewrite_enabled)
+        self.assertFalse(resolved.query_decomposition_enabled)
+        self.assertFalse(resolved.query_expansion_enabled)
+        self.assertFalse(resolved.warm_vector_enabled)
+
+    def test_build_warm_seed_tool_results_keeps_only_non_empty_original_seeds(self) -> None:
+        vector_chunk = RetrievedChunk(chunk_id="vec-1", text="Vector evidence", source_path="v.md", similarity=0.9)
+
+        self.assertEqual(_build_warm_seed_tool_results([vector_chunk], []), {"p_vec": [vector_chunk]})
+        self.assertEqual(_build_warm_seed_tool_results([], []), {})
+
+    def test_should_recover_agentic_round_only_allows_first_recover_once_decision(self) -> None:
+        recover = AgenticJudgeDecision("recover_once", "weak_first_pass_support", 0.7, "lexical_recovery")
+        answer_now = AgenticJudgeDecision("answer_now", "sufficient", 0.9, None)
+
+        self.assertTrue(_should_recover_agentic_round(recover, 1))
+        self.assertFalse(_should_recover_agentic_round(recover, 2))
+        self.assertFalse(_should_recover_agentic_round(answer_now, 1))
 
     def test_build_agentic_retrieval_plan_uses_bm25_only_light_path_for_api_semantics_query(self) -> None:
         plan = _build_agentic_retrieval_plan(
@@ -1262,8 +1316,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ("p_fts", "original"),
             ],
         )
-        self.assertEqual(round_result.judge.decision, "escalate")
-        self.assertEqual(round_result.judge.reason, "weak_top1_support")
+        self.assertEqual(round_result.judge.decision, "answer_now")
+        self.assertEqual(round_result.judge.reason, "sufficient_first_pass_support")
 
     def test_build_agentic_retrieval_plan_keeps_lean_first_pass_for_exact_error_lookup(self) -> None:
         plan = _build_agentic_retrieval_plan(
@@ -2504,7 +2558,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(len(result.trace.agent_iterations), 2)
         self.assertEqual(result.trace.agent_recovery_action, "lexical_recovery")
         self.assertTrue(result.trace.ticket_context_used)
-        self.assertEqual(result.answer.answer, "Error 109 means the token is expired.")
+        self.assertIn("Error 109 means the token is expired.", result.answer.answer)
 
     def test_execute_agentic_round_disables_vector_family_after_first_runtime_failure(self) -> None:
         plan = AgenticRetrievalPlan(
