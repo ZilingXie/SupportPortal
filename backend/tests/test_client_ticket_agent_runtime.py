@@ -223,6 +223,76 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_agent.get("status"), "cancelled")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
+    def test_runtime_surfaces_evidence_verdict_diagnostics_without_changing_workflow_action(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        evidence_verdict = {
+            "decision": "answer",
+            "risk_level": "low",
+            "needs_human": False,
+            "handoff_reason": None,
+            "judge_decision": "answer_now",
+            "judge_reason": "sufficient_first_pass_support",
+            "confidence": 0.91,
+            "citation_count": 1,
+            "citation_coverage_ratio": 1.0,
+            "selected_doc_count": 1,
+            "generation_mode": "structured_answer",
+            "deadline_exhausted": False,
+            "timeout_stage": None,
+            "judge_override": False,
+        }
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join a channel?",
+            ticket_id="TK-EVIDENCE-VERDICT-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join a channel?"}],
+            product="audio_video_calling",
+            message_id="2026-05-20T00:00:00+08:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Call joinChannel with the same channel name and token on each client.",
+                confidence=0.91,
+                sources=["https://docs.agora.io/en/video-calling/get-started"],
+                citations=[{"chunk_id": "chunk-1"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "query_class": "how_to_faq",
+                        "needs_human": False,
+                    },
+                    "diagnostics": {"evidence_verdict": evidence_verdict},
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail("low risk answer should not wait for review"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertEqual(execution.diagnostics["rag_evidence_risk_level"], "low")
+        self.assertEqual(execution.diagnostics["rag_evidence_judge_decision"], "answer_now")
+        self.assertIsNone(execution.diagnostics["rag_evidence_handoff_reason"])
+        self.assertEqual(execution.diagnostics["rag_evidence_citation_coverage_ratio"], 1.0)
+        self.assertEqual(execution.runtime_state.rag_agent["evidence_verdict"]["risk_level"], "low")
+        self.assertEqual(execution.runtime_state.rag_agent["evidence_verdict"]["judge_decision"], "answer_now")
+
     def test_resolved_confirmation_returns_chinese_resolution_message(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 

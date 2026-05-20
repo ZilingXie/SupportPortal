@@ -43,6 +43,7 @@ from backend.services.rag_benchmark_readiness import (
     format_local_benchmark_readiness_failures,
 )
 from backend.services.rag_benchmark_session import build_local_benchmark_session_record
+from backend.services.rag_evidence_verdict import build_evidence_verdict_from_trace, evidence_verdict_to_payload
 from backend.services.rag_evidence_summary import build_rag_evidence_summary
 from backend.services.local_source_sync import SourceIngestResult, ingest_source_document, stage_source_document
 from backend.services.local_benchmark_sync import sync_default_local_benchmarks
@@ -502,6 +503,29 @@ def _attach_response_diagnostics(
     }
 
 
+def _attach_evidence_verdict_to_payload(
+    payload: dict[str, Any],
+    *,
+    trace: Any,
+    answer: Any,
+) -> dict[str, Any]:
+    verdict = evidence_verdict_to_payload(
+        build_evidence_verdict_from_trace(
+            trace,
+            answer,
+            str(payload.get("decision") or "escalate"),
+        )
+    )
+    enriched = {**payload, "evidence_verdict": verdict}
+    evidence_summary = payload.get("evidence_summary")
+    if isinstance(evidence_summary, dict):
+        enriched["evidence_summary"] = _attach_response_diagnostics(
+            evidence_summary,
+            {"evidence_verdict": verdict},
+        )
+    return enriched
+
+
 def _knowledge_index_guard_diagnostics(readiness: RagKnowledgeIndexReadiness) -> dict[str, Any]:
     return {
         "knowledge_index_status": readiness.status,
@@ -613,17 +637,27 @@ def _build_rag_unavailable_response(
     )
     evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
     evidence_summary = _attach_response_diagnostics(evidence_summary, diagnostics_extra)
-    return {
-        "decision": "escalate",
-        "answer": "",
-        "confidence": 0.0,
-        "sources": [],
-        "citations": [],
-        "reason": "rag_unavailable",
-        "evidence_summary": evidence_summary,
-        "packed_evidence": None,
-        "query_understanding": {},
-    }
+    return _attach_evidence_verdict_to_payload(
+        {
+            "decision": "escalate",
+            "answer": "",
+            "confidence": 0.0,
+            "sources": [],
+            "citations": [],
+            "reason": "rag_unavailable",
+            "evidence_summary": evidence_summary,
+            "packed_evidence": None,
+            "query_understanding": {},
+        },
+        trace=None,
+        answer={
+            "confidence": 0.0,
+            "reason": "rag_unavailable",
+            "generation_mode": "insufficient_evidence",
+            "needs_human": True,
+        },
+    )
+
 
 class RagQueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=20000)
@@ -1214,17 +1248,26 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             query_understanding={},
         )
         evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
-        return {
-            "decision": "escalate",
-            "answer": "",
-            "confidence": 0.0,
-            "sources": [],
-            "citations": [],
-            "reason": "rag_service_error",
-            "evidence_summary": evidence_summary,
-            "packed_evidence": None,
-            "query_understanding": {},
-        }
+        return _attach_evidence_verdict_to_payload(
+            {
+                "decision": "escalate",
+                "answer": "",
+                "confidence": 0.0,
+                "sources": [],
+                "citations": [],
+                "reason": "rag_service_error",
+                "evidence_summary": evidence_summary,
+                "packed_evidence": None,
+                "query_understanding": {},
+            },
+            trace=None,
+            answer={
+                "confidence": 0.0,
+                "reason": "rag_service_error",
+                "generation_mode": "insufficient_evidence",
+                "needs_human": True,
+            },
+        )
     finally:
         _cleanup_inflight_rag_request(request.request_id)
 
@@ -1352,29 +1395,37 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         )
 
     if bool(trace.needs_human) or rag_answer.answer.strip() == INSUFFICIENT_EVIDENCE_REPLY:
-        return {
-            "decision": "escalate",
-            "answer": "",
+        return _attach_evidence_verdict_to_payload(
+            {
+                "decision": "escalate",
+                "answer": "",
+                "confidence": round(rag_answer.confidence, 2),
+                "sources": [],
+                "citations": [],
+                "reason": trace.handoff_reason or "insufficient_evidence",
+                "evidence_summary": evidence_summary,
+                "packed_evidence": packed_evidence,
+                "query_understanding": query_understanding_meta,
+            },
+            trace=trace,
+            answer=rag_answer,
+        )
+
+    return _attach_evidence_verdict_to_payload(
+        {
+            "decision": "answer",
+            "answer": rag_answer.answer,
             "confidence": round(rag_answer.confidence, 2),
-            "sources": [],
-            "citations": [],
-            "reason": trace.handoff_reason or "insufficient_evidence",
+            "sources": rag_answer.sources,
+            "citations": rag_answer.citations,
+            "reason": "grounded_answer",
             "evidence_summary": evidence_summary,
             "packed_evidence": packed_evidence,
             "query_understanding": query_understanding_meta,
-        }
-
-    return {
-        "decision": "answer",
-        "answer": rag_answer.answer,
-        "confidence": round(rag_answer.confidence, 2),
-        "sources": rag_answer.sources,
-        "citations": rag_answer.citations,
-        "reason": "grounded_answer",
-        "evidence_summary": evidence_summary,
-        "packed_evidence": packed_evidence,
-        "query_understanding": query_understanding_meta,
-    }
+        },
+        trace=trace,
+        answer=rag_answer,
+    )
 
 
 @app.post("/internal/rag/requests/{request_id}/cancel")

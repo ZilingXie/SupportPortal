@@ -1434,6 +1434,12 @@ def _extract_resolution_diagnostics(resolution: SupportResolution) -> dict[str, 
     return dict(diagnostics) if isinstance(diagnostics, dict) else {}
 
 
+def _extract_resolution_evidence_verdict(resolution: SupportResolution) -> dict[str, Any]:
+    diagnostics = _extract_resolution_diagnostics(resolution)
+    verdict = diagnostics.get("evidence_verdict")
+    return dict(verdict) if isinstance(verdict, dict) else {}
+
+
 def _merge_rag_resolution_diagnostics(
     diagnostics: dict[str, Any],
     *,
@@ -1459,6 +1465,21 @@ def _merge_rag_resolution_diagnostics(
             merged["rag_reason_detail"] = "deadline_exhausted"
         elif handoff_reason == RAG_INSUFFICIENT_EVIDENCE_REASON:
             merged["rag_reason_detail"] = "generic_insufficient_evidence"
+    verdict = _extract_resolution_evidence_verdict(resolution)
+    if verdict:
+        merged["rag_evidence_verdict"] = dict(verdict)
+        merged["rag_evidence_decision"] = verdict.get("decision")
+        merged["rag_evidence_risk_level"] = verdict.get("risk_level")
+        merged["rag_evidence_needs_human"] = verdict.get("needs_human")
+        merged["rag_evidence_handoff_reason"] = verdict.get("handoff_reason")
+        merged["rag_evidence_judge_decision"] = verdict.get("judge_decision")
+        merged["rag_evidence_judge_reason"] = verdict.get("judge_reason")
+        merged["rag_evidence_citation_coverage_ratio"] = verdict.get("citation_coverage_ratio")
+        merged["rag_evidence_selected_doc_count"] = verdict.get("selected_doc_count")
+        merged["rag_evidence_generation_mode"] = verdict.get("generation_mode")
+        merged["rag_evidence_deadline_exhausted"] = verdict.get("deadline_exhausted")
+        merged["rag_evidence_timeout_stage"] = verdict.get("timeout_stage")
+        merged["rag_evidence_judge_override"] = verdict.get("judge_override")
     for key, value in _extract_resolution_diagnostics(resolution).items():
         if value is not None:
             merged[key] = value
@@ -2094,6 +2115,7 @@ def execute_client_ticket_agent_runtime(
             resolution=rag_resolution,
         )
         rag_resolution_diagnostics = _extract_resolution_diagnostics(rag_resolution)
+        rag_evidence_verdict = _extract_resolution_evidence_verdict(rag_resolution)
         _mark_agent_summary(
             rag_summary,
             phase="completed",
@@ -2102,6 +2124,7 @@ def execute_client_ticket_agent_runtime(
             reason=str(rag_detail.reason or "rag_result"),
             extra={
                 "confidence": float(rag_detail.confidence),
+                **({"evidence_verdict": rag_evidence_verdict} if rag_evidence_verdict else {}),
                 **{
                     key: rag_resolution_diagnostics.get(key)
                     for key in (

@@ -10,6 +10,31 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-20 - Add unified EvidenceVerdict diagnostics contract
+
+- Summary:
+  - Added an `EvidenceVerdict` contract for RAG API evidence decisions, including final API decision, risk level, human-handoff state, judge metadata, citation coverage, selected-doc count, generation mode, and timeout/deadline markers.
+  - Attached the verdict to `/internal/rag/query` payloads and mirrored it under `evidence_summary.diagnostics.evidence_verdict` so downstream clients can consume one structured representation.
+  - Preserved the verdict through `RagTicketAnswerDetail` mapping and surfaced key verdict fields in client-ticket runtime diagnostics and RAG agent summaries.
+- Reason:
+  - Evidence state was expressed separately across RAG judge output, RAG API `decision` mapping, service-client diagnostics, and runtime postcheck paths.
+  - This first phase standardizes the diagnostic contract without changing the existing answer/escalate business decision flow.
+- Affected files/config:
+  - `backend/services/rag_evidence_verdict.py`
+  - `backend/rag_api.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, vector-table, BM25, or RAG data reset changes.
+  - API and runtime payloads gain optional diagnostic fields only; current answer/escalate and workflow_action behavior is intentionally unchanged.
+- Verification:
+  - `env PATH=/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin:$PATH python3 -m pytest backend/tests/test_rag_service_client.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_rag_api.py` (`96 passed`, `4 warnings`).
+  - `env PATH=/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin:$PATH python3 .codex/skills/supportportal-run-report/scripts/run_supportportal_run_report.py` was attempted before finalization; it reported `case_count=6`, `success_count=0`, `failure_count=6` because the official single-host stack was not running (`deployment_api_1` missing), so live-stack report verification must be rerun after the required post-merge stack restart.
+
 ## 2026-05-20 - Bound agentic RAG stages with a shared deadline
 
 - Summary:

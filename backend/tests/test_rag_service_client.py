@@ -67,6 +67,40 @@ class RagServiceClientTests(unittest.TestCase):
             "Use the REST API endpoint.",
         )
 
+    def test_map_answer_payload_to_ticket_answer_detail_preserves_evidence_verdict(self) -> None:
+        detail = map_rag_payload_to_ticket_answer_detail(
+            {
+                "decision": "answer",
+                "answer": "Use the REST API endpoint.",
+                "confidence": 0.88,
+                "sources": ["https://docs.agora.io/en/example"],
+                "citations": [{"chunk_id": "chunk-1"}],
+                "evidence_summary": {"quality_signals": {"generation_mode": "structured_answer"}},
+                "evidence_verdict": {
+                    "decision": "answer",
+                    "risk_level": "low",
+                    "needs_human": False,
+                    "handoff_reason": None,
+                    "judge_decision": "answer_now",
+                    "judge_reason": "sufficient_first_pass_support",
+                    "confidence": 0.88,
+                    "citation_count": 1,
+                    "citation_coverage_ratio": 1.0,
+                    "selected_doc_count": 1,
+                    "generation_mode": "structured_answer",
+                    "deadline_exhausted": False,
+                    "timeout_stage": None,
+                    "judge_override": False,
+                },
+            },
+            insufficient_reply="INSUFFICIENT",
+        )
+
+        verdict = detail.evidence_summary["diagnostics"]["evidence_verdict"]
+        self.assertEqual(verdict["decision"], "answer")
+        self.assertEqual(verdict["risk_level"], "low")
+        self.assertEqual(verdict["judge_decision"], "answer_now")
+
     def test_map_answer_payload_to_ticket_answer(self) -> None:
         answer, confidence, sources, citations, needs_engineer = map_rag_payload_to_ticket_answer(
             {
