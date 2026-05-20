@@ -427,6 +427,26 @@ class AgenticRetrievalPlan:
 
 
 @dataclass(frozen=True)
+class AgenticQueryFlags:
+    preliminary_query_class: str
+    api_semantics_query: bool
+    short_how_to_faq_query: bool
+    simple_lexical_query: bool
+    vector_setup_skipped: bool
+    light_path_used: bool
+    skip_bm25_warmup: bool
+
+
+@dataclass(frozen=True)
+class AgenticFeatureFlags:
+    query_understanding_enabled: bool
+    query_rewrite_enabled: bool
+    query_decomposition_enabled: bool
+    query_expansion_enabled: bool
+    warm_vector_enabled: bool
+
+
+@dataclass(frozen=True)
 class AgenticJudgeDecision:
     decision: str
     reason: str
@@ -8438,6 +8458,76 @@ def _iteration_trace_payload(iteration: AgenticIterationTrace) -> dict[str, Any]
     }
 
 
+def _classify_agentic_query_flags(effective_question: str) -> AgenticQueryFlags:
+    preliminary_query_class = _classify_agentic_query(effective_question, None)
+    api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
+    short_how_to_faq_query = preliminary_query_class == "how_to_faq" and _is_short_how_to_faq_query(effective_question)
+    simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(effective_question)
+    vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query
+    light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query
+    skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"}
+    return AgenticQueryFlags(
+        preliminary_query_class=preliminary_query_class,
+        api_semantics_query=api_semantics_query,
+        short_how_to_faq_query=short_how_to_faq_query,
+        simple_lexical_query=simple_lexical_query,
+        vector_setup_skipped=vector_setup_skipped,
+        light_path_used=light_path_used,
+        skip_bm25_warmup=skip_bm25_warmup,
+    )
+
+
+def _resolve_agentic_feature_flags(
+    *,
+    config: dict[str, Any],
+    query_flags: AgenticQueryFlags,
+    effective_question: str,
+) -> AgenticFeatureFlags:
+    warm_vector_enabled = bool(config.get("vector_enabled")) and not (
+        query_flags.simple_lexical_query
+        or query_flags.short_how_to_faq_query
+        or query_flags.api_semantics_query
+        or _is_generic_join_channel_query(effective_question)
+    )
+    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
+        query_flags.simple_lexical_query or query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+    )
+    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not (
+        query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+    )
+    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not (
+        query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+    )
+    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not (
+        query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+    )
+    return AgenticFeatureFlags(
+        query_understanding_enabled=query_understanding_enabled,
+        query_rewrite_enabled=query_rewrite_enabled,
+        query_decomposition_enabled=query_decomposition_enabled,
+        query_expansion_enabled=query_expansion_enabled,
+        warm_vector_enabled=warm_vector_enabled,
+    )
+
+
+def _build_warm_seed_tool_results(
+    warm_original_vector_chunks: list[RetrievedChunk],
+    warm_original_bm25_chunks: list[RetrievedChunk],
+) -> dict[str, list[RetrievedChunk]]:
+    return {
+        tool_name: chunks
+        for tool_name, chunks in {
+            "p_vec": warm_original_vector_chunks,
+            "p_bm25": warm_original_bm25_chunks,
+        }.items()
+        if chunks
+    }
+
+
+def _should_recover_agentic_round(judge: AgenticJudgeDecision, round_index: int) -> bool:
+    return judge.decision == "recover_once" and round_index == 1
+
+
 def _run_rag_query_agentic_single(
     message: str,
     top_k: int | None = None,
@@ -8460,13 +8550,13 @@ def _run_rag_query_agentic_single(
     effective_question, follow_up_inheritance = _resolve_effective_question(message, ticket_context)
     query_type = _infer_query_type(effective_question)
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
-    preliminary_query_class = _classify_agentic_query(effective_question, None)
-    api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
-    short_how_to_faq_query = preliminary_query_class == "how_to_faq" and _is_short_how_to_faq_query(effective_question)
-    simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(effective_question)
-    vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query
-    light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query
-    skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"}
+    query_flags = _classify_agentic_query_flags(effective_question)
+    api_semantics_query = query_flags.api_semantics_query
+    short_how_to_faq_query = query_flags.short_how_to_faq_query
+    simple_lexical_query = query_flags.simple_lexical_query
+    vector_setup_skipped = query_flags.vector_setup_skipped
+    light_path_used = query_flags.light_path_used
+    skip_bm25_warmup = query_flags.skip_bm25_warmup
     preflight_probe_latency_ms = 0.0
 
     config["_vector_runtime_available"] = (
@@ -8498,24 +8588,16 @@ def _run_rag_query_agentic_single(
             config["vector_enabled"] = False
             config["_vector_runtime_available"] = False
     preflight_probe_latency_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
-    warm_vector_enabled = bool(config.get("vector_enabled")) and not (
-        simple_lexical_query
-        or short_how_to_faq_query
-        or api_semantics_query
-        or _is_generic_join_channel_query(effective_question)
+    feature_flags = _resolve_agentic_feature_flags(
+        config=config,
+        query_flags=query_flags,
+        effective_question=effective_question,
     )
-    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
-        simple_lexical_query or short_how_to_faq_query or api_semantics_query
-    )
-    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not (
-        short_how_to_faq_query or api_semantics_query
-    )
-    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not (
-        short_how_to_faq_query or api_semantics_query
-    )
-    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not (
-        short_how_to_faq_query or api_semantics_query
-    )
+    warm_vector_enabled = feature_flags.warm_vector_enabled
+    query_understanding_enabled = feature_flags.query_understanding_enabled
+    query_rewrite_enabled = feature_flags.query_rewrite_enabled
+    query_decomposition_enabled = feature_flags.query_decomposition_enabled
+    query_expansion_enabled = feature_flags.query_expansion_enabled
     query_understanding: QueryUnderstandingResult | None = None
     effective_hard_filters: dict[str, str] = {}
     effective_soft_signals: dict[str, list[str]] = {}
@@ -8685,14 +8767,10 @@ def _run_rag_query_agentic_single(
         config = _apply_light_path_latency_budget(config)
         light_path_used = True
     shadow_tools_skipped = list(plan.shadow_tools_skipped)
-    warm_seed_tool_results = {
-        tool_name: chunks
-        for tool_name, chunks in {
-            "p_vec": warm_original_vector_chunks,
-            "p_bm25": warm_original_bm25_chunks,
-        }.items()
-        if chunks
-    }
+    warm_seed_tool_results = _build_warm_seed_tool_results(
+        warm_original_vector_chunks,
+        warm_original_bm25_chunks,
+    )
 
     for round_index in [1, 2]:
         if round_index == 2:
@@ -8761,7 +8839,7 @@ def _run_rag_query_agentic_single(
         if round_index == 1:
             first_pass_candidate_count = len(round_result.retrieved_chunks)
         second_pass_candidate_count = len(round_result.retrieved_chunks)
-        if round_result.judge.decision == "recover_once" and round_index == 1:
+        if _should_recover_agentic_round(round_result.judge, round_index):
             recovery_action = round_result.judge.recovery_action
             continue
         break
