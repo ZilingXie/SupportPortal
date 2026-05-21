@@ -3230,26 +3230,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "source_family": "video-calling/reference/glossary",
             },
         )
-        query_understanding = QueryUnderstandingResult(
-            query_profile="en",
-            query_understanding_version="v2",
-            glossary_version="agora_glossary_en_v2",
-            self_query_version="v2",
-            normalized_query="how to enable the dual stream",
-            canonical_terms=["Dual-stream mode"],
-            glossary_hits=[{"canonical_term": "Dual-stream mode"}],
-            dictionary_hits=[],
-            retrieval_plan=RetrievalPlan(
-                semantic_query="how to enable the dual stream",
-                soft_signals={"topic": ["stream configuration"], "use_case": ["dual_stream"]},
-                rule_expansions=["enable dual stream enableDualStream low stream"],
-            ),
-            rewritten_queries=["enable dual stream enableDualStream low stream"],
-            decomposition_subqueries=[],
-            fallback_mode="none",
-            intent_latency_ms=2.0,
-            rewrite_latency_ms=1.0,
-        )
 
         def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
             normalized = " ".join(str(query_text or "").split()).lower()
@@ -3296,13 +3276,16 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 return_value="supportportal.docagent_chunks_bge_m3_1024",
             ), patch(
                 "backend.services.rag_qa.get_embedding_provider",
-                return_value=self._FakeProvider(),
+                side_effect=AssertionError("embedding provider should not be initialized for dual-stream light path"),
             ), patch(
                 "backend.services.rag_qa.understand_rag_query",
-                return_value=query_understanding,
+                side_effect=AssertionError("query understanding should be skipped for dual-stream light path"),
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("planner should be skipped for dual-stream light path"),
             ), patch(
                 "backend.services.rag_qa._retrieve_chunks",
-                return_value=[],
+                side_effect=AssertionError("vector retrieval should not run for dual-stream light path"),
             ), patch(
                 "backend.services.rag_qa._retrieve_bm25_chunks",
                 side_effect=_bm25_side_effect,
@@ -3313,23 +3296,56 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "backend.services.rag_qa._retrieve_keyword_chunks",
                 return_value=[],
             ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=lambda *args, **kwargs: (
+                    [rag_qa._copy_chunk(dual_stream_chunk), rag_qa._copy_chunk(glossary_chunk)],
+                    {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
                 "backend.services.rag_qa._rerank_chunks",
-                side_effect=lambda query, chunks, config, *, limit=None: chunks,
+                side_effect=AssertionError("external rerank should be skipped for dual-stream light path"),
             ), patch(
                 "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                side_effect=AssertionError("dual-stream deterministic path should not call the llm when authoritative support is available"),
+                side_effect=AssertionError("dual-stream deterministic path should not call the llm"),
+            ), patch(
+                "backend.services.rag_qa._run_rag_query_legacy",
+                side_effect=AssertionError("dual-stream light path should stay in agentic mode"),
             ):
                 result = run_rag_query("how to enable the dual stream", product="audio_video_calling")
 
         self.assertIsNotNone(result)
         assert result is not None
+        self.assertEqual(result.trace.execution_mode, "agentic")
         self.assertEqual(result.trace.query_class, "configuration")
+        self.assertTrue(result.trace.light_path_used)
+        self.assertTrue(result.trace.vector_setup_skipped)
         self.assertEqual(result.trace.answer_profile_used, "dual_stream_deterministic")
         self.assertFalse(result.trace.needs_human)
         self.assertEqual(result.trace.handoff_reason, None)
         self.assertEqual(result.answer.citations[0]["chunk_id"], "dual-stream-web")
         self.assertIn("client.enableDualStream()", result.answer.answer)
         self.assertIn("```javascript", result.answer.answer)
+        self.assertTrue(
+            any(
+                timing.get("tool_name") == "p_bm25"
+                for timing in result.trace.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
+        )
+        self.assertTrue(
+            any(
+                timing.get("tool_name") == "p_fts"
+                for timing in result.trace.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
+        )
+        self.assertFalse(
+            any(
+                timing.get("tool_name") == "p_vec"
+                for timing in result.trace.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
+        )
 
     def test_run_rag_query_short_black_screen_guidance_uses_deterministic_answer_profile(self) -> None:
         faq_chunk = RetrievedChunk(

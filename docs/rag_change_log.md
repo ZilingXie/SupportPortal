@@ -3989,3 +3989,23 @@ For each new entry, record:
   - Canonical black-screen ticket subjects now normalize to `Black screen issue`, which also lets one-off subject-repair scripts converge existing tickets onto the same stable label.
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_support_router.py backend/tests/test_ticket_title.py backend/tests/test_client_ticket_agent_runtime.py`
+
+## 2026-05-21 - PR3 dual-stream RAG internal retrieval optimization
+
+- Summary:
+  - Explicit dual-stream enablement questions now use a lexical light path before planner/vector work and preserve deterministic cited answers.
+  - The dual-stream detector inspects the effective question before query understanding, planner, vector setup, warm vector retrieval, and external rerank can run; on match it uses BM25/FTS plus rule variants and keeps the existing deterministic answer profile.
+- Reason:
+  - PR2 run-report and live-flow evidence showed that dual-stream enablement questions could still hit `deadline_exhausted` before deterministic generation because planner, query-understanding, and vector work happened upstream of the existing deterministic answer builder.
+  - Moving the check before the RAG planner eliminates unnecessary retrieval latency for these well-understood questions and prevents pipeline contention from starving the deterministic answer path.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Dual-stream enablement answers continue to carry `generation_mode: dual_stream_deterministic` and now also report `light_path_used` and `vector_setup_skipped` in trace output.
+  - Non-dual-stream questions are unaffected; the detector is a short-circuit gate that falls through immediately when no dual-stream keyword match is found.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_dual_stream_enable_query_returns_grounded_answer_with_citations -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_api.py -q`
