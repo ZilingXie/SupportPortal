@@ -135,6 +135,150 @@ class RagDecisionEngineUnitTests(unittest.TestCase):
         self.assertNotEqual(decision.execution_result.workflow_action, "answer_customer")
         self.assertEqual(decision.review_summary.get("reason"), "rag_post_check_insufficient")
 
+    def test_needs_human_quality_signal_blocks_review_approved_answer(self):
+        review_modes: list[str] = []
+
+        def approve_review(**kwargs):
+            review_modes.append(kwargs.get("mode"))
+            return {"decision": "approve_answer", "reason": "review_ok", "confidence": 0.92}
+
+        decision = self._call_evaluate(
+            rag_detail=_make_rag_detail(
+                answer="Call joinChannel.",
+                confidence=0.95,
+                citations=[{"chunk_id": "chunk-1"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": True,
+                    }
+                },
+            ),
+            review_agent=approve_review,
+        )
+
+        self.assertEqual(review_modes, ["grounded_postcheck"])
+        self.assertEqual(decision.execution_result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(decision.review_summary.get("gate_block_reason"), "needs_human")
+
+    def test_extractive_fallback_quality_signal_blocks_review_approved_answer(self):
+        fallback_signals = [
+            {"generation_mode": "extractive_fallback", "selected_doc_count": 1},
+            {
+                "generation_mode": "structured_answer",
+                "selected_doc_count": 1,
+                "extractive_fallback_used": True,
+            },
+        ]
+
+        for quality_signals in fallback_signals:
+            with self.subTest(quality_signals=quality_signals):
+                decision = self._call_evaluate(
+                    rag_detail=_make_rag_detail(
+                        answer="Call joinChannel.",
+                        confidence=0.95,
+                        citations=[{"chunk_id": "chunk-1"}],
+                        evidence_summary={"quality_signals": quality_signals},
+                    ),
+                    review_agent=lambda **_kwargs: {
+                        "decision": "approve_answer",
+                        "reason": "review_ok",
+                        "confidence": 0.92,
+                    },
+                )
+
+                self.assertEqual(decision.execution_result.workflow_action, "open_engineer_ticket")
+                self.assertEqual(decision.review_summary.get("gate_block_reason"), "extractive_fallback")
+
+    def test_grounded_postcheck_review_exception_fails_closed(self):
+        def failing_review(**_kwargs):
+            raise RuntimeError("review unavailable")
+
+        decision = self._call_evaluate(
+            rag_detail=_make_rag_detail(
+                answer="Call joinChannel.",
+                confidence=0.80,
+                citations=[{"chunk_id": "chunk-1"}],
+            ),
+            client_intake_state={"phase": "investigating"},
+            review_agent=failing_review,
+        )
+
+        self.assertEqual(decision.execution_result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(decision.execution_result.investigation_reason, "rag_post_check_error")
+        self.assertEqual(decision.review_summary.get("reason"), "rag_post_check_error")
+
+    def test_grounded_postcheck_invalid_review_output_fails_closed(self):
+        decision = self._call_evaluate(
+            rag_detail=_make_rag_detail(
+                answer="Call joinChannel.",
+                confidence=0.80,
+                citations=[{"chunk_id": "chunk-1"}],
+            ),
+            client_intake_state={"phase": "investigating"},
+            review_agent=lambda **_kwargs: {"reason": "missing_decision"},
+        )
+
+        self.assertEqual(decision.execution_result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(decision.execution_result.investigation_reason, "rag_post_check_error")
+
+    def test_low_risk_structured_answer_skips_review(self):
+        decision = self._call_evaluate(
+            rag_detail=_make_rag_detail(
+                answer="Call joinChannel with the same channel name and token.",
+                confidence=0.95,
+                citations=[{"chunk_id": "chunk-1"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+            ),
+            review_agent=lambda **_kwargs: self.fail("low-risk structured answers should skip review"),
+        )
+
+        self.assertEqual(decision.execution_result.workflow_action, "answer_customer")
+        self.assertEqual(decision.review_summary.get("phase"), "skipped")
+        self.assertEqual(decision.review_summary.get("reason"), "low_risk_grounded_answer")
+
+    def test_troubleshooting_weak_evidence_enters_review_intake_path(self):
+        review_modes: list[str] = []
+
+        def review_agent(**kwargs):
+            review_modes.append(kwargs.get("mode"))
+            if kwargs.get("mode") == "pre_engineer_intake":
+                return TroubleshootingIntakeResult(
+                    issue_mode="investigation",
+                    known_information={"symptom": "black screen"},
+                    missing_information=[],
+                    ready_for_engineer_ticket=True,
+                    customer_reply="",
+                )
+            return {"decision": "approve_answer", "reason": "review_ok", "confidence": 0.9}
+
+        decision = self._call_evaluate(
+            message="I get black screen when joining a channel.",
+            rag_detail=_make_rag_detail(
+                answer="Check whether the render view is bound correctly.",
+                confidence=0.82,
+                citations=[{"chunk_id": "chunk-1"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                    }
+                },
+            ),
+            review_agent=review_agent,
+        )
+
+        self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
+        self.assertEqual(decision.execution_result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(decision.review_summary.get("gate_block_reason"), "weak_troubleshooting_evidence")
+
     def test_insufficient_answer_route_without_review_clarifies_customer(self):
         decision = self._call_evaluate(
             rag_detail=_make_rag_detail(

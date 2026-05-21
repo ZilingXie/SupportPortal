@@ -307,7 +307,7 @@ class TicketOrchestratorTests(unittest.TestCase):
             execution = orchestrate_ticket_execution(
                 "How do I debug token renewal on Android 14?",
                 decision=_decision("rag"),
-                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag", confidence=0.91),
             )
 
         self.assertFalse(execution.needs_investigating)
@@ -387,7 +387,7 @@ class TicketOrchestratorTests(unittest.TestCase):
             execution = orchestrate_ticket_execution(
                 "How do I debug token renewal on Android 14?",
                 decision=_decision("rag"),
-                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag", confidence=0.91),
             )
 
         self.assertFalse(execution.needs_investigating)
@@ -396,9 +396,9 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertEqual(execution.investigation_reason, "rag_post_check_insufficient")
         self.assertEqual(execution.workflow_action, "answer_customer")
         self.assertEqual(execution.route_reason, "grounded_answer")
-        self.assertIn("please share what you're trying to achieve", execution.answer.lower())
+        self.assertIn("what you're trying to achieve", execution.answer.lower())
 
-    def test_rag_post_check_error_falls_back_to_investigating(self) -> None:
+    def test_rag_post_check_error_fails_closed_to_intake(self) -> None:
         with patch(
             "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
             side_effect=RuntimeError("judge unavailable"),
@@ -406,15 +406,15 @@ class TicketOrchestratorTests(unittest.TestCase):
             execution = orchestrate_ticket_execution(
                 "How do I debug token renewal on Android 14?",
                 decision=_decision("rag"),
-                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag", confidence=0.91),
             )
 
         self.assertFalse(execution.needs_investigating)
         self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertEqual(execution.investigation_reason, "rag_post_check_error")
-        self.assertEqual(execution.workflow_action, "answer_customer")
-        self.assertEqual(execution.route_reason, "grounded_answer")
-        self.assertIn("please share what you're trying to achieve", execution.answer.lower())
+        self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.route_reason, "rag_post_check_error")
+        self.assertIn("what you're trying to achieve", execution.answer.lower())
 
     def test_generic_grounded_how_to_question_keeps_answer_when_post_check_errors(self) -> None:
         with patch(
