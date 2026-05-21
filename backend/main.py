@@ -193,7 +193,6 @@ def _safe_float_env(name: str, default: float) -> float:
 
 
 ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
-OPTIMISTIC_PARALLEL_ROUTE_ENABLED = _env_flag("OPTIMISTIC_PARALLEL_ROUTE_ENABLED", default=True)
 INPUT_GUARDRAIL_ENABLED = _env_flag("INPUT_GUARDRAIL_ENABLED", default=False)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
 KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
@@ -213,7 +212,7 @@ def _ticket_db_startup_init_retry_delay_seconds() -> float:
 
 
 def _main_agent_async_enabled() -> bool:
-    return bool(ASYNC_QUERY_ENABLED and OPTIMISTIC_PARALLEL_ROUTE_ENABLED)
+    return bool(ASYNC_QUERY_ENABLED)
 
 
 def _build_client_ack_instructions() -> str:

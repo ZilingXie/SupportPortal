@@ -2918,7 +2918,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client2_postsend_header_reply_countdown_uses_waiting_status_durations(self) -> None:
+    def test_client2_postsend_header_reply_countdown_uses_twenty_minute_baseline(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
                 """
@@ -2948,18 +2948,18 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!communicatingHtml.includes("new-ticket-postsend-countdown")) {
                   throw new Error("Client2 communicating tickets should render the reply countdown chip.");
                 }
-                if (!communicatingHtml.includes(">Next update in 10:00<")) {
-                  throw new Error("Client2 communicating tickets should start the reply countdown at Next update in 10:00.");
+                if (!communicatingHtml.includes(">Next update in 20:00<")) {
+                  throw new Error("Client2 communicating tickets should start the reply countdown at Next update in 20:00.");
                 }
 
                 const investigatingHtml = renderWaitingTicket("investigating", "2026-04-20T09:00:00.000Z");
-                if (!investigatingHtml.includes(">Next update in 1h 00m<")) {
-                  throw new Error("Client2 investigating tickets should start the reply countdown at Next update in 1h 00m.");
+                if (!investigatingHtml.includes(">Next update in 20:00<")) {
+                  throw new Error("Client2 investigating tickets should start the reply countdown at Next update in 20:00.");
                 }
 
                 const escalatedHtml = renderWaitingTicket("escalated", "2026-04-20T09:00:00.000Z");
-                if (!escalatedHtml.includes(">Next update in 3h 00m<")) {
-                  throw new Error("Client2 escalated tickets should start the reply countdown at Next update in 3h 00m.");
+                if (!escalatedHtml.includes(">Next update in 20:00<")) {
+                  throw new Error("Client2 escalated tickets should start the reply countdown at Next update in 20:00.");
                 }
                 if (escalatedHtml.includes("Estimate waiting time: 3 hours")) {
                   throw new Error("Client2 escalated tickets should remove the legacy header wait note when the countdown chip is present.");
@@ -3074,7 +3074,7 @@ class ClientUiContractTests(unittest.TestCase):
                   appRoot.innerHTML = renderChatTicket();
                 };
                 render();
-                if (!appRoot.innerHTML.includes(">Next update in 10:00<")) {
+                if (!appRoot.innerHTML.includes(">Next update in 20:00<")) {
                   throw new Error("Client2 should render the full initial reply countdown before any minute passes.");
                 }
                 if (intervals.length !== 1) {
@@ -3086,7 +3086,7 @@ class ClientUiContractTests(unittest.TestCase):
 
                 now = Date.parse("2026-04-20T09:01:00.000Z");
                 intervals[0].fn();
-                if (!appRoot.innerHTML.includes(">Next update in 09:00<")) {
+                if (!appRoot.innerHTML.includes(">Next update in 19:00<")) {
                   throw new Error("Client2 should decrement the reply countdown after one minute.");
                 }
               """

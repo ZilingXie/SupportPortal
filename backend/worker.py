@@ -113,12 +113,6 @@ TICKET_TASK_RETRY_BASE_DELAY_SECONDS = _safe_positive_float(
     os.getenv("TICKET_WORKER_TASK_RETRY_BASE_DELAY_SECONDS"),
     1.0,
 )
-OPTIMISTIC_PARALLEL_ROUTE_ENABLED = str(os.getenv("OPTIMISTIC_PARALLEL_ROUTE_ENABLED") or "true").strip().lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
 OPTIMISTIC_ROUTE_TIMEOUT_SECONDS = _safe_positive_float(
     os.getenv("OPTIMISTIC_ROUTE_TIMEOUT_SECONDS"),
     8.0,
@@ -434,6 +428,10 @@ def _execute_agent_runtime_ticket_query(
         None,
     )
     cancel_payload = cancel_event.get("payload") if isinstance(cancel_event, dict) and isinstance(cancel_event.get("payload"), dict) else {}
+    route_status = str(route_agent_state.get("status") or "").strip().lower()
+    rag_status = str(rag_agent_state.get("status") or "").strip().lower()
+    rag_cancelled = rag_status == "cancelled"
+    rag_cancel_stage = str(cancel_payload.get("stage") or (rag_agent_state.get("reason") if rag_cancelled else "") or "").strip()
     diagnostics: dict[str, Any] = {
         "parallel_mode": "main_agent",
         "api_persist_latency_ms": None,
@@ -443,13 +441,13 @@ def _execute_agent_runtime_ticket_query(
             runtime_execution.diagnostics.get("route_timeout_seconds") or OPTIMISTIC_ROUTE_TIMEOUT_SECONDS
         ),
         "route_final_action": str(route_agent_state.get("decision") or runtime_execution.result.execution_action or "").strip() or None,
-        "route_result_source": "parallel_route" if str(route_agent_state.get("status") or "").strip().lower() == "completed" else "route_fail_open",
+        "route_result_source": "route_first" if route_status == "completed" else "route_fail_open",
         "route_fail_open": bool(runtime_execution.diagnostics.get("route_fail_open"))
-        or str(route_agent_state.get("status") or "").strip().lower() != "completed",
+        or route_status != "completed",
         "rag_started_at": rag_agent_state.get("started_at"),
         "rag_finished_at": rag_agent_state.get("completed_at"),
-        "rag_cancelled": str(rag_agent_state.get("status") or "").strip().lower() == "cancelled",
-        "rag_cancel_stage": str(cancel_payload.get("stage") or rag_agent_state.get("reason") or "").strip() or None,
+        "rag_cancelled": rag_cancelled,
+        "rag_cancel_stage": rag_cancel_stage or None,
     }
     return runtime_execution.result, diagnostics
 
@@ -593,22 +591,6 @@ def _orchestrate_worker_support_message(
             "parallel_mode": "main_agent",
             **diagnostics_context,
         }
-    if OPTIMISTIC_PARALLEL_ROUTE_ENABLED:
-        execution, diagnostics = _execute_parallel_ticket_query(
-            effective_message,
-            ticket_id=ticket_id,
-            customer_id=customer_id,
-            requester=requester,
-            ticket_subject=ticket_subject,
-            ticket_context=ticket_context,
-            message_created_at=message_created_at,
-            product=effective_product,
-            client_intake_state=effective_client_intake_state,
-            latest_assistant_message=latest_assistant_message,
-            current_ticket_status=current_ticket_status,
-        )
-        diagnostics.update(diagnostics_context)
-        return execution, diagnostics
     execution, diagnostics = _execute_agent_runtime_ticket_query(
         effective_message,
         ticket_id=ticket_id,

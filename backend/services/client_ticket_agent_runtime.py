@@ -1800,21 +1800,10 @@ def execute_client_ticket_agent_runtime(
         event_type="started",
         payload={},
     )
-    _mark_agent_summary(rag_summary, phase="running", status="running", extra={"request_id": rag_request_id})
-    _append_event(
-        agent_events,
-        ticket_id=ticket_id,
-        message_id=message_id,
-        run_id=run_id,
-        agent_name=AGENT_NAME_RAG,
-        phase="running",
-        event_type="started",
-        payload={"request_id": rag_request_id},
-    )
 
     route_decision: SupportRouteDecision | None = None
     rag_detail: RagTicketAnswerDetail | None = None
-    executor = ThreadPoolExecutor(max_workers=2)
+    executor = ThreadPoolExecutor(max_workers=1)
     route_future: Future[SupportRouteDecision] = executor.submit(
         route_agent,
         message=message,
@@ -1824,17 +1813,6 @@ def execute_client_ticket_agent_runtime(
         latest_assistant_message=latest_assistant_message,
         current_ticket_status=current_ticket_status,
         has_active_engineer_case=has_active_engineer_case,
-    )
-    rag_future: Future[RagTicketAnswerDetail] = executor.submit(
-        rag_agent,
-        message=message,
-        ticket_id=ticket_id,
-        customer_id=customer_id,
-        ticket_subject=ticket_subject,
-        ticket_context=ticket_context,
-        product=product,
-        request_id=rag_request_id,
-        message_id=message_id,
     )
 
     try:
@@ -1891,18 +1869,13 @@ def execute_client_ticket_agent_runtime(
             )
 
         if route_decision is not None and str(route_decision.execution_action or "").strip() != "rag":
-            cancel_payload: dict[str, Any] | None = None
-            if callable(rag_canceler):
-                try:
-                    cancel_payload = rag_canceler(rag_request_id)
-                except Exception as exc:
-                    cancel_payload = {"cancelled": False, "error": str(exc)}
             _mark_agent_summary(
                 rag_summary,
-                phase="cancelled",
-                status="cancelled",
-                decision="cancelled_by_route_flip",
-                reason=str((cancel_payload or {}).get("stage") or "route_flip") or "route_flip",
+                phase="skipped",
+                status="skipped",
+                decision="skipped",
+                reason="non_rag_route",
+                extra={"request_id": rag_request_id},
             )
             _append_event(
                 agent_events,
@@ -1910,9 +1883,9 @@ def execute_client_ticket_agent_runtime(
                 message_id=message_id,
                 run_id=run_id,
                 agent_name=AGENT_NAME_RAG,
-                phase="cancelled",
-                event_type="cancel_requested",
-                payload=cancel_payload or {"cancelled": True},
+                phase="skipped",
+                event_type="skipped",
+                payload={"reason": "non_rag_route", "request_id": rag_request_id},
             )
             _mark_agent_summary(review_summary, phase="skipped", status="skipped", decision="skipped", reason="non_rag_route")
             _append_event(
@@ -2105,7 +2078,27 @@ def execute_client_ticket_agent_runtime(
 
         effective_route_decision = route_decision or _build_default_rag_route_decision(message)
         if rag_detail is None:
-            rag_detail = rag_future.result()
+            _mark_agent_summary(rag_summary, phase="running", status="running", extra={"request_id": rag_request_id})
+            _append_event(
+                agent_events,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                run_id=run_id,
+                agent_name=AGENT_NAME_RAG,
+                phase="running",
+                event_type="started",
+                payload={"request_id": rag_request_id},
+            )
+            rag_detail = rag_agent(
+                message=message,
+                ticket_id=ticket_id,
+                customer_id=customer_id,
+                ticket_subject=ticket_subject,
+                ticket_context=ticket_context,
+                product=product,
+                request_id=rag_request_id,
+                message_id=message_id,
+            )
         rag_resolution = _rag_resolution_from_detail(
             route_decision=effective_route_decision,
             rag_detail=rag_detail,

@@ -389,7 +389,7 @@ class PromptModuleTests(unittest.TestCase):
         user_prompt = build_engineer_investigation_reply_user_prompt(
             customer_language_hint="en",
             latest_customer_message="I got a black screen after joining the call.",
-            latest_public_assistant_reply="This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+            latest_public_assistant_reply="This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
             ticket_conversation_summary="Customer: black screen after join | Sid: opened engineer ticket",
             investigation_thread_summary=(
                 "Sid: Please confirm the reproduction scope first. | "

@@ -163,7 +163,7 @@ class SingleHostComposeTests(unittest.TestCase):
         )
         self.assertIn("RAG_REQUEST_TIMEOUT_SECONDS=40.0", env_example)
 
-    def test_client_ack_and_parallel_route_defaults_are_present(self) -> None:
+    def test_client_ack_and_async_query_defaults_are_present(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")
 
         self.assertIn(
@@ -182,10 +182,8 @@ class SingleHostComposeTests(unittest.TestCase):
             "CLIENT_ACK_MAX_OUTPUT_TOKENS: ${CLIENT_ACK_MAX_OUTPUT_TOKENS:-32}",
             content,
         )
-        self.assertIn(
-            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED: ${OPTIMISTIC_PARALLEL_ROUTE_ENABLED:-true}",
-            content,
-        )
+        self.assertIn("ASYNC_QUERY_ENABLED: ${ASYNC_QUERY_ENABLED:-true}", content)
+        self.assertNotIn("OPTIMISTIC_PARALLEL_ROUTE_ENABLED", content)
         self.assertIn(
             "CLIENT_ACK_FALLBACK_TIMEOUT_MS: ${CLIENT_ACK_FALLBACK_TIMEOUT_MS:-5000}",
             content,

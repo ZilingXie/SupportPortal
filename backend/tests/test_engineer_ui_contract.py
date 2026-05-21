@@ -151,8 +151,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn('/shared-ui/composer.css?v=20260423-shared-composer-toolbar-reset-1', html)
-        self.assertIn('/shared-ui/composer.js?v=20260423-shared-composer-toolbar-reset-1', html)
+        self.assertIn('/shared-ui/composer.css?v=20260519-json-codeblock-1', html)
+        self.assertIn('/shared-ui/composer.js?v=20260519-json-codeblock-1', html)
         self.assertIn("./styles.css?v=20260423-shared-composer-toolbar-reset-1", html)
         self.assertIn('./app.js?v=20260423-shared-composer-toolbar-reset-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
@@ -920,7 +920,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     },
                     {
                       role: "assistant",
-                      content: "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                      content: "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                       created_at: "2026-03-24T08:01:00+00:00",
                     },
                   ],

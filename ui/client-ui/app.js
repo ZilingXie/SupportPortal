@@ -25,10 +25,11 @@ const DEMO_USERS = [
     password: "Zac",
   },
 ];
+const REPLY_COUNTDOWN_BASELINE_MINUTES = 20;
 const REPLY_COUNTDOWN_MINUTES_BY_STATUS = {
-  communicating: 10,
-  investigating: 60,
-  escalated: 180,
+  communicating: REPLY_COUNTDOWN_BASELINE_MINUTES,
+  investigating: REPLY_COUNTDOWN_BASELINE_MINUTES,
+  escalated: REPLY_COUNTDOWN_BASELINE_MINUTES,
 };
 const REPLY_COUNTDOWN_REFRESH_INTERVAL_MS = 60 * 1000;
 

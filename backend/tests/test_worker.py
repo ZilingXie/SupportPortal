@@ -284,7 +284,7 @@ class WorkerResilienceTests(unittest.TestCase):
         rag_mock.assert_called_once()
         health_mock.assert_not_called()
 
-    def test_execute_parallel_ticket_query_cancels_rag_when_route_flips_non_rag(self) -> None:
+    def test_execute_parallel_ticket_query_skips_rag_when_route_is_non_rag(self) -> None:
         rag_detail = types.SimpleNamespace(
             answer="Use joinChannel with a valid token.",
             confidence=0.91,
@@ -332,7 +332,7 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "_fetch_rag_answer_detail_for_worker",
             side_effect=_slow_rag,
-        ), patch.object(
+        ) as rag_mock, patch.object(
             worker.rag_service_client,
             "cancel_request",
             return_value={"cancelled": True, "stage": "round_1_retrieval"},
@@ -351,12 +351,13 @@ class WorkerResilienceTests(unittest.TestCase):
             )
 
         self.assertEqual(result.execution_action, "web_search")
-        self.assertTrue(diagnostics["rag_cancelled"])
-        self.assertEqual(diagnostics["rag_cancel_stage"], "round_1_retrieval")
+        self.assertFalse(diagnostics["rag_cancelled"])
+        self.assertIsNone(diagnostics["rag_cancel_stage"])
         self.assertEqual(diagnostics["route_final_action"], "web_search")
-        self.assertEqual(diagnostics["route_result_source"], "parallel_route")
+        self.assertEqual(diagnostics["route_result_source"], "route_first")
         self.assertEqual(result.workflow_action, "answer_customer")
-        cancel_mock.assert_called_once()
+        rag_mock.assert_not_called()
+        cancel_mock.assert_not_called()
         self.assertEqual(
             resolve_mock.call_args.kwargs["decision"].execution_action,
             "web_search",
@@ -1491,7 +1492,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         investigation_result = {
             "created": True,
-            "public_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+            "public_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
             "active_investigation": {
                 "id": "INV-RETRY-1",
                 "state": "active",
@@ -1519,7 +1520,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "source": "worker_async_rag",
                 "conversation_summary": "Customer reports token renew callback never fires.",
                 "latest_customer_message": "token renew callback never fires",
-                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": "grounded_answer",
@@ -1742,7 +1743,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "source": "worker_async_rag",
                 "conversation_summary": "Customer: how to join channel",
                 "latest_customer_message": "how to join channel",
-                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": execution_context.get("route_reason"),
@@ -1773,7 +1774,7 @@ class WorkerResilienceTests(unittest.TestCase):
             }
             return {
                 "created": True,
-                "public_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                "public_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                 "active_investigation": copy.deepcopy(ticket["active_investigation"]),
                 "new_internal_messages": [],
             }
@@ -1804,7 +1805,7 @@ class WorkerResilienceTests(unittest.TestCase):
         saved_ticket = repository.save_ticket.call_args_list[0].args[0]
         saved_engineer_case = repository.save_engineer_case.call_args.kwargs["engineer_case"]
         self.assertEqual(saved_ticket["status"], "investigating")
-        self.assertEqual(saved_ticket["messages"][-1]["content"], "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.")
+        self.assertEqual(saved_ticket["messages"][-1]["content"], "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.")
         self.assertEqual(saved_engineer_case["trigger_reason"], "rag_service_error")
         self.assertEqual(saved_engineer_case["engineer_handoff_packet"]["route_summary"]["route_reason"], "rag_service_error")
         self.assertEqual(saved_engineer_case["engineer_handoff_packet"]["unresolved_reason"], "rag_service_error")
