@@ -158,7 +158,19 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertTrue(reply.startswith("Hi Taylor,"))
         self.assertIn("Thank you for your patience.", reply)
         self.assertIn("This issue requires further internal investigation", reply)
+        self.assertIn("within 20 minutes", reply)
+        self.assertNotIn("24 " + "hours", reply)
         self.assertTrue(reply.endswith("Best Regards,\nSid"))
+
+    def test_default_public_investigation_reply_uses_twenty_minute_wait_in_chinese(self) -> None:
+        reply = default_public_investigation_reply(
+            "我遇到黑屏问题，请帮忙看看",
+            requester="王先生",
+            customer_id="C-001",
+        )
+
+        self.assertIn("20 分钟", reply)
+        self.assertNotIn("24 " + "小时", reply)
 
     def test_engineer_request_models_default_to_jack(self) -> None:
         self.assertEqual(main.TicketActionRequest(action="investigate").engineer_id, "Jack")
@@ -2843,7 +2855,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 "source": "support_query",
                 "conversation_summary": "Customer reports token renew callback never fires.",
                 "latest_customer_message": "token renew callback never fires",
-                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": "rag_insufficient_evidence",
@@ -4100,7 +4112,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
             ],
@@ -4187,7 +4199,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v7")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v8")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
         self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
         self.assertEqual(
@@ -4208,7 +4220,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
             ],
@@ -4309,7 +4321,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
             ],
@@ -4909,7 +4921,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
             ],
@@ -5425,7 +5437,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 "source": "worker_async_rag",
                 "conversation_summary": "Customer reports token renew callback does not fire.",
                 "latest_customer_message": "token renew callback never fires",
-                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply or update you here within 20 minutes.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": "rag_insufficient_evidence",

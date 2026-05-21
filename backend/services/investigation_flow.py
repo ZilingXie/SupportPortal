@@ -337,9 +337,9 @@ def default_public_investigation_reply(
 ) -> str:
     language = detect_customer_reply_language(latest_customer_message)
     body = (
-        "这个问题需要进一步的内部调查，可能需要一些时间。我们预计会在 24 小时内在这里回复你。"
+        "这个问题需要进一步的内部调查，可能需要一些时间。我们预计会在 20 分钟内在这里回复你或更新进展。"
         if language.startswith("zh")
-        else "This issue requires further internal investigation, which may take some time. We expect to reply here within 24 hours."
+        else "This issue requires further internal investigation, which may take some time. We expect to reply or update you here within 20 minutes."
     )
     opener = "感谢你的耐心等待。" if language.startswith("zh") else "Thank you for your patience."
     return compose_customer_reply_email(

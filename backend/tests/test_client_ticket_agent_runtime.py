@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import inspect
 import os
+import threading
 import types
 import unittest
 from unittest.mock import patch
@@ -220,7 +221,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(execution.result.needs_investigating)
         self.assertIn("I'll mark this case as resolved", execution.result.answer)
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "completed")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "cancelled")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "non_rag_route")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_runtime_surfaces_evidence_verdict_diagnostics_without_changing_workflow_action(self) -> None:
@@ -536,7 +538,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertNotEqual(execution.result.workflow_action, "resolve_ticket")
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
 
-    def test_non_rag_route_skips_review_and_cancels_rag(self) -> None:
+    def test_non_rag_route_skips_review_without_starting_or_cancelling_rag(self) -> None:
         from backend.services.client_ticket_agent_runtime import (
             AGENT_NAME_RAG,
             AGENT_NAME_REVIEW,
@@ -544,6 +546,11 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         cancelled: list[str] = []
+        rag_calls: list[bool] = []
+
+        def _rag_agent(**_kwargs):
+            rag_calls.append(True)
+            raise AssertionError("rag agent should not run for non-rag route")
 
         execution = execute_client_ticket_agent_runtime(
             message="Who is Agora's CEO?",
@@ -580,16 +587,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 execution_action="web_search",
                 tooling_profile="official_web_search",
             ),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
-                answer="Use joinChannel with a valid token.",
-                confidence=0.91,
-                sources=["https://docs.agora.io/en/video-calling/get-started"],
-                citations=[{"chunk_id": "chunk-1"}],
-                needs_engineer_guidance=False,
-                reason="grounded_answer",
-                evidence_summary={},
-                packed_evidence=None,
-            ),
+            rag_agent=_rag_agent,
             review_agent=lambda **_kwargs: self.fail("review agent should not run for non-rag route"),
             rag_canceler=lambda request_id: cancelled.append(request_id) or {"cancelled": True, "stage": "route_flip"},
         )
@@ -598,11 +596,28 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.workflow_action, "answer_customer")
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "web_search")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
-        self.assertIn(execution.runtime_state.rag_agent.get("status"), {"cancelled", "completed"})
-        self.assertTrue(cancelled, "rag cancel should be requested when route flips non-rag")
-        self.assertTrue(
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "non_rag_route")
+        self.assertTrue(str(execution.runtime_state.rag_agent.get("request_id") or "").startswith("rag-"))
+        self.assertFalse(rag_calls)
+        self.assertFalse(cancelled, "rag cancel should not be requested when RAG never started")
+        self.assertFalse(
             any(
                 event.get("agent_name") == AGENT_NAME_RAG and event.get("event_type") == "cancel_requested"
+                for event in execution.agent_events
+            )
+        )
+        self.assertFalse(
+            any(
+                event.get("agent_name") == AGENT_NAME_RAG and event.get("event_type") == "started"
+                for event in execution.agent_events
+            )
+        )
+        self.assertTrue(
+            any(
+                event.get("agent_name") == AGENT_NAME_RAG
+                and event.get("event_type") == "skipped"
+                and (event.get("payload") or {}).get("reason") == "non_rag_route"
                 for event in execution.agent_events
             )
         )
@@ -612,6 +627,62 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 for event in execution.agent_events
             )
         )
+
+    def test_rag_route_starts_rag_agent_only_after_route_agent_returns(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        rag_started = threading.Event()
+        route_returned = threading.Event()
+
+        def _route_agent(**_kwargs):
+            rag_started.wait(timeout=0.5)
+            route_returned.set()
+            return SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            )
+
+        def _rag_agent(**_kwargs):
+            rag_started.set()
+            self.assertTrue(route_returned.is_set(), "rag agent started before route agent returned")
+            return RagTicketAnswerDetail(
+                answer="Call joinChannel with the same channel name and token.",
+                confidence=0.91,
+                sources=["https://docs.agora.io/en/video-calling/get-started"],
+                citations=[{"chunk_id": "chunk-1"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={},
+                packed_evidence=None,
+            )
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join a channel?",
+            ticket_id="TK-ROUTE-FIRST-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join a channel?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=_route_agent,
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=_rag_agent,
+            review_agent=lambda **_kwargs: self.fail("grounded rag answer should not run review"),
+            rag_canceler=lambda _request_id: self.fail("rag canceler should not run for rag route"),
+        )
+
+        self.assertEqual(execution.result.execution_action, "rag")
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "completed")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "completed")
+        self.assertTrue(route_returned.is_set())
+        self.assertTrue(rag_started.is_set())
 
     def test_product_portfolio_route_uses_real_web_search_resolution_builder(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -734,8 +805,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("Broadcast Streaming", execution.result.answer)
         self.assertTrue(execution.result.answer.endswith("Best Regards,\nSid"))
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "web_search")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "non_rag_route")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
-        self.assertTrue(cancelled)
+        self.assertFalse(cancelled)
         self.assertTrue(
             all("agora.io" in citation["source_url"] for citation in execution.result.citations),
         )

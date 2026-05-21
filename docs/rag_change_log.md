@@ -10,6 +10,35 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-21 - Align worker and single-host config with route-first RAG orchestration
+
+- Summary:
+  - Updated worker diagnostics so completed route-agent decisions report `route_result_source=route_first` instead of the old optimistic `parallel_route` label.
+  - Kept skipped non-RAG RAG work distinct from cancelled RAG work by only reporting `rag_cancel_stage` from actual cancellation diagnostics.
+  - Removed the `OPTIMISTIC_PARALLEL_ROUTE_ENABLED` gate from API async eligibility and the single-host compose defaults, while preserving `ASYNC_QUERY_ENABLED` as the async queueing switch.
+  - Updated scoped public investigation wait fixtures from `within 24 hours` to `within 20 minutes`.
+- Reason:
+  - Client-ticket orchestration now routes first and only runs RAG when the route requires it, so worker/main/deployment collateral should not imply an optimistic route+RAG parallel pair.
+  - Async query admission should remain available when route-first orchestration is active instead of depending on a removed parallel-route feature flag.
+- Affected files/config:
+  - `backend/worker.py`
+  - `backend/main.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, vector-table, BM25 index, or document backfill changes.
+  - Runtime diagnostics now label completed route-first decisions as `route_first`; skipped non-RAG paths no longer look like cancelled RAG work.
+  - Single-host deployments no longer receive a default `OPTIMISTIC_PARALLEL_ROUTE_ENABLED` environment value from compose.
+- Verification:
+  - RED: `rtk env PYTHONPATH=/tmp/supportportal-route-first-pydeps311 /opt/homebrew/bin/python3.11 -m pytest backend/tests/test_worker.py backend/tests/test_single_host_compose.py backend/tests/test_prompt_modules.py backend/tests/test_engineer_ui_contract.py -q` failed after test-only edits because worker diagnostics still exposed skipped RAG cancel-stage state and compose still exposed `OPTIMISTIC_PARALLEL_ROUTE_ENABLED`; the same run also showed an unrelated existing engineer UI asset-version assertion outside this task scope.
+  - GREEN: `rtk env PYTHONPATH=/tmp/supportportal-route-first-pydeps311 /opt/homebrew/bin/python3.11 -m pytest backend/tests/test_worker.py backend/tests/test_single_host_compose.py backend/tests/test_prompt_modules.py -q` (`63 passed`).
+  - GREEN: `rtk env PYTHONPATH=/tmp/supportportal-route-first-pydeps311 /opt/homebrew/bin/python3.11 -m pytest backend/tests/test_engineer_ui_contract.py::EngineerUiContractTests::test_engineer_detail_prioritizes_internal_investigation_workspace_and_confirmation -q` (`1 passed`).
+  - Codex integration verification: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_single_host_compose.py backend/tests/test_prompt_modules.py backend/tests/test_engineer_ui_contract.py backend/tests/test_client_ui_contract.py -q` (`300 passed`).
+
 ## 2026-05-21 - Bound ordinary agentic retrieval calls to the shared RAG deadline
 
 - Summary:
