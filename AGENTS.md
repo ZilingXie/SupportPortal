@@ -55,9 +55,10 @@
 10. If post-merge live stack verification fails, do not report the task complete even if the code has already merged. Report the failure and keep working until the running official stack serves the expected version.
 
 ## SupportPortal Diagnostic Verification
-1. If a task optimizes SupportPortal latency, timing, queue performance, retrieval latency, generation latency, answer accuracy, grounded-answer quality, routing correctness, review/intake/investigation correctness, or other run-level performance or answer-chain behavior, run the local `$supportportal-run-report` skill against the repo `real_case/real_user_questions.txt` before calling the task complete.
-2. If the task specifically targets lexical retrieval performance such as BM25 or FTS latency, run the same `$supportportal-run-report` skill with `--profile-lexical`.
-3. Final task reports must summarize the key conclusions from those skill runs, not merely state that the skill was executed.
+1. Temporarily do not run the local `$supportportal-run-report` skill as a default completion gate for SupportPortal tasks.
+2. Even for tasks that optimize latency, timing, queue performance, retrieval latency, generation latency, answer accuracy, grounded-answer quality, routing correctness, review/intake/investigation correctness, lexical retrieval performance, or other run-level performance or answer-chain behavior, use the narrowest task-appropriate tests, logs, traces, or direct checks instead of the default `real_case/real_user_questions.txt` run-report batch.
+3. Run `$supportportal-run-report` or `$supportportal-run-report --profile-lexical` only when the user explicitly asks for that report or when a future instruction reinstates it as a required gate.
+4. Final task reports should summarize the verification evidence that was actually run; they do not need a run-report summary when the run-report was intentionally skipped under this temporary rule.
 
 ## RAG Change Logging
 1. Every RAG-related change must be appended to `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_change_log.md` before the task is considered complete.
