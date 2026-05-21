@@ -37,6 +37,9 @@ DEFAULT_DIRECT_PROBE_TIMEOUT_SECONDS = 30.0
 DEFAULT_POST_ANSWER_ARTIFACT_TIMEOUT_SECONDS = 15.0
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_EVENT_LIMIT = 80
+DEFAULT_LOCAL_DB_RELAY_PORT = "15433"
+DEFAULT_LOCAL_DB_RELAY_CONTAINER_HOSTADDR = "192.168.127.254"
+DEFAULT_LOCAL_DB_RELAY_HOST_HOSTADDR = "127.0.0.1"
 
 
 def create_ticket_repository():
@@ -67,6 +70,40 @@ def _safe_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _host_side_rag_telemetry_dsn(dsn: str) -> str:
+    raw = _clean_text(dsn)
+    if not raw:
+        return raw
+    relay_port_raw = _clean_text(os.getenv("SUPPORTPORTAL_LOCAL_DB_RELAY_PORT")) or DEFAULT_LOCAL_DB_RELAY_PORT
+    try:
+        relay_port = int(relay_port_raw)
+    except ValueError:
+        relay_port = int(DEFAULT_LOCAL_DB_RELAY_PORT)
+    container_hostaddr = (
+        _clean_text(os.getenv("SUPPORTPORTAL_LOCAL_DB_RELAY_CONTAINER_HOSTADDR"))
+        or DEFAULT_LOCAL_DB_RELAY_CONTAINER_HOSTADDR
+    )
+    host_hostaddr = (
+        _clean_text(os.getenv("SUPPORTPORTAL_LOCAL_DB_RELAY_HOST_HOSTADDR"))
+        or DEFAULT_LOCAL_DB_RELAY_HOST_HOSTADDR
+    )
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        parsed_port = parsed.port or 5432
+    except ValueError:
+        return raw
+    query_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    if parsed_port != relay_port or not any(
+        key == "hostaddr" and value == container_hostaddr for key, value in query_pairs
+    ):
+        return raw
+    rewritten_query = urllib.parse.urlencode(
+        [(key, host_hostaddr if key == "hostaddr" else value) for key, value in query_pairs],
+        doseq=True,
+    )
+    return urllib.parse.urlunsplit(parsed._replace(query=rewritten_query))
 
 
 def _parse_iso8601(value: Any) -> datetime | None:
@@ -1215,7 +1252,7 @@ def _fetch_rag_query_run(request_id: str) -> dict[str, Any] | None:
     normalized_request_id = _clean_text(request_id)
     if not normalized_request_id:
         return None
-    dsn = _clean_text(os.getenv("PGVECTOR_DSN"))
+    dsn = _host_side_rag_telemetry_dsn(_clean_text(os.getenv("PGVECTOR_DSN")))
     if not dsn:
         raise RuntimeError("PGVECTOR_DSN is required to read support_rag_query_runs")
     schema = _clean_text(os.getenv("PGVECTOR_SCHEMA")) or "supportportal"
