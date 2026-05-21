@@ -66,7 +66,7 @@ MAX_INVESTIGATION_CLARIFICATION_ROUNDS = 2
 
 AGENT_NAME_MAIN = "main_agent"
 AGENT_NAME_ROUTE = "route_agent"
-AGENT_NAME_RAG = "rag_agent"
+AGENT_NAME_RAG = "rag_service"
 AGENT_NAME_REVIEW = "review_agent"
 
 _ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome",)
@@ -679,9 +679,14 @@ class TicketExecutionResult:
             payload["route_agent_phase"] = str(
                 ((self.client_agent_runtime_state.get("route_agent") or {}) if isinstance(self.client_agent_runtime_state.get("route_agent"), dict) else {}).get("phase") or ""
             ).strip()
-            payload["rag_agent_phase"] = str(
-                ((self.client_agent_runtime_state.get("rag_agent") or {}) if isinstance(self.client_agent_runtime_state.get("rag_agent"), dict) else {}).get("phase") or ""
+            rag_service_state = self.client_agent_runtime_state.get("rag_service")
+            if not isinstance(rag_service_state, dict):
+                rag_service_state = self.client_agent_runtime_state.get("rag_agent")
+            rag_service_phase = str(
+                (rag_service_state if isinstance(rag_service_state, dict) else {}).get("phase") or ""
             ).strip()
+            payload["rag_service_phase"] = rag_service_phase
+            payload["rag_agent_phase"] = rag_service_phase
             payload["review_agent_phase"] = str(
                 ((self.client_agent_runtime_state.get("review_agent") or {}) if isinstance(self.client_agent_runtime_state.get("review_agent"), dict) else {}).get("phase") or ""
             ).strip()
@@ -739,9 +744,14 @@ def build_execution_route_payload(execution: Any) -> dict[str, Any]:
         payload["route_agent_phase"] = str(
             ((client_agent_runtime_state.get("route_agent") or {}) if isinstance(client_agent_runtime_state.get("route_agent"), dict) else {}).get("phase") or ""
         ).strip()
-        payload["rag_agent_phase"] = str(
-            ((client_agent_runtime_state.get("rag_agent") or {}) if isinstance(client_agent_runtime_state.get("rag_agent"), dict) else {}).get("phase") or ""
+        rag_service_state = client_agent_runtime_state.get("rag_service")
+        if not isinstance(rag_service_state, dict):
+            rag_service_state = client_agent_runtime_state.get("rag_agent")
+        rag_service_phase = str(
+            (rag_service_state if isinstance(rag_service_state, dict) else {}).get("phase") or ""
         ).strip()
+        payload["rag_service_phase"] = rag_service_phase
+        payload["rag_agent_phase"] = rag_service_phase
         payload["review_agent_phase"] = str(
             ((client_agent_runtime_state.get("review_agent") or {}) if isinstance(client_agent_runtime_state.get("review_agent"), dict) else {}).get("phase") or ""
         ).strip()
@@ -789,13 +799,18 @@ class ClientTicketAgentRuntimeState:
     workflow_action: str
     main_agent: dict[str, Any]
     route_agent: dict[str, Any]
-    rag_agent: dict[str, Any]
+    rag_service: dict[str, Any]
     review_agent: dict[str, Any]
     status: str
     updated_at: str
     completed_at: str | None = None
 
+    @property
+    def rag_agent(self) -> dict[str, Any]:
+        return self.rag_service
+
     def as_dict(self) -> dict[str, Any]:
+        rag_service = dict(self.rag_service)
         return {
             "runtime_version": self.runtime_version,
             "active_run_id": self.active_run_id,
@@ -804,7 +819,8 @@ class ClientTicketAgentRuntimeState:
             "workflow_action": self.workflow_action,
             "main_agent": dict(self.main_agent),
             "route_agent": dict(self.route_agent),
-            "rag_agent": dict(self.rag_agent),
+            "rag_service": rag_service,
+            "rag_agent": dict(rag_service),
             "review_agent": dict(self.review_agent),
             "status": self.status,
             "updated_at": self.updated_at,
@@ -930,6 +946,114 @@ def _append_review_trace_ref(review_summary: dict[str, Any], trace_ref: dict[str
         openai_tracing["group_id"] = group_id
     review_summary["openai_tracing"] = openai_tracing
     return normalized_trace_ref
+
+
+def _append_review_events_from_summary(
+    events: list[dict[str, Any]],
+    *,
+    ticket_id: str | None,
+    message_id: str | None,
+    run_id: str,
+    summary: dict[str, Any],
+) -> None:
+    phase = str(summary.get("phase") or "").strip()
+    decision = str(summary.get("decision") or "").strip()
+    reason = str(summary.get("reason") or "").strip()
+    openai_tracing = summary.get("openai_tracing")
+    trace_ref = _resolve_latest_trace_ref(openai_tracing)
+    if phase == "skipped":
+        summary.pop("_event_starts", None)
+        _append_event(
+            events,
+            ticket_id=ticket_id,
+            message_id=message_id,
+            run_id=run_id,
+            agent_name=AGENT_NAME_REVIEW,
+            phase="skipped",
+            event_type="skipped",
+            payload={"reason": reason} if reason else {},
+        )
+        return
+    if phase in ("running", "completed"):
+        starts = [
+            dict(item)
+            for item in list(summary.get("_event_starts") or [])
+            if isinstance(item, dict)
+        ]
+        if starts:
+            for start in starts:
+                start_payload = (
+                    dict(start.get("payload"))
+                    if isinstance(start.get("payload"), dict)
+                    else {}
+                )
+                start_trace_ref = (
+                    dict(start.get("trace_ref"))
+                    if isinstance(start.get("trace_ref"), dict)
+                    else None
+                )
+                _append_event(
+                    events,
+                    ticket_id=ticket_id,
+                    message_id=message_id,
+                    run_id=run_id,
+                    agent_name=AGENT_NAME_REVIEW,
+                    phase="running",
+                    event_type="started",
+                    payload=_payload_with_openai_tracing(start_payload, start_trace_ref),
+                )
+        else:
+            mode = decision if decision else None
+            _append_event(
+                events,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                run_id=run_id,
+                agent_name=AGENT_NAME_REVIEW,
+                phase="running",
+                event_type="started",
+                payload=_payload_with_openai_tracing(
+                    {"mode": mode} if mode else {},
+                    trace_ref,
+                ),
+            )
+        completed_payload: dict[str, Any] = {}
+        if decision:
+            completed_payload["decision"] = decision
+        if reason:
+            completed_payload["reason"] = reason
+        for key in ("issue_mode", "ready_for_engineer_ticket", "confidence"):
+            if key in summary:
+                completed_payload[key] = summary[key]
+        _append_event(
+            events,
+            ticket_id=ticket_id,
+            message_id=message_id,
+            run_id=run_id,
+            agent_name=AGENT_NAME_REVIEW,
+            phase="completed",
+            event_type="completed",
+            payload=_payload_with_openai_tracing(
+                completed_payload if completed_payload else None,
+                trace_ref,
+            ),
+        )
+    summary.pop("_event_starts", None)
+
+
+def _resolve_latest_trace_ref(openai_tracing: Any) -> dict[str, Any] | None:
+    if not isinstance(openai_tracing, dict):
+        return None
+    latest_trace_id = _clean_text(openai_tracing.get("latest_trace_id"))
+    if not latest_trace_id:
+        return None
+    traces = openai_tracing.get("traces")
+    if not isinstance(traces, list):
+        return None
+    for item in traces:
+        if isinstance(item, dict) and _clean_text(item.get("trace_id")) == latest_trace_id:
+            return dict(item)
+    return None
 
 
 def _ensure_web_search_customer_reply_email(
@@ -1578,7 +1702,7 @@ def execute_client_ticket_agent_runtime(
     has_active_engineer_case: bool = False,
     route_agent: Callable[..., SupportRouteDecision],
     route_executor: Callable[..., SupportResolution],
-    rag_agent: Callable[..., RagTicketAnswerDetail],
+    rag_executor: Callable[..., RagTicketAnswerDetail],
     review_agent: Callable[..., Any] | None = None,
     rag_canceler: Callable[[str], dict[str, Any] | None] | None = None,
     route_timeout_seconds: float = 8.0,
@@ -1771,7 +1895,7 @@ def execute_client_ticket_agent_runtime(
             workflow_action=result.workflow_action,
             main_agent=dict(main_summary),
             route_agent=dict(route_summary),
-            rag_agent=dict(rag_summary),
+            rag_service=dict(rag_summary),
             review_agent=dict(review_summary),
             status="completed",
             updated_at=_utc_now(),
@@ -1962,7 +2086,7 @@ def execute_client_ticket_agent_runtime(
                 workflow_action=result.workflow_action,
                 main_agent=dict(main_summary),
                 route_agent=dict(route_summary),
-                rag_agent=dict(rag_summary),
+                rag_service=dict(rag_summary),
                 review_agent=dict(review_summary),
                 status="completed",
                 updated_at=_utc_now(),
@@ -2057,7 +2181,7 @@ def execute_client_ticket_agent_runtime(
                 workflow_action=result.workflow_action,
                 main_agent=dict(main_summary),
                 route_agent=dict(route_summary),
-                rag_agent=dict(rag_summary),
+                rag_service=dict(rag_summary),
                 review_agent=dict(review_summary),
                 status="completed",
                 updated_at=_utc_now(),
@@ -2089,7 +2213,7 @@ def execute_client_ticket_agent_runtime(
                 event_type="started",
                 payload={"request_id": rag_request_id},
             )
-            rag_detail = rag_agent(
+            rag_detail = rag_executor(
                 message=message,
                 ticket_id=ticket_id,
                 customer_id=customer_id,
@@ -2145,553 +2269,35 @@ def execute_client_ticket_agent_runtime(
             },
         )
 
-        if rag_detail.needs_engineer_guidance:
-            normalized_reason = _normalize_investigation_reason(rag_detail.reason)
-            should_skip_review_for_rag_failure = (
-                normalized_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON, RAG_PROCESSING_TIMEOUT_REASON}
-                and not _is_troubleshooting_intake_candidate(
-                    message=message,
-                    client_intake_state=client_intake_state,
-                )
-            )
-            if should_skip_review_for_rag_failure:
-                _mark_agent_summary(
-                    review_summary,
-                    phase="skipped",
-                    status="skipped",
-                    decision="skipped",
-                    reason=normalized_reason,
-                )
-                _append_event(
-                    agent_events,
-                    ticket_id=ticket_id,
-                    message_id=message_id,
-                    run_id=run_id,
-                    agent_name=AGENT_NAME_REVIEW,
-                    phase="skipped",
-                    event_type="skipped",
-                    payload={"reason": normalized_reason},
-                )
-                result = _build_ticket_execution_result(
-                    resolution=rag_resolution,
-                    needs_investigating=True,
-                    workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-                    investigation_reason=normalized_reason,
-                )
-            else:
-                _mark_agent_summary(review_summary, phase="running", status="running", decision="insufficient_review")
-                effective_review_reason = normalized_reason
-                if is_api_semantics_mismatch_context(
-                    message=message,
-                    rag_result={
-                        "reason": normalized_reason,
-                        "answer": rag_resolution.answer,
-                        "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
-                        "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
-                    },
-                ) and normalized_reason == RAG_PROCESSING_TIMEOUT_REASON:
-                    effective_review_reason = DEADLINE_EXHAUSTED_REASON
-                review_trace_ref: dict[str, str] | None = None
-                if callable(review_agent):
-                    with openai_agent_tracing.start_review_trace(
-                        run_id=run_id,
-                        ticket_id=ticket_id,
-                        message_id=message_id,
-                        product=product,
-                        mode="rag_insufficient_evidence",
-                        route_reason=effective_review_reason,
-                    ) as trace_context:
-                        review_trace_ref = _append_review_trace_ref(review_summary, trace_context.as_trace_ref())
-                        _append_event(
-                            agent_events,
-                            ticket_id=ticket_id,
-                            message_id=message_id,
-                            run_id=run_id,
-                            agent_name=AGENT_NAME_REVIEW,
-                            phase="running",
-                            event_type="started",
-                            payload=_payload_with_openai_tracing(
-                                {"mode": "rag_insufficient_evidence"},
-                                review_trace_ref,
-                            ),
-                        )
-                        with trace_context.function_span(
-                            "review_agent.rag_insufficient_evidence",
-                            input=f"route_reason={effective_review_reason}",
-                        ):
-                            review_result = review_agent(
-                                mode="rag_insufficient_evidence",
-                                message=message,
-                                product=product,
-                                ticket_subject=ticket_subject,
-                                ticket_context=ticket_context,
-                                current_state=client_intake_state,
-                                message_created_at=message_id,
-                                requester=requester,
-                                customer_id=customer_id,
-                                route_decision=effective_route_decision,
-                                resolution=rag_resolution,
-                                rag_result={
-                                    "reason": effective_review_reason,
-                                    "answer": rag_resolution.answer,
-                                    "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
-                                    "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
-                                },
-                            )
-                        if not isinstance(review_result, TroubleshootingIntakeResult):
-                            raise TypeError("review agent must return TroubleshootingIntakeResult for rag_insufficient_evidence")
-                        trace_context.record_custom_span(
-                            "review_agent.outcome",
-                            data={
-                                "mode": "rag_insufficient_evidence",
-                                "issue_mode": review_result.issue_mode,
-                                "ready_for_engineer_ticket": bool(review_result.ready_for_engineer_ticket),
-                            },
-                        )
-                else:
-                    _append_event(
-                        agent_events,
-                        ticket_id=ticket_id,
-                        message_id=message_id,
-                        run_id=run_id,
-                        agent_name=AGENT_NAME_REVIEW,
-                        phase="running",
-                        event_type="started",
-                        payload={"mode": "rag_insufficient_evidence"},
-                    )
-                    review_result = TroubleshootingIntakeResult(
-                        issue_mode="answer",
-                        known_information={},
-                        missing_information=[],
-                        ready_for_engineer_ticket=False,
-                        customer_reply="",
-                    )
-                result = _handle_insufficient_review(
-                    review_result=review_result,
-                    resolution=rag_resolution,
-                    product=product,
-                    investigation_reason=effective_review_reason,
-                    message=message,
-                    current_state=client_intake_state,
-                    ticket_context=ticket_context,
-                    latest_assistant_message=latest_assistant_message,
-                    message_created_at=message_id,
-                    requester=requester,
-                    customer_id=customer_id,
-                )
-                _mark_agent_summary(
-                    review_summary,
-                    phase="completed",
-                    status="completed",
-                    decision=result.workflow_action,
-                    reason=effective_review_reason,
-                    extra={
-                        "issue_mode": review_result.issue_mode,
-                        "ready_for_engineer_ticket": bool(review_result.ready_for_engineer_ticket),
-                    },
-                )
-                _append_event(
-                    agent_events,
-                    ticket_id=ticket_id,
-                    message_id=message_id,
-                    run_id=run_id,
-                    agent_name=AGENT_NAME_REVIEW,
-                    phase="completed",
-                    event_type="completed",
-                    payload=_payload_with_openai_tracing(
-                        {
-                            "decision": result.workflow_action,
-                            "issue_mode": review_result.issue_mode,
-                            "ready_for_engineer_ticket": bool(review_result.ready_for_engineer_ticket),
-                        },
-                        review_trace_ref,
-                    ),
-                )
-        else:
-            should_wait_for_review = _is_high_risk_grounded_answer(
-                message=message,
-                resolution=rag_resolution,
-                client_intake_state=client_intake_state,
-                ticket_context=ticket_context,
-            )
-            if should_wait_for_review:
-                _mark_agent_summary(review_summary, phase="running", status="running", decision="grounded_postcheck")
-                latest_review_trace_ref: dict[str, str] | None = None
-                if callable(review_agent):
-                    with openai_agent_tracing.start_review_trace(
-                        run_id=run_id,
-                        ticket_id=ticket_id,
-                        message_id=message_id,
-                        product=product,
-                        mode="grounded_postcheck",
-                        route_reason=rag_resolution.route_reason,
-                    ) as trace_context:
-                        latest_review_trace_ref = _append_review_trace_ref(review_summary, trace_context.as_trace_ref())
-                        _append_event(
-                            agent_events,
-                            ticket_id=ticket_id,
-                            message_id=message_id,
-                            run_id=run_id,
-                            agent_name=AGENT_NAME_REVIEW,
-                            phase="running",
-                            event_type="started",
-                            payload=_payload_with_openai_tracing(
-                                {"mode": "grounded_postcheck"},
-                                latest_review_trace_ref,
-                            ),
-                        )
-                        with trace_context.function_span(
-                            "review_agent.grounded_postcheck",
-                            input=f"route_reason={rag_resolution.route_reason}",
-                        ):
-                            decision, reason, confidence = _normalize_grounded_review_result(
-                                review_agent(
-                                    mode="grounded_postcheck",
-                                    message=message,
-                                    product=product,
-                                    ticket_subject=ticket_subject,
-                                    ticket_context=ticket_context,
-                                    current_state=client_intake_state,
-                                    message_created_at=message_id,
-                                    requester=requester,
-                                    customer_id=customer_id,
-                                    route_decision=effective_route_decision,
-                                    resolution=rag_resolution,
-                                    rag_result={
-                                        "reason": rag_resolution.route_reason,
-                                        "answer": rag_resolution.answer,
-                                        "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
-                                        "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
-                                    },
-                                )
-                            )
-                        if decision == "approve_answer" and not rag_resolution.citations:
-                            decision = "open_engineer_ticket"
-                            reason = "missing_citations"
-                        trace_context.record_custom_span(
-                            "review_agent.outcome",
-                            data={
-                                "mode": "grounded_postcheck",
-                                "decision": decision,
-                                "reason": reason,
-                                "confidence": confidence,
-                            },
-                        )
-                else:
-                    _append_event(
-                        agent_events,
-                        ticket_id=ticket_id,
-                        message_id=message_id,
-                        run_id=run_id,
-                        agent_name=AGENT_NAME_REVIEW,
-                        phase="running",
-                        event_type="started",
-                        payload={"mode": "grounded_postcheck"},
-                    )
-                    decision, reason, confidence = _normalize_grounded_review_result(
-                        {"decision": "approve_answer", "reason": "review_skipped", "confidence": 0.0}
-                    )
-                    if decision == "approve_answer" and not rag_resolution.citations:
-                        decision = "open_engineer_ticket"
-                        reason = "missing_citations"
-                if decision == "approve_answer":
-                    result = _build_ticket_execution_result(
-                        resolution=rag_resolution,
-                        needs_investigating=False,
-                        workflow_action=WORKFLOW_ACTION_ANSWER_CUSTOMER,
-                    )
-                else:
-                    investigation_reason = (
-                        RAG_POST_CHECK_ERROR_REASON
-                        if reason == "review_error"
-                        else RAG_POST_CHECK_INSUFFICIENT_REASON
-                    )
-                    troubleshooting_candidate = _is_troubleshooting_intake_candidate(
-                        message=message,
-                        client_intake_state=client_intake_state,
-                    )
-                    if _has_cited_grounded_answer(rag_resolution):
-                        if troubleshooting_candidate:
-                            _mark_agent_summary(
-                                review_summary,
-                                phase="running",
-                                status="running",
-                                decision="pre_engineer_intake",
-                                reason=investigation_reason,
-                            )
-                            pre_engineer_trace_ref: dict[str, str] | None = None
-                            if callable(review_agent):
-                                with openai_agent_tracing.start_review_trace(
-                                    run_id=run_id,
-                                    ticket_id=ticket_id,
-                                    message_id=message_id,
-                                    product=product,
-                                    mode="pre_engineer_intake",
-                                    route_reason=investigation_reason,
-                                ) as trace_context:
-                                    pre_engineer_trace_ref = _append_review_trace_ref(
-                                        review_summary,
-                                        trace_context.as_trace_ref(),
-                                    )
-                                    _append_event(
-                                        agent_events,
-                                        ticket_id=ticket_id,
-                                        message_id=message_id,
-                                        run_id=run_id,
-                                        agent_name=AGENT_NAME_REVIEW,
-                                        phase="running",
-                                        event_type="started",
-                                        payload=_payload_with_openai_tracing(
-                                            {
-                                                "mode": "pre_engineer_intake",
-                                                "investigation_reason": investigation_reason,
-                                            },
-                                            pre_engineer_trace_ref,
-                                        ),
-                                    )
-                                    with trace_context.function_span(
-                                        "review_agent.pre_engineer_intake",
-                                        input=f"investigation_reason={investigation_reason}",
-                                    ):
-                                        review_result = review_agent(
-                                            mode="pre_engineer_intake",
-                                            message=message,
-                                            product=product,
-                                            ticket_subject=ticket_subject,
-                                            ticket_context=ticket_context,
-                                            current_state=client_intake_state,
-                                            message_created_at=message_id,
-                                            requester=requester,
-                                            customer_id=customer_id,
-                                            route_decision=effective_route_decision,
-                                            resolution=rag_resolution,
-                                            rag_result={
-                                                "reason": investigation_reason,
-                                                "answer": rag_resolution.answer,
-                                                "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
-                                                "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
-                                            },
-                                        )
-                                    if not isinstance(review_result, TroubleshootingIntakeResult):
-                                        raise TypeError("review agent must return TroubleshootingIntakeResult for pre_engineer_intake")
-                                    trace_context.record_custom_span(
-                                        "review_agent.outcome",
-                                        data={
-                                            "mode": "pre_engineer_intake",
-                                            "issue_mode": review_result.issue_mode,
-                                            "ready_for_engineer_ticket": bool(review_result.ready_for_engineer_ticket),
-                                        },
-                                    )
-                                latest_review_trace_ref = pre_engineer_trace_ref or latest_review_trace_ref
-                            else:
-                                _append_event(
-                                    agent_events,
-                                    ticket_id=ticket_id,
-                                    message_id=message_id,
-                                    run_id=run_id,
-                                    agent_name=AGENT_NAME_REVIEW,
-                                    phase="running",
-                                    event_type="started",
-                                    payload={"mode": "pre_engineer_intake", "investigation_reason": investigation_reason},
-                                )
-                                review_result = TroubleshootingIntakeResult(
-                                    issue_mode="answer",
-                                    known_information={},
-                                    missing_information=[],
-                                    ready_for_engineer_ticket=False,
-                                    customer_reply="",
-                                )
-                        else:
-                            review_result = _build_answer_mode_review_result_from_state(
-                                current_state=client_intake_state,
-                                message=message,
-                                requester=requester,
-                                customer_id=customer_id,
-                            )
-                        result = _build_cited_answer_execution_result(
-                            review_result=review_result,
-                            resolution=rag_resolution,
-                            message=message,
-                            product=product,
-                            investigation_reason=investigation_reason,
-                            current_state=client_intake_state,
-                            ticket_context=ticket_context,
-                            latest_assistant_message=latest_assistant_message,
-                            message_created_at=message_id,
-                            requester=requester,
-                            customer_id=customer_id,
-                        )
-                    elif not rag_resolution.citations and not troubleshooting_candidate:
-                        result = _handle_insufficient_review(
-                            review_result=_build_answer_mode_review_result_from_state(
-                                current_state=client_intake_state,
-                                message=message,
-                                requester=requester,
-                                customer_id=customer_id,
-                            ),
-                            resolution=rag_resolution,
-                            product=product,
-                            investigation_reason=investigation_reason,
-                            message=message,
-                            current_state=client_intake_state,
-                            ticket_context=ticket_context,
-                            latest_assistant_message=latest_assistant_message,
-                            message_created_at=message_id,
-                            requester=requester,
-                            customer_id=customer_id,
-                        )
-                    elif troubleshooting_candidate:
-                        _mark_agent_summary(
-                            review_summary,
-                            phase="running",
-                            status="running",
-                            decision="pre_engineer_intake",
-                            reason=investigation_reason,
-                        )
-                        pre_engineer_trace_ref = None
-                        if callable(review_agent):
-                            with openai_agent_tracing.start_review_trace(
-                                run_id=run_id,
-                                ticket_id=ticket_id,
-                                message_id=message_id,
-                                product=product,
-                                mode="pre_engineer_intake",
-                                route_reason=investigation_reason,
-                            ) as trace_context:
-                                pre_engineer_trace_ref = _append_review_trace_ref(
-                                    review_summary,
-                                    trace_context.as_trace_ref(),
-                                )
-                                _append_event(
-                                    agent_events,
-                                    ticket_id=ticket_id,
-                                    message_id=message_id,
-                                    run_id=run_id,
-                                    agent_name=AGENT_NAME_REVIEW,
-                                    phase="running",
-                                    event_type="started",
-                                    payload=_payload_with_openai_tracing(
-                                        {
-                                            "mode": "pre_engineer_intake",
-                                            "investigation_reason": investigation_reason,
-                                        },
-                                        pre_engineer_trace_ref,
-                                    ),
-                                )
-                                with trace_context.function_span(
-                                    "review_agent.pre_engineer_intake",
-                                    input=f"investigation_reason={investigation_reason}",
-                                ):
-                                    review_result = review_agent(
-                                        mode="pre_engineer_intake",
-                                        message=message,
-                                        product=product,
-                                        ticket_subject=ticket_subject,
-                                        ticket_context=ticket_context,
-                                        current_state=client_intake_state,
-                                        message_created_at=message_id,
-                                        requester=requester,
-                                        customer_id=customer_id,
-                                        route_decision=effective_route_decision,
-                                        resolution=rag_resolution,
-                                        rag_result={
-                                            "reason": investigation_reason,
-                                            "answer": rag_resolution.answer,
-                                            "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
-                                            "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
-                                        },
-                                    )
-                                if not isinstance(review_result, TroubleshootingIntakeResult):
-                                    raise TypeError("review agent must return TroubleshootingIntakeResult for pre_engineer_intake")
-                                trace_context.record_custom_span(
-                                    "review_agent.outcome",
-                                    data={
-                                        "mode": "pre_engineer_intake",
-                                        "issue_mode": review_result.issue_mode,
-                                        "ready_for_engineer_ticket": bool(review_result.ready_for_engineer_ticket),
-                                    },
-                                )
-                            latest_review_trace_ref = pre_engineer_trace_ref or latest_review_trace_ref
-                        else:
-                            _append_event(
-                                agent_events,
-                                ticket_id=ticket_id,
-                                message_id=message_id,
-                                run_id=run_id,
-                                agent_name=AGENT_NAME_REVIEW,
-                                phase="running",
-                                event_type="started",
-                                payload={"mode": "pre_engineer_intake", "investigation_reason": investigation_reason},
-                            )
-                            review_result = TroubleshootingIntakeResult(
-                                issue_mode="answer",
-                                known_information={},
-                                missing_information=[],
-                                ready_for_engineer_ticket=False,
-                                customer_reply="",
-                            )
-                        result = _handle_insufficient_review(
-                            review_result=review_result,
-                            resolution=rag_resolution,
-                            product=product,
-                            investigation_reason=investigation_reason,
-                            message=message,
-                            current_state=client_intake_state,
-                            ticket_context=ticket_context,
-                            latest_assistant_message=latest_assistant_message,
-                            message_created_at=message_id,
-                            requester=requester,
-                            customer_id=customer_id,
-                        )
-                    else:
-                        result = _build_ticket_execution_result(
-                            resolution=rag_resolution,
-                            needs_investigating=True,
-                            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-                            investigation_reason=investigation_reason,
-                        )
-                _mark_agent_summary(
-                    review_summary,
-                    phase="completed",
-                    status="completed",
-                    decision=result.workflow_action if decision != "approve_answer" else decision,
-                    reason=investigation_reason if decision != "approve_answer" else reason,
-                    extra={"confidence": confidence},
-                )
-                _append_event(
-                    agent_events,
-                    ticket_id=ticket_id,
-                    message_id=message_id,
-                    run_id=run_id,
-                    agent_name=AGENT_NAME_REVIEW,
-                    phase="completed",
-                    event_type="completed",
-                    payload=_payload_with_openai_tracing(
-                        {
-                            "decision": result.workflow_action if decision != "approve_answer" else decision,
-                            "reason": investigation_reason if decision != "approve_answer" else reason,
-                            "confidence": confidence,
-                        },
-                        latest_review_trace_ref,
-                    ),
-                )
-            else:
-                _mark_agent_summary(review_summary, phase="skipped", status="skipped", decision="skipped", reason="low_risk_grounded_answer")
-                _append_event(
-                    agent_events,
-                    ticket_id=ticket_id,
-                    message_id=message_id,
-                    run_id=run_id,
-                    agent_name=AGENT_NAME_REVIEW,
-                    phase="skipped",
-                    event_type="skipped",
-                    payload={"reason": "low_risk_grounded_answer"},
-                )
-                result = _build_ticket_execution_result(
-                    resolution=rag_resolution,
-                    needs_investigating=False,
-                    workflow_action=WORKFLOW_ACTION_ANSWER_CUSTOMER,
-                )
+        from backend.services.rag_decision_engine import evaluate_rag_result
+
+        decision = evaluate_rag_result(
+            rag_detail=rag_detail,
+            route_decision=effective_route_decision,
+            message=message,
+            client_intake_state=client_intake_state,
+            ticket_context=ticket_context,
+            review_agent=review_agent,
+            product=product,
+            ticket_subject=ticket_subject,
+            requester=requester,
+            customer_id=customer_id,
+            message_id=message_id,
+            latest_assistant_message=latest_assistant_message,
+            run_id=run_id,
+            ticket_id=ticket_id,
+        )
+        result = decision.execution_result
+        review_summary.clear()
+        review_summary.update(decision.review_summary)
+
+        _append_review_events_from_summary(
+            agent_events,
+            ticket_id=ticket_id,
+            message_id=message_id,
+            run_id=run_id,
+            summary=review_summary,
+        )
 
         _mark_agent_summary(
             main_summary,
@@ -2722,7 +2328,7 @@ def execute_client_ticket_agent_runtime(
             workflow_action=result.workflow_action,
             main_agent=dict(main_summary),
             route_agent=dict(route_summary),
-            rag_agent=dict(rag_summary),
+            rag_service=dict(rag_summary),
             review_agent=dict(review_summary),
             status="completed",
             updated_at=_utc_now(),

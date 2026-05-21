@@ -625,9 +625,13 @@ def _agent_summary(
     agent_name: str,
     events: list[dict[str, Any]],
     runtime_summary: dict[str, Any] | None = None,
+    alt_names: list[str] | None = None,
 ) -> dict[str, Any]:
     runtime_summary = dict(runtime_summary or {})
-    agent_events = [event for event in events if _clean_text(event.get("agent_name")) == agent_name]
+    names_to_match = {agent_name}
+    if alt_names:
+        names_to_match.update(alt_names)
+    agent_events = [event for event in events if _clean_text(event.get("agent_name")) in names_to_match]
     runtime_started_at = _format_timestamp(runtime_summary.get("started_at"))
     runtime_completed_at = _format_timestamp(runtime_summary.get("completed_at"))
     start_event = next(
@@ -685,7 +689,7 @@ def _agent_summary(
 
 def _extract_rag_request_id(agent_events: list[dict[str, Any]]) -> str | None:
     for event in agent_events:
-        if _clean_text(event.get("agent_name")) != "rag_agent":
+        if _clean_text(event.get("agent_name")) not in {"rag_agent", "rag_service"}:
             continue
         if _clean_text(event.get("event_type")) != "started":
             continue
@@ -826,7 +830,11 @@ def build_trace_summary(
         build_provenance_status = "matched" if task_app_build_ref == execution_app_build_ref else "mismatch"
     elif task_app_build_ref or execution_app_build_ref:
         build_provenance_status = "partial"
-    runtime_rag_summary = runtime_state.get("rag_agent") if isinstance(runtime_state.get("rag_agent"), dict) else {}
+    runtime_rag_summary = (
+        (runtime_state.get("rag_service") if isinstance(runtime_state.get("rag_service"), dict) else None)
+        or (runtime_state.get("rag_agent") if isinstance(runtime_state.get("rag_agent"), dict) else None)
+        or {}
+    )
     rag_fetch_error = _clean_text((rag_run or {}).get("_fetch_error")) or None
     rag_request_id = (
         _extract_rag_request_id(filtered_agent_events)
@@ -855,9 +863,10 @@ def build_trace_summary(
         runtime_summary=(runtime_state.get("route_agent") if isinstance(runtime_state.get("route_agent"), dict) else None),
     )
     rag_summary = _agent_summary(
-        agent_name="rag_agent",
+        agent_name="rag_service",
         events=filtered_agent_events,
-        runtime_summary=(runtime_state.get("rag_agent") if isinstance(runtime_state.get("rag_agent"), dict) else None),
+        runtime_summary=runtime_rag_summary,
+        alt_names=["rag_agent"],
     )
     review_summary = _agent_summary(
         agent_name="review_agent",
@@ -944,6 +953,7 @@ def build_trace_summary(
             "workflow_action": workflow_action,
         },
         "route_agent": route_summary,
+        "rag_service": rag_summary,
         "rag_agent": rag_summary,
         "review_agent": review_summary,
         "rag_internal_telemetry": {
@@ -1034,7 +1044,10 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
     )
     main_agent = summary.get("main_agent") if isinstance(summary.get("main_agent"), dict) else {}
     route_agent = summary.get("route_agent") if isinstance(summary.get("route_agent"), dict) else {}
-    rag_agent = summary.get("rag_agent") if isinstance(summary.get("rag_agent"), dict) else {}
+    rag_service = summary.get("rag_service") if isinstance(summary.get("rag_service"), dict) else None
+    if rag_service is None:
+        rag_service = summary.get("rag_agent") if isinstance(summary.get("rag_agent"), dict) else None
+    rag_service = rag_service or {}
     review_agent = summary.get("review_agent") if isinstance(summary.get("review_agent"), dict) else {}
     review_openai_tracing = (
         review_agent.get("openai_tracing")
@@ -1126,12 +1139,12 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
         f"- decision: `{_format_value(route_agent.get('decision'))}`",
         f"- reason: `{_format_value(route_agent.get('reason'))}`",
         "",
-        "## RAG Agent 外层",
-        f"- started_at: `{_format_value(rag_agent.get('started_at'))}`",
-        f"- ended_at: `{_format_value(rag_agent.get('ended_at'))}`",
-        f"- total_latency_ms: {_format_value(rag_agent.get('duration_ms'))}",
-        f"- decision: `{_format_value(rag_agent.get('decision'))}`",
-        f"- reason: `{_format_value(rag_agent.get('reason'))}`",
+        "## RAG Service 外层",
+        f"- started_at: `{_format_value(rag_service.get('started_at'))}`",
+        f"- ended_at: `{_format_value(rag_service.get('ended_at'))}`",
+        f"- total_latency_ms: {_format_value(rag_service.get('duration_ms'))}",
+        f"- decision: `{_format_value(rag_service.get('decision'))}`",
+        f"- reason: `{_format_value(rag_service.get('reason'))}`",
         "",
         "## RAG 内部分段",
     ]
