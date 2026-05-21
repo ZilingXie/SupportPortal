@@ -3899,6 +3899,28 @@ For each new entry, record:
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_single_host_compose.py -q`
 
+## 2026-05-21 - PR2 decision-gate optimization
+
+- Summary:
+  - Added deterministic post-RAG hard gates in `rag_decision_engine.py` for missing citations, human-required evidence signals, extractive fallback output, and weak troubleshooting evidence.
+  - Kept low-risk cited structured answers on the existing direct `answer_customer` path while forcing hard-gated candidates away from customer-visible candidate answers even when grounded-postcheck review approves.
+  - Made review-agent unavailable, invalid, or raised outputs fail closed to engineer-ticket/intake paths instead of defaulting to customer-visible answers.
+  - Preserved deterministic API-semantics answer delivery by treating `api_semantics_deterministic` as a strong direct-evidence generation mode.
+- Reason:
+  - RAG service candidate answers should not become customer-visible when deterministic evidence quality signals already show that citations, human review, fallback generation, or troubleshooting strength are insufficient.
+  - The review agent should serve as a backstop for ambiguous cases, not as an override for hard evidence-quality blocks.
+- Affected files/config:
+  - `backend/services/rag_decision_engine.py`
+  - `backend/tests/test_rag_decision_engine.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Runtime review summaries may include `gate_block_reason` for hard-gated RAG candidates; existing review-trace export shape remains unchanged.
+  - Hard-gated customer-visible results suppress the RAG candidate answer, citations, and evidence payload when opening an engineer ticket directly.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_decision_engine.py backend/tests/test_client_ticket_agent_runtime.py -q` (`61 passed, 2 subtests passed`).
+
 ## 2026-04-22 - Fix OpenAI trace export compatibility for review generation spans
 
 - Summary:

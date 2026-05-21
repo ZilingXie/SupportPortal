@@ -295,6 +295,194 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_service["evidence_verdict"]["risk_level"], "low")
         self.assertEqual(execution.runtime_state.rag_service["evidence_verdict"]["judge_decision"], "answer_now")
 
+    def test_runtime_blocks_needs_human_rag_candidate_even_when_review_approves(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join a channel?",
+            ticket_id="TK-NEEDS-HUMAN-GATE-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join a channel?"}],
+            product="audio_video_calling",
+            message_id="2026-05-21T00:00:00+08:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Call joinChannel with the same channel name and token.",
+                confidence=0.95,
+                sources=["https://docs.agora.io/en/video-calling/get-started"],
+                citations=[{"chunk_id": "chunk-1"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": True,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: {
+                "decision": "approve_answer",
+                "reason": "review_passed",
+                "confidence": 0.92,
+            },
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
+        self.assertEqual(execution.runtime_state.review_agent.get("gate_block_reason"), "needs_human")
+
+    def test_runtime_blocks_extractive_fallback_rag_candidate_even_when_review_approves(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        fallback_signals = [
+            {"generation_mode": "extractive_fallback", "selected_doc_count": 1},
+            {
+                "generation_mode": "structured_answer",
+                "selected_doc_count": 1,
+                "extractive_fallback_used": True,
+            },
+        ]
+
+        for quality_signals in fallback_signals:
+            with self.subTest(quality_signals=quality_signals):
+                execution = execute_client_ticket_agent_runtime(
+                    message="How do I join a channel?",
+                    ticket_id="TK-EXTRACTIVE-GATE-1",
+                    customer_id="C-001",
+                    ticket_subject="Join channel",
+                    ticket_context=[{"role": "customer", "content": "How do I join a channel?"}],
+                    product="audio_video_calling",
+                    message_id="2026-05-21T00:00:00+08:00",
+                    route_agent=lambda **_kwargs: SupportRouteDecision(
+                        scope_label="agora_technical",
+                        route="rag",
+                        confidence=0.94,
+                        reason="technical_question",
+                        matched_signals=["join channel"],
+                        response_language="en",
+                        route_family="agora_docs_rag",
+                        execution_action="rag",
+                        tooling_profile="agora_docs_only",
+                    ),
+                    route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+                    rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
+                        answer="Call joinChannel with the same channel name and token.",
+                        confidence=0.95,
+                        sources=["https://docs.agora.io/en/video-calling/get-started"],
+                        citations=[{"chunk_id": "chunk-1"}],
+                        needs_engineer_guidance=False,
+                        reason="grounded_answer",
+                        evidence_summary={"quality_signals": quality_signals},
+                        packed_evidence=None,
+                    ),
+                    review_agent=lambda **_kwargs: {
+                        "decision": "approve_answer",
+                        "reason": "review_passed",
+                        "confidence": 0.92,
+                    },
+                    rag_canceler=None,
+                )
+
+                self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+                self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
+                self.assertEqual(execution.runtime_state.review_agent.get("gate_block_reason"), "extractive_fallback")
+
+    def test_runtime_review_agent_exception_during_grounded_postcheck_fails_closed(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join a channel?",
+            ticket_id="TK-REVIEW-EXCEPTION-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join a channel?"}],
+            product="audio_video_calling",
+            message_id="2026-05-21T00:00:00+08:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Call joinChannel with the same channel name and token.",
+                confidence=0.80,
+                sources=["https://docs.agora.io/en/video-calling/get-started"],
+                citations=[{"chunk_id": "chunk-1"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={},
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("review unavailable")),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.investigation_reason, "rag_post_check_error")
+        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "rag_post_check_error")
+
+    def test_runtime_review_agent_invalid_output_during_grounded_postcheck_fails_closed(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join a channel?",
+            ticket_id="TK-REVIEW-INVALID-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join a channel?"}],
+            product="audio_video_calling",
+            message_id="2026-05-21T00:00:00+08:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Call joinChannel with the same channel name and token.",
+                confidence=0.80,
+                sources=["https://docs.agora.io/en/video-calling/get-started"],
+                citations=[{"chunk_id": "chunk-1"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={},
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: {"reason": "missing_decision"},
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.investigation_reason, "rag_post_check_error")
+
     def test_resolved_confirmation_returns_chinese_resolution_message(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
@@ -1515,7 +1703,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
 
-    def test_troubleshooting_postcheck_rejection_preserves_cited_answer_with_follow_up(self) -> None:
+    def test_troubleshooting_weak_evidence_postcheck_rejection_enters_intake(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         review_modes: list[str] = []
@@ -1595,7 +1783,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
-        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
         self.assertFalse(execution.result.needs_investigating)
         self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
         self.assertEqual(
@@ -1606,11 +1794,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
             execution.result.client_intake_state["pending_investigation_reason"],
             "rag_post_check_insufficient",
         )
-        self.assertEqual(execution.result.route_reason, "grounded_answer")
-        self.assertEqual(execution.result.citations, [{"chunk_id": "chunk-black-screen"}])
-        self.assertIn("Check whether the remote user is publishing video", execution.result.answer)
-        self.assertIn("If the issue continues, please share", execution.result.answer)
-        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
+        self.assertEqual(execution.result.route_reason, "rag_post_check_insufficient")
+        self.assertNotIn("Check whether the remote user is publishing video", execution.result.answer)
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
+        self.assertEqual(execution.runtime_state.review_agent.get("gate_block_reason"), "weak_troubleshooting_evidence")
         review_trace_state = execution.runtime_state.review_agent.get("openai_tracing") or {}
         self.assertEqual(review_trace_state.get("group_id"), execution.result.run_id)
         self.assertEqual(review_trace_state.get("latest_trace_id"), "trace-pre_engineer_intake")
@@ -2735,8 +2922,25 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertNotIn("known so far", execution.result.answer.lower())
 
-    def test_grounded_answer_high_risk_waits_for_review(self) -> None:
+    def test_troubleshooting_weak_evidence_review_approve_still_enters_intake(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        review_modes: list[str] = []
+
+        def review_agent(**kwargs: object) -> object:
+            mode = str(kwargs.get("mode") or "")
+            review_modes.append(mode)
+            if mode == "grounded_postcheck":
+                return {"decision": "approve_answer", "reason": "postcheck_passed", "confidence": 0.86}
+            if mode == "pre_engineer_intake":
+                return TroubleshootingIntakeResult(
+                    issue_mode="investigation",
+                    known_information={"symptom": "token renewal fails"},
+                    missing_information=[],
+                    ready_for_engineer_ticket=True,
+                    customer_reply="",
+                )
+            self.fail(f"unexpected review mode {mode!r}")
 
         execution = execute_client_ticket_agent_runtime(
             message="Android 14 token renewal keeps failing after reconnect",
@@ -2768,13 +2972,15 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 evidence_summary={"quality_signals": {"generation_mode": "structured_answer", "selected_doc_count": 1, "top1_similarity_score": 0.93}},
                 packed_evidence=None,
             ),
-            review_agent=lambda **_kwargs: {"decision": "approve_answer", "reason": "postcheck_passed", "confidence": 0.86},
+            review_agent=review_agent,
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
-        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "approve_answer")
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
+        self.assertEqual(execution.runtime_state.review_agent.get("gate_block_reason"), "weak_troubleshooting_evidence")
 
     def test_black_screen_runtime_uses_real_route_agent_fast_path_with_misleading_subject(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
