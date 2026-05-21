@@ -597,6 +597,33 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         markdown = module.render_markdown_report(summary)
         self.assertIn("rag_internal_telemetry=missing", markdown)
 
+    def test_wait_for_rag_query_run_retries_transient_fetch_errors(self) -> None:
+        module = _load_script_module()
+        expected_row = {
+            "request_id": "rag-transient",
+            "query_class": "how_to_faq",
+            "total_latency_ms": 123.0,
+        }
+
+        with mock.patch.object(
+            module,
+            "_fetch_rag_query_run",
+            side_effect=[
+                {
+                    "request_id": "rag-transient",
+                    "_fetch_error": "ConnectionTimeout: connection timeout expired",
+                },
+                expected_row,
+            ],
+        ):
+            row = module.wait_for_rag_query_run(
+                request_id="rag-transient",
+                timeout_seconds=1.0,
+                poll_interval_seconds=0.01,
+            )
+
+        self.assertEqual(row, expected_row)
+
     def test_build_trace_summary_uses_explicit_final_assistant_when_ticket_messages_are_omitted(self) -> None:
         module = _load_script_module()
 
