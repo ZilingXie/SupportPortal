@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
+import types
 from unittest import mock
 import unittest
 from pathlib import Path
@@ -623,6 +625,87 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
             )
 
         self.assertEqual(row, expected_row)
+
+    def test_fetch_rag_query_run_rewrites_container_relay_hostaddr_for_host_process(self) -> None:
+        module = _load_script_module()
+        captured: dict[str, object] = {}
+
+        class FakeSQL(str):
+            def format(self, *_args: object, **_kwargs: object) -> "FakeSQL":
+                return self
+
+        class FakeIdentifier:
+            def __init__(self, *_parts: str) -> None:
+                pass
+
+        class FakeCursor:
+            def __enter__(self) -> "FakeCursor":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def execute(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            def fetchone(self) -> tuple[object, ...]:
+                return (
+                    "rag-host-relay",
+                    1.0,
+                    2.0,
+                    3.0,
+                    4.0,
+                    5.0,
+                    6.0,
+                    7.0,
+                    8.0,
+                    {},
+                )
+
+        class FakeConnection:
+            def __enter__(self) -> "FakeConnection":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def cursor(self) -> FakeCursor:
+                return FakeCursor()
+
+        def fake_connect(dsn: str, **kwargs: object) -> FakeConnection:
+            captured["dsn"] = dsn
+            captured["kwargs"] = kwargs
+            return FakeConnection()
+
+        fake_psycopg = types.SimpleNamespace(
+            connect=fake_connect,
+            sql=types.SimpleNamespace(SQL=FakeSQL, Identifier=FakeIdentifier),
+        )
+
+        with (
+            mock.patch.dict(
+                sys.modules,
+                {"psycopg": fake_psycopg},
+            ),
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "PGVECTOR_DSN": (
+                        "postgresql://rag:secret@db.example.com:15433/supportportal"
+                        "?sslmode=require&hostaddr=192.168.127.254"
+                    ),
+                    "PGVECTOR_SCHEMA": "supportportal",
+                },
+                clear=True,
+            ),
+        ):
+            row = module._fetch_rag_query_run("rag-host-relay")
+
+        self.assertEqual(row["request_id"], "rag-host-relay")
+        self.assertEqual(
+            captured["dsn"],
+            "postgresql://rag:secret@db.example.com:15433/supportportal?sslmode=require&hostaddr=127.0.0.1",
+        )
 
     def test_build_trace_summary_uses_explicit_final_assistant_when_ticket_messages_are_omitted(self) -> None:
         module = _load_script_module()

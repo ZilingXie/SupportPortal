@@ -4061,3 +4061,21 @@ For each new entry, record:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_trace_client_ticket_route_cli.py::TraceClientTicketRouteCliTests::test_wait_for_rag_query_run_retries_transient_fetch_errors backend/tests/test_rag_agentic.py::RagAgenticTests::test_short_symptom_troubleshooting_skips_warm_vector_sidecar backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_generic_join_uses_deterministic_answer_when_deadline_exhausted_after_retrieval -q`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_trace_client_ticket_route_cli.py backend/tests/test_rag_api.py backend/tests/test_rag_decision_engine.py backend/tests/test_ticket_orchestrator.py backend/tests/test_client_ticket_agent_runtime.py -q`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py scripts/trace_client_ticket_route.py`
+
+## 2026-05-21 - Host-side RAG telemetry relay DSN normalization
+
+- Summary:
+  - Normalized the host-side run-report telemetry DSN so `scripts/trace_client_ticket_route.py` rewrites the local DB relay `hostaddr` from the container-only address to `127.0.0.1` before reading `support_rag_query_runs`.
+  - Kept the original remote hostname and relay port intact so libpq still uses the intended upstream host identity while connecting through the local relay.
+- Reason:
+  - The post-fix live run-report still showed `rag_internal_telemetry=missing` with `_fetch_error=ConnectionTimeout` because the host process reused the container DSN `hostaddr=192.168.127.254`; that address is reachable inside Podman containers but times out from the host process, while `127.0.0.1:15433` reaches the same local relay.
+- Affected files/config:
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Live run-report artifacts can now include available RAG internal telemetry for local relay setups that use a container-specific `hostaddr`.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_trace_client_ticket_route_cli.py::TraceClientTicketRouteCliTests::test_fetch_rag_query_run_rewrites_container_relay_hostaddr_for_host_process backend/tests/test_trace_client_ticket_route_cli.py::TraceClientTicketRouteCliTests::test_wait_for_rag_query_run_retries_transient_fetch_errors -q`
+  - Live telemetry probe from the linked worktree `.env` confirmed `rag-6093631c6a1c`, `rag-e726d89d58d9`, and `rag-25b5a981f122` returned telemetry rows with no `_fetch_error`.
