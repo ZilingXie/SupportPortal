@@ -6666,10 +6666,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
         )
 
-    def test_run_rag_query_agentic_deadline_exhausted_before_generation_returns_handoff(self) -> None:
+    def test_run_rag_query_agentic_slow_ordinary_retrieval_respects_deadline(self) -> None:
         message = "Please explain the recommended SDK audio profile configuration for production deployments"
         bm25_chunk = RetrievedChunk(
-            chunk_id="bm25-deadline",
+            chunk_id="bm25-slow-ordinary",
             text="Configure the SDK audio profile before production deployment.",
             source_path="official/audio-profile.md",
             similarity=0.91,
@@ -6677,7 +6677,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         answer_mock = None
 
         def slow_bm25(*_args, **_kwargs):
-            time.sleep(0.08)
+            time.sleep(0.35)
             return [bm25_chunk]
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
@@ -6745,6 +6745,119 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     [bm25_chunk],
                     {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
                 ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                return_value=[bm25_chunk],
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                return_value=(
+                    {
+                        "answer": "Configure the SDK audio profile.",
+                        "key_steps": [],
+                        "citations": ["bm25-slow-ordinary"],
+                        "insufficient_evidence": False,
+                    },
+                    10,
+                    5,
+                    "gpt-5.4",
+                ),
+            ) as answer_mock:
+                started_at = time.perf_counter()
+                result = run_rag_query(message)
+                elapsed = time.perf_counter() - started_at
+
+        self.assertLess(elapsed, 0.20)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.trace.needs_human)
+        self.assertEqual(result.trace.handoff_reason, "deadline_exhausted")
+        self.assertTrue(result.trace.deadline_exhausted)
+        self.assertEqual(result.trace.timeout_stage, "round_1_retrieval")
+        self.assertEqual(result.answer.answer, INSUFFICIENT_EVIDENCE_REPLY)
+        answer_mock.assert_not_called()
+
+    def test_run_rag_query_agentic_deadline_exhausted_before_generation_returns_handoff(self) -> None:
+        message = "Please explain the recommended SDK audio profile configuration for production deployments"
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-deadline",
+            text="Configure the SDK audio profile before production deployment.",
+            source_path="official/audio-profile.md",
+            similarity=0.91,
+        )
+        answer_mock = None
+
+        def fast_bm25(*_args, **_kwargs):
+            return [bm25_chunk]
+
+        def slow_metadata_rerank(*_args, **_kwargs):
+            time.sleep(0.08)
+            return (
+                [bm25_chunk],
+                {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "low",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 0.05,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+            }
+            with patch.dict(
+                os.environ,
+                {"RAG_AGENT_ENABLED": "1", "RAG_QUERY_UNDERSTANDING_ENABLED": "0"},
+                clear=False,
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=fast_bm25,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                return_value={
+                    "query_class": "configuration",
+                    "first_pass_tools": ["p_bm25"],
+                    "query_variants": [("original", message)],
+                    "decomposition_targets": [],
+                    "evidence_goal": "configuration_support",
+                    "recovery_bias": "lexical",
+                },
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=slow_metadata_rerank,
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 return_value=[bm25_chunk],
