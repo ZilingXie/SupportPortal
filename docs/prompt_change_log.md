@@ -1638,6 +1638,23 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_troubleshooting_intake.py`
   - `git diff --check`
 
+- Date: 2026-05-21
+- Area or subsystem: RAG answer model timeout configuration
+- Prompt or model version: `rag-answer-timeout-default-v2`
+- Summary: Increased the default `RAG_REQUEST_TIMEOUT_SECONDS` for the single-host RAG API from `20.0` to `40.0` and documented the same default in `.env.example`.
+- Reason: `TK-216` exhausted the RAG request deadline while handling a generic join-channel question, causing engineer escalation instead of the `TK-208` style docs-grounded answer.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Deployments that do not explicitly override `RAG_REQUEST_TIMEOUT_SECONDS` give RAG up to 40 seconds before deadline-exhausted handling.
+  - Prompt text, model names, reasoning effort, and answer schema are unchanged.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_single_host_compose.py -q`
+
 - Date: 2026-04-05
 - Area or subsystem: Client new-session welcome copy and product selector layout
 - Prompt or model version: `client-empty-session-welcome-v3`
