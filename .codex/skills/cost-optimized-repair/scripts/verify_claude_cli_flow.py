@@ -37,6 +37,10 @@ def git_status() -> str:
     return run_text(["git", "status", "--short", "--branch"])
 
 
+def without_fenced_code(markdown: str) -> str:
+    return re.sub(r"```.*?```", "", markdown, flags=re.DOTALL)
+
+
 def build_payload() -> str:
     return """/repair-worker
 
@@ -86,7 +90,7 @@ def validate_worker_result(payload: dict, before_status: str, after_status: str,
     if not result.startswith("## Result"):
         raise AssertionError(f"Worker result does not start with ## Result:\n{result}")
 
-    headings = re.findall(r"^## .+$", result, flags=re.MULTILINE)
+    headings = re.findall(r"^## .+$", without_fenced_code(result), flags=re.MULTILINE)
     if headings != EXPECTED_HEADINGS:
         raise AssertionError(f"Unexpected worker headings: {headings}")
 
