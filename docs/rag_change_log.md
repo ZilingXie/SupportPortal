@@ -10,6 +10,34 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-21 - Keep local lightweight stack on remote RAG DB by default
+
+- Summary:
+  - Changed the local lightweight single-host restart path so `--use-local-env` keeps using the remote `PGVECTOR_DSN` from `.env` by default.
+  - Kept the local Postgres/pgvector compose override available as an explicit `--db local` opt-in.
+  - Updated local environment examples and operator docs to describe remote DB as the default and local Postgres as optional.
+- Reason:
+  - Local development should no longer start or depend on a local Postgres/pgvector database unless explicitly requested.
+  - The local DB path remains useful for isolated empty-database debugging and should stay quick to enable.
+- Affected files/config:
+  - `.env.local.example`
+  - `scripts/workflow/restart_single_host_stack.sh`
+  - `docs/deploy_single_host_ec2.md`
+  - `docs/local_db_relay_recovery.md`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_workflow_scripts.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - Default local lightweight restarts now read/write the remote RAG pgvector store configured in `.env`.
+  - Local Postgres/pgvector data remains isolated to runs that explicitly use `--db local`.
+- Verification:
+  - RED: `rtk python3 -m unittest backend.tests.test_single_host_compose.SingleHostComposeTests.test_env_examples_document_stack_mode_defaults backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_use_local_env_preserves_remote_db_default backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_use_local_env_and_db_local_opts_into_local_db` failed after test-only edits because `.env.local.example` still defaulted `STACK_DB_MODE=local` and `--use-local-env` still included `deployment/docker-compose.single-host.local-db.yml`.
+  - GREEN: `rtk python3 -m unittest backend.tests.test_single_host_compose backend.tests.test_workflow_scripts` (`64 tests`, `OK`).
+  - GREEN: `rtk bash -n scripts/workflow/restart_single_host_stack.sh scripts/workflow/restart_single_host_lightweight_stack.sh scripts/workflow/restart_single_host_local_stack.sh scripts/workflow/_local_db_env.sh scripts/workflow/run_with_local_db_env.sh scripts/workflow/ensure_local_db_relay.sh`.
+  - GREEN: `rtk sh -lc 'env TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets PGVECTOR_DSN=postgresql://rag:test@db.local/rag APP_RUNTIME_IMAGE=localhost/supportportal-app:test APP_BUILD_REF=test podman-compose -f deployment/docker-compose.single-host.yml -f deployment/docker-compose.single-host.local-lightweight.yml config >/tmp/supportportal-compose-remote-default.yml'`.
+  - GREEN: `rtk sh -lc 'env TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets PGVECTOR_DSN=postgresql://rag:test@db.local/rag APP_RUNTIME_IMAGE=localhost/supportportal-app:test APP_BUILD_REF=test LOCAL_POSTGRES_USER=supportportal LOCAL_POSTGRES_PASSWORD=supportportal LOCAL_POSTGRES_DB=supportportal LOCAL_POSTGRES_HOST_PORT=15432 podman-compose -f deployment/docker-compose.single-host.yml -f deployment/docker-compose.single-host.local-lightweight.yml -f deployment/docker-compose.single-host.local-db.yml config >/tmp/supportportal-compose-local-db.yml'`.
+
 ## 2026-05-21 - De-agentize client-ticket RAG service boundary
 
 - Summary:

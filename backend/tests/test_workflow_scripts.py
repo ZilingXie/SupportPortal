@@ -1018,7 +1018,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
         self._terminate_pid_file(pid_path)
 
-    def test_restart_single_host_stack_use_local_env_applies_local_lightweight_and_local_db_defaults(self) -> None:
+    def test_restart_single_host_stack_use_local_env_preserves_remote_db_default(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
         self._write(
             seed,
@@ -1055,6 +1055,67 @@ class WorkflowScriptTests(unittest.TestCase):
             "restart_single_host_stack.sh",
             repo,
             "--use-local-env",
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        for call in calls[1:]:
+            self.assertEqual(
+                call["argv"][:4],
+                [
+                    "-f",
+                    "deployment/docker-compose.single-host.yml",
+                    "-f",
+                    "deployment/docker-compose.single-host.local-lightweight.yml",
+                ],
+            )
+            self.assertNotIn("deployment/docker-compose.single-host.local-db.yml", call["argv"])
+            self.assertEqual(call["ticket_db_dsn"], "postgresql://ticket:test@db.local/tickets")
+            self.assertEqual(call["pgvector_dsn"], "postgresql://rag:test@db.local/rag")
+
+    def test_restart_single_host_stack_use_local_env_and_db_local_opts_into_local_db(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(
+            seed,
+            ".env",
+            "STACK_RUNTIME_MODE=full\n"
+            "STACK_DB_MODE=remote\n"
+            "OPENAI_API_KEY=test-key\n"
+            "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
+        )
+        self._write(
+            seed,
+            ".env.local",
+            "STACK_RUNTIME_MODE=local_lightweight\n"
+            "STACK_DB_MODE=local\n"
+            "LOCAL_POSTGRES_USER=localuser\n"
+            "LOCAL_POSTGRES_PASSWORD=localpass\n"
+            "LOCAL_POSTGRES_DB=localdb\n"
+            "LOCAL_POSTGRES_HOST_PORT=15555\n"
+            "LOCAL_TICKET_DB_SCHEMA=local_ticket\n"
+            "LOCAL_PGVECTOR_SCHEMA=local_rag\n"
+            "LOCAL_PGVECTOR_TABLE=local_chunks\n"
+            "LOCAL_PGVECTOR_DIM=768\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-db.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack local-db opt-in runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            "--use-local-env",
+            "--db",
+            "local",
             extra_env={
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 "RESTART_TEST_STATE_DIR": str(state_dir),
@@ -1164,7 +1225,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertTrue(pid_path.exists())
         self._terminate_pid_file(pid_path)
 
-    def test_restart_single_host_stack_mode_full_overrides_local_env_lightweight_default(self) -> None:
+    def test_restart_single_host_stack_mode_full_and_db_local_override_local_env_defaults(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
         self._write(
             seed,
@@ -1202,6 +1263,8 @@ class WorkflowScriptTests(unittest.TestCase):
             "--use-local-env",
             "--mode",
             "full",
+            "--db",
+            "local",
             extra_env={
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 "RESTART_TEST_STATE_DIR": str(state_dir),
