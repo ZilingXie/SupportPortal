@@ -7061,6 +7061,162 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
         self.assertIn("join method", result.answer.answer.lower())
 
+    def test_run_rag_query_generic_join_uses_deterministic_answer_when_deadline_exhausted_after_retrieval(self) -> None:
+        join_chunk = RetrievedChunk(
+            chunk_id="join-android",
+            text="Call joinChannel(token, channelName, uid, options) to join a channel.",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.86,
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/get-started-sdk",
+                "use_case": "join_channel",
+            },
+        )
+        auth_chunk = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Request a token from your app server for the channel name and user ID before joining.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=0.85,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+        message = (
+            "Hi Team, I am new to Agora and trying to integrate Agora SDK. However, I don't know "
+            "how to join the channel as requested. Could you help explain to me and guide me to "
+            "join the user into the channel?"
+        )
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="query-understanding-v2",
+            glossary_version="glossary-v2",
+            self_query_version="self-query-v2",
+            normalized_query=message,
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[{"canonical_term": "Channel"}],
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="Agora SDK how to join a channel and guide a user into the channel",
+                soft_signals={"topic": ["channel lifecycle"], "use_case": ["join_channel"]},
+                rule_expansions=["joinChannel token uid"],
+            ),
+            fallback_mode="none",
+        )
+
+        def slow_metadata_rerank(*args, **kwargs):
+            time.sleep(0.08)
+            chunks = list(kwargs.get("chunks") if "chunks" in kwargs else args[1])
+            return (
+                chunks,
+                {
+                    "post_rerank_count": len(chunks),
+                    "hints": {},
+                    "applied_filter": False,
+                    "filter_type": None,
+                },
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 0.05,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch.dict(
+                os.environ,
+                {"RAG_AGENT_ENABLED": "1", "RAG_QUERY_UNDERSTANDING_ENABLED": "0"},
+                clear=False,
+            ), patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=understanding,
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                return_value={
+                    "query_class": "how_to_faq",
+                    "first_pass_tools": ["p_bm25", "p_fts"],
+                    "query_variants": [("original", message)],
+                    "decomposition_targets": [],
+                    "evidence_goal": "how_to_usage_support",
+                    "recovery_bias": "lexical",
+                },
+            ), patch(
+                "backend.services.rag_qa._fetch_generic_join_pinned_chunks",
+                return_value=[rag_qa._copy_chunk(join_chunk), rag_qa._copy_chunk(auth_chunk)],
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("generic join deterministic rescue should not need vector retrieval"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                return_value=[rag_qa._copy_chunk(join_chunk), rag_qa._copy_chunk(auth_chunk)],
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=slow_metadata_rerank,
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda _query, chunks, _config, *, limit=None: chunks,
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=AssertionError("deterministic rescue should bypass answer generation"),
+            ):
+                result = run_rag_query(message, product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertFalse(result.trace.needs_human)
+        self.assertIsNone(result.trace.handoff_reason)
+        self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
+        self.assertTrue(result.trace.deadline_exhausted)
+        self.assertIn("join method", result.answer.answer.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

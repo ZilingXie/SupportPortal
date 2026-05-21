@@ -8564,12 +8564,14 @@ def _resolve_agentic_feature_flags(
     effective_question: str,
 ) -> AgenticFeatureFlags:
     dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
+    short_symptom_troubleshooting_query = _is_short_symptom_troubleshooting_query(effective_question)
     warm_vector_enabled = bool(config.get("vector_enabled")) and not (
         query_flags.simple_lexical_query
         or query_flags.short_how_to_faq_query
         or query_flags.api_semantics_query
         or dual_stream_enable_query
         or _is_generic_join_channel_query(effective_question)
+        or short_symptom_troubleshooting_query
     )
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
         query_flags.simple_lexical_query or query_flags.short_how_to_faq_query or query_flags.api_semantics_query
@@ -9292,6 +9294,69 @@ def _run_rag_query_agentic_single(
             ),
         )
 
+    def _deterministic_answer_result() -> RagQueryResult | None:
+        nonlocal generation_latency_ms, answer_profile_used
+        if not final_chunks:
+            return None
+
+        deterministic_generation_started_at = time.perf_counter()
+        deterministic_answer: RagAnswer | None = None
+        generation_mode: str | None = None
+        if plan.query_class == "api_semantics_mismatch":
+            deterministic_answer = _build_api_semantics_grounded_answer(
+                effective_question,
+                final_chunks,
+                requester=requester,
+                customer_id=customer_id,
+            )
+            generation_mode = "api_semantics_deterministic" if deterministic_answer is not None else None
+        elif _allows_release_note_guidance_for_short_symptom_query(effective_question):
+            deterministic_answer = _build_black_screen_guidance_grounded_answer(
+                effective_question,
+                final_chunks,
+                product=product,
+                requester=requester,
+                customer_id=customer_id,
+            )
+            generation_mode = "black_screen_guidance_deterministic" if deterministic_answer is not None else None
+        elif _is_dual_stream_enable_query(effective_question):
+            deterministic_answer = _build_dual_stream_grounded_answer(
+                effective_question,
+                final_chunks,
+                product=product,
+                requester=requester,
+                customer_id=customer_id,
+            )
+            generation_mode = "dual_stream_deterministic" if deterministic_answer is not None else None
+        elif _is_generic_join_channel_query(effective_question):
+            deterministic_answer = _build_generic_join_grounded_answer(
+                effective_question,
+                final_chunks,
+                product=product,
+                requester=requester,
+                customer_id=customer_id,
+            )
+            generation_mode = "generic_join_deterministic" if deterministic_answer is not None else None
+
+        if deterministic_answer is None or generation_mode is None:
+            return None
+        generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
+        answer_profile_used = generation_mode
+        return RagQueryResult(
+            answer=deterministic_answer,
+            trace=_trace_for(
+                deterministic_answer,
+                needs_human=False,
+                handoff_reason=None,
+                generation_mode=generation_mode,
+                extractive_fallback_used=False,
+            ),
+        )
+
+    deterministic_result = _deterministic_answer_result()
+    if deterministic_result is not None:
+        return deterministic_result
+
     if deadline.is_exhausted():
         return _deadline_handoff_result("answer_generation")
 
@@ -9322,93 +9387,6 @@ def _run_rag_query_agentic_single(
         query_class=plan.query_class,
         query_type=query_type,
     )
-    if plan.query_class == "api_semantics_mismatch":
-        deterministic_generation_started_at = time.perf_counter()
-        deterministic_answer = _build_api_semantics_grounded_answer(
-            effective_question,
-            final_chunks,
-            requester=requester,
-            customer_id=customer_id,
-        )
-        if deterministic_answer is not None:
-            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
-            answer_profile_used = "api_semantics_deterministic"
-            return RagQueryResult(
-                answer=deterministic_answer,
-                trace=_trace_for(
-                    deterministic_answer,
-                    needs_human=False,
-                    handoff_reason=None,
-                    generation_mode="api_semantics_deterministic",
-                    extractive_fallback_used=False,
-                ),
-            )
-    if _allows_release_note_guidance_for_short_symptom_query(effective_question):
-        deterministic_generation_started_at = time.perf_counter()
-        deterministic_answer = _build_black_screen_guidance_grounded_answer(
-            effective_question,
-            final_chunks,
-            product=product,
-            requester=requester,
-            customer_id=customer_id,
-        )
-        if deterministic_answer is not None:
-            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
-            answer_profile_used = "black_screen_guidance_deterministic"
-            return RagQueryResult(
-                answer=deterministic_answer,
-                trace=_trace_for(
-                    deterministic_answer,
-                    needs_human=False,
-                    handoff_reason=None,
-                    generation_mode="black_screen_guidance_deterministic",
-                    extractive_fallback_used=False,
-                ),
-            )
-    if _is_dual_stream_enable_query(effective_question):
-        deterministic_generation_started_at = time.perf_counter()
-        deterministic_answer = _build_dual_stream_grounded_answer(
-            effective_question,
-            final_chunks,
-            product=product,
-            requester=requester,
-            customer_id=customer_id,
-        )
-        if deterministic_answer is not None:
-            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
-            answer_profile_used = "dual_stream_deterministic"
-            return RagQueryResult(
-                answer=deterministic_answer,
-                trace=_trace_for(
-                    deterministic_answer,
-                    needs_human=False,
-                    handoff_reason=None,
-                    generation_mode="dual_stream_deterministic",
-                    extractive_fallback_used=False,
-                ),
-            )
-    if _is_generic_join_channel_query(effective_question):
-        deterministic_generation_started_at = time.perf_counter()
-        deterministic_answer = _build_generic_join_grounded_answer(
-            effective_question,
-            final_chunks,
-            product=product,
-            requester=requester,
-            customer_id=customer_id,
-        )
-        if deterministic_answer is not None:
-            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
-            answer_profile_used = "generic_join_deterministic"
-            return RagQueryResult(
-                answer=deterministic_answer,
-                trace=_trace_for(
-                    deterministic_answer,
-                    needs_human=False,
-                    handoff_reason=None,
-                    generation_mode="generic_join_deterministic",
-                    extractive_fallback_used=False,
-                ),
-            )
     generation_chunk_limit = _generation_chunk_limit_for_agentic_query(
         message=effective_question,
         plan=plan,

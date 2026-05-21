@@ -235,6 +235,18 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(adjusted["fusion_candidate_k"], 16)
         self.assertEqual(adjusted["rerank_top_n"], 16)
 
+    def test_short_symptom_troubleshooting_skips_warm_vector_sidecar(self) -> None:
+        message = "I got black screen, what should I do?"
+        query_flags = _classify_agentic_query_flags(message)
+
+        feature_flags = _resolve_agentic_feature_flags(
+            config={**self._base_config(), "vector_enabled": True},
+            query_flags=query_flags,
+            effective_question=message,
+        )
+
+        self.assertFalse(feature_flags.warm_vector_enabled)
+
     def test_api_semantics_recovery_variants_add_anchor_only_after_round_one(self) -> None:
         plan = _build_agentic_retrieval_plan(
             message=self._BAN_API_MISMATCH_MESSAGE,

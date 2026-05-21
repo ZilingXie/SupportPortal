@@ -4037,3 +4037,27 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_dual_stream_enable_query_returns_grounded_answer_with_citations -q`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_api.py -q`
+
+## 2026-05-21 - RAG live deadline rescue and telemetry retry hardening
+
+- Summary:
+  - Let live RAG telemetry polling retry transient `support_rag_query_runs` DB fetch errors during the telemetry wait window instead of stopping after the first `ConnectionTimeout`.
+  - Skipped warm vector sidecar retrieval for short symptom-led troubleshooting prompts such as black-screen questions, keeping those runs on the cheaper lexical-first path.
+  - Moved deterministic RAG answer builders ahead of deadline handoff so already-retrieved grounded evidence can still produce cited answers for join-channel, API-semantics, dual-stream, and black-screen deterministic paths.
+- Reason:
+  - The run-report batch on May 21 showed repeated `rag_internal_telemetry=missing` caused by host-side `ConnectionTimeout` and several RAG runs returning `deadline_exhausted` even after retrieval had enough evidence for deterministic answers.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - RAG traces can still report `deadline_exhausted` diagnostically when a deterministic rescue happens after the internal budget is consumed, but the customer-visible decision can now be a grounded cited answer when deterministic evidence is sufficient.
+  - Run-report telemetry reads are more tolerant of transient host DB connection failures and still return the last fetch error if the full telemetry wait window expires.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_trace_client_ticket_route_cli.py::TraceClientTicketRouteCliTests::test_wait_for_rag_query_run_retries_transient_fetch_errors backend/tests/test_rag_agentic.py::RagAgenticTests::test_short_symptom_troubleshooting_skips_warm_vector_sidecar backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_generic_join_uses_deterministic_answer_when_deadline_exhausted_after_retrieval -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_trace_client_ticket_route_cli.py backend/tests/test_rag_api.py backend/tests/test_rag_decision_engine.py backend/tests/test_ticket_orchestrator.py backend/tests/test_client_ticket_agent_runtime.py -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py scripts/trace_client_ticket_route.py`

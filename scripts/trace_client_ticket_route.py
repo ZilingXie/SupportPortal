@@ -1226,8 +1226,14 @@ def _fetch_rag_query_run(request_id: str) -> dict[str, Any] | None:
     except ModuleNotFoundError as exc:  # pragma: no cover - local env should provide psycopg
         raise RuntimeError("psycopg is required to read support_rag_query_runs") from exc
 
+    raw_connect_timeout = _clean_text(os.getenv("PGVECTOR_CONNECT_TIMEOUT")) or _clean_text(os.getenv("TICKET_DB_CONNECT_TIMEOUT"))
     try:
-        with psycopg.connect(dsn, connect_timeout=5) as conn:
+        connect_timeout = max(1.0, float(raw_connect_timeout or "5"))
+    except ValueError:
+        connect_timeout = 5.0
+
+    try:
+        with psycopg.connect(dsn, connect_timeout=connect_timeout) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -1306,7 +1312,8 @@ def wait_for_rag_query_run(
         if isinstance(row, dict):
             if _clean_text(row.get("_fetch_error")):
                 last_error = _clean_text(row.get("_fetch_error"))
-                break
+                time.sleep(max(float(poll_interval_seconds), 0.1))
+                continue
             return row
         time.sleep(max(float(poll_interval_seconds), 0.1))
     if last_error:
