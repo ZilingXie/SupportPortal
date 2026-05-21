@@ -3988,6 +3988,70 @@ def _execute_agentic_round(
             if dedupe_key:
                 target_set.add(dedupe_key)
 
+    def _empty_tool_result(
+        tool_name: str,
+    ) -> tuple[str, list[RetrievedChunk], float, float, float, float, bool, bool]:
+        return tool_name, [], 0.0, 0.0, 0.0, 0.0, False, False
+
+    def _retrieve_tool_variant_with_deadline(
+        *,
+        tool_name: str,
+        query_kind: str,
+        query_text: str,
+        index_role: str,
+        seeded_chunks: list[RetrievedChunk] | None = None,
+    ) -> tuple[str, list[RetrievedChunk], float, float, float, float, bool, bool]:
+        stage = f"round_{round_index}_retrieval"
+        if deadline is None:
+            return _retrieve_agentic_tool_variant(
+                tool_name=tool_name,
+                query_kind=query_kind,
+                query_text=query_text,
+                config=variant_config,
+                index_role=index_role,
+                round_index=round_index,
+                seeded_chunks=seeded_chunks,
+                lexical_result_cache=lexical_result_cache,
+                should_cancel=should_cancel,
+                record_cancel_stage=record_cancel_stage,
+            )
+
+        timeout_seconds = deadline.remaining_seconds(stage)
+        if timeout_seconds <= 0:
+            deadline.mark_timeout(stage)
+            return _empty_tool_result(tool_name)
+
+        future: Future[tuple[str, list[RetrievedChunk], float, float, float, float, bool, bool]] | None = None
+        retrieval_timed_out = False
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(
+                _retrieve_agentic_tool_variant,
+                tool_name=tool_name,
+                query_kind=query_kind,
+                query_text=query_text,
+                config=variant_config,
+                index_role=index_role,
+                round_index=round_index,
+                seeded_chunks=seeded_chunks,
+                lexical_result_cache=lexical_result_cache,
+                should_cancel=should_cancel,
+                record_cancel_stage=record_cancel_stage,
+            )
+            result = future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            retrieval_timed_out = True
+            deadline.mark_timeout(stage)
+            if future is not None:
+                future.cancel()
+            return _empty_tool_result(tool_name)
+        finally:
+            executor.shutdown(wait=not retrieval_timed_out, cancel_futures=retrieval_timed_out)
+
+        if deadline.is_exhausted():
+            deadline.mark_timeout(stage)
+        return result
+
     retrieval_started_at = time.perf_counter()
     short_faq_sparse_requests = (
         _short_lexical_faq_recovery_requests(
@@ -4010,17 +4074,12 @@ def _execute_agentic_round(
         for tool_name, query_kind, query_text in short_faq_sparse_requests:
             family = _tool_family(tool_name)
             index_role = _tool_index_role(tool_name)
-            result = _retrieve_agentic_tool_variant(
+            result = _retrieve_tool_variant_with_deadline(
                 tool_name=tool_name,
                 query_kind=query_kind,
                 query_text=query_text,
-                config=variant_config,
                 index_role=index_role,
-                round_index=round_index,
                 seeded_chunks=None,
-                lexical_result_cache=lexical_result_cache,
-                should_cancel=should_cancel,
-                record_cancel_stage=record_cancel_stage,
             )
             _consume_tool_result(
                 family=family,
@@ -4064,17 +4123,12 @@ def _execute_agentic_round(
                     requires_vector_recovery = True
             if requires_vector_recovery:
                 original_query_text = short_faq_original_query_text or _original_query_text_for_plan(message, plan)
-                result = _retrieve_agentic_tool_variant(
+                result = _retrieve_tool_variant_with_deadline(
                     tool_name="p_vec",
                     query_kind="original",
                     query_text=original_query_text,
-                    config=variant_config,
                     index_role="primary",
-                    round_index=round_index,
                     seeded_chunks=None,
-                    lexical_result_cache=lexical_result_cache,
-                    should_cancel=should_cancel,
-                    record_cancel_stage=record_cancel_stage,
                 )
                 _consume_tool_result(
                     family="vector",
@@ -4117,17 +4171,12 @@ def _execute_agentic_round(
                     seeded_chunks = None
                     if round_index == 1 and query_kind == "original":
                         seeded_chunks = list((seed_tool_results or {}).get(tool_name) or [])
-                    result = _retrieve_agentic_tool_variant(
+                    result = _retrieve_tool_variant_with_deadline(
                         tool_name=tool_name,
                         query_kind=query_kind,
                         query_text=query_text,
-                        config=variant_config,
                         index_role=index_role,
-                        round_index=round_index,
                         seeded_chunks=seeded_chunks,
-                        lexical_result_cache=lexical_result_cache,
-                        should_cancel=should_cancel,
-                        record_cancel_stage=record_cancel_stage,
                     )
                     _consume_tool_result(
                         family=family,
@@ -4296,17 +4345,12 @@ def _execute_agentic_round(
                 seeded_chunks = None
                 if round_index == 1 and query_kind == "original":
                     seeded_chunks = list((seed_tool_results or {}).get(tool_name) or [])
-                result = _retrieve_agentic_tool_variant(
+                result = _retrieve_tool_variant_with_deadline(
                     tool_name=tool_name,
                     query_kind=query_kind,
                     query_text=query_text,
-                    config=variant_config,
                     index_role=index_role,
-                    round_index=round_index,
                     seeded_chunks=seeded_chunks,
-                    lexical_result_cache=lexical_result_cache,
-                    should_cancel=should_cancel,
-                    record_cancel_stage=record_cancel_stage,
                 )
                 _consume_tool_result(
                     family=family,

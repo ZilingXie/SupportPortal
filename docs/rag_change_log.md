@@ -10,6 +10,27 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-21 - Bound ordinary agentic retrieval calls to the shared RAG deadline
+
+- Summary:
+  - Added a deadline-aware wrapper around ordinary sequential `_retrieve_agentic_tool_variant` calls inside `_execute_agentic_round`.
+  - Retrieval timeouts in short FAQ sparse recovery, short FAQ vector recovery, troubleshooting staged retrieval, and ordinary sequential retrieval now return an empty compatible tool result without blocking past the remaining request budget.
+  - Added a regression test for slow ordinary BM25 retrieval and preserved the separate answer-generation deadline handoff test by moving its delay after fast retrieval.
+- Reason:
+  - Prior deadline handling covered query understanding, warm sidecars, answer generation, and one light-path parallel retrieval branch, but ordinary sequential retrieval could still block beyond `request_timeout_seconds`.
+  - Slow ordinary retrieval was then mislabeled as `timeout_stage="answer_generation"` even though the consumed stage was `round_1_retrieval`.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, vector-table, BM25 index, or document backfill changes.
+  - Existing RAG data remains valid; only runtime deadline behavior and timeout-stage trace labeling change.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_slow_ordinary_retrieval_respects_deadline -q` failed before the production fix with `elapsed=0.3556s`, then passed after the fix.
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_deadline.py backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_slow_ordinary_retrieval_respects_deadline backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_query_understanding_timeout_uses_raw_query_without_blocking backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_warm_retrieval_timeout_degrades_to_round_retrieval backend/tests/test_rag_qa.py::RagQaHybridTests::test_run_rag_query_agentic_deadline_exhausted_before_generation_returns_handoff -q` (`7 passed`)
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py`
+
 ## 2026-05-20 - Add unified EvidenceVerdict diagnostics contract
 
 - Summary:
