@@ -2224,6 +2224,23 @@ def _build_agentic_retrieval_plan(
             product=product,
             shadow_tools_skipped=[],
         )
+    if _is_dual_stream_enable_query(message):
+        variants: list[tuple[str, str]] = [("original", normalized_message)]
+        for query in _dual_stream_query_expansions(message):
+            variants.append(("rule", query))
+        return AgenticRetrievalPlan(
+            query_class="configuration",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=_dedupe_agentic_variants(variants),
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            ticket_context_used=bool(ticket_context),
+            exact_terms=exact_terms,
+            light_path=True,
+            product=product,
+            shadow_tools_skipped=[],
+        )
 
     _raise_if_cancelled(
         "planner",
@@ -8525,9 +8542,10 @@ def _classify_agentic_query_flags(effective_question: str) -> AgenticQueryFlags:
     api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
     short_how_to_faq_query = preliminary_query_class == "how_to_faq" and _is_short_how_to_faq_query(effective_question)
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(effective_question)
-    vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query
-    light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query
-    skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"}
+    dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
+    vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
+    light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
+    skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"} or dual_stream_enable_query
     return AgenticQueryFlags(
         preliminary_query_class=preliminary_query_class,
         api_semantics_query=api_semantics_query,
@@ -8545,23 +8563,29 @@ def _resolve_agentic_feature_flags(
     query_flags: AgenticQueryFlags,
     effective_question: str,
 ) -> AgenticFeatureFlags:
+    dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
     warm_vector_enabled = bool(config.get("vector_enabled")) and not (
         query_flags.simple_lexical_query
         or query_flags.short_how_to_faq_query
         or query_flags.api_semantics_query
+        or dual_stream_enable_query
         or _is_generic_join_channel_query(effective_question)
     )
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
         query_flags.simple_lexical_query or query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+        or dual_stream_enable_query
     )
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not (
         query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+        or dual_stream_enable_query
     )
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not (
         query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+        or dual_stream_enable_query
     )
     query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not (
         query_flags.short_how_to_faq_query or query_flags.api_semantics_query
+        or dual_stream_enable_query
     )
     return AgenticFeatureFlags(
         query_understanding_enabled=query_understanding_enabled,
@@ -8649,6 +8673,7 @@ def _run_rag_query_agentic_single(
     query_type = _infer_query_type(effective_question)
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
     query_flags = _classify_agentic_query_flags(effective_question)
+    dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
     api_semantics_query = query_flags.api_semantics_query
     short_how_to_faq_query = query_flags.short_how_to_faq_query
     simple_lexical_query = query_flags.simple_lexical_query
@@ -8659,7 +8684,7 @@ def _run_rag_query_agentic_single(
 
     config["_vector_runtime_available"] = (
         False
-        if (simple_lexical_query or api_semantics_query)
+        if (simple_lexical_query or api_semantics_query or dual_stream_enable_query)
         else bool(config.get("vector_enabled", True))
         and _runtime_capability_available(
             "vector",
