@@ -615,7 +615,7 @@ def _execute_case(
         client_intake_state=None,
         route_agent=_route_agent,
         route_executor=_route_executor,
-        rag_agent=lambda **kwargs: _rag_detail_from_query_result(_run_rag(kwargs["message"])),
+        rag_executor=lambda **kwargs: _rag_detail_from_query_result(_run_rag(kwargs["message"])),
         review_agent=_benchmark_review_agent,
         rag_canceler=None,
     )

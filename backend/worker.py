@@ -49,13 +49,11 @@ from backend.services.client_ticket_agent_runtime import (
     resolve_next_ticket_status,
 )
 from backend.services.product_selection import resolve_support_product_context
-from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
+from backend.services.rag_executor import build_worker_rag_executor
 from backend.services.rag_service_client import (
     RagServiceClient,
     RagServiceError,
     RagTicketAnswerDetail,
-    classify_rag_service_failure_kind,
-    with_rag_detail_diagnostics,
 )
 from backend.services.sentiment_classifier import classify_sentiment
 from backend.services.support_router import SupportResolution, SupportRouteDecision, decide_support_route
@@ -321,58 +319,26 @@ class _WorkerRagCancelled(RuntimeError):
         self.stage = str(stage or "").strip() or None
 
 
-def _rag_failure_reason(
-    error: RagServiceError,
-    *,
-    timeout_health_status: str | None = None,
-) -> str:
-    failure_kind = classify_rag_service_failure_kind(error)
-    if failure_kind == "timeout":
-        return "rag_processing_timeout" if str(timeout_health_status or "").strip().lower() == "ok" else "rag_unavailable"
-    if failure_kind == "transport":
-        return "rag_unavailable"
-    if failure_kind == "http":
-        return "rag_service_error"
-    if error.status_code is not None:
-        return "rag_service_error"
-    normalized_message = str(error).strip().lower()
-    if "not configured" in normalized_message or "request failed" in normalized_message:
-        return "rag_unavailable"
-    return "rag_service_error"
-
-
-def _fallback_rag_answer_detail(
-    reason: str,
-    *,
-    diagnostics: dict[str, Any] | None = None,
-) -> RagTicketAnswerDetail:
-    fallback_reason = str(reason or "").strip() or "rag_service_error"
-    detail = RagTicketAnswerDetail(
-        answer=INSUFFICIENT_EVIDENCE_REPLY,
-        confidence=0.0,
-        sources=[],
-        citations=[],
-        needs_engineer_guidance=True,
-        reason=fallback_reason,
-        evidence_summary=None,
-        packed_evidence=None,
+def _build_current_worker_rag_executor():
+    return build_worker_rag_executor(
+        rag_service_client,
+        timeout_seconds=_worker_rag_timeout_seconds(),
+        max_wait_seconds=_worker_rag_max_wait_seconds(),
+        recovery_window_seconds=_worker_rag_recovery_window_seconds(),
+        recovery_poll_interval_seconds=_worker_rag_recovery_poll_interval_seconds(),
     )
-    return with_rag_detail_diagnostics(detail, diagnostics)
 
 
-def _worker_timeout_health_status() -> str | None:
+def _worker_rag_with_cancel_guard(**kwargs: Any) -> RagTicketAnswerDetail:
     try:
-        payload = rag_service_client.health(timeout_seconds=min(5.0, max(1.0, _worker_rag_recovery_poll_interval_seconds())))
-    except RagServiceError:
-        return "unreachable"
-    status = str((payload or {}).get("status") or "").strip().lower()
-    return status or "unknown"
+        return _build_current_worker_rag_executor()(**kwargs)
+    except RagServiceError as exc:
+        payload = exc.payload if isinstance(exc.payload, dict) else {}
+        if exc.status_code == 409 and str(payload.get("reason") or "").strip() == "cancelled_by_route_flip":
+            raise _WorkerRagCancelled(stage=str(payload.get("stage") or "").strip() or None) from exc
+        raise
 
 
-def _detail_diagnostic_value(detail: RagTicketAnswerDetail, key: str) -> Any:
-    evidence = detail.evidence_summary if isinstance(detail.evidence_summary, dict) else {}
-    diagnostics = evidence.get("diagnostics") if isinstance(evidence.get("diagnostics"), dict) else {}
-    return diagnostics.get(key)
 def _execute_agent_runtime_ticket_query(
     customer_message: str,
     *,
@@ -402,36 +368,28 @@ def _execute_agent_runtime_ticket_query(
         has_active_engineer_case=False,
         route_agent=decide_support_route,
         route_executor=resolve_support_message,
-        rag_agent=lambda **kwargs: _fetch_rag_answer_detail_for_worker(
-            request_id=str(kwargs.get("request_id") or ""),
-            customer_message=kwargs["message"],
-            ticket_id=str(kwargs.get("ticket_id") or ticket_id),
-            customer_id=kwargs.get("customer_id"),
-            requester=kwargs.get("requester"),
-            ticket_context=kwargs.get("ticket_context") or ticket_context,
-            product=kwargs.get("product"),
-        ),
+        rag_executor=_worker_rag_with_cancel_guard,
         review_agent=_run_client_ticket_review_agent,
         rag_canceler=lambda request_id: rag_service_client.cancel_request(request_id),
         route_timeout_seconds=OPTIMISTIC_ROUTE_TIMEOUT_SECONDS,
     )
     runtime_state = runtime_execution.runtime_state
-    rag_agent_state = runtime_state.rag_agent if isinstance(runtime_state.rag_agent, dict) else {}
+    rag_service_state = runtime_state.rag_service if isinstance(runtime_state.rag_service, dict) else {}
     route_agent_state = runtime_state.route_agent if isinstance(runtime_state.route_agent, dict) else {}
     cancel_event = next(
         (
             item
             for item in runtime_execution.agent_events
-            if str(item.get("agent_name") or "").strip() == "rag_agent"
+            if str(item.get("agent_name") or "").strip() == "rag_service"
             and str(item.get("event_type") or "").strip() == "cancel_requested"
         ),
         None,
     )
     cancel_payload = cancel_event.get("payload") if isinstance(cancel_event, dict) and isinstance(cancel_event.get("payload"), dict) else {}
     route_status = str(route_agent_state.get("status") or "").strip().lower()
-    rag_status = str(rag_agent_state.get("status") or "").strip().lower()
+    rag_status = str(rag_service_state.get("status") or "").strip().lower()
     rag_cancelled = rag_status == "cancelled"
-    rag_cancel_stage = str(cancel_payload.get("stage") or (rag_agent_state.get("reason") if rag_cancelled else "") or "").strip()
+    rag_cancel_stage = str(cancel_payload.get("stage") or (rag_service_state.get("reason") if rag_cancelled else "") or "").strip()
     diagnostics: dict[str, Any] = {
         "parallel_mode": "main_agent",
         "api_persist_latency_ms": None,
@@ -444,77 +402,12 @@ def _execute_agent_runtime_ticket_query(
         "route_result_source": "route_first" if route_status == "completed" else "route_fail_open",
         "route_fail_open": bool(runtime_execution.diagnostics.get("route_fail_open"))
         or route_status != "completed",
-        "rag_started_at": rag_agent_state.get("started_at"),
-        "rag_finished_at": rag_agent_state.get("completed_at"),
+        "rag_started_at": rag_service_state.get("started_at"),
+        "rag_finished_at": rag_service_state.get("completed_at"),
         "rag_cancelled": rag_cancelled,
         "rag_cancel_stage": rag_cancel_stage or None,
     }
     return runtime_execution.result, diagnostics
-
-
-def _fetch_rag_answer_detail_for_worker(
-    *,
-    request_id: str,
-    customer_message: str,
-    ticket_id: str,
-    customer_id: str | None,
-    requester: str | None = None,
-    ticket_context: list[dict[str, str]],
-    product: str | None = None,
-) -> RagTicketAnswerDetail:
-    timeout_seconds = _worker_rag_timeout_seconds()
-    recovery_window_seconds = _worker_rag_recovery_window_seconds()
-    recovery_poll_interval_seconds = _worker_rag_recovery_poll_interval_seconds()
-    max_wait_seconds = _worker_rag_max_wait_seconds()
-    try:
-        detail = rag_service_client.query_answer_with_recovery_detail(
-            question=customer_message,
-            request_id=request_id,
-            ticket_id=ticket_id,
-            customer_id=customer_id,
-            requester=requester,
-            ticket_context=ticket_context,
-            product=product,
-            query_policy="client_accuracy_first",
-            insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
-            timeout_seconds=timeout_seconds,
-            recovery_window_seconds=recovery_window_seconds,
-            recovery_poll_interval_seconds=recovery_poll_interval_seconds,
-        )
-        return with_rag_detail_diagnostics(
-            detail,
-            {
-                "rag_timeout_seconds": timeout_seconds,
-                "rag_recovery_window_seconds": recovery_window_seconds,
-                "rag_max_wait_seconds": max_wait_seconds,
-                "rag_recovered_from_live_detail": bool(_detail_diagnostic_value(detail, "rag_recovered_from_live_detail")),
-            },
-        )
-    except RagServiceError as exc:
-        payload = exc.payload if isinstance(exc.payload, dict) else {}
-        if exc.status_code == 409 and str(payload.get("reason") or "").strip() == "cancelled_by_route_flip":
-            raise _WorkerRagCancelled(stage=str(payload.get("stage") or "").strip() or None) from exc
-        failure_kind = classify_rag_service_failure_kind(exc)
-        timeout_health_status = _worker_timeout_health_status() if failure_kind == "timeout" else None
-        reason = _rag_failure_reason(exc, timeout_health_status=timeout_health_status)
-        diagnostics = {
-            "rag_failure_kind": failure_kind,
-            "rag_timeout_seconds": timeout_seconds,
-            "rag_recovery_window_seconds": recovery_window_seconds,
-            "rag_max_wait_seconds": max_wait_seconds,
-            "rag_recovered_from_live_detail": False,
-            "rag_timeout_health_check_status": timeout_health_status,
-        }
-        LOGGER.warning(
-            "Worker RAG service call failed request_id=%s ticket_id=%s reason=%s failure_kind=%s status_code=%s error=%s",
-            request_id,
-            ticket_id,
-            reason,
-            failure_kind,
-            exc.status_code,
-            exc,
-        )
-        return _fallback_rag_answer_detail(reason, diagnostics=diagnostics)
 
 
 def _execute_parallel_ticket_query(

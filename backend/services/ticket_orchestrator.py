@@ -395,7 +395,7 @@ def orchestrate_ticket_execution(
             decision=route_decision,
         )
 
-    def _rag_agent(**_kwargs: Any) -> RagTicketAnswerDetail:
+    def _rag_executor(**_kwargs: Any) -> RagTicketAnswerDetail:
         return _resolution_to_rag_detail(_route_executor())
 
     runtime_execution = execute_client_ticket_agent_runtime(
@@ -412,7 +412,7 @@ def orchestrate_ticket_execution(
         has_active_engineer_case=False,
         route_agent=_route_agent,
         route_executor=_route_executor,
-        rag_agent=_rag_agent,
+        rag_executor=_rag_executor,
         review_agent=_compat_review_agent,
         rag_canceler=None,
     )

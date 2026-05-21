@@ -165,7 +165,7 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                     "ticket_id": "TK-TRACE-001",
                     "message_id": "2026-04-04T00:00:01+00:00",
                     "run_id": "run-123",
-                    "agent_name": "rag_agent",
+                    "agent_name": "rag_service",
                     "phase": "running",
                     "event_type": "started",
                     "payload": {
@@ -192,7 +192,7 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                     "ticket_id": "TK-TRACE-001",
                     "message_id": "2026-04-04T00:00:01+00:00",
                     "run_id": "run-123",
-                    "agent_name": "rag_agent",
+                    "agent_name": "rag_service",
                     "phase": "completed",
                     "event_type": "completed",
                     "payload": {
@@ -276,6 +276,7 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(summary["raw_ids"]["request_id"], "rag-123")
         self.assertEqual(summary["main_agent"]["workflow_action"], "answer_customer")
         self.assertEqual(summary["route_agent"]["decision"], "rag")
+        self.assertEqual(summary["rag_service"]["decision"], "grounded_answer")
         self.assertEqual(summary["rag_agent"]["decision"], "grounded_answer")
         self.assertEqual(summary["review_agent"]["status"], "skipped")
         self.assertEqual(summary["rag_internal_telemetry"]["status"], "available")
@@ -578,7 +579,7 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                     "ticket_id": "TK-TRACE-002",
                     "message_id": "2026-04-04T00:00:01+00:00",
                     "run_id": "run-456",
-                    "agent_name": "rag_agent",
+                    "agent_name": "rag_service",
                     "phase": "running",
                     "event_type": "started",
                     "payload": {
@@ -746,6 +747,15 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                         "started_at": "2026-04-04T00:00:01.010000+00:00",
                         "completed_at": "2026-04-04T00:00:10.010000+00:00",
                     },
+                    "rag_service": {
+                        "status": "completed",
+                        "phase": "completed",
+                        "decision": "grounded_answer",
+                        "reason": "grounded_answer",
+                        "request_id": "rag-789",
+                        "started_at": "2026-04-04T00:00:01.020000+00:00",
+                        "completed_at": "2026-04-04T00:00:09.000000+00:00",
+                    },
                     "rag_agent": {
                         "status": "completed",
                         "phase": "completed",
@@ -802,6 +812,86 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(summary["raw_ids"]["request_id"], "rag-789")
         self.assertEqual(summary["main_agent"]["ended_at"], "2026-04-04T00:00:10.010000+00:00")
         self.assertGreater(summary["main_agent"]["duration_ms"], 8000)
+
+
+    def test_build_trace_summary_interprets_historical_rag_agent_events_for_trace_reports(self) -> None:
+        module = _load_script_module()
+
+        summary = module.build_trace_summary(
+            ticket={
+                "ticket_id": "TK-TRACE-LEGACY",
+                "customer_id": "C-TRACE-LEGACY",
+                "product": "audio_video_calling",
+                "client_agent_runtime_state": {
+                    "active_run_id": "run-legacy",
+                    "workflow_action": "answer_customer",
+                    "status": "completed",
+                },
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "how to join channel",
+                        "created_at": "2026-04-04T00:00:01+00:00",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Use joinChannel with a valid token.",
+                        "created_at": "2026-04-04T00:00:04+00:00",
+                        "answer_route": "rag",
+                        "route_reason": "grounded_answer",
+                        "workflow_action": "answer_customer",
+                    },
+                ],
+            },
+            request_context={
+                "ticket_id": "TK-TRACE-LEGACY",
+                "customer_id": "C-TRACE-LEGACY",
+                "product": "audio_video_calling",
+                "message": "how to join channel",
+                "message_created_at": "2026-04-04T00:00:01+00:00",
+                "question_started_at": "2026-04-04T00:00:00+00:00",
+                "ack_received_at": "2026-04-04T00:00:00.300000+00:00",
+            },
+            ack_payload={"ack_text": "Got it", "latency_ms": 300.0},
+            query_payload={"processing_mode": "main_agent_async", "queued_for_ai": True},
+            ticket_events=[],
+            agent_events=[
+                {
+                    "ticket_id": "TK-TRACE-LEGACY",
+                    "message_id": "2026-04-04T00:00:01+00:00",
+                    "run_id": "run-legacy",
+                    "agent_name": "rag_agent",
+                    "phase": "running",
+                    "event_type": "started",
+                    "payload": {
+                        "request_id": "rag-legacy-1",
+                        "created_at": "2026-04-04T00:00:01.030000+00:00",
+                    },
+                    "created_at": "2026-04-04T00:00:05+00:00",
+                },
+                {
+                    "ticket_id": "TK-TRACE-LEGACY",
+                    "message_id": "2026-04-04T00:00:01+00:00",
+                    "run_id": "run-legacy",
+                    "agent_name": "rag_agent",
+                    "phase": "completed",
+                    "event_type": "completed",
+                    "payload": {
+                        "decision": "grounded_answer",
+                        "confidence": 0.96,
+                        "created_at": "2026-04-04T00:00:03.700000+00:00",
+                    },
+                    "created_at": "2026-04-04T00:00:05+00:00",
+                },
+            ],
+            rag_run=None,
+        )
+
+        self.assertEqual(summary["rag_service"]["decision"], "grounded_answer")
+        self.assertEqual(summary["rag_agent"]["decision"], "grounded_answer")
+        self.assertEqual(summary["rag_service"]["status"], "completed")
+        self.assertEqual(summary["rag_agent"]["status"], "completed")
+        self.assertEqual(summary["raw_ids"]["rag_request_id"], "rag-legacy-1")
 
 
 if __name__ == "__main__":

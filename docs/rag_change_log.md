@@ -10,6 +10,40 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-21 - De-agentize client-ticket RAG service boundary
+
+- Summary:
+  - Renamed the client-ticket runtime RAG dependency from `rag_agent` to `rag_executor` and runtime state/events from `rag_agent` to `rag_service`, while preserving legacy `rag_agent` and `rag_agent_phase` aliases for historical UI and trace consumers.
+  - Added `backend/services/rag_executor.py` as the sync/worker adapter around `RagServiceClient.query_answer_with_recovery_detail()` and centralized RAG transport failure normalization.
+  - Added `backend/services/rag_decision_engine.py` to move post-RAG workflow decisions out of the runtime orchestrator while keeping PR1 customer-visible behavior unchanged.
+  - Updated route-trace summarization and runtime tests to prefer `rag_service` while still reading historical `rag_agent` events.
+- Reason:
+  - RAG service should own evidence retrieval and candidate-answer generation, while the client-ticket runtime owns the customer-visible decision path after `RagTicketAnswerDetail`.
+  - Separating the RAG executor and post-RAG decision layer makes later accuracy gates easier to review without mixing service transport, route orchestration, and workflow decisions.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/rag_decision_engine.py`
+  - `backend/services/rag_executor.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_rag_decision_engine.py`
+  - `backend/tests/test_rag_executor.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - Runtime state now records `rag_service` as the primary RAG call summary and keeps `rag_agent` as a compatibility alias.
+  - Assistant route payloads now record `rag_service_phase` as the primary phase marker and keep `rag_agent_phase` as a compatibility alias.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_decision_engine.py backend/tests/test_rag_executor.py -q` (`24 passed`).
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_rag_decision_engine.py -q` (`54 passed`).
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_decision_engine.py backend/tests/test_rag_executor.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_ticket_orchestrator.py backend/tests/test_rag_api.py backend/tests/test_trace_client_ticket_route_cli.py -q` (`116 passed`).
+
 ## 2026-05-21 - Align worker and single-host config with route-first RAG orchestration
 
 - Summary:

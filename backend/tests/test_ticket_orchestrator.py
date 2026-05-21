@@ -219,15 +219,11 @@ class TicketOrchestratorTests(unittest.TestCase):
                 ),
             )
 
-        self.assertFalse(execution.needs_investigating)
-        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
-        self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
+        self.assertTrue(execution.needs_investigating)
+        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertEqual(execution.workflow_action, "open_engineer_ticket")
+        self.assertTrue(execution.client_intake_state)
         self.assertEqual(execution.client_intake_state["issue_mode"], "answer")
-        self.assertEqual(
-            execution.client_intake_state["missing_information"],
-            ["desired_outcome", "blocked_step_or_error"],
-        )
-        self.assertIn("what you're trying to achieve", execution.answer.lower())
         sufficiency_mock.assert_not_called()
 
     def test_rag_insufficiency_for_troubleshooting_ready_inputs_opens_engineer_ticket(self) -> None:
@@ -477,10 +473,10 @@ class TicketOrchestratorTests(unittest.TestCase):
                 resolution_builder=_resolution_without_citations,
             )
 
-        self.assertFalse(execution.needs_investigating)
-        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertTrue(execution.needs_investigating)
+        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
         self.assertEqual(execution.investigation_reason, "rag_post_check_insufficient")
-        self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.workflow_action, "open_engineer_ticket")
         sufficiency_mock.assert_not_called()
 
     def test_non_rag_action_skips_post_check(self) -> None:

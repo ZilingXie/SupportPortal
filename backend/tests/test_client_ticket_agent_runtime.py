@@ -79,7 +79,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertEqual(AGENT_NAME_MAIN, "main_agent")
         self.assertEqual(AGENT_NAME_ROUTE, "route_agent")
-        self.assertEqual(AGENT_NAME_RAG, "rag_agent")
+        self.assertEqual(AGENT_NAME_RAG, "rag_service")
         self.assertEqual(AGENT_NAME_REVIEW, "review_agent")
         self.assertTrue(callable(execute_client_ticket_agent_runtime))
         self.assertTrue(hasattr(ClientTicketAgentRuntimeState, "__dataclass_fields__"))
@@ -202,7 +202,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 execution_action="resolve_ticket",
                 tooling_profile="deterministic_resolution",
             ),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
             rag_canceler=None,
         )
@@ -221,8 +221,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(execution.result.needs_investigating)
         self.assertIn("I'll mark this case as resolved", execution.result.answer)
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "completed")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "non_rag_route")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("reason"), "non_rag_route")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_runtime_surfaces_evidence_verdict_diagnostics_without_changing_workflow_action(self) -> None:
@@ -265,7 +265,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="Call joinChannel with the same channel name and token on each client.",
                 confidence=0.91,
                 sources=["https://docs.agora.io/en/video-calling/get-started"],
@@ -292,8 +292,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.diagnostics["rag_evidence_judge_decision"], "answer_now")
         self.assertIsNone(execution.diagnostics["rag_evidence_handoff_reason"])
         self.assertEqual(execution.diagnostics["rag_evidence_citation_coverage_ratio"], 1.0)
-        self.assertEqual(execution.runtime_state.rag_agent["evidence_verdict"]["risk_level"], "low")
-        self.assertEqual(execution.runtime_state.rag_agent["evidence_verdict"]["judge_decision"], "answer_now")
+        self.assertEqual(execution.runtime_state.rag_service["evidence_verdict"]["risk_level"], "low")
+        self.assertEqual(execution.runtime_state.rag_service["evidence_verdict"]["judge_decision"], "answer_now")
 
     def test_resolved_confirmation_returns_chinese_resolution_message(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -350,7 +350,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 execution_action="resolve_ticket",
                 tooling_profile="deterministic_resolution",
             ),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
             rag_canceler=None,
         )
@@ -386,7 +386,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             current_ticket_status="communicating",
             route_agent=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("router unavailable")),
             route_executor=lambda **_kwargs: self.fail("route executor should not run when the route agent fails"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation fallback"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation fallback"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation fallback"),
             rag_canceler=None,
         )
@@ -395,7 +395,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.next_status, "resolved")
         self.assertEqual(execution.result.route_reason, "customer_confirmed_resolved")
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "failed")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_gratitude_after_non_substantive_reply_returns_controlled_response_without_resolving(self) -> None:
@@ -453,7 +453,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 execution_action="controlled_response",
                 tooling_profile="controlled_acknowledgement",
             ),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="",
                 confidence=0.0,
                 sources=[],
@@ -514,7 +514,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="Please share the exact error or blocker you're seeing.",
                 confidence=0.41,
                 sources=[],
@@ -587,7 +587,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 execution_action="web_search",
                 tooling_profile="official_web_search",
             ),
-            rag_agent=_rag_agent,
+            rag_executor=_rag_agent,
             review_agent=lambda **_kwargs: self.fail("review agent should not run for non-rag route"),
             rag_canceler=lambda request_id: cancelled.append(request_id) or {"cancelled": True, "stage": "route_flip"},
         )
@@ -596,9 +596,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.workflow_action, "answer_customer")
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "web_search")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "non_rag_route")
-        self.assertTrue(str(execution.runtime_state.rag_agent.get("request_id") or "").startswith("rag-"))
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("reason"), "non_rag_route")
+        self.assertTrue(str(execution.runtime_state.rag_service.get("request_id") or "").startswith("rag-"))
         self.assertFalse(rag_calls)
         self.assertFalse(cancelled, "rag cancel should not be requested when RAG never started")
         self.assertFalse(
@@ -673,14 +673,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
             message_id="2026-04-04T00:00:00+00:00",
             route_agent=_route_agent,
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=_rag_agent,
+            rag_executor=_rag_agent,
             review_agent=lambda **_kwargs: self.fail("grounded rag answer should not run review"),
             rag_canceler=lambda _request_id: self.fail("rag canceler should not run for rag route"),
         )
 
         self.assertEqual(execution.result.execution_action, "rag")
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "completed")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "completed")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "completed")
         self.assertTrue(route_returned.is_set())
         self.assertTrue(rag_started.is_set())
 
@@ -781,7 +781,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     has_active_engineer_case=bool(kwargs.get("has_active_engineer_case")),
                     decision=kwargs.get("decision"),
                 ),
-                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                     answer="Use joinChannel with a valid token.",
                     confidence=0.91,
                     sources=["https://docs.agora.io/en/video-calling/get-started"],
@@ -805,8 +805,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("Broadcast Streaming", execution.result.answer)
         self.assertTrue(execution.result.answer.endswith("Best Regards,\nSid"))
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "web_search")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "non_rag_route")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("reason"), "non_rag_route")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
         self.assertFalse(cancelled)
         self.assertTrue(
@@ -836,7 +836,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="I couldn't find enough information in the docs alone.",
                 confidence=0.43,
                 sources=[],
@@ -885,7 +885,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="",
                 confidence=0.0,
                 sources=[],
@@ -943,7 +943,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer=(
                     "1. For disbanding a channel, the docs say to fill in `cname` and leave `uid` and `ip` blank. "
                     "The create-rule request parameters also say do not set `uid` to `0`, so you should omit `uid` "
@@ -1012,7 +1012,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer=(
                     "To join a channel, call the SDK join-channel method with your channel name, token, "
                     "user ID, and channel media options."
@@ -1212,7 +1212,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                         tooling_profile="agora_docs_only",
                     ),
                     route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-                    rag_agent=_rag_agent,
+                    rag_executor=_rag_agent,
                     review_agent=lambda **_kwargs: self.fail("review agent should not run for grounded inherited example answers"),
                     rag_canceler=None,
                 )
@@ -1253,7 +1253,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer=(
                     "To join a channel, call the SDK join-channel method with your channel name, token, "
                     "user ID, and channel media options."
@@ -1309,7 +1309,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer=(
                     "To join a channel, call the SDK join-channel method with your channel name, token, "
                     "user ID, and channel media options."
@@ -1368,7 +1368,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="I found relevant support evidence, but I could not verify a complete grounded answer.",
                 confidence=0.41,
                 sources=[],
@@ -1427,7 +1427,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="I couldn't find enough information in the docs alone.",
                 confidence=0.41,
                 sources=[],
@@ -1485,7 +1485,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="I found relevant support evidence, but I could not verify a complete grounded answer.",
                 confidence=0.91,
                 sources=["https://docs.agora.io/en/video-calling/get-started"],
@@ -1574,7 +1574,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     tooling_profile="agora_docs_only",
                 ),
                 route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                     answer="Check whether the remote user is publishing video and the local render view is bound correctly.",
                     confidence=0.88,
                     sources=["https://docs.agora.io/en/video-calling/troubleshooting/black-screen"],
@@ -1644,6 +1644,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             if event.get("agent_name") == "review_agent" and event.get("event_type") == "completed"
         )
         self.assertEqual(review_completed["payload"]["openai_tracing"]["mode"], "pre_engineer_intake")
+        self.assertTrue(trace_contexts)
         self.assertEqual(trace_contexts[0].function_calls[0]["name"], "review_agent.grounded_postcheck")
         self.assertEqual(trace_contexts[1].function_calls[0]["name"], "review_agent.pre_engineer_intake")
 
@@ -1703,7 +1704,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     tooling_profile="agora_docs_only",
                 ),
                 route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                     answer="Call `client.enableDualStream()` before remote users subscribe to the low stream.",
                     confidence=0.9,
                     sources=["https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web"],
@@ -1802,7 +1803,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             },
             route_agent=lambda **_kwargs: self.fail("route agent should not run once investigation intake is complete"),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run once investigation intake is complete"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run once investigation intake is complete"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run once investigation intake is complete"),
             rag_canceler=None,
         )
@@ -1821,10 +1822,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
             "investigation_intake_complete",
         )
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.route_agent.get("reason"), "investigation_intake_complete")
-        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "investigation_intake_complete")
+        self.assertEqual(execution.runtime_state.rag_service.get("reason"), "investigation_intake_complete")
         self.assertEqual(execution.runtime_state.review_agent.get("reason"), "investigation_intake_complete")
 
     def test_tk_122_follow_up_after_first_intake_round_requests_remaining_timestamp_details(self) -> None:
@@ -1860,7 +1861,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             },
             route_agent=lambda **_kwargs: self.fail("route agent should not run during deterministic second clarify"),
             route_executor=lambda **_kwargs: self.fail("route executor should not run during deterministic second clarify"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run during deterministic second clarify"),
             rag_canceler=None,
         )
@@ -1885,7 +1886,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("issue time", execution.result.answer.lower())
         self.assertIn("timezone", execution.result.answer.lower())
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_tk_123_follow_up_without_timestamp_after_first_intake_round_requests_issue_timestamp(self) -> None:
@@ -1921,7 +1922,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             },
             route_agent=lambda **_kwargs: self.fail("route agent should not run during deterministic second clarify"),
             route_executor=lambda **_kwargs: self.fail("route executor should not run during deterministic second clarify"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run during deterministic second clarify"),
             rag_canceler=None,
         )
@@ -1964,7 +1965,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             },
             route_agent=lambda **_kwargs: self.fail("route agent should not run while the legacy second clarify is inferred"),
             route_executor=lambda **_kwargs: self.fail("route executor should not run while the legacy second clarify is inferred"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run while the legacy second clarify is inferred"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run while the legacy second clarify is inferred"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run while the legacy second clarify is inferred"),
             rag_canceler=None,
         )
@@ -2021,7 +2022,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not run when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="I couldn't find enough information in the available support knowledge base to answer that question.",
                 confidence=0.38,
                 sources=[],
@@ -2099,7 +2100,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             },
             route_agent=lambda **_kwargs: self.fail("route agent should not run once two investigation clarify rounds are exhausted"),
             route_executor=lambda **_kwargs: self.fail("route executor should not run once two investigation clarify rounds are exhausted"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run once two investigation clarify rounds are exhausted"),
+            rag_executor=lambda **_kwargs: self.fail("rag agent should not run once two investigation clarify rounds are exhausted"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run once two investigation clarify rounds are exhausted"),
             rag_canceler=None,
         )
@@ -2113,7 +2114,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             {"time": "12:00pm", "timezone": "UTC+8"},
         )
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_follow_up_after_second_investigation_clarify_without_timestamp_opens_engineer_ticket(self) -> None:
@@ -2169,7 +2170,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail(
                 "route executor should not run once two investigation clarify rounds are exhausted"
             ),
-            rag_agent=lambda **_kwargs: self.fail(
+            rag_executor=lambda **_kwargs: self.fail(
                 "rag agent should not run once two investigation clarify rounds are exhausted"
             ),
             review_agent=lambda **_kwargs: self.fail(
@@ -2183,7 +2184,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 2)
         self.assertEqual(execution.result.client_intake_state["phase"], "clarification_limit_reached")
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_grounded_answer_fallback_with_exhausted_investigation_budget_opens_engineer_ticket(self) -> None:
@@ -2286,7 +2287,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="",
                 confidence=0.0,
                 sources=[],
@@ -2372,7 +2373,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     tooling_profile="agora_docs_only",
                 ),
                 route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                     answer="",
                     confidence=0.0,
                     sources=[],
@@ -2474,7 +2475,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     tooling_profile="agora_docs_only",
                 ),
                 route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                     answer="",
                     confidence=0.0,
                     sources=[],
@@ -2530,7 +2531,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="",
                 confidence=0.0,
                 sources=[],
@@ -2591,7 +2592,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="RAG completed but could not verify a customer-safe grounded answer from the available schema evidence.",
                 confidence=0.42,
                 sources=[],
@@ -2649,7 +2650,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="RAG completed but could not verify a customer-safe grounded answer from the available evidence.",
                 confidence=0.42,
                 sources=[],
@@ -2700,7 +2701,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="",
                 confidence=0.0,
                 sources=[],
@@ -2757,7 +2758,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 tooling_profile="agora_docs_only",
             ),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="Use onTokenPrivilegeWillExpire and renewToken before reconnect completes.",
                 confidence=0.88,
                 sources=["https://docs.agora.io/en/video-calling/token-authentication"],
@@ -2795,7 +2796,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 message_id="2026-04-22T00:00:00+00:00",
                 route_agent=decide_support_route,
                 route_executor=lambda **_kwargs: self.fail("route executor should not run when route=rag"),
-                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
                     answer="Check whether the remote user is publishing video and whether the local render view is bound correctly.",
                     confidence=0.9,
                     sources=["https://docs.agora.io/en/video-calling/troubleshooting/black-screen"],
@@ -2825,14 +2826,122 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "rag")
         self.assertEqual(execution.runtime_state.route_agent.get("reason"), "technical_troubleshooting_symptom")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "completed")
+        self.assertEqual(execution.runtime_state.rag_service.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertFalse(
             any(
-                event.get("agent_name") == "rag_agent" and event.get("event_type") == "cancel_requested"
+                event.get("agent_name") == "rag_service" and event.get("event_type") == "cancel_requested"
                 for event in execution.agent_events
             )
         )
+
+    def test_runtime_state_uses_rag_service_phase_with_legacy_alias(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join a channel?",
+            ticket_id="TK-PHASE-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join a channel?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_executor=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Call joinChannel with the same channel name and token on each client.",
+                confidence=0.91,
+                sources=["https://docs.agora.io/en/video-calling/get-started"],
+                citations=[{"chunk_id": "chunk-1"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={},
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail("review should not run for low risk"),
+            rag_canceler=None,
+        )
+
+        route_payload = execution.result.route_payload()
+        self.assertIn("rag_service_phase", route_payload)
+        self.assertIn("rag_agent_phase", route_payload)
+        self.assertEqual(route_payload["rag_service_phase"], "completed")
+        self.assertEqual(route_payload["rag_agent_phase"], "completed")
+        self.assertNotEqual(route_payload["rag_service_phase"], "")
+        runtime_state_payload = execution.runtime_state.as_dict()
+        self.assertIn("rag_service", runtime_state_payload)
+        self.assertIn("rag_agent", runtime_state_payload)
+        self.assertEqual(runtime_state_payload["rag_service"], runtime_state_payload["rag_agent"])
+
+    def test_rag_canceler_contract_preserves_cancelled_by_route_flip_stage(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        cancelled_requests: list[dict[str, object]] = []
+
+        def _rag_canceler(request_id: str) -> dict[str, object]:
+            result = {"cancelled": True, "stage": "route_flip", "request_id": request_id}
+            cancelled_requests.append(result)
+            return result
+
+        execution = execute_client_ticket_agent_runtime(
+            message="Who is Agora's CEO?",
+            ticket_id="TK-CANCEL-CONTRACT-1",
+            customer_id="C-001",
+            ticket_subject="Investor question",
+            ticket_context=[{"role": "customer", "content": "Who is Agora's CEO?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_non_technical",
+                route="web_search",
+                confidence=0.91,
+                reason="company_info",
+                matched_signals=["agora"],
+                response_language="en",
+                route_family="web_company_info",
+                execution_action="web_search",
+                tooling_profile="official_web_search",
+            ),
+            route_executor=lambda **_kwargs: SupportResolution(
+                answer="Agora's latest investor information is on the official site.",
+                confidence=0.82,
+                sources=["https://investor.agora.io"],
+                citations=[],
+                needs_engineer_guidance=False,
+                answer_route="web_search",
+                scope_label="agora_non_technical",
+                route_reason="company_info",
+                route_confidence=0.91,
+                search_used=True,
+                matched_signals=["agora"],
+                route_family="web_company_info",
+                execution_action="web_search",
+                tooling_profile="official_web_search",
+            ),
+            rag_executor=lambda **_kwargs: self.fail("rag executor should not run for non-rag route"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for non-rag route"),
+            rag_canceler=_rag_canceler,
+        )
+
+        self.assertEqual(execution.result.execution_action, "web_search")
+        self.assertIn("rag_canceler", inspect.signature(execute_client_ticket_agent_runtime).parameters)
+
+    def test_runtime_signature_has_rag_executor_and_no_rag_agent(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        sig = inspect.signature(execute_client_ticket_agent_runtime)
+        self.assertIn("rag_executor", sig.parameters)
+        self.assertNotIn("rag_agent", sig.parameters)
 
 
 if __name__ == "__main__":
