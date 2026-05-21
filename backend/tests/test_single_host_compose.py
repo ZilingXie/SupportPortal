@@ -237,7 +237,8 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("STACK_RUNTIME_MODE=full", env_content)
         self.assertIn("STACK_DB_MODE=remote", env_content)
         self.assertIn("STACK_RUNTIME_MODE=local_lightweight", env_local_content)
-        self.assertIn("STACK_DB_MODE=local", env_local_content)
+        self.assertIn("STACK_DB_MODE=remote", env_local_content)
+        self.assertIn("# Use --db local to opt into local Postgres/pgvector.", env_local_content)
 
     def test_api_build_injects_app_build_metadata(self) -> None:
         api_block = self._service_block("api")

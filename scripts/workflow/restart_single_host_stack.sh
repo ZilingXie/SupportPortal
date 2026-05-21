@@ -82,6 +82,7 @@ set -a
 # shellcheck source=/dev/null
 source "$env_file"
 set +a
+base_stack_db_mode="${STACK_DB_MODE:-remote}"
 
 if (( use_local_env )); then
   [[ -f "$local_env_file" ]] || die "Root .env.local not found at $local_env_file. Copy .env.local.example to .env.local for local development defaults."
@@ -92,7 +93,7 @@ if (( use_local_env )); then
 fi
 
 runtime_mode="${runtime_mode_override:-${STACK_RUNTIME_MODE:-full}}"
-db_mode="${db_mode_override:-${STACK_DB_MODE:-remote}}"
+db_mode="${db_mode_override:-$base_stack_db_mode}"
 
 case "$runtime_mode" in
   full|local_lightweight) ;;
