@@ -1,5 +1,8 @@
 # Collaboration Rules
 
+## Cost-Optimized Repair
+For cost-sensitive code repair, prefer the project-local `cost-optimized-repair` skill when the user requests token-efficient delegation or when implementation can be safely delegated.
+
 ## Branch Workflow
 1. Keep the root workspace on a clean `main` checkout at all times. Use it only for browsing, syncing `main`, creating or inspecting worktrees, and fast-forwarding local `main` after task PRs merge.
 2. `main` is the only authoritative long-lived branch for normal development. Do not create or use any local or remote `mac` branch, `mac-integration` worktree, or any other temporary integration branch for routine development or release work.

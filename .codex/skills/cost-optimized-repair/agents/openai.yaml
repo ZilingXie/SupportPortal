@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cost Optimized Repair"
+  short_description: "Delegate repairs, keep Codex on review"
+  default_prompt: "Use $cost-optimized-repair to delegate this repair with a minimal payload and review the returned diff."
