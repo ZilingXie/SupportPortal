@@ -3817,6 +3817,25 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_troubleshooting_intake backend.tests.test_trace_client_ticket_route_cli backend.tests.test_internal_trace_routes backend.tests.test_llm_factory backend.tests.test_openai_agent_tracing`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/openai_agent_tracing.py backend/services/client_ticket_agent_runtime.py backend/services/llm_factory.py backend/services/troubleshooting_intake.py scripts/trace_client_ticket_route.py`
 
+## 2026-05-21 - Double RAG request timeout default for deadline-exhausted mitigation
+
+- Summary:
+  - Increased the single-host `rag_api` default `RAG_REQUEST_TIMEOUT_SECONDS` from `20.0` to `40.0`.
+  - Documented the same `RAG_REQUEST_TIMEOUT_SECONDS=40.0` default in `.env.example`.
+- Reason:
+  - `TK-216` showed a generic join-channel question reaching `deadline_exhausted` during warm BM25/vector retrieval before deterministic join-channel answering could run; this is a short-term mitigation while the fallback logic is adjusted separately.
+- Affected files/config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, or data reset changes.
+  - New single-host deployments without an explicit `RAG_REQUEST_TIMEOUT_SECONDS` override give RAG up to 40 seconds before deadline handling.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_single_host_compose.py -q`
+
 ## 2026-04-22 - Fix OpenAI trace export compatibility for review generation spans
 
 - Summary:
