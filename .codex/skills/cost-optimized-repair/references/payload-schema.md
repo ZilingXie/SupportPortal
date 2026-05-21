@@ -42,7 +42,10 @@ acceptance:
 Use one correction round when the first worker result is close but incomplete.
 
 ```md
-/repair-worker correction
+/repair-worker
+
+mode:
+correction
 
 problem:
 <specific issue in the returned diff, test result, or risk>
@@ -59,5 +62,7 @@ verification:
 acceptance:
 <conditions for the corrected result>
 ```
+
+Do not use `/repair-worker correction`; Claude Code CLI treats slash-command arguments inconsistently. Keep `/repair-worker` as the first line and put `mode: correction` in the payload body.
 
 Do not send a third worker round. After two failed or unsafe rounds, Codex takes over.

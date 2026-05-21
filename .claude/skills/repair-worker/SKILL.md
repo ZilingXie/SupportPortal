@@ -1,6 +1,6 @@
 ---
 name: repair-worker
-description: Project-local Claude Code repair worker. Use when invoked with /repair-worker or given a Codex repair payload containing goal, scope_hints, known_context, constraints, verification, and acceptance. Implement the smallest correct code repair, run the requested verification, and return the fixed structured result.
+description: "Project-local Claude Code repair worker. Use when invoked with /repair-worker, including payloads with mode: correction, or given a Codex repair payload containing goal, scope_hints, known_context, constraints, verification, and acceptance. Implement the smallest correct code repair, run the requested verification, and return the fixed structured result."
 ---
 
 # Repair Worker
@@ -24,6 +24,16 @@ Expect:
 
 If the payload lacks a usable `goal`, ask one concise clarification and stop.
 
+For correction payloads, expect `/repair-worker` as the first line and `mode: correction` in the payload body, then:
+
+- `problem`: specific issue in the returned diff, test result, or risk
+- `must_keep`: parts of the first result that remain acceptable
+- `must_change`: specific changes needed
+- `verification`: command or commands to rerun
+- `acceptance`: conditions Codex will review
+
+Treat `must_change` as the repair objective. Do not ask for `goal` when a correction payload has both `problem` and `must_change`. Do not require or use `/repair-worker correction`.
+
 ## Workflow
 
 1. Read the payload first and restate the goal internally.
@@ -31,7 +41,7 @@ If the payload lacks a usable `goal`, ask one concise clarification and stop.
 3. Make the smallest correct change. Prefer local fixes over new abstractions.
 4. Preserve public APIs, schemas, config, and existing behavior unless the payload explicitly requires a change.
 5. Run the requested verification. If it cannot run, report the blocker and any partial evidence.
-6. Return only the structured result format below.
+6. Return only the strict structured result format below.
 
 ## Boundaries
 
@@ -43,6 +53,8 @@ If the payload lacks a usable `goal`, ask one concise clarification and stop.
 - Stop as `Blocked` if the repair requires unsafe assumptions about auth, payment, migrations, data loss, production secrets, or public API changes.
 
 ## Return Format
+
+Your final answer must begin immediately with `## Result` and use exactly these six H2 headings, in this order, with no alternate headings, tables, preamble, horizontal rule, or extra wrapper title. The `## Result` body must be exactly one of `Fixed`, `Not fixed`, or `Blocked`.
 
 ```md
 ## Result
