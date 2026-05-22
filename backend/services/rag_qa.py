@@ -1633,15 +1633,52 @@ def _generic_join_options_term(join_chunk: RetrievedChunk | None) -> str:
 def _extract_authoritative_code_block(chunk: RetrievedChunk | None) -> str | None:
     if chunk is None:
         return None
-    match = re.search(r"```([A-Za-z0-9_+-]*)\n(.*?)```", str(chunk.text or ""), flags=re.DOTALL)
-    if not match:
-        return None
-    language = str(match.group(1) or "").strip()
-    body = str(match.group(2) or "").strip("\n")
-    if not body:
-        return None
-    fence = f"```{language}" if language else "```"
-    return f"{fence}\n{body}\n```"
+    for code_block, _body in _iter_authoritative_code_blocks(chunk):
+        return code_block
+    return None
+
+
+def _iter_authoritative_code_blocks(chunk: RetrievedChunk | None) -> Iterable[tuple[str, str]]:
+    if chunk is None:
+        return
+    for match in re.finditer(r"```([A-Za-z0-9_+-]*)\n(.*?)```", str(chunk.text or ""), flags=re.DOTALL):
+        language = str(match.group(1) or "").strip()
+        body = str(match.group(2) or "").strip("\n")
+        if not body:
+            continue
+        fence = f"```{language}" if language else "```"
+        yield f"{fence}\n{body}\n```", body
+
+
+def _generic_join_code_block_score(body: str) -> int:
+    text = str(body or "").lower()
+    compact = re.sub(r"\s+", "", text)
+    if not text.strip():
+        return 0
+    score = 0
+    if "joinchannel(" in compact:
+        score += 4
+    elif re.search(r"\bjoin\s*\(", text):
+        score += 2
+    if score <= 0:
+        return 0
+    if any(marker in text for marker in ["channel", "channelid", "channel name"]):
+        score += 1
+    if any(marker in text for marker in ["token", "uid", "user id", "userid"]):
+        score += 1
+    return score
+
+
+def _extract_generic_join_code_block(*chunks: RetrievedChunk | None) -> str | None:
+    best_block: str | None = None
+    best_score = 0
+    for chunk in chunks:
+        for code_block, body in _iter_authoritative_code_blocks(chunk):
+            score = _generic_join_code_block_score(body)
+            if score > best_score:
+                best_block = code_block
+                best_score = score
+    return best_block
 
 
 def _answer_has_fenced_code_block(value: str) -> bool:
@@ -1968,17 +2005,7 @@ def _build_generic_join_grounded_answer(
     cited_chunks = [join_chunk]
     if auth_chunk is not None and _chunk_dedupe_key(auth_chunk) != _chunk_dedupe_key(join_chunk):
         cited_chunks.append(auth_chunk)
-    example_code_block = next(
-        (
-            block
-            for block in (
-                _extract_authoritative_code_block(join_chunk),
-                _extract_authoritative_code_block(auth_chunk),
-            )
-            if block
-        ),
-        None,
-    )
+    example_code_block = _extract_generic_join_code_block(join_chunk, auth_chunk)
     body = (
         "To join a channel, call the SDK join method with your channel name, authentication token, "
         f"user ID, and {options_term}. The channel name identifies which channel to join, the token "

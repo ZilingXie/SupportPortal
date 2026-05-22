@@ -3057,6 +3057,63 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("join method", result.answer.answer.lower())
         self.assertIn("channelmediaoptions", result.answer.answer.lower())
 
+    def test_generic_join_reference_example_skips_dependency_setup_blocks(self) -> None:
+        join_chunk = RetrievedChunk(
+            chunk_id="join-windows-setup",
+            text=(
+                "Quickstart setup text. After the setup phase, call the SDK join method "
+                "with a channel name, token, and user ID to join a channel."
+            ),
+            source_path="official/get-started-sdk_windows.md",
+            similarity=0.95,
+            h1="Quickstart",
+            h2="Set up your project",
+            metadata={"product": "voice-calling", "platform": "windows"},
+        )
+        auth_chunk = RetrievedChunk(
+            chunk_id="auth-flutter",
+            text=(
+                "Use a token to join a channel.\n\n"
+                "```yaml\n"
+                "dependencies:\n"
+                "  agora_rtc_engine: ^6.3.0\n"
+                "  http: ^0.13.5\n"
+                "```\n\n"
+                "Then call the join method with the token, channel name, and user ID.\n\n"
+                "```dart\n"
+                "await _engine.joinChannel(\n"
+                "  token: token,\n"
+                "  channelId: channelName,\n"
+                "  uid: uid,\n"
+                "  options: const ChannelMediaOptions(),\n"
+                ");\n"
+                "```"
+            ),
+            source_path="official/authentication-workflow_flutter.md",
+            similarity=0.9,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "video-calling",
+                "platform": "flutter",
+                "source_family": "video-calling/get-started/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+
+        answer = rag_qa._build_generic_join_grounded_answer(
+            "How do I join the channel?",
+            [join_chunk, auth_chunk],
+            product="audio_video_calling",
+        )
+
+        self.assertIsNotNone(answer)
+        assert answer is not None
+        self.assertIn("Reference Example:", answer.answer)
+        self.assertIn("_engine.joinChannel", answer.answer)
+        self.assertNotIn("dependencies:", answer.answer)
+
     def test_run_rag_query_short_how_to_faq_accepts_token_auth_chunk_that_already_covers_join_flow(self) -> None:
         auth_join_chunk = RetrievedChunk(
             chunk_id="auth-join-android",
