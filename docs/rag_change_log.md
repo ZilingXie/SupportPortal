@@ -10,6 +10,26 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-22 - Keep generic join reference examples on actual join calls
+
+- Summary:
+  - Tightened the deterministic generic join-channel answer path so `Reference Example` code blocks must contain an actual SDK join invocation instead of any first fenced block from the selected evidence.
+  - Added regression coverage for the TK-219 shape where a Flutter token-authentication chunk begins with a `pubspec.yaml` dependency block before the real `_engine.joinChannel(...)` example.
+- Reason:
+  - `TK-219` answered the join-channel question correctly in prose but surfaced a misleading `Reference Example` that only showed Flutter dependencies, because the generic join answer builder accepted the first fenced block from the auth chunk without checking that it demonstrated joining a channel.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - Future generic join-channel answers may omit `Reference Example` when selected evidence has no actual join-call code block, instead of showing setup or dependency snippets.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py::RagQaHybridTests::test_generic_join_reference_example_skips_dependency_setup_blocks -q` failed because the answer included `dependencies:` and omitted `_engine.joinChannel`.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py::RagQaHybridTests::test_generic_join_reference_example_skips_dependency_setup_blocks -q` (`1 passed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -k 'generic_join or follow_up_code_example or short_how_to_faq' -q` (`16 passed, 77 deselected`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_client_ticket_agent_runtime.py -k 'follow_up_code_example or polite_onboarding_how_to_grounded_answer' -q` (`2 passed, 47 deselected`).
+
 ## 2026-05-21 - Keep local lightweight stack on remote RAG DB by default
 
 - Summary:
