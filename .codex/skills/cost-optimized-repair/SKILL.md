@@ -29,7 +29,7 @@ Do not delegate by default when the task involves security, auth, payment, data 
 
 ## Claude CLI Invocation
 
-Use a minimal, budget-capped CLI invocation. Avoid plain `claude -p "$payload"` for this workflow because it can load broad project context, deny tools, or select an expensive default model.
+Use a guarded CLI invocation with the explicit Claude Code worker model and effort. Avoid plain `claude -p "$payload"` for this workflow because it can load broad project context, deny tools, or select a model/effort that does not match the intended DeepSeek-backed worker.
 
 For implementation rounds:
 
@@ -38,15 +38,15 @@ claude --bare -p "$payload" \
   --output-format json \
   --permission-mode bypassPermissions \
   --tools "Read,Edit,Bash" \
-  --model haiku \
-  --max-budget-usd 0.10 \
+  --model opus \
+  --effort max \
   --append-system-prompt "For /repair-worker tasks, the final answer must start with ## Result and use exactly these H2 headings in order: ## Result, ## Files Changed, ## What Changed, ## Verification, ## Risk / Uncertainty, ## Needs Codex Review. No preamble, tables, alternate headings, or wrapper title." \
   --no-session-persistence
 ```
 
 For read-only probes, use `--tools "Read,Bash"`.
 
-After every CLI call, inspect the JSON result for `is_error`, `result`, `total_cost_usd`, `modelUsage`, and `permission_denials`. Treat budget errors, permission denials, or missing worker sections as a failed worker round.
+After every CLI call, inspect the JSON result for `is_error`, `result`, `total_cost_usd`, `modelUsage`, and `permission_denials`. Treat permission denials, CLI errors, or missing worker sections as a failed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
 
 To verify the local CLI path without modifying files, run:
 
