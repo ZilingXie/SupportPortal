@@ -22,37 +22,37 @@ Do not delegate by default when the task involves security, auth, payment, data 
 1. Classify whether the repair is safe to delegate. If unclear, read `references/escalation-policy.md`.
 2. Read only enough context to create a precise payload: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, and nearby call sites when necessary.
 3. Build a short payload using `references/payload-schema.md`. Do not paste a full worker brief.
-4. Dispatch the payload through the Claude Code CLI using the guarded command shape below. If no direct dispatch path is available, give the payload to the user and ask for the worker result instead of expanding Codex implementation.
+4. Dispatch the payload through `scripts/run_repair_worker.py`, not by calling `claude` directly.
 5. Review the returned files, diff, and test evidence with `references/review-checklist.md`.
-6. If the result is close but flawed, send one concise correction payload. After two failed, blocked, or unsafe worker rounds, stop delegating and have Codex take over.
-7. Finish with the repository's normal task classification, verification, and finalization rules.
+6. If `worker_status` is `failed`, count it as a failed worker round, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
+7. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, or no-report worker rounds, stop delegating and have Codex take over.
+8. Finish with the repository's normal task classification, verification, and finalization rules.
 
 ## Claude CLI Invocation
 
-Use a guarded CLI invocation with the explicit Claude Code worker model and effort. Avoid plain `claude -p "$payload"` for this workflow because it can load broad project context, deny tools, or select a model/effort that does not match the intended DeepSeek-backed worker.
+Use the runner so Codex gets a structured result even when Claude Code hangs, returns non-JSON output, or leaves a partial diff. Store the payload outside the repo, for example under `/tmp`, so the task worktree stays clean before dispatch.
 
 For implementation rounds:
 
 ```bash
-claude --bare -p "$payload" \
-  --output-format json \
-  --permission-mode bypassPermissions \
-  --tools "Read,Edit,Bash" \
-  --model opus \
-  --effort max \
-  --append-system-prompt "For /repair-worker tasks, the final answer must start with ## Result and use exactly these H2 headings in order: ## Result, ## Files Changed, ## What Changed, ## Verification, ## Risk / Uncertainty, ## Needs Codex Review. No preamble, tables, alternate headings, or wrapper title." \
-  --no-session-persistence
+python3 .codex/skills/cost-optimized-repair/scripts/run_repair_worker.py \
+  --payload-file /tmp/repair-worker-payload.md \
+  --restore-on-failure
 ```
 
-For read-only probes, use `--tools "Read,Bash"`.
+The runner uses `--model opus --effort max` by default and does not set a budget cap. For read-only probes, add `--tools "Read,Bash"`. For intentionally short smoke tests only, add `--max-budget-usd`.
 
-After every CLI call, inspect the JSON result for `is_error`, `result`, `total_cost_usd`, `modelUsage`, and `permission_denials`. Treat permission denials, CLI errors, or missing worker sections as a failed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
+After every runner call, inspect `worker_status`, `failure_reason`, `partial_diff_stat`, `partial_diff_files`, `restored_partial_diff`, `stdout`, `stderr`, `worker_result`, `total_cost_usd`, `modelUsage`, and `permission_denials`. Treat permission denials, CLI errors, timeouts, invalid JSON, missing worker sections, or unrestored partial diffs as a failed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
 
 To verify the local CLI path without modifying files, run:
 
 ```bash
 python3 .codex/skills/cost-optimized-repair/scripts/verify_claude_cli_flow.py
 ```
+
+## Failure Reporting
+
+Final task reports must say whether the worker succeeded, failed, or was skipped. If Codex takes over after worker failure, report the failure reason and cleanup state, for example: `worker timed out without JSON; partial diff touched <files>; runner restored it; Codex then implemented and verified the fix directly`.
 
 ## Context Budget
 
