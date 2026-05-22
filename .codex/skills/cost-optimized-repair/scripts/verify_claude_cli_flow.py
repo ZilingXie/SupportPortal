@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 
 EXPECTED_HEADINGS = [
@@ -107,47 +109,73 @@ def main() -> int:
     parser.add_argument("--model", default="opus")
     parser.add_argument("--effort", default="max", choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--max-budget-usd", type=float, default=None, help="Optional smoke-test safety cap")
+    parser.add_argument("--timeout-sec", type=float, default=1200)
     args = parser.parse_args()
 
     if shutil.which("claude") is None:
         print("claude CLI not found on PATH", file=sys.stderr)
         return 1
 
-    before_status = git_status()
-    command = [
-        "claude",
-        "--bare",
-        "-p",
-        build_payload(),
-        "--output-format",
-        "json",
-        "--permission-mode",
-        "bypassPermissions",
-        "--tools",
-        "Read,Bash",
-        "--model",
-        args.model,
-        "--effort",
-        args.effort,
-        "--append-system-prompt",
-        OUTPUT_GUARD,
-        "--no-session-persistence",
-    ]
-    if args.max_budget_usd is not None:
-        command.extend(["--max-budget-usd", str(args.max_budget_usd)])
-    completed = subprocess.run(command, check=True, capture_output=True, text=True)
-    try:
-        response = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise AssertionError(f"Claude CLI did not return JSON: {completed.stdout}") from exc
+    runner = Path(__file__).with_name("run_repair_worker.py")
+    if not runner.exists():
+        print(f"runner not found: {runner}", file=sys.stderr)
+        return 1
 
-    after_status = git_status()
-    validate_worker_result(response, before_status, after_status, args.max_budget_usd)
+    payload_file = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".md")
+    try:
+        payload_file.write(build_payload())
+        payload_file.close()
+        before_status = git_status()
+        command = [
+            sys.executable,
+            str(runner),
+            "--payload-file",
+            payload_file.name,
+            "--timeout-sec",
+            str(args.timeout_sec),
+            "--tools",
+            "Read,Bash",
+            "--restore-on-failure",
+            "--model",
+            args.model,
+            "--effort",
+            args.effort,
+        ]
+        if args.max_budget_usd is not None:
+            command.extend(["--max-budget-usd", str(args.max_budget_usd)])
+        completed = subprocess.run(command, capture_output=True, text=True)
+        if completed.returncode != 0:
+            raise AssertionError(
+                "Runner reported worker failure.\n"
+                f"stdout:\n{completed.stdout}\n"
+                f"stderr:\n{completed.stderr}"
+            )
+        try:
+            response = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise AssertionError(f"Runner did not return JSON: {completed.stdout}") from exc
+    finally:
+        Path(payload_file.name).unlink(missing_ok=True)
+
+    if response.get("worker_status") != "succeeded":
+        raise AssertionError(f"Runner reported worker failure: {response}")
+    worker_result = response.get("worker_result")
+    if not isinstance(worker_result, dict):
+        raise AssertionError(f"Runner did not include worker_result: {response}")
+
+    command = [
+        "git",
+        "status",
+        "--short",
+        "--branch",
+    ]
+    after_status = run_text(command)
+    validate_worker_result(worker_result, before_status, after_status, args.max_budget_usd)
     print(
         "Claude CLI flow verified: "
         f"model={args.model}, effort={args.effort}, "
         f"cost=${float(response.get('total_cost_usd') or 0):.6f}, "
-        f"session={response.get('session_id', '')}"
+        f"session={worker_result.get('session_id', '')}"
     )
     return 0
 
