@@ -42,7 +42,7 @@ python3 .codex/skills/cost-optimized-repair/scripts/run_repair_worker.py \
 
 The runner uses `--model opus --effort max` by default and does not set a budget cap. For read-only probes, add `--tools "Read,Bash"`. For intentionally short smoke tests only, add `--max-budget-usd`.
 
-After every runner call, inspect `worker_status`, `failure_reason`, `partial_diff_stat`, `partial_diff_files`, `restored_partial_diff`, `stdout`, `stderr`, `worker_result`, `total_cost_usd`, `modelUsage`, and `permission_denials`. Treat permission denials, CLI errors, timeouts, invalid JSON, missing worker sections, or unrestored partial diffs as a failed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
+After every runner call, inspect `worker_status`, `failure_reason`, `partial_diff_stat`, `partial_diff_files`, `restored_partial_diff`, `normalized_worker_result`, `stdout`, `stderr`, `worker_result`, `total_cost_usd`, `modelUsage`, and `permission_denials`. Treat permission denials, CLI errors, timeouts, invalid JSON, missing worker sections, or unrestored partial diffs as a failed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
 
 To verify the local CLI path without modifying files, run:
 

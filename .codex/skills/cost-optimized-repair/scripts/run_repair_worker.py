@@ -69,6 +69,18 @@ def result_headings(result: str) -> list[str]:
     return re.findall(r"^## .+$", without_fenced_code(result), flags=re.MULTILINE)
 
 
+def normalize_worker_result(payload: dict[str, object]) -> bool:
+    result = payload.get("result")
+    if not isinstance(result, str):
+        return False
+    stripped = result.strip()
+    marker = stripped.find("## Result")
+    if marker <= 0:
+        return False
+    payload["result"] = stripped[marker:]
+    return True
+
+
 def validate_worker_json(payload: dict[str, object]) -> str | None:
     if payload.get("is_error"):
         return "worker_error"
@@ -166,6 +178,7 @@ def base_report(args: argparse.Namespace, before_status: str) -> dict[str, objec
         "total_cost_usd": None,
         "modelUsage": None,
         "permission_denials": None,
+        "normalized_worker_result": False,
         "codex_action_required": (
             "Record the worker failure in the final report. If the worker left a partial diff, "
             "restore it before Codex takes over unless the user explicitly asks to inspect it."
@@ -224,6 +237,7 @@ def main() -> int:
             failure_reason = "invalid_json"
 
     if parsed is not None:
+        report["normalized_worker_result"] = normalize_worker_result(parsed)
         report["worker_result"] = parsed
         report["total_cost_usd"] = parsed.get("total_cost_usd")
         report["modelUsage"] = parsed.get("modelUsage")
