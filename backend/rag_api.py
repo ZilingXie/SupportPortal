@@ -74,63 +74,26 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
     "review",
 )
 RAG_PROMPT_VERSION = "rag-v5-product-troubleshooting-intake"
-_INFLIGHT_RAG_REQUESTS: dict[str, dict[str, Any]] = {}
-_INFLIGHT_RAG_REQUESTS_LOCK = threading.Lock()
 _RAG_QUERY_TELEMETRY_MAX_PENDING = 64
 _RAG_QUERY_TELEMETRY_EXECUTOR: ThreadPoolExecutor | None = None
 _RAG_QUERY_TELEMETRY_SEMAPHORE = threading.Semaphore(_RAG_QUERY_TELEMETRY_MAX_PENDING)
 _RAG_QUERY_TELEMETRY_LOCK = threading.Lock()
 
 
-def _register_inflight_rag_request(request_id: str) -> dict[str, Any]:
-    state = {
+def _new_rag_cancel_state() -> dict[str, Any]:
+    return {
         "cancel_event": threading.Event(),
         "last_stage": None,
-        "registered_at": now_iso(),
     }
-    normalized_request_id = str(request_id or "").strip()
-    if not normalized_request_id:
-        return state
-    with _INFLIGHT_RAG_REQUESTS_LOCK:
-        _INFLIGHT_RAG_REQUESTS[normalized_request_id] = state
-    return state
 
 
-def _cleanup_inflight_rag_request(request_id: str) -> None:
-    normalized_request_id = str(request_id or "").strip()
-    if not normalized_request_id:
-        return
-    with _INFLIGHT_RAG_REQUESTS_LOCK:
-        _INFLIGHT_RAG_REQUESTS.pop(normalized_request_id, None)
-
-
-def _update_inflight_rag_stage(request_id: str, stage: str) -> None:
-    normalized_request_id = str(request_id or "").strip()
-    if not normalized_request_id:
-        return
-    with _INFLIGHT_RAG_REQUESTS_LOCK:
-        state = _INFLIGHT_RAG_REQUESTS.get(normalized_request_id)
-        if state is not None:
-            state["last_stage"] = str(stage or "").strip() or None
+def _record_rag_cancel_stage(state: dict[str, Any], stage: str) -> None:
+    state["last_stage"] = str(stage or "").strip() or None
 
 
 def _cancel_inflight_rag_request(request_id: str) -> dict[str, Any]:
     normalized_request_id = str(request_id or "").strip()
-    if not normalized_request_id:
-        return {"request_id": normalized_request_id, "cancelled": False, "found": False, "stage": None}
-    with _INFLIGHT_RAG_REQUESTS_LOCK:
-        state = _INFLIGHT_RAG_REQUESTS.get(normalized_request_id)
-        if state is None:
-            return {"request_id": normalized_request_id, "cancelled": False, "found": False, "stage": None}
-        cancel_event = state.get("cancel_event")
-        if isinstance(cancel_event, threading.Event):
-            cancel_event.set()
-        return {
-            "request_id": normalized_request_id,
-            "cancelled": True,
-            "found": True,
-            "stage": state.get("last_stage"),
-        }
+    return {"request_id": normalized_request_id, "cancelled": False, "found": False, "stage": None}
 
 
 def _ensure_rag_query_telemetry_runtime() -> tuple[ThreadPoolExecutor, threading.Semaphore]:
@@ -1124,7 +1087,7 @@ def health() -> dict[str, Any]:
 
 @app.post("/internal/rag/query")
 def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_internal_auth)) -> dict[str, Any]:
-    inflight_state = _register_inflight_rag_request(request.request_id)
+    cancel_state = _new_rag_cancel_state()
     try:
         readiness = probe_customer_rag_index_readiness(top_k=request.top_k or 6)
         if readiness.status in {"configured_table_empty", "fallback_table_selected"}:
@@ -1142,8 +1105,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             requester=request.requester,
             product=request.product,
             query_policy=request.query_policy,
-            should_cancel=lambda: bool(inflight_state["cancel_event"].is_set()),
-            record_cancel_stage=lambda stage: _update_inflight_rag_stage(request.request_id, stage),
+            should_cancel=lambda: bool(cancel_state["cancel_event"].is_set()),
+            record_cancel_stage=lambda stage: _record_rag_cancel_stage(cancel_state, stage),
         )
     except RagExecutionCancelled as exc:
         LOGGER.info(
@@ -1268,9 +1231,6 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                 "needs_human": True,
             },
         )
-    finally:
-        _cleanup_inflight_rag_request(request.request_id)
-
     if result is None:
         return _build_rag_unavailable_response(request=request)
 

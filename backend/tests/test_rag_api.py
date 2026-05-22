@@ -417,22 +417,62 @@ class RagApiTests(unittest.TestCase):
         )
         self.assertEqual(repository.recorded_runs, [])
 
-    def test_internal_rag_cancel_marks_inflight_request_cancelled(self) -> None:
+    def test_internal_rag_cancel_returns_not_found_without_active_cancel_backend(self) -> None:
         repository = _TrackingKnowledgeRepository()
         with self._client(repository) as client:
-            rag_api._register_inflight_rag_request("rag-cancel-api-1")
-            try:
-                response = client.post(
-                    "/internal/rag/requests/rag-cancel-api-1/cancel",
-                    headers={"Authorization": "Bearer test-token"},
-                )
-            finally:
-                rag_api._cleanup_inflight_rag_request("rag-cancel-api-1")
+            response = client.post(
+                "/internal/rag/requests/rag-cancel-api-1/cancel",
+                headers={"Authorization": "Bearer test-token"},
+            )
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertTrue(payload["cancelled"])
-        self.assertEqual(payload["request_id"], "rag-cancel-api-1")
+        self.assertEqual(
+            payload,
+            {
+                "request_id": "rag-cancel-api-1",
+                "cancelled": False,
+                "found": False,
+                "stage": None,
+            },
+        )
+
+    def test_internal_rag_query_does_not_register_inflight_request_for_cancel(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+        cancel_payloads: list[dict[str, object]] = []
+
+        def _answer_after_cancel_probe(*_args, **_kwargs):
+            cancel_payloads.append(rag_api._cancel_inflight_rag_request("rag-no-register-1"))
+            return _answer_result()
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "run_rag_query",
+            side_effect=_answer_after_cancel_probe,
+        ):
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-no-register-1",
+                    "ticket_id": "TK-003",
+                    "customer_id": "C-003",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            cancel_payloads,
+            [
+                {
+                    "request_id": "rag-no-register-1",
+                    "cancelled": False,
+                    "found": False,
+                    "stage": None,
+                }
+            ],
+        )
 
     def test_internal_rag_query_forwards_selected_product_to_rag_engine(self) -> None:
         repository = _TrackingKnowledgeRepository()
