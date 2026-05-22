@@ -10,6 +10,27 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-22 - Remove RAG API inflight request registration
+
+- Summary:
+  - Removed per-query registration in the RAG API process-global inflight request registry.
+  - Kept the query-to-RAG-engine cancel hook callables in place so future cancel wiring can attach without changing the `run_rag_query` call contract.
+  - Kept the internal cancel endpoint deterministic by returning a not-found, not-cancelled payload when no active cancel backend is wired.
+- Reason:
+  - The RAG API should not expose query-local request state through process-global inflight registration while later cancellation behavior is being prepared.
+  - This keeps the public internal endpoint stable without pretending that a process-local registry is the authoritative cancel backend.
+- Affected files/config:
+  - `backend/rag_api.py`
+  - `backend/tests/test_rag_api.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - In-flight RAG cancel requests now return `cancelled: false` and `found: false` until a later cancel backend is wired.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_api.py::RagApiTests::test_internal_rag_query_does_not_register_inflight_request_for_cancel -q` failed because the current query path exposed the request through the inflight registry and returned `cancelled: true`.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_api.py::RagApiTests::test_internal_rag_cancel_returns_not_found_without_active_cancel_backend backend/tests/test_rag_api.py::RagApiTests::test_internal_rag_query_does_not_register_inflight_request_for_cancel backend/tests/test_rag_api.py::RagApiTests::test_internal_rag_query_forwards_selected_product_to_rag_engine -q` (`3 passed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_api.py -q` (`17 passed`).
+
 ## 2026-05-22 - Keep generic join reference examples on actual join calls
 
 - Summary:
