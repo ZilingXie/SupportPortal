@@ -69,13 +69,13 @@ acceptance:
 """
 
 
-def validate_worker_result(payload: dict, before_status: str, after_status: str, max_budget: float) -> None:
+def validate_worker_result(payload: dict, before_status: str, after_status: str, max_budget: float | None) -> None:
     if payload.get("is_error"):
         raise AssertionError(f"Claude CLI returned is_error=true: {payload}")
     if payload.get("permission_denials"):
         raise AssertionError(f"Claude CLI reported permission denials: {payload['permission_denials']}")
     cost = float(payload.get("total_cost_usd") or 0)
-    if cost > max_budget:
+    if max_budget is not None and cost > max_budget:
         raise AssertionError(f"Claude CLI cost {cost:.6f} exceeded budget {max_budget:.6f}")
     if before_status != after_status:
         raise AssertionError(
@@ -104,8 +104,9 @@ def validate_worker_result(payload: dict, before_status: str, after_status: str,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="haiku")
-    parser.add_argument("--max-budget-usd", type=float, default=0.05)
+    parser.add_argument("--model", default="opus")
+    parser.add_argument("--effort", default="max", choices=["low", "medium", "high", "xhigh", "max"])
+    parser.add_argument("--max-budget-usd", type=float, default=None, help="Optional smoke-test safety cap")
     args = parser.parse_args()
 
     if shutil.which("claude") is None:
@@ -126,12 +127,14 @@ def main() -> int:
         "Read,Bash",
         "--model",
         args.model,
-        "--max-budget-usd",
-        str(args.max_budget_usd),
+        "--effort",
+        args.effort,
         "--append-system-prompt",
         OUTPUT_GUARD,
         "--no-session-persistence",
     ]
+    if args.max_budget_usd is not None:
+        command.extend(["--max-budget-usd", str(args.max_budget_usd)])
     completed = subprocess.run(command, check=True, capture_output=True, text=True)
     try:
         response = json.loads(completed.stdout)
@@ -142,6 +145,7 @@ def main() -> int:
     validate_worker_result(response, before_status, after_status, args.max_budget_usd)
     print(
         "Claude CLI flow verified: "
+        f"model={args.model}, effort={args.effort}, "
         f"cost=${float(response.get('total_cost_usd') or 0):.6f}, "
         f"session={response.get('session_id', '')}"
     )
