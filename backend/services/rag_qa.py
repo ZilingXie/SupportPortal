@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import hashlib
 import json
 import logging
 import os
@@ -1656,6 +1657,92 @@ def _extract_authoritative_code_block(chunk: RetrievedChunk | None) -> str | Non
     for code_block, _body in _iter_authoritative_code_blocks(chunk):
         return code_block
     return None
+
+
+def _chunk_code_language(chunk: RetrievedChunk) -> str | None:
+    """Return the programming language for a chunk's code example.
+
+    Prefers the chunk metadata ``language`` field; falls back to the first
+    fenced-code-block language tag found in the chunk text.
+    """
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    meta_lang = str(metadata.get("language") or "").strip().lower()
+    if meta_lang:
+        return meta_lang
+    for match in re.finditer(r"```([A-Za-z0-9_+-]*)\n(.*?)```", str(chunk.text or ""), flags=re.DOTALL):
+        lang = str(match.group(1) or "").strip().lower()
+        body = str(match.group(2) or "").strip()
+        if lang and body:
+            return lang
+    return None
+
+
+def _chunk_has_code_or_config_evidence(chunk: RetrievedChunk) -> bool:
+    """Return True when a chunk carries a code block or config evidence."""
+    text = str(chunk.text or "")
+    if re.search(r"```[A-Za-z0-9_+-]*\s*\n.*?```", text, flags=re.DOTALL):
+        return True
+    config_signals = ("configuration", "enable", "disable", "setup", "json", "parameter", "field", "property")
+    lowered = text.lower()
+    if any(signal in lowered for signal in config_signals):
+        return True
+    return False
+
+
+def _usage_configuration_supported_code_languages(
+    chunks: list[RetrievedChunk],
+) -> tuple[str, ...]:
+    """Return deduplicated, ordered list of code languages found in *chunks*."""
+    languages: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        lang = _chunk_code_language(chunk)
+        if lang and lang not in seen:
+            seen.add(lang)
+            languages.append(lang)
+    return tuple(languages)
+
+
+def _usage_configuration_supports_code_example(
+    chunks: list[RetrievedChunk],
+) -> bool:
+    """Return True when at least one chunk provides code or config evidence."""
+    for chunk in chunks:
+        if _chunk_code_language(chunk) or _chunk_has_code_or_config_evidence(chunk):
+            return True
+    return False
+
+
+def _select_usage_configuration_code_language(
+    question: str,
+    chunks: list[RetrievedChunk],
+    *,
+    ticket_id: str,
+    customer_id: str,
+) -> str | None:
+    """Select a single preferred code language for a usage/configuration query.
+
+    * If the customer's question names a supported language, use it.
+    * Otherwise choose a stable fallback derived from *ticket_id*, *customer_id*
+      and the *question* text (deterministic across restarts).
+    * Returns ``None`` when no chunk provides a code or config example.
+    """
+    supported = _usage_configuration_supported_code_languages(chunks)
+    if not supported:
+        return None
+
+    question_lower = str(question or "").lower()
+
+    # --- customer-requested language (case-insensitive whole-word match) ---
+    for lang in supported:
+        if re.search(rf"\b{re.escape(lang)}\b", question_lower):
+            return lang
+
+    # --- deterministic fallback ---
+    seed = f"{ticket_id}|{customer_id}|{question}"
+    digest = hashlib.sha256(seed.encode("utf-8")).digest()
+    index = int.from_bytes(digest[:4], "big") % len(supported)
+    return supported[index]
 
 
 def _iter_authoritative_code_blocks(chunk: RetrievedChunk | None) -> Iterable[tuple[str, str]]:
@@ -6348,6 +6435,9 @@ def _build_answer_prompt_for_mode(
     *,
     repair_mode: bool,
     citation_retry: bool = False,
+    query_class: str | None = None,
+    preferred_code_language: str | None = None,
+    supported_code_languages: tuple[str, ...] | None = None,
 ) -> str:
     return build_rag_answer_user_prompt(
         question=question,
@@ -6355,6 +6445,9 @@ def _build_answer_prompt_for_mode(
         insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         repair_mode=repair_mode,
         citation_retry_mode=citation_retry,
+        query_class=query_class,
+        preferred_code_language=preferred_code_language,
+        supported_code_languages=supported_code_languages,
     )
 
 
@@ -7074,6 +7167,9 @@ def _invoke_llm_payload(
     product: str | None = None,
     profile_override: ModelProfile | None = None,
     citation_retry: bool = False,
+    query_class: str | None = None,
+    preferred_code_language: str | None = None,
+    supported_code_languages: tuple[str, ...] | None = None,
 ) -> dict[str, Any] | None:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(
@@ -7081,6 +7177,9 @@ def _invoke_llm_payload(
         context_block,
         repair_mode=strict_retry,
         citation_retry=citation_retry,
+        query_class=query_class,
+        preferred_code_language=preferred_code_language,
+        supported_code_languages=supported_code_languages,
     )
     profile = profile_override or _build_answer_profile(config)
     try:
@@ -7104,13 +7203,33 @@ def _invoke_llm_payload_with_trace(
     product: str | None = None,
     profile_override: ModelProfile | None = None,
     citation_retry: bool = False,
+    query_class: str | None = None,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
+    query_class_label = str(query_class or "").strip() or None
+    preferred_code_language: str | None = None
+    supported_code_languages: tuple[str, ...] | None = None
+
+    if query_class_label == "usage_configuration":
+        supported_code_languages = _usage_configuration_supported_code_languages(chunks)
+        if supported_code_languages:
+            preferred_code_language = _select_usage_configuration_code_language(
+                message,
+                chunks,
+                ticket_id=str(ticket_id or ""),
+                customer_id=str(customer_id or ""),
+            )
+
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(
         message,
         context_block,
         repair_mode=strict_retry,
         citation_retry=citation_retry,
+        query_class=query_class_label,
+        preferred_code_language=preferred_code_language,
+        supported_code_languages=supported_code_languages,
     )
     profile = profile_override or _build_answer_profile(config)
     try:
