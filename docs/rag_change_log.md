@@ -4192,3 +4192,25 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_trace_client_ticket_route_cli.py::TraceClientTicketRouteCliTests::test_fetch_rag_query_run_rewrites_container_relay_hostaddr_for_host_process backend/tests/test_trace_client_ticket_route_cli.py::TraceClientTicketRouteCliTests::test_wait_for_rag_query_run_retries_transient_fetch_errors -q`
   - Live telemetry probe from the linked worktree `.env` confirmed `rag-6093631c6a1c`, `rag-e726d89d58d9`, and `rag-25b5a981f122` returned telemetry rows with no `_fetch_error`.
+
+## 2026-05-25 - PR4 usage-configuration grounded code example policy
+
+- Summary:
+  - Added usage-configuration answer-generation guidance that passes evidence-supported code languages and config-example evidence into the RAG answer prompt.
+  - Selected an explicit customer-requested language only when supported by retrieved evidence; otherwise selected a deterministic fallback from evidence-supported languages using ticket, customer, and effective question inputs.
+  - Kept weak prose-only chunks from enabling code/config examples unless they contain fenced code, parseable JSON, request-body schema evidence, API parameter metadata, or explicit field/parameter lists.
+- Reason:
+  - PR4 of the usage/config unification needs code examples where evidence supports them, while preventing fabricated SDK/API names, field names, parameters, call order, or config shape.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Only answer-generation prompt guidance changes for `usage_configuration`; retrieval and evidence selection are unchanged in this PR slice.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py backend/tests/test_rag_qa.py backend/tests/test_rag_prompt_guards.py -q -k 'usage_configuration_code_language or usage_configuration_answer_prompt_receives_selected_evidence_language or config_examples_when_field_evidence_has_no_language_tag or supports_config_example_without_language_tag or receives_config_evidence_without_language or weak_config_words or language_metadata_alone or rag_answer_prompt_guides or generic_join'`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_answer.py`

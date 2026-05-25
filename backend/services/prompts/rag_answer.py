@@ -39,6 +39,10 @@ def build_rag_answer_user_prompt(
     insufficient_reply: str,
     repair_mode: bool,
     citation_retry_mode: bool = False,
+    query_class: str | None = None,
+    preferred_code_language: str | None = None,
+    supported_code_languages: tuple[str, ...] | None = None,
+    code_example_evidence_available: bool = False,
 ) -> str:
     parts = [
         "## User Question",
@@ -103,6 +107,37 @@ def build_rag_answer_user_prompt(
         'Question: "How do I fix black screen on Flutter Web 5.2.1 when using custom capturer?"',
         f'If the chunks do not directly support that exact answer, return: {{"answer":"{insufficient_reply}","key_steps":[],"citations":[],"insufficient_evidence":true}}',
     ]
+    if query_class == "usage_configuration":
+        usage_parts = ["", "## Usage/Configuration Code Example Policy"]
+        if code_example_evidence_available and supported_code_languages:
+            usage_parts.extend(
+                [
+                    "usage_configuration",
+                    f"Preferred example language: {preferred_code_language or ''}",
+                    f"Evidence-supported example languages: {', '.join(supported_code_languages)}",
+                    "If the customer requested a language, prefer it only when it appears in the evidence-supported list",
+                    "Do not translate examples into another SDK language",
+                    "Do not invent API names",
+                ]
+            )
+        elif code_example_evidence_available:
+            usage_parts.extend(
+                [
+                    "Evidence-supported code or configuration example is available",
+                    "Example language is not specified by the evidence",
+                    "Prefer a minimal configuration or JSON example built only from verbatim field and schema evidence",
+                    "Do not invent API names",
+                ]
+            )
+        else:
+            usage_parts.extend(
+                [
+                    "No evidence-supported code or configuration example is available",
+                    "Do not include a fenced code block",
+                    "set insufficient_evidence=true",
+                ]
+            )
+        parts.extend(usage_parts)
     if repair_mode:
         parts.extend(
             [

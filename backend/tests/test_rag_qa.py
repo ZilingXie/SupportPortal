@@ -26,6 +26,7 @@ from backend.services.rag_qa import (
     _raise_if_cancelled,
     _metadata_rerank,
     _merge_request_body_evidence_into_final_chunks,
+    _select_usage_configuration_code_language,
     probe_customer_rag_index_readiness,
     _retrieve_bm25_chunks,
     _rerank_chunks,
@@ -35,6 +36,8 @@ from backend.services.rag_qa import (
     _select_bm25_query_terms,
     _split_table_name,
     _format_context,
+    _usage_configuration_supported_code_languages,
+    _usage_configuration_supports_code_example,
     run_rag_query,
 )
 from backend.services.rag_request_body_evidence import (
@@ -200,6 +203,250 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertNotIn("```", answer)
         self.assertEqual(citation_ids, ["join-text"])
+
+    def test_usage_configuration_code_language_prefers_customer_requested_supported_language(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-1",
+                text="```javascript\nclient.join(appId, channel, token, uid);\n```",
+                source_path="docs/js.md",
+                similarity=0.92,
+                metadata={"language": "javascript"},
+            ),
+            RetrievedChunk(
+                chunk_id="java-1",
+                text="```java\nengine.joinChannel(token, channel, uid, options);\n```",
+                source_path="docs/java.md",
+                similarity=0.9,
+                metadata={"language": "java"},
+            ),
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ("javascript", "java"))
+        self.assertTrue(_usage_configuration_supports_code_example(chunks))
+        self.assertEqual(
+            _select_usage_configuration_code_language(
+                "How do I join a channel in JavaScript?",
+                chunks,
+                ticket_id="ticket-1",
+                customer_id="customer-1",
+            ),
+            "javascript",
+        )
+
+    def test_usage_configuration_code_language_is_stable_when_customer_does_not_request_one(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-1",
+                text="```javascript\nclient.join(appId, channel, token, uid);\n```",
+                source_path="docs/js.md",
+                similarity=0.92,
+                metadata={"language": "javascript"},
+            ),
+            RetrievedChunk(
+                chunk_id="java-1",
+                text="```java\nengine.joinChannel(token, channel, uid, options);\n```",
+                source_path="docs/java.md",
+                similarity=0.9,
+                metadata={"language": "java"},
+            ),
+        ]
+
+        selected_once = _select_usage_configuration_code_language(
+            "How do I join a channel?",
+            chunks,
+            ticket_id="ticket-2",
+            customer_id="customer-2",
+        )
+        selected_twice = _select_usage_configuration_code_language(
+            "How do I join a channel?",
+            chunks,
+            ticket_id="ticket-2",
+            customer_id="customer-2",
+        )
+
+        self.assertEqual(selected_once, selected_twice)
+        self.assertIn(selected_once, {"javascript", "java"})
+
+    def test_usage_configuration_code_language_is_empty_without_code_or_config_evidence(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="text-1",
+                text="The SDK lets users join a channel after preparing credentials.",
+                source_path="docs/overview.md",
+                similarity=0.85,
+                metadata={},
+            )
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ())
+        self.assertFalse(_usage_configuration_supports_code_example(chunks))
+        self.assertIsNone(
+            _select_usage_configuration_code_language(
+                "How do I join a channel?",
+                chunks,
+                ticket_id="ticket-3",
+                customer_id="customer-3",
+            )
+        )
+
+    def test_usage_configuration_supports_config_example_without_language_tag(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="config-1",
+                text=(
+                    "Configuration fields: appId, channelName, uid, token. "
+                    "Use these field names exactly in the JSON payload."
+                ),
+                source_path="docs/config.md",
+                similarity=0.91,
+                metadata={"chunk_type": "api_params"},
+            )
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ())
+        self.assertTrue(_usage_configuration_supports_code_example(chunks))
+        self.assertIsNone(
+            _select_usage_configuration_code_language(
+                "How to configure token auth?",
+                chunks,
+                ticket_id="ticket-5",
+                customer_id="customer-5",
+            )
+        )
+
+    def test_usage_configuration_does_not_treat_weak_config_words_as_example_evidence(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="weak-1",
+                text="The overview mentions parameters and fields at a high level but names no exact schema.",
+                source_path="docs/overview.md",
+                similarity=0.82,
+                metadata={},
+            )
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ())
+        self.assertFalse(_usage_configuration_supports_code_example(chunks))
+        self.assertIsNone(
+            _select_usage_configuration_code_language(
+                "Which parameter controls channel role?",
+                chunks,
+                ticket_id="ticket-7",
+                customer_id="customer-7",
+            )
+        )
+
+    def test_usage_configuration_language_metadata_alone_is_not_example_evidence(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-overview",
+                text="This JavaScript SDK overview mentions joining a channel but gives no method names or fields.",
+                source_path="docs/js-overview.md",
+                similarity=0.82,
+                metadata={"language": "javascript"},
+            )
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ("javascript",))
+        self.assertFalse(_usage_configuration_supports_code_example(chunks))
+        self.assertIsNone(
+            _select_usage_configuration_code_language(
+                "How do I join a channel in JavaScript?",
+                chunks,
+                ticket_id="ticket-8",
+                customer_id="customer-8",
+            )
+        )
+
+    def test_usage_configuration_answer_prompt_receives_selected_evidence_language(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-1",
+                text="```javascript\nclient.join(appId, channel, token, uid);\n```",
+                source_path="docs/js.md",
+                similarity=0.92,
+                metadata={"language": "javascript"},
+            )
+        ]
+        captured_prompts: list[str] = []
+
+        def _capture_answer_call(*, profile, system_prompt: str, user_prompt: str, extra_payload=None):
+            _ = profile
+            _ = system_prompt
+            _ = extra_payload
+            captured_prompts.append(user_prompt)
+            return LlmTextResult(
+                text=(
+                    '{"answer":"Call client.join with the cited parameters.",'
+                    '"key_steps":[],"citations":["js-1"],"insufficient_evidence":false}'
+                ),
+                model_name="gpt-5.4",
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+
+        with patch("backend.services.rag_qa.invoke_responses_text", side_effect=_capture_answer_call):
+            payload, _prompt_tokens, _completion_tokens, _model_name = rag_qa._invoke_llm_payload_with_trace(
+                "How do I join a channel in JavaScript?",
+                chunks,
+                {"api_key": "test-key", "chat_model": "gpt-5.4", "reasoning_effort": "low"},
+                query_class="usage_configuration",
+                ticket_id="ticket-4",
+                customer_id="customer-4",
+            )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(captured_prompts), 1)
+        self.assertIn("## Usage/Configuration Code Example Policy", captured_prompts[0])
+        self.assertIn("Preferred example language: javascript", captured_prompts[0])
+        self.assertIn("Evidence-supported example languages: javascript", captured_prompts[0])
+
+    def test_usage_configuration_answer_prompt_receives_config_evidence_without_language(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="config-1",
+                text=(
+                    "Configuration fields: appId, channelName, uid, token. "
+                    "Use these field names exactly in the JSON payload."
+                ),
+                source_path="docs/config.md",
+                similarity=0.91,
+                metadata={"chunk_type": "api_params"},
+            )
+        ]
+        captured_prompts: list[str] = []
+
+        def _capture_answer_call(*, profile, system_prompt: str, user_prompt: str, extra_payload=None):
+            _ = profile
+            _ = system_prompt
+            _ = extra_payload
+            captured_prompts.append(user_prompt)
+            return LlmTextResult(
+                text=(
+                    '{"answer":"Use the cited token auth fields exactly.",'
+                    '"key_steps":[],"citations":["config-1"],"insufficient_evidence":false}'
+                ),
+                model_name="gpt-5.4",
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+
+        with patch("backend.services.rag_qa.invoke_responses_text", side_effect=_capture_answer_call):
+            payload, _prompt_tokens, _completion_tokens, _model_name = rag_qa._invoke_llm_payload_with_trace(
+                "How to configure token auth?",
+                chunks,
+                {"api_key": "test-key", "chat_model": "gpt-5.4", "reasoning_effort": "low"},
+                query_class="usage_configuration",
+                ticket_id="ticket-6",
+                customer_id="customer-6",
+            )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(captured_prompts), 1)
+        self.assertIn("Evidence-supported code or configuration example is available", captured_prompts[0])
+        self.assertIn("Example language is not specified by the evidence", captured_prompts[0])
+        self.assertNotIn("No evidence-supported code or configuration example is available", captured_prompts[0])
 
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
