@@ -1859,6 +1859,40 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(decision.decision, "answer_now")
         self.assertEqual(decision.reason, "sufficient_first_pass_support")
 
+    def test_judge_agentic_round_escalates_unclear_query_without_strong_top_score(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="low-score-unclear-1",
+                text="Use the token server flow to generate a token before joining the channel.",
+                source_path="official/token-authentication.md",
+                similarity=0.72,
+                index_role="primary",
+                rerank_score=0.68,
+            ),
+            RetrievedChunk(
+                chunk_id="low-score-unclear-2",
+                text="Call joinChannel with the token, channel name, and user ID.",
+                source_path="official/get-started-sdk.md",
+                similarity=0.70,
+                index_role="primary",
+                rerank_score=0.66,
+            ),
+        ]
+
+        decision = _judge_agentic_round(
+            message="Token and channel join help",
+            query_class="unclear_query",
+            round_index=1,
+            reranked_chunks=chunks,
+            final_chunks=chunks,
+            decomposition_targets=[],
+            exact_terms=[],
+            grounded_overlap=True,
+        )
+
+        self.assertEqual(decision.decision, "escalate")
+        self.assertEqual(decision.reason, "unclear_query_weak_support")
+
     def test_judge_agentic_round_recovers_when_api_semantics_lacks_request_parameter_support(self) -> None:
         disband_chunk = RetrievedChunk(
             chunk_id="disband",

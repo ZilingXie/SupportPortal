@@ -2941,7 +2941,7 @@ def _judge_agentic_round(
             ) or not has_join_step or not has_token_auth or not has_preferred_join_step:
                 recovery = "configuration_recovery" if query_class == "usage_configuration" else "lexical_recovery"
                 return AgenticJudgeDecision("recover_once", "generic_join_wrong_family", 0.78, recovery)
-        if query_class == "unclear_query" and not grounded_overlap and primary_count < 2:
+        if query_class == "unclear_query" and not (grounded_overlap and primary_count >= 2 and top_score >= 0.72):
             return AgenticJudgeDecision("escalate", "unclear_query_weak_support", 0.80, None)
         if query_class == "lexical_exact" and (top_score < 0.32 or not exact_match_supported):
             return AgenticJudgeDecision("recover_once", "low_top1_rerank_score", 0.74, "lexical_recovery")
@@ -2990,6 +2990,8 @@ def _judge_agentic_round(
             )
         ):
             return AgenticJudgeDecision("escalate", "generic_join_support_incomplete", 0.84, None)
+    if query_class == "unclear_query" and not (grounded_overlap and primary_count >= 2 and top_score >= 0.72):
+        return AgenticJudgeDecision("escalate", "unclear_query_weak_support", 0.80, None)
     if _same_family_only(final_chunks) and not grounded_overlap:
         return AgenticJudgeDecision("escalate", "single_family_ungrounded", 0.78, None)
     return AgenticJudgeDecision("answer_now", "sufficient_second_pass_support", 0.92, None)
