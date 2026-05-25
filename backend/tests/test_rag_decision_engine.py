@@ -244,6 +244,52 @@ class RagDecisionEngineUnitTests(unittest.TestCase):
         self.assertEqual(decision.review_summary.get("phase"), "skipped")
         self.assertEqual(decision.review_summary.get("reason"), "low_risk_grounded_answer")
 
+    def test_usage_configuration_answer_first_uses_low_risk_usage_gate(self):
+        decision = self._call_evaluate(
+            message="How do I enable dual stream?",
+            rag_detail=_make_rag_detail(
+                answer="Enable dual stream before publishing, then select the stream type.",
+                confidence=0.80,
+                citations=[{"chunk_id": "dual-stream"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "usage_configuration",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+            ),
+            review_agent=lambda **_kwargs: self.fail("low-risk usage/config answers should skip review"),
+        )
+
+        self.assertEqual(decision.execution_result.workflow_action, "answer_customer")
+        self.assertEqual(decision.review_summary.get("phase"), "skipped")
+        self.assertEqual(decision.review_summary.get("reason"), "low_risk_grounded_answer")
+
+    def test_legacy_configuration_class_uses_usage_configuration_low_risk_gate(self):
+        decision = self._call_evaluate(
+            message="How to configure token auth?",
+            rag_detail=_make_rag_detail(
+                answer="Configure a token server and pass the issued token when joining the channel.",
+                confidence=0.80,
+                citations=[{"chunk_id": "token-auth"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "configuration",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+            ),
+            review_agent=lambda **_kwargs: self.fail("legacy configuration answers should use the usage gate"),
+        )
+
+        self.assertEqual(decision.execution_result.workflow_action, "answer_customer")
+        self.assertEqual(decision.review_summary.get("phase"), "skipped")
+        self.assertEqual(decision.review_summary.get("reason"), "low_risk_grounded_answer")
+
     def test_troubleshooting_weak_evidence_enters_review_intake_path(self):
         review_modes: list[str] = []
 

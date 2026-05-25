@@ -1800,6 +1800,65 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(decision.reason, "generic_join_wrong_family")
         self.assertEqual(decision.recovery_action, "configuration_recovery")
 
+    def test_judge_agentic_round_escalates_unclear_query_with_weak_single_doc_support(self) -> None:
+        chunk = RetrievedChunk(
+            chunk_id="weak-unclear",
+            text="This overview mentions channels and tokens without answering a specific customer intent.",
+            source_path="official/channel-overview.md",
+            similarity=0.68,
+            index_role="primary",
+            rerank_score=0.61,
+        )
+
+        decision = _judge_agentic_round(
+            message="???",
+            query_class="unclear_query",
+            round_index=1,
+            reranked_chunks=[chunk],
+            final_chunks=[chunk],
+            decomposition_targets=[],
+            exact_terms=[],
+            grounded_overlap=False,
+        )
+
+        self.assertEqual(decision.decision, "escalate")
+        self.assertEqual(decision.reason, "unclear_query_weak_support")
+        self.assertIsNone(decision.recovery_action)
+
+    def test_judge_agentic_round_answers_unclear_query_only_with_strong_support(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="strong-unclear-1",
+                text="Use the token server flow to generate a token before joining the channel.",
+                source_path="official/token-authentication.md",
+                similarity=0.92,
+                index_role="primary",
+                rerank_score=0.86,
+            ),
+            RetrievedChunk(
+                chunk_id="strong-unclear-2",
+                text="Call joinChannel with the token, channel name, and user ID from the same project.",
+                source_path="official/get-started-sdk.md",
+                similarity=0.88,
+                index_role="primary",
+                rerank_score=0.82,
+            ),
+        ]
+
+        decision = _judge_agentic_round(
+            message="Token and channel join help",
+            query_class="unclear_query",
+            round_index=1,
+            reranked_chunks=chunks,
+            final_chunks=chunks,
+            decomposition_targets=[],
+            exact_terms=[],
+            grounded_overlap=True,
+        )
+
+        self.assertEqual(decision.decision, "answer_now")
+        self.assertEqual(decision.reason, "sufficient_first_pass_support")
+
     def test_judge_agentic_round_recovers_when_api_semantics_lacks_request_parameter_support(self) -> None:
         disband_chunk = RetrievedChunk(
             chunk_id="disband",
@@ -2535,6 +2594,41 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertEqual(decision.decision, "answer_now")
         self.assertEqual(decision.reason, "sufficient_first_pass_support")
+        self.assertIsNone(decision.recovery_action)
+
+    def test_judge_agentic_round_escalates_after_recovery_without_preferred_generic_join_step(self) -> None:
+        role_specific_join_chunk = RetrievedChunk(
+            chunk_id="join-role-specific",
+            text=(
+                "Call joinChannel(token, channelName, uid, options) after setClientRole("
+                "ClientRoleType.BROADCASTER) for live broadcasting."
+            ),
+            source_path="official/live-broadcasting_web.md",
+            similarity=0.91,
+            index_role="primary",
+            rerank_score=0.88,
+            h1="Live broadcasting",
+            h2="Set client role",
+            h3="Join a channel",
+            metadata={
+                "product": "video-calling",
+            },
+        )
+
+        decision = _judge_agentic_round(
+            message="how to join channel",
+            query_class="usage_configuration",
+            round_index=2,
+            reranked_chunks=[role_specific_join_chunk],
+            final_chunks=[role_specific_join_chunk],
+            decomposition_targets=[],
+            exact_terms=["join", "channel"],
+            grounded_overlap=True,
+            product="audio_video_calling",
+        )
+
+        self.assertEqual(decision.decision, "escalate")
+        self.assertEqual(decision.reason, "generic_join_support_incomplete")
         self.assertIsNone(decision.recovery_action)
 
     def test_judge_agentic_round_recovers_when_generic_join_query_lacks_core_rtc_join_support(self) -> None:
