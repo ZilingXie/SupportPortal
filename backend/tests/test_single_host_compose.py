@@ -153,15 +153,15 @@ class SingleHostComposeTests(unittest.TestCase):
             content,
         )
 
-    def test_rag_request_timeout_default_is_doubled(self) -> None:
+    def test_rag_request_timeout_default_is_ten_minutes(self) -> None:
         rag_api_block = self._service_block("rag_api")
         env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
 
         self.assertIn(
-            "RAG_REQUEST_TIMEOUT_SECONDS: ${RAG_REQUEST_TIMEOUT_SECONDS:-40.0}",
+            "RAG_REQUEST_TIMEOUT_SECONDS: ${RAG_REQUEST_TIMEOUT_SECONDS:-600.0}",
             rag_api_block,
         )
-        self.assertIn("RAG_REQUEST_TIMEOUT_SECONDS=40.0", env_example)
+        self.assertIn("RAG_REQUEST_TIMEOUT_SECONDS=600.0", env_example)
 
     def test_client_ack_and_async_query_defaults_are_present(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")

@@ -79,6 +79,7 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(rag_answer.api_mode, "openai_responses")
         self.assertEqual(rag_answer.model, "gpt-5.4")
         self.assertEqual(rag_answer.reasoning_effort, "medium")
+        self.assertEqual(rag_answer.timeout_seconds, 600.0)
 
         self.assertEqual(sufficiency.provider, "openai")
         self.assertEqual(sufficiency.api_mode, "openai_responses")
