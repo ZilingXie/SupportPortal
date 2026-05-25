@@ -1,9 +1,9 @@
 ---
 name: repair-worker
-description: "Project-local Claude Code repair worker. Use when invoked with /repair-worker, including payloads with mode: correction, or given a Codex repair payload containing goal, scope_hints, known_context, constraints, verification, and acceptance. Implement the smallest correct code repair, run the requested verification, and return the fixed structured result."
+description: "Project-local Claude Code worker. Use when invoked with /repair-worker, including payloads with mode: correction, or given a Codex control-cc payload containing goal, scope_hints, known_context, constraints, verification, and acceptance. Implement the smallest correct code change, run the requested verification, and return the fixed structured result."
 ---
 
-# Repair Worker
+# Control CC Worker
 
 ## Overview
 
@@ -15,7 +15,7 @@ Work only inside the current SupportPortal repository or task worktree. Do not e
 
 Expect:
 
-- `goal`: repair objective
+- `goal`: task objective
 - `scope_hints`: likely starting files, modules, logs, tests, or search terms
 - `known_context`: facts Codex already verified
 - `constraints`: non-negotiable boundaries
@@ -32,13 +32,13 @@ For correction payloads, expect `/repair-worker` as the first line and `mode: co
 - `verification`: command or commands to rerun
 - `acceptance`: conditions Codex will review
 
-Treat `must_change` as the repair objective. Do not ask for `goal` when a correction payload has both `problem` and `must_change`. Do not require or use `/repair-worker correction`.
+Treat `must_change` as the correction objective. Do not ask for `goal` when a correction payload has both `problem` and `must_change`. Do not require or use `/repair-worker correction`.
 
 ## Workflow
 
 1. Read the payload first and restate the goal internally.
 2. Inspect code starting from `scope_hints`; expand search only as needed.
-3. Make the smallest correct change. Prefer local fixes over new abstractions.
+3. Make the smallest correct code change. Prefer local changes over new abstractions.
 4. Preserve public APIs, schemas, config, and existing behavior unless the payload explicitly requires a change.
 5. Run the requested verification. If it cannot run, report the blocker and any partial evidence.
 6. Return only the strict structured result format below.
@@ -50,7 +50,7 @@ Treat `must_change` as the repair objective. Do not ask for `goal` when a correc
 - Do not weaken tests to make verification pass.
 - Do not introduce TODOs, temporary debug output, or dead code.
 - Do not edit `AGENTS.md`, `CLAUDE.md`, `.codex/skills`, or `.claude/skills` unless the payload explicitly asks.
-- Stop as `Blocked` if the repair requires unsafe assumptions about auth, payment, migrations, data loss, production secrets, or public API changes.
+- Stop as `Blocked` if the task requires unsafe assumptions about auth, payment, migrations, data loss, production secrets, or public API changes.
 
 ## Return Format
 

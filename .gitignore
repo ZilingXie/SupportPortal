@@ -21,5 +21,6 @@ artifacts/
 .deploy_ec2.lock
 .DS_Store
 .superpowers/
+.codex/tmp/
 official_doc/
 local_knowledge/

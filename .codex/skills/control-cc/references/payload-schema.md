@@ -8,7 +8,7 @@ Use this schema to keep Codex-to-worker handoff short and testable.
 /repair-worker
 
 goal:
-<one concrete repair objective>
+<one concrete code-work objective>
 
 scope_hints:
 <likely files, modules, logs, failing tests, or search terms>
@@ -95,4 +95,4 @@ final_output_contract:
 
 Do not use `/repair-worker correction`; Claude Code CLI treats slash-command arguments inconsistently. Keep `/repair-worker` as the first line and put `mode: correction` in the payload body.
 
-Do not send a third worker round. After two failed or unsafe rounds, Codex takes over.
+Do not send a third worker round. After two failed or unsafe rounds, Codex either splits the work further or takes over with an independent review of the useful findings.

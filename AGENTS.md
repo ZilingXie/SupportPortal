@@ -1,7 +1,7 @@
 # Collaboration Rules
 
-## Cost-Optimized Repair
-For cost-sensitive code repair, prefer the project-local `cost-optimized-repair` skill when the user requests token-efficient delegation or when implementation can be safely delegated.
+## Control CC
+For delegated code work, prefer the project-local `control-cc` skill when the user requests Codex planning, Claude Code execution, and Codex review, or when implementation can be safely delegated.
 
 ## Branch Workflow
 1. Keep the root workspace on a clean `main` checkout at all times. Use it only for browsing, syncing `main`, creating or inspecting worktrees, and fast-forwarding local `main` after task PRs merge.
