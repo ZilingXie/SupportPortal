@@ -159,8 +159,62 @@ else
   fi
 fi
 
+# --- Build cache diagnostics ---
+
+# Normalize SUPPORTPORTAL_NO_BUILD_CACHE
+_cache_disabled=0
+_no_cache_value="${SUPPORTPORTAL_NO_BUILD_CACHE:-}"
+case "$_no_cache_value" in
+  ""|0) _cache_disabled=0 ;;
+  1) _cache_disabled=1 ;;
+  *) die "Unsupported SUPPORTPORTAL_NO_BUILD_CACHE: $_no_cache_value (expected unset, empty, 0, or 1)" ;;
+esac
+
+# Normalize SUPPORTPORTAL_BUILD_PROGRESS
+_build_progress="auto"
+_progress_value="${SUPPORTPORTAL_BUILD_PROGRESS:-}"
+case "$_progress_value" in
+  "") _build_progress="auto" ;;
+  plain) _build_progress="plain" ;;
+  *) die "Unsupported SUPPORTPORTAL_BUILD_PROGRESS: $_progress_value (expected unset, empty, or plain)" ;;
+esac
+
+echo "Runtime mode: ${runtime_mode}"
+if [[ "$runtime_mode" == "local_lightweight" ]]; then
+  echo "INSTALL_ML_DEPS: 0"
+else
+  echo "INSTALL_ML_DEPS: 1"
+fi
+echo "Runtime image tag: ${APP_BUILD_REF}"
+
+if (( _cache_disabled )); then
+  echo "Build cache: disabled (SUPPORTPORTAL_NO_BUILD_CACHE=1)"
+else
+  echo "Build cache: enabled"
+fi
+
+if [[ "$_build_progress" == "plain" ]]; then
+  echo "Build progress: plain"
+else
+  echo "Build progress: auto"
+fi
+
+echo "backend/requirements.base.txt: $(git hash-object backend/requirements.base.txt)"
+echo "backend/requirements.ml.txt: $(git hash-object backend/requirements.ml.txt)"
+
 "$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
 podman-compose "${compose_args[@]}" down
-podman-compose "${compose_args[@]}" up -d --build
+
+up_args=(up -d --build)
+if (( _cache_disabled )); then
+  up_args+=(--no-cache)
+fi
+
+if [[ "$_build_progress" == "plain" ]]; then
+  export BUILDKIT_PROGRESS=plain
+  export BUILDAH_PROGRESS=plain
+fi
+
+podman-compose "${compose_args[@]}" "${up_args[@]}"
 podman-compose "${compose_args[@]}" ps
 curl -sS "http://127.0.0.1:${health_port}/health"

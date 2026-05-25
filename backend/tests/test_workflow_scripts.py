@@ -678,6 +678,10 @@ class WorkflowScriptTests(unittest.TestCase):
                     "app_build_ref": os.environ.get("APP_BUILD_REF"),
                     "app_build_time": os.environ.get("APP_BUILD_TIME"),
                     "app_runtime_image": os.environ.get("APP_RUNTIME_IMAGE"),
+                    "buildah_progress": os.environ.get("BUILDAH_PROGRESS"),
+                    "buildkit_progress": os.environ.get("BUILDKIT_PROGRESS"),
+                    "supportportal_build_progress": os.environ.get("SUPPORTPORTAL_BUILD_PROGRESS"),
+                    "supportportal_no_build_cache": os.environ.get("SUPPORTPORTAL_NO_BUILD_CACHE"),
                     "ticket_db_dsn": os.environ.get("TICKET_DB_DSN"),
                     "pgvector_dsn": os.environ.get("PGVECTOR_DSN"),
                     "ticket_db_schema": os.environ.get("TICKET_DB_SCHEMA"),
@@ -934,6 +938,47 @@ class WorkflowScriptTests(unittest.TestCase):
             self.assertTrue(str(call["app_build_time"]).strip())
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
+    def test_restart_single_host_stack_prints_build_cache_diagnostics_and_honors_no_cache_flag(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "backend/requirements.base.txt", "fastapi==0.1\n")
+        self._write(seed, "backend/requirements.ml.txt", "torch==0.1\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._commit_all(seed, "Add lightweight runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            "--mode",
+            "local_lightweight",
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "SUPPORTPORTAL_BUILD_PROGRESS": "plain",
+                "SUPPORTPORTAL_NO_BUILD_CACHE": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
+        expected_base_hash = _git(["hash-object", "backend/requirements.base.txt"], cwd=repo).stdout.strip()
+        expected_ml_hash = _git(["hash-object", "backend/requirements.ml.txt"], cwd=repo).stdout.strip()
+        self.assertIn("Runtime mode: local_lightweight", result.stdout)
+        self.assertIn("INSTALL_ML_DEPS: 0", result.stdout)
+        self.assertIn(f"Runtime image tag: {expected_ref}", result.stdout)
+        self.assertIn("Build cache: disabled (SUPPORTPORTAL_NO_BUILD_CACHE=1)", result.stdout)
+        self.assertIn("Build progress: plain", result.stdout)
+        self.assertIn(f"backend/requirements.base.txt: {expected_base_hash}", result.stdout)
+        self.assertIn(f"backend/requirements.ml.txt: {expected_ml_hash}", result.stdout)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        self.assertIn("--no-cache", calls[2]["argv"])
+        self.assertEqual(calls[2]["buildah_progress"], "plain")
+        self.assertEqual(calls[2]["buildkit_progress"], "plain")
 
     def test_restart_single_host_stack_ignores_env_local_without_use_local_env(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
