@@ -255,6 +255,27 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("Do not include a fenced code block", user_prompt)
         self.assertIn("set insufficient_evidence=true", user_prompt)
 
+    def test_rag_answer_prompt_allows_config_examples_when_field_evidence_has_no_language_tag(self) -> None:
+        insufficient_reply = "I couldn't find enough information in the available support knowledge base to answer that question."
+        user_prompt = build_rag_answer_user_prompt(
+            question="How to configure token auth?",
+            context_block=(
+                "chunk-1: Required fields: appId, channelName, uid, token. "
+                "Use the nesting exactly shown in the API reference."
+            ),
+            insufficient_reply=insufficient_reply,
+            repair_mode=False,
+            query_class="usage_configuration",
+            supported_code_languages=(),
+            code_example_evidence_available=True,
+        )
+
+        self.assertIn("## Usage/Configuration Code Example Policy", user_prompt)
+        self.assertIn("Evidence-supported code or configuration example is available", user_prompt)
+        self.assertIn("Example language is not specified by the evidence", user_prompt)
+        self.assertIn("minimal configuration or JSON example", user_prompt)
+        self.assertNotIn("No evidence-supported code or configuration example is available", user_prompt)
+
     def test_rag_answer_system_prompt_includes_selected_product_scope(self) -> None:
         system_prompt = build_rag_answer_system_prompt(
             insufficient_reply="INSUFFICIENT",
