@@ -7626,6 +7626,7 @@ def _run_rag_query_legacy(
     top_k: int | None = None,
     *,
     ticket_context: list[dict[str, str]] | None = None,
+    ticket_id: str | None = None,
     requester: str | None = None,
     customer_id: str | None = None,
     product: str | None = None,
@@ -8169,9 +8170,10 @@ def _run_rag_query_legacy(
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
     grounded_overlap = _has_grounded_keyword_overlap(effective_question, final_chunks)
     generation_config = dict(config)
+    answer_query_class = _classify_agentic_query(effective_question, query_understanding)
     generation_config["reasoning_effort"] = _effective_answer_reasoning_effort(
         base_effort=str(config.get("reasoning_effort") or ""),
-        query_class=_classify_agentic_query(effective_question, query_understanding),
+        query_class=answer_query_class,
         query_type=query_type,
     )
     payload: dict[str, Any] | None = None
@@ -8188,6 +8190,9 @@ def _run_rag_query_legacy(
             generation_config,
             strict_retry=False,
             packed_evidence=packed_evidence,
+            query_class=answer_query_class,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
         )
         retry_required = (
             payload is None
@@ -8202,6 +8207,9 @@ def _run_rag_query_legacy(
                 generation_config,
                 strict_retry=True,
                 packed_evidence=packed_evidence,
+                query_class=answer_query_class,
+                ticket_id=ticket_id,
+                customer_id=customer_id,
             )
             prompt_tokens += retry_prompt_tokens
             completion_tokens += retry_completion_tokens
@@ -8615,7 +8623,6 @@ def _run_rag_query_agentic_single(
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
-    _ = ticket_id
     request_started_at = time.perf_counter()
     config = _get_rag_config(top_k=top_k, query_policy=query_policy)
     if not config["dsn"] or not _rag_config_llm_available(config):
@@ -9520,6 +9527,9 @@ def _run_rag_query_agentic_single(
         packed_evidence=packed_evidence,
         product=product,
         profile_override=initial_profile_with_deadline,
+        query_class=plan.query_class,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
     )
     answer_profile_used = model_name or initial_profile_with_deadline.model
     retry_required = (
@@ -9545,6 +9555,9 @@ def _run_rag_query_agentic_single(
             packed_evidence=packed_evidence,
             product=product,
             profile_override=primary_profile_with_deadline,
+            query_class=plan.query_class,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -9574,6 +9587,9 @@ def _run_rag_query_agentic_single(
             packed_evidence=packed_evidence,
             product=product,
             profile_override=primary_profile_with_deadline,
+            query_class=plan.query_class,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -9610,6 +9626,9 @@ def _run_rag_query_agentic_single(
             product=product,
             profile_override=primary_profile_with_deadline,
             citation_retry=True,
+            query_class=plan.query_class,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -10098,6 +10117,7 @@ def run_rag_query(
             message,
             top_k=top_k,
             ticket_context=ticket_context,
+            ticket_id=ticket_id,
             requester=requester,
             customer_id=customer_id,
             product=product,
@@ -10137,6 +10157,7 @@ def run_rag_query(
             message,
             top_k=top_k,
             ticket_context=ticket_context,
+            ticket_id=ticket_id,
             requester=requester,
             customer_id=customer_id,
             product=product,
