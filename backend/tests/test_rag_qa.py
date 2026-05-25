@@ -26,6 +26,7 @@ from backend.services.rag_qa import (
     _raise_if_cancelled,
     _metadata_rerank,
     _merge_request_body_evidence_into_final_chunks,
+    _select_usage_configuration_code_language,
     probe_customer_rag_index_readiness,
     _retrieve_bm25_chunks,
     _rerank_chunks,
@@ -35,6 +36,8 @@ from backend.services.rag_qa import (
     _select_bm25_query_terms,
     _split_table_name,
     _format_context,
+    _usage_configuration_supported_code_languages,
+    _usage_configuration_supports_code_example,
     run_rag_query,
 )
 from backend.services.rag_request_body_evidence import (
@@ -200,6 +203,92 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertNotIn("```", answer)
         self.assertEqual(citation_ids, ["join-text"])
+
+    def test_usage_configuration_code_language_prefers_customer_requested_supported_language(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-1",
+                text="```javascript\nclient.join(appId, channel, token, uid);\n```",
+                source_path="docs/js.md",
+                similarity=0.92,
+                metadata={"language": "javascript"},
+            ),
+            RetrievedChunk(
+                chunk_id="java-1",
+                text="```java\nengine.joinChannel(token, channel, uid, options);\n```",
+                source_path="docs/java.md",
+                similarity=0.9,
+                metadata={"language": "java"},
+            ),
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ("javascript", "java"))
+        self.assertTrue(_usage_configuration_supports_code_example(chunks))
+        self.assertEqual(
+            _select_usage_configuration_code_language(
+                "How do I join a channel in JavaScript?",
+                chunks,
+                ticket_id="ticket-1",
+                customer_id="customer-1",
+            ),
+            "javascript",
+        )
+
+    def test_usage_configuration_code_language_is_stable_when_customer_does_not_request_one(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-1",
+                text="```javascript\nclient.join(appId, channel, token, uid);\n```",
+                source_path="docs/js.md",
+                similarity=0.92,
+                metadata={"language": "javascript"},
+            ),
+            RetrievedChunk(
+                chunk_id="java-1",
+                text="```java\nengine.joinChannel(token, channel, uid, options);\n```",
+                source_path="docs/java.md",
+                similarity=0.9,
+                metadata={"language": "java"},
+            ),
+        ]
+
+        selected_once = _select_usage_configuration_code_language(
+            "How do I join a channel?",
+            chunks,
+            ticket_id="ticket-2",
+            customer_id="customer-2",
+        )
+        selected_twice = _select_usage_configuration_code_language(
+            "How do I join a channel?",
+            chunks,
+            ticket_id="ticket-2",
+            customer_id="customer-2",
+        )
+
+        self.assertEqual(selected_once, selected_twice)
+        self.assertIn(selected_once, {"javascript", "java"})
+
+    def test_usage_configuration_code_language_is_empty_without_code_or_config_evidence(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="text-1",
+                text="The SDK lets users join a channel after preparing credentials.",
+                source_path="docs/overview.md",
+                similarity=0.85,
+                metadata={},
+            )
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ())
+        self.assertFalse(_usage_configuration_supports_code_example(chunks))
+        self.assertIsNone(
+            _select_usage_configuration_code_language(
+                "How do I join a channel?",
+                chunks,
+                ticket_id="ticket-3",
+                customer_id="customer-3",
+            )
+        )
 
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))

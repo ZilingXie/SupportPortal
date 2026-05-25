@@ -216,6 +216,45 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("Do not invent API names", user_prompt)
         self.assertIn("Do not put code examples in key_steps", user_prompt)
 
+    def test_rag_answer_prompt_guides_usage_configuration_language_choice_from_evidence(self) -> None:
+        insufficient_reply = "I couldn't find enough information in the available support knowledge base to answer that question."
+        user_prompt = build_rag_answer_user_prompt(
+            question="How do I join a channel in JavaScript?",
+            context_block=(
+                "chunk-1: Join with joinChannel.\n"
+                "```javascript\nclient.join(appId, channel, token, uid);\n```"
+            ),
+            insufficient_reply=insufficient_reply,
+            repair_mode=False,
+            query_class="usage_configuration",
+            preferred_code_language="javascript",
+            supported_code_languages=("javascript", "java"),
+        )
+
+        self.assertIn("## Usage/Configuration Code Example Policy", user_prompt)
+        self.assertIn("usage_configuration", user_prompt)
+        self.assertIn("Preferred example language: javascript", user_prompt)
+        self.assertIn("Evidence-supported example languages: javascript, java", user_prompt)
+        self.assertIn("If the customer requested a language, prefer it only when it appears in the evidence-supported list", user_prompt)
+        self.assertIn("Do not translate examples into another SDK language", user_prompt)
+        self.assertIn("Do not invent API names", user_prompt)
+
+    def test_rag_answer_prompt_blocks_usage_configuration_code_when_evidence_has_no_example(self) -> None:
+        insufficient_reply = "I couldn't find enough information in the available support knowledge base to answer that question."
+        user_prompt = build_rag_answer_user_prompt(
+            question="Which parameter controls the role?",
+            context_block="chunk-1: The docs mention channel roles but provide no code or field schema.",
+            insufficient_reply=insufficient_reply,
+            repair_mode=False,
+            query_class="usage_configuration",
+            supported_code_languages=(),
+        )
+
+        self.assertIn("## Usage/Configuration Code Example Policy", user_prompt)
+        self.assertIn("No evidence-supported code or configuration example is available", user_prompt)
+        self.assertIn("Do not include a fenced code block", user_prompt)
+        self.assertIn("set insufficient_evidence=true", user_prompt)
+
     def test_rag_answer_system_prompt_includes_selected_product_scope(self) -> None:
         system_prompt = build_rag_answer_system_prompt(
             insufficient_reply="INSUFFICIENT",
