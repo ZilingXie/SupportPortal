@@ -798,8 +798,6 @@ def _build_query_variants(
     decomposition_enabled: bool,
 ) -> list[tuple[str, str]]:
     variants: list[tuple[str, str]] = [("original", str(message or "").strip())]
-    for query in _dual_stream_query_expansions(message):
-        variants.append(("rule", query))
     if understanding is None:
         deduped: list[tuple[str, str]] = []
         seen: set[str] = set()
@@ -889,8 +887,6 @@ def _classify_agentic_query(
         return "comparison"
     if is_api_semantics_mismatch_message(message):
         return "api_semantics_mismatch"
-    if _is_dual_stream_enable_query(message):
-        return "usage_configuration"
     if _is_how_to_faq_query(message, understanding):
         return "usage_configuration"
     if understanding is not None:
@@ -1759,201 +1755,6 @@ def _supplement_how_to_code_example_if_missing(
     return body, normalized_citation_ids
 
 
-def _is_dual_stream_enable_query(message: str) -> bool:
-    lower = _normalized_query_text(message)
-    if not lower:
-        return False
-    if not any(marker in lower for marker in ["dual stream", "dual-stream"]):
-        return False
-    if any(
-        marker in lower
-        for marker in ["error", "issue", "problem", "failed", "failure", "why ", "black screen", "no video"]
-    ):
-        return False
-    return any(
-        marker in lower
-        for marker in ["how to", "how do i", "enable", "configure", "turn on", "use"]
-    )
-
-
-def _dual_stream_query_expansions(message: str) -> list[str]:
-    if not _is_dual_stream_enable_query(message):
-        return []
-    lower = _normalized_query_text(message)
-    expansions = [
-        "enable dual stream enableDualStream setDualStreamMode low stream media stream fallback",
-        "client enableDualStream low stream subscription media stream fallback",
-    ]
-    if any(marker in lower for marker in ["web", "javascript", "js"]):
-        expansions.insert(0, "web client enableDualStream low stream media stream fallback")
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for query in expansions:
-        normalized = " ".join(str(query or "").split()).strip()
-        if not normalized:
-            continue
-        key = normalized.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(normalized)
-    return deduped
-
-
-def _chunk_mentions_dual_stream(chunk: RetrievedChunk) -> bool:
-    surface = _chunk_surface_text(chunk)
-    return any(
-        marker in surface
-        for marker in [
-            "dual stream",
-            "dual-stream",
-            "enabledualstream",
-            "enabledualstreammode",
-            "setdualstreammode",
-        ]
-    )
-
-
-def _chunk_covers_dual_stream_enablement(chunk: RetrievedChunk) -> bool:
-    surface = _chunk_surface_text(chunk)
-    if any(
-        marker in surface
-        for marker in [
-            "enabledualstream",
-            "client.enabledualstream",
-            "enabledualstreammode",
-            "setdualstreammode",
-            "enable dual-stream mode",
-            "enable dual stream mode",
-        ]
-    ):
-        return True
-    if not _chunk_mentions_dual_stream(chunk):
-        return False
-    if any(
-        marker in surface
-        for marker in [
-            "subscribe to the low stream",
-            "subscribe to the low video stream",
-            "low-quality video stream",
-            "low stream",
-        ]
-    ):
-        return True
-    return "media stream fallback" in surface or ("stream fallback" in surface and "fallback" in surface)
-
-
-def _is_dual_stream_support_chunk(chunk: RetrievedChunk) -> bool:
-    if not _chunk_mentions_dual_stream(chunk):
-        return False
-    surface = _chunk_surface_text(chunk)
-    return "glossary" in surface or "reference/glossary" in surface or "dual-stream mode" in surface
-
-
-def _dual_stream_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
-    if not _is_dual_stream_enable_query(query):
-        return 0.0, []
-    reasons: list[str] = []
-    boost = 0.0
-    surface = _chunk_surface_text(chunk)
-    source_path_lower = str(chunk.source_path or "").strip().lower()
-    source_url_lower = str(chunk.source_url or "").strip().lower()
-    if _chunk_covers_dual_stream_enablement(chunk):
-        boost += 2.6
-        reasons.append("intent:dual_stream_enablement")
-        if any(marker in surface for marker in ["enabledualstream", "enabledualstreammode", "setdualstreammode"]):
-            boost += 0.85
-            reasons.append("intent:dual_stream_api_call")
-        if any(
-            marker in source_path_lower or marker in source_url_lower or marker in surface
-            for marker in ["media-stream-fallback", "media stream fallback", "stream fallback"]
-        ):
-            boost += 0.85
-            reasons.append("intent:dual_stream_fallback_doc")
-        if not _generic_join_product_compatible(chunk, product):
-            boost -= 1.2
-            reasons.append("intent:dual_stream_product_penalty")
-        return boost, reasons
-    if _is_dual_stream_support_chunk(chunk):
-        boost += 0.35
-        reasons.append("intent:dual_stream_support")
-        if "glossary" in source_path_lower or "glossary" in source_url_lower:
-            boost -= 1.55
-            reasons.append("intent:dual_stream_glossary_penalty")
-    return boost, reasons
-
-
-def _select_dual_stream_grounding_chunks(
-    chunks: list[RetrievedChunk],
-    *,
-    product: str | None,
-) -> tuple[RetrievedChunk | None, RetrievedChunk | None]:
-    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
-    candidates = compatible_chunks or list(chunks)
-    action_chunk = next((chunk for chunk in candidates if _chunk_covers_dual_stream_enablement(chunk)), None)
-    support_chunk = next(
-        (
-            chunk
-            for chunk in candidates
-            if action_chunk is not None
-            and _chunk_dedupe_key(chunk) != _chunk_dedupe_key(action_chunk)
-            and _is_dual_stream_support_chunk(chunk)
-        ),
-        None,
-    )
-    return action_chunk, support_chunk
-
-
-def _build_dual_stream_grounded_answer(
-    message: str,
-    chunks: list[RetrievedChunk],
-    *,
-    product: str | None,
-    requester: str | None = None,
-    customer_id: str | None = None,
-) -> RagAnswer | None:
-    if not _is_dual_stream_enable_query(message):
-        return None
-    action_chunk, support_chunk = _select_dual_stream_grounding_chunks(
-        chunks,
-        product=product,
-    )
-    if action_chunk is None:
-        return None
-    action_surface = _chunk_surface_text(action_chunk)
-    api_name = "`client.enableDualStream()`" if "client.enabledualstream" in action_surface else "`enableDualStream()`"
-    cited_chunks = [action_chunk]
-    if support_chunk is not None:
-        cited_chunks.append(support_chunk)
-    example_code_block = _extract_authoritative_code_block(action_chunk)
-    body = f"To enable dual-stream mode, use {api_name} as described in the available Agora documentation."
-    steps = [
-        "Enable dual-stream mode on the publishing client before subscribers switch between the high and low video streams.",
-        "Keep the publisher sending video so the SDK can provide both stream layers.",
-        "Configure your low-stream subscription or media stream fallback behavior as needed for your app.",
-    ]
-    if example_code_block:
-        body = f"{body}\n\nReference Example:\n{example_code_block}"
-    citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
-    sources = [
-        record.get("source_url") or f"rag:{record['chunk_id']}"
-        for record in citation_records
-    ]
-    confidence = max(0.9, _confidence_from_chunks(cited_chunks))
-    return RagAnswer(
-        answer=_compose_grounded_answer_email(
-            question=message,
-            body=body,
-            steps=steps,
-            requester=requester,
-            customer_id=customer_id,
-        ),
-        confidence=round(min(0.96, confidence), 2),
-        sources=sources,
-        citations=citation_records,
-    )
-
-
 def _build_black_screen_guidance_grounded_answer(
     message: str,
     chunks: list[RetrievedChunk],
@@ -2275,24 +2076,6 @@ def _build_agentic_retrieval_plan(
             product=product,
             shadow_tools_skipped=[],
         )
-    if _is_dual_stream_enable_query(message):
-        variants: list[tuple[str, str]] = [("original", normalized_message)]
-        for query in _dual_stream_query_expansions(message):
-            variants.append(("rule", query))
-        return AgenticRetrievalPlan(
-            query_class="usage_configuration",
-            first_pass_tools=["p_bm25", "p_fts"],
-            query_variants=_dedupe_agentic_variants(variants),
-            decomposition_targets=[],
-            evidence_goal="configuration_support",
-            recovery_bias="lexical",
-            ticket_context_used=bool(ticket_context),
-            exact_terms=exact_terms,
-            light_path=True,
-            product=product,
-            shadow_tools_skipped=[],
-        )
-
     if query_class == "usage_configuration":
         return AgenticRetrievalPlan(
             query_class=query_class,
@@ -2347,10 +2130,6 @@ def _build_agentic_retrieval_plan(
                 if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[1]).strip()
             ]
             if query_variants:
-                for specialized_query in _dual_stream_query_expansions(message):
-                    normalized = " ".join(str(specialized_query or "").split()).strip()
-                    if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
-                        query_variants.append(("rule", normalized))
                 return AgenticRetrievalPlan(
                     query_class=query_class,
                     first_pass_tools=first_pass_tools or list(default_tool_order),
@@ -2398,10 +2177,6 @@ def _build_agentic_retrieval_plan(
                 normalized = " ".join(str(subquery or "").split()).strip()
                 if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
                     query_variants.append(("decomposition", normalized))
-    for specialized_query in _dual_stream_query_expansions(message):
-        normalized = " ".join(str(specialized_query or "").split()).strip()
-        if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
-            query_variants.append(("rule", normalized))
     decomposition_targets = _extract_comparison_targets(message) if query_class == "comparison" else []
     return AgenticRetrievalPlan(
         query_class=query_class,
@@ -5325,10 +5100,6 @@ def _metadata_rerank(
         if join_boost:
             boost += join_boost
             reasons.extend(join_reasons)
-        dual_stream_boost, dual_stream_reasons = _dual_stream_intent_adjustment(query, chunk, product)
-        if dual_stream_boost:
-            boost += dual_stream_boost
-            reasons.extend(dual_stream_reasons)
         if (
             resolved_query_class == "troubleshooting_why"
             and _is_release_note_chunk(chunk)
@@ -8631,10 +8402,9 @@ def _classify_agentic_query_flags(effective_question: str) -> AgenticQueryFlags:
     usage_configuration_query = preliminary_query_class == "usage_configuration"
     short_how_to_faq_query = preliminary_query_class == "usage_configuration" and _is_short_how_to_faq_query(effective_question)
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(effective_question)
-    dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
-    vector_setup_skipped = simple_lexical_query or usage_configuration_query or api_semantics_query or dual_stream_enable_query
-    light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
-    skip_bm25_warmup = usage_configuration_query or api_semantics_query or dual_stream_enable_query
+    vector_setup_skipped = simple_lexical_query or usage_configuration_query or api_semantics_query
+    light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query
+    skip_bm25_warmup = usage_configuration_query or api_semantics_query
     return AgenticQueryFlags(
         preliminary_query_class=preliminary_query_class,
         api_semantics_query=api_semantics_query,
@@ -8652,27 +8422,25 @@ def _resolve_agentic_feature_flags(
     query_flags: AgenticQueryFlags,
     effective_question: str,
 ) -> AgenticFeatureFlags:
-    dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
     short_symptom_troubleshooting_query = _is_short_symptom_troubleshooting_query(effective_question)
     warm_vector_enabled = bool(config.get("vector_enabled")) and not (
         query_flags.simple_lexical_query
         or query_flags.short_how_to_faq_query
         or query_flags.api_semantics_query
-        or dual_stream_enable_query
         or _is_generic_join_channel_query(effective_question)
         or short_symptom_troubleshooting_query
     )
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
-        query_flags.simple_lexical_query or query_flags.api_semantics_query or dual_stream_enable_query
+        query_flags.simple_lexical_query or query_flags.api_semantics_query
     )
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not (
-        query_flags.api_semantics_query or dual_stream_enable_query
+        query_flags.api_semantics_query
     )
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not (
-        query_flags.api_semantics_query or dual_stream_enable_query
+        query_flags.api_semantics_query
     )
     query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not (
-        query_flags.api_semantics_query or dual_stream_enable_query
+        query_flags.api_semantics_query
     )
     return AgenticFeatureFlags(
         query_understanding_enabled=query_understanding_enabled,
@@ -8760,7 +8528,6 @@ def _run_rag_query_agentic_single(
     query_type = _infer_query_type(effective_question)
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
     query_flags = _classify_agentic_query_flags(effective_question)
-    dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
     api_semantics_query = query_flags.api_semantics_query
     short_how_to_faq_query = query_flags.short_how_to_faq_query
     simple_lexical_query = query_flags.simple_lexical_query
@@ -8771,7 +8538,7 @@ def _run_rag_query_agentic_single(
 
     config["_vector_runtime_available"] = (
         False
-        if (simple_lexical_query or api_semantics_query or dual_stream_enable_query)
+        if (simple_lexical_query or api_semantics_query)
         else bool(config.get("vector_enabled", True))
         and _runtime_capability_available(
             "vector",
@@ -9459,15 +9226,6 @@ def _run_rag_query_agentic_single(
                 customer_id=customer_id,
             )
             generation_mode = "black_screen_guidance_deterministic" if deterministic_answer is not None else None
-        elif _is_dual_stream_enable_query(effective_question):
-            deterministic_answer = _build_dual_stream_grounded_answer(
-                effective_question,
-                final_chunks,
-                product=product,
-                requester=requester,
-                customer_id=customer_id,
-            )
-            generation_mode = "dual_stream_deterministic" if deterministic_answer is not None else None
         elif _is_generic_join_channel_query(effective_question):
             deterministic_answer = _build_generic_join_grounded_answer(
                 effective_question,

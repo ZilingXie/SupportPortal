@@ -80,7 +80,6 @@ _ANSWER_MODE_PLATFORM_SCOPE_REPLY_RE = re.compile(
 _LOW_RISK_HOW_TO_GENERATION_MODES = {
     "structured_answer",
     "generic_join_deterministic",
-    "dual_stream_deterministic",
 }
 _STRUCTURED_TECHNICAL_REPLY_RE = re.compile(
     r"```|(^|\n)\s*\d+\.\s+|(^|\n)\s*[-*]\s+|\bjoinchannel\b|\bsetclientrole\b|\bengine\.\w+\b|"
