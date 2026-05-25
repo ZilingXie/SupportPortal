@@ -35,15 +35,20 @@ Do not delegate by default when the task involves security, auth, payment, data 
 
 ## Task Decomposition
 
-Before dispatching workers, split the user request into PR-sized slices:
+Codex must decompose the user request before any implementation worker runs. This is required whether the user provides a detailed multi-PR plan or only describes a bug to fix.
+
+First split the request into PR-sized slices:
 
 - If the user provides a plan with multiple PRs or clearly separable phases, process exactly one PR slice at a time in the requested order.
 - If the user only describes a repair, create the smallest PR-sized slice that can restore the behavior and be verified.
 - For each PR slice, define the goal, scope boundaries, expected changed files, targeted verification, and acceptance checks before dispatch.
 - Do not bundle multiple PR slices into one broad payload. Finish review and verification for the current slice before starting the next slice.
 
-Within a PR slice, split independent work into one or more Claude Code agents:
+Then split the current PR slice into one or more Claude Code agent payloads and dispatch them:
 
+- Dispatch at least one Claude Code implementation agent for every delegated PR slice. Do not self-implement first unless the Delegation Gate says the slice is unsafe to delegate, Claude Code preflight failed, or the worker failure limit has been reached.
+- Start multiple Claude Code agents simultaneously when the current PR slice contains independent subtasks that can be safely isolated.
+- Start exactly one Claude Code agent when the PR slice is not safely parallelizable.
 - Start multiple agents simultaneously only when their write scopes are independent and each can run from a clean isolated workspace or is read-only.
 - Never point two writing workers at the same task worktree. If isolated write workspaces are not available, run one writing worker and optionally run parallel read-only probes with `--tools "Read,Bash"`.
 - Give every parallel payload an explicit write scope, out-of-scope list, verification command, and final output contract.
@@ -53,10 +58,10 @@ Within a PR slice, split independent work into one or more Claude Code agents:
 
 1. Run the Claude Code preflight. Stop and report if it fails.
 2. Classify whether the repair is safe to delegate. If unclear, read `references/escalation-policy.md`.
-3. Decompose the request into PR-sized slices, then decompose the current slice into safe worker payloads.
+3. Decompose the request into PR-sized slices, then decompose the current slice into one or more safe Claude Code agent payloads.
 4. Read enough context to create high-quality worker payloads: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, nearby call sites when necessary, verification commands, and explicit out-of-scope boundaries. Prioritize code quality over minimizing this planning step.
 5. Build concise payloads using `references/payload-schema.md`. Do not paste a full worker brief, but do include the `final_output_contract`.
-6. Dispatch each payload through `scripts/run_repair_worker.py`, not by calling `claude` directly. Use parallel dispatch only under the Task Decomposition safety rules.
+6. Dispatch the Claude Code agent payload or payloads through `scripts/run_repair_worker.py`, not by calling `claude` directly. Use parallel dispatch when the Task Decomposition safety rules allow it; otherwise dispatch one worker.
 7. Treat each runner as the completion hook: wait for its final report, then review the compact report, changed files, diff, and test evidence with `references/review-checklist.md`. Do not consume long Claude stdout/stderr unless the compact report points to a failure that needs it.
 8. If `worker_status` is `failed`, count it as a failed worker round for that payload, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
 9. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, or no-report worker rounds for the same payload, stop delegating that payload and have Codex take over.
