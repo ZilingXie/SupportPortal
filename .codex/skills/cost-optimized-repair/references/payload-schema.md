@@ -16,6 +16,15 @@ scope_hints:
 known_context:
 <only facts Codex has already verified>
 
+pr_slice:
+<optional PR slice name or number when the user supplied a multi-PR plan>
+
+parallel_group:
+<optional group name plus whether this worker is read-only or has an isolated write workspace>
+
+write_scope:
+<files/directories this worker may edit, or "read-only">
+
 constraints:
 - Smallest correct change
 - No unrelated refactor
@@ -39,6 +48,9 @@ final_output_contract:
 - `goal`: one outcome, not an implementation plan.
 - `scope_hints`: point the worker to likely starting points; do not summarize the whole repo.
 - `known_context`: include verified facts only. Mark guesses as guesses or omit them.
+- `pr_slice`: include when the user provided a multi-PR plan; one payload should belong to exactly one PR slice.
+- `parallel_group`: include when launching multiple agents together; state whether the worker is read-only or has an isolated write workspace.
+- `write_scope`: required for parallel workers; never allow two writing payloads to edit the same files in the same worktree.
 - `constraints`: keep the default three unless the task needs tighter rules.
 - `verification`: prefer one narrow command that proves the fix.
 - `acceptance`: describe user-visible behavior, regression coverage, or exact diff expectations.

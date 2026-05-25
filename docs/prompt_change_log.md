@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-25 - cost-optimized repair dispatch preflight and PR slicing
+
+- Area or subsystem: Project-local Codex-to-Claude repair delegation workflow
+- Prompt or model version: `repair-worker-dispatch-v3`
+- Summary: Added a mandatory Claude Code CLI preflight, PR-sized task decomposition rules, safe parallel-agent dispatch guidance, and worker payload metadata for PR slices, parallel groups, and write scopes.
+- Reason: Broad repair plans can contain several PR-level changes, and Codex needs a deterministic guard that stops immediately when Claude Code is unavailable while avoiding oversized payloads and unsafe concurrent writes to one worktree.
+- Affected files or config:
+  - `.codex/skills/cost-optimized-repair/SKILL.md`
+  - `.codex/skills/cost-optimized-repair/references/payload-schema.md`
+  - `.codex/skills/cost-optimized-repair/agents/openai.yaml`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Codex now verifies Claude Code with a fixed non-interactive smoke test before delegated repair work and stops if that preflight fails.
+  - Multi-PR plans are processed one PR slice at a time instead of being bundled into one broad worker payload.
+  - Within a PR slice, Codex may start multiple Claude Code agents only for read-only probes or independent isolated write scopes; overlapping write workers stay sequential.
+- Verification:
+  - `rtk claude --bare -p 'Smoke test only. Reply exactly: CLAUDE_CODE_OK' --output-format json --permission-mode bypassPermissions --tools Read --model opus --effort low --no-session-persistence`
+  - `rtk rg -n "Claude Code Preflight|Task Decomposition|CLAUDE_CODE_OK|pr_slice|parallel_group|write_scope" .codex/skills/cost-optimized-repair/SKILL.md .codex/skills/cost-optimized-repair/references/payload-schema.md`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile .codex/skills/cost-optimized-repair/scripts/run_repair_worker.py .codex/skills/cost-optimized-repair/scripts/verify_claude_cli_flow.py .codex/skills/cost-optimized-repair/scripts/test_run_repair_worker.py`
+  - `rtk git diff --check`
+
 ## 2026-05-25 - cost-optimized repair worker output contract
 
 - Area or subsystem: Project-local Codex-to-Claude repair delegation workflow

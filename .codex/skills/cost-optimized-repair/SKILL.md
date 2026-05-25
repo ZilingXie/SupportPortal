@@ -11,22 +11,56 @@ Keep Codex focused on judgment, dispatch, and acceptance. Delegate cheap impleme
 
 Do not create or rely on global skills under `~/.codex/skills` or `~/.claude/skills` for this workflow.
 
+## Claude Code Preflight
+
+Before planning or dispatching delegated repair work, verify Claude Code can answer non-interactively:
+
+```bash
+claude --bare -p 'Smoke test only. Reply exactly: CLAUDE_CODE_OK' \
+  --output-format json \
+  --permission-mode bypassPermissions \
+  --tools Read \
+  --model opus \
+  --effort low \
+  --no-session-persistence
+```
+
+Continue only when the command exits 0, returns valid JSON, has `is_error=false`, no permission denials, and `result` is exactly `CLAUDE_CODE_OK`. If the preflight fails, terminate the repair task immediately; do not create worker payloads, do not start implementation, and report the Claude Code failure reason, exit status, and any useful stderr/stdout path or JSON error details.
+
 ## Delegation Gate
 
 Delegate only when the likely fix is bounded and Codex can review it cheaply. Good candidates are small and medium bug fixes with clear symptoms, likely files, and targeted verification.
 
 Do not delegate by default when the task involves security, auth, payment, data migration, data loss risk, concurrency, consistency, public API or schema changes, production secrets, broad architecture, or paths that tests cannot cover. See `references/escalation-policy.md`.
 
+## Task Decomposition
+
+Before dispatching workers, split the user request into PR-sized slices:
+
+- If the user provides a plan with multiple PRs or clearly separable phases, process exactly one PR slice at a time in the requested order.
+- If the user only describes a repair, create the smallest PR-sized slice that can restore the behavior and be verified.
+- For each PR slice, define the goal, scope boundaries, expected changed files, targeted verification, and acceptance checks before dispatch.
+- Do not bundle multiple PR slices into one broad payload. Finish review and verification for the current slice before starting the next slice.
+
+Within a PR slice, split independent work into one or more Claude Code agents:
+
+- Start multiple agents simultaneously only when their write scopes are independent and each can run from a clean isolated workspace or is read-only.
+- Never point two writing workers at the same task worktree. If isolated write workspaces are not available, run one writing worker and optionally run parallel read-only probes with `--tools "Read,Bash"`.
+- Give every parallel payload an explicit write scope, out-of-scope list, verification command, and final output contract.
+- Codex remains responsible for merging or accepting worker outputs sequentially, reviewing each diff, and resolving conflicts.
+
 ## Codex Workflow
 
-1. Classify whether the repair is safe to delegate. If unclear, read `references/escalation-policy.md`.
-2. Read enough context to create a high-quality repair plan for the worker: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, nearby call sites when necessary, verification commands, and explicit out-of-scope boundaries. Prioritize code quality over minimizing this planning step.
-3. Build a concise payload using `references/payload-schema.md`. Do not paste a full worker brief, but do include the `final_output_contract`.
-4. Dispatch the payload through `scripts/run_repair_worker.py`, not by calling `claude` directly.
-5. Treat the runner as the completion hook: wait for its final report, then review the compact report, changed files, diff, and test evidence with `references/review-checklist.md`. Do not consume long Claude stdout/stderr unless the compact report points to a failure that needs it.
-6. If `worker_status` is `failed`, count it as a failed worker round, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
-7. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, or no-report worker rounds, stop delegating and have Codex take over.
-8. Finish with the repository's normal task classification, verification, and finalization rules.
+1. Run the Claude Code preflight. Stop and report if it fails.
+2. Classify whether the repair is safe to delegate. If unclear, read `references/escalation-policy.md`.
+3. Decompose the request into PR-sized slices, then decompose the current slice into safe worker payloads.
+4. Read enough context to create high-quality worker payloads: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, nearby call sites when necessary, verification commands, and explicit out-of-scope boundaries. Prioritize code quality over minimizing this planning step.
+5. Build concise payloads using `references/payload-schema.md`. Do not paste a full worker brief, but do include the `final_output_contract`.
+6. Dispatch each payload through `scripts/run_repair_worker.py`, not by calling `claude` directly. Use parallel dispatch only under the Task Decomposition safety rules.
+7. Treat each runner as the completion hook: wait for its final report, then review the compact report, changed files, diff, and test evidence with `references/review-checklist.md`. Do not consume long Claude stdout/stderr unless the compact report points to a failure that needs it.
+8. If `worker_status` is `failed`, count it as a failed worker round for that payload, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
+9. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, or no-report worker rounds for the same payload, stop delegating that payload and have Codex take over.
+10. After all accepted payloads for a PR slice are reviewed, run the slice-level targeted verification. Then continue to the next PR slice or finish with the repository's normal task classification, verification, and finalization rules.
 
 ## Claude CLI Invocation
 
@@ -43,6 +77,8 @@ python3 .codex/skills/cost-optimized-repair/scripts/run_repair_worker.py \
 ```
 
 The runner uses `--model opus --effort max` by default and does not set a budget cap. For read-only probes, add `--tools "Read,Bash"`. For intentionally short smoke tests only, add `--max-budget-usd`.
+
+For multiple safe read-only probes, start multiple runner commands concurrently with separate payload and report files. For writing implementation workers, run concurrently only from separate clean isolated workspaces; otherwise run writing workers sequentially.
 
 After every runner call, inspect the compact stdout first: `worker_status`, `failure_reason`, `partial_diff_stat`, `partial_diff_files`, `restored_partial_diff`, `saved_partial_patch`, `normalized_worker_result`, `worker_call_report`, `total_cost_usd`, and `full_report_path`. Open the full report or saved stdout/stderr artifacts only when the compact report is insufficient for review. Treat permission denials, CLI errors, timeouts, invalid JSON, missing worker sections, unrestored partial diffs, or a low quality score as a failed or correction-needed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
 
