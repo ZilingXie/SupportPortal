@@ -23,11 +23,11 @@ EXPECTED_HEADINGS = [
 ]
 
 OUTPUT_GUARD = (
-    "For /repair-worker tasks, the final answer must start with ## Result and use exactly "
-    "these H2 headings in order: ## Result, ## Files Changed, ## What Changed, "
-    "## Verification, ## Risk / Uncertainty, ## Needs Codex Review. No preamble, "
-    "tables, alternate headings, or wrapper title. The body under ## Result must be exactly "
-    "one of Fixed, Not fixed, or Blocked with no punctuation."
+    "For /control-cc-worker or /repair-worker tasks, the final answer must start with "
+    "## Result and use exactly these H2 headings in order: ## Result, ## Files Changed, "
+    "## What Changed, ## Verification, ## Risk / Uncertainty, ## Needs Codex Review. "
+    "No preamble, tables, alternate headings, or wrapper title. The body under ## Result "
+    "must be exactly one of Fixed, Not fixed, or Blocked with no punctuation."
 )
 
 
@@ -45,7 +45,7 @@ def without_fenced_code(markdown: str) -> str:
 
 
 def build_payload() -> str:
-    return """/repair-worker
+    return """/control-cc-worker
 
 mode:
 correction
@@ -54,7 +54,7 @@ problem:
 Verify that the project-local control-cc flow can call Claude Code CLI non-interactively and receive the strict worker result format.
 
 must_keep:
-- Use the project-local repair-worker skill.
+- Use the project-local control-cc-worker skill.
 - Do not modify any files.
 - Keep this as a read-only verification probe.
 
@@ -123,7 +123,7 @@ def main() -> int:
         print("claude CLI not found on PATH", file=sys.stderr)
         return 1
 
-    runner = Path(__file__).with_name("run_repair_worker.py")
+    runner = Path(__file__).with_name("run_cc_worker.py")
     if not runner.exists():
         print(f"runner not found: {runner}", file=sys.stderr)
         return 1
@@ -142,6 +142,8 @@ def main() -> int:
             str(args.timeout_sec),
             "--tools",
             "Read,Bash",
+            "--packet-type",
+            "read-only probe",
             "--restore-on-failure",
             "--model",
             args.model,

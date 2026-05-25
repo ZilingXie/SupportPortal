@@ -5,7 +5,7 @@ Use this schema to keep Codex-to-worker handoff short and testable.
 ## Initial Payload
 
 ```md
-/repair-worker
+/control-cc-worker
 
 goal:
 <one concrete code-work objective>
@@ -66,7 +66,7 @@ final_output_contract:
 Use one correction round when the first worker result is close but incomplete.
 
 ```md
-/repair-worker
+/control-cc-worker
 
 mode:
 correction
@@ -93,6 +93,8 @@ final_output_contract:
 - Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
 ```
 
-Do not use `/repair-worker correction`; Claude Code CLI treats slash-command arguments inconsistently. Keep `/repair-worker` as the first line and put `mode: correction` in the payload body.
+Do not use `/control-cc-worker correction`; Claude Code CLI treats slash-command arguments inconsistently. Keep `/control-cc-worker` as the first line and put `mode: correction` in the payload body.
 
 Do not send a third worker round. After two failed or unsafe rounds, Codex either splits the work further or takes over with an independent review of the useful findings.
+
+Legacy `/repair-worker` payloads remain supported through a compatibility skill, but new control-cc payloads should use `/control-cc-worker`.
