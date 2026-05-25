@@ -870,9 +870,9 @@ def _classify_agentic_query(
     if is_api_semantics_mismatch_message(message):
         return "api_semantics_mismatch"
     if _is_dual_stream_enable_query(message):
-        return "configuration"
+        return "usage_configuration"
     if _is_how_to_faq_query(message, understanding):
-        return "how_to_faq"
+        return "usage_configuration"
     if understanding is not None:
         doc_subtype = str(understanding.retrieval_plan.hard_filters.get("doc_subtype") or "").strip().lower()
         if doc_subtype == "troubleshooting_case":
@@ -880,10 +880,10 @@ def _classify_agentic_query(
     if any(term in lowered for term in ["why", "root cause", "black screen", "no audio", "jitter", "delay", "failed", "failure", "问题", "故障", "排查"]):
         return "troubleshooting_why"
     if any(term in lowered for term in ["configure", "configuration", "setup", "enable", "disable", "deploy", "parameter", "参数", "配置"]):
-        return "configuration"
+        return "usage_configuration"
     if _extract_query_terms(message, max_terms=6) or re.search(r"\b\d{3,5}\b", lowered):
         return "lexical_exact"
-    return "configuration"
+    return "unclear_query"
 
 
 def _raw_tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
@@ -893,6 +893,10 @@ def _raw_tool_order_for_query_class(query_class: str) -> tuple[list[str], str, s
         return (["p_bm25", "p_fts", "p_vec"], "exact_match", "lexical")
     if query_class == "how_to_faq":
         return (["p_bm25", "p_fts", "p_vec"], "how_to_usage_support", "lexical")
+    if query_class == "usage_configuration":
+        return (["p_bm25", "p_fts", "p_vec"], "configuration_support", "lexical")
+    if query_class == "unclear_query":
+        return (["p_bm25", "p_fts"], "clarifying_evidence", "conservative")
     if query_class == "troubleshooting_why":
         return (["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"], "causal_grounding", "semantic")
     if query_class == "comparison":
@@ -1010,7 +1014,7 @@ def _short_lexical_faq_pattern(message: str) -> str | None:
 
 
 def _is_short_lexical_faq_bucket(message: str, plan: AgenticRetrievalPlan) -> bool:
-    if plan.query_class not in {"lexical_exact", "how_to_faq"}:
+    if plan.query_class not in {"lexical_exact", "how_to_faq", "usage_configuration"}:
         return False
     query_terms = _extract_query_terms(message, max_terms=8)
     if len(query_terms) > 6:
@@ -2209,7 +2213,7 @@ def _build_agentic_retrieval_plan(
             product=product,
             shadow_tools_skipped=[],
         )
-    if query_class == "how_to_faq" and _is_short_how_to_faq_query(message, query_understanding):
+    if query_class == "usage_configuration" and _is_short_how_to_faq_query(message, query_understanding):
         return AgenticRetrievalPlan(
             query_class=query_class,
             first_pass_tools=["p_bm25", "p_fts"],
@@ -2256,7 +2260,7 @@ def _build_agentic_retrieval_plan(
         for query in _dual_stream_query_expansions(message):
             variants.append(("rule", query))
         return AgenticRetrievalPlan(
-            query_class="configuration",
+            query_class="usage_configuration",
             first_pass_tools=["p_bm25", "p_fts"],
             query_variants=_dedupe_agentic_variants(variants),
             decomposition_targets=[],
@@ -2284,7 +2288,9 @@ def _build_agentic_retrieval_plan(
     )
     if isinstance(planner_payload, dict):
         query_class = str(planner_payload.get("query_class") or "").strip().lower()
-        if query_class in {"lexical_exact", "how_to_faq", "configuration", "troubleshooting_why", "comparison"}:
+        if query_class in {"how_to_faq", "configuration"}:
+            query_class = "usage_configuration"
+        if query_class in {"lexical_exact", "usage_configuration", "unclear_query", "troubleshooting_why", "comparison"}:
             first_pass_tools, planner_shadow_skipped = _filter_shadow_tool_names(
                 [
                     str(item).strip()
@@ -3008,11 +3014,11 @@ def _judge_agentic_round(
         if primary_count == 0:
             recovery = (
                 "lexical_recovery"
-                if query_class in {"lexical_exact", "how_to_faq", "configuration"}
+                if query_class in {"lexical_exact", "how_to_faq", "configuration", "usage_configuration"}
                 else "semantic_recovery"
             )
             return AgenticJudgeDecision("recover_once", "missing_primary_support", 0.72, recovery)
-        if query_class in {"lexical_exact", "how_to_faq"} and _is_generic_join_channel_query(message):
+        if query_class in {"lexical_exact", "how_to_faq", "usage_configuration"} and _is_generic_join_channel_query(message):
             top_focus_chunk = top_chunk or (final_chunks[0] if final_chunks else None)
             has_join_step, has_token_auth = _generic_join_support_signals(
                 final_chunks,
@@ -3038,7 +3044,7 @@ def _judge_agentic_round(
                 return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
             if query_class == "comparison":
                 recovery = "compare_recovery"
-            elif query_class == "how_to_faq":
+            elif query_class in {"how_to_faq", "usage_configuration"}:
                 recovery = "lexical_recovery"
             else:
                 recovery = "semantic_recovery"
@@ -3052,7 +3058,7 @@ def _judge_agentic_round(
         return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
     if query_class == "comparison" and not comparison_covered:
         return AgenticJudgeDecision("escalate", "comparison_targets_missing", 0.84, None)
-    if query_class in {"lexical_exact", "how_to_faq"} and _is_generic_join_channel_query(message):
+    if query_class in {"lexical_exact", "how_to_faq", "usage_configuration"} and _is_generic_join_channel_query(message):
         has_join_step, has_token_auth = _generic_join_support_signals(
             final_chunks,
             product=product,
@@ -3235,7 +3241,7 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
             "p_keyword": 0.35,
             "s_keyword": 0.20,
         }
-    if query_class == "how_to_faq":
+    if query_class in {"how_to_faq", "usage_configuration"}:
         return {
             "p_bm25": 1.00,
             "p_fts": 0.90,
@@ -3403,7 +3409,7 @@ def _agentic_round_tools(
     if plan.light_path:
         if round_index <= 1:
             return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
-        if plan.query_class == "how_to_faq" and recovery_action == "lexical_recovery":
+        if plan.query_class in {"how_to_faq", "usage_configuration"} and recovery_action == "lexical_recovery":
             return _filter_shadow_tool_names(["p_vec"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         if recovery_action == "lexical_recovery":
             return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
@@ -4133,7 +4139,7 @@ def _execute_agentic_round(
                 index_role=index_role,
                 result=result,
             )
-        if plan.query_class == "how_to_faq":
+        if plan.query_class in {"how_to_faq", "usage_configuration"}:
             effective_tool_results = _merge_tool_result_maps(
                 short_faq_original_tool_results,
                 tool_results,
@@ -4986,7 +4992,8 @@ def _metadata_rerank(
     query_lower = str(query or "").lower()
     api_semantics_query = is_api_semantics_mismatch_message(query)
     answer_first_guidance_query = (
-        resolved_query_class in {"how_to_faq", "configuration"} and is_answer_first_how_to_message(query)
+        resolved_query_class in {"how_to_faq", "configuration", "usage_configuration"}
+        and is_answer_first_how_to_message(query)
     )
     anchor_hits = {item.lower() for item in extract_anchor_hits(query)}
     endpoint_operation_hints = {item.lower() for item in extract_endpoint_operation_hints(query)}
@@ -8567,12 +8574,12 @@ def _iteration_trace_payload(iteration: AgenticIterationTrace) -> dict[str, Any]
 def _classify_agentic_query_flags(effective_question: str) -> AgenticQueryFlags:
     preliminary_query_class = _classify_agentic_query(effective_question, None)
     api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
-    short_how_to_faq_query = preliminary_query_class == "how_to_faq" and _is_short_how_to_faq_query(effective_question)
+    short_how_to_faq_query = preliminary_query_class == "usage_configuration" and _is_short_how_to_faq_query(effective_question)
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(effective_question)
     dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
     vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
     light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
-    skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"} or dual_stream_enable_query
+    skip_bm25_warmup = short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
     return AgenticQueryFlags(
         preliminary_query_class=preliminary_query_class,
         api_semantics_query=api_semantics_query,
@@ -9133,7 +9140,7 @@ def _run_rag_query_agentic_single(
             "shadow": sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "shadow"),
         }
         answer_path_decision = None
-        if plan.query_class in {"how_to_faq", "configuration"}:
+        if plan.query_class in {"how_to_faq", "configuration", "usage_configuration"}:
             answer_path_decision = "answer_first" if not needs_human else "clarify_first"
         return RagQueryTrace(
             query_type=query_type,
