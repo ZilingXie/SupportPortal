@@ -842,6 +842,26 @@ def _build_query_variants(
     return deduped
 
 
+def _usage_configuration_query_variants(
+    normalized_message: str,
+    understanding: QueryUnderstandingResult | None,
+) -> list[tuple[str, str]]:
+    variants: list[tuple[str, str]] = [("original", normalized_message)]
+    if understanding is None:
+        return _dedupe_agentic_variants(variants)
+
+    semantic_query = " ".join(str(understanding.semantic_query or "").split()).strip()
+    if semantic_query:
+        variants.append(("semantic", semantic_query))
+    for query in understanding.retrieval_plan.rule_expansions:
+        variants.append(("rule", str(query).strip()))
+    for query in understanding.retrieval_plan.llm_expansions or understanding.rewritten_queries:
+        variants.append(("rewrite", str(query).strip()))
+    for query in understanding.decomposition_subqueries:
+        variants.append(("decomposition", str(query).strip()))
+    return _dedupe_agentic_variants(variants)
+
+
 def _is_comparison_query(message: str) -> bool:
     lowered = str(message or "").lower()
     return any(marker in lowered for marker in [" compare ", " difference ", " vs ", " versus ", "区别", "对比"])
@@ -894,7 +914,7 @@ def _raw_tool_order_for_query_class(query_class: str) -> tuple[list[str], str, s
     if query_class == "how_to_faq":
         return (["p_bm25", "p_fts", "p_vec"], "how_to_usage_support", "lexical")
     if query_class == "usage_configuration":
-        return (["p_bm25", "p_fts", "p_vec"], "configuration_support", "lexical")
+        return (["p_bm25", "p_fts"], "configuration_support", "lexical")
     if query_class == "unclear_query":
         return (["p_bm25", "p_fts"], "clarifying_evidence", "conservative")
     if query_class == "troubleshooting_why":
@@ -2217,7 +2237,7 @@ def _build_agentic_retrieval_plan(
         return AgenticRetrievalPlan(
             query_class=query_class,
             first_pass_tools=["p_bm25", "p_fts"],
-            query_variants=[("original", normalized_message)],
+            query_variants=_usage_configuration_query_variants(normalized_message, query_understanding),
             decomposition_targets=[],
             evidence_goal="how_to_usage_support",
             recovery_bias="lexical",
@@ -2269,6 +2289,21 @@ def _build_agentic_retrieval_plan(
             ticket_context_used=bool(ticket_context),
             exact_terms=exact_terms,
             light_path=True,
+            product=product,
+            shadow_tools_skipped=[],
+        )
+
+    if query_class == "usage_configuration":
+        return AgenticRetrievalPlan(
+            query_class=query_class,
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=_usage_configuration_query_variants(normalized_message, query_understanding),
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            ticket_context_used=bool(ticket_context),
+            exact_terms=exact_terms,
+            light_path=False,
             product=product,
             shadow_tools_skipped=[],
         )
@@ -3012,11 +3047,12 @@ def _judge_agentic_round(
         ):
             return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
         if primary_count == 0:
-            recovery = (
-                "lexical_recovery"
-                if query_class in {"lexical_exact", "how_to_faq", "configuration", "usage_configuration"}
-                else "semantic_recovery"
-            )
+            if query_class == "usage_configuration":
+                recovery = "configuration_recovery"
+            elif query_class in {"lexical_exact", "how_to_faq", "configuration"}:
+                recovery = "lexical_recovery"
+            else:
+                recovery = "semantic_recovery"
             return AgenticJudgeDecision("recover_once", "missing_primary_support", 0.72, recovery)
         if query_class in {"lexical_exact", "how_to_faq", "usage_configuration"} and _is_generic_join_channel_query(message):
             top_focus_chunk = top_chunk or (final_chunks[0] if final_chunks else None)
@@ -3034,7 +3070,8 @@ def _judge_agentic_round(
                 top_focus_chunk is not None
                 and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
             ) or not has_join_step or not has_token_auth or not has_preferred_join_step:
-                return AgenticJudgeDecision("recover_once", "generic_join_wrong_family", 0.78, "lexical_recovery")
+                recovery = "configuration_recovery" if query_class == "usage_configuration" else "lexical_recovery"
+                return AgenticJudgeDecision("recover_once", "generic_join_wrong_family", 0.78, recovery)
         if query_class == "lexical_exact" and (top_score < 0.32 or not exact_match_supported):
             return AgenticJudgeDecision("recover_once", "low_top1_rerank_score", 0.74, "lexical_recovery")
         if query_class == "troubleshooting_why" and troubleshooting_recovery_unlikely and top_score < 0.5:
@@ -3044,7 +3081,9 @@ def _judge_agentic_round(
                 return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
             if query_class == "comparison":
                 recovery = "compare_recovery"
-            elif query_class in {"how_to_faq", "usage_configuration"}:
+            elif query_class == "usage_configuration":
+                recovery = "configuration_recovery"
+            elif query_class == "how_to_faq":
                 recovery = "lexical_recovery"
             else:
                 recovery = "semantic_recovery"
@@ -3406,6 +3445,14 @@ def _agentic_round_tools(
         if recovery_action == "lexical_recovery":
             return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         return _filter_shadow_tool_names(["p_bm25", "p_fts", "p_vec"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+    if plan.query_class == "usage_configuration":
+        if round_index <= 1:
+            return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+        if recovery_action == "configuration_recovery":
+            return _filter_shadow_tool_names(
+                ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"],
+                shadow_retrieval_enabled=shadow_retrieval_enabled,
+            )
     if plan.light_path:
         if round_index <= 1:
             return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
@@ -3445,6 +3492,13 @@ def _agentic_round_variants(
     variants = list(plan.query_variants)
     if not variants:
         variants = [("original", " ".join(str(message or "").split()).strip())]
+    if plan.query_class == "usage_configuration":
+        if round_index <= 1:
+            return _dedupe_agentic_variants(variants[:1])
+        if recovery_action == "configuration_recovery":
+            if _is_generic_join_channel_query(message):
+                variants.extend(_generic_join_recovery_variants())
+            return _dedupe_agentic_variants(variants)
     short_faq_variants = (
         _short_lexical_faq_recovery_variants(message, plan.exact_terms)
         if (
@@ -8574,12 +8628,13 @@ def _iteration_trace_payload(iteration: AgenticIterationTrace) -> dict[str, Any]
 def _classify_agentic_query_flags(effective_question: str) -> AgenticQueryFlags:
     preliminary_query_class = _classify_agentic_query(effective_question, None)
     api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
+    usage_configuration_query = preliminary_query_class == "usage_configuration"
     short_how_to_faq_query = preliminary_query_class == "usage_configuration" and _is_short_how_to_faq_query(effective_question)
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(effective_question)
     dual_stream_enable_query = _is_dual_stream_enable_query(effective_question)
-    vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
+    vector_setup_skipped = simple_lexical_query or usage_configuration_query or api_semantics_query or dual_stream_enable_query
     light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
-    skip_bm25_warmup = short_how_to_faq_query or api_semantics_query or dual_stream_enable_query
+    skip_bm25_warmup = usage_configuration_query or api_semantics_query or dual_stream_enable_query
     return AgenticQueryFlags(
         preliminary_query_class=preliminary_query_class,
         api_semantics_query=api_semantics_query,
@@ -8608,20 +8663,16 @@ def _resolve_agentic_feature_flags(
         or short_symptom_troubleshooting_query
     )
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
-        query_flags.simple_lexical_query or query_flags.short_how_to_faq_query or query_flags.api_semantics_query
-        or dual_stream_enable_query
+        query_flags.simple_lexical_query or query_flags.api_semantics_query or dual_stream_enable_query
     )
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not (
-        query_flags.short_how_to_faq_query or query_flags.api_semantics_query
-        or dual_stream_enable_query
+        query_flags.api_semantics_query or dual_stream_enable_query
     )
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not (
-        query_flags.short_how_to_faq_query or query_flags.api_semantics_query
-        or dual_stream_enable_query
+        query_flags.api_semantics_query or dual_stream_enable_query
     )
     query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not (
-        query_flags.short_how_to_faq_query or query_flags.api_semantics_query
-        or dual_stream_enable_query
+        query_flags.api_semantics_query or dual_stream_enable_query
     )
     return AgenticFeatureFlags(
         query_understanding_enabled=query_understanding_enabled,
@@ -8757,6 +8808,10 @@ def _run_rag_query_agentic_single(
     query_rewrite_enabled = feature_flags.query_rewrite_enabled
     query_decomposition_enabled = feature_flags.query_decomposition_enabled
     query_expansion_enabled = feature_flags.query_expansion_enabled
+    defer_usage_configuration_understanding = (
+        query_flags.preliminary_query_class == "usage_configuration"
+        and query_understanding_enabled
+    )
     query_understanding: QueryUnderstandingResult | None = None
     effective_hard_filters: dict[str, str] = {}
     effective_soft_signals: dict[str, list[str]] = {}
@@ -8822,7 +8877,7 @@ def _run_rag_query_agentic_single(
         chunks = retrieval_fn(*args, **kwargs)
         return list(chunks or []), round((time.perf_counter() - started_at) * 1000, 2)
 
-    if query_understanding_enabled:
+    if query_understanding_enabled and not defer_usage_configuration_understanding:
         _raise_if_cancelled(
             "query_understanding",
             should_cancel=should_cancel,
@@ -8876,6 +8931,48 @@ def _run_rag_query_agentic_single(
             logger.warning("RAG %s timed out after %.3fs", stage, timeout_seconds)
             return None
 
+    def _apply_query_understanding_result(source: QueryUnderstandingResult) -> None:
+        nonlocal query_understanding
+        nonlocal effective_hard_filters, effective_soft_signals
+        nonlocal effective_rule_expansions, effective_llm_expansions
+        nonlocal effective_rewrites, effective_decomposition_subqueries
+        nonlocal effective_plan, effective_query_understanding
+
+        query_understanding = source
+        effective_hard_filters = dict(source.retrieval_plan.hard_filters)
+        effective_soft_signals = dict(source.retrieval_plan.soft_signals)
+        effective_rule_expansions = list(source.retrieval_plan.rule_expansions) if query_expansion_enabled else []
+        effective_llm_expansions = (
+            list(source.retrieval_plan.llm_expansions or source.rewritten_queries)
+            if query_rewrite_enabled
+            else []
+        )
+        effective_rewrites = list(effective_llm_expansions)
+        effective_decomposition_subqueries = (
+            list(source.decomposition_subqueries) if query_decomposition_enabled else []
+        )
+        effective_plan = RetrievalPlan(
+            semantic_query=source.semantic_query or str(effective_question or "").strip(),
+            hard_filters=dict(effective_hard_filters),
+            soft_signals=dict(effective_soft_signals),
+            rewritten_queries=list(effective_rewrites),
+            decomposition_subqueries=list(effective_decomposition_subqueries),
+            fallback_mode=source.fallback_mode,
+            rule_expansions=list(effective_rule_expansions),
+            llm_expansions=list(effective_llm_expansions),
+            prf_expansions=list(effective_prf_expansions),
+            hard_filter_sources=dict(source.retrieval_plan.hard_filter_sources),
+            soft_signal_sources=dict(source.retrieval_plan.soft_signal_sources),
+            cache_hit=bool(source.cache_hit),
+            prf_used=bool(source.retrieval_plan.prf_used),
+        )
+        effective_query_understanding = replace(
+            source,
+            rewritten_queries=list(effective_rewrites),
+            decomposition_subqueries=list(effective_decomposition_subqueries),
+            retrieval_plan=effective_plan,
+        )
+
     if query_understanding_future is not None:
         query_understanding_timed_out = False
         try:
@@ -8919,39 +9016,7 @@ def _run_rag_query_agentic_single(
                 cancel_futures=sidecar_future_timed_out,
             )
     if query_understanding is not None:
-        effective_hard_filters = dict(query_understanding.retrieval_plan.hard_filters)
-        effective_soft_signals = dict(query_understanding.retrieval_plan.soft_signals)
-        effective_rule_expansions = list(query_understanding.retrieval_plan.rule_expansions) if query_expansion_enabled else []
-        effective_llm_expansions = (
-            list(query_understanding.retrieval_plan.llm_expansions or query_understanding.rewritten_queries)
-            if query_rewrite_enabled
-            else []
-        )
-        effective_rewrites = list(effective_llm_expansions)
-        effective_decomposition_subqueries = (
-            list(query_understanding.decomposition_subqueries) if query_decomposition_enabled else []
-        )
-        effective_plan = RetrievalPlan(
-            semantic_query=query_understanding.semantic_query or str(effective_question or "").strip(),
-            hard_filters=dict(effective_hard_filters),
-            soft_signals=dict(effective_soft_signals),
-            rewritten_queries=list(effective_rewrites),
-            decomposition_subqueries=list(effective_decomposition_subqueries),
-            fallback_mode=query_understanding.fallback_mode,
-            rule_expansions=list(effective_rule_expansions),
-            llm_expansions=list(effective_llm_expansions),
-            prf_expansions=list(effective_prf_expansions),
-            hard_filter_sources=dict(query_understanding.retrieval_plan.hard_filter_sources),
-            soft_signal_sources=dict(query_understanding.retrieval_plan.soft_signal_sources),
-            cache_hit=bool(query_understanding.cache_hit),
-            prf_used=bool(query_understanding.retrieval_plan.prf_used),
-        )
-        effective_query_understanding = replace(
-            query_understanding,
-            rewritten_queries=list(effective_rewrites),
-            decomposition_subqueries=list(effective_decomposition_subqueries),
-            retrieval_plan=effective_plan,
-        )
+        _apply_query_understanding_result(query_understanding)
     else:
         effective_plan = RetrievalPlan(semantic_query=str(effective_question or "").strip())
 
@@ -8979,6 +9044,47 @@ def _run_rag_query_agentic_single(
 
     for round_index in [1, 2]:
         if round_index == 2:
+            if (
+                recovery_action == "configuration_recovery"
+                and query_understanding is None
+                and query_understanding_enabled
+            ):
+                try:
+                    _raise_if_cancelled(
+                        "query_understanding",
+                        should_cancel=should_cancel,
+                        record_stage=record_cancel_stage,
+                    )
+                    lazy_executor = ThreadPoolExecutor(max_workers=1)
+                    lazy_future_timed_out = False
+                    lazy_future = lazy_executor.submit(
+                        understand_rag_query,
+                        effective_question,
+                        query_policy=query_policy,
+                    )
+                    try:
+                        lazy_understanding = _wait_for_sidecar_future(lazy_future, "query_understanding")
+                        lazy_future_timed_out = bool(sidecar_future_timed_out)
+                    finally:
+                        lazy_executor.shutdown(
+                            wait=not lazy_future_timed_out,
+                            cancel_futures=lazy_future_timed_out,
+                        )
+                    if isinstance(lazy_understanding, QueryUnderstandingResult):
+                        _apply_query_understanding_result(lazy_understanding)
+                        plan = _build_agentic_retrieval_plan(
+                            message=effective_question,
+                            top_k=int(config["top_k"]),
+                            query_understanding=effective_query_understanding or query_understanding,
+                            ticket_context=ticket_context,
+                            product=product,
+                            shadow_retrieval_enabled=shadow_retrieval_enabled,
+                            should_cancel=should_cancel,
+                            record_cancel_stage=record_cancel_stage,
+                        )
+                        shadow_tools_skipped = list(plan.shadow_tools_skipped)
+                except Exception as exc:
+                    logger.warning("RAG lazy query understanding for configuration recovery failed: %s", exc)
             _raise_if_cancelled(
                 "round_2_recovery",
                 should_cancel=should_cancel,

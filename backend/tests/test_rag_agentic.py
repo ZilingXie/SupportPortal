@@ -746,6 +746,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ("rewrite", "joinChannel token uid flow"),
                 ("decomposition", "join channel"),
                 ("decomposition", "token authentication"),
+                (
+                    "focused_join_step",
+                    "join a channel joinChannel channelName uid token appid quickstart get started",
+                ),
+                (
+                    "focused_rewrite",
+                    "join channel joinChannel token channel name uid basic authentication",
+                ),
             ],
         )
 
