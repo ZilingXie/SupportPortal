@@ -1293,11 +1293,20 @@ def _is_high_risk_grounded_answer(
         else normalized_message
     )
     query_class = str(quality_signals.get("query_class") or "").strip().lower()
-    if (
-        query_class == "how_to_faq"
-        and effective_message
-        and is_answer_first_how_to_message(effective_message)
-    ):
+    usage_configuration_low_risk_intent = bool(
+        effective_message
+        and (
+            (
+                query_class == "how_to_faq"
+                and is_answer_first_how_to_message(effective_message)
+            )
+            or (
+                query_class in {"usage_configuration", "configuration"}
+                and not has_explicit_troubleshooting_signal(effective_message.lower())
+            )
+        )
+    )
+    if usage_configuration_low_risk_intent:
         if bool(quality_signals.get("needs_human")):
             return True
         generation_mode = str(quality_signals.get("generation_mode") or "").strip().lower()
