@@ -1,4 +1,4 @@
 interface:
   display_name: "Control CC"
   short_description: "Control Claude Code delegation for code work"
-  default_prompt: "Use $control-cc for delegated code work: verify Claude Code, decompose the request into PR-sized slices and atomic worker packets, dispatch safe Claude Code workers or read-only probes, and review the returned diffs."
+  default_prompt: "Use $control-cc for delegated code work: verify Claude Code, decompose the request into PR-sized slices and scored atomic worker packets, dispatch safe Claude Code workers or read-only probes through runner hard gates, and review the returned diffs."

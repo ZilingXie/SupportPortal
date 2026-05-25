@@ -12,6 +12,37 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-25 - control-cc hard gates and worker packet scoring
+
+- Area or subsystem: Project-local Codex-to-Claude Code delegation workflow
+- Prompt or model version: `control-cc-v2`
+- Summary: Added executable packet scoring, runner hard gates for oversized packets/read-only probes/write scopes/task plan paths, a worker diff review gate, and a first-class `/control-cc-worker` Claude Code skill while keeping `/repair-worker` as a compatibility entry.
+- Reason: The previous workflow relied too much on Markdown guidance, allowing Codex to hand Claude Code oversized PR slices or fall back to Codex implementation instead of enforcing atomic worker packets.
+- Affected files or config:
+  - `.codex/skills/control-cc/SKILL.md`
+  - `.codex/skills/control-cc/agents/openai.yaml`
+  - `.codex/skills/control-cc/references/payload-schema.md`
+  - `.codex/skills/control-cc/references/review-checklist.md`
+  - `.codex/skills/control-cc/references/task-plan-schema.md`
+  - `.codex/skills/control-cc/scripts/run_cc_worker.py`
+  - `.codex/skills/control-cc/scripts/run_repair_worker.py`
+  - `.codex/skills/control-cc/scripts/score_packet.py`
+  - `.codex/skills/control-cc/scripts/review_worker_result.py`
+  - `.codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `.codex/skills/control-cc/scripts/verify_claude_cli_flow.py`
+  - `.claude/skills/control-cc-worker/SKILL.md`
+  - `.claude/skills/repair-worker/SKILL.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Codex must turn PR slices into scored worker packets before dispatching writing workers.
+  - Oversized writing packets, dirty baselines, read-only probes with edit tools, read-only probe diffs, unsafe repo-local task plans, and write-scope violations fail in the runner before Codex accepts the result.
+  - New Claude Code payloads use `/control-cc-worker`; old `/repair-worker` payloads remain compatible.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile .codex/skills/control-cc/scripts/run_cc_worker.py .codex/skills/control-cc/scripts/run_repair_worker.py .codex/skills/control-cc/scripts/score_packet.py .codex/skills/control-cc/scripts/review_worker_result.py .codex/skills/control-cc/scripts/verify_claude_cli_flow.py .codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python .codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `rtk rg -n "score_packet.py|review_worker_result.py|run_cc_worker.py|/control-cc-worker|task-plan-schema" .codex/skills/control-cc .claude/skills docs/prompt_change_log.md`
+  - `rtk git diff --check`
+
 ## 2026-05-25 - control-cc delegated code workflow rename
 
 - Area or subsystem: Project-local Codex-to-Claude Code delegation workflow

@@ -9,6 +9,7 @@ Run or inspect:
 ```bash
 git diff --stat
 git diff -- <changed-files>
+python3 .codex/skills/control-cc/scripts/review_worker_result.py --write-scope <scope> --require-verification --report-file <runner-report.json> --fail-on-reject
 ```
 
 Then check:
