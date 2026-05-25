@@ -1,13 +1,9 @@
 FROM python:3.11-slim
 
-ARG APP_BUILD_REF=unknown
-ARG APP_BUILD_TIME=
 ARG INSTALL_ML_DEPS=1
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    APP_BUILD_REF=${APP_BUILD_REF} \
-    APP_BUILD_TIME=${APP_BUILD_TIME}
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -38,6 +34,13 @@ RUN python -m pip install --upgrade pip && \
       test "${install_ok}" -eq 1; \
     fi && \
     python -m pip show uvicorn fastapi >/dev/null
+
+ARG APP_BUILD_REF=unknown
+ARG APP_BUILD_TIME=
+# Force layer rebuild when build args change so ENV reflects current provenance
+RUN true "${APP_BUILD_REF}" "${APP_BUILD_TIME}"
+ENV APP_BUILD_REF=${APP_BUILD_REF} \
+    APP_BUILD_TIME=${APP_BUILD_TIME}
 
 COPY backend /app/backend
 COPY benchmarks /app/benchmarks
