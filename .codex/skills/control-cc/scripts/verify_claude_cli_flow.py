@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the project-local cost-optimized repair Claude CLI handoff."""
+"""Verify the project-local control-cc Claude CLI handoff."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ mode:
 correction
 
 problem:
-Verify that the project-local cost-optimized-repair flow can call Claude Code CLI non-interactively and receive the strict worker result format.
+Verify that the project-local control-cc flow can call Claude Code CLI non-interactively and receive the strict worker result format.
 
 must_keep:
 - Use the project-local repair-worker skill.

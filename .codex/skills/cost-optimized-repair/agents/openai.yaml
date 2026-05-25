@@ -1,4 +1,0 @@
-interface:
-  display_name: "Cost Optimized Repair"
-  short_description: "Verify Claude Code, size work packets, dispatch agents"
-  default_prompt: "Use $cost-optimized-repair to verify Claude Code, decompose the request into PR-sized slices and sized worker packets, dispatch only safe Claude Code agents or read-only probes, and review the returned diffs."

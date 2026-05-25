@@ -12,6 +12,33 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-25 - control-cc delegated code workflow rename
+
+- Area or subsystem: Project-local Codex-to-Claude Code delegation workflow
+- Prompt or model version: `control-cc-v1`
+- Summary: Renamed the project-local Codex delegation skill from `cost-optimized-repair` to `control-cc`, broadened the trigger from repair-only work to delegated code work, and documented temporary task plan files for Claude Code worker handoff.
+- Reason: The previous repair framing made feature implementation, logic optimization, and refactor tasks ambiguous and encouraged oversized PR-slice payloads instead of controlled atomic worker packets.
+- Affected files or config:
+  - `AGENTS.md`
+  - `.gitignore`
+  - `.codex/skills/control-cc/SKILL.md`
+  - `.codex/skills/control-cc/agents/openai.yaml`
+  - `.codex/skills/control-cc/references/escalation-policy.md`
+  - `.codex/skills/control-cc/references/payload-schema.md`
+  - `.codex/skills/control-cc/scripts/verify_claude_cli_flow.py`
+  - `.claude/skills/repair-worker/SKILL.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Codex loads `control-cc` for repairs, feature slices, refactors, logic optimization, tests, and code-adjacent docs that can be safely delegated to Claude Code.
+  - Codex creates temporary worker task plans outside tracked repo paths and deletes successful plans after review and verification.
+  - High-complexity slices should be recursively split or probed before direct Codex implementation.
+- Verification:
+  - `rtk rg -n "name: control-cc|Use when the user asks for control-cc|Temporary Task Plan|\\.codex/skills/control-cc|Control CC Worker" AGENTS.md .codex/skills/control-cc .claude/skills/repair-worker docs/prompt_change_log.md`
+  - `rtk rg -n "cost-optimized-repair|Cost-Optimized Repair|Cost Optimized Repair|cost-optimized repair" AGENTS.md .codex/skills/control-cc .claude/skills/repair-worker`
+  - `rtk .venv/bin/python -m py_compile .codex/skills/control-cc/scripts/run_repair_worker.py .codex/skills/control-cc/scripts/verify_claude_cli_flow.py .codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `rtk .venv/bin/python .codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `rtk git diff --check`
+
 ## 2026-05-25 - cost-optimized repair mandatory agent dispatch
 
 - Area or subsystem: Project-local Codex-to-Claude repair delegation workflow
