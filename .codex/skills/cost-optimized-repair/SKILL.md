@@ -1,6 +1,6 @@
 ---
 name: cost-optimized-repair
-description: Token-efficient repair delegation for this SupportPortal project. Use when the user asks to use cost-optimized-repair, requests token-efficient delegation, or a code repair can safely be delegated to Claude Code or DeepSeek while Codex keeps responsibility for triage, minimal payload construction, diff review, verification review, and final acceptance.
+description: Token-efficient repair delegation for this SupportPortal project. Use when the user asks to use cost-optimized-repair, requests token-efficient delegation, or a code repair can safely be delegated to Claude Code or DeepSeek while Codex keeps responsibility for triage, focused repair planning, diff review, verification review, and final acceptance.
 ---
 
 # Cost Optimized Repair
@@ -20,10 +20,10 @@ Do not delegate by default when the task involves security, auth, payment, data 
 ## Codex Workflow
 
 1. Classify whether the repair is safe to delegate. If unclear, read `references/escalation-policy.md`.
-2. Read only enough context to create a precise payload: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, and nearby call sites when necessary.
-3. Build a short payload using `references/payload-schema.md`. Do not paste a full worker brief.
+2. Read enough context to create a high-quality repair plan for the worker: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, nearby call sites when necessary, verification commands, and explicit out-of-scope boundaries. Prioritize code quality over minimizing this planning step.
+3. Build a concise payload using `references/payload-schema.md`. Do not paste a full worker brief, but do include the `final_output_contract`.
 4. Dispatch the payload through `scripts/run_repair_worker.py`, not by calling `claude` directly.
-5. Review the returned files, diff, and test evidence with `references/review-checklist.md`.
+5. Treat the runner as the completion hook: wait for its final report, then review the compact report, changed files, diff, and test evidence with `references/review-checklist.md`. Do not consume long Claude stdout/stderr unless the compact report points to a failure that needs it.
 6. If `worker_status` is `failed`, count it as a failed worker round, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
 7. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, or no-report worker rounds, stop delegating and have Codex take over.
 8. Finish with the repository's normal task classification, verification, and finalization rules.
@@ -37,12 +37,14 @@ For implementation rounds:
 ```bash
 python3 .codex/skills/cost-optimized-repair/scripts/run_repair_worker.py \
   --payload-file /tmp/repair-worker-payload.md \
-  --restore-on-failure
+  --restore-on-failure \
+  --compact-output \
+  --report-file /tmp/repair-worker-report.json
 ```
 
 The runner uses `--model opus --effort max` by default and does not set a budget cap. For read-only probes, add `--tools "Read,Bash"`. For intentionally short smoke tests only, add `--max-budget-usd`.
 
-After every runner call, inspect `worker_status`, `failure_reason`, `partial_diff_stat`, `partial_diff_files`, `restored_partial_diff`, `normalized_worker_result`, `stdout`, `stderr`, `worker_result`, `total_cost_usd`, `modelUsage`, and `permission_denials`. Treat permission denials, CLI errors, timeouts, invalid JSON, missing worker sections, or unrestored partial diffs as a failed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
+After every runner call, inspect the compact stdout first: `worker_status`, `failure_reason`, `partial_diff_stat`, `partial_diff_files`, `restored_partial_diff`, `saved_partial_patch`, `normalized_worker_result`, `worker_call_report`, `total_cost_usd`, and `full_report_path`. Open the full report or saved stdout/stderr artifacts only when the compact report is insufficient for review. Treat permission denials, CLI errors, timeouts, invalid JSON, missing worker sections, unrestored partial diffs, or a low quality score as a failed or correction-needed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
 
 To verify the local CLI path without modifying files, run:
 
@@ -52,11 +54,11 @@ python3 .codex/skills/cost-optimized-repair/scripts/verify_claude_cli_flow.py
 
 ## Failure Reporting
 
-Final task reports must say whether the worker succeeded, failed, or was skipped. If Codex takes over after worker failure, report the failure reason and cleanup state, for example: `worker timed out without JSON; partial diff touched <files>; runner restored it; Codex then implemented and verified the fix directly`.
+Final task reports must include a short Claude Code call report. If the worker succeeded, report success, verification status, and Codex's repair-quality score out of 10. If the score is below 7, briefly state why and the optimization plan. If the worker failed, report the failure reason, cleanup state, and one short optimization plan, for example: `Claude Code: failed; reason=timeout; partial diff touched <files>; runner restored it; optimization=narrow the payload and verification command`.
 
 ## Context Budget
 
-Prefer targeted commands and narrow reads:
+Spend Codex tokens on diagnosis, planning, and acceptance, not on watching the worker process. Prefer targeted commands and narrow reads:
 
 - `git diff --stat`
 - `git diff -- <changed-files>`
@@ -64,7 +66,7 @@ Prefer targeted commands and narrow reads:
 - failing test output
 - changed-file neighbors and high-risk call sites
 
-Do not default to rereading the whole repository. Expand only for the escalation triggers in `references/escalation-policy.md`.
+Do not default to rereading the whole repository or long Claude stdout/stderr. Expand only for the escalation triggers in `references/escalation-policy.md` or when the compact report shows a specific review gap.
 
 ## Payload Shape
 
@@ -87,6 +89,12 @@ constraints:
 verification:
 
 acceptance:
+
+final_output_contract:
+- Final answer starts exactly with `## Result`.
+- Under `## Result`, write exactly one of `Fixed`, `Not fixed`, or `Blocked`.
+- Do not write `Fixed.`, `Success`, `Implemented`, bullets, or code formatting on the result line.
+- Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
 ```
 
 See `references/payload-schema.md` for field rules and correction payloads.
@@ -97,7 +105,7 @@ Require the worker to return:
 
 ```md
 ## Result
-Fixed / Not fixed / Blocked
+Fixed
 
 ## Files Changed
 - ...
@@ -115,6 +123,8 @@ Fixed / Not fixed / Blocked
 ## Needs Codex Review
 - ...
 ```
+
+The result line may also be exactly `Not fixed` or `Blocked`; do not include punctuation or multiple options on that line.
 
 ## Cost Experiment
 

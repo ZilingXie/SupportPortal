@@ -10,6 +10,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -22,12 +23,19 @@ EXPECTED_HEADINGS = [
     "## Risk / Uncertainty",
     "## Needs Codex Review",
 ]
+EXPECTED_RESULT_STATUSES = ["Fixed", "Not fixed", "Blocked"]
+STATUS_ALIASES = {
+    "fixed": "Fixed",
+    "not fixed": "Not fixed",
+    "blocked": "Blocked",
+}
 
 OUTPUT_GUARD = (
     "For /repair-worker tasks, the final answer must start with ## Result and use exactly "
     "these H2 headings in order: ## Result, ## Files Changed, ## What Changed, "
     "## Verification, ## Risk / Uncertainty, ## Needs Codex Review. No preamble, "
-    "tables, alternate headings, or wrapper title."
+    "tables, alternate headings, or wrapper title. The body under ## Result must be exactly "
+    "one of Fixed, Not fixed, or Blocked with no punctuation."
 )
 
 
@@ -45,6 +53,10 @@ def git_porcelain() -> str:
 
 def git_diff_stat() -> str:
     return run_text(["git", "diff", "--stat"])
+
+
+def git_diff_patch() -> str:
+    return run_text(["git", "diff", "--binary", "--no-ext-diff", "HEAD", "--"])
 
 
 def git_changed_files() -> list[str]:
@@ -69,16 +81,66 @@ def result_headings(result: str) -> list[str]:
     return re.findall(r"^## .+$", without_fenced_code(result), flags=re.MULTILINE)
 
 
+def canonical_result_status(raw: str) -> str | None:
+    status = raw.strip()
+    status = re.sub(r"^\s*[-*]\s+", "", status)
+    status = status.strip("`'\" ").rstrip(".").strip()
+    status = re.sub(r"[_-]+", " ", status)
+    status = re.sub(r"\s+", " ", status).casefold()
+    return STATUS_ALIASES.get(status)
+
+
+def result_status_found(result: str) -> str | None:
+    match = re.search(r"^## Result\s*\n\s*([^\n]+)", without_fenced_code(result), flags=re.MULTILINE)
+    if not match:
+        return None
+    return canonical_result_status(match.group(1)) or match.group(1).strip()
+
+
+def normalize_result_status(result: str) -> tuple[str, bool]:
+    pattern = re.compile(r"(^## Result\s*\n)([^\n]+)(\n\s*\n## Files Changed)", flags=re.MULTILINE)
+    match = pattern.search(result)
+    if not match:
+        return result, False
+    canonical = canonical_result_status(match.group(2))
+    if canonical is None or canonical == match.group(2).strip():
+        return result, False
+    normalized = pattern.sub(rf"\1{canonical}\3", result, count=1)
+    return normalized, True
+
+
 def normalize_worker_result(payload: dict[str, object]) -> bool:
     result = payload.get("result")
     if not isinstance(result, str):
         return False
     stripped = result.strip()
     marker = stripped.find("## Result")
-    if marker <= 0:
+    if marker < 0:
         return False
-    payload["result"] = stripped[marker:]
-    return True
+    changed = False
+    normalized = stripped
+    if marker > 0:
+        normalized = stripped[marker:]
+        changed = True
+    normalized, status_changed = normalize_result_status(normalized)
+    payload["result"] = normalized
+    return changed or status_changed
+
+
+def validation_detail(reason: str | None, payload: dict[str, object]) -> str | None:
+    if reason is None:
+        return None
+    result = payload.get("result")
+    if not isinstance(result, str):
+        return f"{reason}: worker JSON did not include a string result"
+    if reason == "missing_report_sections":
+        return f"{reason}: found headings {result_headings(result)!r}"
+    if reason == "invalid_result_status":
+        return (
+            f"{reason}: found {result_status_found(result)!r}; expected one of "
+            f"{', '.join(EXPECTED_RESULT_STATUSES)}"
+        )
+    return reason
 
 
 def validate_worker_json(payload: dict[str, object]) -> str | None:
@@ -99,14 +161,143 @@ def validate_worker_json(payload: dict[str, object]) -> str | None:
     return None
 
 
-def truncate(text: str, limit: int = 12000) -> str:
+def truncate(text: str, limit: int = 2000) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "\n...[truncated]..."
 
 
-def emit(report: dict[str, object], exit_code: int) -> int:
-    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+def write_temp_artifact(prefix: str, suffix: str, text: str) -> str | None:
+    if not text:
+        return None
+    artifact = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, prefix=prefix, suffix=suffix)
+    with artifact:
+        artifact.write(text)
+    return artifact.name
+
+
+def save_partial_patch() -> str | None:
+    patch = git_diff_patch()
+    return write_temp_artifact("repair-worker-partial-", ".patch", patch)
+
+
+def make_temp_path(prefix: str, suffix: str) -> Path:
+    fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
+    os.close(fd)
+    return Path(path)
+
+
+def failure_optimization(reason: object) -> str:
+    if reason == "invalid_result_status":
+        return "Tighten the final_output_contract and keep runner status normalization enabled."
+    if reason == "missing_report_sections":
+        return "Repeat the six-heading output contract at the end of the payload."
+    if reason == "invalid_json":
+        return "Keep Claude CLI on JSON output and inspect the saved stdout/stderr artifacts."
+    if reason == "timeout":
+        return "Reduce task scope or give the worker a narrower verification command."
+    if reason == "permission_denied":
+        return "Check requested tools and avoid paths outside the task worktree."
+    if reason == "dirty_baseline":
+        return "Start the worker only from a clean task worktree."
+    return "Review the saved full report and send one correction payload only if the diff is close."
+
+
+def verification_summary(worker_result: object) -> str | None:
+    if not isinstance(worker_result, dict):
+        return None
+    result = worker_result.get("result")
+    if not isinstance(result, str):
+        return None
+    match = re.search(
+        r"^## Verification\s*\n(?P<body>.*?)(?=^## Risk / Uncertainty|\Z)",
+        result,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        return None
+    body = " ".join(line.strip() for line in match.group("body").splitlines() if line.strip())
+    return body or None
+
+
+def build_worker_call_report(report: dict[str, object]) -> dict[str, object]:
+    succeeded = report.get("worker_status") == "succeeded"
+    if not succeeded:
+        reason = report.get("failure_reason") or "unknown"
+        return {
+            "success": False,
+            "status": "failed",
+            "failure_reason": reason,
+            "summary": f"Claude Code failed: {reason}.",
+            "quality_score": None,
+            "quality_reason": None,
+            "optimization": failure_optimization(reason),
+        }
+
+    score = 8
+    reasons = ["structured result accepted", "Codex still needs final diff review"]
+    if report.get("normalized_worker_result"):
+        score -= 1
+        reasons.append("minor output-format drift was normalized")
+    if not verification_summary(report.get("worker_result")):
+        score -= 1
+        reasons.append("verification summary was missing or empty")
+    changed_files = report.get("partial_diff_files")
+    if isinstance(changed_files, list) and len(changed_files) > 8:
+        score -= 1
+        reasons.append("worker changed more than 8 files")
+    score = max(1, min(10, score))
+    return {
+        "success": True,
+        "status": "succeeded",
+        "failure_reason": None,
+        "summary": "Claude Code succeeded; Codex should review the diff and verification evidence.",
+        "quality_score": score,
+        "quality_reason": "; ".join(reasons),
+        "optimization": None if score >= 7 else "Send one correction payload or have Codex take over.",
+    }
+
+
+def compact_report(report: dict[str, object]) -> dict[str, object]:
+    keys = [
+        "worker_status",
+        "failure_reason",
+        "duration_sec",
+        "model",
+        "effort",
+        "tools",
+        "partial_diff_stat",
+        "partial_diff_files",
+        "restored_partial_diff",
+        "saved_partial_patch",
+        "stdout_path",
+        "stderr_path",
+        "full_report_path",
+        "total_cost_usd",
+        "normalized_worker_result",
+        "headings_found",
+        "result_status_found",
+        "validation_failure_detail",
+        "worker_call_report",
+    ]
+    return {key: report.get(key) for key in keys if key in report}
+
+
+def emit(
+    report: dict[str, object],
+    exit_code: int,
+    *,
+    compact_output: bool = False,
+    report_file: Path | None = None,
+) -> int:
+    if report_file is None and compact_output:
+        report_file = make_temp_path("repair-worker-report-", ".json")
+    if report_file is not None:
+        report["full_report_path"] = str(report_file)
+        report_file.parent.mkdir(parents=True, exist_ok=True)
+        report_file.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    output = compact_report(report) if compact_output else report
+    print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
     return exit_code
 
 
@@ -172,16 +363,24 @@ def base_report(args: argparse.Namespace, before_status: str) -> dict[str, objec
         "partial_diff_stat": "",
         "partial_diff_files": [],
         "restored_partial_diff": False,
+        "saved_partial_patch": None,
         "stdout": "",
+        "stdout_path": None,
         "stderr": "",
+        "stderr_path": None,
         "worker_result": None,
         "total_cost_usd": None,
         "modelUsage": None,
         "permission_denials": None,
         "normalized_worker_result": False,
+        "headings_found": [],
+        "result_status_found": None,
+        "expected_result_status": EXPECTED_RESULT_STATUSES,
+        "validation_failure_detail": None,
+        "worker_call_report": None,
         "codex_action_required": (
-            "Record the worker failure in the final report. If the worker left a partial diff, "
-            "restore it before Codex takes over unless the user explicitly asks to inspect it."
+            "Use worker_call_report for the short user-facing Claude Code report. Review the diff "
+            "and verification evidence before accepting successful worker output."
         ),
     }
 
@@ -197,6 +396,9 @@ def main() -> int:
     parser.add_argument("--max-budget-usd", type=float, default=None, help="Optional smoke-test safety cap")
     parser.add_argument("--restore-on-failure", action="store_true")
     parser.add_argument("--allow-dirty-baseline", action="store_true")
+    parser.add_argument("--compact-output", action="store_true", help="Print only the Codex review summary")
+    parser.add_argument("--report-file", type=Path, default=None, help="Optional path for the full JSON report")
+    parser.add_argument("--inline-log-chars", type=int, default=2000)
     args = parser.parse_args()
 
     payload = args.payload_file.read_text(encoding="utf-8")
@@ -208,7 +410,8 @@ def main() -> int:
         report["failure_reason"] = "dirty_baseline"
         report["after_status"] = before_status
         report["partial_diff_files"] = git_changed_files()
-        return emit(report, 2)
+        report["worker_call_report"] = build_worker_call_report(report)
+        return emit(report, 2, compact_output=args.compact_output, report_file=args.report_file)
 
     command = build_command(args, payload)
     exit_code, stdout, stderr, timed_out, duration = run_worker(command, args.timeout_sec)
@@ -217,8 +420,10 @@ def main() -> int:
             "timed_out": timed_out,
             "exit_code": exit_code,
             "duration_sec": round(duration, 3),
-            "stdout": truncate(stdout),
-            "stderr": truncate(stderr),
+            "stdout": truncate(stdout, args.inline_log_chars),
+            "stdout_path": write_temp_artifact("repair-worker-stdout-", ".log", stdout),
+            "stderr": truncate(stderr, args.inline_log_chars),
+            "stderr_path": write_temp_artifact("repair-worker-stderr-", ".log", stderr),
             "partial_diff_stat": git_diff_stat(),
             "partial_diff_files": git_changed_files(),
         }
@@ -243,19 +448,27 @@ def main() -> int:
         report["modelUsage"] = parsed.get("modelUsage")
         report["permission_denials"] = parsed.get("permission_denials")
         failure_reason = validate_worker_json(parsed)
+        result = parsed.get("result")
+        if isinstance(result, str):
+            report["headings_found"] = result_headings(result)
+            report["result_status_found"] = result_status_found(result)
+        report["validation_failure_detail"] = validation_detail(failure_reason, parsed)
 
     if failure_reason is None:
         report["worker_status"] = "succeeded"
         report["failure_reason"] = None
         report["after_status"] = git_status()
-        return emit(report, 0)
+        report["worker_call_report"] = build_worker_call_report(report)
+        return emit(report, 0, compact_output=args.compact_output, report_file=args.report_file)
 
     report["failure_reason"] = failure_reason
+    report["saved_partial_patch"] = save_partial_patch()
     if args.restore_on_failure:
         restore_worktree()
         report["restored_partial_diff"] = True
     report["after_status"] = git_status()
-    return emit(report, 2)
+    report["worker_call_report"] = build_worker_call_report(report)
+    return emit(report, 2, compact_output=args.compact_output, report_file=args.report_file)
 
 
 if __name__ == "__main__":

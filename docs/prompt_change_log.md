@@ -12,6 +12,29 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-25 - cost-optimized repair worker output contract
+
+- Area or subsystem: Project-local Codex-to-Claude repair delegation workflow
+- Prompt or model version: `repair-worker-output-contract-v2`
+- Summary: Tightened the repair-worker final output contract, added explicit payload-level final-output instructions, and documented compact runner reports for Codex review.
+- Reason: Claude worker rounds could complete the code work but fail the runner contract with small status-format drift such as non-canonical `## Result` text, forcing Codex takeover and extra review tokens.
+- Affected files or config:
+  - `.claude/skills/repair-worker/SKILL.md`
+  - `.codex/skills/cost-optimized-repair/SKILL.md`
+  - `.codex/skills/cost-optimized-repair/references/payload-schema.md`
+  - `.codex/skills/cost-optimized-repair/scripts/run_repair_worker.py`
+  - `.codex/skills/cost-optimized-repair/scripts/verify_claude_cli_flow.py`
+  - `.codex/skills/cost-optimized-repair/scripts/test_run_repair_worker.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Claude worker prompts now show `Fixed` as the single example status instead of a multi-option placeholder.
+  - Worker payloads repeat the exact final output contract so the result status is less likely to drift.
+  - Codex can rely on compact runner output for the normal review path and open full logs only when needed.
+- Verification:
+  - `python3 .codex/skills/cost-optimized-repair/scripts/test_run_repair_worker.py`
+  - `python3 -m py_compile .codex/skills/cost-optimized-repair/scripts/run_repair_worker.py .codex/skills/cost-optimized-repair/scripts/verify_claude_cli_flow.py .codex/skills/cost-optimized-repair/scripts/test_run_repair_worker.py`
+  - `git diff --check`
+
 ## 2026-05-19 - How-to RAG code example contract
 
 - Area or subsystem: Client-facing RAG answer generation and customer reply formatting

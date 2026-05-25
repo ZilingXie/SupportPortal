@@ -26,7 +26,8 @@ OUTPUT_GUARD = (
     "For /repair-worker tasks, the final answer must start with ## Result and use exactly "
     "these H2 headings in order: ## Result, ## Files Changed, ## What Changed, "
     "## Verification, ## Risk / Uncertainty, ## Needs Codex Review. No preamble, "
-    "tables, alternate headings, or wrapper title."
+    "tables, alternate headings, or wrapper title. The body under ## Result must be exactly "
+    "one of Fixed, Not fixed, or Blocked with no punctuation."
 )
 
 
@@ -68,6 +69,12 @@ acceptance:
 - The final answer has exactly the six required H2 headings in order.
 - Result body is exactly Fixed, Not fixed, or Blocked.
 - No files are modified by this verification round.
+
+final_output_contract:
+- Final answer starts exactly with `## Result`.
+- Under `## Result`, write exactly one of `Fixed`, `Not fixed`, or `Blocked`.
+- Do not write `Fixed.`, `Success`, `Implemented`, bullets, or code formatting on the result line.
+- Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
 """
 
 
