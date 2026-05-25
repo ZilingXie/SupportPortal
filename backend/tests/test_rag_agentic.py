@@ -140,6 +140,22 @@ The documentation states that time: 0 means the rule is applied permanently. How
             "api_semantics_mismatch",
         )
 
+    def test_classify_agentic_query_groups_how_to_setup_and_configuration(self) -> None:
+        examples = [
+            "How do I join a channel?",
+            "How do I enable dual stream?",
+            "How to configure token auth?",
+            "Which parameter controls the publish stream?",
+            "怎么配置或启用 token auth?",
+        ]
+
+        for message in examples:
+            with self.subTest(message=message):
+                self.assertEqual(rag_qa._classify_agentic_query(message, None), "usage_configuration")
+
+    def test_classify_agentic_query_falls_back_to_unclear_query(self) -> None:
+        self.assertEqual(rag_qa._classify_agentic_query("???", None), "unclear_query")
+
     def test_classify_agentic_query_flags_preserves_api_semantics_light_path(self) -> None:
         flags = _classify_agentic_query_flags(self._BAN_API_MISMATCH_MESSAGE)
 
@@ -213,7 +229,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ticket_context=None,
             )
 
-        self.assertEqual(plan.query_class, "configuration")
+        self.assertEqual(plan.query_class, "usage_configuration")
         self.assertTrue(
             any(kind == "rule" and "enableDualStream" in query for kind, query in plan.query_variants)
         )
@@ -652,10 +668,24 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ticket_context=None,
             )
 
-        self.assertEqual(plan.query_class, "how_to_faq")
+        self.assertEqual(plan.query_class, "usage_configuration")
         self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
         self.assertTrue(plan.light_path)
+
+    def test_tool_order_for_usage_configuration_starts_with_lexical_usage_support(self) -> None:
+        tools, evidence_goal, recovery_bias = _tool_order_for_query_class("usage_configuration")
+
+        self.assertEqual(tools[:3], ["p_bm25", "p_fts", "p_vec"])
+        self.assertEqual(evidence_goal, "configuration_support")
+        self.assertEqual(recovery_bias, "lexical")
+
+    def test_tool_order_for_unclear_query_is_conservative_but_retrievable(self) -> None:
+        tools, evidence_goal, recovery_bias = _tool_order_for_query_class("unclear_query")
+
+        self.assertEqual(tools, ["p_bm25", "p_fts"])
+        self.assertEqual(evidence_goal, "clarifying_evidence")
+        self.assertEqual(recovery_bias, "conservative")
 
     def test_tool_order_for_query_class_skips_shadow_tools_when_disabled(self) -> None:
         with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=False):
@@ -674,7 +704,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ticket_context=None,
             )
 
-        self.assertEqual(plan.query_class, "how_to_faq")
+        self.assertEqual(plan.query_class, "usage_configuration")
         self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
         self.assertTrue(plan.light_path)

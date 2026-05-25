@@ -10,6 +10,29 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-25 - Merge how-to and configuration query classification
+
+- Summary:
+  - Added `usage_configuration` as the unified agentic query class for how-to, setup, enable/disable, parameter, and configuration questions.
+  - Changed the unclassifiable agentic classifier fallback to `unclear_query` with conservative lexical retrieval.
+  - Kept existing generic join-channel protection and short usage light-path behavior active after the class rename.
+- Reason:
+  - Customer usage and configuration questions should share one class instead of splitting between `how_to_faq` and `configuration`.
+  - Ambiguous input should not be treated as configuration by default.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - RAG traces for how-to/configuration questions now report `usage_configuration`; unclear empty/no-term input reports `unclear_query`.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -k 'classify_agentic_query_groups_how_to_setup_and_configuration or classify_agentic_query_falls_back_to_unclear_query or build_agentic_retrieval_plan_uses_lexical_light_path_for_short_how_to_faq or tool_order_for_usage_configuration_starts_with_lexical_usage_support or tool_order_for_unclear_query_is_conservative_but_retrievable or build_agentic_retrieval_plan_omits_shadow_tools_when_disabled or build_agentic_retrieval_plan_adds_dual_stream_rule_variants' -q` failed because the old code still emitted `how_to_faq`/`configuration` and used the old default tool order.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q` (`61 passed, 5 subtests passed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q` (`93 passed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py`.
+
 ## 2026-05-22 - Remove RAG API inflight request registration
 
 - Summary:
