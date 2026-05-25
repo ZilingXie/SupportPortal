@@ -26,6 +26,12 @@ verification:
 
 acceptance:
 <observable conditions Codex will review>
+
+final_output_contract:
+- Final answer starts exactly with `## Result`.
+- Under `## Result`, write exactly one of `Fixed`, `Not fixed`, or `Blocked`.
+- Do not write `Fixed.`, `Success`, `Implemented`, bullets, or code formatting on the result line.
+- Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
 ```
 
 ## Field Rules
@@ -36,6 +42,7 @@ acceptance:
 - `constraints`: keep the default three unless the task needs tighter rules.
 - `verification`: prefer one narrow command that proves the fix.
 - `acceptance`: describe user-visible behavior, regression coverage, or exact diff expectations.
+- `final_output_contract`: repeat the strict return contract at the end of every payload so the worker does not drift from the runner parser.
 
 ## Correction Payload
 
@@ -61,6 +68,12 @@ verification:
 
 acceptance:
 <conditions for the corrected result>
+
+final_output_contract:
+- Final answer starts exactly with `## Result`.
+- Under `## Result`, write exactly one of `Fixed`, `Not fixed`, or `Blocked`.
+- Do not write `Fixed.`, `Success`, `Implemented`, bullets, or code formatting on the result line.
+- Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
 ```
 
 Do not use `/repair-worker correction`; Claude Code CLI treats slash-command arguments inconsistently. Keep `/repair-worker` as the first line and put `mode: correction` in the payload body.

@@ -96,6 +96,18 @@ def parse_stdout(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
     return json.loads(result.stdout)
 
 
+def valid_worker_result(result_body: str) -> dict[str, object]:
+    return {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": result_body,
+        "total_cost_usd": 0.01,
+        "modelUsage": {"opus": {"inputTokens": 1}},
+        "permission_denials": [],
+    }
+
+
 def test_timeout_restores_partial_diff_and_reports_worker_failure() -> None:
     root = make_repo()
     payload = write_payload(root)
@@ -112,7 +124,8 @@ def test_timeout_restores_partial_diff_and_reports_worker_failure() -> None:
     assert result.returncode == 2
     assert report["worker_status"] == "failed"
     assert report["failure_reason"] == "timeout"
-    assert "CLAUDE.md" in report["partial_diff_stat"]
+    assert report["worker_call_report"]["success"] is False
+    assert report["worker_call_report"]["optimization"]
     assert run(["git", "status", "--short"], root, check=True).stdout == ""
 
 
@@ -133,21 +146,19 @@ def test_invalid_json_restores_partial_diff_and_reports_worker_failure() -> None
     assert report["worker_status"] == "failed"
     assert report["failure_reason"] == "invalid_json"
     assert "CLAUDE.md" in report["partial_diff_stat"]
+    assert report["saved_partial_patch"]
+    assert Path(str(report["saved_partial_patch"])).read_text(encoding="utf-8").find("partial worker edit") != -1
+    assert report["worker_call_report"]["success"] is False
+    assert report["worker_call_report"]["optimization"]
     assert run(["git", "status", "--short"], root, check=True).stdout == ""
 
 
 def test_success_returns_worker_report_without_restoring() -> None:
     root = make_repo()
     payload = write_payload(root)
-    worker_result = {
-        "type": "result",
-        "subtype": "success",
-        "is_error": False,
-        "result": "## Result\nFixed\n\n## Files Changed\n- none\n\n## What Changed\n- none\n\n## Verification\n- Command: git status --short --branch\n- Result: clean\n\n## Risk / Uncertainty\n- none\n\n## Needs Codex Review\n- none\n",
-        "total_cost_usd": 0.01,
-        "modelUsage": {"opus": {"inputTokens": 1}},
-        "permission_denials": [],
-    }
+    worker_result = valid_worker_result(
+        "## Result\nFixed\n\n## Files Changed\n- none\n\n## What Changed\n- none\n\n## Verification\n- Command: git status --short --branch\n- Result: clean\n\n## Risk / Uncertainty\n- none\n\n## Needs Codex Review\n- none\n"
+    )
     fake_bin = fake_claude(root, f"#!/usr/bin/env bash\nprintf '%s\\n' {json.dumps(json.dumps(worker_result))}\n")
 
     result = run_worker(root, payload, fake_bin)
@@ -157,21 +168,17 @@ def test_success_returns_worker_report_without_restoring() -> None:
     assert report["worker_status"] == "succeeded"
     assert report["failure_reason"] is None
     assert report["worker_result"]["total_cost_usd"] == 0.01
+    assert report["worker_call_report"]["success"] is True
+    assert report["worker_call_report"]["quality_score"] >= 7
     assert run(["git", "status", "--short"], root, check=True).stdout == ""
 
 
 def test_success_normalizes_report_with_preamble() -> None:
     root = make_repo()
     payload = write_payload(root)
-    worker_result = {
-        "type": "result",
-        "subtype": "success",
-        "is_error": False,
-        "result": "The verification command ran successfully.\n\n## Result\nFixed\n\n## Files Changed\n- none\n\n## What Changed\n- none\n\n## Verification\n- Command: git status --short --branch\n- Result: clean\n\n## Risk / Uncertainty\n- none\n\n## Needs Codex Review\n- none\n",
-        "total_cost_usd": 0.01,
-        "modelUsage": {"opus": {"inputTokens": 1}},
-        "permission_denials": [],
-    }
+    worker_result = valid_worker_result(
+        "The verification command ran successfully.\n\n## Result\nFixed\n\n## Files Changed\n- none\n\n## What Changed\n- none\n\n## Verification\n- Command: git status --short --branch\n- Result: clean\n\n## Risk / Uncertainty\n- none\n\n## Needs Codex Review\n- none\n"
+    )
     fake_bin = fake_claude(root, f"#!/usr/bin/env bash\nprintf '%s\\n' {json.dumps(json.dumps(worker_result))}\n")
 
     result = run_worker(root, payload, fake_bin)
@@ -184,9 +191,70 @@ def test_success_normalizes_report_with_preamble() -> None:
     assert run(["git", "status", "--short"], root, check=True).stdout == ""
 
 
+def test_success_normalizes_result_status_punctuation() -> None:
+    root = make_repo()
+    payload = write_payload(root)
+    worker_result = valid_worker_result(
+        "## Result\nFixed.\n\n## Files Changed\n- none\n\n## What Changed\n- none\n\n## Verification\n- Command: git status --short --branch\n- Result: clean\n\n## Risk / Uncertainty\n- none\n\n## Needs Codex Review\n- none\n"
+    )
+    fake_bin = fake_claude(root, f"#!/usr/bin/env bash\nprintf '%s\\n' {json.dumps(json.dumps(worker_result))}\n")
+
+    result = run_worker(root, payload, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 0
+    assert report["worker_status"] == "succeeded"
+    assert report["normalized_worker_result"] is True
+    assert report["worker_result"]["result"].startswith("## Result\nFixed\n")
+    assert report["result_status_found"] == "Fixed"
+
+
+def test_invalid_result_status_reports_diagnostic_and_optimization() -> None:
+    root = make_repo()
+    payload = write_payload(root)
+    worker_result = valid_worker_result(
+        "## Result\nSuccess\n\n## Files Changed\n- none\n\n## What Changed\n- none\n\n## Verification\n- Command: git status --short --branch\n- Result: clean\n\n## Risk / Uncertainty\n- none\n\n## Needs Codex Review\n- none\n"
+    )
+    fake_bin = fake_claude(root, f"#!/usr/bin/env bash\nprintf '%s\\n' {json.dumps(json.dumps(worker_result))}\n")
+
+    result = run_worker(root, payload, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["worker_status"] == "failed"
+    assert report["failure_reason"] == "invalid_result_status"
+    assert report["result_status_found"] == "Success"
+    assert "expected one of Fixed, Not fixed, Blocked" in report["validation_failure_detail"]
+    assert report["worker_call_report"]["optimization"]
+
+
+def test_compact_output_writes_full_report_file() -> None:
+    root = make_repo()
+    payload = write_payload(root)
+    report_file = root.parent / f"{root.name}-full-report.json"
+    worker_result = valid_worker_result(
+        "## Result\nFixed\n\n## Files Changed\n- none\n\n## What Changed\n- none\n\n## Verification\n- Command: git status --short --branch\n- Result: clean\n\n## Risk / Uncertainty\n- none\n\n## Needs Codex Review\n- none\n"
+    )
+    fake_bin = fake_claude(root, f"#!/usr/bin/env bash\nprintf '%s\\n' {json.dumps(json.dumps(worker_result))}\n")
+
+    result = run_worker(root, payload, fake_bin, "--compact-output", "--report-file", str(report_file))
+    compact = parse_stdout(result)
+    full = json.loads(report_file.read_text(encoding="utf-8"))
+
+    assert result.returncode == 0
+    assert compact["worker_status"] == "succeeded"
+    assert compact["worker_call_report"]["success"] is True
+    assert compact["full_report_path"] == str(report_file)
+    assert "worker_result" not in compact
+    assert full["worker_result"]["result"].startswith("## Result")
+
+
 if __name__ == "__main__":
     test_timeout_restores_partial_diff_and_reports_worker_failure()
     test_invalid_json_restores_partial_diff_and_reports_worker_failure()
     test_success_returns_worker_report_without_restoring()
     test_success_normalizes_report_with_preamble()
+    test_success_normalizes_result_status_punctuation()
+    test_invalid_result_status_reports_diagnostic_and_optimization()
+    test_compact_output_writes_full_report_file()
     print("run_repair_worker tests passed")

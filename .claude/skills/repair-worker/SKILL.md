@@ -54,11 +54,11 @@ Treat `must_change` as the repair objective. Do not ask for `goal` when a correc
 
 ## Return Format
 
-Your final answer must begin immediately with `## Result` and use exactly these six H2 headings, in this order, with no alternate headings, tables, preamble, horizontal rule, or extra wrapper title. The `## Result` body must be exactly one of `Fixed`, `Not fixed`, or `Blocked`.
+Your final answer must begin immediately with `## Result` and use exactly these six H2 headings, in this order, with no alternate headings, tables, preamble, horizontal rule, or extra wrapper title. The `## Result` body must be exactly one of `Fixed`, `Not fixed`, or `Blocked`. Do not add punctuation, bullets, code formatting, or explanatory text on that line.
 
 ```md
 ## Result
-Fixed / Not fixed / Blocked
+Fixed
 
 ## Files Changed
 - ...
@@ -76,3 +76,5 @@ Fixed / Not fixed / Blocked
 ## Needs Codex Review
 - ...
 ```
+
+Use `Not fixed` or `Blocked` instead of `Fixed` only when that is the single correct status for the round.
