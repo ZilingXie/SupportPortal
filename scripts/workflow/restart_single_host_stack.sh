@@ -159,8 +159,43 @@ else
   fi
 fi
 
+# --- Build cache diagnostics ---
+echo "Runtime mode: ${runtime_mode}"
+if [[ "$runtime_mode" == "local_lightweight" ]]; then
+  echo "INSTALL_ML_DEPS: 0"
+else
+  echo "INSTALL_ML_DEPS: 1"
+fi
+echo "Runtime image tag: ${APP_BUILD_REF}"
+
+if [[ "${SUPPORTPORTAL_NO_BUILD_CACHE:-}" == "1" ]]; then
+  echo "Build cache: disabled (SUPPORTPORTAL_NO_BUILD_CACHE=1)"
+else
+  echo "Build cache: enabled"
+fi
+
+if [[ "${SUPPORTPORTAL_BUILD_PROGRESS:-}" == "plain" ]]; then
+  echo "Build progress: plain"
+else
+  echo "Build progress: auto"
+fi
+
+echo "backend/requirements.base.txt: $(git hash-object backend/requirements.base.txt)"
+echo "backend/requirements.ml.txt: $(git hash-object backend/requirements.ml.txt)"
+
 "$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
 podman-compose "${compose_args[@]}" down
-podman-compose "${compose_args[@]}" up -d --build
+
+up_args=(up -d --build)
+if [[ "${SUPPORTPORTAL_NO_BUILD_CACHE:-}" == "1" ]]; then
+  up_args+=(--no-cache)
+fi
+
+if [[ "${SUPPORTPORTAL_BUILD_PROGRESS:-}" == "plain" ]]; then
+  export BUILDKIT_PROGRESS=plain
+  export BUILDAH_PROGRESS=plain
+fi
+
+podman-compose "${compose_args[@]}" "${up_args[@]}"
 podman-compose "${compose_args[@]}" ps
 curl -sS "http://127.0.0.1:${health_port}/health"
