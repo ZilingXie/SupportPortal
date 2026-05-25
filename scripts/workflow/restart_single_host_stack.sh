@@ -199,8 +199,8 @@ else
   echo "Build progress: auto"
 fi
 
-echo "backend/requirements.base.txt: $(git hash-object backend/requirements.base.txt)"
-echo "backend/requirements.ml.txt: $(git hash-object backend/requirements.ml.txt)"
+echo "requirements.base.txt: $(git hash-object requirements.base.txt)"
+echo "requirements.ml.txt: $(git hash-object requirements.ml.txt)"
 
 "$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
 podman-compose "${compose_args[@]}" down
