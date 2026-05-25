@@ -12,6 +12,24 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-25 - cost-optimized repair mandatory agent dispatch
+
+- Area or subsystem: Project-local Codex-to-Claude repair delegation workflow
+- Prompt or model version: `repair-worker-dispatch-v4`
+- Summary: Clarified that Codex must decompose every delegated repair request before implementation and dispatch one or more Claude Code agents for each PR-sized slice, with simultaneous dispatch for safely isolated independent subtasks.
+- Reason: The previous dispatch guidance described safe parallelism but did not make self-decomposition plus one-or-more Claude Code agent execution explicit enough for both detailed multi-PR plans and short repair requests.
+- Affected files or config:
+  - `.codex/skills/cost-optimized-repair/SKILL.md`
+  - `.codex/skills/cost-optimized-repair/agents/openai.yaml`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Codex first decomposes user requirements even when the user only gives a brief bug report.
+  - Every delegated PR slice launches at least one Claude Code implementation agent unless delegation is unsafe, preflight failed, or the worker failure limit has been reached.
+  - Independent isolated subtasks in one PR slice should run through simultaneous Claude Code agents; non-isolated write work remains one worker.
+- Verification:
+  - `rtk rg -n "must decompose|one or more Claude Code agent payloads|Dispatch at least one Claude Code implementation agent|Start multiple Claude Code agents simultaneously|dispatch one or more Claude Code agents" .codex/skills/cost-optimized-repair/SKILL.md .codex/skills/cost-optimized-repair/agents/openai.yaml`
+  - `rtk git diff --check`
+
 ## 2026-05-25 - cost-optimized repair dispatch preflight and PR slicing
 
 - Area or subsystem: Project-local Codex-to-Claude repair delegation workflow
