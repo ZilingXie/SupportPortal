@@ -133,6 +133,13 @@ def validation_detail(reason: str | None, payload: dict[str, object]) -> str | N
     result = payload.get("result")
     if not isinstance(result, str):
         return f"{reason}: worker JSON did not include a string result"
+    if reason == "empty_result_after_edit":
+        return (
+            "empty_result_after_edit: Claude CLI completed successfully and changed files, "
+            "but returned an empty result; inspect the saved partial diff before deciding whether to retry."
+        )
+    if reason == "empty_result":
+        return "empty_result: Claude CLI completed successfully but returned an empty result"
     if reason == "missing_report_sections":
         return f"{reason}: found headings {result_headings(result)!r}"
     if reason == "invalid_result_status":
@@ -188,6 +195,10 @@ def make_temp_path(prefix: str, suffix: str) -> Path:
 
 
 def failure_optimization(reason: object) -> str:
+    if reason == "empty_result_after_edit":
+        return "Treat the worker round as failed, review the saved partial patch, then either send one output-contract correction payload or have Codex take over."
+    if reason == "empty_result":
+        return "Run the repair-worker CLI flow smoke test before dispatching more workers."
     if reason == "invalid_result_status":
         return "Tighten the final_output_contract and keep runner status normalization enabled."
     if reason == "missing_report_sections":
@@ -224,11 +235,19 @@ def build_worker_call_report(report: dict[str, object]) -> dict[str, object]:
     succeeded = report.get("worker_status") == "succeeded"
     if not succeeded:
         reason = report.get("failure_reason") or "unknown"
+        summary = f"Claude Code failed: {reason}."
+        if reason == "empty_result_after_edit":
+            changed_files = report.get("partial_diff_files")
+            if isinstance(changed_files, list) and changed_files:
+                summary = (
+                    "Claude Code failed: empty_result_after_edit; "
+                    f"partial diff touched {', '.join(str(item) for item in changed_files)}."
+                )
         return {
             "success": False,
             "status": "failed",
             "failure_reason": reason,
-            "summary": f"Claude Code failed: {reason}.",
+            "summary": summary,
             "quality_score": None,
             "quality_reason": None,
             "optimization": failure_optimization(reason),
@@ -279,6 +298,9 @@ def compact_report(report: dict[str, object]) -> dict[str, object]:
         "result_status_found",
         "validation_failure_detail",
         "worker_call_report",
+        "exit_code",
+        "timed_out",
+        "result_empty",
     ]
     return {key: report.get(key) for key in keys if key in report}
 
@@ -372,6 +394,7 @@ def base_report(args: argparse.Namespace, before_status: str) -> dict[str, objec
         "total_cost_usd": None,
         "modelUsage": None,
         "permission_denials": None,
+        "result_empty": False,
         "normalized_worker_result": False,
         "headings_found": [],
         "result_status_found": None,
@@ -450,8 +473,15 @@ def main() -> int:
         failure_reason = validate_worker_json(parsed)
         result = parsed.get("result")
         if isinstance(result, str):
+            report["result_empty"] = not bool(result.strip())
             report["headings_found"] = result_headings(result)
             report["result_status_found"] = result_status_found(result)
+            if failure_reason == "missing_result" and report["result_empty"]:
+                failure_reason = (
+                    "empty_result_after_edit"
+                    if report["partial_diff_files"]
+                    else "empty_result"
+                )
         report["validation_failure_detail"] = validation_detail(failure_reason, parsed)
 
     if failure_reason is None:

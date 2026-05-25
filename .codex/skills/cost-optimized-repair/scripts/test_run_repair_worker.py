@@ -228,6 +228,34 @@ def test_invalid_result_status_reports_diagnostic_and_optimization() -> None:
     assert report["worker_call_report"]["optimization"]
 
 
+def test_empty_result_after_edit_reports_specific_diagnostic_and_restores_diff() -> None:
+    root = make_repo()
+    payload = write_payload(root)
+    worker_result = valid_worker_result("")
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        "printf '\\npartial worker edit\\n' >> CLAUDE.md\n"
+        f"printf '%s\\n' {json.dumps(json.dumps(worker_result))}\n",
+    )
+
+    result = run_worker(root, payload, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["worker_status"] == "failed"
+    assert report["failure_reason"] == "empty_result_after_edit"
+    assert report["exit_code"] == 0
+    assert report["timed_out"] is False
+    assert report["result_empty"] is True
+    assert "CLAUDE.md" in report["partial_diff_stat"]
+    assert report["saved_partial_patch"]
+    assert report["restored_partial_diff"] is True
+    assert "returned an empty result" in report["validation_failure_detail"]
+    assert "partial diff" in report["worker_call_report"]["summary"]
+    assert run(["git", "status", "--short"], root, check=True).stdout == ""
+
+
 def test_compact_output_writes_full_report_file() -> None:
     root = make_repo()
     payload = write_payload(root)
@@ -256,5 +284,6 @@ if __name__ == "__main__":
     test_success_normalizes_report_with_preamble()
     test_success_normalizes_result_status_punctuation()
     test_invalid_result_status_reports_diagnostic_and_optimization()
+    test_empty_result_after_edit_reports_specific_diagnostic_and_restores_diff()
     test_compact_output_writes_full_report_file()
     print("run_repair_worker tests passed")
