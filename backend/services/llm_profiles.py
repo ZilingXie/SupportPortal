@@ -373,7 +373,7 @@ def resolve_model_profile(
             api_key=_openai_api_key(),
             reasoning_effort=_first_env_text("RAG_AGENT_ANSWER_REASONING_EFFORT", "RAG_ANSWER_REASONING_EFFORT") or "medium",
             temperature=0.0,
-            timeout_seconds=_safe_positive_float_env_any(("RAG_AGENT_ANSWER_TIMEOUT_SECONDS", "RAG_REQUEST_TIMEOUT_SECONDS"), 20.0),
+            timeout_seconds=_safe_positive_float_env_any(("RAG_AGENT_ANSWER_TIMEOUT_SECONDS", "RAG_REQUEST_TIMEOUT_SECONDS"), 600.0),
             max_retries=_safe_int_env_any(("RAG_AGENT_ANSWER_MAX_RETRIES", "RAG_OPENAI_MAX_RETRIES"), 1),
             fallback_models=("gpt-5.4-mini",),
         ))
