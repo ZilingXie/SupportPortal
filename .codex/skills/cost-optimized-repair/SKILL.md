@@ -27,6 +27,14 @@ claude --bare -p 'Smoke test only. Reply exactly: CLAUDE_CODE_OK' \
 
 Continue only when the command exits 0, returns valid JSON, has `is_error=false`, no permission denials, and `result` is exactly `CLAUDE_CODE_OK`. If the preflight fails, terminate the repair task immediately; do not create worker payloads, do not start implementation, and report the Claude Code failure reason, exit status, and any useful stderr/stdout path or JSON error details.
 
+Then verify the actual project-local repair-worker handoff before dispatching implementation workers:
+
+```bash
+python3 .codex/skills/cost-optimized-repair/scripts/verify_claude_cli_flow.py
+```
+
+Continue only when this command exits 0. This smoke test proves that Claude Code can return the strict six-heading repair-worker report through `run_repair_worker.py`, not merely that the raw CLI can answer a one-line prompt. If it fails, stop delegation for the current task and report the runner failure details.
+
 ## Delegation Gate
 
 Delegate only when the likely fix is bounded and Codex can review it cheaply. Good candidates are small and medium bug fixes with clear symptoms, likely files, and targeted verification.
@@ -60,12 +68,13 @@ Then split the current PR slice into one or more Claude Code agent payloads and 
 2. Classify whether the repair is safe to delegate. If unclear, read `references/escalation-policy.md`.
 3. Decompose the request into PR-sized slices, then decompose the current slice into one or more safe Claude Code agent payloads.
 4. Read enough context to create high-quality worker payloads: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, nearby call sites when necessary, verification commands, and explicit out-of-scope boundaries. Prioritize code quality over minimizing this planning step.
-5. Build concise payloads using `references/payload-schema.md`. Do not paste a full worker brief, but do include the `final_output_contract`.
-6. Dispatch the Claude Code agent payload or payloads through `scripts/run_repair_worker.py`, not by calling `claude` directly. Use parallel dispatch when the Task Decomposition safety rules allow it; otherwise dispatch one worker.
-7. Treat each runner as the completion hook: wait for its final report, then review the compact report, changed files, diff, and test evidence with `references/review-checklist.md`. Do not consume long Claude stdout/stderr unless the compact report points to a failure that needs it.
-8. If `worker_status` is `failed`, count it as a failed worker round for that payload, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
-9. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, or no-report worker rounds for the same payload, stop delegating that payload and have Codex take over.
-10. After all accepted payloads for a PR slice are reviewed, run the slice-level targeted verification. Then continue to the next PR slice or finish with the repository's normal task classification, verification, and finalization rules.
+5. If Codex created RED tests before dispatch, commit that test-only checkpoint first so the implementation worker starts from a clean task worktree. Do not use a dirty baseline for writing workers.
+6. Build concise payloads using `references/payload-schema.md`. Do not paste a full worker brief, but do include the `final_output_contract`.
+7. Dispatch the Claude Code agent payload or payloads through `scripts/run_repair_worker.py`, not by calling `claude` directly. Use parallel dispatch when the Task Decomposition safety rules allow it; otherwise dispatch one worker.
+8. Treat each runner as the completion hook: wait for its final report, then review the compact report, changed files, diff, and test evidence with `references/review-checklist.md`. Do not consume long Claude stdout/stderr unless the compact report points to a failure that needs it.
+9. If `worker_status` is `failed`, count it as a failed worker round for that payload, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
+10. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, no-report, empty-result, or empty-result-after-edit worker rounds for the same payload, stop delegating that payload and have Codex take over.
+11. After all accepted payloads for a PR slice are reviewed, run the slice-level targeted verification. Then continue to the next PR slice or finish with the repository's normal task classification, verification, and finalization rules.
 
 ## Claude CLI Invocation
 
