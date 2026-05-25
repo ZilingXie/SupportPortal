@@ -626,7 +626,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertEqual(reranked[0].chunk_id, "create-rules-request")
 
-    def test_metadata_rerank_prefers_dual_stream_enablement_chunk_over_glossary(self) -> None:
+    def test_metadata_rerank_does_not_apply_dual_stream_specific_boost(self) -> None:
         glossary_chunk = RetrievedChunk(
             chunk_id="dual-stream-glossary",
             text=(
@@ -663,9 +663,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
             product="audio_video_calling",
         )
 
-        self.assertEqual(reranked[0].chunk_id, "dual-stream-web")
-        self.assertIn("intent:dual_stream_enablement", info["candidate_reasons"]["dual-stream-web"])
-        self.assertIn("intent:dual_stream_glossary_penalty", info["candidate_reasons"]["dual-stream-glossary"])
+        self.assertEqual(reranked[0].chunk_id, "dual-stream-glossary")
+        self.assertNotIn("intent:dual_stream_enablement", info["candidate_reasons"].get("dual-stream-web", []))
+        self.assertNotIn("intent:dual_stream_glossary_penalty", info["candidate_reasons"].get("dual-stream-glossary", []))
 
     def test_metadata_rerank_prefers_official_how_to_over_issue_summary_for_onboarding_query(self) -> None:
         issue_summary_chunk = RetrievedChunk(
@@ -3255,7 +3255,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("```kotlin", result.answer.answer)
         self.assertIn("join a channel", result.answer.answer.lower())
 
-    def test_run_rag_query_dual_stream_enable_query_returns_grounded_answer_with_citations(self) -> None:
+    def test_run_rag_query_dual_stream_enable_query_uses_generic_usage_configuration_path(self) -> None:
         dual_stream_chunk = RetrievedChunk(
             chunk_id="dual-stream-web",
             text=(
@@ -3292,8 +3292,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
         def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
             normalized = " ".join(str(query_text or "").split()).lower()
             if normalized == "how to enable the dual stream":
-                return [rag_qa._copy_chunk(glossary_chunk)]
-            if "media stream fallback" in normalized or "enabledualstream" in normalized or "setdualstreammode" in normalized:
                 return [rag_qa._copy_chunk(dual_stream_chunk), rag_qa._copy_chunk(glossary_chunk)]
             raise AssertionError(f"unexpected bm25 query: {query_text!r}")
 
@@ -3320,7 +3318,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "rerank_model": "BAAI/bge-reranker-v2-m3",
                 "rerank_api_key": "test-rerank-key",
                 "rerank_base_url": "https://api.siliconflow.cn/v1",
-                "rerank_enabled": True,
+                "rerank_enabled": False,
                 "rerank_timeout_seconds": 10.0,
                 "rerank_max_retries": 1,
                 "request_timeout_seconds": 20.0,
@@ -3334,16 +3332,16 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 return_value="supportportal.docagent_chunks_bge_m3_1024",
             ), patch(
                 "backend.services.rag_qa.get_embedding_provider",
-                side_effect=AssertionError("embedding provider should not be initialized for dual-stream light path"),
+                side_effect=AssertionError("embedding provider should not be initialized for generic usage_configuration first pass"),
             ), patch(
                 "backend.services.rag_qa.understand_rag_query",
-                side_effect=AssertionError("query understanding should be skipped for dual-stream light path"),
+                side_effect=AssertionError("query understanding should be deferred until usage_configuration recovery"),
             ), patch(
                 "backend.services.rag_qa._invoke_agentic_planner",
-                side_effect=AssertionError("planner should be skipped for dual-stream light path"),
+                side_effect=AssertionError("planner should not run for generic usage_configuration lexical first pass"),
             ), patch(
                 "backend.services.rag_qa._retrieve_chunks",
-                side_effect=AssertionError("vector retrieval should not run for dual-stream light path"),
+                side_effect=AssertionError("vector retrieval should not run when generic usage_configuration lexical evidence is sufficient"),
             ), patch(
                 "backend.services.rag_qa._retrieve_bm25_chunks",
                 side_effect=_bm25_side_effect,
@@ -3361,13 +3359,23 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ),
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
-                side_effect=AssertionError("external rerank should be skipped for dual-stream light path"),
+                side_effect=AssertionError("external rerank should be skipped when disabled"),
             ), patch(
                 "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                side_effect=AssertionError("dual-stream deterministic path should not call the llm"),
-            ), patch(
+                return_value=(
+                    {
+                        "answer": "Call `client.enableDualStream()` before configuring low-stream subscription or stream fallback logic.",
+                        "key_steps": [],
+                        "citations": ["dual-stream-web"],
+                        "insufficient_evidence": False,
+                    },
+                    10,
+                    5,
+                    "gpt-5.4",
+                ),
+            ) as llm_mock, patch(
                 "backend.services.rag_qa._run_rag_query_legacy",
-                side_effect=AssertionError("dual-stream light path should stay in agentic mode"),
+                side_effect=AssertionError("generic usage_configuration path should stay in agentic mode"),
             ):
                 result = run_rag_query("how to enable the dual stream", product="audio_video_calling")
 
@@ -3375,9 +3383,11 @@ The documentation states that time: 0 means the rule is applied permanently. How
         assert result is not None
         self.assertEqual(result.trace.execution_mode, "agentic")
         self.assertEqual(result.trace.query_class, "usage_configuration")
-        self.assertTrue(result.trace.light_path_used)
+        self.assertFalse(result.trace.light_path_used)
         self.assertTrue(result.trace.vector_setup_skipped)
-        self.assertEqual(result.trace.answer_profile_used, "dual_stream_deterministic")
+        self.assertEqual(result.trace.generation_mode, "structured_answer")
+        self.assertNotEqual(result.trace.answer_profile_used, "dual_stream_deterministic")
+        self.assertEqual(llm_mock.call_count, 1)
         self.assertFalse(result.trace.needs_human)
         self.assertEqual(result.trace.handoff_reason, None)
         self.assertEqual(result.answer.citations[0]["chunk_id"], "dual-stream-web")

@@ -10,6 +10,33 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-25 - PR3 remove dual-stream enablement special RAG path
+
+- Summary:
+  - Removed the dual-stream enablement detector and dedicated query-expansion, metadata-rerank, retrieval-planning, feature-flag, vector-runtime, and deterministic-answer branches.
+  - Let "how to enable dual stream" route through the generic `usage_configuration` path: Round 1 keeps `p_bm25 + p_fts`, and recovery uses the existing usage/config widening logic.
+  - Removed `dual_stream_deterministic` from low-risk direct-answer allowlists because the runtime no longer emits that generation profile.
+- Reason:
+  - Dual-stream enablement should no longer be a bespoke fast path; it should behave like other usage/configuration questions after PR1 and PR2.
+  - Hard-coded dual-stream rule variants and deterministic answer generation masked whether generic usage/config retrieval and answer generation were sufficient.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/rag_decision_engine.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - RAG traces for dual-stream enablement questions no longer report `dual_stream_deterministic` or dual-stream-specific rerank reasons; supported answers use the normal structured-answer path with citations.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -k 'generic_usage_configuration_for_dual_stream or feature_flags_does_not_special_case_dual_stream' -q` failed on old rule variants and dual-stream feature-flag gating.
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -k 'dual_stream_specific_boost or dual_stream_enable_query_uses_generic_usage_configuration_path' -q` failed on old dual-stream metadata boost and deterministic answer generation.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/client_ticket_agent_runtime.py backend/services/rag_decision_engine.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py`.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_decision_engine.py backend/tests/test_rag_service_client.py backend/tests/test_client_ticket_agent_runtime.py -q` (`261 passed, 9 subtests passed`).
+  - GREEN: `rtk rg -n "_is_dual_stream_enable_query|_dual_stream_query_expansions|_dual_stream_intent_adjustment|_build_dual_stream_grounded_answer|dual_stream_deterministic|intent:dual_stream|dual_stream_enable" backend/services -S` found no runtime references.
+
 ## 2026-05-25 - PR2 usage/config two-round retrieval
 
 - Summary:

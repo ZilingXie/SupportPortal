@@ -228,7 +228,7 @@ class RagServiceClientTests(unittest.TestCase):
                             "heading": "Media stream fallback > Implement media stream fallback",
                         }
                     ],
-                    "generation_mode": "dual_stream_deterministic",
+                    "generation_mode": "structured_answer",
                     "selected_doc_count": 1,
                     "selected_contexts": [
                         {

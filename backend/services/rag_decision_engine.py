@@ -36,7 +36,6 @@ _LOW_RISK_DIRECT_GENERATION_MODES = {
     "api_semantics_deterministic",
     "structured_answer",
     "generic_join_deterministic",
-    "dual_stream_deterministic",
 }
 _HUMAN_REQUIRED_SIGNAL_KEYS = {
     "needs_human",

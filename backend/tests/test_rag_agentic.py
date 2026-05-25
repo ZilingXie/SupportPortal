@@ -221,7 +221,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(len(plan.query_variants), 1)
         self.assertTrue(plan.light_path)
 
-    def test_build_agentic_retrieval_plan_adds_dual_stream_rule_variants(self) -> None:
+    def test_build_agentic_retrieval_plan_uses_generic_usage_configuration_for_dual_stream(self) -> None:
         with patch("backend.services.rag_qa._invoke_agentic_planner", return_value=None):
             plan = _build_agentic_retrieval_plan(
                 message="how to enable the dual stream",
@@ -231,12 +231,36 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(plan.query_class, "usage_configuration")
-        self.assertTrue(
-            any(kind == "rule" and "enableDualStream" in query for kind, query in plan.query_variants)
-        )
-        self.assertTrue(
-            any(kind == "rule" and "media stream fallback" in query for kind, query in plan.query_variants)
-        )
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
+        self.assertEqual(plan.query_variants, [("original", "how to enable the dual stream")])
+        self.assertFalse(plan.light_path)
+
+    def test_resolve_agentic_feature_flags_does_not_special_case_dual_stream_usage(self) -> None:
+        message = "how to enable the dual stream"
+        flags = _classify_agentic_query_flags(message)
+
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_QUERY_UNDERSTANDING_ENABLED": "true",
+                "RAG_QUERY_REWRITE_ENABLED": "true",
+                "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
+                "RAG_QUERY_EXPANSION_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            resolved = _resolve_agentic_feature_flags(
+                config={"vector_enabled": True},
+                query_flags=flags,
+                effective_question=message,
+            )
+
+        self.assertEqual(flags.preliminary_query_class, "usage_configuration")
+        self.assertTrue(resolved.query_understanding_enabled)
+        self.assertTrue(resolved.query_rewrite_enabled)
+        self.assertTrue(resolved.query_decomposition_enabled)
+        self.assertTrue(resolved.query_expansion_enabled)
+        self.assertTrue(resolved.warm_vector_enabled)
 
     def test_apply_api_semantics_latency_budget_caps_bm25_candidate_window(self) -> None:
         adjusted = _apply_api_semantics_latency_budget(
