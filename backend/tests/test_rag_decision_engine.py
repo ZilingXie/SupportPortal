@@ -244,6 +244,89 @@ class RagDecisionEngineUnitTests(unittest.TestCase):
         self.assertEqual(decision.review_summary.get("phase"), "skipped")
         self.assertEqual(decision.review_summary.get("reason"), "low_risk_grounded_answer")
 
+    def test_usage_configuration_answer_first_uses_low_risk_usage_gate(self):
+        decision = self._call_evaluate(
+            message="How do I enable dual stream?",
+            rag_detail=_make_rag_detail(
+                answer="Enable dual stream before publishing, then select the stream type.",
+                confidence=0.80,
+                citations=[{"chunk_id": "dual-stream"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "usage_configuration",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+            ),
+            review_agent=lambda **_kwargs: self.fail("low-risk usage/config answers should skip review"),
+        )
+
+        self.assertEqual(decision.execution_result.workflow_action, "answer_customer")
+        self.assertEqual(decision.review_summary.get("phase"), "skipped")
+        self.assertEqual(decision.review_summary.get("reason"), "low_risk_grounded_answer")
+
+    def test_legacy_configuration_class_uses_usage_configuration_low_risk_gate(self):
+        decision = self._call_evaluate(
+            message="How to configure token auth?",
+            rag_detail=_make_rag_detail(
+                answer="Configure a token server and pass the issued token when joining the channel.",
+                confidence=0.80,
+                citations=[{"chunk_id": "token-auth"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "configuration",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+            ),
+            review_agent=lambda **_kwargs: self.fail("legacy configuration answers should use the usage gate"),
+        )
+
+        self.assertEqual(decision.execution_result.workflow_action, "answer_customer")
+        self.assertEqual(decision.review_summary.get("phase"), "skipped")
+        self.assertEqual(decision.review_summary.get("reason"), "low_risk_grounded_answer")
+
+    def test_usage_configuration_label_does_not_bypass_troubleshooting_high_risk_gate(self):
+        review_modes: list[str] = []
+
+        def review_agent(**kwargs):
+            review_modes.append(kwargs.get("mode"))
+            if kwargs.get("mode") == "pre_engineer_intake":
+                return TroubleshootingIntakeResult(
+                    issue_mode="investigation",
+                    known_information={"symptom": "joining failure"},
+                    missing_information=[],
+                    ready_for_engineer_ticket=True,
+                    customer_reply="",
+                )
+            return {"decision": "open_engineer_ticket", "reason": "high_risk_unverified", "confidence": 0.3}
+
+        decision = self._call_evaluate(
+            message="How to fix failure when joining a channel?",
+            rag_detail=_make_rag_detail(
+                answer="Call joinChannel with a valid token.",
+                confidence=0.80,
+                citations=[{"chunk_id": "join-failure"}],
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "usage_configuration",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+            ),
+            review_agent=review_agent,
+        )
+
+        self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
+        self.assertEqual(decision.execution_result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(decision.review_summary.get("gate_block_reason"), "weak_troubleshooting_evidence")
+
     def test_troubleshooting_weak_evidence_enters_review_intake_path(self):
         review_modes: list[str] = []
 
