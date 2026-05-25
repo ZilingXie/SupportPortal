@@ -1715,7 +1715,7 @@ def _usage_configuration_supports_code_example(
 ) -> bool:
     """Return True when at least one chunk provides code or config evidence."""
     for chunk in chunks:
-        if _chunk_code_language(chunk) or _chunk_has_code_or_config_evidence(chunk):
+        if _chunk_has_code_or_config_evidence(chunk):
             return True
     return False
 
@@ -1735,7 +1735,7 @@ def _select_usage_configuration_code_language(
     * Returns ``None`` when no chunk provides a code or config example.
     """
     supported = _usage_configuration_supported_code_languages(chunks)
-    if not supported:
+    if not supported or not _usage_configuration_supports_code_example(chunks):
         return None
 
     question_lower = str(question or "").lower()

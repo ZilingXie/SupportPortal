@@ -337,6 +337,28 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
         )
 
+    def test_usage_configuration_language_metadata_alone_is_not_example_evidence(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-overview",
+                text="This JavaScript SDK overview mentions joining a channel but gives no method names or fields.",
+                source_path="docs/js-overview.md",
+                similarity=0.82,
+                metadata={"language": "javascript"},
+            )
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ("javascript",))
+        self.assertFalse(_usage_configuration_supports_code_example(chunks))
+        self.assertIsNone(
+            _select_usage_configuration_code_language(
+                "How do I join a channel in JavaScript?",
+                chunks,
+                ticket_id="ticket-8",
+                customer_id="customer-8",
+            )
+        )
+
     def test_usage_configuration_answer_prompt_receives_selected_evidence_language(self) -> None:
         chunks = [
             RetrievedChunk(

@@ -229,6 +229,7 @@ class PromptModuleTests(unittest.TestCase):
             query_class="usage_configuration",
             preferred_code_language="javascript",
             supported_code_languages=("javascript", "java"),
+            code_example_evidence_available=True,
         )
 
         self.assertIn("## Usage/Configuration Code Example Policy", user_prompt)

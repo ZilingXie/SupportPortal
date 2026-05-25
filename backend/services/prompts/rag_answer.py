@@ -109,7 +109,7 @@ def build_rag_answer_user_prompt(
     ]
     if query_class == "usage_configuration":
         usage_parts = ["", "## Usage/Configuration Code Example Policy"]
-        if supported_code_languages:
+        if code_example_evidence_available and supported_code_languages:
             usage_parts.extend(
                 [
                     "usage_configuration",
