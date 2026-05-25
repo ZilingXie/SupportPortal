@@ -19,6 +19,9 @@ known_context:
 pr_slice:
 <optional PR slice name or number when the user supplied a multi-PR plan>
 
+packet_type:
+<"read-only probe" or "atomic writing packet">
+
 parallel_group:
 <optional group name plus whether this worker is read-only or has an isolated write workspace>
 
@@ -29,6 +32,7 @@ constraints:
 - Smallest correct change
 - No unrelated refactor
 - Preserve public APIs unless required
+- Stop and return `Blocked` if the needed edit exceeds the write scope, touches a second control-flow stage, or needs broader tests than listed
 
 verification:
 <exact command or commands the worker should run>
@@ -49,9 +53,10 @@ final_output_contract:
 - `scope_hints`: point the worker to likely starting points; do not summarize the whole repo.
 - `known_context`: include verified facts only. Mark guesses as guesses or omit them.
 - `pr_slice`: include when the user provided a multi-PR plan; one payload should belong to exactly one PR slice.
+- `packet_type`: required when the PR slice was split; use `read-only probe` for investigation-only packets and `atomic writing packet` for bounded implementation.
 - `parallel_group`: include when launching multiple agents together; state whether the worker is read-only or has an isolated write workspace.
 - `write_scope`: required for parallel workers; never allow two writing payloads to edit the same files in the same worktree.
-- `constraints`: keep the default three unless the task needs tighter rules.
+- `constraints`: keep the defaults and add task-specific stop conditions when scope creep would make the result unsafe.
 - `verification`: prefer one narrow command that proves the fix.
 - `acceptance`: describe user-visible behavior, regression coverage, or exact diff expectations.
 - `final_output_contract`: repeat the strict return contract at the end of every payload so the worker does not drift from the runner parser.
