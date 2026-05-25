@@ -16,6 +16,7 @@ from backend.services.rag_qa import (
     RagAnswer,
     RagQueryResult,
     RetrievedChunk,
+    _agentic_round_tools,
     _agentic_round_variants,
     _apply_api_semantics_latency_budget,
     _build_api_semantics_grounded_answer,
@@ -676,9 +677,85 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_tool_order_for_usage_configuration_starts_with_lexical_usage_support(self) -> None:
         tools, evidence_goal, recovery_bias = _tool_order_for_query_class("usage_configuration")
 
-        self.assertEqual(tools[:3], ["p_bm25", "p_fts", "p_vec"])
+        self.assertEqual(tools, ["p_bm25", "p_fts"])
         self.assertEqual(evidence_goal, "configuration_support")
         self.assertEqual(recovery_bias, "lexical")
+
+    def test_build_agentic_retrieval_plan_defers_usage_configuration_expansions_until_recovery(self) -> None:
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="How do I join a channel?",
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="join a video calling channel",
+                rewritten_queries=["joinChannel token uid flow"],
+                decomposition_subqueries=["join channel", "token authentication"],
+                fallback_mode="none",
+                rule_expansions=["joinChannel token uid"],
+                llm_expansions=["joinChannel token uid flow"],
+            ),
+            rewritten_queries=["joinChannel token uid flow"],
+            decomposition_subqueries=["join channel", "token authentication"],
+            fallback_mode="none",
+        )
+
+        with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "true"}, clear=False):
+            plan = _build_agentic_retrieval_plan(
+                message="How do I join a channel?",
+                top_k=5,
+                query_understanding=understanding,
+                ticket_context=None,
+            )
+            round_one_tools, _ = _agentic_round_tools(plan, round_index=1, recovery_action=None)
+            round_two_tools, _ = _agentic_round_tools(
+                plan,
+                round_index=2,
+                recovery_action="configuration_recovery",
+            )
+            round_one_variants = _agentic_round_variants(
+                message="How do I join a channel?",
+                plan=plan,
+                round_index=1,
+                recovery_action=None,
+                ticket_context=None,
+            )
+            round_two_variants = _agentic_round_variants(
+                message="How do I join a channel?",
+                plan=plan,
+                round_index=2,
+                recovery_action="configuration_recovery",
+                ticket_context=None,
+            )
+
+        self.assertEqual(plan.query_class, "usage_configuration")
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
+        self.assertEqual(round_one_tools, ["p_bm25", "p_fts"])
+        self.assertEqual(round_two_tools, ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"])
+        self.assertEqual(round_one_variants, [("original", "How do I join a channel?")])
+        self.assertEqual(
+            round_two_variants,
+            [
+                ("original", "How do I join a channel?"),
+                ("semantic", "join a video calling channel"),
+                ("rule", "joinChannel token uid"),
+                ("rewrite", "joinChannel token uid flow"),
+                ("decomposition", "join channel"),
+                ("decomposition", "token authentication"),
+                (
+                    "focused_join_step",
+                    "join a channel joinChannel channelName uid token appid quickstart get started",
+                ),
+                (
+                    "focused_rewrite",
+                    "join channel joinChannel token channel name uid basic authentication",
+                ),
+            ],
+        )
 
     def test_tool_order_for_unclear_query_is_conservative_but_retrievable(self) -> None:
         tools, evidence_goal, recovery_bias = _tool_order_for_query_class("unclear_query")
@@ -1674,6 +1751,31 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(decision.decision, "recover_once")
         self.assertEqual(decision.recovery_action, "lexical_recovery")
 
+    def test_judge_agentic_round_requests_configuration_recovery_for_weak_usage_support(self) -> None:
+        chunk = RetrievedChunk(
+            chunk_id="weak-usage",
+            text="This chunk mentions channels but does not explain the join flow.",
+            source_path="official/channel-overview.md",
+            similarity=0.62,
+            index_role="primary",
+            rerank_score=0.31,
+        )
+
+        decision = _judge_agentic_round(
+            message="How do I join a channel?",
+            query_class="usage_configuration",
+            round_index=1,
+            reranked_chunks=[chunk],
+            final_chunks=[chunk],
+            decomposition_targets=[],
+            exact_terms=["join", "channel"],
+            grounded_overlap=False,
+        )
+
+        self.assertEqual(decision.decision, "recover_once")
+        self.assertEqual(decision.reason, "generic_join_wrong_family")
+        self.assertEqual(decision.recovery_action, "configuration_recovery")
+
     def test_judge_agentic_round_recovers_when_api_semantics_lacks_request_parameter_support(self) -> None:
         disband_chunk = RetrievedChunk(
             chunk_id="disband",
@@ -2601,6 +2703,199 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.trace.agent_recovery_action, "lexical_recovery")
         self.assertTrue(result.trace.ticket_context_used)
         self.assertIn("Error 109 means the token is expired.", result.answer.answer)
+
+    def test_run_rag_query_usage_configuration_lazily_consumes_understanding_on_recovery(self) -> None:
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="How do I join a channel?",
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="join a video calling channel",
+                rewritten_queries=["joinChannel token uid flow"],
+                decomposition_subqueries=["join channel", "token authentication"],
+                fallback_mode="none",
+                rule_expansions=["joinChannel token uid"],
+                llm_expansions=["joinChannel token uid flow"],
+            ),
+            rewritten_queries=["joinChannel token uid flow"],
+            decomposition_subqueries=["join channel", "token authentication"],
+            fallback_mode="none",
+        )
+        initial_plan = AgenticRetrievalPlan(
+            query_class="usage_configuration",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "How do I join a channel?")],
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["join", "channel"],
+            light_path=True,
+            product="audio_video_calling",
+        )
+        expanded_plan = AgenticRetrievalPlan(
+            query_class="usage_configuration",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "How do I join a channel?"),
+                ("semantic", "join a video calling channel"),
+                ("rule", "joinChannel token uid"),
+                ("rewrite", "joinChannel token uid flow"),
+                ("decomposition", "join channel"),
+                ("decomposition", "token authentication"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["join", "channel"],
+            light_path=True,
+            product="audio_video_calling",
+        )
+        weak_chunk = RetrievedChunk(
+            chunk_id="weak-usage",
+            text="Channel overview.",
+            source_path="official/channel-overview.md",
+            similarity=0.58,
+            index_role="primary",
+            rerank_score=0.28,
+        )
+        strong_chunk = RetrievedChunk(
+            chunk_id="strong-usage",
+            text="To join a channel, call joinChannel with a token and channel name.",
+            source_path="official/join-channel.md",
+            similarity=0.94,
+            index_role="primary",
+            rerank_score=0.88,
+        )
+        round_one = AgenticRoundResult(
+            retrieved_chunks=[weak_chunk],
+            reranked_chunks=[weak_chunk],
+            final_chunks=[weak_chunk],
+            rerank_info={"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+            judge=AgenticJudgeDecision(
+                decision="recover_once",
+                reason="weak_first_pass_support",
+                confidence=0.7,
+                recovery_action="configuration_recovery",
+            ),
+            iteration_trace=AgenticIterationTrace(
+                round_index=1,
+                tool_names=["p_bm25", "p_fts"],
+                query_variants=["original"],
+                selected_chunk_ids=["weak-usage"],
+                decision="recover_once",
+                recovery_action="configuration_recovery",
+            ),
+        )
+        round_two = AgenticRoundResult(
+            retrieved_chunks=[strong_chunk],
+            reranked_chunks=[strong_chunk],
+            final_chunks=[strong_chunk],
+            rerank_info={"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+            judge=AgenticJudgeDecision(
+                decision="answer_now",
+                reason="sufficient_second_pass_support",
+                confidence=0.92,
+                recovery_action=None,
+            ),
+            iteration_trace=AgenticIterationTrace(
+                round_index=2,
+                tool_names=["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"],
+                query_variants=["original", "semantic", "rule", "rewrite", "decomposition"],
+                selected_chunk_ids=["strong-usage"],
+                decision="answer_now",
+                recovery_action=None,
+            ),
+        )
+        call_order: list[tuple[object, ...]] = []
+
+        def _build_plan_side_effect(**kwargs):
+            has_understanding = kwargs.get("query_understanding") is not None
+            call_order.append(("build_plan", has_understanding))
+            return expanded_plan if has_understanding else initial_plan
+
+        def _understand_side_effect(*args, **kwargs):
+            _ = args
+            _ = kwargs
+            call_order.append(("understand",))
+            return understanding
+
+        def _execute_side_effect(**kwargs):
+            plan_arg = kwargs["plan"]
+            query_understanding_arg = kwargs.get("query_understanding")
+            retrieval_plan_arg = kwargs.get("retrieval_plan")
+            round_index = kwargs["round_index"]
+            call_order.append(
+                (
+                    "execute",
+                    round_index,
+                    query_understanding_arg is not None,
+                    [kind for kind, _query in plan_arg.query_variants],
+                    retrieval_plan_arg.semantic_query if isinstance(retrieval_plan_arg, RetrievalPlan) else None,
+                )
+            )
+            return round_one if round_index == 1 else round_two
+
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_QUERY_UNDERSTANDING_ENABLED": "true",
+                "RAG_QUERY_REWRITE_ENABLED": "true",
+                "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
+                "RAG_QUERY_EXPANSION_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            with patch("backend.services.rag_qa._get_rag_config", return_value=self._base_config()):
+                with patch("backend.services.rag_qa._build_agentic_retrieval_plan", side_effect=_build_plan_side_effect):
+                    with patch("backend.services.rag_qa.understand_rag_query", side_effect=_understand_side_effect):
+                        with patch("backend.services.rag_qa._execute_agentic_round", side_effect=_execute_side_effect):
+                            with patch(
+                                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                return_value=(
+                                    {
+                                        "answer": "Call joinChannel with a token and channel name.",
+                                        "key_steps": [],
+                                        "citations": ["strong-usage"],
+                                        "insufficient_evidence": False,
+                                    },
+                                    12,
+                                    6,
+                                    "gpt-4.1",
+                                ),
+                            ):
+                                result = run_rag_query("How do I join a channel?", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            call_order,
+            [
+                ("build_plan", False),
+                ("execute", 1, False, ["original"], "How do I join a channel?"),
+                ("understand",),
+                ("build_plan", True),
+                (
+                    "execute",
+                    2,
+                    True,
+                    ["original", "semantic", "rule", "rewrite", "decomposition", "decomposition"],
+                    "join a video calling channel",
+                ),
+            ],
+        )
+        self.assertTrue(result.trace.query_understanding_enabled)
+        self.assertEqual(result.trace.agent_recovery_action, "configuration_recovery")
+        self.assertEqual(
+            [item["kind"] for item in result.trace.plan_query_variants],
+            ["original", "semantic", "rule", "rewrite", "decomposition", "decomposition"],
+        )
 
     def test_execute_agentic_round_disables_vector_family_after_first_runtime_failure(self) -> None:
         plan = AgenticRetrievalPlan(

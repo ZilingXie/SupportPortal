@@ -10,6 +10,28 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-25 - PR2 usage/config two-round retrieval
+
+- Summary:
+  - Changed `usage_configuration` planning so Round 1 is fixed to `p_bm25 + p_fts` and ignores semantic/rewrite/rule/decomposition variants until recovery.
+  - Added `configuration_recovery` for weak first-pass usage/config evidence; Round 2 expands to `p_vec + s_vec + p_bm25 + s_bm25 + p_fts + s_fts`.
+  - Deferred query understanding for usage/config questions until recovery, then lazily materializes semantic query, rewrites, rule expansions, and decomposition variants for the second round.
+- Reason:
+  - Usage/config questions should get a cheap lexical first pass without permanently disabling query understanding or vector recall when evidence is weak.
+  - Weak generic join/config evidence needs a broader second pass instead of staying on a narrow lexical-only recovery path.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - RAG traces for recovered usage/config questions can now show `agent_recovery_action: configuration_recovery` and second-round vector/shadow tools.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q -k "usage_configuration or configuration_recovery"` failed on the old lexical/vector/query-understanding behavior.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_decision_engine.py -q` (`172 passed, 7 subtests passed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py`.
+
 ## 2026-05-25 - Merge how-to and configuration query classification
 
 - Summary:
