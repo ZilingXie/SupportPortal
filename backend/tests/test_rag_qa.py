@@ -290,6 +290,49 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
         )
 
+    def test_usage_configuration_answer_prompt_receives_selected_evidence_language(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="js-1",
+                text="```javascript\nclient.join(appId, channel, token, uid);\n```",
+                source_path="docs/js.md",
+                similarity=0.92,
+                metadata={"language": "javascript"},
+            )
+        ]
+        captured_prompts: list[str] = []
+
+        def _capture_answer_call(*, profile, system_prompt: str, user_prompt: str, extra_payload=None):
+            _ = profile
+            _ = system_prompt
+            _ = extra_payload
+            captured_prompts.append(user_prompt)
+            return LlmTextResult(
+                text=(
+                    '{"answer":"Call client.join with the cited parameters.",'
+                    '"key_steps":[],"citations":["js-1"],"insufficient_evidence":false}'
+                ),
+                model_name="gpt-5.4",
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+
+        with patch("backend.services.rag_qa.invoke_responses_text", side_effect=_capture_answer_call):
+            payload, _prompt_tokens, _completion_tokens, _model_name = rag_qa._invoke_llm_payload_with_trace(
+                "How do I join a channel in JavaScript?",
+                chunks,
+                {"api_key": "test-key", "chat_model": "gpt-5.4", "reasoning_effort": "low"},
+                query_class="usage_configuration",
+                ticket_id="ticket-4",
+                customer_id="customer-4",
+            )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(captured_prompts), 1)
+        self.assertIn("## Usage/Configuration Code Example Policy", captured_prompts[0])
+        self.assertIn("Preferred example language: javascript", captured_prompts[0])
+        self.assertIn("Evidence-supported example languages: javascript", captured_prompts[0])
+
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
         self.assertEqual(
