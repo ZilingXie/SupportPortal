@@ -10,6 +10,30 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-25 - PR5 usage/config quality gates
+
+- Summary:
+  - Tightened `_judge_agentic_round` so `unclear_query` answers only when evidence is strong: grounded overlap, at least two primary chunks, and top score >= 0.72.
+  - Required second-round generic join recovery to include a preferred generic join-step chunk instead of accepting role-specific join evidence as complete usage/config support.
+  - Normalized post-RAG high-risk handling so `usage_configuration` and legacy `configuration` quality signals use the same low-risk usage/config gate as legacy `how_to_faq`, while explicit troubleshooting signals still enter grounded post-check and intake.
+- Reason:
+  - PR5 needs weak usage/config and unclear evidence to fail closed instead of producing customer-visible answers from incomplete or ambiguous support.
+  - Legacy `configuration` / `how_to_faq` labels can still appear in quality signals after PR1-PR4, so post-RAG gates must treat them consistently with `usage_configuration` without bypassing troubleshooting review.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_decision_engine.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or document backfill changes.
+  - RAG traces can now escalate weak `unclear_query` evidence with `unclear_query_weak_support` and second-round generic join misses with `generic_join_support_incomplete`.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py::RagAgenticTests::test_judge_agentic_round_escalates_unclear_query_with_weak_single_doc_support backend/tests/test_rag_agentic.py::RagAgenticTests::test_judge_agentic_round_escalates_after_recovery_without_preferred_generic_join_step backend/tests/test_rag_decision_engine.py::RagDecisionEngineUnitTests::test_usage_configuration_answer_first_uses_low_risk_usage_gate backend/tests/test_rag_decision_engine.py::RagDecisionEngineUnitTests::test_legacy_configuration_class_uses_usage_configuration_low_risk_gate` failed on the previous answer-now and high-risk gating behavior.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/client_ticket_agent_runtime.py`.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py::RagAgenticTests::test_judge_agentic_round_escalates_unclear_query_with_weak_single_doc_support backend/tests/test_rag_agentic.py::RagAgenticTests::test_judge_agentic_round_answers_unclear_query_only_with_strong_support backend/tests/test_rag_agentic.py::RagAgenticTests::test_judge_agentic_round_escalates_unclear_query_without_strong_top_score backend/tests/test_rag_agentic.py::RagAgenticTests::test_judge_agentic_round_escalates_after_recovery_without_preferred_generic_join_step`.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_decision_engine.py::RagDecisionEngineUnitTests::test_usage_configuration_answer_first_uses_low_risk_usage_gate backend/tests/test_rag_decision_engine.py::RagDecisionEngineUnitTests::test_legacy_configuration_class_uses_usage_configuration_low_risk_gate backend/tests/test_rag_decision_engine.py::RagDecisionEngineUnitTests::test_usage_configuration_label_does_not_bypass_troubleshooting_high_risk_gate backend/tests/test_rag_decision_engine.py::RagDecisionEngineUnitTests::test_low_risk_structured_answer_skips_review backend/tests/test_rag_decision_engine.py::RagDecisionEngineUnitTests::test_troubleshooting_weak_evidence_enters_review_intake_path`.
+
 ## 2026-05-25 - PR3 remove dual-stream enablement special RAG path
 
 - Summary:
