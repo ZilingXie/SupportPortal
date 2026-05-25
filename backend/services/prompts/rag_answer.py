@@ -42,6 +42,7 @@ def build_rag_answer_user_prompt(
     query_class: str | None = None,
     preferred_code_language: str | None = None,
     supported_code_languages: tuple[str, ...] | None = None,
+    code_example_evidence_available: bool = False,
 ) -> str:
     parts = [
         "## User Question",
@@ -116,6 +117,15 @@ def build_rag_answer_user_prompt(
                     f"Evidence-supported example languages: {', '.join(supported_code_languages)}",
                     "If the customer requested a language, prefer it only when it appears in the evidence-supported list",
                     "Do not translate examples into another SDK language",
+                    "Do not invent API names",
+                ]
+            )
+        elif code_example_evidence_available:
+            usage_parts.extend(
+                [
+                    "Evidence-supported code or configuration example is available",
+                    "Example language is not specified by the evidence",
+                    "Prefer a minimal configuration or JSON example built only from verbatim field and schema evidence",
                     "Do not invent API names",
                 ]
             )

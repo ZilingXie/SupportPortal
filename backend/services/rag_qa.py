@@ -1682,9 +1682,16 @@ def _chunk_has_code_or_config_evidence(chunk: RetrievedChunk) -> bool:
     text = str(chunk.text or "")
     if re.search(r"```[A-Za-z0-9_+-]*\s*\n.*?```", text, flags=re.DOTALL):
         return True
-    config_signals = ("configuration", "enable", "disable", "setup", "json", "parameter", "field", "property")
-    lowered = text.lower()
-    if any(signal in lowered for signal in config_signals):
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    if str(metadata.get("request_body_evidence_type") or "").strip():
+        return True
+    if metadata.get("request_body_matched_fields"):
+        return True
+    if str(metadata.get("chunk_type") or "").strip().lower() in {"api_params", "code"}:
+        return True
+    if _contains_parseable_json_block(text):
+        return True
+    if re.search(r"\b(?:fields?|parameters?|properties?)\s*:\s*`?[A-Za-z_][A-Za-z0-9_]*`?", text, re.IGNORECASE):
         return True
     return False
 
@@ -6438,6 +6445,7 @@ def _build_answer_prompt_for_mode(
     query_class: str | None = None,
     preferred_code_language: str | None = None,
     supported_code_languages: tuple[str, ...] | None = None,
+    code_example_evidence_available: bool = False,
 ) -> str:
     return build_rag_answer_user_prompt(
         question=question,
@@ -6448,6 +6456,7 @@ def _build_answer_prompt_for_mode(
         query_class=query_class,
         preferred_code_language=preferred_code_language,
         supported_code_languages=supported_code_languages,
+        code_example_evidence_available=code_example_evidence_available,
     )
 
 
@@ -7170,6 +7179,7 @@ def _invoke_llm_payload(
     query_class: str | None = None,
     preferred_code_language: str | None = None,
     supported_code_languages: tuple[str, ...] | None = None,
+    code_example_evidence_available: bool = False,
 ) -> dict[str, Any] | None:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(
@@ -7180,6 +7190,7 @@ def _invoke_llm_payload(
         query_class=query_class,
         preferred_code_language=preferred_code_language,
         supported_code_languages=supported_code_languages,
+        code_example_evidence_available=code_example_evidence_available,
     )
     profile = profile_override or _build_answer_profile(config)
     try:
@@ -7210,9 +7221,11 @@ def _invoke_llm_payload_with_trace(
     query_class_label = str(query_class or "").strip() or None
     preferred_code_language: str | None = None
     supported_code_languages: tuple[str, ...] | None = None
+    code_example_evidence_available: bool = False
 
     if query_class_label == "usage_configuration":
         supported_code_languages = _usage_configuration_supported_code_languages(chunks)
+        code_example_evidence_available = _usage_configuration_supports_code_example(chunks)
         if supported_code_languages:
             preferred_code_language = _select_usage_configuration_code_language(
                 message,
@@ -7230,6 +7243,7 @@ def _invoke_llm_payload_with_trace(
         query_class=query_class_label,
         preferred_code_language=preferred_code_language,
         supported_code_languages=supported_code_languages,
+        code_example_evidence_available=code_example_evidence_available,
     )
     profile = profile_override or _build_answer_profile(config)
     try:

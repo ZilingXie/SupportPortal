@@ -315,6 +315,28 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
         )
 
+    def test_usage_configuration_does_not_treat_weak_config_words_as_example_evidence(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="weak-1",
+                text="The overview mentions parameters and fields at a high level but names no exact schema.",
+                source_path="docs/overview.md",
+                similarity=0.82,
+                metadata={},
+            )
+        ]
+
+        self.assertEqual(_usage_configuration_supported_code_languages(chunks), ())
+        self.assertFalse(_usage_configuration_supports_code_example(chunks))
+        self.assertIsNone(
+            _select_usage_configuration_code_language(
+                "Which parameter controls channel role?",
+                chunks,
+                ticket_id="ticket-7",
+                customer_id="customer-7",
+            )
+        )
+
     def test_usage_configuration_answer_prompt_receives_selected_evidence_language(self) -> None:
         chunks = [
             RetrievedChunk(
