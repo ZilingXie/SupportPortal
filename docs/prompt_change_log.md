@@ -1853,3 +1853,23 @@ For each new entry, record:
   - When no safe customer clarification remains and the answer lacks sufficient grounding, the runtime opens engineer intake instead of sending unsupported or mismatched guidance.
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime`
+
+- Date: 2026-05-25
+- Area or subsystem: RAG answer prompt and usage-configuration generation
+- Prompt or model version: `rag-answer-usage-configuration-code-v1`
+- Summary: Added a usage/configuration code-example policy to the RAG answer prompt and wired answer generation to provide evidence-supported languages plus config-example evidence availability.
+- Reason: PR4 requires usage/configuration answers to include minimal code or configuration examples when the retrieved chunks support exact API names, fields, parameters, call order, or config shape, without allowing the model to invent unsupported examples.
+- Affected files or config:
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `usage_configuration` prompts now prefer a customer-requested language only when retrieved evidence supports that language.
+  - When no language is requested, generation gets a deterministic evidence-supported language choice derived from ticket ID, customer ID, and effective question.
+  - If chunks do not provide code, JSON, API parameter, request-body schema, or explicit field-list evidence, the prompt tells the model not to include a fenced code block and to use insufficient evidence when needed.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py backend/tests/test_rag_qa.py backend/tests/test_rag_prompt_guards.py -q -k 'usage_configuration_code_language or usage_configuration_answer_prompt_receives_selected_evidence_language or config_examples_when_field_evidence_has_no_language_tag or supports_config_example_without_language_tag or receives_config_evidence_without_language or weak_config_words or language_metadata_alone or rag_answer_prompt_guides or generic_join'`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_answer.py`
