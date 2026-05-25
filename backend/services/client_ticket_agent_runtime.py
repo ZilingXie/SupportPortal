@@ -1294,9 +1294,12 @@ def _is_high_risk_grounded_answer(
     )
     query_class = str(quality_signals.get("query_class") or "").strip().lower()
     if (
-        query_class == "how_to_faq"
+        query_class in {"how_to_faq", "usage_configuration", "configuration"}
         and effective_message
-        and is_answer_first_how_to_message(effective_message)
+        and (
+            is_answer_first_how_to_message(effective_message)
+            or query_class != "how_to_faq"
+        )
     ):
         if bool(quality_signals.get("needs_human")):
             return True
