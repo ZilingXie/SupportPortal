@@ -157,6 +157,46 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_classify_agentic_query_falls_back_to_unclear_query(self) -> None:
         self.assertEqual(rag_qa._classify_agentic_query("???", None), "unclear_query")
 
+    def test_classify_agentic_query_start_of_query_compare_triggers_comparison(self) -> None:
+        self.assertEqual(
+            rag_qa._classify_agentic_query("compare joinChannel and joinChannelEx", None),
+            "comparison",
+        )
+
+    def test_classify_agentic_query_difference_triggers_comparison(self) -> None:
+        self.assertEqual(
+            rag_qa._classify_agentic_query("difference between setRemoteVideoStreamType and muteLocalVideoStream?", None),
+            "comparison",
+        )
+
+    def test_classify_agentic_query_versus_triggers_comparison(self) -> None:
+        self.assertEqual(
+            rag_qa._classify_agentic_query("push vs pull what to choose", None),
+            "comparison",
+        )
+
+    def test_classify_agentic_query_boundary_word_contains_marker_not_comparison(self) -> None:
+        # Words that merely contain the marker substring must not match.
+        examples = [
+            "compareChannel API reference",
+            "vsync setting question",
+        ]
+        for message in examples:
+            with self.subTest(message=message):
+                self.assertNotEqual(rag_qa._classify_agentic_query(message, None), "comparison")
+
+    def test_build_agentic_retrieval_plan_comparison_query_gives_comparison_first_pass_tools(self) -> None:
+        plan = _build_agentic_retrieval_plan(
+            message="compare joinChannel and joinChannelEx",
+            top_k=5,
+            query_understanding=None,
+            ticket_context=None,
+        )
+        self.assertEqual(plan.query_class, "comparison")
+        self.assertEqual(plan.first_pass_tools, ["p_vec", "p_bm25", "s_vec", "p_fts"])
+        self.assertFalse(plan.light_path)
+
+
     def test_classify_agentic_query_flags_preserves_api_semantics_light_path(self) -> None:
         flags = _classify_agentic_query_flags(self._BAN_API_MISMATCH_MESSAGE)
 
