@@ -10,6 +10,26 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-26 - Fix agentic comparison-query classification for start-of-message markers
+
+- Summary:
+  - Changed `_is_comparison_query()` to use word-boundary regex matching (`\b`) for English comparison markers (`compare`, `difference`, `vs`, `versus`) instead of literal-space-delimited substring checks.
+  - Preserved substring matching for Chinese markers (`区别`, `对比`).
+- Reason:
+  - Comparison questions starting with "compare", "difference", "vs", or "versus" (or adjacent to punctuation) were not matching the space-delimited markers and fell through to `lexical_exact` instead of `comparison`.
+  - A customer query like `"compare joinChannel and joinChannelEx"` was classified as `lexical_exact` and routed through lexical-first tools instead of the comparison retrieval plan.
+- Affected files/config:
+  - `backend/services/rag_qa.py` (`_is_comparison_query`)
+  - `backend/tests/test_rag_agentic.py` (5 new comparison classification tests)
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Query classification for English comparison markers is broader at word boundaries while continuing to avoid spurious substring matches (e.g. `compareChannel`, `vsync`).
+- Verification:
+  - RED: `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q -k "comparison"` (3 `AssertionError`: `lexical_exact != comparison` before the fix).
+  - GREEN: Same command (5 passed, 2 subtests passed after the fix).
+  - GREEN: `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q` (74 passed, 7 subtests passed).
+
 ## 2026-05-25 - PR5 usage/config quality gates
 
 - Summary:

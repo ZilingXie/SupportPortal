@@ -863,7 +863,13 @@ def _usage_configuration_query_variants(
 
 def _is_comparison_query(message: str) -> bool:
     lowered = str(message or "").lower()
-    return any(marker in lowered for marker in [" compare ", " difference ", " vs ", " versus ", "区别", "对比"])
+    # Use word-boundary matching for English markers so sentence-start
+    # and punctuation-adjacent positions are recognised (e.g. "compare X and Y",
+    # "difference between...").  Keep substring matching for Chinese markers.
+    _COMPARISON_EN_MARKERS = (r"\bcompare\b", r"\bdifference\b", r"\bvs\b", r"\bversus\b")
+    if any(re.search(pattern, lowered) for pattern in _COMPARISON_EN_MARKERS):
+        return True
+    return any(marker in lowered for marker in ["区别", "对比"])
 
 
 def _extract_comparison_targets(message: str) -> list[str]:
