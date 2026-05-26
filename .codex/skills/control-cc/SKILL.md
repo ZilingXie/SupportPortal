@@ -1,19 +1,19 @@
 ---
 name: control-cc
-description: Use when the user asks for control-cc or wants Codex to delegate code work to Claude Code, including repairs, feature implementation, refactors, logic optimization, tests, or code-adjacent docs, while Codex keeps responsibility for planning, review, and acceptance.
+description: Use when the user asks for control-cc or wants Codex to coordinate Claude Code for repairs, features, refactors, optimizations, tests, or code-adjacent docs while Codex keeps planning, review, and acceptance responsibility.
 ---
 
 # Control CC
 
 ## Overview
 
-Keep Codex focused on judgment, task control, diff review, verification review, and final acceptance. Delegate bounded implementation and test iteration to the project-local Claude Code worker skill at `.claude/skills/control-cc-worker/`.
+Use Control CC when Codex should manage the work and Claude Code should do most implementation. Codex owns PR sequencing, implementation plans, candidate patch integration, diff review, verification, final acceptance, and repository finalization. Claude Code executes clear plans inside the project-local `.claude/skills/control-cc-worker/` skill.
 
-Do not create or rely on global skills under `~/.codex/skills` or `~/.claude/skills` for this workflow.
+Do not create or rely on global skills under `~/.codex/skills` or `~/.claude/skills`.
 
-## Claude Code Preflight
+## Preflight
 
-Before planning or dispatching delegated code work, verify Claude Code can answer non-interactively:
+Before dispatching Claude Code, verify the CLI can answer non-interactively:
 
 ```bash
 claude --bare -p 'Smoke test only. Reply exactly: CLAUDE_CODE_OK' \
@@ -25,220 +25,119 @@ claude --bare -p 'Smoke test only. Reply exactly: CLAUDE_CODE_OK' \
   --no-session-persistence
 ```
 
-Continue only when the command exits 0, returns valid JSON, has `is_error=false`, no permission denials, and `result` is exactly `CLAUDE_CODE_OK`. If the preflight fails, terminate the delegated task immediately; do not create worker payloads, do not start implementation, and report the Claude Code failure reason, exit status, and any useful stderr/stdout path or JSON error details.
+Continue only when the command exits 0, returns valid JSON, has `is_error=false`, no permission denials, and `result` is exactly `CLAUDE_CODE_OK`.
 
-Then verify the actual project-local control-cc worker handoff before dispatching implementation workers:
-
-```bash
-python3 .codex/skills/control-cc/scripts/verify_claude_cli_flow.py
-```
-
-Continue only when this command exits 0. This smoke test proves that Claude Code can return the strict six-heading worker report through `run_cc_worker.py`, not merely that the raw CLI can answer a one-line prompt. If it fails, stop delegation for the current task and report the runner failure details.
-
-## Delegation Gate
-
-Delegate only when the likely code change is bounded and Codex can review it cheaply. Good candidates are small and medium repairs, feature slices, refactors, logic optimizations, tests, and code-adjacent docs with clear symptoms or acceptance criteria, likely files, and targeted verification.
-
-Do not delegate by default when the task involves security, auth, payment, data migration, data loss risk, concurrency, consistency, public API or schema changes, production secrets, broad architecture, or paths that tests cannot cover. See `references/escalation-policy.md`.
-
-## Worker Sizing Gate
-
-Before dispatching any writing implementation worker, score the current PR slice:
-
-| Signal | Points |
-| --- | ---: |
-| Shared core file, hot path, or file over about 3,000 lines | 2 |
-| More than one control-flow stage or function cluster must change | 2 |
-| Lazy initialization, deadlines, sidecars, caching, concurrency, or runtime state are involved | 3 |
-| Existing tests need semantic reinterpretation, not just new assertions | 2 |
-| Docs, change logs, finalization, or broad suite triage are included in the worker scope | 1 |
-| Write scope spans more than 3 functions or more than 2 production files | 2 |
-
-Decision rules:
-
-- Score 0-4: a writing worker is allowed only if the payload is an atomic writing packet.
-- Score 5 or higher: do not send one implementation worker for the whole PR slice. Use read-only probes first and let Codex integrate, or split into sequential atomic writing packets that each score 0-4.
-- Any hard Delegation Gate risk still blocks writing workers even if the score is low.
-
-Before any writing worker, write a temporary task plan with `references/task-plan-schema.md` and run:
+For a full local-path smoke test, write a tiny `/control-cc-worker` plan under `/tmp/control-cc-runs/<thread>/smoke.md` and run:
 
 ```bash
-python3 .codex/skills/control-cc/scripts/score_packet.py \
-  --task-plan-file /tmp/control-cc-tasks/<branch>/<packet>.md \
-  > /tmp/control-cc-tasks/<branch>/<packet>-score.json
-```
-
-`decision=split_required` is a hard stop for writing workers. A PR slice is not a worker packet; split recursively until each writing packet scores 0-4.
-
-An atomic writing packet has exactly one production behavior point, one bounded file region or function cluster, one expected diff direction, one narrow verification command, and 1-3 directly related tests. It must not include docs, change logs, finalization, optional broader tests, open-ended investigation, or multiple fallback paths. Codex adds docs and runs slice-level verification after accepted code.
-
-For score 5 or higher, prefer 1-3 read-only probes with `--tools "Read,Bash"`. Each probe should answer a narrow question such as the call chain, the safest write boundary, or the tests likely to fail. A probe may not edit files or propose a full patch.
-
-## Task Decomposition
-
-Codex must decompose the user request before any implementation worker runs. This is required whether the user provides a detailed multi-PR plan, asks for a feature or optimization, or only describes a bug to fix.
-
-First split the request into PR-sized slices:
-
-- If the user provides a plan with multiple PRs or clearly separable phases, process exactly one PR slice at a time in the requested order.
-- If the user only describes one broad change, create the smallest PR-sized slice that can deliver one coherent behavior and be verified.
-- For each PR slice, define the goal, scope boundaries, expected changed files, targeted verification, and acceptance checks before dispatch.
-- Do not bundle multiple PR slices into one broad payload. Finish review and verification for the current slice before starting the next slice.
-
-Then split the current PR slice into one or more Claude Code agent payloads and dispatch them:
-
-- Treat a PR slice and a Claude Code writing packet as different units. A PR slice can require Codex integration, read-only probes, several sequential writing packets, or no writing worker at all.
-- Delegation-first: Codex should not implement production code for a packet until that atomic packet has two failed/blocked worker rounds, the Delegation Gate blocks delegation, or the packet cannot be split further.
-- Dispatch a Claude Code writing worker only when the Worker Sizing Gate allows an atomic writing packet. Do not force an implementation worker just because the PR slice is delegated.
-- When the slice scores 5 or higher, split it recursively and start with read-only probes when needed. Codex should implement directly only after the work remains unsafe or blocked after splitting and probing.
-- Start multiple Claude Code agents simultaneously when the current PR slice contains independent read-only probes or independent writing packets that can be safely isolated.
-- Start exactly one Claude Code agent when the PR slice is not safely parallelizable.
-- Start multiple agents simultaneously only when their write scopes are independent and each can run from a clean isolated workspace or is read-only.
-- Never point two writing workers at the same task worktree. If isolated write workspaces are not available, run one writing worker and optionally run parallel read-only probes with `--tools "Read,Bash"`.
-- Give every parallel payload an explicit write scope, out-of-scope list, verification command, and final output contract.
-- Codex remains responsible for merging or accepting worker outputs sequentially, reviewing each diff, and resolving conflicts.
-
-## Temporary Task Plan
-
-Before dispatching a writing worker, Codex must create a compact temporary task plan outside tracked repo paths, preferably under `/tmp/control-cc-tasks/<branch-or-thread>/<packet>.md`.
-
-Use `references/task-plan-schema.md`. The file must include: requirement recap, PR slice, acceptance criteria, target files or search hints, out-of-scope boundaries, packet type, write scope, scoring flags, verification command, worker prompt, and cleanup policy. It is a coordination artifact, not project documentation.
-
-Delete temporary task plans after successful review and verification. Preserve them only when a worker fails and the path helps debugging. Never commit these files. If a repo-local path is required for tooling, use an ignored path such as `.codex/tmp/tasks/`. `run_cc_worker.py --task-plan-file` rejects tracked repo-local task plans outside `.codex/tmp/`.
-
-## Codex Workflow
-
-1. Run the Claude Code preflight. Stop and report if it fails.
-2. Classify whether the work is safe to delegate. If unclear, read `references/escalation-policy.md`.
-3. Decompose the request into PR-sized slices, then into worker packets. Score each candidate worker packet with `scripts/score_packet.py` before choosing read-only probes, recursive splitting, or atomic writing packets.
-4. Read enough context to create high-quality worker payloads: the user report, failing output, likely files from `scope_hints`, targeted `rg` results, nearby call sites when necessary, verification commands, and explicit out-of-scope boundaries. Prioritize code quality over minimizing this planning step.
-5. If Codex created RED tests before dispatch, commit that test-only checkpoint first so the implementation worker starts from a clean task worktree. Do not use a dirty baseline for writing workers.
-6. Build concise temporary payload files using `references/payload-schema.md`. Do not paste a full worker brief into chat, but do include the `final_output_contract`.
-7. Dispatch the Claude Code agent payload or payloads through `scripts/run_cc_worker.py`, not by calling `claude` directly. Pass `--task-plan-file`, `--packet-score-file`, `--packet-type`, and `--write-scope` for writing workers. Use parallel dispatch when the Task Decomposition safety rules allow it; otherwise dispatch one worker. If the only valid path is read-only probing, do not ask the probe to implement.
-8. Treat each runner as the completion hook: wait for its final report, then review the compact report, changed files, diff, and test evidence with `references/review-checklist.md`. Run `scripts/review_worker_result.py` before accepting a worker diff. Do not consume long Claude stdout/stderr unless the compact report points to a failure that needs it.
-9. If `worker_status` is `failed`, count it as a failed worker round for that payload, preserve the failure report, verify any partial diff was restored, and decide whether to send one correction payload or have Codex take over.
-10. If the result is close but flawed, send one concise correction payload. After two failed, blocked, unsafe, timed-out, no-JSON, no-report, empty-result, or empty-result-after-edit worker rounds for the same payload, stop delegating that payload and have Codex take over.
-11. After all accepted payloads for a PR slice are reviewed, run the slice-level targeted verification and delete successful temporary task plans. Then continue to the next PR slice or finish with the repository's normal task classification, verification, and finalization rules.
-
-## Claude CLI Invocation
-
-Use the runner so Codex gets a structured result even when Claude Code hangs, returns non-JSON output, or leaves a partial diff. Store the payload outside the repo, for example under `/tmp/control-cc-tasks`, so the task worktree stays clean before dispatch.
-
-For implementation rounds:
-
-```bash
-python3 .codex/skills/control-cc/scripts/run_cc_worker.py \
-  --payload-file /tmp/control-cc-tasks/current-packet.md \
-  --task-plan-file /tmp/control-cc-tasks/current-task-plan.md \
-  --packet-score-file /tmp/control-cc-tasks/current-score.json \
-  --packet-type "atomic writing packet" \
-  --write-scope backend/services/example.py \
+python3 .codex/skills/control-cc/scripts/run_cc_plan.py \
+  --plan-file /tmp/control-cc-runs/<thread>/smoke.md \
+  --tools Read,Bash \
   --restore-on-failure \
-  --timeout-sec 600 \
+  --timeout-sec 180 \
+  --compact-output
+```
+
+Stop delegation for the current task if either preflight fails. Report the failure reason and any saved stdout, stderr, report, or patch paths.
+
+## Input Modes
+
+### Goal Only
+
+When the user gives one target such as "fix this feature":
+
+1. Follow the repository worktree rules to create one real `codex/<thread>` task branch and worktree.
+2. Turn the goal into one PR-sized implementation plan with acceptance criteria and targeted verification.
+3. Run Claude Code with `scripts/run_cc_plan.py` from the task worktree, or from one detached candidate worktree if isolation is useful.
+4. Review the report, `git diff --stat`, changed-file diffs, and verification evidence.
+5. If the result is close but incomplete, Codex improves the diff directly in the task worktree.
+6. Run fresh targeted verification, then use the repository finalization workflow.
+
+### Goal Plus Multiple PRs
+
+When the user gives a goal and several PR slices:
+
+1. Sort slices before execution: explicit dependencies first, shared contracts/backend/core logic before consumers/UI, otherwise keep the user's order.
+2. Process exactly one real PR slice at a time.
+3. For each PR slice, create or reuse the active task branch/worktree for that PR slice, then split the slice into one or more implementation plans.
+4. Independent plans may run in parallel through sub-agents. Dependent plans run sequentially.
+5. After all plans for the current PR are integrated and verified, finalize that PR to `main` before starting the next PR.
+6. Write `/tmp/control-cc-runs/<thread>/pr-XX/handoff.md` after each merged PR. Carry forward only the summary, verification evidence, and important diff conclusions.
+
+## Candidate Worktrees
+
+Use detached candidate worktrees for parallel or risky plan execution. They are temporary local execution spaces, not task branches.
+
+Create one from the current PR task worktree:
+
+```bash
+python3 .codex/skills/control-cc/scripts/candidate_worktree.py create \
+  --run-dir /tmp/control-cc-runs/<thread>/pr-01/plan-01 \
+  --base-ref HEAD
+```
+
+Run Claude Code inside the returned `worktree_path`:
+
+```bash
+python3 .codex/skills/control-cc/scripts/run_cc_plan.py \
+  --plan-file /tmp/control-cc-runs/<thread>/pr-01/plan-01/plan.md \
+  --restore-on-failure \
   --compact-output \
-  --report-file /tmp/control-cc-tasks/current-report.json
+  --report-file /tmp/control-cc-runs/<thread>/pr-01/plan-01/report.json
 ```
 
-The runner uses `--model opus --effort max` by default and does not set a budget cap. Use timeouts to detect stalled or oversized packets, not to reduce model spend. For read-only probes, add `--packet-type "read-only probe" --tools "Read,Bash"` and prefer `--timeout-sec 180` to `--timeout-sec 300`. For intentionally short smoke tests only, add `--max-budget-usd`.
-
-For multiple safe read-only probes, start multiple runner commands concurrently with separate payload and report files. For writing implementation workers, run concurrently only from separate clean isolated workspaces; otherwise run writing workers sequentially.
-
-After every runner call, inspect the compact stdout first: `worker_status`, `failure_reason`, `packet_score`, `packet_decision`, `write_scope_matched`, `partial_diff_stat`, `partial_diff_files`, `restored_partial_diff`, `saved_partial_patch`, `normalized_worker_result`, `worker_call_report`, `total_cost_usd`, and `full_report_path`. Open the full report or saved stdout/stderr artifacts only when the compact report is insufficient for review. Treat permission denials, CLI errors, timeouts, invalid JSON, missing worker sections, dirty baselines, oversized packet scores, read-only probe edits, write-scope violations, unrestored partial diffs, or a low quality score as a failed or correction-needed worker round. Record `total_cost_usd` for experiments, but do not set a budget cap for normal implementation rounds unless the user explicitly asks for a smoke test cap.
-
-Before accepting a successful writing worker:
+Export and integrate accepted work sequentially in the real PR task worktree:
 
 ```bash
-python3 .codex/skills/control-cc/scripts/review_worker_result.py \
-  --write-scope backend/services/example.py \
-  --require-verification \
-  --report-file /tmp/control-cc-tasks/current-report.json \
-  --fail-on-reject
+python3 .codex/skills/control-cc/scripts/candidate_worktree.py export-patch \
+  --worktree /tmp/control-cc-runs/<thread>/pr-01/plan-01/worktree \
+  --patch-file /tmp/control-cc-runs/<thread>/pr-01/plan-01/accepted.patch
+
+git apply --3way /tmp/control-cc-runs/<thread>/pr-01/plan-01/accepted.patch
 ```
 
-To verify the local CLI path without modifying files, run:
+Clean candidates after integration or rejection:
 
 ```bash
-python3 .codex/skills/control-cc/scripts/verify_claude_cli_flow.py
+python3 .codex/skills/control-cc/scripts/candidate_worktree.py cleanup \
+  --worktree /tmp/control-cc-runs/<thread>/pr-01/plan-01/worktree
 ```
 
-## Failure Reporting
+Never push, finalize, or merge from a candidate worktree. The real PR task branch is the only branch that may be finalized.
 
-Final task reports must include a short Claude Code call report. If the worker succeeded, report success, verification status, and Codex's implementation-quality score out of 10. If the score is below 7, briefly state why and the optimization plan. If the worker failed, report the failure reason, cleanup state, and one short optimization plan, for example: `Claude Code: failed; reason=timeout; partial diff touched <files>; runner restored it; optimization=narrow the payload and verification command`.
+## Agent Responsibilities
 
-## Context Budget
+Main Codex agent:
 
-Spend Codex tokens on diagnosis, planning, and acceptance, not on watching the worker process. Prefer targeted commands and narrow reads:
+- interprets the user request, sorts PR slices, creates real task worktrees, and writes implementation plans
+- dispatches plan sub-agents when parallel candidate work is safe
+- integrates accepted patches into the real PR task worktree
+- performs final diff review, verification, change-log updates, and repository finalization
 
-- `git diff --stat`
-- `git diff -- <changed-files>`
-- targeted `rg`
-- failing test output
-- changed-file neighbors and high-risk call sites
+Plan sub-agent:
 
-Do not default to rereading the whole repository or long Claude stdout/stderr. Expand only for the escalation triggers in `references/escalation-policy.md` or when the compact report shows a specific review gap.
+- receives one implementation plan, candidate worktree path, verification command, and acceptance criteria
+- runs `run_cc_plan.py`, reviews the returned report and local diff, and asks Claude Code for one correction only when useful
+- may make small local fixes in the candidate worktree when that is cheaper than another Claude round
+- exports an accepted patch and reports changed files, verification evidence, risks, and patch path to the main agent
 
-## Payload Shape
+Claude Code worker:
 
-Every delegated task must start with:
+- executes the plan through `/control-cc-worker`
+- runs the requested verification when possible
+- returns a concise completion report; strict report headings are optional
+- does not commit, push, or finalize
 
-```md
-/control-cc-worker
+## Review And Acceptance
 
-goal:
+Accept work from evidence, not from Claude's confidence.
 
-scope_hints:
+- Review `run_cc_plan.py` JSON first: status, failure reason, changed files, diff stat, saved patch paths, cost, stdout/stderr paths, and verification text in the worker result.
+- Inspect `git diff --stat` and changed-file diffs in either the candidate or real task worktree.
+- Reject or fix work that hides verification failures, changes unrelated behavior, edits global skills, performs broad refactors, or leaves unexplained risk.
+- Codex may directly improve an accepted-but-imperfect diff in the real task worktree before final verification.
+- Run the narrowest fresh verification that proves the PR slice before finalization. For stack-relevant work, follow the repository post-merge live stack verification rules.
 
-known_context:
+## Legacy Compatibility
 
-constraints:
-- Smallest correct change
-- No unrelated refactor
-- Preserve public APIs unless required
-- Stop and return `Blocked` if the needed edit exceeds the write scope, touches a second control-flow stage, or needs broader tests than listed
-
-verification:
-
-acceptance:
-
-final_output_contract:
-- Final answer starts exactly with `## Result`.
-- Under `## Result`, write exactly one of `Fixed`, `Not fixed`, or `Blocked`.
-- Do not write `Fixed.`, `Success`, `Implemented`, bullets, or code formatting on the result line.
-- Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
-```
-
-See `references/payload-schema.md` for field rules and correction payloads.
-Legacy `/repair-worker` payloads are still supported through a compatibility skill, but new payloads should use `/control-cc-worker`.
-
-## Worker Result Contract
-
-Require the worker to return:
-
-```md
-## Result
-Fixed
-
-## Files Changed
-- ...
-
-## What Changed
-- ...
-
-## Verification
-- Command:
-- Result:
-
-## Risk / Uncertainty
-- ...
-
-## Needs Codex Review
-- ...
-```
-
-The result line may also be exactly `Not fixed` or `Blocked`; do not include punctuation or multiple options on that line.
-
-## Cost Experiment
-
-When measuring this workflow, compare Codex-direct work against Codex delegation plus review on representative repairs, features, refactors, and optimizations. Record Codex tokens, worker tokens, elapsed time, first-pass test result, rework rounds, and final diff quality.
-
-If a task class does not reduce Codex tokens below 70 percent of direct Codex work, tighten Codex reads, payload length, or review scope before using that class as a default delegation target.
+The legacy v2 runner path remains available for older `/repair-worker` payloads. It is not the default path for new Control CC work.

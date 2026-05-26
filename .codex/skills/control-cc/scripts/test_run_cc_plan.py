@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""Tests for the lightweight control-cc plan runner."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
+from pathlib import Path
+
+
+SCRIPT = Path(__file__).with_name("run_cc_plan.py")
+CANDIDATE_SCRIPT = Path(__file__).with_name("candidate_worktree.py")
+
+
+def run(command: list[str], cwd: Path, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, **kwargs)
+
+
+def make_repo() -> Path:
+    root = Path(tempfile.mkdtemp(prefix="cc-plan-test-"))
+    run(["git", "init", "-q"], root, check=True)
+    run(["git", "config", "user.email", "test@example.com"], root, check=True)
+    run(["git", "config", "user.name", "Test User"], root, check=True)
+    (root / "README.md").write_text("# baseline\n", encoding="utf-8")
+    run(["git", "add", "README.md"], root, check=True)
+    run(["git", "commit", "-q", "-m", "baseline"], root, check=True)
+    return root
+
+
+def write_plan(root: Path) -> Path:
+    plan = root.parent / f"{root.name}-plan.md"
+    plan.write_text(
+        textwrap.dedent(
+            """\
+            /control-cc-worker
+
+            goal:
+            Execute this implementation plan.
+
+            implementation_plan:
+            - Make the requested change.
+
+            verification:
+            git status --short --branch
+            """
+        ),
+        encoding="utf-8",
+    )
+    return plan
+
+
+def fake_claude(root: Path, body: str) -> Path:
+    fake_bin = root.parent / f"{root.name}-fake-bin"
+    fake_bin.mkdir()
+    script = fake_bin / "claude"
+    script.write_text(body, encoding="utf-8")
+    script.chmod(0o755)
+    return fake_bin
+
+
+def run_plan(root: Path, plan: Path, fake_bin: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--plan-file",
+            str(plan),
+            "--timeout-sec",
+            "1",
+            "--restore-on-failure",
+            *extra,
+        ],
+        cwd=root,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+
+def parse_stdout(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
+    assert result.stdout, result.stderr
+    return json.loads(result.stdout)
+
+
+def success_payload(result_text: str = "Implemented the plan. Verification passed.") -> dict[str, object]:
+    return {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": result_text,
+        "total_cost_usd": 0.02,
+        "modelUsage": {"opus": {"inputTokens": 1}},
+        "permission_denials": [],
+    }
+
+
+def test_success_accepts_natural_language_json_and_saves_patch() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    payload = success_payload("Natural language completion report with no strict headings.")
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        "printf '\\nplanned edit\\n' >> README.md\n"
+        f"printf '%s\\n' {json.dumps(json.dumps(payload))}\n",
+    )
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 0
+    assert report["plan_status"] == "succeeded"
+    assert report["failure_reason"] is None
+    assert report["worker_result"]["result"].startswith("Natural language")
+    assert report["success_patch"]
+    assert Path(str(report["success_patch"])).read_text(encoding="utf-8").find("planned edit") != -1
+    assert "README.md" in report["changed_files"]
+    assert report["claude_call_report"]["success"] is True
+
+
+def test_dirty_baseline_blocks_before_calling_claude() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    marker = root / "called.txt"
+    fake_bin = fake_claude(root, f"#!/usr/bin/env bash\ntouch {marker}\nexit 99\n")
+    (root / "README.md").write_text("# dirty\n", encoding="utf-8")
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["plan_status"] == "failed"
+    assert report["failure_reason"] == "dirty_baseline"
+    assert not marker.exists()
+
+
+def test_timeout_saves_partial_patch_and_restores() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        "printf '\\npartial timeout edit\\n' >> README.md\n"
+        "sleep 30\n",
+    )
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["failure_reason"] == "timeout"
+    assert report["saved_partial_patch"]
+    assert Path(str(report["saved_partial_patch"])).read_text(encoding="utf-8").find("partial timeout edit") != -1
+    assert report["restored_partial_diff"] is True
+    assert run(["git", "status", "--short"], root, check=True).stdout == ""
+
+
+def test_invalid_json_saves_partial_patch_and_restores() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        "printf '\\npartial invalid json edit\\n' >> README.md\n"
+        "echo 'not json'\n",
+    )
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["failure_reason"] == "invalid_json"
+    assert report["saved_partial_patch"]
+    assert report["restored_partial_diff"] is True
+    assert run(["git", "status", "--short"], root, check=True).stdout == ""
+
+
+def test_permission_denial_fails_without_strict_heading_checks() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    payload = success_payload("The content shape is otherwise acceptable.")
+    payload["permission_denials"] = ["Edit denied"]
+    fake_bin = fake_claude(root, f"#!/usr/bin/env bash\nprintf '%s\\n' {json.dumps(json.dumps(payload))}\n")
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["failure_reason"] == "permission_denied"
+    assert report["claude_call_report"]["success"] is False
+
+
+def test_nonzero_exit_reports_failure() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    fake_bin = fake_claude(root, "#!/usr/bin/env bash\nexit 7\n")
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["failure_reason"] == "nonzero_exit"
+    assert report["exit_code"] == 7
+
+
+def test_candidate_worktree_exports_patch_and_cleans_up() -> None:
+    root = make_repo()
+    run_dir = root.parent / f"{root.name}-candidate"
+    patch_file = run_dir / "candidate.patch"
+
+    create = subprocess.run(
+        [
+            sys.executable,
+            str(CANDIDATE_SCRIPT),
+            "create",
+            "--run-dir",
+            str(run_dir),
+            "--base-ref",
+            "HEAD",
+        ],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    created = json.loads(create.stdout)
+    worktree = Path(created["worktree_path"])
+
+    (worktree / "README.md").write_text("# candidate\n", encoding="utf-8")
+    (worktree / "NEW.md").write_text("new file\n", encoding="utf-8")
+
+    export = subprocess.run(
+        [
+            sys.executable,
+            str(CANDIDATE_SCRIPT),
+            "export-patch",
+            "--worktree",
+            str(worktree),
+            "--patch-file",
+            str(patch_file),
+        ],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    exported = json.loads(export.stdout)
+
+    assert exported["changed_files"] == ["NEW.md", "README.md"]
+    patch_text = patch_file.read_text(encoding="utf-8")
+    assert "diff --git a/README.md b/README.md" in patch_text
+    assert "diff --git a/NEW.md b/NEW.md" in patch_text
+
+    cleanup = subprocess.run(
+        [sys.executable, str(CANDIDATE_SCRIPT), "cleanup", "--worktree", str(worktree)],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    cleaned = json.loads(cleanup.stdout)
+    assert cleaned["removed"] is True
+    assert not worktree.exists()
+
+
+if __name__ == "__main__":
+    test_success_accepts_natural_language_json_and_saves_patch()
+    test_dirty_baseline_blocks_before_calling_claude()
+    test_timeout_saves_partial_patch_and_restores()
+    test_invalid_json_saves_partial_patch_and_restores()
+    test_permission_denial_fails_without_strict_heading_checks()
+    test_nonzero_exit_reports_failure()
+    test_candidate_worktree_exports_patch_and_cleans_up()
+    print("run_cc_plan tests passed")

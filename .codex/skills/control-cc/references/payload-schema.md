@@ -1,69 +1,55 @@
-# Payload Schema
+# Implementation Plan Payload
 
-Use this schema to keep Codex-to-worker handoff short and testable.
-
-## Initial Payload
+Use this schema for the plan file passed to `run_cc_plan.py`. Store plan files outside tracked repo paths, usually under `/tmp/control-cc-runs/<thread>/pr-XX/plan-YY/plan.md`.
 
 ```md
 /control-cc-worker
 
 goal:
-<one concrete code-work objective>
-
-scope_hints:
-<likely files, modules, logs, failing tests, or search terms>
-
-known_context:
-<only facts Codex has already verified>
+<one concrete behavior, repair, or refactor objective>
 
 pr_slice:
-<optional PR slice name or number when the user supplied a multi-PR plan>
+<the current real PR slice, or "single-pr" for goal-only work>
 
-packet_type:
-<"read-only probe" or "atomic writing packet">
+plan_id:
+<stable short id such as pr-01-plan-02>
 
-parallel_group:
-<optional group name plus whether this worker is read-only or has an isolated write workspace>
+context:
+- <verified facts, likely files, logs, tests, or previous PR handoff notes>
 
-write_scope:
-<files/directories this worker may edit, or "read-only">
+implementation_plan:
+- <ordered implementation steps or expected diff direction>
 
 constraints:
 - Smallest correct change
 - No unrelated refactor
-- Preserve public APIs unless required
-- Stop and return `Blocked` if the needed edit exceeds the write scope, touches a second control-flow stage, or needs broader tests than listed
+- Preserve public APIs, schemas, config, prompts, and data contracts unless listed in implementation_plan
+- Do not commit, push, merge, or finalize
 
 verification:
-<exact command or commands the worker should run>
+<exact command or commands Claude Code should run>
 
 acceptance:
-<observable conditions Codex will review>
+- <observable condition Codex will verify from diff and tests>
 
-final_output_contract:
-- Final answer starts exactly with `## Result`.
-- Under `## Result`, write exactly one of `Fixed`, `Not fixed`, or `Blocked`.
-- Do not write `Fixed.`, `Success`, `Implemented`, bullets, or code formatting on the result line.
-- Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
+report_request:
+Return status, files changed, what changed, verification command/result, risks, and Codex review notes.
 ```
 
 ## Field Rules
 
-- `goal`: one outcome, not an implementation plan.
-- `scope_hints`: point the worker to likely starting points; do not summarize the whole repo.
-- `known_context`: include verified facts only. Mark guesses as guesses or omit them.
-- `pr_slice`: include when the user provided a multi-PR plan; one payload should belong to exactly one PR slice.
-- `packet_type`: required when the PR slice was split; use `read-only probe` for investigation-only packets and `atomic writing packet` for bounded implementation.
-- `parallel_group`: include when launching multiple agents together; state whether the worker is read-only or has an isolated write workspace.
-- `write_scope`: required for parallel workers; never allow two writing payloads to edit the same files in the same worktree.
-- `constraints`: keep the defaults and add task-specific stop conditions when scope creep would make the result unsafe.
-- `verification`: prefer one narrow command that proves the fix.
-- `acceptance`: describe user-visible behavior, regression coverage, or exact diff expectations.
-- `final_output_contract`: repeat the strict return contract at the end of every payload so the worker does not drift from the runner parser.
+- `goal`: one outcome, not a broad project.
+- `pr_slice`: exactly one real PR slice.
+- `plan_id`: unique inside the current PR slice.
+- `context`: verified facts only; label guesses or omit them.
+- `implementation_plan`: specific enough for execution, but not a line-by-line patch.
+- `constraints`: include the defaults and add task-specific stop conditions.
+- `verification`: prefer the narrowest command that proves the plan.
+- `acceptance`: describe what Codex will check after diff review.
 
 ## Correction Payload
 
-Use one correction round when the first worker result is close but incomplete.
+Use at most one correction round when a Claude Code result is close but incomplete.
 
 ```md
 /control-cc-worker
@@ -86,15 +72,12 @@ verification:
 acceptance:
 <conditions for the corrected result>
 
-final_output_contract:
-- Final answer starts exactly with `## Result`.
-- Under `## Result`, write exactly one of `Fixed`, `Not fixed`, or `Blocked`.
-- Do not write `Fixed.`, `Success`, `Implemented`, bullets, or code formatting on the result line.
-- Use exactly these six H2 headings in order: `## Result`, `## Files Changed`, `## What Changed`, `## Verification`, `## Risk / Uncertainty`, `## Needs Codex Review`.
+report_request:
+Return status, files changed, verification evidence, remaining risks, and Codex review notes.
 ```
 
-Do not use `/control-cc-worker correction`; Claude Code CLI treats slash-command arguments inconsistently. Keep `/control-cc-worker` as the first line and put `mode: correction` in the payload body.
+After a failed correction, Codex either fixes the diff directly or splits the plan further.
 
-Do not send a third worker round. After two failed or unsafe rounds, Codex either splits the work further or takes over with an independent review of the useful findings.
+## Legacy
 
-Legacy `/repair-worker` payloads remain supported through a compatibility skill, but new control-cc payloads should use `/control-cc-worker`.
+Older `/repair-worker` payloads are still supported through the compatibility runner. New Control CC work should use implementation plan payloads.

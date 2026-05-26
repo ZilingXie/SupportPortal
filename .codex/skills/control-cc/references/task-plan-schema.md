@@ -1,55 +1,49 @@
-# Task Plan Schema
+# Control CC Planning Artifacts
 
-Use this schema for temporary control-cc task plan files. Store plans outside tracked repo paths, preferably under `/tmp/control-cc-tasks/<branch-or-thread>/<packet>.md`.
+Control CC uses temporary coordination files outside tracked repo paths. Prefer `/tmp/control-cc-runs/<thread>/`.
+
+## PR Handoff
+
+Write this after each real PR slice is merged to `main`:
 
 ```md
-request_recap:
-<one short restatement of the user request>
-
 pr_slice:
-<one PR-sized behavior slice>
+<number and short title>
 
-acceptance_criteria:
-- <observable condition Codex will verify>
+merged_branch:
+<codex/... branch that was finalized>
 
-target_files:
-- <likely files or search hints>
-
-out_of_scope:
-- <explicit non-goals>
-
-packet_type:
-<"read-only probe" or "atomic writing packet">
-
-write_scope:
-<exact files/directories the worker may edit, or "read-only">
-
-shared_core_file:
-<true|false>
-
-multi_stage_flow:
-<true|false>
-
-runtime_state:
-<true|false>
-
-semantic_tests:
-<true|false>
-
-docs_in_scope:
-<true|false>
-
-broad_write_scope:
-<true|false>
+summary:
+- <what changed>
 
 verification:
-<exact command or commands the worker should run>
+- <fresh verification commands and results>
 
-worker_prompt:
-<the payload passed to the Claude Code worker>
+diff_review:
+- <important review conclusions, risks, or follow-ups>
 
-cleanup_policy:
-Delete after successful Codex review and verification; preserve only when a worker failure needs debugging.
+next_pr_context:
+- <only facts the next PR needs>
 ```
 
-Before dispatching a writing worker, run `scripts/score_packet.py --task-plan-file <file>` and pass the resulting JSON to the runner with `--packet-score-file`.
+## Plan Directory
+
+Each implementation plan should have a directory such as:
+
+```text
+/tmp/control-cc-runs/<thread>/pr-01/plan-01/
+  plan.md
+  report.json
+  accepted.patch
+  worktree/
+```
+
+`plan.md` follows `references/payload-schema.md`. `report.json` is written by `run_cc_plan.py`. `accepted.patch` is exported from a candidate worktree only after Codex or a plan sub-agent reviews the diff.
+
+## Cleanup Policy
+
+Delete candidate worktrees after integration or rejection with `candidate_worktree.py cleanup`. Temporary run directories may be kept until the thread is finalized when they contain useful reports, patches, or handoff summaries. Never commit these files.
+
+## Legacy
+
+The older packet task-plan format remains useful only for compatibility with the v2 runner path.

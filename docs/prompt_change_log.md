@@ -12,6 +12,38 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-26 - control-cc plan-driven delegation
+
+- Area or subsystem: Project-local Codex-to-Claude Code delegation workflow
+- Prompt or model version: `control-cc-v3`
+- Summary: Reworked Control CC around Codex-authored implementation plans, lightweight Claude Code plan execution, detached candidate worktrees for isolated parallel work, and Codex-owned patch integration and final review.
+- Reason: The previous workflow over-constrained Claude Code with small packet scoring, strict result formatting, and hard write gates; the desired flow gives Claude Code more implementation autonomy while preserving clean worktrees, failure visibility, Codex diff review, and targeted verification.
+- Affected files or config:
+  - `AGENTS.md`
+  - `.codex/skills/control-cc/SKILL.md`
+  - `.codex/skills/control-cc/agents/openai.yaml`
+  - `.codex/skills/control-cc/references/escalation-policy.md`
+  - `.codex/skills/control-cc/references/payload-schema.md`
+  - `.codex/skills/control-cc/references/review-checklist.md`
+  - `.codex/skills/control-cc/references/task-plan-schema.md`
+  - `.codex/skills/control-cc/scripts/candidate_worktree.py`
+  - `.codex/skills/control-cc/scripts/run_cc_plan.py`
+  - `.codex/skills/control-cc/scripts/test_run_cc_plan.py`
+  - `.claude/skills/control-cc-worker/SKILL.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Goal-only requests become one PR-sized implementation plan on a real task worktree.
+  - Goal-plus-multiple-PR requests are sorted and completed as real PR slices one at a time.
+  - Independent plans inside a PR may run in detached candidate worktrees, export patches, and be integrated sequentially by Codex.
+  - New Claude Code plan runs use `run_cc_plan.py`, which accepts concise natural-language worker reports and records diff/report artifacts without enforcing the older strict output contract.
+- Verification:
+  - `python3 -m py_compile .codex/skills/control-cc/scripts/run_cc_plan.py .codex/skills/control-cc/scripts/candidate_worktree.py .codex/skills/control-cc/scripts/*.py`
+  - `python3 .codex/skills/control-cc/scripts/test_run_cc_plan.py`
+  - `python3 .codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `! rg -n "atomic writing packet|packet scoring|six-heading|score_packet.py|review_worker_result.py|strict write-scope|write-scope" .codex/skills/control-cc/SKILL.md`
+  - `rg -n "control-cc-v3" docs/prompt_change_log.md`
+  - `git diff --check`
+
 ## 2026-05-25 - control-cc hard gates and worker packet scoring
 
 - Area or subsystem: Project-local Codex-to-Claude Code delegation workflow

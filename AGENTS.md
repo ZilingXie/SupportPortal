@@ -3,6 +3,8 @@
 ## Control CC
 For delegated code work, prefer the project-local `control-cc` skill when the user requests Codex planning, Claude Code execution, and Codex review, or when implementation can be safely delegated.
 
+`control-cc` may create temporary detached candidate worktrees under `/tmp/control-cc-runs/...` from the active task branch for isolated Claude Code execution. Candidate worktrees are not task branches: do not push, finalize, merge, or treat them as authoritative. Export reviewed patches from candidates, integrate them sequentially into the real `codex/<thread>` task worktree, then clean the candidates.
+
 ## Branch Workflow
 1. Keep the root workspace on a clean `main` checkout at all times. Use it only for browsing, syncing `main`, creating or inspecting worktrees, and fast-forwarding local `main` after task PRs merge.
 2. `main` is the only authoritative long-lived branch for normal development. Do not create or use any local or remote `mac` branch, `mac-integration` worktree, or any other temporary integration branch for routine development or release work.
