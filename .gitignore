@@ -18,6 +18,9 @@ env/
 artifacts/
 .env
 .env.local
+
+# CodeGraph
+.codegraph/
 .deploy_ec2.lock
 .DS_Store
 .superpowers/
