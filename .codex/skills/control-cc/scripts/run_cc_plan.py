@@ -128,26 +128,79 @@ def build_command(args: argparse.Namespace, plan: str) -> list[str]:
     return command
 
 
-def run_worker(command: list[str], timeout_sec: float) -> tuple[int | None, str, str, bool, float]:
+def run_worker(
+    command: list[str],
+    *,
+    timeout_sec: float,
+    heartbeat_sec: float,
+    attempt: int,
+) -> dict[str, object]:
     start = time.monotonic()
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    heartbeats: list[dict[str, object]] = []
     try:
-        stdout, stderr = process.communicate(timeout=timeout_sec)
-        return process.returncode, stdout, stderr, False, time.monotonic() - start
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGTERM)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return {
+            "attempt": attempt,
+            "exit_code": None,
+            "stdout": "",
+            "stderr": str(exc),
+            "timed_out": False,
+            "startup_error": True,
+            "duration_sec": round(time.monotonic() - start, 3),
+            "heartbeats": heartbeats,
+        }
+
+    heartbeat_interval = max(0.01, heartbeat_sec)
+    stdout = ""
+    stderr = ""
+    while True:
+        elapsed = time.monotonic() - start
+        remaining = timeout_sec - elapsed
+        if remaining <= 0:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+            return {
+                "attempt": attempt,
+                "exit_code": None,
+                "stdout": stdout or "",
+                "stderr": stderr or "",
+                "timed_out": True,
+                "startup_error": False,
+                "duration_sec": round(time.monotonic() - start, 3),
+                "heartbeats": heartbeats,
+            }
         try:
-            stdout, stderr = process.communicate(timeout=5)
+            stdout, stderr = process.communicate(timeout=min(heartbeat_interval, remaining))
+            return {
+                "attempt": attempt,
+                "exit_code": process.returncode,
+                "stdout": stdout or "",
+                "stderr": stderr or "",
+                "timed_out": False,
+                "startup_error": False,
+                "duration_sec": round(time.monotonic() - start, 3),
+                "heartbeats": heartbeats,
+            }
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            stdout, stderr = process.communicate()
-        return None, stdout or "", stderr or "", True, time.monotonic() - start
+            heartbeats.append(
+                {
+                    "attempt": attempt,
+                    "elapsed_sec": round(time.monotonic() - start, 3),
+                    "pid": process.pid,
+                    "running": process.poll() is None,
+                }
+            )
 
 
 def validation_failure(payload: dict[str, object]) -> str | None:
@@ -158,6 +211,14 @@ def validation_failure(payload: dict[str, object]) -> str | None:
     result = payload.get("result")
     if not isinstance(result, str) or not result.strip():
         return "missing_result"
+    return None
+
+
+def availability_failure_reason(failure_reason: str | None, changed_files: list[str]) -> str | None:
+    if failure_reason in {"startup_error", "nonzero_exit", "invalid_json"}:
+        return failure_reason
+    if failure_reason == "missing_result" and not changed_files:
+        return failure_reason
     return None
 
 
@@ -176,6 +237,7 @@ def claude_call_report(report: dict[str, object]) -> dict[str, object]:
         "status": "failed",
         "summary": f"Claude Code plan run failed: {reason}.",
         "failure_reason": reason,
+        "availability_failure_reason": report.get("availability_failure_reason"),
         "cleanup": "restored" if report.get("restored_partial_diff") else "not_restored",
     }
 
@@ -192,6 +254,12 @@ def base_report(args: argparse.Namespace, before_status: str) -> dict[str, objec
         "tools": args.tools,
         "plan_file": str(args.plan_file),
         "worker_workspace": str(Path.cwd()),
+        "attempt_count": 0,
+        "retry_count": 0,
+        "max_unavailable_retries": args.max_unavailable_retries,
+        "availability_failure_reason": None,
+        "attempts": [],
+        "heartbeats": [],
         "before_status": before_status,
         "after_status": None,
         "stdout": "",
@@ -230,6 +298,11 @@ def compact_report(report: dict[str, object]) -> dict[str, object]:
         "total_cost_usd",
         "exit_code",
         "timed_out",
+        "attempt_count",
+        "retry_count",
+        "max_unavailable_retries",
+        "availability_failure_reason",
+        "heartbeats",
         "plan_file",
         "worker_workspace",
         "claude_call_report",
@@ -259,6 +332,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan-file", type=Path, required=True)
     parser.add_argument("--timeout-sec", type=float, default=1200)
+    parser.add_argument("--heartbeat-sec", type=float, default=60)
+    parser.add_argument("--retry-interval-sec", type=float, default=10)
+    parser.add_argument("--max-unavailable-retries", type=int, default=3)
     parser.add_argument("--model", default="opus")
     parser.add_argument("--effort", default="max", choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--tools", default="Read,Edit,Bash")
@@ -284,53 +360,109 @@ def main() -> int:
         return emit(report, 2, compact_output=args.compact_output, report_file=args.report_file)
 
     command = build_command(args, plan)
-    exit_code, stdout, stderr, timed_out, duration = run_worker(command, args.timeout_sec)
-    report.update(
-        {
-            "timed_out": timed_out,
+    max_attempts = max(1, args.max_unavailable_retries + 1)
+    final_failure_reason: str | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        attempt_result = run_worker(
+            command,
+            timeout_sec=args.timeout_sec,
+            heartbeat_sec=args.heartbeat_sec,
+            attempt=attempt,
+        )
+        stdout = str(attempt_result["stdout"])
+        stderr = str(attempt_result["stderr"])
+        timed_out = bool(attempt_result["timed_out"])
+        exit_code = attempt_result["exit_code"]
+        stdout_path = write_temp_artifact(f"control-cc-plan-attempt-{attempt}-stdout-", ".log", stdout)
+        stderr_path = write_temp_artifact(f"control-cc-plan-attempt-{attempt}-stderr-", ".log", stderr)
+        changed_files = git_changed_files()
+        diff_stat = git_diff_stat()
+
+        parsed: dict[str, object] | None = None
+        failure_reason: str | None = None
+        if attempt_result.get("startup_error"):
+            failure_reason = "startup_error"
+        elif timed_out:
+            failure_reason = "timeout"
+        elif exit_code != 0:
+            failure_reason = "nonzero_exit"
+        else:
+            try:
+                parsed = json.loads(stdout)
+            except json.JSONDecodeError:
+                failure_reason = "invalid_json"
+
+        if parsed is not None:
+            report["worker_result"] = parsed
+            report["total_cost_usd"] = parsed.get("total_cost_usd")
+            report["modelUsage"] = parsed.get("modelUsage")
+            report["permission_denials"] = parsed.get("permission_denials")
+            failure_reason = validation_failure(parsed)
+
+        attempt_summary = {
+            "attempt": attempt,
             "exit_code": exit_code,
-            "duration_sec": round(duration, 3),
-            "stdout": truncate(stdout, args.inline_log_chars),
-            "stdout_path": write_temp_artifact("control-cc-plan-stdout-", ".log", stdout),
-            "stderr": truncate(stderr, args.inline_log_chars),
-            "stderr_path": write_temp_artifact("control-cc-plan-stderr-", ".log", stderr),
-            "partial_diff_stat": git_diff_stat(),
-            "changed_files": git_changed_files(),
+            "timed_out": timed_out,
+            "startup_error": bool(attempt_result.get("startup_error")),
+            "duration_sec": attempt_result["duration_sec"],
+            "failure_reason": failure_reason,
+            "stdout_path": stdout_path,
+            "stderr_path": stderr_path,
+            "changed_files": changed_files,
+            "partial_diff_stat": diff_stat,
+            "heartbeats": attempt_result["heartbeats"],
         }
-    )
+        report["attempts"].append(attempt_summary)
+        report["heartbeats"].extend(attempt_result["heartbeats"])
+        report.update(
+            {
+                "attempt_count": attempt,
+                "retry_count": attempt - 1,
+                "timed_out": timed_out,
+                "exit_code": exit_code,
+                "duration_sec": round(sum(float(item["duration_sec"]) for item in report["attempts"]), 3),
+                "stdout": truncate(stdout, args.inline_log_chars),
+                "stdout_path": stdout_path,
+                "stderr": truncate(stderr, args.inline_log_chars),
+                "stderr_path": stderr_path,
+                "partial_diff_stat": diff_stat,
+                "changed_files": changed_files,
+            }
+        )
 
-    parsed: dict[str, object] | None = None
-    failure_reason: str | None = None
-    if timed_out:
-        failure_reason = "timeout"
-    elif exit_code != 0:
-        failure_reason = "nonzero_exit"
-    else:
-        try:
-            parsed = json.loads(stdout)
-        except json.JSONDecodeError:
-            failure_reason = "invalid_json"
+        if failure_reason is None:
+            report["plan_status"] = "succeeded"
+            report["success_patch"] = save_current_patch("control-cc-plan-success-")
+            report["after_status"] = git_status()
+            report["claude_call_report"] = claude_call_report(report)
+            return emit(report, 0, compact_output=args.compact_output, report_file=args.report_file)
 
-    if parsed is not None:
-        report["worker_result"] = parsed
-        report["total_cost_usd"] = parsed.get("total_cost_usd")
-        report["modelUsage"] = parsed.get("modelUsage")
-        report["permission_denials"] = parsed.get("permission_denials")
-        failure_reason = validation_failure(parsed)
+        availability_reason = availability_failure_reason(failure_reason, changed_files)
+        if availability_reason and attempt < max_attempts:
+            attempt_summary["saved_partial_patch"] = save_current_patch(f"control-cc-plan-attempt-{attempt}-partial-")
+            if args.restore_on_failure:
+                restore_worktree()
+            time.sleep(max(0, args.retry_interval_sec))
+            final_failure_reason = availability_reason
+            continue
 
-    if failure_reason is None:
-        report["plan_status"] = "succeeded"
-        report["success_patch"] = save_current_patch("control-cc-plan-success-")
-        report["after_status"] = git_status()
-        report["claude_call_report"] = claude_call_report(report)
-        return emit(report, 0, compact_output=args.compact_output, report_file=args.report_file)
+        if availability_reason and attempt == max_attempts:
+            final_failure_reason = availability_reason
+            report["failure_reason"] = "claude_unavailable"
+            report["availability_failure_reason"] = availability_reason
+        else:
+            final_failure_reason = failure_reason
+            report["failure_reason"] = failure_reason
+        break
 
-    report["failure_reason"] = failure_reason
     report["saved_partial_patch"] = save_current_patch("control-cc-plan-partial-")
     if args.restore_on_failure:
         restore_worktree()
         report["restored_partial_diff"] = True
     report["after_status"] = git_status()
+    if report.get("availability_failure_reason") is None:
+        report["availability_failure_reason"] = final_failure_reason if report["failure_reason"] == "claude_unavailable" else None
     report["claude_call_report"] = claude_call_report(report)
     return emit(report, 2, compact_output=args.compact_output, report_file=args.report_file)
 

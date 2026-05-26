@@ -12,6 +12,31 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-26 - control-cc low-token waiting and quality scoring
+
+- Area or subsystem: Project-local Codex-to-Claude Code delegation workflow
+- Prompt or model version: `control-cc-v4`
+- Summary: Added runner heartbeat monitoring, availability retries, `claude_unavailable` reporting, low-token Codex waiting guidance, and mandatory post-worker `quality_score` review.
+- Reason: Codex should avoid spending tokens while Claude Code is still working, should recover cleanly when Claude Code is unavailable, and should give consistent quality feedback after reviewing delegated results.
+- Affected files or config:
+  - `.codex/skills/control-cc/SKILL.md`
+  - `.codex/skills/control-cc/agents/openai.yaml`
+  - `.codex/skills/control-cc/references/review-checklist.md`
+  - `.codex/skills/control-cc/scripts/run_cc_plan.py`
+  - `.codex/skills/control-cc/scripts/test_run_cc_plan.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `run_cc_plan.py` records heartbeat entries while Claude Code is running without requiring Codex to poll logs or diffs.
+  - Startup failures, abnormal exits, invalid JSON, and empty-result availability failures retry at 10-second intervals up to 3 times before `claude_unavailable`.
+  - Permission denials and worker `Blocked` results do not trigger availability retries.
+  - Codex review reports must include `quality_score: X/10`; scores below 8 require reasons and a follow-up recommendation.
+- Verification:
+  - `python3 -m py_compile .codex/skills/control-cc/scripts/*.py`
+  - `python3 .codex/skills/control-cc/scripts/test_run_cc_plan.py`
+  - `python3 .codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `rg -n "heartbeat-sec|max-unavailable-retries|claude_unavailable|quality_score|< 8" .codex/skills/control-cc docs/prompt_change_log.md`
+  - `git diff --check`
+
 ## 2026-05-26 - control-cc plan-driven delegation
 
 - Area or subsystem: Project-local Codex-to-Claude Code delegation workflow

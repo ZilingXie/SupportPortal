@@ -81,10 +81,17 @@ Run Claude Code inside the returned `worktree_path`:
 ```bash
 python3 .codex/skills/control-cc/scripts/run_cc_plan.py \
   --plan-file /tmp/control-cc-runs/<thread>/pr-01/plan-01/plan.md \
+  --heartbeat-sec 60 \
+  --retry-interval-sec 10 \
+  --max-unavailable-retries 3 \
   --restore-on-failure \
   --compact-output \
   --report-file /tmp/control-cc-runs/<thread>/pr-01/plan-01/report.json
 ```
+
+After dispatch, enter low-token waiting mode. Keep only the plan id, candidate worktree path, and report path in active context. Let `run_cc_plan.py` monitor the Claude Code process; do not poll diffs, reread stdout/stderr, or summarize intermediate logs while it is still running.
+
+If the runner returns `failure_reason=claude_unavailable`, Codex must take over the current repair or plan directly. In parallel, start a separate diagnostic pass that checks the Claude CLI path, PATH resolution, permission mode, model/effort arguments, the saved stderr path, and a one-line smoke test. Do not block the user-facing fix on that diagnostic unless the same Claude failure prevents all further work.
 
 Export and integrate accepted work sequentially in the real PR task worktree:
 
@@ -136,6 +143,7 @@ Accept work from evidence, not from Claude's confidence.
 - Inspect `git diff --stat` and changed-file diffs in either the candidate or real task worktree.
 - Reject or fix work that hides verification failures, changes unrelated behavior, edits global skills, performs broad refactors, or leaves unexplained risk.
 - Codex may directly improve an accepted-but-imperfect diff in the real task worktree before final verification.
+- Every accepted Claude Code result must receive `quality_score: X/10` in Codex's review summary. If `quality_score < 8`, include `score_reasons` and `followup_recommendation`.
 - Run the narrowest fresh verification that proves the PR slice before finalization. For stack-relevant work, follow the repository post-merge live stack verification rules.
 
 ## Legacy Compatibility

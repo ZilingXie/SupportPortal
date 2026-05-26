@@ -23,6 +23,29 @@ Check:
 - Nearby call sites around modified code still satisfy the old contract.
 - New or adjusted tests cover the failure or behavior when practical.
 
+## Quality Score
+
+Every accepted Claude Code result needs a Codex review score:
+
+```text
+quality_score: X/10
+accepted: true|false
+score_reasons:
+- <required when quality_score < 8>
+followup_recommendation: none|minor cleanup|direct fix|correction payload|codex takeover
+```
+
+Score the implementation result, not Claude Code cost:
+
+- Correctness: 4 points
+- Test and verification evidence: 2 points
+- Diff focus and simplicity: 1.5 points
+- Project conventions: 1 point
+- Worktree and artifact hygiene: 1 point
+- Report quality and risk notes: 0.5 points
+
+If `quality_score < 8`, Codex must explain the deductions and choose a follow-up. Low score does not automatically reject the patch; correctness or verification gaps should trigger correction or Codex takeover, while local style, ASCII, changelog, or artifact issues can be fixed directly by Codex.
+
 ## When To Expand Review
 
 Read beyond changed files when there is evidence of:
