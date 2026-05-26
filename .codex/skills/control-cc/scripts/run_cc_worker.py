@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the control-cc Claude CLI path with failure reporting and cleanup."""
+"""Legacy v2 strict control-cc Claude CLI runner."""
 
 from __future__ import annotations
 

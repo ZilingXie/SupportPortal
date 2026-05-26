@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Review a control-cc worker diff before Codex accepts it."""
+"""Legacy v2 review gate for strict control-cc worker diffs."""
 
 from __future__ import annotations
 

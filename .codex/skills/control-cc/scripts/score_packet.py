@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Score a control-cc worker packet and decide whether writing is allowed."""
+"""Legacy v2 scorer for strict control-cc worker packets."""
 
 from __future__ import annotations
 

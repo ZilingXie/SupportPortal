@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the project-local control-cc Claude CLI handoff."""
+"""Legacy v2 smoke test for the strict control-cc Claude CLI handoff."""
 
 from __future__ import annotations
 

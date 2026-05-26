@@ -1,48 +1,47 @@
 # Review Checklist
 
-Codex accepts or rejects the worker result from evidence, not from the worker's confidence.
+Codex accepts or rejects Claude Code work from evidence, not from the report's confidence.
 
 ## Required Review
 
-Run or inspect:
+Inspect:
 
 ```bash
 git diff --stat
 git diff -- <changed-files>
-python3 .codex/skills/control-cc/scripts/review_worker_result.py --write-scope <scope> --require-verification --report-file <runner-report.json> --fail-on-reject
 ```
 
-Then check:
+For candidate worktrees, inspect the candidate diff before exporting the patch, then inspect the real PR task worktree again after `git apply --3way`.
 
-- Changed files match the payload scope.
-- Diff is the smallest correct change for the stated goal.
-- Writing worker stayed inside an atomic writing packet: one behavior point, one bounded file region or function cluster, and the listed verification only.
-- No unrelated refactor, formatting churn, dependency churn, or generated noise.
-- Public APIs, schemas, config, prompts, model behavior, and data contracts are unchanged unless explicitly required.
-- Verification command and result are present and credible.
+Check:
+
+- The diff satisfies the current implementation plan and acceptance criteria.
+- The change is the smallest practical implementation for the PR slice.
+- No unrelated refactor, formatting churn, dependency churn, generated noise, or hidden behavior change is present.
+- Public APIs, schemas, config, prompts, model behavior, and data contracts are unchanged unless the plan explicitly requires them.
+- Verification command and result are present and credible, or the blocker is concrete.
 - Nearby call sites around modified code still satisfy the old contract.
-- New or adjusted tests cover the failure when practical.
+- New or adjusted tests cover the failure or behavior when practical.
 
 ## When To Expand Review
 
-Read more than the changed files only when there is evidence of:
+Read beyond changed files when there is evidence of:
 
-- security, auth, or payment risk
-- data migration or data loss risk
-- concurrency, ordering, or consistency risk
-- public API, schema, or config changes
+- security, auth, payment, or secrets risk
+- data migration, destructive operation, or data loss risk
+- concurrency, ordering, idempotency, or consistency risk
+- public API, schema, prompt, model, RAG, config, deployment, or restart changes
 - test coverage gaps on the critical path
-- unclear ownership of a changed subsystem
 - worker failure, speculative edits, or broad refactoring
 
-## Rejection Signals
+## Rejection Or Codex Fix Signals
 
-Reject or correct the worker result when:
+Reject the patch, ask for one correction, or have Codex fix directly when:
 
 - it changes behavior outside the goal
-- it expands beyond the atomic packet instead of returning `Blocked`
 - it hides failure by weakening tests or validation
 - it rewrites a subsystem to fix a local bug
 - it leaves verification unrun without a concrete blocker
 - it introduces TODOs, dead code, or temporary debug output
 - it changes global skills or user-level configuration
+- it cannot explain meaningful risk or uncertainty
