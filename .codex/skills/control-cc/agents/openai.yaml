@@ -1,4 +1,4 @@
 interface:
   display_name: "Control CC"
-  short_description: "Plan-driven Claude Code delegation for code work"
-  default_prompt: "Use $control-cc for delegated code work: verify Claude Code, turn goals or PR slices into implementation plans, run Claude Code in task or detached candidate worktrees, review and integrate patches, verify, and finalize each real PR slice to main."
+  short_description: "Plan-driven Claude Code delegation with low-token waiting"
+  default_prompt: "Use $control-cc for delegated code work: verify Claude Code, turn goals or PR slices into implementation plans, run Claude Code through runner heartbeat/retry monitoring in task or candidate worktrees, review patches with a quality_score out of 10, verify, and finalize each real PR slice to main."

@@ -122,6 +122,7 @@ def test_success_accepts_natural_language_json_and_saves_patch() -> None:
     assert Path(str(report["success_patch"])).read_text(encoding="utf-8").find("planned edit") != -1
     assert "README.md" in report["changed_files"]
     assert report["claude_call_report"]["success"] is True
+    assert report["attempt_count"] == 1
 
 
 def test_dirty_baseline_blocks_before_calling_claude() -> None:
@@ -161,24 +162,87 @@ def test_timeout_saves_partial_patch_and_restores() -> None:
     assert run(["git", "status", "--short"], root, check=True).stdout == ""
 
 
-def test_invalid_json_saves_partial_patch_and_restores() -> None:
+def test_long_running_worker_records_heartbeats_in_report_without_inline_logs() -> None:
     root = make_repo()
     plan = write_plan(root)
+    report_file = root.parent / f"{root.name}-report.json"
+    payload = success_payload("Long run finished.")
     fake_bin = fake_claude(
         root,
         "#!/usr/bin/env bash\n"
+        "sleep 0.25\n"
+        "printf '\\nlong run edit\\n' >> README.md\n"
+        f"printf '%s\\n' {json.dumps(json.dumps(payload))}\n",
+    )
+
+    result = run_plan(
+        root,
+        plan,
+        fake_bin,
+        "--timeout-sec",
+        "2",
+        "--heartbeat-sec",
+        "0.1",
+        "--compact-output",
+        "--report-file",
+        str(report_file),
+    )
+    compact = parse_stdout(result)
+    full = json.loads(report_file.read_text(encoding="utf-8"))
+
+    assert result.returncode == 0
+    assert compact["plan_status"] == "succeeded"
+    assert "stdout" not in compact
+    assert compact["stdout_path"]
+    assert full["heartbeats"]
+    assert full["heartbeats"][0]["attempt"] == 1
+
+
+def test_invalid_json_retries_then_reports_claude_unavailable_and_restores() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    attempts = root.parent / f"{root.name}-attempts.txt"
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        f"printf x >> {attempts}\n"
         "printf '\\npartial invalid json edit\\n' >> README.md\n"
         "echo 'not json'\n",
     )
 
-    result = run_plan(root, plan, fake_bin)
+    result = run_plan(root, plan, fake_bin, "--retry-interval-sec", "0.01", "--max-unavailable-retries", "3")
     report = parse_stdout(result)
 
     assert result.returncode == 2
-    assert report["failure_reason"] == "invalid_json"
+    assert report["failure_reason"] == "claude_unavailable"
+    assert report["availability_failure_reason"] == "invalid_json"
+    assert report["attempt_count"] == 4
+    assert attempts.read_text(encoding="utf-8") == "xxxx"
     assert report["saved_partial_patch"]
     assert report["restored_partial_diff"] is True
     assert run(["git", "status", "--short"], root, check=True).stdout == ""
+
+
+def test_empty_result_without_diff_retries_then_reports_claude_unavailable() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    attempts = root.parent / f"{root.name}-attempts.txt"
+    payload = success_payload("")
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        f"printf x >> {attempts}\n"
+        f"printf '%s\\n' {json.dumps(json.dumps(payload))}\n",
+    )
+
+    result = run_plan(root, plan, fake_bin, "--retry-interval-sec", "0.01", "--max-unavailable-retries", "3")
+    report = parse_stdout(result)
+
+    assert result.returncode == 2
+    assert report["failure_reason"] == "claude_unavailable"
+    assert report["availability_failure_reason"] == "missing_result"
+    assert report["attempt_count"] == 4
+    assert attempts.read_text(encoding="utf-8") == "xxxx"
 
 
 def test_permission_denial_fails_without_strict_heading_checks() -> None:
@@ -193,20 +257,46 @@ def test_permission_denial_fails_without_strict_heading_checks() -> None:
 
     assert result.returncode == 2
     assert report["failure_reason"] == "permission_denied"
+    assert report["attempt_count"] == 1
     assert report["claude_call_report"]["success"] is False
 
 
-def test_nonzero_exit_reports_failure() -> None:
+def test_nonzero_exit_retries_then_reports_claude_unavailable() -> None:
     root = make_repo()
     plan = write_plan(root)
-    fake_bin = fake_claude(root, "#!/usr/bin/env bash\nexit 7\n")
+    attempts = root.parent / f"{root.name}-attempts.txt"
+    fake_bin = fake_claude(root, "#!/usr/bin/env bash\n" f"printf x >> {attempts}\n" "exit 7\n")
 
-    result = run_plan(root, plan, fake_bin)
+    result = run_plan(root, plan, fake_bin, "--retry-interval-sec", "0.01", "--max-unavailable-retries", "3")
     report = parse_stdout(result)
 
     assert result.returncode == 2
-    assert report["failure_reason"] == "nonzero_exit"
+    assert report["failure_reason"] == "claude_unavailable"
+    assert report["availability_failure_reason"] == "nonzero_exit"
     assert report["exit_code"] == 7
+    assert report["attempt_count"] == 4
+    assert attempts.read_text(encoding="utf-8") == "xxxx"
+
+
+def test_worker_blocked_result_does_not_retry() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    attempts = root.parent / f"{root.name}-attempts.txt"
+    payload = success_payload("Blocked: the plan needs broader API changes.")
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        f"printf x >> {attempts}\n"
+        f"printf '%s\\n' {json.dumps(json.dumps(payload))}\n",
+    )
+
+    result = run_plan(root, plan, fake_bin, "--retry-interval-sec", "0.01", "--max-unavailable-retries", "3")
+    report = parse_stdout(result)
+
+    assert result.returncode == 0
+    assert report["plan_status"] == "succeeded"
+    assert report["attempt_count"] == 1
+    assert attempts.read_text(encoding="utf-8") == "x"
 
 
 def test_candidate_worktree_exports_patch_and_cleans_up() -> None:
@@ -273,8 +363,11 @@ if __name__ == "__main__":
     test_success_accepts_natural_language_json_and_saves_patch()
     test_dirty_baseline_blocks_before_calling_claude()
     test_timeout_saves_partial_patch_and_restores()
-    test_invalid_json_saves_partial_patch_and_restores()
+    test_long_running_worker_records_heartbeats_in_report_without_inline_logs()
+    test_invalid_json_retries_then_reports_claude_unavailable_and_restores()
+    test_empty_result_without_diff_retries_then_reports_claude_unavailable()
     test_permission_denial_fails_without_strict_heading_checks()
-    test_nonzero_exit_reports_failure()
+    test_nonzero_exit_retries_then_reports_claude_unavailable()
+    test_worker_blocked_result_does_not_retry()
     test_candidate_worktree_exports_patch_and_cleans_up()
     print("run_cc_plan tests passed")
