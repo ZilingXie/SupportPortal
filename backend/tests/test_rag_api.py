@@ -434,6 +434,7 @@ class RagApiTests(unittest.TestCase):
                 "cancelled": False,
                 "found": False,
                 "stage": None,
+                "reason": "cancel_backend_not_configured",
             },
         )
 
@@ -470,6 +471,7 @@ class RagApiTests(unittest.TestCase):
                     "cancelled": False,
                     "found": False,
                     "stage": None,
+                    "reason": "cancel_backend_not_configured",
                 }
             ],
         )

@@ -10,6 +10,40 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-27 - Remove misleading RAG cancel contract
+
+- Summary:
+  - Removed the unused `rag_canceler` parameter from `execute_client_ticket_agent_runtime`.
+  - Removed `RagServiceClient.cancel_request` method since no production caller exists.
+  - Kept `/internal/rag/requests/{request_id}/cancel` as a compatibility no-op with explicit reason `cancel_backend_not_configured`.
+  - Kept `run_rag_query(... should_cancel=..., record_cancel_stage=...)` hook intact for future in-process use.
+- Reason:
+  - The runtime previously accepted a `rag_canceler` parameter but never called it.
+  - Current runtime is route-first: non-RAG route skips RAG, route=rag starts RAG after route completes.
+  - No in-flight RAG cancellation is wired; the code previously implied route-flip or timeout cancellation without implementing it.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/worker.py`
+  - `backend/main.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_worker.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No RAG data schema, ingestion, embedding, chunking, or vector-table behavior changes.
+  - Existing route-first behavior remains unchanged.
+  - Cancel API endpoint response additionally includes `reason: "cancel_backend_not_configured"`.
+- Verification:
+  - RED: control-cc test-only pass failed while the runtime still exposed `rag_canceler`, `RagServiceClient.cancel_request` still existed, and the cancel API response lacked the explicit no-op reason.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_client_ticket_agent_runtime.py::ClientTicketAgentRuntimeContractTests::test_non_rag_route_skips_review_without_starting_or_cancelling_rag backend/tests/test_client_ticket_agent_runtime.py::ClientTicketAgentRuntimeContractTests::test_rag_route_starts_rag_agent_only_after_route_agent_returns backend/tests/test_client_ticket_agent_runtime.py::ClientTicketAgentRuntimeContractTests::test_runtime_signature_has_rag_executor_and_no_rag_agent backend/tests/test_client_ticket_agent_runtime.py::ClientTicketAgentRuntimeContractTests::test_rag_canceler_contract_removed_runtime_no_longer_exposes_rag_canceler backend/tests/test_rag_api.py::RagApiTests::test_internal_rag_cancel_returns_not_found_without_active_cancel_backend backend/tests/test_rag_api.py::RagApiTests::test_internal_rag_query_does_not_register_inflight_request_for_cancel backend/tests/test_rag_service_client.py::RagServiceClientTests::test_cancel_request_is_not_exposed_without_cancel_backend -q` (`7 passed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_rag_api.py backend/tests/test_rag_service_client.py -q` (`105 passed`, `2 subtests passed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py -q` (`27 passed`).
+
 ## 2026-05-27 - Split BM25 telemetry from FTS and keyword fallback
 
 - Summary:

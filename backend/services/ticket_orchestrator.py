@@ -414,6 +414,5 @@ def orchestrate_ticket_execution(
         route_executor=_route_executor,
         rag_executor=_rag_executor,
         review_agent=_compat_review_agent,
-        rag_canceler=None,
     )
     return runtime_execution.result

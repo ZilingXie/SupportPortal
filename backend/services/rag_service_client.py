@@ -491,15 +491,6 @@ class RagServiceClient:
             payload["top_k"] = int(top_k)
         return self._request("POST", "/internal/rag/query", json_body=payload, timeout_seconds=timeout_seconds)
 
-    def cancel_request(self, request_id: str) -> dict[str, Any]:
-        normalized_request_id = urllib.parse.quote(str(request_id or "").strip(), safe="")
-        if not normalized_request_id:
-            raise RagServiceError("request_id is required")
-        return self._request(
-            "POST",
-            f"/internal/rag/requests/{normalized_request_id}/cancel",
-        )
-
     def query_answer_with_recovery(
         self,
         *,

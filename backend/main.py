@@ -2423,7 +2423,6 @@ async def create_or_update_ticket(
                     route_executor=resolve_support_message,
                     rag_executor=build_sync_rag_executor(rag_service_client),
                     review_agent=_run_client_ticket_review_agent,
-                    rag_canceler=None,
                 )
                 execution = runtime_execution.result
         if execution is not None:
