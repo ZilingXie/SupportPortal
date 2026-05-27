@@ -397,6 +397,9 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("## Ticket Context", user_prompt)
         self.assertIn("## Query Understanding Prior", user_prompt)
         self.assertIn("error 109 meaning ios", user_prompt)
+        # Verify FTS tools are present in the planner allowed tool list (quality-first supplemental lexical route)
+        self.assertIn('"p_fts"', user_prompt)
+        self.assertIn('"s_fts"', user_prompt)
 
     def test_product_selection_prompt_is_sectioned_and_json_only(self) -> None:
         system_prompt = build_product_selection_system_prompt()

@@ -193,24 +193,28 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ticket_context=None,
         )
         self.assertEqual(plan.query_class, "comparison")
-        self.assertEqual(plan.first_pass_tools, ["p_vec", "p_bm25", "s_vec"])
+        self.assertEqual(plan.first_pass_tools, ["p_vec", "p_bm25", "s_vec", "p_fts"])
         self.assertFalse(plan.light_path)
 
-    def test_tool_order_for_online_agentic_main_path_excludes_fts(self) -> None:
-        for query_class in [
-            "api_semantics_mismatch",
-            "lexical_exact",
-            "how_to_faq",
-            "usage_configuration",
-            "unclear_query",
-            "troubleshooting_why",
-            "comparison",
-        ]:
+    def test_tool_order_for_online_agentic_main_path_includes_fts(self) -> None:
+        """Default agentic tool order includes p_fts as a supplemental lexical route."""
+        fts_query_classes = {
+            "api_semantics_mismatch": True,
+            "lexical_exact": True,
+            "how_to_faq": True,
+            "usage_configuration": True,
+            "unclear_query": True,
+            "troubleshooting_why": True,
+            "comparison": True,
+        }
+        for query_class, expect_fts in fts_query_classes.items():
             with self.subTest(query_class=query_class):
                 tools, _, _ = _tool_order_for_query_class(query_class, shadow_retrieval_enabled=True)
 
-                self.assertNotIn("p_fts", tools)
-                self.assertNotIn("s_fts", tools)
+                if expect_fts:
+                    self.assertIn("p_fts", tools, f"p_fts missing from default tool order for {query_class}")
+                else:
+                    self.assertNotIn("p_fts", tools)
 
 
     def test_classify_agentic_query_flags_preserves_api_semantics_light_path(self) -> None:
@@ -287,7 +291,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(plan.query_class, "usage_configuration")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to enable the dual stream")])
         self.assertFalse(plan.light_path)
 
@@ -468,7 +472,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             agent_enabled=True,
             agent_plan_version="v1",
             query_class="api_semantics_mismatch",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             plan_query_variants=[{"kind": "original", "query": "child"}],
             plan_decomposition_targets=[],
             evidence_goal="api_semantics_grounding",
@@ -674,7 +678,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         plan = AgenticRetrievalPlan(
             query_class="api_semantics_mismatch",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "uid: 0 cannot be used")],
             decomposition_targets=[],
             evidence_goal="api_semantics_grounding",
@@ -700,7 +704,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             iteration_trace=AgenticIterationTrace(
                 round_index=1,
-                tool_names=["p_bm25"],
+                tool_names=["p_bm25", "p_fts"],
                 query_variants=["original"],
                 selected_chunk_ids=["disband", "request-uid"],
                 decision="answer_now",
@@ -750,14 +754,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(plan.query_class, "usage_configuration")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
         self.assertTrue(plan.light_path)
 
     def test_tool_order_for_usage_configuration_starts_with_lexical_usage_support(self) -> None:
         tools, evidence_goal, recovery_bias = _tool_order_for_query_class("usage_configuration")
 
-        self.assertEqual(tools, ["p_bm25"])
+        self.assertEqual(tools, ["p_bm25", "p_fts"])
         self.assertEqual(evidence_goal, "configuration_support")
         self.assertEqual(recovery_bias, "lexical")
 
@@ -813,9 +817,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(plan.query_class, "usage_configuration")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
-        self.assertEqual(round_one_tools, ["p_bm25"])
-        self.assertEqual(round_two_tools, ["p_vec", "s_vec", "p_bm25", "s_bm25"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
+        self.assertEqual(round_one_tools, ["p_bm25", "p_fts"])
+        self.assertEqual(round_two_tools, ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"])
         self.assertEqual(round_one_variants, [("original", "How do I join a channel?")])
         self.assertEqual(
             round_two_variants,
@@ -840,7 +844,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_tool_order_for_unclear_query_is_conservative_but_retrievable(self) -> None:
         tools, evidence_goal, recovery_bias = _tool_order_for_query_class("unclear_query")
 
-        self.assertEqual(tools, ["p_bm25"])
+        self.assertEqual(tools, ["p_bm25", "p_fts"])
         self.assertEqual(evidence_goal, "clarifying_evidence")
         self.assertEqual(recovery_bias, "conservative")
 
@@ -848,7 +852,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=False):
             tools, evidence_goal, recovery_bias = _tool_order_for_query_class("troubleshooting_why")
 
-        self.assertEqual(tools, ["p_vec", "p_bm25"])
+        self.assertEqual(tools, ["p_vec", "p_bm25", "p_fts"])
         self.assertEqual(evidence_goal, "causal_grounding")
         self.assertEqual(recovery_bias, "semantic")
 
@@ -862,14 +866,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(plan.query_class, "usage_configuration")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
         self.assertTrue(plan.light_path)
 
     def test_execute_agentic_round_short_circuits_zero_yield_troubleshooting_expansions(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="troubleshooting_why",
-            first_pass_tools=["p_vec", "p_bm25"],
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
             query_variants=[
                 ("original", "black screen"),
                 ("semantic", "ios black screen"),
@@ -958,7 +962,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn(("p_bm25", "semantic"), timings)
         self.assertIn(("p_bm25", "rewrite"), timings)
         self.assertNotIn(("p_bm25", "context"), timings)
-        self.assertNotIn(("p_fts", "original"), timings)
+        self.assertIn(("p_fts", "original"), timings)
         self.assertNotIn(("p_fts", "semantic"), timings)
         self.assertNotIn(("p_fts", "rewrite"), timings)
         self.assertNotIn(("p_fts", "context"), timings)
@@ -1523,7 +1527,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(plan.query_class, "lexical_exact")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertTrue(plan.light_path)
 
     def test_build_agentic_retrieval_plan_uses_lexical_fast_path_for_short_token_usage_query(self) -> None:
@@ -1535,7 +1539,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(plan.query_class, "lexical_exact")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to use token")])
         self.assertEqual(plan.exact_terms, ["use", "token"])
         self.assertTrue(plan.light_path)
@@ -1549,7 +1553,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(plan.query_class, "lexical_exact")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "what is connection state change used for")])
         self.assertEqual(plan.exact_terms, ["connection", "state", "change"])
         self.assertTrue(plan.light_path)
@@ -1563,12 +1567,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertFalse(plan.light_path)
-        self.assertNotEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertNotEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
 
     def test_expand_agentic_variants_adds_focused_join_recovery_queries_for_light_path(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "how to join channel")],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -1601,7 +1605,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_expand_agentic_variants_adds_token_usage_recovery_queries_for_light_path(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "how to use token")],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -1632,7 +1636,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_expand_agentic_variants_adds_connection_state_reference_queries_for_short_faq_bucket(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "what is connection state change used for")],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -1663,7 +1667,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_generation_chunk_limit_for_short_lexical_faq_bucket_caps_context_to_two_chunks(self) -> None:
         short_faq_plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "how to use token")],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -2121,7 +2125,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "how to join channel")],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -2202,7 +2206,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_execute_agentic_round_uses_sparse_short_faq_lexical_recovery_matrix(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "what is connection state change used for")],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -2272,7 +2276,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_execute_agentic_round_reuses_cached_lexical_queries_across_rounds(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "join channel")],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -2865,7 +2869,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             iteration_trace=AgenticIterationTrace(
                 round_index=2,
-                tool_names=["p_bm25"],
+                tool_names=["p_bm25", "p_fts"],
                 query_variants=["original", "exact_token"],
                 selected_chunk_ids=["strong-primary"],
                 decision="answer_now",
@@ -2932,7 +2936,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         initial_plan = AgenticRetrievalPlan(
             query_class="usage_configuration",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", "How do I join a channel?")],
             decomposition_targets=[],
             evidence_goal="configuration_support",
@@ -2944,7 +2948,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         expanded_plan = AgenticRetrievalPlan(
             query_class="usage_configuration",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[
                 ("original", "How do I join a channel?"),
                 ("semantic", "join a video calling channel"),
@@ -2990,7 +2994,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             iteration_trace=AgenticIterationTrace(
                 round_index=1,
-                tool_names=["p_bm25"],
+                tool_names=["p_bm25", "p_fts"],
                 query_variants=["original"],
                 selected_chunk_ids=["weak-usage"],
                 decision="recover_once",
@@ -3010,7 +3014,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             iteration_trace=AgenticIterationTrace(
                 round_index=2,
-                tool_names=["p_vec", "s_vec", "p_bm25", "s_bm25"],
+                tool_names=["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"],
                 query_variants=["original", "semantic", "rule", "rewrite", "decomposition"],
                 selected_chunk_ids=["strong-usage"],
                 decision="answer_now",
@@ -3247,7 +3251,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_execute_agentic_round_skips_shadow_tools_when_disabled(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="configuration",
-            first_pass_tools=["p_bm25", "s_bm25"],
+            first_pass_tools=["p_bm25", "s_bm25", "p_fts", "s_fts"],
             query_variants=[("original", "How do I enable dual stream in Node.js?")],
             decomposition_targets=[],
             evidence_goal="configuration_support",
@@ -3309,9 +3313,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(bm25_mock.call_count, 1)
-        self.assertEqual(fts_mock.call_count, 0)
-        self.assertEqual(result.iteration_trace.tool_names, ["p_bm25"])
-        self.assertEqual(result.shadow_tools_skipped, ["s_bm25"])
+        self.assertEqual(fts_mock.call_count, 1)
+        self.assertEqual(result.iteration_trace.tool_names, ["p_bm25", "p_fts"])
+        self.assertEqual(result.shadow_tools_skipped, ["s_bm25", "s_fts"])
         self.assertTrue(
             all(
                 not str(timing.get("tool_name") or "").startswith("s_")

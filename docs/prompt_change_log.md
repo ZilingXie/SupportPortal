@@ -12,6 +12,33 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-27 - Agentic RAG planner FTS restoration
+
+- Area or subsystem: RAG agent planner
+- Prompt or model version: `rag-agent-planner-tool-contract-v3`
+- Summary: Restored `p_fts` and `s_fts` in the planner prompt's allowed tool list so planner output can select PostgreSQL FTS as a supplemental lexical retrieval tool for online agentic retrieval.
+- Reason: Online answer quality is the priority; FTS provides valuable supplemental lexical retrieval. The planner tool contract is updated to allow FTS, and documentation/telemetry contract now requires separate FTS attribution to prevent benchmark/dashboard misattribution.
+- Affected files or config:
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Agentic planner prompts advertise vector, BM25, and FTS retrieval tools.
+  - Planner can intentionally select `p_fts` and `s_fts` for query classes where supplemental lexical retrieval improves answer quality.
+  - FTS execution produces distinct telemetry rows that benchmark/dashboard consumers must attribute separately from BM25 and vector.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python - <<'PY' ... assert 'p_fts' in build_rag_agent_planner_user_prompt(...) ... PY` failed on the previous implementation after the tool-order assertion showed `['p_bm25']`.
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_agent_planner.py`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py::PromptModuleTests::test_rag_agent_planner_prompt_is_sectioned_and_ticket_context_aware -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
+  - `rtk git diff --check`
+
 ## 2026-05-27 - Agentic RAG planner FTS removal
 
 - Area or subsystem: RAG agent planner
