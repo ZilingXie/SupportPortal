@@ -12,6 +12,30 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-27 - Agentic RAG planner FTS removal
+
+- Area or subsystem: RAG agent planner
+- Prompt or model version: `rag-agent-planner-tool-contract-v2`
+- Summary: Removed `p_fts` and `s_fts` from the planner prompt's allowed tool list so planner output cannot intentionally select PostgreSQL FTS for online agentic retrieval.
+- Reason: The canonical online RAG chain is vector + BM25, with FTS removed from the online main path; leaving FTS in planner tool choices made benchmark, dashboard, and trace analysis attribute FTS effects to BM25/vector retrieval.
+- Affected files or config:
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Agentic planner prompts advertise only vector and BM25 retrieval tools.
+  - If a stale or mocked planner response still includes `p_fts` or `s_fts`, backend tool filtering drops those tools before execution.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_agent_planner.py`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py::PromptModuleTests::test_rag_agent_planner_prompt_is_sectioned_and_ticket_context_aware -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
+  - `rtk git diff --check`
+
 ## 2026-05-26 - control-cc low-token waiting and quality scoring
 
 - Area or subsystem: Project-local Codex-to-Claude Code delegation workflow
