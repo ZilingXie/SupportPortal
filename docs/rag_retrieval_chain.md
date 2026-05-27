@@ -233,7 +233,7 @@ Run-level telemetry:
 
 Latency and candidate semantics:
 - `bm25_retrieval_latency_ms` and `bm25_candidates_count` are true BM25 SQL metrics only
-- `fts_latency_ms` and `fts_candidates_count` are PostgreSQL FTS metrics for legacy or diagnostic paths where FTS still appears
+- `fts_latency_ms` and `fts_candidates_count` are PostgreSQL FTS supplemental route telemetry for the current agentic multi-tool chain (may also appear in legacy or diagnostic paths where FTS still runs)
 - `keyword_fallback_latency_ms` and `keyword_fallback_candidates_count` are degraded keyword `LIKE` fallback metrics
 - `lexical_retrieval_latency_ms` and `lexical_candidates_count` are the combined lexical bucket across BM25, FTS, and keyword fallback
 - `retrieval_latency_ms` includes vector retrieval plus the combined lexical bucket

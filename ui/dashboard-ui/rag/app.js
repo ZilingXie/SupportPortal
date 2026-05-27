@@ -57,18 +57,8 @@ const ROUTING_SUMMARY_PERCENT_KEYS = new Set([
 const SUMMARY_METRIC_EXPLANATIONS = {
   "answer_relevance_score":
     "Measures how well the final answer addresses the user question. Higher is better because answers stay closer to the requested intent and are less likely to drift.",
-  "avg_bm25_retrieval_latency_ms":
-    "Measures average true BM25 SQL latency for live retrieval. Lower is better because exact lexical matching is returning evidence faster.",
   "avg_chunk_tokens":
     "Measures the average chunk length in tokens across the indexed knowledge base. The best result is a balanced value because chunks that are too short lose context and chunks that are too long add noise.",
-  "avg_fts_latency_ms":
-    "Measures average PostgreSQL FTS latency for live retrieval when the supplemental lexical route runs. Lower is better because FTS recovery is adding less delay.",
-  "avg_keyword_fallback_latency_ms":
-    "Measures average keyword fallback latency for degraded live retrieval. Lower is better because fallback recovery is not dominating the request budget.",
-  "avg_lexical_retrieval_latency_ms":
-    "Measures the combined live lexical latency across BM25, FTS, and keyword fallback. Lower is better because all lexical evidence routes together are staying fast.",
-  "avg_vector_retrieval_latency_ms":
-    "Measures average vector retrieval latency for live traffic. Lower is better because semantic recall is returning candidates faster.",
   "benchmark_p95_total_latency_ms":
     "Measures the 95th percentile end-to-end latency across benchmark cases in the selected run. Lower is better because fewer benchmark cases experience slow outlier latency.",
   "benchmark_review_sample_count":
@@ -2245,6 +2235,7 @@ function renderRetrievalDashboardPage(payload) {
   const root = ragPageContainers["retrieval"].root;
   const sections = payload.sections || {};
   const summary = sections.summary || {};
+  const liveTelemetry = sections.live_retrieval_telemetry || {};
   const sampleList = sections.sample_list || {};
   const retrievalCases = sections.retrieval_cases || {};
   const incorrectRows = retrievalCases.incorrect?.rows || [];
@@ -2259,6 +2250,13 @@ function renderRetrievalDashboardPage(payload) {
         <p>${escapeHtml(summary.subtitle || "Check whether the right chunks arrived before blaming synthesis.")}</p>
       </div>
       ${buildMetricCards(summary.cards || {}, { summaryTooltipPage: "retrieval" })}
+    </section>
+    <section class="panel-card">
+      <div class="panel-header">
+        <h3>${escapeHtml(liveTelemetry.title || "Live Retrieval Telemetry")}</h3>
+        <p>${escapeHtml(liveTelemetry.subtitle || "")}</p>
+      </div>
+      ${buildMetricCards(liveTelemetry.cards || {})}
     </section>
     ${buildCaseExplorerSection("Retrieval Errors", incorrectRows, {
       subtitle: "Every retrieval-eligible case where the miss was attributed to retrieval.",

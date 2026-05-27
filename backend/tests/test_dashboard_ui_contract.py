@@ -31,7 +31,7 @@ class DashboardUiContractTests(unittest.TestCase):
         patterns = {
             "scorecard": r'def _scorecard_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"overview_usage_summary"',
             "routing": r'def _routing_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"category_pass_rate"',
-            "retrieval": r'def _retrieval_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"retrieval_cases"',
+            "retrieval": r'def _retrieval_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"live_retrieval_telemetry"',
             "generation": r'def _generation_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"generation_cases"',
             "data-supply": r'def _data_supply_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"benchmark_supply"',
             "performance": r'def _performance_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"segment_breakdown"',
@@ -431,6 +431,21 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertIn(marker, source)
 
+    def test_retrieval_page_renders_live_telemetry_separate_from_hero_summary(self) -> None:
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        retrieval_block = self._extract_js_function_block(
+            source,
+            "function renderRetrievalDashboardPage(payload) {",
+        )
+
+        self.assertIn("live_retrieval_telemetry", retrieval_block)
+        self.assertIn("buildMetricCards(liveTelemetry.cards", retrieval_block)
+        # The live telemetry buildMetricCards call must not pass summaryTooltipPage.
+        live_metric_call = retrieval_block.split("buildMetricCards(liveTelemetry.cards")[1].split(")")[0]
+        self.assertNotIn("summaryTooltipPage", live_metric_call)
+        # The hero summary buildMetricCards call still passes summaryTooltipPage.
+        self.assertIn('summaryTooltipPage: "retrieval"', retrieval_block)
+
     def test_case_detail_modal_and_diagnosis_single_column_surface_exist(self) -> None:
         html = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
@@ -618,12 +633,16 @@ class DashboardUiContractTests(unittest.TestCase):
     def test_rag_dashboard_explains_split_lexical_latency_cards(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
 
+        explanation_block = self._extract_js_const_object_block(js_source, "const SUMMARY_METRIC_EXPLANATIONS =")
         for key in [
             "avg_fts_latency_ms",
             "avg_keyword_fallback_latency_ms",
             "avg_lexical_retrieval_latency_ms",
+            "avg_vector_retrieval_latency_ms",
+            "avg_bm25_retrieval_latency_ms",
         ]:
-            self.assertIn(f'"{key}"', js_source)
+            self.assertNotIn(f'"{key}"', explanation_block)
+        self.assertIn("live_retrieval_telemetry", js_source)
 
     def test_benchmark_session_panel_is_overview_only(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
