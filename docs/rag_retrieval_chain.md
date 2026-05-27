@@ -22,6 +22,11 @@ Current online retrieval chain:
 
 Only `index_role='primary'` chunks participate in online retrieval.
 
+When `RAG_AGENT_ENABLED=true`, `agentic_multi_tool_v1` must preserve the same
+online main path. Agentic first-pass and recovery plans may use configured
+vector and BM25 tools, but must not include PostgreSQL FTS tools (`p_fts`,
+`s_fts`) in online retrieval plans.
+
 ## Stage Graph
 
 ```text

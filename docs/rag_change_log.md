@@ -10,6 +10,34 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-27 - Remove FTS from agentic online retrieval plans
+
+- Summary:
+  - Removed `p_fts` and `s_fts` from deterministic agentic tool ordering, light-path first-pass plans, recovery tool sets, planner-supplied tool filtering, and generic-join support selection.
+  - Removed FTS from the agent planner prompt's allowed tool list.
+  - Documented that `agentic_multi_tool_v1` must preserve the canonical vector/BM25 online path and must not include PostgreSQL FTS tools in online retrieval plans.
+- Reason:
+  - `docs/rag_retrieval_chain.md` defines the online retrieval chain as vector + BM25 with FTS removed from the main path, but the default `RAG_AGENT_ENABLED=true` path could still plan and execute FTS tools.
+  - Benchmark, dashboard, and incident-trace conclusions could therefore attribute FTS effects to the BM25/vector chain.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Existing RAG data remains valid; online agentic retrieval no longer executes PostgreSQL FTS tools or records FTS timing rows for main-path agentic plans.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py::RagAgenticTests::test_tool_order_for_online_agentic_main_path_excludes_fts -q` failed before the implementation because every default query class included `p_fts` or `s_fts`.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_agent_planner.py`
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q`
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py::PromptModuleTests::test_rag_agent_planner_prompt_is_sectioned_and_ticket_context_aware -q`
+  - GREEN: `rtk git diff --check`
+
 ## 2026-05-26 - Fix agentic comparison-query classification for start-of-message markers
 
 - Summary:

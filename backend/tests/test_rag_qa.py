@@ -1528,9 +1528,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 source_path="official/get-started.md",
                 similarity=0.95,
             )
-        def _fts_auth_chunk() -> RetrievedChunk:
+        def _bm25_auth_chunk() -> RetrievedChunk:
             return RetrievedChunk(
-                chunk_id="fts-auth",
+                chunk_id="bm25-auth",
                 text="Generate a token from your authentication server before calling joinChannel.",
                 source_path="official/authentication-workflow.md",
                 similarity=0.88,
@@ -1581,13 +1581,13 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 side_effect=AssertionError("vector retrieval should not run on the first pass when lexical light path is sufficient"),
             ), patch(
                 "backend.services.rag_qa._retrieve_bm25_chunks",
-                return_value=[_bm25_chunk()],
+                return_value=[_bm25_chunk(), _bm25_auth_chunk()],
             ), patch(
                 "backend.services.rag_qa._retrieve_fts_chunks",
-                return_value=[_fts_auth_chunk()],
+                side_effect=AssertionError("FTS should not run on the online agentic light path"),
             ), patch(
                 "backend.services.rag_qa._metadata_rerank",
-                side_effect=lambda *args, **kwargs: ([_bm25_chunk(), _fts_auth_chunk()], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+                side_effect=lambda *args, **kwargs: ([_bm25_chunk(), _bm25_auth_chunk()], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 side_effect=AssertionError("external rerank should be skipped for lexical light path"),
@@ -1600,7 +1600,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     {
                         "answer": "Generate a token from your authentication server, then call joinChannel with the same channel name on each client.",
                         "key_steps": [],
-                        "citations": ["bm25-join", "fts-auth"],
+                        "citations": ["bm25-join", "bm25-auth"],
                         "insufficient_evidence": False,
                     },
                     10,
@@ -1618,12 +1618,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("join method", result.answer.answer.lower())
         self.assertIn("channel/media options", result.answer.answer.lower())
         self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-join")
-        self.assertIn("fts-auth", result.trace.selected_chunk_ids)
+        self.assertIn("bm25-auth", result.trace.selected_chunk_ids)
         self.assertEqual(result.trace.query_class, "usage_configuration")
         self.assertTrue(result.trace.light_path_used)
         self.assertTrue(result.trace.vector_setup_skipped)
         self.assertTrue(result.trace.generic_join_primary_chunk_found)
-        self.assertEqual(result.trace.generic_join_support_chunks[:2], ["bm25-join", "fts-auth"])
+        self.assertEqual(result.trace.generic_join_support_chunks[:2], ["bm25-join", "bm25-auth"])
         self.assertFalse(result.trace.generic_join_recovery_used)
         self.assertTrue(
             any(
@@ -1632,7 +1632,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 if isinstance(timing, dict)
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 timing.get("tool_name") == "p_fts"
                 for timing in result.trace.retrieval_tool_timings
@@ -1662,9 +1662,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 similarity=0.95,
             )
 
-        def _fts_auth_chunk() -> RetrievedChunk:
+        def _bm25_auth_chunk() -> RetrievedChunk:
             return RetrievedChunk(
-                chunk_id="fts-auth",
+                chunk_id="bm25-auth",
                 text="Generate a token from your authentication server before calling joinChannel.",
                 source_path="official/authentication-workflow.md",
                 similarity=0.88,
@@ -1731,14 +1731,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 side_effect=AssertionError("vector retrieval should not run for inherited generic join examples"),
             ), patch(
                 "backend.services.rag_qa._retrieve_bm25_chunks",
-                return_value=[_bm25_chunk()],
+                return_value=[_bm25_chunk(), _bm25_auth_chunk()],
             ), patch(
                 "backend.services.rag_qa._retrieve_fts_chunks",
-                return_value=[_fts_auth_chunk()],
+                side_effect=AssertionError("FTS should not run on the online agentic light path"),
             ), patch(
                 "backend.services.rag_qa._metadata_rerank",
                 side_effect=lambda *args, **kwargs: (
-                    [_bm25_chunk(), _fts_auth_chunk()],
+                    [_bm25_chunk(), _bm25_auth_chunk()],
                     {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None},
                 ),
             ), patch(
@@ -1769,7 +1769,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("join channel", str(result.trace.effective_question).lower())
         self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
         self.assertTrue(result.trace.generic_join_primary_chunk_found)
-        self.assertEqual(result.trace.generic_join_support_chunks[:2], ["bm25-join", "fts-auth"])
+        self.assertEqual(result.trace.generic_join_support_chunks[:2], ["bm25-join", "bm25-auth"])
 
     def test_run_rag_query_exact_error_lookup_uses_light_path_fast_answer_profile_then_falls_back_to_main_model(self) -> None:
         bm25_chunk = RetrievedChunk(
@@ -1878,7 +1878,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 if isinstance(timing, dict)
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 timing.get("tool_name") == "p_fts"
                 for timing in result.trace.retrieval_tool_timings
@@ -3647,7 +3647,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 if isinstance(timing, dict)
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 timing.get("tool_name") == "p_fts"
                 for timing in result.trace.retrieval_tool_timings

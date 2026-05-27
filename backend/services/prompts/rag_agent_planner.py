@@ -73,10 +73,8 @@ def build_rag_agent_planner_user_prompt(
                     "round_index": int(round_index),
                     "allowed_tools": [
                         "p_bm25",
-                        "p_fts",
                         "p_vec",
                         "s_bm25",
-                        "s_fts",
                         "s_vec",
                     ],
                 }
