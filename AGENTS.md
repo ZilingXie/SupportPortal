@@ -5,6 +5,11 @@ For delegated code work, prefer the project-local `control-cc` skill when the us
 
 `control-cc` may create temporary detached candidate worktrees under `/tmp/control-cc-runs/...` from the active task branch for isolated Claude Code execution. Candidate worktrees are not task branches: do not push, finalize, merge, or treat them as authoritative. Export reviewed patches from candidates, integrate them sequentially into the real `codex/<thread>` task worktree, then clean the candidates.
 
+## CodeGraph First For Code Reading
+1. When reading or understanding code, prefer the project CodeGraph tools before native file search or broad file reads. Use CodeGraph for structural questions such as where a symbol is defined, who calls it, what it calls, how data flows between symbols, what would be affected by a change, or which files and symbols are relevant to a task.
+2. Use native search such as `rg` primarily for literal text, comments, log messages, configuration keys, documentation wording, or after CodeGraph has already identified the specific files that need direct inspection.
+3. If CodeGraph is unavailable, uninitialized, or stale, report that explicitly and fall back to the narrowest native search needed. Do not run `codegraph init -i` unless the project has not been initialized; for an initialized project, use `codegraph sync` to refresh changed files.
+
 ## Branch Workflow
 1. Keep the root workspace on a clean `main` checkout at all times. Use it only for browsing, syncing `main`, creating or inspecting worktrees, and fast-forwarding local `main` after task PRs merge.
 2. `main` is the only authoritative long-lived branch for normal development. Do not create or use any local or remote `mac` branch, `mac-integration` worktree, or any other temporary integration branch for routine development or release work.
