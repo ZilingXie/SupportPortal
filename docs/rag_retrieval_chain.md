@@ -206,14 +206,27 @@ Run-level telemetry:
 - `retrieval_strategy`
 - `vector_candidates_count`
 - `bm25_candidates_count`
+- `fts_candidates_count`
+- `keyword_fallback_candidates_count`
+- `lexical_candidates_count`
 - `vector_retrieval_latency_ms`
 - `bm25_retrieval_latency_ms`
+- `fts_latency_ms`
+- `keyword_fallback_latency_ms`
+- `lexical_retrieval_latency_ms`
 - `retrieval_latency_ms`
 - `rerank_latency_ms`
 - `reranker_provider`
 - `reranker_model`
 - `retrieved_chunk_ids`
 - `selected_chunk_ids`
+
+Latency and candidate semantics:
+- `bm25_retrieval_latency_ms` and `bm25_candidates_count` are true BM25 SQL metrics only
+- `fts_latency_ms` and `fts_candidates_count` are PostgreSQL FTS metrics for legacy or diagnostic paths where FTS still appears
+- `keyword_fallback_latency_ms` and `keyword_fallback_candidates_count` are degraded keyword `LIKE` fallback metrics
+- `lexical_retrieval_latency_ms` and `lexical_candidates_count` are the combined lexical bucket across BM25, FTS, and keyword fallback
+- `retrieval_latency_ms` includes vector retrieval plus the combined lexical bucket
 
 Candidate-level telemetry in `support_rag_query_candidates.candidate_trace`:
 - `vector_rank`
