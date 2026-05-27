@@ -509,10 +509,6 @@ def _is_shadow_tool(tool_name: str) -> bool:
     return str(tool_name or "").strip().lower().startswith("s_")
 
 
-def _is_fts_tool(tool_name: str) -> bool:
-    return str(tool_name or "").strip().lower().endswith("_fts")
-
-
 def _filter_shadow_tool_names(
     tool_names: Iterable[str],
     *,
@@ -526,9 +522,6 @@ def _filter_shadow_tool_names(
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-        if _is_fts_tool(normalized):
-            skipped.append(normalized)
-            continue
         if not shadow_retrieval_enabled and _is_shadow_tool(normalized):
             skipped.append(normalized)
             continue
@@ -918,20 +911,20 @@ def _classify_agentic_query(
 
 def _raw_tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
     if query_class == "api_semantics_mismatch":
-        return (["p_bm25", "p_vec"], "api_semantics_grounding", "lexical")
+        return (["p_bm25", "p_fts", "p_vec"], "api_semantics_grounding", "lexical")
     if query_class == "lexical_exact":
-        return (["p_bm25", "p_vec"], "exact_match", "lexical")
+        return (["p_bm25", "p_fts", "p_vec"], "exact_match", "lexical")
     if query_class == "how_to_faq":
-        return (["p_bm25", "p_vec"], "how_to_usage_support", "lexical")
+        return (["p_bm25", "p_fts", "p_vec"], "how_to_usage_support", "lexical")
     if query_class == "usage_configuration":
-        return (["p_bm25"], "configuration_support", "lexical")
+        return (["p_bm25", "p_fts"], "configuration_support", "lexical")
     if query_class == "unclear_query":
-        return (["p_bm25"], "clarifying_evidence", "conservative")
+        return (["p_bm25", "p_fts"], "clarifying_evidence", "conservative")
     if query_class == "troubleshooting_why":
-        return (["p_vec", "s_vec", "p_bm25", "s_bm25"], "causal_grounding", "semantic")
+        return (["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"], "causal_grounding", "semantic")
     if query_class == "comparison":
-        return (["p_vec", "p_bm25", "s_vec"], "balanced_comparison", "compare")
-    return (["p_bm25", "p_vec", "s_bm25", "s_vec"], "configuration_support", "lexical")
+        return (["p_vec", "p_bm25", "s_vec", "p_fts"], "balanced_comparison", "compare")
+    return (["p_bm25", "p_vec", "p_fts", "s_bm25", "s_vec"], "configuration_support", "lexical")
 
 
 def _tool_order_for_query_class(
@@ -1222,7 +1215,7 @@ def _load_short_faq_original_tool_results(
         return "", {}
 
     original_tool_results: dict[str, list[RetrievedChunk]] = {}
-    for tool_name in ("p_bm25", "p_keyword"):
+    for tool_name in ("p_bm25", "p_fts", "p_keyword"):
         cache_key = _lexical_cache_key(
             tool_name=tool_name,
             query_text=original_query_text,
@@ -2130,7 +2123,7 @@ def _build_agentic_retrieval_plan(
     if query_class == "lexical_exact" and _is_simple_lexical_query(message):
         return AgenticRetrievalPlan(
             query_class=query_class,
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", normalized_message)],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -2144,7 +2137,7 @@ def _build_agentic_retrieval_plan(
     if query_class == "usage_configuration" and _is_short_how_to_faq_query(message, query_understanding):
         return AgenticRetrievalPlan(
             query_class=query_class,
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=_usage_configuration_query_variants(normalized_message, query_understanding),
             decomposition_targets=[],
             evidence_goal="how_to_usage_support",
@@ -2158,7 +2151,7 @@ def _build_agentic_retrieval_plan(
     if short_faq_pattern in {"token_usage", "connection_state"}:
         return AgenticRetrievalPlan(
             query_class="lexical_exact",
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=[("original", normalized_message)],
             decomposition_targets=[],
             evidence_goal="exact_match",
@@ -2186,7 +2179,7 @@ def _build_agentic_retrieval_plan(
     if query_class == "usage_configuration":
         return AgenticRetrievalPlan(
             query_class=query_class,
-            first_pass_tools=["p_bm25"],
+            first_pass_tools=["p_bm25", "p_fts"],
             query_variants=_usage_configuration_query_variants(normalized_message, query_understanding),
             decomposition_targets=[],
             evidence_goal="configuration_support",
@@ -3164,8 +3157,10 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
     if query_class == "lexical_exact":
         return {
             "p_bm25": 1.00,
+            "p_fts": 0.90,
             "p_vec": 0.55,
             "s_bm25": 0.45,
+            "s_fts": 0.40,
             "s_vec": 0.35,
             "p_keyword": 0.35,
             "s_keyword": 0.20,
@@ -3173,8 +3168,10 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
     if query_class in {"how_to_faq", "usage_configuration"}:
         return {
             "p_bm25": 1.00,
+            "p_fts": 0.90,
             "p_vec": 0.55,
             "s_bm25": 0.35,
+            "s_fts": 0.25,
             "s_vec": 0.20,
             "p_keyword": 0.20,
             "s_keyword": 0.08,
@@ -3183,6 +3180,7 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
         return {
             "p_bm25": 1.00,
             "p_vec": 0.75,
+            "p_fts": 0.55,
             "s_bm25": 0.40,
             "s_vec": 0.35,
             "p_keyword": 0.25,
@@ -3194,15 +3192,19 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
             "s_vec": 0.80,
             "p_bm25": 0.50,
             "s_bm25": 0.30,
+            "p_fts": 0.25,
+            "s_fts": 0.15,
             "p_keyword": 0.15,
             "s_keyword": 0.10,
         }
     if query_class == "api_semantics_mismatch":
         return {
             "p_bm25": 1.00,
+            "p_fts": 0.95,
             "p_vec": 0.55,
             "p_keyword": 0.20,
             "s_bm25": 0.0,
+            "s_fts": 0.0,
             "s_vec": 0.0,
             "s_keyword": 0.0,
         }
@@ -3210,6 +3212,7 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
         "p_vec": 0.90,
         "p_bm25": 0.80,
         "s_vec": 0.60,
+        "p_fts": 0.30,
         "p_keyword": 0.20,
     }
 
@@ -3326,38 +3329,38 @@ def _agentic_round_tools(
             return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         if recovery_action == "lexical_recovery":
             return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
-        return _filter_shadow_tool_names(["p_bm25", "p_vec"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+        return _filter_shadow_tool_names(["p_bm25", "p_fts", "p_vec"], shadow_retrieval_enabled=shadow_retrieval_enabled)
     if plan.query_class == "usage_configuration":
         if round_index <= 1:
-            return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+            return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         if recovery_action == "configuration_recovery":
             return _filter_shadow_tool_names(
-                ["p_vec", "s_vec", "p_bm25", "s_bm25"],
+                ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"],
                 shadow_retrieval_enabled=shadow_retrieval_enabled,
             )
     if plan.light_path:
         if round_index <= 1:
-            return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+            return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         if plan.query_class in {"how_to_faq", "usage_configuration"} and recovery_action == "lexical_recovery":
             return _filter_shadow_tool_names(["p_vec"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         if recovery_action == "lexical_recovery":
-            return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
-        return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+            return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+        return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
     if round_index <= 1:
         return _filter_shadow_tool_names(plan.first_pass_tools, shadow_retrieval_enabled=shadow_retrieval_enabled)
     if recovery_action == "lexical_recovery":
         return _filter_shadow_tool_names(
-            ["p_bm25", "p_vec", "s_bm25"],
+            ["p_bm25", "p_fts", "p_vec", "s_bm25"],
             shadow_retrieval_enabled=shadow_retrieval_enabled,
         )
     if recovery_action == "semantic_recovery":
         return _filter_shadow_tool_names(
-            ["p_vec", "s_vec", "p_bm25", "s_bm25"],
+            ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"],
             shadow_retrieval_enabled=shadow_retrieval_enabled,
         )
     if recovery_action == "compare_recovery":
         return _filter_shadow_tool_names(
-            ["p_vec", "p_bm25", "s_vec"],
+            ["p_vec", "p_bm25", "s_vec", "p_fts"],
             shadow_retrieval_enabled=shadow_retrieval_enabled,
         )
     return _filter_shadow_tool_names(plan.first_pass_tools, shadow_retrieval_enabled=shadow_retrieval_enabled)
@@ -3519,7 +3522,7 @@ def _inject_generic_join_candidates(
             continue
         seen.add(dedupe_key)
         focused_candidates.append(_copy_chunk(chunk))
-    for tool_name in ["p_bm25", "p_keyword"]:
+    for tool_name in ["p_bm25", "p_fts", "p_keyword"]:
         for chunk in tool_results.get(tool_name, []) or []:
             kinds = _chunk_query_variant_kinds(chunk)
             if not any(kind in accepted_variant_kinds for kind in kinds):
@@ -4258,7 +4261,7 @@ def _execute_agentic_round(
                 troubleshooting_original_support_weak = True
         else:
             troubleshooting_original_support_weak = True
-    elif plan.light_path and round_index == 1 and len(query_variants) == 1 and set(tool_names) == {"p_bm25"}:
+    elif plan.light_path and round_index == 1 and len(query_variants) == 1 and set(tool_names) == {"p_bm25", "p_fts"}:
         query_kind, query_text = query_variants[0]
         executor = ThreadPoolExecutor(max_workers=2)
         tool_future_timed_out = False
