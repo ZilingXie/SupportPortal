@@ -1368,6 +1368,18 @@ class RagScorecardRepositoryTests(unittest.TestCase):
                 [{"test_case_id": "agora-mixed-001"}],
                 [{"test_case_id": "agora-mixed-002"}],
             ),
+        ), patch.object(
+            repository,
+            "_retrieval_page",
+            return_value={
+                "cards": {
+                    "avg_vector_retrieval_latency_ms": 11.0,
+                    "avg_bm25_retrieval_latency_ms": 22.0,
+                    "avg_fts_latency_ms": 10.0,
+                    "avg_keyword_fallback_latency_ms": 3.0,
+                    "avg_lexical_retrieval_latency_ms": 35.0,
+                }
+            },
         ):
             payload = repository._retrieval_workbench_page("7d", 7, {"limit": 20})
 
@@ -1380,6 +1392,8 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(incorrect_rows[0]["failure_stage"], "retrieval")
         self.assertEqual(correct_rows[0]["evidence_hit_at_5"], 1.0)
         self.assertEqual(payload["sections"]["summary"]["candidate_eval_run_id"], "run-mixed-candidate")
+        self.assertEqual(payload["sections"]["summary"]["cards"]["avg_fts_latency_ms"], 10.0)
+        self.assertEqual(payload["sections"]["summary"]["cards"]["avg_lexical_retrieval_latency_ms"], 35.0)
 
     def test_retrieval_page_bm25_average_prefers_split_latency_metadata(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
@@ -1388,7 +1402,7 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         def _query_rows(query, params=()):
             queries.append(str(query))
             if "COUNT(*) FILTER" in str(query):
-                return [(5, 450.0, 200.0, 22.0, 0.88, 0.85, 3)]
+                return [(5, 450.0, 200.0, 22.0, None, None, 22.0, 0.88, 0.85, 3)]
             return []
 
         with patch.object(repository, "_has_eval_data", return_value=False), patch.object(
@@ -1403,6 +1417,63 @@ class RagScorecardRepositoryTests(unittest.TestCase):
             any("query_understanding_meta->>'bm25_sql_latency_ms'" in query for query in queries),
             "retrieval summary must prefer split BM25 latency metadata when it exists",
         )
+
+    def test_retrieval_page_exposes_split_lexical_latency_averages(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        queries: list[str] = []
+
+        def _query_rows(query, params=()):
+            query_text = str(query)
+            queries.append(query_text)
+            if "COUNT(*) FILTER" in query_text:
+                return [(5, 450.0, 200.0, 22.0, 10.0, 3.0, 35.0, 0.88, 0.85, 3)]
+            return []
+
+        with patch.object(repository, "_has_eval_data", return_value=False), patch.object(
+            repository,
+            "_query_rows",
+            side_effect=_query_rows,
+        ):
+            payload = repository._retrieval_page("7d", 7, {"limit": 20})
+
+        self.assertEqual(payload["cards"]["avg_bm25_retrieval_latency_ms"], 22.0)
+        self.assertEqual(payload["cards"]["avg_fts_latency_ms"], 10.0)
+        self.assertEqual(payload["cards"]["avg_keyword_fallback_latency_ms"], 3.0)
+        self.assertEqual(payload["cards"]["avg_lexical_retrieval_latency_ms"], 35.0)
+        summary_query = next(query for query in queries if "COUNT(*) FILTER" in query)
+        self.assertIn("query_understanding_meta->>'fts_latency_ms'", summary_query)
+        self.assertIn("query_understanding_meta->>'keyword_fallback_latency_ms'", summary_query)
+        self.assertIn("query_understanding_meta->>'lexical_retrieval_latency_ms'", summary_query)
+
+    def test_performance_cost_waterfall_exposes_split_lexical_latency_columns(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        queries: list[str] = []
+
+        def _query_rows(query, params=()):
+            query_text = str(query)
+            queries.append(query_text)
+            if "percentile_cont" in query_text:
+                return [(1, 100.0, 120.0, 140.0, 40.0, 50.0, 20.0, 30.0, 0.0, 0.0, 10.0, 5.0, 2.0, 0.01, 0.01)]
+            if "SELECT COALESCE(model_name" in query_text:
+                return []
+            if "SELECT COALESCE(primary_source_type" in query_text:
+                return []
+            if "intent_latency_ms" in query_text and "ORDER BY created_at DESC" in query_text:
+                return [("req-1", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 15.0, 7.0, 8.0, 30.0)]
+            return []
+
+        with patch.object(repository, "_query_rows", side_effect=_query_rows):
+            payload = repository._performance_cost_page("7d", 7, {"limit": 20})
+
+        row = payload["tables"]["latency_waterfall"][0]
+        self.assertEqual(row["bm25_retrieval_latency_ms"], 4.0)
+        self.assertEqual(row["fts_latency_ms"], 5.0)
+        self.assertEqual(row["keyword_fallback_latency_ms"], 6.0)
+        self.assertEqual(row["lexical_retrieval_latency_ms"], 15.0)
+        waterfall_query = next(query for query in queries if "intent_latency_ms" in query and "ORDER BY created_at DESC" in query)
+        self.assertIn("query_understanding_meta->>'fts_latency_ms'", waterfall_query)
+        self.assertIn("query_understanding_meta->>'keyword_fallback_latency_ms'", waterfall_query)
+        self.assertIn("query_understanding_meta->>'lexical_retrieval_latency_ms'", waterfall_query)
 
     def test_generation_page_groups_generation_eligible_cases_and_includes_business_failures(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")

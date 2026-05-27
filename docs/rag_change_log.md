@@ -10,6 +10,31 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-27 - Align RAG retrieval docs and Dashboard lexical telemetry
+
+- Summary:
+  - Updated `docs/rag_retrieval_chain.md` so the canonical online chain describes the default agentic multi-tool path, supplemental FTS retrieval, optional shadow tools, and primary-support guard.
+  - Added split lexical latency averages to the RAG Dashboard retrieval summary: true BM25, FTS, keyword fallback, and combined lexical latency.
+  - Added split lexical columns to the performance latency waterfall so incident analysis can attribute BM25, FTS, keyword fallback, and combined lexical time separately.
+  - Added Dashboard help copy for the new lexical latency cards.
+- Reason:
+  - The docs still described the online path as primary-only vector + BM25 RRF, while the default agentic chain can execute FTS and optional shadow tools.
+  - The Dashboard exposed true BM25 averages after the earlier telemetry split, but did not surface FTS, keyword fallback, or combined lexical aggregates in the same view.
+- Affected files/config:
+  - `docs/rag_retrieval_chain.md`
+  - `backend/repositories/knowledge_repository.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_docs_contract.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Existing rows without split lexical metadata continue to fall back to legacy BM25/lexical behavior where applicable; FTS and keyword fallback averages are null unless split metadata exists.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_retrieval_page_exposes_split_lexical_latency_averages backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_performance_cost_waterfall_exposes_split_lexical_latency_columns backend/tests/test_dashboard_ui_contract.py::DashboardUiContractTests::test_rag_dashboard_explains_split_lexical_latency_cards backend/tests/test_rag_docs_contract.py::RagDocsContractTests::test_retrieval_chain_documents_agentic_fts_and_shadow_contract -q` failed before implementation (`4 failed`).
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_retrieval_page_groups_retrieval_eligible_cases_by_failure_stage backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_retrieval_page_bm25_average_prefers_split_latency_metadata backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_retrieval_page_exposes_split_lexical_latency_averages backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_performance_cost_waterfall_exposes_split_lexical_latency_columns backend/tests/test_dashboard_ui_contract.py::DashboardUiContractTests::test_rag_dashboard_explains_split_lexical_latency_cards backend/tests/test_dashboard_ui_contract.py::DashboardUiContractTests::test_rag_summary_metric_explanations_cover_all_summary_card_keys backend/tests/test_rag_docs_contract.py::RagDocsContractTests::test_retrieval_chain_documents_agentic_fts_and_shadow_contract -q` (`7 passed`).
+
 ## 2026-05-27 - Refresh stale knowledge indexes on config changes
 
 - Summary:

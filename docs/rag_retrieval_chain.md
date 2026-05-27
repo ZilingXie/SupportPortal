@@ -18,9 +18,7 @@ It does not redefine source-specific chunking rules. Chunk structure and metadat
 
 Current online retrieval chain:
 
-`query -> vector recall + BM25 recall -> RRF fusion -> metadata prune/boost -> SiliconFlow rerank -> topK context -> generation`
-
-Only `index_role='primary'` chunks participate in online retrieval.
+`query -> query understanding -> agentic tool plan -> vector/BM25/FTS tool recall -> RRF-style tool fusion -> metadata prune/boost -> rerank/context packing -> generation`
 
 When `RAG_AGENT_ENABLED=true`, `agentic_multi_tool_v1` uses agentic multi-tool
 retrieval where BM25 is the primary lexical route and PostgreSQL FTS is a
@@ -29,13 +27,22 @@ configured vector, BM25, and FTS tools. Benchmark, dashboard, and incident
 analysis MUST attribute FTS retrieval separately from BM25 and vector
 retrieval; FTS must not be conflated with BM25 in telemetry conventions.
 
+Primary tools (`p_vec`, `p_bm25`, `p_fts`) read `index_role='primary'` chunks.
+When `RAG_SHADOW_RETRIEVAL_ENABLED=true`, selected query classes can also run
+shadow comparison tools (`s_vec`, `s_bm25`, `s_fts`). Shadow chunks are capped
+during tool fusion, and the judge requires primary support before answering.
+
 ## Stage Graph
 
 ```text
 user query
-  -> vector coarse recall (pgvector)
-  -> BM25 coarse recall (PostgreSQL BM25 tables)
-  -> RRF fusion
+  -> query understanding / query-class routing
+  -> agentic first-pass tool plan
+  -> primary vector recall (p_vec / pgvector)
+  -> primary BM25 recall (p_bm25 / PostgreSQL BM25 tables)
+  -> primary FTS recall (p_fts / PostgreSQL FTS, supplemental lexical)
+  -> optional shadow comparison recall (s_vec / s_bm25 / s_fts)
+  -> RRF-style tool fusion with shadow cap
   -> metadata-aware prune / pre-rank
   -> external rerank (SiliconFlow BAAI/bge-reranker-v2-m3)
   -> final topK chunks
@@ -186,7 +193,10 @@ External rerank config:
 ## Degradation Behavior
 
 Normal path:
-- vector recall + true BM25 recall + RRF + metadata prune + external rerank
+- agentic query-class plan + primary BM25/vector/FTS tool recall + RRF-style
+  tool fusion + metadata prune + rerank/context packing
+- legacy/non-agentic mode remains vector + true BM25 + RRF + metadata prune +
+  external rerank, without FTS in the main fusion path
 
 Fallback behavior:
 - PostgreSQL FTS is used as a supplemental lexical retrieval route in the
@@ -256,9 +266,9 @@ Old chain:
 - metadata-aware rerank/filter
 
 Current chain:
-- vector recall
-- true BM25 recall backed by PostgreSQL BM25 tables
-- RRF
+- agentic multi-tool recall over primary vector, BM25, and supplemental FTS
+- optional shadow vector/BM25/FTS comparison tools when shadow retrieval is enabled
+- RRF-style tool fusion with a shadow cap and primary-support guard
 - metadata-aware prune / pre-rank
 - external rerank by `BAAI/bge-reranker-v2-m3`
 
@@ -283,7 +293,8 @@ Technical-case style:
 - `AWS IVS 第一帧晚到怎么排查`
 
 Expected behavior:
-- vector and BM25 both over-recall candidates
-- RRF merges them into one pool
+- vector, BM25, and supplemental FTS tools over-recall candidates according to
+  the agentic query class
+- RRF-style tool fusion merges them into one pool while capping shadow evidence
 - metadata narrows obvious mismatch
 - external rerank pushes the best grounded chunk to the top
