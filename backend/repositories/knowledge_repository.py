@@ -9296,7 +9296,7 @@ class PostgresKnowledgeRepository:
                     COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'),
                     AVG(retrieval_latency_ms),
                     AVG(vector_retrieval_latency_ms),
-                    AVG(bm25_retrieval_latency_ms),
+                    AVG(COALESCE((query_understanding_meta->>'bm25_sql_latency_ms')::DOUBLE PRECISION, bm25_retrieval_latency_ms)),
                     AVG(top1_similarity_score),
                     AVG(avg_selected_similarity_score),
                     AVG(selected_doc_count)
@@ -9821,7 +9821,7 @@ class PostgresKnowledgeRepository:
                     intent_latency_ms,
                     rewrite_latency_ms,
                     vector_retrieval_latency_ms,
-                    bm25_retrieval_latency_ms,
+                    COALESCE((query_understanding_meta->>'bm25_sql_latency_ms')::DOUBLE PRECISION, bm25_retrieval_latency_ms),
                     rerank_latency_ms,
                     generation_latency_ms,
                     total_latency_ms
@@ -11220,6 +11220,17 @@ class PostgresKnowledgeRepository:
             else None,
             "bm25_sql_latency_ms": _coalesce_metric(query_understanding_meta.get("bm25_sql_latency_ms")),
             "fts_latency_ms": _coalesce_metric(query_understanding_meta.get("fts_latency_ms")),
+            "keyword_fallback_latency_ms": _coalesce_metric(
+                query_understanding_meta.get("keyword_fallback_latency_ms")
+            ),
+            "lexical_retrieval_latency_ms": _coalesce_metric(
+                query_understanding_meta.get("lexical_retrieval_latency_ms")
+            ),
+            "fts_candidates_count": int(query_understanding_meta.get("fts_candidates_count") or 0),
+            "keyword_fallback_candidates_count": int(
+                query_understanding_meta.get("keyword_fallback_candidates_count") or 0
+            ),
+            "lexical_candidates_count": int(query_understanding_meta.get("lexical_candidates_count") or 0),
             "retrieval_round_wall_clock_ms": _coalesce_metric(
                 query_understanding_meta.get("retrieval_round_wall_clock_ms")
             ),

@@ -1381,6 +1381,29 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(correct_rows[0]["evidence_hit_at_5"], 1.0)
         self.assertEqual(payload["sections"]["summary"]["candidate_eval_run_id"], "run-mixed-candidate")
 
+    def test_retrieval_page_bm25_average_prefers_split_latency_metadata(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        queries: list[str] = []
+
+        def _query_rows(query, params=()):
+            queries.append(str(query))
+            if "COUNT(*) FILTER" in str(query):
+                return [(5, 450.0, 200.0, 22.0, 0.88, 0.85, 3)]
+            return []
+
+        with patch.object(repository, "_has_eval_data", return_value=False), patch.object(
+            repository,
+            "_query_rows",
+            side_effect=_query_rows,
+        ):
+            payload = repository._retrieval_page("7d", 7, {"limit": 20})
+
+        self.assertEqual(payload["cards"]["avg_bm25_retrieval_latency_ms"], 22.0)
+        self.assertTrue(
+            any("query_understanding_meta->>'bm25_sql_latency_ms'" in query for query in queries),
+            "retrieval summary must prefer split BM25 latency metadata when it exists",
+        )
+
     def test_generation_page_groups_generation_eligible_cases_and_includes_business_failures(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         candidate_cases = {
