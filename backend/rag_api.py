@@ -93,7 +93,7 @@ def _record_rag_cancel_stage(state: dict[str, Any], stage: str) -> None:
 
 def _cancel_inflight_rag_request(request_id: str) -> dict[str, Any]:
     normalized_request_id = str(request_id or "").strip()
-    return {"request_id": normalized_request_id, "cancelled": False, "found": False, "stage": None}
+    return {"request_id": normalized_request_id, "cancelled": False, "found": False, "stage": None, "reason": "cancel_backend_not_configured"}
 
 
 def _ensure_rag_query_telemetry_runtime() -> tuple[ThreadPoolExecutor, threading.Semaphore]:

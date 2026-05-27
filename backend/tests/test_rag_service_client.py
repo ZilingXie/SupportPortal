@@ -764,38 +764,6 @@ class RagServiceClientTests(unittest.TestCase):
 
         self.assertEqual(captured["timeout"], 180.0)
 
-    def test_cancel_request_posts_internal_cancel_endpoint(self) -> None:
-        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
-        captured: dict[str, object] = {}
-
-        class _FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self):
-                return b'{"request_id":"rag-cancel-1","cancelled":true,"stage":"round_1_retrieval"}'
-
-        def _fake_urlopen(request, timeout):
-            captured["url"] = request.full_url
-            captured["method"] = request.get_method()
-            captured["headers"] = dict(request.headers)
-            captured["timeout"] = timeout
-            return _FakeResponse()
-
-        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
-            payload = client.cancel_request("rag-cancel-1")
-
-        self.assertEqual(payload["cancelled"], True)
-        self.assertEqual(captured["method"], "POST")
-        self.assertEqual(
-            captured["url"],
-            "http://rag-api.internal/internal/rag/requests/rag-cancel-1/cancel",
-        )
-        self.assertEqual(captured["timeout"], 180.0)
-
     def test_get_ingestion_report_uses_report_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}
@@ -1324,6 +1292,10 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(captured["authorization"], "Bearer token")
         self.assertIsNone(captured["body"])
         self.assertEqual(payload["synced_count"], 3)
+
+    def test_cancel_request_is_not_exposed_without_cancel_backend(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        self.assertFalse(hasattr(client, "cancel_request"))
 
     def test_export_dataset_snapshot_uses_internal_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")

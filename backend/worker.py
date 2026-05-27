@@ -370,26 +370,15 @@ def _execute_agent_runtime_ticket_query(
         route_executor=resolve_support_message,
         rag_executor=_worker_rag_with_cancel_guard,
         review_agent=_run_client_ticket_review_agent,
-        rag_canceler=lambda request_id: rag_service_client.cancel_request(request_id),
         route_timeout_seconds=OPTIMISTIC_ROUTE_TIMEOUT_SECONDS,
     )
     runtime_state = runtime_execution.runtime_state
     rag_service_state = runtime_state.rag_service if isinstance(runtime_state.rag_service, dict) else {}
     route_agent_state = runtime_state.route_agent if isinstance(runtime_state.route_agent, dict) else {}
-    cancel_event = next(
-        (
-            item
-            for item in runtime_execution.agent_events
-            if str(item.get("agent_name") or "").strip() == "rag_service"
-            and str(item.get("event_type") or "").strip() == "cancel_requested"
-        ),
-        None,
-    )
-    cancel_payload = cancel_event.get("payload") if isinstance(cancel_event, dict) and isinstance(cancel_event.get("payload"), dict) else {}
     route_status = str(route_agent_state.get("status") or "").strip().lower()
     rag_status = str(rag_service_state.get("status") or "").strip().lower()
     rag_cancelled = rag_status == "cancelled"
-    rag_cancel_stage = str(cancel_payload.get("stage") or (rag_service_state.get("reason") if rag_cancelled else "") or "").strip()
+    rag_cancel_stage = str(rag_service_state.get("reason") if rag_cancelled else "").strip()
     diagnostics: dict[str, Any] = {
         "parallel_mode": "main_agent",
         "api_persist_latency_ms": None,

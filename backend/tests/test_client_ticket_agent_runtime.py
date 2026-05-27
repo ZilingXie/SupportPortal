@@ -204,7 +204,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
-            rag_canceler=None,
         )
 
         self.assertTrue(route_called)
@@ -284,7 +283,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: self.fail("low risk answer should not wait for review"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "answer_customer")
@@ -339,7 +337,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "reason": "review_passed",
                 "confidence": 0.92,
             },
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -395,7 +392,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                         "reason": "review_passed",
                         "confidence": 0.92,
                     },
-                    rag_canceler=None,
                 )
 
                 self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -436,7 +432,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("review unavailable")),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -477,7 +472,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: {"reason": "missing_decision"},
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -540,7 +534,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
-            rag_canceler=None,
         )
 
         self.assertTrue(route_called)
@@ -576,7 +569,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail("route executor should not run when the route agent fails"),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation fallback"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation fallback"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "resolve_ticket")
@@ -652,7 +644,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=None,
-            rag_canceler=None,
         )
 
         self.assertTrue(route_called)
@@ -719,7 +710,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ready_for_engineer_ticket=False,
                 customer_reply="What are you trying to achieve? What error or blocker are you seeing?",
             ),
-            rag_canceler=None,
         )
 
         self.assertTrue(route_called)
@@ -733,7 +723,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             execute_client_ticket_agent_runtime,
         )
 
-        cancelled: list[str] = []
         rag_calls: list[bool] = []
 
         def _rag_agent(**_kwargs):
@@ -777,7 +766,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             rag_executor=_rag_agent,
             review_agent=lambda **_kwargs: self.fail("review agent should not run for non-rag route"),
-            rag_canceler=lambda request_id: cancelled.append(request_id) or {"cancelled": True, "stage": "route_flip"},
         )
 
         self.assertEqual(execution.result.execution_action, "web_search")
@@ -788,7 +776,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_service.get("reason"), "non_rag_route")
         self.assertTrue(str(execution.runtime_state.rag_service.get("request_id") or "").startswith("rag-"))
         self.assertFalse(rag_calls)
-        self.assertFalse(cancelled, "rag cancel should not be requested when RAG never started")
         self.assertFalse(
             any(
                 event.get("agent_name") == AGENT_NAME_RAG and event.get("event_type") == "cancel_requested"
@@ -863,7 +850,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
             rag_executor=_rag_agent,
             review_agent=lambda **_kwargs: self.fail("grounded rag answer should not run review"),
-            rag_canceler=lambda _request_id: self.fail("rag canceler should not run for rag route"),
         )
 
         self.assertEqual(execution.result.execution_action, "rag")
@@ -875,7 +861,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
     def test_product_portfolio_route_uses_real_web_search_resolution_builder(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
-        cancelled: list[str] = []
         payload = {
             "output_text": (
                 "For broadcasting, the best starting point is to separate one-to-many delivery from "
@@ -980,7 +965,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     packed_evidence=None,
                 ),
                 review_agent=lambda **_kwargs: self.fail("review agent should not run for product portfolio route"),
-                rag_canceler=lambda request_id: cancelled.append(request_id) or {"cancelled": True, "stage": "route_flip"},
             )
 
         self.assertEqual(execution.result.answer_route, "web_search")
@@ -996,7 +980,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.rag_service.get("reason"), "non_rag_route")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
-        self.assertFalse(cancelled)
         self.assertTrue(
             all("agora.io" in citation["source_url"] for citation in execution.result.citations),
         )
@@ -1041,7 +1024,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ready_for_engineer_ticket=False,
                 customer_reply="I understand you are seeing a black screen issue. Please share the channel name, problematic uid, and issue timestamp.",
             ),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -1097,7 +1079,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 current_state=kwargs.get("current_state"),
                 rag_result=kwargs.get("rag_result"),
             ),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -1167,7 +1148,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for grounded api semantics answers"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "answer_customer")
@@ -1227,7 +1207,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for low-risk how_to_faq answers"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "answer_customer")
@@ -1402,8 +1381,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
                     rag_executor=_rag_agent,
                     review_agent=lambda **_kwargs: self.fail("review agent should not run for grounded inherited example answers"),
-                    rag_canceler=None,
-                )
+            )
 
         self.assertEqual(execution.result.workflow_action, "answer_customer")
         self.assertFalse(execution.result.needs_investigating)
@@ -1466,7 +1444,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for low-risk onboarding how_to answers"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "answer_customer")
@@ -1524,7 +1501,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "reason": "review_passed",
                 "confidence": 0.92,
             },
-            rag_canceler=None,
         )
 
         self.assertNotEqual(execution.result.workflow_action, "answer_customer")
@@ -1582,7 +1558,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     "What error or blocker are you seeing?"
                 ),
             ),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -1641,7 +1616,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     "channel name, uid, and options."
                 ),
             ),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -1692,7 +1666,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: {"decision": "open_engineer_ticket", "reason": "review_insufficient", "confidence": 0.62},
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -1779,7 +1752,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     packed_evidence=None,
                 ),
                 review_agent=_review_agent,
-                rag_canceler=None,
             )
 
         self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
@@ -1910,7 +1882,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     packed_evidence=None,
                 ),
                 review_agent=_review_agent,
-                rag_canceler=None,
             )
 
         self.assertEqual(review_modes, ["grounded_postcheck"])
@@ -1992,7 +1963,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run once investigation intake is complete"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run once investigation intake is complete"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -2050,7 +2020,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail("route executor should not run during deterministic second clarify"),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run during deterministic second clarify"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -2111,7 +2080,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail("route executor should not run during deterministic second clarify"),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run during deterministic second clarify"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -2154,7 +2122,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail("route executor should not run while the legacy second clarify is inferred"),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run while the legacy second clarify is inferred"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run while the legacy second clarify is inferred"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -2231,7 +2198,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 customer_reply="Known so far: channel name is zilingtest; problematic uid is 2. Please share the issue time and timezone.",
                 issue_timestamp_parts={},
             ),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -2289,7 +2255,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             route_executor=lambda **_kwargs: self.fail("route executor should not run once two investigation clarify rounds are exhausted"),
             rag_executor=lambda **_kwargs: self.fail("rag agent should not run once two investigation clarify rounds are exhausted"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run once two investigation clarify rounds are exhausted"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -2363,7 +2328,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             review_agent=lambda **_kwargs: self.fail(
                 "review agent should not run once two investigation clarify rounds are exhausted"
             ),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -2495,7 +2459,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for rag_unavailable"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -2581,7 +2544,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     packed_evidence=None,
                 ),
                 review_agent=_review_agent,
-                rag_canceler=None,
             )
 
         self.assertEqual(review_modes, ["rag_insufficient_evidence"])
@@ -2685,7 +2647,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     current_state=kwargs.get("current_state"),
                     rag_result=kwargs.get("rag_result"),
                 ),
-                rag_canceler=None,
             )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -2729,7 +2690,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for rag_processing_timeout"),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
@@ -2796,7 +2756,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=_review_agent,
-            rag_canceler=None,
         )
 
         self.assertEqual(review_modes, ["rag_insufficient_evidence"])
@@ -2859,7 +2818,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ready_for_engineer_ticket=False,
                 customer_reply="Which platform or SDK are you using?",
             ),
-            rag_canceler=None,
         )
 
         self.assertNotIn("platform", execution.result.answer.lower())
@@ -2908,7 +2866,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     "could you also share the channel name, problematic uid, and issue timestamp?"
                 ),
             ),
-            rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -2973,7 +2930,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=review_agent,
-            rag_canceler=None,
         )
 
         self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
@@ -3023,7 +2979,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     "reason": "postcheck_passed",
                     "confidence": 0.88,
                 },
-                rag_canceler=None,
             )
 
         self.assertEqual(execution.result.answer_route, "rag")
@@ -3075,7 +3030,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 packed_evidence=None,
             ),
             review_agent=lambda **_kwargs: self.fail("review should not run for low risk"),
-            rag_canceler=None,
         )
 
         route_payload = execution.result.route_payload()
@@ -3089,15 +3043,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("rag_agent", runtime_state_payload)
         self.assertEqual(runtime_state_payload["rag_service"], runtime_state_payload["rag_agent"])
 
-    def test_rag_canceler_contract_preserves_cancelled_by_route_flip_stage(self) -> None:
+    def test_rag_canceler_contract_removed_runtime_no_longer_exposes_rag_canceler(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
-
-        cancelled_requests: list[dict[str, object]] = []
-
-        def _rag_canceler(request_id: str) -> dict[str, object]:
-            result = {"cancelled": True, "stage": "route_flip", "request_id": request_id}
-            cancelled_requests.append(result)
-            return result
 
         execution = execute_client_ticket_agent_runtime(
             message="Who is Agora's CEO?",
@@ -3136,11 +3083,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ),
             rag_executor=lambda **_kwargs: self.fail("rag executor should not run for non-rag route"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for non-rag route"),
-            rag_canceler=_rag_canceler,
         )
 
         self.assertEqual(execution.result.execution_action, "web_search")
-        self.assertIn("rag_canceler", inspect.signature(execute_client_ticket_agent_runtime).parameters)
+        self.assertNotIn("rag_canceler", inspect.signature(execute_client_ticket_agent_runtime).parameters)
 
     def test_runtime_signature_has_rag_executor_and_no_rag_agent(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -3148,6 +3094,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         sig = inspect.signature(execute_client_ticket_agent_runtime)
         self.assertIn("rag_executor", sig.parameters)
         self.assertNotIn("rag_agent", sig.parameters)
+        self.assertNotIn("rag_canceler", sig.parameters)
 
 
 if __name__ == "__main__":

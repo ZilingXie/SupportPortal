@@ -617,7 +617,6 @@ def _execute_case(
         route_executor=_route_executor,
         rag_executor=lambda **kwargs: _rag_detail_from_query_result(_run_rag(kwargs["message"])),
         review_agent=_benchmark_review_agent,
-        rag_canceler=None,
     )
     resolution = _resolution_from_ticket_execution_result(execution.result)
     actual_decision = _decision_from_resolution(case=case, resolution=resolution)

@@ -1712,7 +1712,6 @@ def execute_client_ticket_agent_runtime(
     route_executor: Callable[..., SupportResolution],
     rag_executor: Callable[..., RagTicketAnswerDetail],
     review_agent: Callable[..., Any] | None = None,
-    rag_canceler: Callable[[str], dict[str, Any] | None] | None = None,
     route_timeout_seconds: float = 8.0,
 ) -> ClientTicketAgentRuntimeExecution:
     run_id = f"run-{uuid4().hex[:12]}"

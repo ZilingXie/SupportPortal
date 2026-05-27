@@ -15,6 +15,8 @@ if importlib.util.find_spec("psycopg") is None:
 
 import psycopg
 
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
+
 if importlib.util.find_spec("redis") is None:
     redis_module = types.ModuleType("redis")
     redis_asyncio_module = types.ModuleType("redis.asyncio")
@@ -140,7 +142,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "created_at": "2026-03-22T00:00:01+00:00",
         }
 
-    def test_fetch_rag_answer_detail_for_worker_uses_extended_timeout_and_recovery_window(self) -> None:
+    def test_worker_rag_executor_uses_extended_timeout_and_recovery_window(self) -> None:
         detail = worker.RagTicketAnswerDetail(
             answer="Use joinChannel with a token.",
             confidence=0.92,
@@ -165,9 +167,9 @@ class WorkerResilienceTests(unittest.TestCase):
             "query_answer_with_recovery_detail",
             return_value=detail,
         ) as rag_mock:
-            result = worker._fetch_rag_answer_detail_for_worker(
+            result = worker._worker_rag_with_cancel_guard(
                 request_id="rag-worker-timeout-1",
-                customer_message="how to join channel",
+                message="how to join channel",
                 ticket_id="T-WORKER-1",
                 customer_id="C-123",
                 ticket_context=[{"role": "customer", "content": "how to join channel"}],
@@ -183,14 +185,14 @@ class WorkerResilienceTests(unittest.TestCase):
             requester=None,
             ticket_context=[{"role": "customer", "content": "how to join channel"}],
             product="audio_video_calling",
-            insufficient_reply=worker.INSUFFICIENT_EVIDENCE_REPLY,
+            insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
             timeout_seconds=90.0,
             recovery_window_seconds=210.0,
             recovery_poll_interval_seconds=2.0,
             query_policy="client_accuracy_first",
         )
 
-    def test_fetch_rag_answer_detail_for_worker_timeout_with_healthy_service_returns_processing_timeout(self) -> None:
+    def test_worker_rag_executor_timeout_with_healthy_service_returns_processing_timeout(self) -> None:
         with patch.object(
             worker.rag_service_client,
             "query_answer_with_recovery_detail",
@@ -203,9 +205,9 @@ class WorkerResilienceTests(unittest.TestCase):
             "health",
             return_value={"status": "ok", "service": "rag-api"},
         ) as health_mock:
-            result = worker._fetch_rag_answer_detail_for_worker(
+            result = worker._worker_rag_with_cancel_guard(
                 request_id="rag-worker-timeout-2",
-                customer_message="how to join channel",
+                message="how to join channel",
                 ticket_id="T-WORKER-2",
                 customer_id="C-123",
                 ticket_context=[{"role": "customer", "content": "how to join channel"}],
@@ -220,7 +222,7 @@ class WorkerResilienceTests(unittest.TestCase):
         rag_mock.assert_called_once()
         health_mock.assert_called_once()
 
-    def test_fetch_rag_answer_detail_for_worker_preserves_recovered_insufficient_evidence_reason(self) -> None:
+    def test_worker_rag_executor_preserves_recovered_insufficient_evidence_reason(self) -> None:
         recovered = worker.RagTicketAnswerDetail(
             answer="RAG completed but could not verify a customer-safe grounded answer from the available schema evidence.",
             confidence=0.41,
@@ -239,9 +241,9 @@ class WorkerResilienceTests(unittest.TestCase):
             worker.rag_service_client,
             "health",
         ) as health_mock:
-            result = worker._fetch_rag_answer_detail_for_worker(
+            result = worker._worker_rag_with_cancel_guard(
                 request_id="rag-worker-insufficient-1",
-                customer_message="Can you check this request body {\"clientRequest\":{\"layoutConfig\":[]}}?",
+                message="Can you check this request body {\"clientRequest\":{\"layoutConfig\":[]}}?",
                 ticket_id="T-WORKER-INSUFFICIENT",
                 customer_id="C-123",
                 ticket_context=[{"role": "customer", "content": "request body question"}],
@@ -258,7 +260,7 @@ class WorkerResilienceTests(unittest.TestCase):
         rag_mock.assert_called_once()
         health_mock.assert_not_called()
 
-    def test_fetch_rag_answer_detail_for_worker_transport_failure_with_unhealthy_service_stays_unavailable(self) -> None:
+    def test_worker_rag_executor_transport_failure_with_unhealthy_service_stays_unavailable(self) -> None:
         with patch.object(
             worker.rag_service_client,
             "query_answer_with_recovery_detail",
@@ -270,9 +272,9 @@ class WorkerResilienceTests(unittest.TestCase):
             worker.rag_service_client,
             "health",
         ) as health_mock:
-            result = worker._fetch_rag_answer_detail_for_worker(
+            result = worker._worker_rag_with_cancel_guard(
                 request_id="rag-worker-timeout-3",
-                customer_message="how to join channel",
+                message="how to join channel",
                 ticket_id="T-WORKER-3",
                 customer_id="C-123",
                 ticket_context=[{"role": "customer", "content": "how to join channel"}],
@@ -330,13 +332,9 @@ class WorkerResilienceTests(unittest.TestCase):
             ),
         ), patch.object(
             worker,
-            "_fetch_rag_answer_detail_for_worker",
+            "_worker_rag_with_cancel_guard",
             side_effect=_slow_rag,
         ) as rag_mock, patch.object(
-            worker.rag_service_client,
-            "cancel_request",
-            return_value={"cancelled": True, "stage": "round_1_retrieval"},
-        ) as cancel_mock, patch.object(
             worker,
             "resolve_support_message",
             return_value=execution,
@@ -357,7 +355,6 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(diagnostics["route_result_source"], "route_first")
         self.assertEqual(result.workflow_action, "answer_customer")
         rag_mock.assert_not_called()
-        cancel_mock.assert_not_called()
         self.assertEqual(
             resolve_mock.call_args.kwargs["decision"].execution_action,
             "web_search",
@@ -400,7 +397,7 @@ class WorkerResilienceTests(unittest.TestCase):
             side_effect=RuntimeError("route timeout"),
         ), patch.object(
             worker,
-            "_fetch_rag_answer_detail_for_worker",
+            "_worker_rag_with_cancel_guard",
             return_value=rag_detail,
         ):
             result, diagnostics = worker._execute_parallel_ticket_query(
