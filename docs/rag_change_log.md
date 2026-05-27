@@ -10,6 +10,33 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-27 - Split BM25 telemetry from FTS and keyword fallback
+
+- Summary:
+  - Changed RAG trace metrics so `bm25_retrieval_latency_ms` records true BM25 SQL latency only, while `lexical_retrieval_latency_ms` records the combined BM25 + FTS + keyword-fallback bucket.
+  - Added explicit keyword-fallback latency and lexical/FTS/keyword candidate counters to query-understanding metadata exports.
+  - Updated RAG Dashboard repository aggregation to prefer split `query_understanding_meta.bm25_sql_latency_ms` over legacy polluted `bm25_retrieval_latency_ms` values when split metadata exists.
+- Reason:
+  - Agentic traces previously wrote BM25 + FTS + keyword fallback latency into `bm25_retrieval_latency_ms`, contradicting the retrieval-chain contract and polluting Dashboard BM25 performance cards.
+  - Keyword fallback candidates could also be counted as BM25 candidates when a BM25 tool degraded to keyword fallback.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - New rows store true BM25 latency in `bm25_retrieval_latency_ms` and expose combined lexical latency in metadata.
+  - Dashboard aggregates use split BM25 metadata for historical rows that already contain it; rows without split metadata keep falling back to the legacy column.
+- Verification:
+  - RED: `.venv/bin/python -m pytest backend/tests/test_rag_agentic.py::RagAgenticTests::test_agentic_trace_keeps_bm25_latency_separate_from_lexical_fallbacks backend/tests/test_rag_agentic.py::RagAgenticTests::test_execute_agentic_round_keyword_fallback_does_not_increment_bm25_candidates backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_retrieval_page_bm25_average_prefers_split_latency_metadata`
+  - GREEN: `.venv/bin/python -m pytest backend/tests/test_rag_agentic.py::RagAgenticTests::test_agentic_trace_keeps_bm25_latency_separate_from_lexical_fallbacks backend/tests/test_rag_agentic.py::RagAgenticTests::test_execute_agentic_round_keyword_fallback_does_not_increment_bm25_candidates backend/tests/test_rag_scorecard_repository.py::RagScorecardRepositoryTests::test_retrieval_page_bm25_average_prefers_split_latency_metadata`
+  - GREEN: `.venv/bin/python -m pytest backend/tests/test_rag_agentic.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_rag_api.py`
+  - GREEN: `.venv/bin/python -m py_compile backend/services/rag_qa.py backend/rag_api.py backend/repositories/knowledge_repository.py`
+
 ## 2026-05-27 - Restore FTS as supplemental agentic lexical retrieval
 
 - Summary:

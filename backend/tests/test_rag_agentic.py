@@ -3323,3 +3323,136 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 if isinstance(timing, dict)
             )
         )
+
+    def test_agentic_trace_keeps_bm25_latency_separate_from_lexical_fallbacks(self) -> None:
+        chunk = RetrievedChunk(
+            chunk_id="bm25-chunk",
+            text="Use joinChannel to join a channel.",
+            source_path="official/join.md",
+            similarity=0.92,
+            index_role="primary",
+        )
+        plan = AgenticRetrievalPlan(
+            query_class="how_to_faq",
+            first_pass_tools=["p_bm25"],
+            query_variants=[("original", "how to join channel")],
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            light_path=True,
+        )
+        round_result = AgenticRoundResult(
+            retrieved_chunks=[chunk],
+            reranked_chunks=[chunk],
+            final_chunks=[chunk],
+            rerank_info={"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+            judge=AgenticJudgeDecision(decision="answer_now", reason="supported", confidence=0.95),
+            iteration_trace=AgenticIterationTrace(
+                round_index=1,
+                tool_names=["p_bm25"],
+                query_variants=["original"],
+                selected_chunk_ids=["bm25-chunk"],
+                decision="answer_now",
+            ),
+            vector_candidate_count=0,
+            bm25_candidate_count=1,
+            vector_latency_ms=8.0,
+            bm25_latency_ms=12.0,
+            fts_latency_ms=34.0,
+            keyword_latency_ms=56.0,
+            retrieval_wall_clock_ms=150.0,
+            rerank_latency_ms=5.0,
+        )
+
+        with patch.object(rag_qa, "_get_rag_config", return_value=self._base_config()), patch.object(
+            rag_qa,
+            "_build_agentic_retrieval_plan",
+            return_value=plan,
+        ), patch.object(
+            rag_qa,
+            "_execute_agentic_round",
+            return_value=round_result,
+        ), patch.object(
+            rag_qa,
+            "_invoke_llm_payload_with_trace",
+            return_value=(
+                {
+                    "answer": "Use joinChannel to join a channel.",
+                    "key_steps": [],
+                    "citations": ["bm25-chunk"],
+                    "insufficient_evidence": False,
+                },
+                10,
+                5,
+                "gpt-4.1",
+            ),
+        ), patch.object(
+            rag_qa,
+            "get_embedding_provider",
+            return_value=self._FakeProvider(),
+        ):
+            result = _run_rag_query_agentic_single("how to join channel", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        trace = result.trace
+        self.assertEqual(trace.bm25_retrieval_latency_ms, 12.0)
+        self.assertEqual(trace.bm25_sql_latency_ms, 12.0)
+        self.assertEqual(trace.fts_latency_ms, 34.0)
+        self.assertEqual(getattr(trace, "keyword_fallback_latency_ms", None), 56.0)
+        self.assertEqual(getattr(trace, "lexical_retrieval_latency_ms", None), 102.0)
+        self.assertEqual(trace.retrieval_latency_ms, 110.0)
+
+    def test_execute_agentic_round_keyword_fallback_does_not_increment_bm25_candidates(self) -> None:
+        keyword_chunk = RetrievedChunk(
+            chunk_id="keyword-chunk",
+            text="Keyword fallback support",
+            source_path="official/fallback.md",
+            similarity=0.71,
+            index_role="primary",
+            retrieval_sources=["keyword_fallback"],
+        )
+        plan = AgenticRetrievalPlan(
+            query_class="how_to_faq",
+            first_pass_tools=["p_bm25"],
+            query_variants=[("original", "how to join channel")],
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            light_path=True,
+        )
+
+        with patch.object(rag_qa, "_retrieve_bm25_chunks", side_effect=RuntimeError("bm25 down")), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            return_value=[],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_keyword_chunks",
+            return_value=[keyword_chunk],
+        ), patch.object(
+            rag_qa,
+            "_metadata_rerank",
+            return_value=([keyword_chunk], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
+        ), patch.object(
+            rag_qa,
+            "_has_grounded_keyword_overlap",
+            return_value=True,
+        ):
+            config = self._base_config()
+            config["shadow_retrieval_enabled"] = False
+            result = _execute_agentic_round(
+                message="how to join channel",
+                config=config,
+                plan=plan,
+                round_index=1,
+                retrieval_plan=RetrievalPlan(semantic_query="how to join channel"),
+                query_understanding=None,
+                ticket_context=None,
+                recovery_action=None,
+            )
+
+        self.assertEqual(result.bm25_candidate_count, 0)
+        self.assertEqual(result.keyword_candidate_count, 1)
+        self.assertEqual(result.lexical_candidate_count, 1)
+        self.assertEqual(result.keyword_latency_ms, result.retrieval_tool_timings[0]["latency_ms"])

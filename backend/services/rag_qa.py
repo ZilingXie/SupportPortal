@@ -336,6 +336,11 @@ class RagQueryTrace:
     shadow_tools_skipped: list[str] = field(default_factory=list)
     bm25_sql_latency_ms: float = 0.0
     fts_latency_ms: float = 0.0
+    keyword_fallback_latency_ms: float = 0.0
+    lexical_retrieval_latency_ms: float = 0.0
+    fts_candidates_count: int = 0
+    keyword_fallback_candidates_count: int = 0
+    lexical_candidates_count: int = 0
     retrieval_round_wall_clock_ms: float = 0.0
     retrieval_tool_timings: list[dict[str, Any]] = field(default_factory=list)
     variant_candidate_counts: dict[str, dict[str, int]] = field(default_factory=dict)
@@ -477,6 +482,9 @@ class AgenticRoundResult:
     iteration_trace: AgenticIterationTrace
     vector_candidate_count: int = 0
     bm25_candidate_count: int = 0
+    fts_candidate_count: int = 0
+    keyword_candidate_count: int = 0
+    lexical_candidate_count: int = 0
     vector_latency_ms: float = 0.0
     bm25_latency_ms: float = 0.0
     fts_latency_ms: float = 0.0
@@ -723,6 +731,15 @@ def _copy_chunk(chunk: RetrievedChunk) -> RetrievedChunk:
 
 def _chunk_dedupe_key(chunk: RetrievedChunk) -> str:
     return chunk.chunk_id or f"{chunk.source_path}:{chunk.text[:120]}"
+
+
+def _unique_chunk_count(chunks: Iterable[RetrievedChunk]) -> int:
+    keys: set[str] = set()
+    for chunk in chunks:
+        dedupe_key = _chunk_dedupe_key(chunk)
+        if dedupe_key:
+            keys.add(dedupe_key)
+    return len(keys)
 
 
 def _merge_variant_chunks(
@@ -3868,6 +3885,8 @@ def _execute_agentic_round(
     tool_results: dict[str, list[RetrievedChunk]] = {}
     vector_candidate_ids: set[str] = set()
     bm25_candidate_ids: set[str] = set()
+    fts_candidate_ids: set[str] = set()
+    keyword_candidate_ids: set[str] = set()
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
     fts_latency_ms = 0.0
@@ -3920,6 +3939,7 @@ def _execute_agentic_round(
     ) -> None:
         nonlocal vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms
         current_tool_label, raw_chunks, vector_ms, bm25_ms, fts_ms, keyword_ms, used_seed_tool, used_cached_tool = result
+        actual_family = _tool_family(current_tool_label)
         vector_latency_ms += vector_ms
         bm25_latency_ms += bm25_ms
         fts_latency_ms += fts_ms
@@ -3928,18 +3948,18 @@ def _execute_agentic_round(
             used_seed_tools.append(tool_name)
         tool_latency_ms = (
             vector_ms
-            if family == "vector"
+            if actual_family == "vector"
             else bm25_ms
-            if family == "bm25"
+            if actual_family == "bm25"
             else fts_ms
-            if family == "fts"
+            if actual_family == "fts"
             else keyword_ms
         )
         zero_yield_reason = None
         if not raw_chunks:
             if used_seed_tool:
                 zero_yield_reason = "seeded_chunks_empty"
-            elif family in {"vector", "bm25", "keyword"} and downpush_hard_filters(
+            elif actual_family in {"vector", "bm25", "keyword"} and downpush_hard_filters(
                 retrieval_plan,
                 query_policy=str(config.get("query_policy") or ""),
             ):
@@ -3971,7 +3991,15 @@ def _execute_agentic_round(
             query_kind=query_kind,
         )
         tool_results[current_tool_label] = merged_tool_chunks
-        target_set = vector_candidate_ids if family == "vector" else bm25_candidate_ids
+        target_set = (
+            vector_candidate_ids
+            if actual_family == "vector"
+            else bm25_candidate_ids
+            if actual_family == "bm25"
+            else fts_candidate_ids
+            if actual_family == "fts"
+            else keyword_candidate_ids
+        )
         for chunk in merged_tool_chunks:
             dedupe_key = _chunk_dedupe_key(chunk)
             if dedupe_key:
@@ -4532,6 +4560,9 @@ def _execute_agentic_round(
         ),
         vector_candidate_count=len(vector_candidate_ids),
         bm25_candidate_count=len(bm25_candidate_ids),
+        fts_candidate_count=len(fts_candidate_ids),
+        keyword_candidate_count=len(keyword_candidate_ids),
+        lexical_candidate_count=len(bm25_candidate_ids | fts_candidate_ids | keyword_candidate_ids),
         vector_latency_ms=round(vector_latency_ms, 2),
         bm25_latency_ms=round(bm25_latency_ms, 2),
         fts_latency_ms=round(fts_latency_ms, 2),
@@ -8013,7 +8044,7 @@ def _run_rag_query_legacy(
                 retrieved_chunk_ids=[],
                 selected_chunk_ids=[],
                 vector_retrieval_latency_ms=vector_latency_ms,
-                bm25_retrieval_latency_ms=compatible_lexical_latency_ms,
+                bm25_retrieval_latency_ms=round(bm25_latency_ms, 2),
                 retrieval_latency_ms=round(vector_latency_ms + compatible_lexical_latency_ms, 2),
                 rerank_latency_ms=0.0,
                 generation_latency_ms=0.0,
@@ -8091,6 +8122,10 @@ def _run_rag_query_legacy(
                 agent_fallback_reason=None,
                 bm25_sql_latency_ms=round(bm25_latency_ms, 2),
                 fts_latency_ms=0.0,
+                keyword_fallback_latency_ms=round(keyword_fallback_latency_ms, 2),
+                lexical_retrieval_latency_ms=compatible_lexical_latency_ms,
+                keyword_fallback_candidates_count=_unique_chunk_count(keyword_fallback_chunks),
+                lexical_candidates_count=_unique_chunk_count([*bm25_chunks, *keyword_fallback_chunks]),
                 retrieval_round_wall_clock_ms=compatible_lexical_latency_ms,
                 retrieval_tool_timings=[],
                 effective_question=effective_question,
@@ -8276,7 +8311,7 @@ def _run_rag_query_legacy(
             retrieved_chunk_ids=[chunk.chunk_id for chunk in retrieved_chunks if chunk.chunk_id],
             selected_chunk_ids=selected_chunk_ids,
             vector_retrieval_latency_ms=vector_latency_ms,
-            bm25_retrieval_latency_ms=compatible_lexical_latency_ms,
+            bm25_retrieval_latency_ms=round(bm25_latency_ms, 2),
             retrieval_latency_ms=round(vector_latency_ms + compatible_lexical_latency_ms, 2),
             rerank_latency_ms=rerank_latency_ms,
             generation_latency_ms=generation_latency_ms,
@@ -8374,6 +8409,10 @@ def _run_rag_query_legacy(
             agent_fallback_reason=None,
             bm25_sql_latency_ms=round(bm25_latency_ms, 2),
             fts_latency_ms=0.0,
+            keyword_fallback_latency_ms=round(keyword_fallback_latency_ms, 2),
+            lexical_retrieval_latency_ms=compatible_lexical_latency_ms,
+            keyword_fallback_candidates_count=_unique_chunk_count(keyword_fallback_chunks),
+            lexical_candidates_count=_unique_chunk_count([*bm25_chunks, *keyword_fallback_chunks]),
             retrieval_round_wall_clock_ms=compatible_lexical_latency_ms,
             retrieval_tool_timings=[],
             variant_candidate_counts={},
@@ -8781,6 +8820,9 @@ def _run_rag_query_agentic_single(
     agent_iterations: list[dict[str, Any]] = []
     total_vector_candidates = 0
     total_bm25_candidates = 0
+    total_fts_candidates = 0
+    total_keyword_fallback_candidates = 0
+    total_lexical_candidates = 0
     query_understanding_executor: ThreadPoolExecutor | None = None
     query_understanding_future: Future[QueryUnderstandingResult] | None = None
     warm_original_vector_future: Future[tuple[list[RetrievedChunk], float]] | None = None
@@ -9066,6 +9108,9 @@ def _run_rag_query_agentic_single(
         rerank_latency_ms += round_result.rerank_latency_ms
         total_vector_candidates += round_result.vector_candidate_count
         total_bm25_candidates += round_result.bm25_candidate_count
+        total_fts_candidates += round_result.fts_candidate_count
+        total_keyword_fallback_candidates += round_result.keyword_candidate_count
+        total_lexical_candidates += round_result.lexical_candidate_count
         _merge_retrieved_chunk_map(retrieved_chunk_map, round_result.retrieved_chunks)
         reranked_chunks = list(round_result.reranked_chunks)
         final_chunks = list(round_result.final_chunks)
@@ -9180,7 +9225,7 @@ def _run_rag_query_agentic_single(
             retrieved_chunk_ids=[chunk.chunk_id for chunk in retrieved_chunks if chunk.chunk_id],
             selected_chunk_ids=selected_chunk_ids,
             vector_retrieval_latency_ms=round(vector_latency_ms, 2),
-            bm25_retrieval_latency_ms=compatible_lexical_latency_ms,
+            bm25_retrieval_latency_ms=round(bm25_latency_ms, 2),
             retrieval_latency_ms=round(vector_latency_ms + compatible_lexical_latency_ms, 2),
             rerank_latency_ms=round(rerank_latency_ms, 2),
             generation_latency_ms=round(generation_latency_ms, 2),
@@ -9315,6 +9360,11 @@ def _run_rag_query_agentic_single(
             shadow_tools_skipped=list(dict.fromkeys(shadow_tools_skipped)),
             bm25_sql_latency_ms=round(bm25_latency_ms, 2),
             fts_latency_ms=round(fts_latency_ms, 2),
+            keyword_fallback_latency_ms=round(keyword_fallback_latency_ms, 2),
+            lexical_retrieval_latency_ms=compatible_lexical_latency_ms,
+            fts_candidates_count=total_fts_candidates,
+            keyword_fallback_candidates_count=total_keyword_fallback_candidates,
+            lexical_candidates_count=total_lexical_candidates,
             retrieval_round_wall_clock_ms=round(retrieval_round_wall_clock_ms, 2),
             retrieval_tool_timings=list(retrieval_tool_timings),
             variant_candidate_counts=_variant_candidate_counts_from_timings(retrieval_tool_timings),
@@ -9912,6 +9962,14 @@ def _aggregate_fanout_results(
             sum(float(result.trace.bm25_retrieval_latency_ms or 0.0) for result in child_results),
             2,
         ),
+        keyword_fallback_latency_ms=round(
+            sum(float(getattr(result.trace, "keyword_fallback_latency_ms", 0.0) or 0.0) for result in child_results),
+            2,
+        ),
+        lexical_retrieval_latency_ms=round(
+            sum(float(getattr(result.trace, "lexical_retrieval_latency_ms", 0.0) or 0.0) for result in child_results),
+            2,
+        ),
         retrieval_latency_ms=round(
             sum(float(result.trace.retrieval_latency_ms or 0.0) for result in child_results),
             2,
@@ -9924,6 +9982,19 @@ def _aggregate_fanout_results(
             sum(float(result.trace.generation_latency_ms or 0.0) for result in child_results),
             2,
         ),
+        bm25_sql_latency_ms=round(
+            sum(float(result.trace.bm25_sql_latency_ms or 0.0) for result in child_results),
+            2,
+        ),
+        fts_latency_ms=round(
+            sum(float(getattr(result.trace, "fts_latency_ms", 0.0) or 0.0) for result in child_results),
+            2,
+        ),
+        fts_candidates_count=sum(int(getattr(result.trace, "fts_candidates_count", 0) or 0) for result in child_results),
+        keyword_fallback_candidates_count=sum(
+            int(getattr(result.trace, "keyword_fallback_candidates_count", 0) or 0) for result in child_results
+        ),
+        lexical_candidates_count=sum(int(getattr(result.trace, "lexical_candidates_count", 0) or 0) for result in child_results),
         total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
         prompt_tokens=sum(int(result.trace.prompt_tokens or 0) for result in child_results),
         completion_tokens=sum(int(result.trace.completion_tokens or 0) for result in child_results),
