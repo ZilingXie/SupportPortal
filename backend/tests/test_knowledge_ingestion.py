@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from backend.services.knowledge_ingestion import (
     _build_chunk_rows,
     _build_shadow_chunk_rows,
+    _desired_ingestion_manifest,
     _enrich_metadata_with_llm,
     parse_official_markdown_file,
     parse_official_markdown_content,
     parse_technical_article,
+    process_knowledge_ingestion,
 )
 from backend.services.llm_profiles import KNOWLEDGE_INGESTION_SCENARIO, ModelProfile, OPENAI_CHAT_API
 
@@ -629,6 +632,445 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertEqual(metadata["metadata_model"], "gpt-test-metadata")
         self.assertEqual(metadata["summary"], "LLM summary")
         invoke_chat_text.assert_called_once()
+
+
+class KnowledgeIngestionDedupeManifestTests(unittest.TestCase):
+    """Regression tests for index-manifest-aware deduplication."""
+
+    _FAKE_PROVIDER_NAME = "siliconflow"
+    _FAKE_MODEL_ID = "BAAI/bge-m3"
+    _FAKE_VECTOR_DIM = 1024
+    _STALE_MODEL_ID = "text-embedding-3-small"
+    _STALE_VECTOR_DIM = 1536
+
+    @staticmethod
+    def _fake_ingestion_row():
+        return {
+            "ingestion_id": "KI-TEST-DEDUPE-1",
+            "entry_type": "official_document",
+            "source_type": "official_markdown_upload",
+            "knowledge_type": "official",
+            "status": "queued",
+            "normalization_status": "pending",
+            "title": "Test Doc",
+            "source_url": "https://example.com/test-doc",
+            "source_updated_at": "2026-01-20T05:44:18Z",
+            "file_name": "test-doc.md",
+            "file_path": None,
+            "content": SAMPLE_OFFICIAL_MARKDOWN,
+            "checksum": None,
+            "request_metadata": {},
+            "parser_name": None,
+            "parser_version": None,
+            "cleaning_report": None,
+            "dedupe_action": None,
+            "dedupe_target_doc_id": None,
+            "document_id": None,
+            "chunk_count": None,
+            "error_message": None,
+            "processing_started_at": None,
+            "finished_at": None,
+            "created_at": "2026-01-20T05:44:18Z",
+            "updated_at": "2026-01-20T05:44:18Z",
+        }
+
+    @staticmethod
+    def _fake_provider():
+        class _FakeEmbedProvider:
+            provider_name = KnowledgeIngestionDedupeManifestTests._FAKE_PROVIDER_NAME
+            model_id = KnowledgeIngestionDedupeManifestTests._FAKE_MODEL_ID
+            vector_dim = KnowledgeIngestionDedupeManifestTests._FAKE_VECTOR_DIM
+
+            def embed_documents(self, texts):
+                return [[1.0, 2.0, 3.0] for _ in texts]
+
+            def count_tokens(self, text):
+                return max(1, len(str(text or "").split()))
+
+            def drain_request_log(self):
+                return []
+
+        return _FakeEmbedProvider()
+
+    def test_reindexed_when_checksum_differs(self):
+        """Content changed: reindexed regardless of manifest."""
+        candidate = {
+            "document_id": "doc-existing",
+            "source_url": "https://example.com/test-doc",
+            "source_path": "official/test-doc.md",
+            "checksum": "old-checksum-abc",
+            "title": "Test Doc",
+            "chunk_count": 3,
+        }
+        repo = MagicMock()
+        repo.get_ingestion.return_value = self._fake_ingestion_row()
+        repo.find_dedupe_candidate.return_value = candidate
+        repo.get_current_index_manifest.return_value = None
+        replace_mock = MagicMock(return_value=5)
+        repo.replace_document_chunks = replace_mock
+
+        with patch("backend.services.knowledge_ingestion.get_embedding_provider",
+                   return_value=self._fake_provider()), \
+             patch("backend.services.knowledge_ingestion._enrich_metadata_with_llm",
+                   side_effect=lambda doc: (doc.metadata, {"metadata_source": "rule"})):
+            process_knowledge_ingestion(repo, "KI-TEST-DEDUPE-1")
+
+        _, kwargs = repo.update_ingestion_source.call_args
+        self.assertEqual(kwargs["dedupe_action"], "reindexed")
+        self.assertTrue(replace_mock.called)
+
+    def test_reindexed_when_same_checksum_but_no_current_manifest(self):
+        """No persisted vector rows: reindex even with same checksum."""
+        doc_checksum = hashlib.sha256(
+            SAMPLE_OFFICIAL_MARKDOWN.encode("utf-8")
+        ).hexdigest()
+        ingestion_row = dict(self._fake_ingestion_row())
+        ingestion_row["checksum"] = doc_checksum
+        candidate = {
+            "document_id": "doc-existing",
+            "source_url": "https://example.com/test-doc",
+            "source_path": "official/test-doc.md",
+            "checksum": doc_checksum,
+            "title": "Test Doc",
+            "chunk_count": 0,
+        }
+        repo = MagicMock()
+        repo.get_ingestion.return_value = ingestion_row
+        repo.find_dedupe_candidate.return_value = candidate
+        repo.get_current_index_manifest.return_value = None
+        replace_mock = MagicMock(return_value=5)
+        repo.replace_document_chunks = replace_mock
+
+        with patch("backend.services.knowledge_ingestion.get_embedding_provider",
+                   return_value=self._fake_provider()), \
+             patch("backend.services.knowledge_ingestion._enrich_metadata_with_llm",
+                   side_effect=lambda doc: (doc.metadata, {"metadata_source": "rule"})):
+            process_knowledge_ingestion(repo, "KI-TEST-DEDUPE-1")
+
+        _, kwargs = repo.update_ingestion_source.call_args
+        self.assertEqual(kwargs["dedupe_action"], "reindexed")
+        self.assertTrue(replace_mock.called)
+
+    def test_reindexed_when_same_checksum_but_stale_embedding_model(self):
+        """Embedding model changed: reindexed even with same content."""
+        doc_checksum = hashlib.sha256(
+            SAMPLE_OFFICIAL_MARKDOWN.encode("utf-8")
+        ).hexdigest()
+        ingestion_row = dict(self._fake_ingestion_row())
+        ingestion_row["checksum"] = doc_checksum
+        candidate = {
+            "document_id": "doc-existing",
+            "source_url": "https://example.com/test-doc",
+            "source_path": "official/test-doc.md",
+            "checksum": doc_checksum,
+            "title": "Test Doc",
+            "chunk_count": 3,
+        }
+        current_manifest = {
+            "has_vector_rows": True,
+            "roles": {
+                "primary": {
+                    "chunk_count": 3,
+                    "chunk_strategy": "official_structured_v1",
+                    "strategy_version": "official_structured_v1",
+                    "embedding_model": self._STALE_MODEL_ID,
+                    "embedding_provider": "openai",
+                    "vector_dim": self._STALE_VECTOR_DIM,
+                    "content_fingerprint": "fake-old-fingerprint",
+                },
+            },
+        }
+        repo = MagicMock()
+        repo.get_ingestion.return_value = ingestion_row
+        repo.find_dedupe_candidate.return_value = candidate
+        repo.get_current_index_manifest.return_value = current_manifest
+        replace_mock = MagicMock(return_value=5)
+        repo.replace_document_chunks = replace_mock
+
+        with patch("backend.services.knowledge_ingestion.get_embedding_provider",
+                   return_value=self._fake_provider()), \
+             patch("backend.services.knowledge_ingestion._enrich_metadata_with_llm",
+                   side_effect=lambda doc: (doc.metadata, {"metadata_source": "rule"})), \
+             patch("backend.services.knowledge_ingestion.shadow_chunk_enabled",
+                   return_value=False):
+            process_knowledge_ingestion(repo, "KI-TEST-DEDUPE-1")
+
+        _, kwargs = repo.update_ingestion_source.call_args
+        self.assertEqual(kwargs["dedupe_action"], "reindexed")
+        self.assertTrue(replace_mock.called)
+
+    def test_reindexed_when_same_checksum_but_stale_chunk_strategy(self):
+        """Chunk strategy changed: reindexed even with same content."""
+        doc_checksum = hashlib.sha256(
+            SAMPLE_OFFICIAL_MARKDOWN.encode("utf-8")
+        ).hexdigest()
+        ingestion_row = dict(self._fake_ingestion_row())
+        ingestion_row["checksum"] = doc_checksum
+        candidate = {
+            "document_id": "doc-existing",
+            "source_url": "https://example.com/test-doc",
+            "source_path": "official/test-doc.md",
+            "checksum": doc_checksum,
+            "title": "Test Doc",
+            "chunk_count": 3,
+        }
+        current_manifest = {
+            "has_vector_rows": True,
+            "roles": {
+                "primary": {
+                    "chunk_count": 3,
+                    "chunk_strategy": "old_strategy_v0",
+                    "strategy_version": "old_strategy_v0",
+                    "embedding_model": self._FAKE_MODEL_ID,
+                    "embedding_provider": self._FAKE_PROVIDER_NAME,
+                    "vector_dim": self._FAKE_VECTOR_DIM,
+                    "content_fingerprint": "fake-old-fingerprint",
+                },
+            },
+        }
+        repo = MagicMock()
+        repo.get_ingestion.return_value = ingestion_row
+        repo.find_dedupe_candidate.return_value = candidate
+        repo.get_current_index_manifest.return_value = current_manifest
+        replace_mock = MagicMock(return_value=5)
+        repo.replace_document_chunks = replace_mock
+
+        with patch("backend.services.knowledge_ingestion.get_embedding_provider",
+                   return_value=self._fake_provider()), \
+             patch("backend.services.knowledge_ingestion._enrich_metadata_with_llm",
+                   side_effect=lambda doc: (doc.metadata, {"metadata_source": "rule"})), \
+             patch("backend.services.knowledge_ingestion.shadow_chunk_enabled",
+                   return_value=False):
+            process_knowledge_ingestion(repo, "KI-TEST-DEDUPE-1")
+
+        _, kwargs = repo.update_ingestion_source.call_args
+        self.assertEqual(kwargs["dedupe_action"], "reindexed")
+        self.assertTrue(replace_mock.called)
+
+    def test_skipped_duplicate_when_same_checksum_and_matching_manifest(self):
+        """Same content + matching manifest: skipped_duplicate, no reindex."""
+        doc_checksum = hashlib.sha256(
+            SAMPLE_OFFICIAL_MARKDOWN.encode("utf-8")
+        ).hexdigest()
+        ingestion_row = dict(self._fake_ingestion_row())
+        ingestion_row["checksum"] = doc_checksum
+        candidate = {
+            "document_id": "doc-existing",
+            "source_url": "https://example.com/test-doc",
+            "source_path": "official/test-doc.md",
+            "checksum": doc_checksum,
+            "title": "Test Doc",
+            "chunk_count": 3,
+        }
+        # Build the actual desired manifest so the current manifest matches
+        document = parse_official_markdown_content(
+            raw_markdown=SAMPLE_OFFICIAL_MARKDOWN,
+            file_name="test-doc.md",
+            ingestion_id="KI-TEST-DEDUPE-1",
+        )
+        rows = _build_chunk_rows(document, document.metadata,
+                                 provider=self._fake_provider())
+        fake_chunk_result = MagicMock()
+        fake_chunk_result.index_role = "primary"
+        fake_chunk_result.chunk_strategy = "official_structured_v1"
+        fake_chunk_result.strategy_version = "official_structured_v1"
+        fake_chunk_result.rows = rows
+        desired = _desired_ingestion_manifest(
+            document=document,
+            chunk_results=[fake_chunk_result],
+            embedding_provider=self._FAKE_PROVIDER_NAME,
+            embedding_model=self._FAKE_MODEL_ID,
+            vector_dim=self._FAKE_VECTOR_DIM,
+        )
+        # Build a matching current manifest from the desired one
+        current_manifest = {
+            "has_vector_rows": True,
+            "roles": dict(desired["roles"]),
+        }
+        repo = MagicMock()
+        repo.get_ingestion.return_value = ingestion_row
+        repo.find_dedupe_candidate.return_value = candidate
+        repo.get_current_index_manifest.return_value = current_manifest
+        replace_mock = MagicMock(return_value=5)
+        repo.replace_document_chunks = replace_mock
+
+        with patch("backend.services.knowledge_ingestion.get_embedding_provider",
+                   return_value=self._fake_provider()), \
+             patch("backend.services.knowledge_ingestion._enrich_metadata_with_llm",
+                   side_effect=lambda doc: (doc.metadata, {"metadata_source": "rule"})), \
+             patch("backend.services.knowledge_ingestion.shadow_chunk_enabled",
+                   return_value=False):
+            process_knowledge_ingestion(repo, "KI-TEST-DEDUPE-1")
+
+        _, kwargs = repo.update_ingestion_source.call_args
+        self.assertEqual(kwargs["dedupe_action"], "skipped_duplicate",
+                         "Matching manifest must skip duplicate")
+        self.assertFalse(replace_mock.called,
+                         "replace_document_chunks must NOT be called for skipped_duplicate")
+
+    def test_stale_shadow_role_deleted_when_shadow_disabled(self):
+        """Shadow disabled but old shadow rows exist: shadow rows deleted."""
+        doc_checksum = hashlib.sha256(
+            SAMPLE_OFFICIAL_MARKDOWN.encode("utf-8")
+        ).hexdigest()
+        ingestion_row = dict(self._fake_ingestion_row())
+        ingestion_row["checksum"] = doc_checksum
+        candidate = {
+            "document_id": "doc-existing",
+            "source_url": "https://example.com/test-doc",
+            "source_path": "official/test-doc.md",
+            "checksum": doc_checksum,
+            "title": "Test Doc",
+            "chunk_count": 3,
+        }
+        # Different embedding model triggers the reindexed path.
+        current_manifest = {
+            "has_vector_rows": True,
+            "roles": {
+                "primary": {
+                    "chunk_count": 3,
+                    "chunk_strategy": "official_structured_v1",
+                    "strategy_version": "official_structured_v1",
+                    "embedding_model": self._STALE_MODEL_ID,
+                    "embedding_provider": "openai",
+                    "vector_dim": self._STALE_VECTOR_DIM,
+                    "content_fingerprint": "fake-old",
+                },
+                "shadow": {
+                    "chunk_count": 2,
+                    "chunk_strategy": "official_section_token_v1",
+                    "strategy_version": "official_section_token_v1",
+                    "embedding_model": self._STALE_MODEL_ID,
+                    "embedding_provider": "openai",
+                    "vector_dim": self._STALE_VECTOR_DIM,
+                    "content_fingerprint": "fake-shadow-old",
+                },
+            },
+        }
+        repo = MagicMock()
+        repo.get_ingestion.return_value = ingestion_row
+        repo.find_dedupe_candidate.return_value = candidate
+        repo.get_current_index_manifest.return_value = current_manifest
+        replace_mock = MagicMock(return_value=5)
+        repo.replace_document_chunks = replace_mock
+
+        with patch("backend.services.knowledge_ingestion.get_embedding_provider",
+                   return_value=self._fake_provider()), \
+             patch("backend.services.knowledge_ingestion._enrich_metadata_with_llm",
+                   side_effect=lambda doc: (doc.metadata, {"metadata_source": "rule"})), \
+             patch("backend.services.knowledge_ingestion.shadow_chunk_enabled",
+                   return_value=False):
+            process_knowledge_ingestion(repo, "KI-TEST-DEDUPE-1")
+
+        shadow_calls = [
+            call for call in replace_mock.call_args_list
+            if call.kwargs.get("index_role") == "shadow"
+        ]
+        self.assertTrue(
+            any(len(call.kwargs.get("rows", [1])) == 0 for call in shadow_calls),
+            "Expected replace_document_chunks(shadow, rows=[]) to clean up stale shadow",
+        )
+
+    def test_manifest_helper_builds_desired_manifest(self):
+        """_desired_ingestion_manifest builds the expected shape."""
+        document = parse_official_markdown_content(
+            raw_markdown=SAMPLE_OFFICIAL_MARKDOWN,
+            file_name="test-doc.md",
+            ingestion_id="KI-TEST-MANIFEST-HELPER",
+        )
+        rows = _build_chunk_rows(document, document.metadata,
+                                 provider=self._fake_provider())
+
+        fake_chunk_result = MagicMock()
+        fake_chunk_result.index_role = "primary"
+        fake_chunk_result.chunk_strategy = "official_structured_v1"
+        fake_chunk_result.strategy_version = "official_structured_v1"
+        fake_chunk_result.rows = rows
+
+        manifest = _desired_ingestion_manifest(
+            document=document,
+            chunk_results=[fake_chunk_result],
+            embedding_provider=self._FAKE_PROVIDER_NAME,
+            embedding_model=self._FAKE_MODEL_ID,
+            vector_dim=self._FAKE_VECTOR_DIM,
+        )
+
+        self.assertIn("checksum", manifest)
+        self.assertIn("roles", manifest)
+        self.assertIn("primary", manifest["roles"])
+        primary = manifest["roles"]["primary"]
+        self.assertEqual(primary["chunk_strategy"], "official_structured_v1")
+        self.assertEqual(primary["embedding_model"], self._FAKE_MODEL_ID)
+        self.assertEqual(primary["vector_dim"], self._FAKE_VECTOR_DIM)
+        self.assertEqual(primary["chunk_count"], len(rows))
+        self.assertIsInstance(primary["content_fingerprint"], str)
+        self.assertEqual(len(primary["content_fingerprint"]), 64)
+
+    def test_manifests_match_returns_true_for_identical(self):
+        """_manifests_match returns True for identical manifests."""
+        from backend.services.knowledge_ingestion import _manifests_match
+        desired = {
+            "checksum": "abc",
+            "embedding_provider": "p",
+            "embedding_model": "m",
+            "vector_dim": 1024,
+            "roles": {
+                "primary": {
+                    "chunk_count": 3, "chunk_strategy": "s",
+                    "strategy_version": "v", "embedding_model": "m",
+                    "embedding_provider": "p", "vector_dim": 1024,
+                    "content_fingerprint": "f1",
+                },
+            },
+        }
+        current = {
+            "has_vector_rows": True,
+            "roles": {
+                "primary": {
+                    "chunk_count": 3, "chunk_strategy": "s",
+                    "strategy_version": "v", "embedding_model": "m",
+                    "embedding_provider": "p", "vector_dim": 1024,
+                    "content_fingerprint": "f1",
+                },
+            },
+        }
+        self.assertTrue(_manifests_match(desired, current))
+
+    def test_manifests_match_returns_false_for_mismatch(self):
+        """_manifests_match returns False when manifests differ."""
+        from backend.services.knowledge_ingestion import _manifests_match
+        desired = {
+            "checksum": "abc",
+            "embedding_provider": "p",
+            "embedding_model": "m",
+            "vector_dim": 1024,
+            "roles": {
+                "primary": {
+                    "chunk_count": 3, "chunk_strategy": "s",
+                    "strategy_version": "v", "embedding_model": "m",
+                    "embedding_provider": "p", "vector_dim": 1024,
+                    "content_fingerprint": "f1",
+                },
+            },
+        }
+        current = {
+            "has_vector_rows": True,
+            "roles": {
+                "primary": {
+                    "chunk_count": 3, "chunk_strategy": "different",
+                    "strategy_version": "v", "embedding_model": "m",
+                    "embedding_provider": "p", "vector_dim": 1024,
+                    "content_fingerprint": "f1",
+                },
+            },
+        }
+        self.assertFalse(_manifests_match(desired, current))
+
+    def test_manifests_match_returns_false_for_none(self):
+        """_manifests_match returns False when current is None."""
+        from backend.services.knowledge_ingestion import _manifests_match
+        desired = {"checksum": "abc", "roles": {"primary": {}}}
+        self.assertFalse(_manifests_match(desired, None))
 
 
 if __name__ == "__main__":
