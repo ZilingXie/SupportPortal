@@ -4,14 +4,20 @@ Codex accepts or rejects Claude Code work from evidence, not from the report's c
 
 ## Required Review
 
-Inspect:
+Start with the small artifacts:
+
+```bash
+cat /tmp/control-cc-runs/<thread>/pr-XX/plan-YY/review_packet.json
+```
+
+Only then expand as needed:
 
 ```bash
 git diff --stat
 git diff -- <changed-files>
 ```
 
-For candidate worktrees, inspect the candidate diff before exporting the patch, then inspect the real PR task worktree again after `git apply --3way`.
+For candidate worktrees, inspect the candidate packet and targeted diff before exporting the patch, then inspect the real PR task worktree again after `git apply --3way`.
 
 Check:
 
@@ -22,6 +28,8 @@ Check:
 - Verification command and result are present and credible, or the blocker is concrete.
 - Nearby call sites around modified code still satisfy the old contract.
 - New or adjusted tests cover the failure or behavior when practical.
+
+`review_packet.json` is a mechanical triage aid, not the acceptance decision. It should include changed files, diff stat, artifact/temp files, non-ASCII additions, debug/TODO markers, missing changelog signals, optional root workspace status, and a short worker-result excerpt. If it flags no risk and the task is low-risk, Codex may keep review to the packet plus targeted changed-file hunks.
 
 ## Quality Score
 
@@ -46,6 +54,12 @@ Score the implementation result, not Claude Code cost:
 
 If `quality_score < 8`, Codex must explain the deductions and choose a follow-up. Low score does not automatically reject the patch; correctness or verification gaps should trigger correction or Codex takeover, while local style, ASCII, changelog, or artifact issues can be fixed directly by Codex.
 
+Follow-up policy:
+
+- `8-10`: accept after fresh verification; apply minor Codex cleanup if needed.
+- `6-7.9`: choose direct Codex cleanup for local issues, or one correction payload for semantic gaps.
+- `<6`: default to Codex takeover unless a Claude redo is clearly lower risk.
+
 ## When To Expand Review
 
 Read beyond changed files when there is evidence of:
@@ -56,6 +70,7 @@ Read beyond changed files when there is evidence of:
 - public API, schema, prompt, model, RAG, config, deployment, or restart changes
 - test coverage gaps on the critical path
 - worker failure, speculative edits, or broad refactoring
+- `review_packet.json` reports artifact/temp files, non-ASCII additions, debug/TODO markers, missing required changelog, or root workspace dirtiness
 
 ## Rejection Or Codex Fix Signals
 

@@ -12,6 +12,34 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-27 - control-cc orchestrator review packets
+
+- Area or subsystem: Project-local Codex-to-Claude Code delegation workflow
+- Prompt or model version: `control-cc-v5`
+- Summary: Reframed Control CC around Codex as orchestrator and Claude Code as implementation owner, added runner-generated review packets for low-token Codex triage, compacted heartbeat output, and softened Claude Code implementation constraints while preserving safety and review gates.
+- Reason: The workflow should save Codex tokens and avoid over-constraining Claude Code, while maintaining quality through artifacts, quality scoring, targeted diff review, and fresh verification.
+- Affected files or config:
+  - `.codex/skills/control-cc/SKILL.md`
+  - `.codex/skills/control-cc/agents/openai.yaml`
+  - `.codex/skills/control-cc/references/payload-schema.md`
+  - `.codex/skills/control-cc/references/review-checklist.md`
+  - `.codex/skills/control-cc/references/task-plan-schema.md`
+  - `.codex/skills/control-cc/scripts/run_cc_plan.py`
+  - `.codex/skills/control-cc/scripts/test_run_cc_plan.py`
+  - `.claude/skills/control-cc-worker/SKILL.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - New Control CC runs default to Orchestrator Mode: Codex plans and reviews, while Claude Code owns implementation inside task or candidate worktrees without default budget caps or write-scope gates.
+  - `run_cc_plan.py` writes `review_packet.json` with changed files, diff stat, artifact/temp files, non-ASCII additions, debug/TODO markers, changelog signals, optional root workspace status, and a short worker-result excerpt.
+  - Compact runner output exposes heartbeat count and last heartbeat instead of the full heartbeat list, keeping Codex waiting/review context small.
+  - Codex reads the review packet before long logs or full diffs and expands review only for flagged risks, high-risk tasks, or insufficient worker evidence.
+- Verification:
+  - `python3 -m py_compile .codex/skills/control-cc/scripts/*.py`
+  - `python3 .codex/skills/control-cc/scripts/test_run_cc_plan.py`
+  - `python3 .codex/skills/control-cc/scripts/test_run_repair_worker.py`
+  - `rg -n "review_packet|heartbeat_count|Orchestrator Mode|quality_score|control-cc-v5" .codex/skills/control-cc .claude/skills/control-cc-worker docs/prompt_change_log.md`
+  - `git diff --check`
+
 ## 2026-05-27 - Agentic RAG planner FTS restoration
 
 - Area or subsystem: RAG agent planner

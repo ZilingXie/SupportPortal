@@ -34,11 +34,12 @@ Each implementation plan should have a directory such as:
 /tmp/control-cc-runs/<thread>/pr-01/plan-01/
   plan.md
   report.json
+  review_packet.json
   accepted.patch
   worktree/
 ```
 
-`plan.md` follows `references/payload-schema.md`. `report.json` is written by `run_cc_plan.py`. `accepted.patch` is exported from a candidate worktree only after Codex or a plan sub-agent reviews the diff.
+`plan.md` follows `references/payload-schema.md`. `report.json` and `review_packet.json` are written by `run_cc_plan.py`. `review_packet.json` is the first Codex review surface; open full logs or full diffs only when the packet flags risk or the task is high risk. `accepted.patch` is exported from a candidate worktree only after Codex or a plan sub-agent reviews the result.
 
 ## Cleanup Policy
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -14,11 +15,30 @@ from pathlib import Path
 
 
 OUTPUT_GUARD = (
-    "For /control-cc-worker implementation plans, execute the plan, run the requested "
-    "verification when possible, and return a concise completion report. Include changed "
-    "files, verification evidence, remaining risks, and anything Codex should review. "
-    "Do not commit, push, edit global skill directories, hide test failures, or perform "
-    "unrelated refactors."
+    "For /control-cc-worker implementation plans, execute the plan using your judgment, "
+    "run the requested verification when possible, and return a concise completion report. "
+    "Include changed files, verification evidence, remaining risks, and anything Codex "
+    "should review. Do not commit, push, edit global skill directories, or hide test "
+    "failures."
+)
+
+DEBUG_MARKER_RE = re.compile(r"\b(TODO|FIXME|XXX|debugger|pdb\.set_trace|console\.log|print\()", re.IGNORECASE)
+ARTIFACT_SUFFIXES = (".log", ".tmp", ".temp", ".bak", ".orig", ".patch", ".rej", ".swp")
+ARTIFACT_NAMES = {".DS_Store"}
+ARTIFACT_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
+PROMPT_CHANGE_PREFIXES = (
+    ".codex/skills/",
+    ".claude/skills/",
+    "backend/services/prompts/",
+)
+PROMPT_CHANGE_FILES = {
+    ".codex/skills/control-cc/agents/openai.yaml",
+}
+RAG_CHANGE_HINTS = (
+    "rag",
+    "retrieval",
+    "embedding",
+    "vector",
 )
 
 
@@ -84,6 +104,14 @@ def truncate(text: str, limit: int) -> str:
     return text[:limit] + "\n...[truncated]..."
 
 
+def write_json_artifact(prefix: str, suffix: str, payload: dict[str, object], path: Path | None = None) -> str:
+    if path is None:
+        path = make_temp_path(prefix, suffix)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return str(path)
+
+
 def write_temp_artifact(prefix: str, suffix: str, text: str) -> str | None:
     if not text:
         return None
@@ -101,6 +129,128 @@ def make_temp_path(prefix: str, suffix: str) -> Path:
 
 def save_current_patch(prefix: str) -> str | None:
     return write_temp_artifact(prefix, ".patch", git_diff_patch())
+
+
+def added_lines_from_patch(patch: str) -> list[str]:
+    lines: list[str] = []
+    for line in patch.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        lines.append(line[1:])
+    return lines
+
+
+def is_artifact_or_temp_file(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    name = normalized.rsplit("/", 1)[-1]
+    parts = set(normalized.split("/"))
+    return name in ARTIFACT_NAMES or normalized.endswith(ARTIFACT_SUFFIXES) or bool(parts & ARTIFACT_PARTS)
+
+
+def is_prompt_related(path: str) -> bool:
+    return path in PROMPT_CHANGE_FILES or path.startswith(PROMPT_CHANGE_PREFIXES)
+
+
+def is_rag_related(path: str) -> bool:
+    lower = path.lower()
+    return lower.startswith(("backend/", "docs/", "scripts/")) and any(hint in lower for hint in RAG_CHANGE_HINTS)
+
+
+def git_status_for_path(path: Path) -> dict[str, object]:
+    result = subprocess.run(
+        ["git", "-C", str(path), "status", "--short", "--branch"],
+        capture_output=True,
+        text=True,
+    )
+    status = result.stdout.strip()
+    dirty_lines = [line for line in status.splitlines() if line and not line.startswith("##")]
+    return {
+        "path": str(path),
+        "ok": result.returncode == 0,
+        "status": status,
+        "dirty": bool(dirty_lines),
+    }
+
+
+def build_review_packet(
+    report: dict[str, object],
+    *,
+    diff_stat: str,
+    patch: str,
+    changed_files: list[str],
+    root_workspace: Path | None,
+) -> dict[str, object]:
+    added_lines = added_lines_from_patch(patch)
+    non_ascii_lines = [line for line in added_lines if any(ord(char) > 127 for char in line)]
+    debug_lines = [line for line in added_lines if DEBUG_MARKER_RE.search(line)]
+    artifact_files = [path for path in changed_files if is_artifact_or_temp_file(path)]
+    prompt_change_log_required = any(is_prompt_related(path) for path in changed_files)
+    prompt_change_log_touched = "docs/prompt_change_log.md" in changed_files
+    rag_change_log_required = any(is_rag_related(path) for path in changed_files)
+    rag_change_log_touched = "docs/rag_change_log.md" in changed_files
+    missing_required_changelog = (
+        (prompt_change_log_required and not prompt_change_log_touched)
+        or (rag_change_log_required and not rag_change_log_touched)
+    )
+    root_workspace_status = git_status_for_path(root_workspace) if root_workspace else None
+    worker_result = report.get("worker_result")
+    worker_result_excerpt = ""
+    if isinstance(worker_result, dict):
+        worker_result_excerpt = truncate(str(worker_result.get("result") or ""), 1200)
+
+    return {
+        "schema_version": "control-cc-review-packet-v1",
+        "plan_status": report.get("plan_status"),
+        "failure_reason": report.get("failure_reason"),
+        "availability_failure_reason": report.get("availability_failure_reason"),
+        "worker_workspace": report.get("worker_workspace"),
+        "plan_file": report.get("plan_file"),
+        "changed_files": changed_files,
+        "changed_file_count": len(changed_files),
+        "diff_stat": diff_stat,
+        "artifact_or_temp_files": artifact_files,
+        "added_non_ascii_samples": [truncate(line, 240) for line in non_ascii_lines[:5]],
+        "debug_or_todo_samples": [truncate(line, 240) for line in debug_lines[:5]],
+        "prompt_change_log_required": prompt_change_log_required,
+        "prompt_change_log_touched": prompt_change_log_touched,
+        "rag_change_log_required": rag_change_log_required,
+        "rag_change_log_touched": rag_change_log_touched,
+        "missing_required_changelog": missing_required_changelog,
+        "root_workspace_status": root_workspace_status,
+        "worker_result_excerpt": worker_result_excerpt,
+        "flags": {
+            "added_non_ascii": bool(non_ascii_lines),
+            "debug_or_todo_markers": bool(debug_lines),
+            "artifact_or_temp_files": bool(artifact_files),
+            "missing_required_changelog": missing_required_changelog,
+            "root_workspace_dirty": bool(root_workspace_status and root_workspace_status.get("dirty")),
+        },
+        "codex_review_hint": (
+            "Read this packet before opening long logs or full diffs. Expand only changed "
+            "files or flagged risks unless the task is high risk."
+        ),
+    }
+
+
+def write_review_packet(
+    report: dict[str, object],
+    *,
+    diff_stat: str,
+    patch: str,
+    changed_files: list[str],
+    review_packet_file: Path | None,
+    root_workspace: Path | None,
+) -> str:
+    packet = build_review_packet(
+        report,
+        diff_stat=diff_stat,
+        patch=patch,
+        changed_files=changed_files,
+        root_workspace=root_workspace,
+    )
+    report["review_packet"] = packet
+    report["review_flags"] = packet["flags"]
+    return write_json_artifact("control-cc-review-packet-", ".json", packet, review_packet_file)
 
 
 def build_command(args: argparse.Namespace, plan: str) -> list[str]:
@@ -276,7 +426,17 @@ def base_report(args: argparse.Namespace, before_status: str) -> dict[str, objec
         "saved_partial_patch": None,
         "restored_partial_diff": False,
         "claude_call_report": None,
+        "review_packet_path": None,
+        "review_packet": None,
+        "review_flags": None,
     }
+
+
+def add_heartbeat_summary(report: dict[str, object]) -> None:
+    heartbeats = report.get("heartbeats")
+    if isinstance(heartbeats, list):
+        report["heartbeat_count"] = len(heartbeats)
+        report["last_heartbeat"] = heartbeats[-1] if heartbeats else None
 
 
 def compact_report(report: dict[str, object]) -> dict[str, object]:
@@ -302,10 +462,13 @@ def compact_report(report: dict[str, object]) -> dict[str, object]:
         "retry_count",
         "max_unavailable_retries",
         "availability_failure_reason",
-        "heartbeats",
+        "heartbeat_count",
+        "last_heartbeat",
         "plan_file",
         "worker_workspace",
         "claude_call_report",
+        "review_packet_path",
+        "review_flags",
     ]
     return {key: report.get(key) for key in keys if key in report}
 
@@ -319,6 +482,7 @@ def emit(
 ) -> int:
     if report_file is None and compact_output:
         report_file = make_temp_path("control-cc-plan-report-", ".json")
+    add_heartbeat_summary(report)
     if report_file is not None:
         report["full_report_path"] = str(report_file)
         report_file.parent.mkdir(parents=True, exist_ok=True)
@@ -344,6 +508,8 @@ def main() -> int:
     parser.add_argument("--allow-dirty-baseline", action="store_true")
     parser.add_argument("--compact-output", action="store_true")
     parser.add_argument("--report-file", type=Path, default=None)
+    parser.add_argument("--review-packet-file", type=Path, default=None)
+    parser.add_argument("--root-workspace", type=Path, default=None)
     parser.add_argument("--inline-log-chars", type=int, default=2000)
     args = parser.parse_args()
 
@@ -433,7 +599,16 @@ def main() -> int:
 
         if failure_reason is None:
             report["plan_status"] = "succeeded"
-            report["success_patch"] = save_current_patch("control-cc-plan-success-")
+            success_patch = git_diff_patch()
+            report["success_patch"] = write_temp_artifact("control-cc-plan-success-", ".patch", success_patch)
+            report["review_packet_path"] = write_review_packet(
+                report,
+                diff_stat=diff_stat,
+                patch=success_patch,
+                changed_files=changed_files,
+                review_packet_file=args.review_packet_file,
+                root_workspace=args.root_workspace,
+            )
             report["after_status"] = git_status()
             report["claude_call_report"] = claude_call_report(report)
             return emit(report, 0, compact_output=args.compact_output, report_file=args.report_file)
@@ -456,7 +631,16 @@ def main() -> int:
             report["failure_reason"] = failure_reason
         break
 
-    report["saved_partial_patch"] = save_current_patch("control-cc-plan-partial-")
+    partial_patch = git_diff_patch()
+    report["saved_partial_patch"] = write_temp_artifact("control-cc-plan-partial-", ".patch", partial_patch)
+    report["review_packet_path"] = write_review_packet(
+        report,
+        diff_stat=str(report.get("partial_diff_stat") or ""),
+        patch=partial_patch,
+        changed_files=list(report.get("changed_files") or []),
+        review_packet_file=args.review_packet_file,
+        root_workspace=args.root_workspace,
+    )
     if args.restore_on_failure:
         restore_worktree()
         report["restored_partial_diff"] = True
