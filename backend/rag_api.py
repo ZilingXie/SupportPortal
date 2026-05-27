@@ -1095,7 +1095,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
     cancel_state = _new_rag_cancel_state()
     try:
         readiness = probe_customer_rag_index_readiness(top_k=request.top_k or 6)
-        if readiness.status in {"configured_table_empty", "fallback_table_selected"}:
+        if readiness.status == "configured_table_empty":
             return _build_rag_unavailable_response(
                 request=request,
                 diagnostics_extra=_knowledge_index_guard_diagnostics(readiness),
@@ -1353,6 +1353,11 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         candidates=candidates,
     )
     evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
+    if readiness.status == "fallback_table_selected":
+        evidence_summary = _attach_response_diagnostics(
+            evidence_summary,
+            _knowledge_index_guard_diagnostics(readiness),
+        )
     if retrieval_plan_snapshot is not None:
         evidence_summary = _attach_response_diagnostics(
             evidence_summary,

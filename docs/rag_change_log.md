@@ -4405,3 +4405,25 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py backend/tests/test_rag_qa.py backend/tests/test_rag_prompt_guards.py -q -k 'usage_configuration_code_language or usage_configuration_answer_prompt_receives_selected_evidence_language or config_examples_when_field_evidence_has_no_language_tag or supports_config_example_without_language_tag or receives_config_evidence_without_language or weak_config_words or language_metadata_alone or rag_answer_prompt_guides or generic_join'`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_answer.py`
+
+## 2026-05-27 - RAG API fallback table readiness alignment
+
+- Summary:
+  - Changed `/internal/rag/query` to allow `fallback_table_selected` readiness status to proceed to `run_rag_query` instead of returning `rag_unavailable`.
+  - Attached knowledge-index guard diagnostics (configured table, resolved fallback table, primary row counts) to `evidence_summary["diagnostics"]` for responses reached through a fallback table.
+  - Kept `configured_table_empty` status returning `rag_unavailable` unchanged.
+- Reason:
+  - `backend/services/rag_qa.py::_resolve_active_vector_table()` already selects a populated fallback table when the configured vector table has zero primary rows, and `run_rag_query()` uses that resolver to update `config["table"]` before retrieval.
+  - The `/internal/rag/query` endpoint previously treated `fallback_table_selected` the same as `configured_table_empty`, returning unavailable and never calling `run_rag_query()`, which was inconsistent with direct `run_rag_query()` behavior.
+  - Callers can now see both the configured and resolved vector tables in diagnostics when a fallback table is used.
+- Affected files/config:
+  - `backend/rag_api.py`
+  - `backend/tests/test_rag_api.py` (existing red test)
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Queries that previously returned `rag_unavailable` when only the fallback table had data will now execute `run_rag_query()` using the resolved fallback table.
+  - The `configured_table_empty` guard continues to return unavailable when no fallback table with data is available.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_rag_api.py -k 'fallback_table_selected_readiness or knowledge_index_guard_trips'`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_rag_qa.py -k 'resolve_active_vector_table or probe_customer_rag_index_readiness'`
