@@ -9401,6 +9401,9 @@ class PostgresKnowledgeRepository:
                     AVG(retrieval_latency_ms),
                     AVG(vector_retrieval_latency_ms),
                     AVG(COALESCE((query_understanding_meta->>'bm25_sql_latency_ms')::DOUBLE PRECISION, bm25_retrieval_latency_ms)),
+                    AVG((query_understanding_meta->>'fts_latency_ms')::DOUBLE PRECISION),
+                    AVG((query_understanding_meta->>'keyword_fallback_latency_ms')::DOUBLE PRECISION),
+                    AVG(COALESCE((query_understanding_meta->>'lexical_retrieval_latency_ms')::DOUBLE PRECISION, bm25_retrieval_latency_ms)),
                     AVG(top1_similarity_score),
                     AVG(avg_selected_similarity_score),
                     AVG(selected_doc_count)
@@ -9540,9 +9543,12 @@ class PostgresKnowledgeRepository:
             "avg_retrieval_latency_ms": _coalesce_metric(query_row[1]),
             "avg_vector_retrieval_latency_ms": _coalesce_metric(query_row[2]),
             "avg_bm25_retrieval_latency_ms": _coalesce_metric(query_row[3]),
-            "avg_top1_similarity_score": _coalesce_metric(query_row[4]),
-            "avg_selected_similarity_score": _coalesce_metric(query_row[5]),
-            "avg_selected_doc_count": _coalesce_metric(query_row[6]),
+            "avg_fts_latency_ms": _coalesce_metric(query_row[4]),
+            "avg_keyword_fallback_latency_ms": _coalesce_metric(query_row[5]),
+            "avg_lexical_retrieval_latency_ms": _coalesce_metric(query_row[6]),
+            "avg_top1_similarity_score": _coalesce_metric(query_row[7]),
+            "avg_selected_similarity_score": _coalesce_metric(query_row[8]),
+            "avg_selected_doc_count": _coalesce_metric(query_row[9]),
             "document_relevance_score_avg": eval_metrics.get("document_relevance_score_avg") if has_eval_data else None,
         }
         tables = {
@@ -9926,6 +9932,9 @@ class PostgresKnowledgeRepository:
                     rewrite_latency_ms,
                     vector_retrieval_latency_ms,
                     COALESCE((query_understanding_meta->>'bm25_sql_latency_ms')::DOUBLE PRECISION, bm25_retrieval_latency_ms),
+                    (query_understanding_meta->>'fts_latency_ms')::DOUBLE PRECISION,
+                    (query_understanding_meta->>'keyword_fallback_latency_ms')::DOUBLE PRECISION,
+                    COALESCE((query_understanding_meta->>'lexical_retrieval_latency_ms')::DOUBLE PRECISION, bm25_retrieval_latency_ms),
                     rerank_latency_ms,
                     generation_latency_ms,
                     total_latency_ms
@@ -9970,9 +9979,12 @@ class PostgresKnowledgeRepository:
                     "rewrite_latency_ms": _coalesce_metric(row[2]),
                     "vector_retrieval_latency_ms": _coalesce_metric(row[3]),
                     "bm25_retrieval_latency_ms": _coalesce_metric(row[4]),
-                    "rerank_latency_ms": _coalesce_metric(row[5]),
-                    "generation_latency_ms": _coalesce_metric(row[6]),
-                    "total_latency_ms": _coalesce_metric(row[7]),
+                    "fts_latency_ms": _coalesce_metric(row[5]),
+                    "keyword_fallback_latency_ms": _coalesce_metric(row[6]),
+                    "lexical_retrieval_latency_ms": _coalesce_metric(row[7]),
+                    "rerank_latency_ms": _coalesce_metric(row[8]),
+                    "generation_latency_ms": _coalesce_metric(row[9]),
+                    "total_latency_ms": _coalesce_metric(row[10]),
                 }
                 for row in waterfall_rows
             ]
@@ -13071,6 +13083,7 @@ class PostgresKnowledgeRepository:
             _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
         )
         rag_rows = [row for row in candidate_cases.values() if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"]
+        live_retrieval_cards = self._retrieval_page(range_value, days, filters).get("cards", {})
         sections = {
             "summary": {
                 "title": "Retrieval",
@@ -13090,6 +13103,11 @@ class PostgresKnowledgeRepository:
                     "evidence_ndcg_at_5": _mean_from_rows(rag_rows, "evidence_ndcg_at_5"),
                     "evidence_coverage": _mean_from_rows(rag_rows, "evidence_coverage"),
                     "noise_rate": _mean_from_rows(rag_rows, "noise_rate"),
+                    "avg_vector_retrieval_latency_ms": live_retrieval_cards.get("avg_vector_retrieval_latency_ms"),
+                    "avg_bm25_retrieval_latency_ms": live_retrieval_cards.get("avg_bm25_retrieval_latency_ms"),
+                    "avg_fts_latency_ms": live_retrieval_cards.get("avg_fts_latency_ms"),
+                    "avg_keyword_fallback_latency_ms": live_retrieval_cards.get("avg_keyword_fallback_latency_ms"),
+                    "avg_lexical_retrieval_latency_ms": live_retrieval_cards.get("avg_lexical_retrieval_latency_ms"),
                 },
             },
             "retrieval_cases": self._retrieval_case_rows(candidate_cases),

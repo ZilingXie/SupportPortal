@@ -615,6 +615,16 @@ class DashboardUiContractTests(unittest.TestCase):
 
         self.assertEqual(explanation_keys, expected_keys)
 
+    def test_rag_dashboard_explains_split_lexical_latency_cards(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+
+        for key in [
+            "avg_fts_latency_ms",
+            "avg_keyword_fallback_latency_ms",
+            "avg_lexical_retrieval_latency_ms",
+        ]:
+            self.assertIn(f'"{key}"', js_source)
+
     def test_benchmark_session_panel_is_overview_only(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
         panel_markup = "${buildBenchmarkSessionPanel(payload.benchmark_session)}"
