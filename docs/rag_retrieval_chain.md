@@ -22,10 +22,12 @@ Current online retrieval chain:
 
 Only `index_role='primary'` chunks participate in online retrieval.
 
-When `RAG_AGENT_ENABLED=true`, `agentic_multi_tool_v1` must preserve the same
-online main path. Agentic first-pass and recovery plans may use configured
-vector and BM25 tools, but must not include PostgreSQL FTS tools (`p_fts`,
-`s_fts`) in online retrieval plans.
+When `RAG_AGENT_ENABLED=true`, `agentic_multi_tool_v1` uses agentic multi-tool
+retrieval where BM25 is the primary lexical route and PostgreSQL FTS is a
+supplemental lexical route. Agentic first-pass and recovery plans may use
+configured vector, BM25, and FTS tools. Benchmark, dashboard, and incident
+analysis MUST attribute FTS retrieval separately from BM25 and vector
+retrieval; FTS must not be conflated with BM25 in telemetry conventions.
 
 ## Stage Graph
 
@@ -187,7 +189,11 @@ Normal path:
 - vector recall + true BM25 recall + RRF + metadata prune + external rerank
 
 Fallback behavior:
-- PostgreSQL FTS is no longer part of the online main path
+- PostgreSQL FTS is used as a supplemental lexical retrieval route in the
+  agentic multi-tool chain. It runs alongside BM25 on the first-pass light
+  path and in recovery tool sets for relevant query classes.
+- For the legacy/non-agentic hybrid chain, FTS is no longer part of the
+  online main fusion path.
 - if BM25 retrieval fails or returns nothing, a keyword `LIKE` fallback can still be used as a degraded recovery path
 - keyword fallback does not populate `bm25_candidates_count`
 - keyword fallback does not populate `bm25_retrieval_latency_ms`
@@ -257,7 +263,11 @@ Current chain:
 - external rerank by `BAAI/bge-reranker-v2-m3`
 
 Main differences:
-- FTS is removed from the online main path
+- The default agentic chain (`RAG_AGENT_ENABLED=true`) uses BM25 as the
+  primary lexical route and PostgreSQL FTS as a supplemental lexical route;
+  telemetry consumers must attribute FTS separately from BM25 and vector.
+- The legacy/non-agentic hybrid chain uses vector + BM25 without FTS in the
+  main fusion path.
 - lexical retrieval now uses a real BM25 implementation
 - reranking is now split into metadata pre-rank and model rerank
 - candidate telemetry records stage-by-stage rank transitions

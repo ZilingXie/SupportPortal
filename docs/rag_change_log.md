@@ -37,6 +37,37 @@ For each new entry, record:
   - GREEN: `.venv/bin/python -m pytest backend/tests/test_rag_agentic.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_rag_api.py`
   - GREEN: `.venv/bin/python -m py_compile backend/services/rag_qa.py backend/rag_api.py backend/repositories/knowledge_repository.py`
 
+## 2026-05-27 - Restore FTS as supplemental agentic lexical retrieval
+
+- Summary:
+  - Restored `p_fts` and `s_fts` in deterministic agentic tool ordering, light-path first-pass plans, recovery tool sets, generic-join support selection, and tool weights.
+  - Restored `p_fts` and `s_fts` in the agent planner prompt's allowed tool list.
+  - Removed the FTS-exclusion filter from `_filter_shadow_tool_names()`.
+  - Updated `docs/rag_retrieval_chain.md` to document FTS as a supplemental lexical route in the default agentic chain and to require separate FTS attribution in benchmark/dashboard/incident analysis.
+- Reason:
+  - Online answer quality is the priority; FTS provides valuable supplemental lexical retrieval that improves answer quality for many query classes.
+  - The previous removal was based on a strict reading of the documentation, but the product decision is to keep FTS as a quality-first supplemental route and fix documentation/telemetry to prevent misattribution instead.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Existing RAG data remains valid; online agentic retrieval now includes FTS timing rows and candidate counts for relevant query classes.
+  - Benchmark, dashboard, and incident analysis must attribute FTS separately from BM25 and vector.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python - <<'PY' ... assert 'p_fts' in _tool_order_for_query_class('usage_configuration', shadow_retrieval_enabled=True)[0] ... PY` failed on the previous implementation with `AssertionError: ['p_bm25']`.
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_agent_planner.py`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py::PromptModuleTests::test_rag_agent_planner_prompt_is_sectioned_and_ticket_context_aware -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_agentic.py -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
+  - `rtk git diff --check`
+
 ## 2026-05-27 - Remove FTS from agentic online retrieval plans
 
 - Summary:
