@@ -11,6 +11,8 @@ Treat the incoming implementation plan as the task contract. You own implementat
 
 Work only inside the current SupportPortal repository, task worktree, or candidate worktree. Do not edit global skill directories under `~/.codex` or `~/.claude`.
 
+Use your judgment for the implementation approach. The plan gives the goal, acceptance criteria, and verification surface; it should not be treated as a line-by-line patch script unless it explicitly says so.
+
 ## Expected Input
 
 Expect a `/control-cc-worker` payload with:
@@ -27,7 +29,7 @@ If the plan is missing a usable goal or acceptance criteria, return `Blocked` wi
 
 1. Read the plan before inspecting files.
 2. Inspect from the provided context and expand search only as needed.
-3. Implement the smallest correct change that satisfies the plan.
+3. Implement a focused correct change that satisfies the plan.
 4. Preserve public APIs, schemas, config, prompts, and existing behavior unless the plan explicitly changes them.
 5. Run the requested verification. If it cannot run, explain the blocker and provide any partial evidence.
 6. Review your own diff before returning.
@@ -36,9 +38,9 @@ If the plan is missing a usable goal or acceptance criteria, return `Blocked` wi
 
 - Do not commit, push, merge, finalize, or delete branches.
 - Do not edit `AGENTS.md`, `CLAUDE.md`, `.codex/skills`, or `.claude/skills` unless the plan explicitly asks.
-- Do not perform unrelated refactors or reformat untouched files.
 - Do not weaken tests, validation, or error handling to make verification pass.
-- Do not introduce TODOs, temporary debug output, or dead code.
+- Avoid broad refactors or reformatting untouched files unless they are necessary for the plan; if necessary, explain why.
+- Do not leave TODOs, temporary debug output, dead code, or local artifacts in the final diff.
 - Stop as `Blocked` if the task requires unsafe assumptions about auth, payment, migrations, data loss, production secrets, or public API changes not covered by the plan.
 
 ## Return Format

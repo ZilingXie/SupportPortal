@@ -193,9 +193,62 @@ def test_long_running_worker_records_heartbeats_in_report_without_inline_logs() 
     assert result.returncode == 0
     assert compact["plan_status"] == "succeeded"
     assert "stdout" not in compact
+    assert "heartbeats" not in compact
+    assert compact["heartbeat_count"] >= 1
+    assert compact["last_heartbeat"]["attempt"] == 1
     assert compact["stdout_path"]
+    assert compact["review_packet_path"]
     assert full["heartbeats"]
     assert full["heartbeats"][0]["attempt"] == 1
+
+
+def test_success_writes_review_packet_with_mechanical_flags() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    payload = success_payload("Implemented with verification evidence.")
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        "printf '\\nTODO: remove debug trace ✨\\n' >> README.md\n"
+        "printf 'temporary log\\n' > debug.log\n"
+        f"printf '%s\\n' {json.dumps(json.dumps(payload))}\n",
+    )
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+    packet_path = Path(str(report["review_packet_path"]))
+    packet = json.loads(packet_path.read_text(encoding="utf-8"))
+
+    assert result.returncode == 0
+    assert packet["changed_files"] == ["README.md", "debug.log"]
+    assert "README.md" in packet["diff_stat"]
+    assert packet["flags"]["added_non_ascii"] is True
+    assert packet["flags"]["debug_or_todo_markers"] is True
+    assert packet["flags"]["artifact_or_temp_files"] is True
+    assert packet["artifact_or_temp_files"] == ["debug.log"]
+    assert packet["prompt_change_log_required"] is False
+
+
+def test_skill_prompt_change_review_packet_requires_prompt_log() -> None:
+    root = make_repo()
+    plan = write_plan(root)
+    payload = success_payload("Changed skill instructions.")
+    fake_bin = fake_claude(
+        root,
+        "#!/usr/bin/env bash\n"
+        "mkdir -p .codex/skills/control-cc\n"
+        "printf 'skill change\\n' > .codex/skills/control-cc/SKILL.md\n"
+        f"printf '%s\\n' {json.dumps(json.dumps(payload))}\n",
+    )
+
+    result = run_plan(root, plan, fake_bin)
+    report = parse_stdout(result)
+    packet = json.loads(Path(str(report["review_packet_path"])).read_text(encoding="utf-8"))
+
+    assert result.returncode == 0
+    assert packet["prompt_change_log_required"] is True
+    assert packet["prompt_change_log_touched"] is False
+    assert packet["flags"]["missing_required_changelog"] is True
 
 
 def test_invalid_json_retries_then_reports_claude_unavailable_and_restores() -> None:
@@ -364,6 +417,8 @@ if __name__ == "__main__":
     test_dirty_baseline_blocks_before_calling_claude()
     test_timeout_saves_partial_patch_and_restores()
     test_long_running_worker_records_heartbeats_in_report_without_inline_logs()
+    test_success_writes_review_packet_with_mechanical_flags()
+    test_skill_prompt_change_review_packet_requires_prompt_log()
     test_invalid_json_retries_then_reports_claude_unavailable_and_restores()
     test_empty_result_without_diff_retries_then_reports_claude_unavailable()
     test_permission_denial_fails_without_strict_heading_checks()

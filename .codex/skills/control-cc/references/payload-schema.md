@@ -18,13 +18,14 @@ context:
 - <verified facts, likely files, logs, tests, or previous PR handoff notes>
 
 implementation_plan:
-- <ordered implementation steps or expected diff direction>
+- <ordered steps, target files, or expected diff direction; avoid line-by-line patch instructions>
 
 constraints:
-- Smallest correct change
-- No unrelated refactor
-- Preserve public APIs, schemas, config, prompts, and data contracts unless listed in implementation_plan
 - Do not commit, push, merge, or finalize
+- Do not edit global `~/.codex` or `~/.claude` skill directories
+- Do not hide verification failures or weaken tests to pass
+- Preserve public APIs, schemas, config, prompts, and data contracts unless the plan intentionally changes them
+- Prefer focused changes; if a broader refactor is necessary, explain why in the report
 
 verification:
 <exact command or commands Claude Code should run>
@@ -33,7 +34,7 @@ acceptance:
 - <observable condition Codex will verify from diff and tests>
 
 report_request:
-Return status, files changed, what changed, verification command/result, risks, and Codex review notes.
+Return a concise status, files changed, what changed, verification command/result, risks, and Codex review notes.
 ```
 
 ## Field Rules
@@ -42,8 +43,8 @@ Return status, files changed, what changed, verification command/result, risks, 
 - `pr_slice`: exactly one real PR slice.
 - `plan_id`: unique inside the current PR slice.
 - `context`: verified facts only; label guesses or omit them.
-- `implementation_plan`: specific enough for execution, but not a line-by-line patch.
-- `constraints`: include the defaults and add task-specific stop conditions.
+- `implementation_plan`: specific enough for execution, but leave Claude Code implementation freedom.
+- `constraints`: keep only repo safety rules and task-specific hard boundaries; do not add budget caps or write-scope gates unless the user asks.
 - `verification`: prefer the narrowest command that proves the plan.
 - `acceptance`: describe what Codex will check after diff review.
 
