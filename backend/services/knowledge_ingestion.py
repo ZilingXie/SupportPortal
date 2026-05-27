@@ -1823,6 +1823,85 @@ def _chunk_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _desired_ingestion_manifest(
+    *,
+    document: NormalizedKnowledgeDocument,
+    chunk_results: list[ChunkBuildResult],
+    embedding_provider: str,
+    embedding_model: str,
+    vector_dim: int | None,
+) -> dict[str, Any]:
+    """Build the desired index manifest for this ingestion.
+
+    The manifest captures every dimension that could make a duplicate stale:
+    content checksum, embedding provider/model/dimension, and per-index-role
+    chunk strategy, version, count, and a deterministic fingerprint of the
+    generated chunk content.
+    """
+    roles: dict[str, dict[str, Any]] = {}
+    for result in chunk_results:
+        chunk_texts = sorted(
+            _clean_text(row.get("content", "")) or ""
+            for row in result.rows
+        )
+        fingerprint = hashlib.sha256(
+            "|".join([
+                result.chunk_strategy,
+                result.strategy_version,
+                *chunk_texts,
+            ]).encode("utf-8")
+        ).hexdigest()
+        roles[result.index_role] = {
+            "chunk_count": len(result.rows),
+            "chunk_strategy": result.chunk_strategy,
+            "strategy_version": result.strategy_version,
+            "embedding_model": embedding_model,
+            "embedding_provider": embedding_provider,
+            "vector_dim": vector_dim,
+            "content_fingerprint": fingerprint,
+        }
+    return {
+        "checksum": document.checksum,
+        "embedding_provider": embedding_provider,
+        "embedding_model": embedding_model,
+        "vector_dim": vector_dim,
+        "roles": roles,
+    }
+
+
+def _manifests_match(
+    desired: dict[str, Any],
+    current: dict[str, Any] | None,
+) -> bool:
+    """Return True when *current* manifest is fresh for *desired*.
+
+    A missing (None) current manifest never matches.  The comparison
+    ignores *has_vector_rows* and *checksum* (checksum equality is
+    already decided by the caller).
+    """
+    if current is None:
+        return False
+    desired_roles: dict[str, Any] = desired.get("roles", {})
+    current_roles: dict[str, Any] = current.get("roles", {})
+    if set(desired_roles) != set(current_roles):
+        return False
+    for role_key in desired_roles:
+        d = desired_roles[role_key]
+        c = current_roles[role_key]
+        for field in (
+            "chunk_count",
+            "chunk_strategy",
+            "strategy_version",
+            "embedding_model",
+            "embedding_provider",
+            "vector_dim",
+            "content_fingerprint",
+        ):
+            if d.get(field) != c.get(field):
+                return False
+    return True
+
+
 def _build_chunk_handoff_summary(
     document: NormalizedKnowledgeDocument,
     rows: list[dict[str, Any]],
@@ -3600,12 +3679,41 @@ def process_knowledge_ingestion(
         if candidate:
             dedupe_target_doc_id = candidate.get("document_id")
             existing_chunk_count = int(candidate.get("chunk_count") or 0)
-            if candidate.get("checksum") == document.checksum:
-                dedupe_action = "skipped_duplicate"
-            else:
-                dedupe_action = "reindexed"
             if dedupe_target_doc_id:
                 document.document_id = dedupe_target_doc_id
+
+        normalized_payload = _normalized_payload(document, final_metadata)
+
+        chunking_started_perf = time.perf_counter()
+        chunk_results = _build_chunk_results(document, final_metadata, provider=provider)
+        embedding_request_log.extend(provider.drain_request_log())
+        primary_result = next((result for result in chunk_results if result.index_role == "primary"), None)
+        if primary_result is None:
+            raise RuntimeError("Primary chunking did not produce a result")
+        rows = primary_result.rows
+        chunking_latency_ms = round((time.perf_counter() - chunking_started_perf) * 1000, 2)
+
+        # Decide dedupe action after chunk_results are available so we can
+        # build the desired index manifest and compare it against the
+        # currently persisted index.
+        if candidate:
+            if candidate.get("checksum") == document.checksum:
+                desired_manifest = _desired_ingestion_manifest(
+                    document=document,
+                    chunk_results=chunk_results,
+                    embedding_provider=embedding_provider,
+                    embedding_model=embedding_model,
+                    vector_dim=vector_dim,
+                )
+                current_manifest = repository.get_current_index_manifest(
+                    document_id=document.document_id,
+                )
+                if _manifests_match(desired_manifest, current_manifest):
+                    dedupe_action = "skipped_duplicate"
+                else:
+                    dedupe_action = "reindexed"
+            else:
+                dedupe_action = "reindexed"
         duplicate_doc_flag = dedupe_action == "skipped_duplicate"
 
         repository.update_ingestion_source(
@@ -3621,17 +3729,6 @@ def process_knowledge_ingestion(
             dedupe_action=dedupe_action,
             dedupe_target_doc_id=dedupe_target_doc_id,
         )
-
-        normalized_payload = _normalized_payload(document, final_metadata)
-
-        chunking_started_perf = time.perf_counter()
-        chunk_results = _build_chunk_results(document, final_metadata, provider=provider)
-        embedding_request_log.extend(provider.drain_request_log())
-        primary_result = next((result for result in chunk_results if result.index_role == "primary"), None)
-        if primary_result is None:
-            raise RuntimeError("Primary chunking did not produce a result")
-        rows = primary_result.rows
-        chunking_latency_ms = round((time.perf_counter() - chunking_started_perf) * 1000, 2)
         if not rows and dedupe_action != "skipped_duplicate":
             raise RuntimeError("No chunks were generated from the document")
         chunk_stats = _chunk_stats(rows)
@@ -3660,6 +3757,24 @@ def process_knowledge_ingestion(
             index_started_perf = time.perf_counter()
             failed_stage = "index_upsert"
             written = 0
+
+            # Clean up stale shadow index rows when the new ingestion does
+            # not produce a shadow role but old shadow rows exist.
+            if (
+                not shadow_chunk_enabled()
+                and dedupe_target_doc_id
+            ):
+                _stale_manifest = repository.get_current_index_manifest(
+                    document_id=document.document_id,
+                )
+                if _stale_manifest and "shadow" in (_stale_manifest.get("roles") or {}):
+                    repository.replace_document_chunks(
+                        document_id=document.document_id,
+                        index_role="shadow",
+                        vector_dim=vector_dim,
+                        rows=[],
+                    )
+
             for result in chunk_results:
                 if result.index_role == "primary":
                     written = repository.replace_document_chunks(

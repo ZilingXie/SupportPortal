@@ -891,6 +891,37 @@ class KnowledgeRepository(Protocol):
     ) -> dict[str, Any] | None:
         ...
 
+    def get_current_index_manifest(
+        self,
+        *,
+        document_id: str,
+    ) -> dict[str, Any] | None:
+        """Return the persisted index manifest for *document_id*.
+
+        Returns *None* when the document has no vector rows (the index is
+        effectively empty).  Otherwise the shape is::
+
+            {
+                "has_vector_rows": True,
+                "roles": {
+                    "<index_role>": {
+                        "chunk_count": int,
+                        "chunk_strategy": str | None,
+                        "strategy_version": str | None,
+                        "embedding_model": str | None,
+                        "embedding_provider": str | None,
+                        "vector_dim": int | None,
+                        "content_fingerprint": str,
+                    },
+                    ...
+                },
+            }
+
+        The *content_fingerprint* is a SHA-256 hex digest computed over
+        the ordered chunk content for that index role.
+        """
+        ...
+
     def upsert_document(
         self,
         *,
@@ -1380,6 +1411,14 @@ class DisabledKnowledgeRepository:
     ) -> dict[str, Any] | None:
         _ = source_url
         _ = source_path
+        return None
+
+    def get_current_index_manifest(
+        self,
+        *,
+        document_id: str,
+    ) -> dict[str, Any] | None:
+        _ = document_id
         return None
 
     def upsert_document(
@@ -5071,6 +5110,71 @@ class PostgresKnowledgeRepository:
             "checksum": _clean_text(row[3]),
             "title": _clean_text(row[4]),
             "chunk_count": _safe_positive_int(row[5], 0),
+        }
+
+    def get_current_index_manifest(
+        self,
+        *,
+        document_id: str,
+    ) -> dict[str, Any] | None:
+        """Read the current persisted index manifest from the vector table.
+
+        Returns *None* when no vector rows exist for this document.
+        """
+        clean_doc_id = _clean_text(document_id)
+        query = sql.SQL(
+            """
+            SELECT
+                index_role,
+                COUNT(*) AS chunk_count,
+                MIN(chunk_strategy) AS chunk_strategy,
+                MIN(strategy_version) AS strategy_version,
+                MIN(embedding_model) AS embedding_model,
+                MIN(metadata ->> 'embedding_provider') AS embedding_provider,
+                ARRAY_AGG(content ORDER BY chunk_index) AS contents,
+                MAX(vector_dims(embedding)) AS vector_dim
+            FROM {}
+            WHERE doc_id = %s
+            GROUP BY index_role
+            ORDER BY index_role
+            """
+        ).format(self._vector_table())
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (clean_doc_id,))
+                rows = cur.fetchall()
+        if not rows:
+            return None
+        roles: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            index_role = _clean_text(row[0]) or "primary"
+            chunk_count = _safe_positive_int(row[1], 0)
+            chunk_strategy = _clean_text(row[2]) or None
+            strategy_version = _clean_text(row[3]) or None
+            embedding_model = _clean_text(row[4]) or None
+            embedding_provider = _clean_text(row[5]) or None
+            contents: list[str] = sorted(
+                _clean_text(content) or ""
+                for content in (row[6] or [])
+            )
+            vector_dim = _safe_positive_int(row[7], 0) or None
+            fingerprint = hashlib.sha256(
+                "|".join(
+                    [chunk_strategy or "", strategy_version or "", *contents]
+                ).encode("utf-8")
+            ).hexdigest()
+            roles[index_role] = {
+                "chunk_count": chunk_count,
+                "chunk_strategy": chunk_strategy,
+                "strategy_version": strategy_version,
+                "embedding_model": embedding_model,
+                "embedding_provider": embedding_provider,
+                "vector_dim": vector_dim,
+                "content_fingerprint": fingerprint,
+            }
+        return {
+            "has_vector_rows": True,
+            "roles": roles,
         }
 
     def upsert_document(

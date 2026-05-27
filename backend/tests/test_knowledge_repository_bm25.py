@@ -310,6 +310,39 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
         bm25_mock.assert_called_once()
         ensure_bm25_mock.assert_not_called()
 
+    def test_get_current_index_manifest_reads_vector_row_metadata(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        cursor = _SequenceCursor()
+        cursor.fetchall_results = [
+            (
+                "primary",
+                2,
+                "official_structured_v1",
+                "official_structured_v1",
+                "BAAI/bge-m3",
+                "siliconflow",
+                ["Beta chunk", "Alpha chunk"],
+                1024,
+            )
+        ]
+        connection = _FakeConnection()
+        connection._cursor = cursor
+
+        with patch.object(repository, "_connect", return_value=connection):
+            manifest = repository.get_current_index_manifest(document_id="doc-1")
+
+        executed_sql = "\n".join(cursor.executed)
+        self.assertIn("metadata ->> 'embedding_provider'", executed_sql)
+        self.assertIn("MAX(vector_dims(embedding))", executed_sql)
+        self.assertNotIn("MIN(embedding)", executed_sql)
+        self.assertIsNotNone(manifest)
+        primary = manifest["roles"]["primary"]
+        self.assertEqual(primary["embedding_provider"], "siliconflow")
+        self.assertEqual(primary["embedding_model"], "BAAI/bge-m3")
+        self.assertEqual(primary["vector_dim"], 1024)
+        self.assertEqual(primary["chunk_count"], 2)
+        self.assertEqual(len(primary["content_fingerprint"]), 64)
+
     def test_replace_document_chunks_invalidates_active_vector_table_cache(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         rows = [

@@ -10,6 +10,33 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-27 - Refresh stale knowledge indexes on config changes
+
+- Summary:
+  - Added index-manifest-aware deduplication in `process_knowledge_ingestion`.
+  - Same-source documents with the same content checksum are now only skipped when the current persisted index manifest (embedding model, chunk strategy, generated chunk fingerprints per index role) matches the desired manifest for this ingestion.
+  - Stale manifests trigger `dedupe_action="reindexed"` with full re-embedding and vector/BM25 index refresh.
+  - When shadow chunking is disabled but old shadow rows exist, the stale shadow role is cleaned up via `replace_document_chunks(index_role="shadow", rows=[])`.
+  - Documents with no current vector rows are never skipped (treated as new/reindexed).
+  - Fixed content fingerprint ordering mismatch: `get_current_index_manifest` now sorts chunk content alphabetically before hashing, matching `_desired_ingestion_manifest` behavior.
+- Reason:
+  - The previous dedup logic only compared content checksums, ignoring changes to embedding provider/model, vector dimension, chunk strategy, shadow enabled state, or generated chunk text.
+  - This caused stale vector and BM25 indexes to persist when only the index configuration changed, degrading retrieval quality silently.
+  - The fingerprint ordering mismatch between `_desired_ingestion_manifest` (sorted alphabetically) and `get_current_index_manifest` (ordered by `chunk_index`) would cause matching manifests to never compare equal, triggering unnecessary reindexing of every duplicate document.
+- Affected files/config:
+  - `backend/services/knowledge_ingestion.py`: added `_desired_ingestion_manifest()` and `_manifests_match()` helpers; restructured `process_knowledge_ingestion` to compare manifests after chunking before deciding dedup action; added stale shadow cleanup.
+  - `backend/repositories/knowledge_repository.py`: added `get_current_index_manifest()` to protocol, stub, and real Postgres implementation; reads embedding provider from vector row metadata; fixed fingerprint content ordering to use `sorted()`.
+  - `backend/tests/test_knowledge_ingestion.py`: added `KnowledgeIngestionDedupeManifestTests` class with 10 regression tests covering reindex-on-stale, skip-on-match, and stale-shadow-cleanup scenarios.
+  - `backend/tests/test_knowledge_repository_bm25.py`: added repository manifest SQL coverage for provider metadata and vector dimensions.
+  - `docs/rag_change_log.md`: this entry.
+- Data impact:
+  - No schema changes to tables.
+  - Documents that were previously incorrectly skipped will be reindexed on next ingestion, updating their vector embeddings and BM25 indices.
+  - Shadow index role rows may be deleted when shadow chunking is disabled.
+- Verification:
+  - `python3.12 -m pytest backend/tests/test_knowledge_ingestion.py backend/tests/test_knowledge_repository_bm25.py -q`: knowledge ingestion dedupe and repository manifest tests pass.
+  - `python3.12 -m py_compile backend/services/knowledge_ingestion.py backend/repositories/knowledge_repository.py`: clean compile.
+
 ## 2026-05-27 - Remove misleading RAG cancel contract
 
 - Summary:
