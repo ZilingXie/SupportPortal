@@ -633,6 +633,43 @@ class RagApiTests(unittest.TestCase):
             "supportportal.docagent_chunks_bge_m3_1024",
         )
 
+    def test_internal_rag_query_allows_fallback_table_selected_readiness(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "probe_customer_rag_index_readiness",
+            return_value=RagKnowledgeIndexReadiness(
+                status="fallback_table_selected",
+                configured_table="supportportal.docagent_chunks_bge_m3_1024",
+                resolved_table="supportportal.docagent_chunks_ag_docs_test_1024",
+                configured_primary_rows=0,
+            ),
+        ), patch.object(
+            rag_api,
+            "run_rag_query",
+            return_value=_answer_result(),
+        ) as run_mock:
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-api-fallback-table-1",
+                    "ticket_id": "TK-FALLBACK",
+                    "customer_id": "C-FALLBACK",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        run_mock.assert_called_once()
+        payload = response.json()
+        self.assertEqual(payload["decision"], "answer")
+        diagnostics = payload["evidence_summary"]["diagnostics"]
+        self.assertEqual(diagnostics["knowledge_index_status"], "fallback_table_selected")
+        self.assertEqual(diagnostics["configured_vector_table"], "supportportal.docagent_chunks_bge_m3_1024")
+        self.assertEqual(diagnostics["resolved_vector_table"], "supportportal.docagent_chunks_ag_docs_test_1024")
+
     def test_upload_technical_article_returns_202_for_completed_direct_ingestion(self) -> None:
         record = self._direct_ingestion_record(ingestion_id="ing-article-success", status="completed")
         repository = _DirectIngestionRepository({record["ingestion_id"]: record})
