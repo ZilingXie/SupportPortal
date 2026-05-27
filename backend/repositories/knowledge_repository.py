@@ -13103,6 +13103,12 @@ class PostgresKnowledgeRepository:
                     "evidence_ndcg_at_5": _mean_from_rows(rag_rows, "evidence_ndcg_at_5"),
                     "evidence_coverage": _mean_from_rows(rag_rows, "evidence_coverage"),
                     "noise_rate": _mean_from_rows(rag_rows, "noise_rate"),
+                },
+            },
+            "live_retrieval_telemetry": {
+                "title": "Live Retrieval Telemetry",
+                "subtitle": "Rolling live traffic latency over the selected dashboard range, not the current benchmark run.",
+                "cards": {
                     "avg_vector_retrieval_latency_ms": live_retrieval_cards.get("avg_vector_retrieval_latency_ms"),
                     "avg_bm25_retrieval_latency_ms": live_retrieval_cards.get("avg_bm25_retrieval_latency_ms"),
                     "avg_fts_latency_ms": live_retrieval_cards.get("avg_fts_latency_ms"),

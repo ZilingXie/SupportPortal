@@ -3,12 +3,39 @@
 This file is the canonical log for every RAG-related change in this repository.
 
 For each new entry, record:
+
 - Date
 - Summary
 - Reason
 - Affected files or config
 - Data impact
 - Verification
+
+## 2026-05-27 - RAG docs and Retrieval dashboard provenance
+
+- Summary:
+  - Moved live rolling retrieval latency metrics out of the Retrieval dashboard hero summary cards into a dedicated `live_retrieval_telemetry` section with clear provenance copy.
+  - Updated `docs/rag_retrieval_chain.md` to document `fts_latency_ms` / `fts_candidates_count` as current agentic supplemental FTS route telemetry, not legacy/diagnostic-only telemetry.
+- Reason:
+  - The Retrieval dashboard incorrectly presented live rolling retrieval latency metrics alongside benchmark IR metrics in the hero summary, making them appear as if they belonged to the currently selected benchmark run.
+  - The retrieval chain docs incorrectly scoped FTS telemetry to legacy/diagnostic paths when the agentic multi-tool chain actively uses PostgreSQL FTS as a supplemental lexical route.
+- Affected files/config:
+  - `backend/repositories/knowledge_repository.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_docs_contract.py`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - The Retrieval dashboard now renders live retrieval telemetry in a separate panel with clear copy stating it uses rolling live traffic over the selected dashboard range, not the current benchmark run.
+  - Live latency metric keys were removed from `SUMMARY_METRIC_EXPLANATIONS` since they are no longer part of any page's summary cards.
+  - The existing `_retrieval_page` latency query behavior is unchanged; only the workbench page payload structure and frontend rendering changed.
+- Verification:
+  - `rtk .venv/bin/python -m pytest backend/tests/test_rag_scorecard_repository.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_docs_contract.py backend/tests/test_dashboard_routes.py -q`
+  - `rtk node --check ui/dashboard-ui/rag/app.js`
+  - `rtk .venv/bin/python -m py_compile backend/repositories/knowledge_repository.py backend/rag_api.py backend/services/rag_qa.py`
 
 ## 2026-05-27 - Align RAG retrieval docs and Dashboard lexical telemetry
 

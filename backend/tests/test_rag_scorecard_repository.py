@@ -1392,8 +1392,25 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(incorrect_rows[0]["failure_stage"], "retrieval")
         self.assertEqual(correct_rows[0]["evidence_hit_at_5"], 1.0)
         self.assertEqual(payload["sections"]["summary"]["candidate_eval_run_id"], "run-mixed-candidate")
-        self.assertEqual(payload["sections"]["summary"]["cards"]["avg_fts_latency_ms"], 10.0)
-        self.assertEqual(payload["sections"]["summary"]["cards"]["avg_lexical_retrieval_latency_ms"], 35.0)
+        # Live latency metrics must not leak into the benchmark summary cards.
+        for latency_key in [
+            "avg_vector_retrieval_latency_ms",
+            "avg_bm25_retrieval_latency_ms",
+            "avg_fts_latency_ms",
+            "avg_keyword_fallback_latency_ms",
+            "avg_lexical_retrieval_latency_ms",
+        ]:
+            self.assertNotIn(latency_key, payload["sections"]["summary"]["cards"])
+        # Live latency metrics must be in the dedicated live telemetry section.
+        live_telemetry = payload["sections"]["live_retrieval_telemetry"]
+        self.assertEqual(live_telemetry["cards"]["avg_fts_latency_ms"], 10.0)
+        self.assertEqual(live_telemetry["cards"]["avg_lexical_retrieval_latency_ms"], 35.0)
+        self.assertEqual(live_telemetry["cards"]["avg_vector_retrieval_latency_ms"], 11.0)
+        self.assertEqual(live_telemetry["cards"]["avg_bm25_retrieval_latency_ms"], 22.0)
+        self.assertEqual(live_telemetry["cards"]["avg_keyword_fallback_latency_ms"], 3.0)
+        # The live telemetry subtitle must make the live/rolling provenance clear.
+        self.assertIn("live", live_telemetry.get("subtitle", "").lower())
+        self.assertIn("not", live_telemetry.get("subtitle", "").lower())
 
     def test_retrieval_page_bm25_average_prefers_split_latency_metadata(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
