@@ -3137,18 +3137,25 @@ function buildNewTicketAttachmentItems(ticket) {
   const items = [];
   const seenAssetIds = new Set();
 
+  const addAttachment = (attachment) => {
+    if (!attachment.assetId || seenAssetIds.has(attachment.assetId)) {
+      return;
+    }
+    if (attachment.status && attachment.status !== "uploaded" && attachment.status !== "attached") {
+      return;
+    }
+    seenAssetIds.add(attachment.assetId);
+    items.push(attachment);
+  };
+
   for (const message of messages) {
     const attachments = normalizeMessageAttachments(message);
     for (const attachment of attachments) {
-      if (!attachment.assetId || seenAssetIds.has(attachment.assetId)) {
-        continue;
-      }
-      if (attachment.status && attachment.status !== "uploaded" && attachment.status !== "attached") {
-        continue;
-      }
-      seenAssetIds.add(attachment.assetId);
-      items.push(attachment);
+      addAttachment(attachment);
     }
+  }
+  for (const attachment of getComposerAttachments(ticket?.id)) {
+    addAttachment(attachment);
   }
   return items;
 }
