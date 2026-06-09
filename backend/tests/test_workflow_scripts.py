@@ -1064,7 +1064,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
         self._terminate_pid_file(pid_path)
 
-    def test_restart_single_host_stack_use_local_env_preserves_remote_db_default(self) -> None:
+    def test_restart_single_host_stack_use_local_env_uses_remote_db_from_env_local(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
         self._write(
             seed,
@@ -1079,7 +1079,7 @@ class WorkflowScriptTests(unittest.TestCase):
             seed,
             ".env.local",
             "STACK_RUNTIME_MODE=local_lightweight\n"
-            "STACK_DB_MODE=local\n"
+            "STACK_DB_MODE=remote\n"
             "LOCAL_POSTGRES_USER=localuser\n"
             "LOCAL_POSTGRES_PASSWORD=localpass\n"
             "LOCAL_POSTGRES_DB=localdb\n"
@@ -1694,14 +1694,17 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("condition: service_healthy", compose_source)
         self.assertIn("supportportal_local_pgdata:", compose_source)
 
-    def test_local_env_template_is_ignored_and_does_not_replace_online_env(self) -> None:
+    def test_local_env_template_keeps_remote_db_default_and_does_not_replace_online_env(self) -> None:
         gitignore_source = Path(".gitignore").read_text(encoding="utf-8")
         local_env_source = Path(".env.local.example").read_text(encoding="utf-8")
 
         self.assertIn(".env.local", gitignore_source)
+        self.assertIn("STACK_RUNTIME_MODE=local_lightweight", local_env_source)
+        self.assertIn("STACK_DB_MODE=remote", local_env_source)
         self.assertIn("LOCAL_POSTGRES_USER=supportportal", local_env_source)
         self.assertIn("LOCAL_POSTGRES_HOST_PORT=15432", local_env_source)
         self.assertIn("LOCAL_PGVECTOR_TABLE=docagent_chunks_bge_m3_1024", local_env_source)
+        self.assertIn("# Use --db local to opt into local Postgres/pgvector.", local_env_source)
         self.assertNotIn("YOUR_AWS_POSTGRES_HOST", local_env_source)
 
     def test_cleanup_single_host_aux_stack_only_targets_auxiliary_project(self) -> None:
