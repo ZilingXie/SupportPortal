@@ -52,6 +52,7 @@ from backend.services.rag_context_budget import (
     model_context_window,
 )
 from backend.services.rag_deadline import RagDeadline
+from backend.services.rag_access_policy import metadata_filter_for_access_mode, normalize_rag_access_mode
 from backend.services.rag_request_body_evidence import (
     RequestBodyEvidenceResult,
     detect_request_body_evidence_query,
@@ -4686,6 +4687,45 @@ def _metadata_filter_clauses(psycopg_sql: Any, filters: dict[str, str], *, metad
     return sql.SQL(" AND ") + sql.SQL(" AND ").join(clauses), params
 
 
+def _metadata_access_filter_clauses(psycopg_sql: Any, access_mode: Any, *, metadata_ref: str) -> tuple[Any, list[Any]]:
+    sql = psycopg_sql
+    access_filter = metadata_filter_for_access_mode(access_mode)
+    clauses: list[Any] = []
+    params: list[Any] = []
+    for key, value in access_filter.include.items():
+        clauses.append(
+            sql.SQL("LOWER(COALESCE({} ->> {}, '')) = %s").format(
+                sql.SQL(metadata_ref),
+                sql.Literal(key),
+            )
+        )
+        params.append(str(value or "").strip().lower())
+    for key, value in access_filter.exclude.items():
+        clauses.append(
+            sql.SQL("LOWER(COALESCE({} ->> {}, '')) <> %s").format(
+                sql.SQL(metadata_ref),
+                sql.Literal(key),
+            )
+        )
+        params.append(str(value or "").strip().lower())
+    if not clauses:
+        return sql.SQL(""), []
+    return sql.SQL(" AND ") + sql.SQL(" AND ").join(clauses), params
+
+
+def _combined_metadata_filter_clauses(
+    psycopg_sql: Any,
+    filters: dict[str, str],
+    *,
+    metadata_ref: str,
+    access_mode: Any,
+) -> tuple[Any, list[Any]]:
+    sql = psycopg_sql
+    filter_sql, filter_params = _metadata_filter_clauses(sql, filters, metadata_ref=metadata_ref)
+    access_sql, access_params = _metadata_access_filter_clauses(sql, access_mode, metadata_ref=metadata_ref)
+    return filter_sql + access_sql, [*filter_params, *access_params]
+
+
 def _split_table_name(raw_value: str, default_schema: str = "supportportal") -> tuple[str, str]:
     value = (raw_value or "").strip()
     if not value:
@@ -5341,11 +5381,17 @@ def _rag_config_llm_available(config: dict[str, Any]) -> bool:
     return bool(str(config.get("api_key") or "").strip())
 
 
-def _get_rag_config(top_k: int | None = None, *, query_policy: str | None = None) -> dict[str, Any]:
+def _get_rag_config(
+    top_k: int | None = None,
+    *,
+    query_policy: str | None = None,
+    rag_access_mode: str | None = None,
+) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
     compression_profile = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
     resolved_query_policy = _normalize_query_policy(query_policy)
+    resolved_rag_access_mode = normalize_rag_access_mode(rag_access_mode)
     final_top_k = max(1, int(top_k)) if top_k is not None else _safe_int_env("RAG_TOP_K", 6)
     vector_candidate_k = _safe_int_env("RAG_VECTOR_CANDIDATE_K", max(40, final_top_k * 10))
     bm25_candidate_k = _safe_int_env("RAG_BM25_CANDIDATE_K", max(40, final_top_k * 10))
@@ -5423,6 +5469,7 @@ def _get_rag_config(top_k: int | None = None, *, query_policy: str | None = None
         "request_timeout_seconds": answer_profile.timeout_seconds,
         "max_retries": answer_profile.max_retries,
         "query_policy": resolved_query_policy or None,
+        "rag_access_mode": resolved_rag_access_mode,
     }
 
 
@@ -5753,7 +5800,12 @@ def _retrieve_chunks(
         if retrieval_plan is not None
         else {}
     )
-    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
+    filter_sql, filter_params = _combined_metadata_filter_clauses(
+        sql,
+        downpush_filters,
+        metadata_ref="metadata",
+        access_mode=config.get("rag_access_mode"),
+    )
 
     provider = get_embedding_provider()
     query_embedding = provider.embed_query(message)
@@ -5838,7 +5890,12 @@ def _retrieve_bm25_chunks(
         if retrieval_plan is not None
         else {}
     )
-    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="v.metadata")
+    filter_sql, filter_params = _combined_metadata_filter_clauses(
+        sql,
+        downpush_filters,
+        metadata_ref="v.metadata",
+        access_mode=config.get("rag_access_mode"),
+    )
     app_schema = str(config.get("app_schema") or "supportportal").strip() or "supportportal"
     normalized_index_role = str(index_role or "").strip().lower() or "primary"
     candidate_limit = int(limit or config["bm25_candidate_k"])
@@ -6061,6 +6118,11 @@ def _retrieve_fts_chunks(
     psycopg = _import_psycopg()
     sql = psycopg.sql
     normalized_index_role = str(index_role or "").strip().lower() or "primary"
+    filter_sql, filter_params = _metadata_access_filter_clauses(
+        sql,
+        config.get("rag_access_mode"),
+        metadata_ref="metadata",
+    )
 
     query = sql.SQL(
         """
@@ -6091,6 +6153,7 @@ def _retrieve_fts_chunks(
             ) AS rank
         FROM {}
         WHERE index_role = %s
+          {}
           AND to_tsvector(
                 'simple',
                 coalesce(h1, '')
@@ -6104,11 +6167,14 @@ def _retrieve_fts_chunks(
         ORDER BY rank DESC
         LIMIT %s
         """
-    ).format(_table_identifier(sql, config["table"]))
+    ).format(_table_identifier(sql, config["table"]), filter_sql)
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (message, normalized_index_role, message, int(limit or config["keyword_candidate_k"])))
+            cur.execute(
+                query,
+                (message, normalized_index_role, *filter_params, message, int(limit or config["keyword_candidate_k"])),
+            )
             rows = cur.fetchall()
 
     chunks: list[RetrievedChunk] = []
@@ -6182,7 +6248,12 @@ def _retrieve_keyword_chunks(
         if retrieval_plan is not None
         else {}
     )
-    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
+    filter_sql, filter_params = _combined_metadata_filter_clauses(
+        sql,
+        downpush_filters,
+        metadata_ref="metadata",
+        access_mode=config.get("rag_access_mode"),
+    )
     patterns = [f"%{term}%" for term in terms]
     candidate_limit = max(int(config["top_k"]) * 25, 50)
     normalized_index_role = str(index_role or "").strip().lower() or "primary"
@@ -7678,10 +7749,11 @@ def _run_rag_query_legacy(
     customer_id: str | None = None,
     product: str | None = None,
     query_policy: str | None = None,
+    rag_access_mode: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
-    config = _get_rag_config(top_k=top_k, query_policy=query_policy)
+    config = _get_rag_config(top_k=top_k, query_policy=query_policy, rag_access_mode=rag_access_mode)
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
         config["table"] = resolved_table
@@ -8675,11 +8747,12 @@ def _run_rag_query_agentic_single(
     requester: str | None = None,
     product: str | None = None,
     query_policy: str | None = None,
+    rag_access_mode: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
     request_started_at = time.perf_counter()
-    config = _get_rag_config(top_k=top_k, query_policy=query_policy)
+    config = _get_rag_config(top_k=top_k, query_policy=query_policy, rag_access_mode=rag_access_mode)
     if not config["dsn"] or not _rag_config_llm_available(config):
         return None
 
@@ -10044,6 +10117,7 @@ def _run_rag_query_agentic(
     requester: str | None = None,
     product: str | None = None,
     query_policy: str | None = None,
+    rag_access_mode: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
@@ -10063,6 +10137,7 @@ def _run_rag_query_agentic(
             requester=requester,
             product=product,
             query_policy=query_policy,
+            rag_access_mode=rag_access_mode,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -10111,6 +10186,7 @@ def _run_rag_query_agentic(
             requester=requester,
             product=product,
             query_policy=query_policy,
+            rag_access_mode=rag_access_mode,
             should_cancel=_child_should_cancel,
             record_cancel_stage=_child_record,
         )
@@ -10196,6 +10272,7 @@ def run_rag_query(
     requester: str | None = None,
     product: str | None = None,
     query_policy: str | None = None,
+    rag_access_mode: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
@@ -10209,6 +10286,7 @@ def run_rag_query(
             customer_id=customer_id,
             product=product,
             query_policy=query_policy,
+            rag_access_mode=rag_access_mode,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -10228,6 +10306,7 @@ def run_rag_query(
             requester=requester,
             product=product,
             query_policy=query_policy,
+            rag_access_mode=rag_access_mode,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -10249,6 +10328,7 @@ def run_rag_query(
             customer_id=customer_id,
             product=product,
             query_policy=query_policy,
+            rag_access_mode=rag_access_mode,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )

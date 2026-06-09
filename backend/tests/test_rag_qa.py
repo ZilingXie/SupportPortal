@@ -24,6 +24,7 @@ from backend.services.rag_qa import (
     _extract_metadata_hints,
     _get_rag_config,
     _raise_if_cancelled,
+    _metadata_access_filter_clauses,
     _metadata_rerank,
     _merge_request_body_evidence_into_final_chunks,
     _select_usage_configuration_code_language,
@@ -91,6 +92,34 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+    def test_official_access_clause_requires_official_type_and_source(self) -> None:
+        filter_sql, params = _metadata_access_filter_clauses(
+            psycopg.sql,
+            "official_only",
+            metadata_ref="metadata",
+        )
+
+        rendered = repr(filter_sql)
+        self.assertIn("knowledge_type", rendered)
+        self.assertIn("source_type", rendered)
+        self.assertIn("metadata", rendered)
+        self.assertIn("= %s", rendered)
+        self.assertEqual(params, ["official", "official_markdown_upload"])
+
+    def test_non_official_access_clause_excludes_official_type_and_source(self) -> None:
+        filter_sql, params = _metadata_access_filter_clauses(
+            psycopg.sql,
+            "non_official_only",
+            metadata_ref="v.metadata",
+        )
+
+        rendered = repr(filter_sql)
+        self.assertIn("knowledge_type", rendered)
+        self.assertIn("source_type", rendered)
+        self.assertIn("v.metadata", rendered)
+        self.assertIn("<> %s", rendered)
+        self.assertEqual(params, ["official", "official_markdown_upload"])
 
     def test_build_answer_text_formats_email_style_response(self) -> None:
         answer_text = rag_qa._build_answer_text(

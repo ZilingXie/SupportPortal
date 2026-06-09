@@ -23,6 +23,7 @@
 - Client 对话支持同 ticket 打断重发，并允许不同 ticket 并发等待 AI 回复。
 - Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。
 - 对话支持上传 txt/log/err 日志附件。
+- Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
@@ -39,6 +40,7 @@
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
 - Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。
 - 对话支持上传 txt/log/err 日志附件。
+- Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
@@ -88,6 +90,7 @@
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
 - 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
+- Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 
 ### 未完成
 - 待补充。

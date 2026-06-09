@@ -70,6 +70,25 @@ class TestBuildSyncRagExecutor(unittest.TestCase):
         result = executor(message="hi", ticket_id="T1")
         self.assertIs(result, expected)
 
+    def test_sync_client_executor_forces_official_only_access(self):
+        client = MagicMock()
+        client.query_answer_with_recovery_detail.return_value = RagTicketAnswerDetail(
+            answer="Hello",
+            confidence=0.9,
+            sources=["src"],
+            citations=[],
+            needs_engineer_guidance=False,
+            reason="grounded_answer",
+        )
+        executor = build_sync_rag_executor(client)
+
+        executor(message="hi", ticket_id="T1")
+
+        self.assertEqual(
+            client.query_answer_with_recovery_detail.call_args.kwargs["rag_access_mode"],
+            "official_only",
+        )
+
     def test_transport_error_returns_fallback(self):
         client = MagicMock()
         client.query_answer_with_recovery_detail.side_effect = RagServiceError(
