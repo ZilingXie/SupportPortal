@@ -11,6 +11,26 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-09 - Plan RAG external/internal scope split
+
+- Summary:
+  - Added the formal design for splitting SupportPortal RAG access into client external-only retrieval and engineer internal-first retrieval with external fallback.
+  - Added the implementation plan for system-enforced `knowledge_scope`, `retrieval_policy`, handoff evidence preservation, engineer-side evidence orchestration, customer-safety filtering, and future MCP query integration.
+- Reason:
+  - Client-side AI must only use public official documentation.
+  - Engineer-side AI needs internal support knowledge first, but should still be able to consult official documentation when internal evidence is insufficient or official API semantics are needed.
+  - Future MCP query results need a planned evidence contract before they are wired into engineer-side investigation.
+- Affected files/config:
+  - `docs/superpowers/specs/2026-06-09-rag-scope-split-design.md`
+  - `docs/superpowers/plans/2026-06-09-rag-scope-split.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes in this planning-only task.
+  - The plan calls for a future explicit backfill that maps official knowledge to `external` and all other knowledge to `internal`, failing closed to `internal` for ambiguous rows.
+- Verification:
+  - `rtk python3 - <<'PY' ... PY` checked that the design, plan, and change-log files exist and contain the required scope/policy/MCP markers.
+  - `rtk git diff --check`
+
 ## 2026-05-27 - RAG docs and Retrieval dashboard provenance
 
 - Summary:
