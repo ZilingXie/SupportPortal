@@ -11,6 +11,41 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-09 - Enforce RAG official and non-official access with existing metadata
+
+- Summary:
+  - Replaced the earlier `knowledge_scope` / public `retrieval_policy` foundation with existing-field access policy helpers based on `knowledge_type` and `source_type`.
+  - Added internal `rag_access_mode` routing for official-only and non-official-only retrieval.
+  - Enforced access filters across vector, BM25, FTS, keyword fallback, warm sidecar, and request-body evidence retrieval paths.
+  - Forced client RAG executors to use official-only access and added engineer evidence orchestration for non-official-first retrieval with official fallback.
+- Reason:
+  - Client AI must only retrieve official documentation.
+  - Engineer AI should search internal/non-official knowledge first while retaining official documentation fallback for insufficient internal evidence or official API semantics.
+  - The implementation should not add or backfill new RAG metadata fields because existing `knowledge_type` and `source_type` already express the boundary.
+- Affected files/config:
+  - `backend/services/rag_access_policy.py`
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/rag_executor.py`
+  - `backend/services/engineer_evidence_tools.py`
+  - `backend/tests/test_rag_access_policy.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_executor.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_engineer_evidence_tools.py`
+  - `docs/superpowers/specs/2026-06-09-rag-scope-split-design.md`
+  - `docs/superpowers/plans/2026-06-09-rag-scope-split.md`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+  - `docs/feature_list.md`
+- Data impact:
+  - No schema changes, ingestion mapping changes, vector table changes, embedding changes, or backfill.
+  - Existing chunks remain valid when they carry `knowledge_type` and `source_type` metadata.
+- Verification:
+  - RED: targeted pytest failed before implementation because `_metadata_access_filter_clauses` and `rag_access_mode` support were missing.
+  - GREEN: targeted pytest passed for access policy, client executor, service client forwarding, SQL access clauses, and engineer evidence orchestration.
+
 ## 2026-06-09 - Add RAG access policy foundation
 
 - Summary:

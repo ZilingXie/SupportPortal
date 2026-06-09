@@ -500,6 +500,38 @@ class RagServiceClientTests(unittest.TestCase):
 
         self.assertEqual(captured["body"]["query_policy"], "client_accuracy_first")
 
+    def test_query_includes_internal_rag_access_mode_in_json_payload(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"decision":"answer","answer":"ok","confidence":0.8,"sources":[],"citations":[]}'
+
+        def _fake_urlopen(request, timeout):
+            _ = timeout
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            client.query(
+                question="How do I join a channel?",
+                request_id="rag-access-1",
+                ticket_id="T-001",
+                customer_id="C-001",
+                rag_access_mode="official_only",
+            )
+
+        self.assertEqual(captured["body"]["rag_access_mode"], "official_only")
+        self.assertNotIn("knowledge_scope", captured["body"])
+        self.assertNotIn("retrieval_policy", captured["body"])
+
     def test_query_answer_with_recovery_detail_forwards_selected_product(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
 
@@ -547,6 +579,25 @@ class RagServiceClientTests(unittest.TestCase):
             )
 
         self.assertEqual(query_mock.call_args.kwargs["query_policy"], "client_accuracy_first")
+
+    def test_query_answer_with_recovery_detail_forwards_rag_access_mode(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+
+        with patch.object(
+            client,
+            "query",
+            return_value={"decision": "answer", "answer": "ok", "confidence": 0.8, "sources": [], "citations": []},
+        ) as query_mock:
+            client.query_answer_with_recovery_detail(
+                question="How do I join a channel?",
+                request_id="rag-access-2",
+                ticket_id="T-001",
+                customer_id="C-001",
+                rag_access_mode="official_only",
+                insufficient_reply="INSUFFICIENT",
+            )
+
+        self.assertEqual(query_mock.call_args.kwargs["rag_access_mode"], "official_only")
 
     def test_query_answer_with_recovery_detail_forwards_timeout_override_to_query(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")

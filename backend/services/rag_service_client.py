@@ -461,6 +461,7 @@ class RagServiceClient:
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
         query_policy: str | None = None,
+        rag_access_mode: str | None = None,
         top_k: int | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
@@ -476,6 +477,8 @@ class RagServiceClient:
             payload["product"] = str(product).strip()
         if str(query_policy or "").strip():
             payload["query_policy"] = str(query_policy).strip()
+        if str(rag_access_mode or "").strip():
+            payload["rag_access_mode"] = str(rag_access_mode).strip()
         if ticket_context is not None:
             payload["ticket_context"] = [
                 {
@@ -502,6 +505,7 @@ class RagServiceClient:
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
         query_policy: str | None = None,
+        rag_access_mode: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         timeout_seconds: float | None = None,
@@ -518,6 +522,7 @@ class RagServiceClient:
             requester=requester,
             ticket_context=ticket_context,
             query_policy=query_policy,
+            rag_access_mode=rag_access_mode,
             insufficient_reply=insufficient_reply,
             top_k=top_k,
             timeout_seconds=timeout_seconds,
@@ -540,6 +545,7 @@ class RagServiceClient:
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
         query_policy: str | None = None,
+        rag_access_mode: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         timeout_seconds: float | None = None,
@@ -563,6 +569,8 @@ class RagServiceClient:
                 query_kwargs["product"] = str(product).strip()
             if str(query_policy or "").strip():
                 query_kwargs["query_policy"] = str(query_policy).strip()
+            if str(rag_access_mode or "").strip():
+                query_kwargs["rag_access_mode"] = str(rag_access_mode).strip()
             payload = self.query(
                 **query_kwargs,
             )

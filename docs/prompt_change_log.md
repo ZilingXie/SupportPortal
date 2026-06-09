@@ -12,6 +12,24 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-09 - RAG access-aware AI evidence routing
+
+- Area or subsystem: Client RAG executor and engineer evidence tools
+- Prompt or model version: `rag-access-routing-v1`
+- Summary: Client-side AI RAG execution now forces official-only retrieval, while engineer evidence search runs non-official retrieval first and only uses official fallback when internal evidence is insufficient or official semantics are requested.
+- Reason: Model-visible evidence must match the intended access boundary: customers get official-doc-grounded answers, engineers can reason from internal/non-official knowledge without leaking it into customer drafts.
+- Affected files or config:
+  - `backend/services/rag_executor.py`
+  - `backend/services/engineer_evidence_tools.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/rag_api.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Client AI cannot receive technical/internal RAG chunks through the normal RAG executor.
+  - Engineer evidence tooling prefers internal/non-official evidence and adds official evidence only as a fallback or semantics check.
+- Verification:
+  - Targeted pytest covered client official-only executor behavior, internal RAG access mode forwarding, and engineer non-official-first / official-fallback ordering.
+
 ## 2026-05-27 - control-cc orchestrator review packets
 
 - Area or subsystem: Project-local Codex-to-Claude Code delegation workflow

@@ -635,6 +635,7 @@ class RagQueryRequest(BaseModel):
     requester: str | None = Field(default=None, max_length=256)
     product: str | None = Field(default=None, max_length=64)
     query_policy: str | None = Field(default=None, max_length=64)
+    rag_access_mode: str | None = Field(default=None, pattern="^(official_only|non_official_only)$")
     ticket_context: list[dict[str, str]] | None = None
     top_k: int | None = Field(default=None, ge=1, le=12)
 
@@ -1110,6 +1111,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             requester=request.requester,
             product=request.product,
             query_policy=request.query_policy,
+            rag_access_mode=request.rag_access_mode,
             should_cancel=lambda: bool(cancel_state["cancel_event"].is_set()),
             record_cancel_stage=lambda stage: _record_rag_cancel_stage(cancel_state, stage),
         )

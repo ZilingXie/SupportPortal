@@ -83,6 +83,7 @@ def build_sync_rag_executor(rag_service_client: RagServiceClient):
                 ticket_context=ticket_context,
                 product=product,
                 query_policy="client_accuracy_first",
+                rag_access_mode="official_only",
                 insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
             )
         except RagServiceError as exc:
@@ -161,6 +162,7 @@ def build_worker_rag_executor(
                 ticket_context=ticket_context,
                 product=product,
                 query_policy="client_accuracy_first",
+                rag_access_mode="official_only",
                 insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
                 timeout_seconds=timeout_seconds,
                 recovery_window_seconds=effective_recovery_window,
