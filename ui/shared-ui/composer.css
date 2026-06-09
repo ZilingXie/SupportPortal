@@ -477,6 +477,109 @@
   box-shadow: none;
 }
 
+.attachment-chip-list,
+.message-attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attachment-chip-list {
+  margin: 8px 18px 0;
+}
+
+.attachment-chip,
+.message-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(100%, 360px);
+  border: 1px solid rgba(110, 120, 130, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--ink);
+  font: inherit;
+}
+
+.attachment-chip {
+  min-height: 40px;
+  padding: 6px 6px 6px 10px;
+}
+
+.attachment-chip.is-uploading {
+  color: var(--ink-soft);
+}
+
+.attachment-chip.is-failed {
+  border-color: rgba(172, 55, 49, 0.28);
+  color: #8b2b25;
+}
+
+.attachment-chip-main,
+.message-attachment-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.attachment-chip-name,
+.message-attachment-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.attachment-chip-meta,
+.message-attachment-meta {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.attachment-chip .material-symbols-outlined,
+.message-attachment .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 18px;
+}
+
+.attachment-chip-remove {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.attachment-chip-remove:hover {
+  background: rgba(23, 28, 33, 0.06);
+  color: var(--ink);
+}
+
+.message-attachment-list {
+  margin-top: 10px;
+}
+
+.message-attachment {
+  min-height: 42px;
+  padding: 7px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.message-attachment:hover {
+  border-color: rgba(0, 100, 147, 0.32);
+  background: rgba(245, 249, 252, 0.96);
+}
+
 @media (max-width: 960px) {
   .new-ticket-textarea {
     min-height: 104px;
@@ -500,5 +603,10 @@
     width: 44px;
     height: 44px;
     border-radius: 14px;
+  }
+
+  .attachment-chip-list {
+    margin-left: 16px;
+    margin-right: 16px;
   }
 }

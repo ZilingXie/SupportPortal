@@ -38,6 +38,19 @@ from backend.repositories.ticket_repository import (
     TicketRepository,
     create_ticket_repository,
 )
+from backend.repositories.asset_repository import (
+    ASSET_STATUS_ATTACHED,
+    ASSET_STATUS_UPLOADED,
+    AssetRepository,
+    InMemoryAssetRepository,
+    create_asset_repository,
+)
+from backend.services.asset_storage import (
+    build_asset_s3_key,
+    create_asset_id,
+    create_asset_storage,
+    validate_asset_upload_request,
+)
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
     embedding_model_id,
@@ -277,6 +290,19 @@ class TicketQueryRequest(BaseModel):
     product: str | None = Field(default=None, max_length=64)
     content_format: str = Field(default="plaintext", pattern="^(plaintext|markdown)$")
     message: str = Field(min_length=1)
+    asset_ids: list[str] = Field(default_factory=list)
+
+
+class AssetUploadIntentRequest(BaseModel):
+    ticket_id: str = Field(min_length=1, max_length=128)
+    customer_id: str = Field(min_length=1, max_length=128)
+    file_name: str = Field(min_length=1, max_length=300)
+    content_type: str = Field(default="text/plain", max_length=160)
+    size_bytes: int = Field(gt=0)
+
+
+class AssetCompleteRequest(BaseModel):
+    customer_id: str | None = Field(default=None, max_length=128)
 
 
 class ClientAckRequest(BaseModel):
@@ -400,6 +426,8 @@ if SHARED_UI_DIR.exists():
 
 
 ticket_repository: TicketRepository = create_ticket_repository()
+asset_repository: AssetRepository = create_asset_repository()
+asset_storage = create_asset_storage()
 hub = ConnectionHub()
 event_bus = AsyncRedisEventBus()
 task_queue = AsyncRedisTaskQueue()
@@ -2245,9 +2273,28 @@ def logout() -> dict[str, Any]:
     return {"ok": True, "logged_out_at": now_iso()}
 
 
+def _initialize_asset_repository_with_fallback() -> None:
+    global asset_repository
+    if isinstance(ticket_repository, InMemoryTicketRepository):
+        fallback_asset_repository = InMemoryAssetRepository()
+        fallback_asset_repository.initialize()
+        asset_repository = fallback_asset_repository
+        LOGGER.warning("Using in-memory asset repository because ticket repository is in memory mode.")
+        return
+    try:
+        asset_repository.initialize()
+        LOGGER.info("Asset repository initialized: %s", asset_repository.storage_mode())
+    except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
+        LOGGER.error("Asset repository initialization failed: %s", exc)
+        fallback_asset_repository = InMemoryAssetRepository()
+        fallback_asset_repository.initialize()
+        asset_repository = fallback_asset_repository
+        LOGGER.warning("Falling back to in-memory asset repository for this process.")
+
+
 @app.on_event("startup")
 def startup_event() -> None:
-    global ticket_repository
+    global ticket_repository, asset_repository
     attempts = max(1, _ticket_db_startup_init_retries() + 1)
     retry_delay_seconds = _ticket_db_startup_init_retry_delay_seconds()
     last_error: Exception | None = None
@@ -2255,6 +2302,7 @@ def startup_event() -> None:
         try:
             ticket_repository.initialize()
             LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
+            _initialize_asset_repository_with_fallback()
             return
         except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
             last_error = exc
@@ -2276,6 +2324,7 @@ def startup_event() -> None:
     fallback_repository.initialize()
     ticket_repository = fallback_repository
     LOGGER.warning("Falling back to in-memory ticket repository for this process.")
+    _initialize_asset_repository_with_fallback()
 
 
 @app.on_event("shutdown")
@@ -2285,6 +2334,9 @@ async def shutdown_event() -> None:
     close_ticket_repository = getattr(ticket_repository, "close", None)
     if callable(close_ticket_repository):
         close_ticket_repository()
+    close_asset_repository = getattr(asset_repository, "close", None)
+    if callable(close_asset_repository):
+        close_asset_repository()
 
 
 def _dsn_host_database_signature(raw_dsn: str) -> tuple[str, str] | None:
@@ -2437,6 +2489,158 @@ def create_client_ack(request: ClientAckRequest) -> dict[str, Any]:
     return _create_client_ack(request.message)
 
 
+def _public_asset_payload(asset: dict[str, Any]) -> dict[str, Any]:
+    original_filename = str(asset.get("original_filename") or "").strip()
+    return {
+        "asset_id": str(asset.get("asset_id") or "").strip(),
+        "ticket_id": str(asset.get("ticket_id") or "").strip(),
+        "customer_id": str(asset.get("customer_id") or "").strip(),
+        "original_filename": original_filename,
+        "file_name": original_filename,
+        "content_type": str(asset.get("content_type") or "application/octet-stream").strip(),
+        "size_bytes": int(asset.get("size_bytes") or 0),
+        "extension": str(asset.get("extension") or "").strip().lower(),
+        "status": str(asset.get("status") or "").strip(),
+        "agent_read_enabled": False,
+        "created_at": asset.get("created_at"),
+        "uploaded_at": asset.get("uploaded_at"),
+        "attached_at": asset.get("attached_at"),
+    }
+
+
+def _attachment_summary_from_asset(asset: dict[str, Any]) -> dict[str, Any]:
+    summary = _public_asset_payload(asset)
+    summary["agent_read_enabled"] = False
+    return summary
+
+
+def _normalize_asset_ids(asset_ids: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for asset_id in asset_ids or []:
+        value = str(asset_id or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _prepare_message_asset_attachments_sync(
+    *,
+    asset_ids: list[str] | None,
+    ticket_id: str,
+    customer_id: str,
+) -> list[dict[str, Any]]:
+    normalized_ids = _normalize_asset_ids(asset_ids)
+    if len(normalized_ids) > 10:
+        raise HTTPException(status_code=400, detail="At most 10 attachments can be sent with one message")
+    attachments: list[dict[str, Any]] = []
+    for asset_id in normalized_ids:
+        asset = asset_repository.get_asset(asset_id)
+        if asset is None:
+            raise HTTPException(status_code=400, detail=f"Asset {asset_id} was not found")
+        if str(asset.get("ticket_id") or "").strip() != ticket_id:
+            raise HTTPException(status_code=403, detail="Asset does not belong to this ticket")
+        if str(asset.get("customer_id") or "").strip() != customer_id:
+            raise HTTPException(status_code=403, detail="Asset does not belong to this customer")
+        if str(asset.get("status") or "").strip() != ASSET_STATUS_UPLOADED:
+            raise HTTPException(status_code=400, detail="Only uploaded assets can be attached to a message")
+        attachments.append(_attachment_summary_from_asset(asset))
+    return attachments
+
+
+@app.post("/api/assets/upload-intents")
+def create_asset_upload_intent(request: AssetUploadIntentRequest) -> dict[str, Any]:
+    try:
+        safe_filename, extension = validate_asset_upload_request(request.file_name, request.size_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    asset_id = create_asset_id()
+    bucket = str(getattr(asset_storage, "bucket", "") or os.getenv("ASSET_S3_BUCKET") or "").strip()
+    asset = {
+        "asset_id": asset_id,
+        "ticket_id": request.ticket_id.strip(),
+        "customer_id": request.customer_id.strip(),
+        "original_filename": safe_filename,
+        "content_type": str(request.content_type or "text/plain").strip() or "text/plain",
+        "size_bytes": int(request.size_bytes),
+        "extension": extension,
+        "status": "pending_upload",
+        "storage_provider": "s3",
+        "bucket": bucket,
+        "s3_key": build_asset_s3_key(
+            ticket_id=request.ticket_id,
+            asset_id=asset_id,
+            file_name=safe_filename,
+        ),
+        "meta": {"agent_read_enabled": False},
+    }
+    try:
+        upload = asset_storage.create_presigned_post(asset)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        LOGGER.warning("Failed to create asset upload intent: %s", exc)
+        raise HTTPException(status_code=503, detail="Failed to create upload intent") from exc
+
+    stored = asset_repository.create_asset(asset)
+    return {
+        "asset": _public_asset_payload(stored),
+        "upload": upload,
+    }
+
+
+@app.post("/api/assets/{asset_id}/complete")
+def complete_asset_upload(asset_id: str, request: AssetCompleteRequest) -> dict[str, Any]:
+    asset = asset_repository.get_asset(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    normalized_customer_id = str(request.customer_id or "").strip()
+    if normalized_customer_id and normalized_customer_id != str(asset.get("customer_id") or "").strip():
+        raise HTTPException(status_code=403, detail="Asset does not belong to this customer")
+    try:
+        upload_info = asset_storage.verify_uploaded(asset)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        LOGGER.warning("Failed to verify asset upload %s: %s", asset_id, exc)
+        raise HTTPException(status_code=400, detail="Uploaded object could not be verified") from exc
+    uploaded = asset_repository.mark_uploaded(
+        asset_id,
+        size_bytes=int(upload_info.get("size_bytes") or asset.get("size_bytes") or 0),
+        etag=str(upload_info.get("etag") or "").strip() or None,
+        checksum=str(upload_info.get("checksum") or "").strip() or None,
+    )
+    if uploaded is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return {"asset": _public_asset_payload(uploaded)}
+
+
+@app.get("/api/assets/{asset_id}/download-url")
+def get_asset_download_url(
+    asset_id: str,
+    customer_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    asset = asset_repository.get_asset(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    normalized_customer_id = str(customer_id or "").strip()
+    if normalized_customer_id and normalized_customer_id != str(asset.get("customer_id") or "").strip():
+        raise HTTPException(status_code=403, detail="Asset does not belong to this customer")
+    if str(asset.get("status") or "").strip() not in {ASSET_STATUS_UPLOADED, ASSET_STATUS_ATTACHED}:
+        raise HTTPException(status_code=400, detail="Asset is not ready for download")
+    try:
+        download_url = asset_storage.create_download_url(asset)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        LOGGER.warning("Failed to create asset download URL %s: %s", asset_id, exc)
+        raise HTTPException(status_code=503, detail="Failed to create download URL") from exc
+    return {"download_url": download_url, "asset": _public_asset_payload(asset)}
+
+
 @app.get("/api/client/service-events")
 def list_client_service_events() -> dict[str, Any]:
     return get_agora_service_events_payload()
@@ -2466,6 +2670,13 @@ async def create_or_update_ticket(
     ensure_ticket_defaults(ticket)
     initial_message_count = len(ticket.get("messages", []))
     customer_message = request.message.strip()
+    message_attachments = await async_to_thread(
+        _prepare_message_asset_attachments_sync,
+        asset_ids=request.asset_ids,
+        ticket_id=ticket_id,
+        customer_id=request.customer_id,
+    )
+    attached_asset_ids = [str(item.get("asset_id") or "").strip() for item in message_attachments if item.get("asset_id")]
     ticket_status_before_customer_message = normalize_ticket_status(ticket.get("status"))
     latest_assistant_message = _latest_assistant_message_for_ticket(ticket)
     customer_resolution_signal = is_explicit_resolved_confirmation(customer_message)
@@ -2542,6 +2753,7 @@ async def create_or_update_ticket(
                 "content": persisted_customer_message,
                 "created_at": timestamp,
                 "content_format": customer_message_content_format,
+                **({"attachments": message_attachments} if message_attachments else {}),
                 **_build_input_guardrail_message_metadata(input_guardrail_result),
             }
         )
@@ -2564,6 +2776,7 @@ async def create_or_update_ticket(
                 "content": customer_message,
                 "created_at": timestamp,
                 "content_format": customer_message_content_format,
+                **({"attachments": message_attachments} if message_attachments else {}),
             }
         )
         active_engineer_case_payload = _active_engineer_case_payload(ticket)
@@ -2834,6 +3047,8 @@ async def create_or_update_ticket(
         ticket,
         new_messages=new_messages,
     )
+    if attached_asset_ids:
+        await async_to_thread(asset_repository.mark_attached, attached_asset_ids)
     if execution is not None:
         await async_to_thread(_record_ticket_agent_runtime_events, execution)
     if engineer_case is not None:

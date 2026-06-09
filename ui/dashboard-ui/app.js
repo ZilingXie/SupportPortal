@@ -164,6 +164,85 @@ function normalizeString(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeAttachmentRecord(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const assetId = normalizeString(value.asset_id || value.assetId);
+  const originalFilename =
+    normalizeString(value.original_filename || value.originalFilename || value.file_name || value.fileName) ||
+    "attachment";
+  if (!assetId && !originalFilename) {
+    return null;
+  }
+  return {
+    assetId,
+    originalFilename,
+    sizeBytes: Number(value.size_bytes ?? value.sizeBytes ?? 0) || 0,
+  };
+}
+
+function normalizeMessageAttachments(message) {
+  return (Array.isArray(message?.attachments) ? message.attachments : [])
+    .map((attachment) => normalizeAttachmentRecord(attachment))
+    .filter(Boolean);
+}
+
+function formatAttachmentSize(sizeBytes) {
+  const bytes = Number(sizeBytes || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "";
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderMessageAttachments(message) {
+  const attachments = normalizeMessageAttachments(message);
+  if (attachments.length === 0) {
+    return "";
+  }
+  return `
+    <div class="message-attachment-list">
+      ${attachments
+        .map((attachment) => `
+          <button
+            type="button"
+            class="message-attachment"
+            data-asset-download-id="${escapeHtml(attachment.assetId)}"
+            title="Download attachment"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">description</span>
+            <span class="message-attachment-main">
+              <span class="message-attachment-name">${escapeHtml(attachment.originalFilename)}</span>
+              <span class="message-attachment-meta">${escapeHtml(formatAttachmentSize(attachment.sizeBytes))}</span>
+            </span>
+            <span class="material-symbols-outlined" aria-hidden="true">download</span>
+          </button>
+        `)
+        .join("")}
+    </div>
+  `;
+}
+
+async function downloadAsset(assetId) {
+  const normalizedAssetId = normalizeString(assetId);
+  if (!normalizedAssetId) {
+    return;
+  }
+  const payload = await fetchJson(`/api/assets/${encodeURIComponent(normalizedAssetId)}/download-url`);
+  const downloadUrl = normalizeString(payload?.download_url);
+  if (!downloadUrl) {
+    throw new Error("Download URL was empty");
+  }
+  window.open(downloadUrl, "_blank", "noopener,noreferrer");
+}
+
 function humanizeToken(value) {
   const normalized = normalizeString(value);
   if (!normalized) {
@@ -1884,6 +1963,7 @@ function buildTicketDetailMessageCard(message) {
         </div>
       </header>
       <div class="ticket-detail-message-content">${escapeHtml(normalizeString(message?.content) || "-")}</div>
+      ${renderMessageAttachments(message)}
       ${canShowRagPlan ? buildTicketDetailRagPlanPanel(message, messageKey) : ""}
     </article>
   `;
@@ -2433,6 +2513,14 @@ async function refreshDashboard({ showLoading = true } = {}) {
 }
 
 function handleDocumentClick(event) {
+  const assetDownloadButton = event.target.closest("[data-asset-download-id]");
+  if (assetDownloadButton) {
+    downloadAsset(assetDownloadButton.getAttribute("data-asset-download-id")).catch((error) => {
+      window.alert(`Attachment download failed: ${error.message}`);
+    });
+    return;
+  }
+
   const ticketDetailCloseTarget = event.target.closest("[data-close-ticket-detail]");
   if (ticketDetailCloseTarget) {
     closeTicketDetailModal();

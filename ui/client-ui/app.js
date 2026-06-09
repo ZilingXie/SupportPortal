@@ -145,6 +145,7 @@ const state = {
   pendingAsyncTicketId: null,
   pendingAsyncMessageCreatedAt: null,
   pendingByTicket: {},
+  attachmentsByTicket: {},
   supersededTurnsByTicket: loadSupersededTurnsByTicket(),
   serviceEvents: buildDefaultServiceEventsState(),
 };
@@ -221,6 +222,320 @@ function sanitizeUrl(value) {
     return null;
   }
   return null;
+}
+
+function normalizeAttachmentRecord(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const assetId = String(value.assetId || value.asset_id || "").trim();
+  const originalFilename = String(
+    value.originalFilename || value.original_filename || value.fileName || value.file_name || "attachment"
+  ).trim();
+  if (!assetId && !originalFilename) {
+    return null;
+  }
+  return {
+    localId: String(value.localId || value.local_id || assetId || crypto.randomUUID()).trim(),
+    assetId,
+    originalFilename: originalFilename || "attachment",
+    sizeBytes: Number(value.sizeBytes ?? value.size_bytes ?? 0) || 0,
+    contentType: String(value.contentType || value.content_type || "").trim(),
+    status: String(value.status || "uploaded").trim().toLowerCase(),
+    error: String(value.error || "").trim(),
+    agentReadEnabled: value.agentReadEnabled === true || value.agent_read_enabled === true,
+  };
+}
+
+function normalizeMessageAttachments(message) {
+  return (Array.isArray(message?.attachments) ? message.attachments : [])
+    .map((attachment) => normalizeAttachmentRecord(attachment))
+    .filter(Boolean);
+}
+
+function getComposerAttachments(ticketId = state.activeTicketId) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  if (!normalizedTicketId) {
+    return [];
+  }
+  return (Array.isArray(state.attachmentsByTicket?.[normalizedTicketId])
+    ? state.attachmentsByTicket[normalizedTicketId]
+    : []
+  )
+    .map((attachment) => normalizeAttachmentRecord(attachment))
+    .filter(Boolean);
+}
+
+function setComposerAttachments(ticketId, attachments) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  if (!normalizedTicketId) {
+    return;
+  }
+  const normalizedAttachments = (Array.isArray(attachments) ? attachments : [])
+    .map((attachment) => normalizeAttachmentRecord(attachment))
+    .filter(Boolean);
+  state.attachmentsByTicket = { ...(state.attachmentsByTicket || {}) };
+  if (normalizedAttachments.length > 0) {
+    state.attachmentsByTicket[normalizedTicketId] = normalizedAttachments;
+  } else {
+    delete state.attachmentsByTicket[normalizedTicketId];
+  }
+}
+
+function clearUploadedComposerAttachments(ticketId) {
+  const remaining = getComposerAttachments(ticketId).filter((attachment) => attachment.status !== "uploaded");
+  setComposerAttachments(ticketId, remaining);
+}
+
+function uploadedComposerAssetIds(ticketId = state.activeTicketId) {
+  return getComposerAttachments(ticketId)
+    .filter((attachment) => attachment.status === "uploaded" && attachment.assetId)
+    .map((attachment) => attachment.assetId);
+}
+
+function formatAttachmentSize(sizeBytes) {
+  const bytes = Number(sizeBytes || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "";
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderAttachmentStatusText(status, error = "") {
+  if (status === "uploading") {
+    return "Uploading";
+  }
+  if (status === "failed") {
+    return error || "Failed";
+  }
+  return "Attached";
+}
+
+function renderComposerAttachmentsHtml(ticketId = state.activeTicketId) {
+  const attachments = getComposerAttachments(ticketId);
+  if (attachments.length === 0) {
+    return "";
+  }
+  return `
+    <div class="attachment-chip-list" data-chat-section="composer-attachments">
+      ${attachments
+        .map((attachment) => {
+          const isUploading = attachment.status === "uploading";
+          const isFailed = attachment.status === "failed";
+          const statusText = renderAttachmentStatusText(attachment.status, attachment.error);
+          const chipClass = ["attachment-chip", isUploading ? "is-uploading" : "", isFailed ? "is-failed" : ""]
+            .filter(Boolean)
+            .join(" ");
+          return `
+            <span class="${chipClass}" data-attachment-local-id="${escapeHtml(attachment.localId)}">
+              <span class="material-symbols-outlined" aria-hidden="true">${isFailed ? "error" : "description"}</span>
+              <span class="attachment-chip-main">
+                <span class="attachment-chip-name">${escapeHtml(attachment.originalFilename)}</span>
+                <span class="attachment-chip-meta">${escapeHtml(
+                  [formatAttachmentSize(attachment.sizeBytes), statusText].filter(Boolean).join(" · ")
+                )}</span>
+              </span>
+              <button type="button" class="attachment-chip-remove" data-attachment-remove-id="${escapeHtml(
+                attachment.localId
+              )}" aria-label="Remove attachment" title="Remove attachment">
+                <span class="material-symbols-outlined" aria-hidden="true">close</span>
+              </button>
+            </span>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderMessageAttachmentsHtml(message) {
+  const attachments = normalizeMessageAttachments(message);
+  if (attachments.length === 0) {
+    return "";
+  }
+  return `
+    <div class="message-attachment-list">
+      ${attachments
+        .map((attachment) => `
+          <button
+            type="button"
+            class="message-attachment"
+            data-asset-download-id="${escapeHtml(attachment.assetId)}"
+            title="Download attachment"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">description</span>
+            <span class="message-attachment-main">
+              <span class="message-attachment-name">${escapeHtml(attachment.originalFilename)}</span>
+              <span class="message-attachment-meta">${escapeHtml(formatAttachmentSize(attachment.sizeBytes))}</span>
+            </span>
+            <span class="material-symbols-outlined" aria-hidden="true">download</span>
+          </button>
+        `)
+        .join("")}
+    </div>
+  `;
+}
+
+function removeComposerAttachment(ticketId, localId) {
+  const normalizedLocalId = String(localId || "").trim();
+  if (!normalizedLocalId) {
+    return false;
+  }
+  const nextAttachments = getComposerAttachments(ticketId).filter(
+    (attachment) => attachment.localId !== normalizedLocalId
+  );
+  setComposerAttachments(ticketId, nextAttachments);
+  return true;
+}
+
+function isAllowedLogAttachmentFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  return [".log", ".err", ".txt"].some((extension) => name.endsWith(extension));
+}
+
+function openAttachmentFilePicker() {
+  const ticket = getTicketById(state.activeTicketId);
+  if (!ticket || ticket.status === "resolved") {
+    return false;
+  }
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".log,.err,.txt,text/plain";
+  input.multiple = true;
+  input.style.display = "none";
+  input.addEventListener("change", () => {
+    const files = Array.from(input.files || []);
+    uploadSelectedLogAttachments(files, ticket.id).finally(() => {
+      input.remove();
+    });
+  });
+  document.body?.appendChild(input);
+  input.click();
+  return true;
+}
+
+async function uploadSelectedLogAttachments(files, ticketId = state.activeTicketId) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  if (!normalizedTicketId || !Array.isArray(files) || files.length === 0) {
+    return;
+  }
+  for (const file of files) {
+    if (!isAllowedLogAttachmentFile(file)) {
+      toast("Only .log, .err, and .txt files can be attached.", "error");
+      continue;
+    }
+    const localId = crypto.randomUUID();
+    const initialAttachment = {
+      localId,
+      assetId: "",
+      originalFilename: file.name || "attachment.log",
+      sizeBytes: Number(file.size || 0),
+      contentType: file.type || "text/plain",
+      status: "uploading",
+    };
+    setComposerAttachments(normalizedTicketId, [...getComposerAttachments(normalizedTicketId), initialAttachment]);
+    render();
+    try {
+      const intentResponse = await fetch("/api/assets/upload-intents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticket_id: normalizedTicketId,
+          customer_id: state.user?.id || "",
+          file_name: file.name || "attachment.log",
+          content_type: file.type || "text/plain",
+          size_bytes: Number(file.size || 0),
+        }),
+      });
+      if (!intentResponse.ok) {
+        throw new Error(`Upload intent failed with status ${intentResponse.status}`);
+      }
+      const intent = await intentResponse.json();
+      const formData = new FormData();
+      Object.entries(intent?.upload?.fields || {}).forEach(([key, value]) => {
+        formData.append(key, value);
+      });
+      formData.append("file", file);
+      const uploadResponse = await fetch(intent?.upload?.url, {
+        method: "POST",
+        body: formData,
+      });
+      if (!uploadResponse.ok) {
+        throw new Error(`S3 upload failed with status ${uploadResponse.status}`);
+      }
+      const assetId = String(intent?.asset?.asset_id || "").trim();
+      const completeResponse = await fetch(`/api/assets/${encodeURIComponent(assetId)}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: state.user?.id || "" }),
+      });
+      if (!completeResponse.ok) {
+        throw new Error(`Upload completion failed with status ${completeResponse.status}`);
+      }
+      const completed = await completeResponse.json();
+      const completedAsset = completed?.asset || intent?.asset || {};
+      setComposerAttachments(
+        normalizedTicketId,
+        getComposerAttachments(normalizedTicketId).map((attachment) =>
+          attachment.localId === localId
+            ? {
+                ...attachment,
+                assetId: String(completedAsset.asset_id || assetId).trim(),
+                originalFilename: String(
+                  completedAsset.original_filename || completedAsset.file_name || attachment.originalFilename
+                ).trim(),
+                sizeBytes: Number(completedAsset.size_bytes || attachment.sizeBytes || 0),
+                contentType: String(completedAsset.content_type || attachment.contentType || "").trim(),
+                status: "uploaded",
+              }
+            : attachment
+        )
+      );
+    } catch (error) {
+      setComposerAttachments(
+        normalizedTicketId,
+        getComposerAttachments(normalizedTicketId).map((attachment) =>
+          attachment.localId === localId
+            ? { ...attachment, status: "failed", error: error?.message || "Upload failed" }
+            : attachment
+        )
+      );
+      toast(`Attachment upload failed: ${error.message}`, "error");
+    }
+    render();
+  }
+}
+
+async function downloadAsset(assetId) {
+  const normalizedAssetId = String(assetId || "").trim();
+  if (!normalizedAssetId) {
+    return;
+  }
+  try {
+    const params = new URLSearchParams();
+    if (state.user?.id) {
+      params.set("customer_id", state.user.id);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const response = await fetch(`/api/assets/${encodeURIComponent(normalizedAssetId)}/download-url${suffix}`);
+    if (!response.ok) {
+      throw new Error(`Download URL failed with status ${response.status}`);
+    }
+    const payload = await response.json();
+    const downloadUrl = sanitizeUrl(payload?.download_url);
+    if (!downloadUrl) {
+      throw new Error("Download URL was empty");
+    }
+    window.open(downloadUrl, "_blank", "noopener,noreferrer");
+  } catch (error) {
+    toast(`Attachment download failed: ${error.message}`, "error");
+  }
 }
 
 function normalizeMessageContentFormat(value) {
@@ -718,10 +1033,11 @@ function renderMessageBody(message) {
     shouldRenderMarkdownForMessage(message)
       ? `<div class="message-markdown">${renderMarkdownMessage(message.content || "")}</div>`
       : `<div>${formatMultilineText(message.content || "")}</div>`;
+  const withAttachments = `${base}${renderMessageAttachmentsHtml(message)}`;
   if (normalizeRenderableMessageRole(message) !== "assistant") {
-    return base;
+    return withAttachments;
   }
-  return `${base}${renderCitationsHtml(normalizedCitations)}`;
+  return `${withAttachments}${renderCitationsHtml(normalizedCitations)}`;
 }
 
 function toast(message, kind = "") {
@@ -1698,6 +2014,7 @@ function normalizeBackendTicket(ticket) {
         citations: Array.isArray(message?.citations) ? message.citations : [],
         sources: Array.isArray(message?.sources) ? message.sources : [],
       }),
+      attachments: normalizeMessageAttachments(message),
     })),
   };
 }
@@ -3162,6 +3479,7 @@ function renderNewTicketComposerPanel(viewState, composerClass) {
           </div>
         </div>
       </form>
+      <div data-chat-section="composer-attachments-region">${renderComposerAttachmentsHtml(viewState.ticket?.id)}</div>
     </footer>
   `;
 }
@@ -5012,7 +5330,7 @@ function getClientComposerRuntime() {
   }
   clientComposerRuntime = SharedComposer.createRichComposerRuntime({
     getToolbarRoot: () => appRoot,
-    onAttach: () => toast("Attachments are not available yet."),
+    onAttach: openAttachmentFilePicker,
     syncState: syncComposerDraftStateFromElement,
   });
   return clientComposerRuntime;
@@ -5542,7 +5860,7 @@ function handleComposerToolbarAction(action, element = getActiveChatComposerElem
     return false;
   }
   if (normalizedAction === "attach") {
-    toast("Attachments are not available yet.");
+    openAttachmentFilePicker();
     return false;
   }
   if (!isRichTextComposerElement(element) || isComposerElementDisabled(element)) {
@@ -5816,6 +6134,7 @@ function renderChatTicketFromState(viewState) {
               ${renderChatComposerActionHtml(viewState)}
             </div>
           </form>
+          <div data-chat-section="composer-attachments-region">${renderComposerAttachmentsHtml(ticket.id)}</div>
         </footer>`
             : ""
         }
@@ -5855,6 +6174,7 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
   const toolbarRegion = chatRoot.querySelector(".ticket-detail-composer-format-toolbar");
   const noteRegion = chatRoot.querySelector('[data-chat-section="composer-note"]');
   const actionRegion = chatRoot.querySelector('[data-chat-section="composer-action"]');
+  const attachmentsRegion = chatRoot.querySelector('[data-chat-section="composer-attachments-region"]');
   if (!messagesRegion || !toolbarRegion || !noteRegion || !actionRegion) {
     return false;
   }
@@ -5872,6 +6192,9 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
   });
   noteRegion.innerHTML = renderChatComposerNoteHtml(viewState);
   actionRegion.innerHTML = renderChatComposerActionHtml(viewState);
+  if (attachmentsRegion) {
+    attachmentsRegion.innerHTML = renderComposerAttachmentsHtml(viewState.ticket?.id);
+  }
   if (composer) {
     if (isRichTextComposerElement(composer)) {
       composer.setAttribute("contenteditable", viewState.canCompose ? "true" : "false");
@@ -6406,6 +6729,8 @@ async function handleSendMessage(text, options = {}) {
 
   const editMessageId = options.editMessageId || null;
   const now = new Date().toISOString();
+  const messageAttachments = getComposerAttachments(ticketId).filter((attachment) => attachment.status === "uploaded");
+  const messageAssetIds = messageAttachments.map((attachment) => attachment.assetId).filter(Boolean);
   let userMessageId = editMessageId;
   let messages = [];
   let keepWaitingForAsync = false;
@@ -6418,6 +6743,7 @@ async function handleSendMessage(text, options = {}) {
           content: text,
           createdAt: now,
           contentFormat: CUSTOMER_MESSAGE_MARKDOWN_FORMAT,
+          attachments: messageAttachments,
         };
       }
       return message;
@@ -6432,6 +6758,7 @@ async function handleSendMessage(text, options = {}) {
       content: text,
       createdAt: now,
       contentFormat: CUSTOMER_MESSAGE_MARKDOWN_FORMAT,
+      attachments: messageAttachments,
     };
     userMessageId = userMessage.id;
     messages = [...ticket.messages, userMessage];
@@ -6463,6 +6790,9 @@ async function handleSendMessage(text, options = {}) {
     if (normalizedProduct) {
       requestBody.product = normalizedProduct;
     }
+    if (messageAssetIds.length > 0) {
+      requestBody.asset_ids = messageAssetIds;
+    }
     const response = await fetch("/api/tickets/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -6473,6 +6803,9 @@ async function handleSendMessage(text, options = {}) {
       throw new Error(`Request failed with status ${response.status}`);
     }
     const payload = await response.json();
+    if (messageAssetIds.length > 0) {
+      clearUploadedComposerAttachments(ticketId);
+    }
     const updated = getTicketById(ticketId);
     const queuedForAi = Boolean(payload?.queued_for_ai);
     const persistedMessageCreatedAt = String(
@@ -6664,6 +6997,25 @@ function bindAuthedEvents() {
         handleComposerToolbarAction(element.getAttribute("data-composer-markdown-action"));
       });
       element.__clientComposerToolbarBound = true;
+    }
+  });
+
+  appRoot.querySelectorAll("[data-attachment-remove-id]").forEach((element) => {
+    if (!element.__clientAttachmentRemoveBound) {
+      element.addEventListener("click", () => {
+        removeComposerAttachment(state.activeTicketId, element.getAttribute("data-attachment-remove-id"));
+        render();
+      });
+      element.__clientAttachmentRemoveBound = true;
+    }
+  });
+
+  appRoot.querySelectorAll("[data-asset-download-id]").forEach((element) => {
+    if (!element.__clientAssetDownloadBound) {
+      element.addEventListener("click", () => {
+        downloadAsset(element.getAttribute("data-asset-download-id"));
+      });
+      element.__clientAssetDownloadBound = true;
     }
   });
 
