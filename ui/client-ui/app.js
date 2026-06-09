@@ -3132,6 +3132,27 @@ function buildNewTicketKnowledgeItems(ticket) {
   return items;
 }
 
+function buildNewTicketAttachmentItems(ticket) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const items = [];
+  const seenAssetIds = new Set();
+
+  for (const message of messages) {
+    const attachments = normalizeMessageAttachments(message);
+    for (const attachment of attachments) {
+      if (!attachment.assetId || seenAssetIds.has(attachment.assetId)) {
+        continue;
+      }
+      if (attachment.status && attachment.status !== "uploaded" && attachment.status !== "attached") {
+        continue;
+      }
+      seenAssetIds.add(attachment.assetId);
+      items.push(attachment);
+    }
+  }
+  return items;
+}
+
 function isNewTicketPostSendState(viewState) {
   return Boolean(viewState?.usesNewTicketShell && !isTicketEmpty(viewState?.ticket));
 }
@@ -3208,6 +3229,51 @@ function renderNewTicketKnowledgePanel(ticket, options = {}) {
                 </div>
               `
             : `<p class="new-ticket-knowledge-placeholder new-ticket-info-value">All reference links provided by agent will show up here.</p>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderNewTicketAttachmentsPanel(ticket, options = {}) {
+  const items = buildNewTicketAttachmentItems(ticket);
+  const classes = ["new-ticket-info-card", "new-ticket-attachments-card"];
+  if (options.fixed !== false) {
+    classes.push("new-ticket-fixed-attachments-card");
+  }
+  if (options.variant) {
+    classes.push(`new-ticket-${options.variant}-attachments-card`);
+  }
+  return `
+    <section class="${classes.join(" ")}">
+      <div class="new-ticket-info-card-header">
+        <p class="new-ticket-info-kicker">Attachments</p>
+      </div>
+      <div class="new-ticket-info-body new-ticket-attachments-list">
+        ${
+          items.length > 0
+            ? items
+                .map(
+                  (attachment) => `
+                    <button
+                      type="button"
+                      class="new-ticket-attachment-item"
+                      data-asset-download-id="${escapeHtml(attachment.assetId)}"
+                      title="Download attachment"
+                    >
+                      <span class="material-symbols-outlined" aria-hidden="true">description</span>
+                      <span class="new-ticket-attachment-main">
+                        <span class="new-ticket-attachment-name">${escapeHtml(attachment.originalFilename)}</span>
+                        <span class="new-ticket-attachment-meta">${escapeHtml(
+                          [formatAttachmentSize(attachment.sizeBytes), "Uploaded"].filter(Boolean).join(" · ")
+                        )}</span>
+                      </span>
+                      <span class="material-symbols-outlined new-ticket-attachment-download" aria-hidden="true">download</span>
+                    </button>
+                  `
+                )
+                .join("")
+            : `<p class="new-ticket-attachments-placeholder new-ticket-info-value">Successfully uploaded attachments will show up here.</p>`
         }
       </div>
     </section>
@@ -3551,6 +3617,7 @@ function renderNewTicketDraftTicketFromState(viewState) {
           <aside class="new-ticket-sidebar">
             ${renderNewTicketInformationPanel(ticket)}
             ${renderNewTicketKnowledgePanel(ticket)}
+            ${renderNewTicketAttachmentsPanel(ticket)}
           </aside>
         </div>
       </div>
@@ -3592,6 +3659,7 @@ function renderNewTicketPostSendTicketFromState(viewState) {
             <aside class="new-ticket-postsend-sidebar">
               ${renderNewTicketInformationPanel(ticket, { fixed: false, variant: "postsend" })}
               ${renderNewTicketKnowledgePanel(ticket, { variant: "postsend" })}
+              ${renderNewTicketAttachmentsPanel(ticket, { variant: "postsend" })}
             </aside>
           </div>
           ${showTailComposer ? renderNewTicketTailComposer(viewState, { postsend: true }) : ""}

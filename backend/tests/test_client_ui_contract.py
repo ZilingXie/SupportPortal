@@ -1300,8 +1300,14 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!html.includes("Knowledge Base Articles")) {
                   throw new Error("Client2 draft should keep the reference-links sidebar.");
                 }
+                if (!html.includes("Attachments")) {
+                  throw new Error("Client2 draft should keep the attachments sidebar.");
+                }
                 if (!html.includes("All reference links provided by agent will show up here.")) {
                   throw new Error("Client2 draft should show the empty reference-links placeholder.");
+                }
+                if (!html.includes("Successfully uploaded attachments will show up here.")) {
+                  throw new Error("Client2 draft should show the empty attachments placeholder.");
                 }
                 if (!html.includes("new-ticket-knowledge-placeholder new-ticket-info-value")) {
                   throw new Error("Client2 draft placeholder should reuse the info-value typography treatment.");
@@ -2861,6 +2867,14 @@ class ClientUiContractTests(unittest.TestCase):
                     role: "user",
                     content: "How do I join a channel?",
                     createdAt: "2026-04-17T10:39:00.000Z",
+                    attachments: [
+                      {
+                        assetId: "ASSET-POSTSEND-001",
+                        originalFilename: "join-channel.log",
+                        sizeBytes: 4096,
+                        status: "uploaded",
+                      },
+                    ],
                   },
                   {
                     id: "msg-2",
@@ -2919,6 +2933,15 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("Knowledge Base Articles")) {
                   throw new Error("Existing client2 tickets should keep the new-ticket knowledge sidebar.");
+                }
+                if (!html.includes("Attachments")) {
+                  throw new Error("Existing client2 tickets should keep the attachments sidebar.");
+                }
+                if (!html.includes('data-asset-download-id="ASSET-POSTSEND-001"')) {
+                  throw new Error("Existing client2 tickets should render uploaded attachments in the sidebar.");
+                }
+                if (!html.includes("join-channel.log") || !html.includes("4.0 KB")) {
+                  throw new Error("Existing client2 tickets should render uploaded attachment name and size.");
                 }
                 if (!html.includes("Join a channel")) {
                   throw new Error("Existing client2 tickets should keep source chips in the postsend shell.");
