@@ -207,7 +207,7 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}", api_block)
         self.assertIn("AWS_REGION: ${AWS_REGION:-${ASSET_S3_REGION:-}}", api_block)
         self.assertIn("AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-${ASSET_S3_REGION:-}}", api_block)
-        self.assertIn("AWS_PROFILE: ${AWS_PROFILE:-}", api_block)
+        self.assertNotIn("AWS_PROFILE: ${AWS_PROFILE:-}", api_block)
         self.assertIn("ASSET_STORAGE_PROVIDER=s3", env_example)
         self.assertIn("ASSET_ALLOWED_EXTENSIONS=.log,.err,.txt", env_example)
         self.assertIn("AWS_ACCESS_KEY_ID=", env_example)
@@ -215,7 +215,6 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("AWS_SESSION_TOKEN=", env_example)
         self.assertIn("AWS_REGION=us-east-1", env_example)
         self.assertIn("AWS_DEFAULT_REGION=us-east-1", env_example)
-        self.assertIn("AWS_PROFILE=", env_example)
         self.assertIn("boto3>=", base_requirements)
 
     def test_engineer_investigation_reply_defaults_are_present_for_api_service(self) -> None:
