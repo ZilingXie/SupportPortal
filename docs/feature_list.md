@@ -51,6 +51,7 @@
 - Dashboard 可跟踪实时事件流。
 - Dashboard 的 ticket detail 可查看 client agent runtime 摘要与最近 agent events。
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
+- Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
 
 ### 未完成
 - 待补充。

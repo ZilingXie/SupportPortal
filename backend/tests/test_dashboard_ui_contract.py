@@ -790,6 +790,40 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertNotIn(removed_marker, render_ticket_detail_block)
 
+    def test_ticket_detail_modal_exposes_execution_flow_panel(self) -> None:
+        js_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+        css_source = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+        render_ticket_detail_block = self._extract_js_function_block(js_source, "function renderTicketDetail() {")
+
+        for marker in [
+            "Execution Flow",
+            "Customer Message",
+            "Route Agent",
+            "RAG Retrieval",
+            "Review Agent",
+            "Final Outcome",
+            "/api/dashboard/tickets/${encodeURIComponent(requestedTicketId)}/execution-flow",
+            "buildTicketExecutionFlowSection",
+            "ticketExecutionFlow",
+            "data-ticket-execution-flow-node-toggle",
+        ]:
+            self.assertIn(marker, js_source)
+
+        for marker in [
+            ".ticket-execution-flow-panel",
+            ".ticket-execution-flow-list",
+            ".ticket-execution-flow-node",
+            ".ticket-execution-flow-node-details",
+            ".ticket-execution-flow-node-details[hidden]",
+        ]:
+            self.assertIn(marker, css_source)
+
+        self.assertIn("buildTicketExecutionFlowSection()", render_ticket_detail_block)
+        self.assertRegex(
+            css_source,
+            r"\.ticket-execution-flow-node-details\[hidden\]\s*\{[^}]*display:\s*none(?:\s*!important)?;",
+        )
+
     def test_ticket_detail_message_cards_expose_rag_plan_disclosure(self) -> None:
         js_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
         css_source = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")

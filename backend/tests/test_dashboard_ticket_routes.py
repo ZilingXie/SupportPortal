@@ -465,6 +465,235 @@ class DashboardTicketRouteTests(unittest.TestCase):
         self.assertIn("Need the channel name", payload["summary"])
         self.assertTrue(str(payload["next_action_needed"]).strip())
 
+    def test_dashboard_ticket_execution_flow_returns_normalized_agent_run(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-FLOW-100",
+            subject="how to join channel",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "how to join channel",
+                    "created_at": "2026-04-08T03:01:03.342358+00:00",
+                    "sentiment_label": "neutral",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with a token and the channel name.",
+                    "created_at": "2026-04-08T03:02:11.358702+00:00",
+                    "answer_route": "rag",
+                    "route_reason": "grounded_answer",
+                    "confidence": 0.86,
+                    "citations": [{"chunk_id": "chunk-join", "heading": "Join a channel"}],
+                    "retrieval_plan_snapshot": {
+                        "retrieval_strategy": "agentic_multi_tool_v1",
+                        "selected_chunk_ids": ["chunk-join"],
+                        "selected_contexts": [{"chunk_id": "chunk-join", "heading": "Join a channel"}],
+                        "tool_timing_summary": {
+                            "retrieval_latency_ms": 120.5,
+                            "rerank_latency_ms": 25.0,
+                            "generation_latency_ms": 240.0,
+                            "total_latency_ms": 385.5,
+                        },
+                    },
+                },
+            ],
+        )
+        ticket["client_agent_runtime_state"] = {
+            "active_run_id": "run-flow-100",
+            "status": "completed",
+            "workflow_action": "answer_customer",
+            "message_id": "2026-04-08T03:01:03.342358+00:00",
+            "product": "audio_video_calling",
+            "updated_at": "2026-04-08T03:02:11.358702+00:00",
+            "completed_at": "2026-04-08T03:02:11.358702+00:00",
+            "main_agent": {
+                "phase": "completed",
+                "status": "completed",
+                "decision": "answer_customer",
+                "reason": "RAG answer approved.",
+            },
+            "route_agent": {
+                "phase": "completed",
+                "status": "completed",
+                "decision": "technical_support",
+                "reason": "Agora technical support question.",
+            },
+            "rag_service": {
+                "phase": "completed",
+                "status": "completed",
+                "decision": "grounded_answer",
+                "reason": "Cited evidence was selected.",
+            },
+            "review_agent": {
+                "phase": "completed",
+                "status": "completed",
+                "decision": "pass",
+                "reason": "Grounded answer passed review.",
+                "openai_tracing": {"latest_trace_id": "trace-review-1", "group_id": "run-flow-100"},
+            },
+        }
+        self.repository.save_ticket(ticket, new_messages=[])
+        self.repository.record_ticket_agent_event(
+            "TK-FLOW-100",
+            "2026-04-08T03:01:03.342358+00:00",
+            "run-flow-100",
+            "route_agent",
+            "completed",
+            "completed",
+            {"decision": "technical_support", "created_at": "2026-04-08T03:01:10+00:00"},
+        )
+        self.repository.record_ticket_agent_event(
+            "TK-FLOW-100",
+            "2026-04-08T03:01:03.342358+00:00",
+            "run-flow-100",
+            "rag_service",
+            "completed",
+            "completed",
+            {"rag_request_id": "rag-flow-100", "created_at": "2026-04-08T03:01:40+00:00"},
+        )
+
+        response = self.client.get("/api/dashboard/tickets/TK-FLOW-100/execution-flow")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ticket_id"], "TK-FLOW-100")
+        self.assertEqual(payload["run_id"], "run-flow-100")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["summary"]["workflow_action"], "answer_customer")
+        self.assertEqual(payload["summary"]["final_action"], "answer_customer")
+        self.assertEqual(payload["summary"]["route_reason"], "grounded_answer")
+        self.assertFalse(payload["summary"]["needs_human"])
+        self.assertEqual(
+            [node["id"] for node in payload["nodes"]],
+            ["customer_message", "route_agent", "rag_service", "review_agent", "final_outcome"],
+        )
+        self.assertEqual(
+            payload["edges"],
+            [
+                {"from": "customer_message", "to": "route_agent"},
+                {"from": "route_agent", "to": "rag_service"},
+                {"from": "rag_service", "to": "review_agent"},
+                {"from": "review_agent", "to": "final_outcome"},
+            ],
+        )
+        customer_node = next(node for node in payload["nodes"] if node["id"] == "customer_message")
+        self.assertNotIn("message", customer_node["details"])
+        self.assertEqual(customer_node["details"]["message_summary"]["content_summary"], "how to join channel")
+        route_node = next(node for node in payload["nodes"] if node["id"] == "route_agent")
+        self.assertNotIn("payload", route_node["details"]["events"][0])
+        self.assertEqual(route_node["details"]["events"][0]["decision"], "technical_support")
+        rag_node = next(node for node in payload["nodes"] if node["id"] == "rag_service")
+        self.assertEqual(rag_node["status"], "completed")
+        self.assertEqual(rag_node["decision"], "grounded_answer")
+        self.assertEqual(rag_node["details"]["retrieval_strategy"], "agentic_multi_tool_v1")
+        self.assertEqual(rag_node["details"]["selected_chunk_ids"], ["chunk-join"])
+        self.assertEqual(rag_node["details"]["citations"][0]["chunk_id"], "chunk-join")
+        self.assertEqual(rag_node["details"]["event_count"], 1)
+        review_node = next(node for node in payload["nodes"] if node["id"] == "review_agent")
+        self.assertEqual(review_node["details"]["openai_tracing"]["latest_trace_id"], "trace-review-1")
+        final_node = next(node for node in payload["nodes"] if node["id"] == "final_outcome")
+        self.assertNotIn("message", final_node["details"])
+        self.assertEqual(final_node["details"]["message_summary"]["answer_route"], "rag")
+
+    def test_dashboard_ticket_execution_flow_returns_stable_empty_flow_without_runtime(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-FLOW-EMPTY",
+            subject="waiting for async processing",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "waiting for async processing",
+                    "created_at": "2026-04-08T03:01:03.342358+00:00",
+                    "sentiment_label": "neutral",
+                }
+            ],
+        )
+
+        response = self.client.get("/api/dashboard/tickets/TK-FLOW-EMPTY/execution-flow")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ticket_id"], "TK-FLOW-EMPTY")
+        self.assertIsNone(payload["run_id"])
+        self.assertEqual(payload["status"], "queued")
+        self.assertEqual(payload["summary"]["final_action"], "unknown")
+        self.assertEqual(
+            [node["id"] for node in payload["nodes"]],
+            ["customer_message", "route_agent", "rag_service", "review_agent", "final_outcome"],
+        )
+        self.assertEqual(payload["nodes"][0]["status"], "completed")
+        self.assertEqual(payload["nodes"][1]["status"], "queued")
+        self.assertEqual(payload["nodes"][-1]["decision"], "unknown")
+
+    def test_dashboard_ticket_execution_flow_classifies_escalation_outcome(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-FLOW-ESC",
+            subject="black screen after join",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "black screen after join",
+                    "created_at": "2026-04-08T03:01:03.342358+00:00",
+                    "sentiment_label": "neutral",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I need an engineer to investigate this with logs.",
+                    "created_at": "2026-04-08T03:02:11.358702+00:00",
+                    "answer_route": "handoff",
+                    "route_reason": "rag_insufficient_evidence",
+                    "needs_human": True,
+                },
+            ],
+        )
+        ticket["client_agent_runtime_state"] = {
+            "active_run_id": "run-flow-esc",
+            "status": "completed",
+            "workflow_action": "open_engineer_case",
+            "updated_at": "2026-04-08T03:02:11.358702+00:00",
+            "completed_at": "2026-04-08T03:02:11.358702+00:00",
+            "main_agent": {
+                "phase": "completed",
+                "status": "completed",
+                "decision": "open_engineer_case",
+                "reason": "Escalated for investigation.",
+            },
+            "route_agent": {
+                "phase": "completed",
+                "status": "completed",
+                "decision": "technical_support",
+                "reason": "Agora technical issue.",
+            },
+            "rag_service": {
+                "phase": "completed",
+                "status": "completed",
+                "decision": "insufficient_evidence",
+                "reason": "No grounded evidence survived.",
+            },
+            "review_agent": {
+                "phase": "skipped",
+                "status": "skipped",
+                "decision": "not_applicable",
+                "reason": "RAG did not produce grounded answer.",
+            },
+        }
+        self.repository.save_ticket(ticket, new_messages=[])
+
+        response = self.client.get("/api/dashboard/tickets/TK-FLOW-ESC/execution-flow")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["final_action"], "escalate_to_engineer")
+        self.assertTrue(payload["summary"]["needs_human"])
+        final_node = payload["nodes"][-1]
+        self.assertEqual(final_node["id"], "final_outcome")
+        self.assertEqual(final_node["decision"], "escalate_to_engineer")
+        self.assertEqual(final_node["status"], "completed")
+        self.assertIn("engineer", final_node["reason"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

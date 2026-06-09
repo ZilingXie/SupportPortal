@@ -90,6 +90,10 @@ let ticketDetailSummaryLoading = false;
 let ticketDetailSummaryFailed = false;
 let ticketDetailSummaryModel = "";
 let ticketDetailRuntimeExpanded = false;
+let ticketExecutionFlow = null;
+let ticketExecutionFlowLoading = false;
+let ticketExecutionFlowError = "";
+let ticketExecutionFlowExpandedNodeIds = new Set();
 let ticketDetailExpandedSubTicketIds = new Set();
 let ticketDetailExpandedRagPlanMessageKeys = new Set();
 let lastTicketDetailFocusEl = null;
@@ -501,6 +505,10 @@ function resetTicketDetailState({ clearSelection = true } = {}) {
   ticketDetailSummaryFailed = false;
   ticketDetailSummaryModel = "";
   ticketDetailRuntimeExpanded = false;
+  ticketExecutionFlow = null;
+  ticketExecutionFlowLoading = false;
+  ticketExecutionFlowError = "";
+  ticketExecutionFlowExpandedNodeIds = new Set();
   ticketDetailExpandedSubTicketIds = new Set();
   ticketDetailExpandedRagPlanMessageKeys = new Set();
 }
@@ -546,6 +554,325 @@ function buildTokenUsagePanel(tokenUsage) {
         ? `<p class="detail-note">token_by_model: ${escapeHtml(JSON.stringify(usage.token_by_model))}</p>`
         : `<p class="detail-note">token_by_model: []</p>`
     }
+  `;
+}
+
+function normalizeExecutionFlowStatus(value) {
+  const normalized = normalizeString(value).toLowerCase();
+  if (["completed", "running", "queued", "skipped", "failed", "cancelled"].includes(normalized)) {
+    return normalized;
+  }
+  return "queued";
+}
+
+function executionFlowStatusClass(value) {
+  return `is-${normalizeExecutionFlowStatus(value)}`;
+}
+
+function formatDurationMs(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  const durationMs = Number(value);
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return "-";
+  }
+  if (durationMs >= 1000) {
+    return `${formatDecimal(durationMs / 1000, 1)}s`;
+  }
+  return `${formatDecimal(durationMs, 0)}ms`;
+}
+
+function formatExecutionFlowDetailValue(value, maxLength = 220) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (Array.isArray(value)) {
+    const renderedItems = value
+      .map((item) => formatExecutionFlowDetailValue(item, 80))
+      .filter(Boolean);
+    return truncateText(renderedItems.join(", "), maxLength);
+  }
+  if (typeof value === "object") {
+    const renderedEntries = Object.entries(value)
+      .map(([key, item]) => {
+        const renderedItem = formatExecutionFlowDetailValue(item, 80);
+        return renderedItem ? `${humanizeToken(key)}: ${renderedItem}` : "";
+      })
+      .filter(Boolean);
+    return truncateText(renderedEntries.join(" | "), maxLength);
+  }
+  return truncateText(normalizeString(value), maxLength);
+}
+
+function buildExecutionFlowDetailGrid(items) {
+  const safeItems = (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      label: item?.label || "-",
+      value: formatExecutionFlowDetailValue(item?.value),
+    }))
+    .filter((item) => normalizeString(item.value) && normalizeString(item.value) !== "-");
+  if (!safeItems.length) {
+    return "";
+  }
+  return buildDefinitionGrid(safeItems);
+}
+
+function buildExecutionFlowEventList(events) {
+  const safeEvents = Array.isArray(events)
+    ? events.filter((item) => item && typeof item === "object").slice(0, 5)
+    : [];
+  if (!safeEvents.length) {
+    return "";
+  }
+  return `
+    <div class="ticket-execution-flow-detail-block">
+      <p class="eyebrow">Raw Event Summary</p>
+      <div class="ticket-execution-flow-event-list">
+        ${safeEvents
+          .map((event) => {
+            const payloadSummary = formatExecutionFlowDetailValue(
+              event?.reason
+              || event?.decision
+              || event?.status
+              || event?.trace_id
+              || event?.rag_request_id,
+              180
+            );
+            return `
+              <article class="ticket-execution-flow-event">
+                <div>
+                  <strong>${escapeHtml(humanizeToken(event?.event_type || "event"))}</strong>
+                  <p>${escapeHtml(humanizeToken(event?.phase || event?.agent_name || "agent"))}</p>
+                </div>
+                <div class="ticket-execution-flow-event-meta">
+                  ${payloadSummary ? `<span>${escapeHtml(payloadSummary)}</span>` : ""}
+                  <span>${escapeHtml(formatDateTime(event?.created_at))}</span>
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function buildExecutionFlowEvidenceList(label, items, emptyText) {
+  const safeItems = Array.isArray(items) ? items.filter((item) => item && typeof item === "object").slice(0, 4) : [];
+  return `
+    <div class="ticket-execution-flow-detail-block">
+      <p class="eyebrow">${escapeHtml(label)}</p>
+      ${
+        safeItems.length
+          ? `<div class="ticket-execution-flow-evidence-list">
+              ${safeItems
+                .map((item) => {
+                  const title =
+                    normalizeString(item?.heading || item?.label || item?.source_path || item?.chunk_id)
+                    || "Evidence";
+                  const meta = normalizeString(item?.source_path || item?.source_url || item?.chunk_id);
+                  const excerpt = normalizeString(item?.text_excerpt || item?.text || item?.summary);
+                  return `
+                    <article class="ticket-execution-flow-evidence">
+                      <strong>${escapeHtml(truncateText(title, 120))}</strong>
+                      ${meta ? `<p class="detail-note">${escapeHtml(truncateText(meta, 160))}</p>` : ""}
+                      ${excerpt ? `<p>${escapeHtml(truncateText(excerpt, 220))}</p>` : ""}
+                    </article>
+                  `;
+                })
+                .join("")}
+            </div>`
+          : `<div class="detail-empty-state compact">${escapeHtml(emptyText)}</div>`
+      }
+    </div>
+  `;
+}
+
+function buildTicketExecutionFlowNode(node, index, total) {
+  const safeNode = node && typeof node === "object" ? node : {};
+  const nodeId = normalizeString(safeNode.id) || `node-${index}`;
+  const label = normalizeString(safeNode.label) || humanizeToken(nodeId);
+  const status = normalizeExecutionFlowStatus(safeNode.status);
+  const details = safeNode.details && typeof safeNode.details === "object" ? safeNode.details : {};
+  const hasFailure = status === "failed" || status === "cancelled";
+  const expanded = ticketExecutionFlowExpandedNodeIds.has(nodeId);
+  const completedAt = formatDateTime(safeNode.completed_at || safeNode.started_at);
+  const duration = formatDurationMs(safeNode.duration_ms);
+  const decision = normalizeString(safeNode.decision);
+  const reason = normalizeString(safeNode.reason);
+  const summary = normalizeString(safeNode.summary);
+  const events = Array.isArray(details.events) ? details.events : [];
+  const selectedContexts = Array.isArray(details.selected_contexts) ? details.selected_contexts : [];
+  const citations = Array.isArray(details.citations) ? details.citations : [];
+  const selectedChunkIds = Array.isArray(details.selected_chunk_ids)
+    ? details.selected_chunk_ids.map((item) => normalizeString(item)).filter(Boolean)
+    : [];
+  const openaiTracing = details.openai_tracing && typeof details.openai_tracing === "object"
+    ? details.openai_tracing
+    : {};
+  const hasStructuredDetails =
+    Object.keys(details).length > 0
+    || decision
+    || reason
+    || summary
+    || completedAt !== "-"
+    || duration !== "-";
+
+  return `
+    <article class="ticket-execution-flow-node ${executionFlowStatusClass(status)}" data-ticket-execution-flow-node="${escapeHtml(nodeId)}">
+      <div class="ticket-execution-flow-node-rail" aria-hidden="true">
+        <span class="ticket-execution-flow-node-index">${escapeHtml(String(index + 1))}</span>
+        ${index < total - 1 ? '<span class="ticket-execution-flow-edge"></span>' : ""}
+      </div>
+      <div class="ticket-execution-flow-node-card">
+        <header class="ticket-execution-flow-node-header">
+          <div class="ticket-execution-flow-node-title">
+            <span class="ticket-execution-flow-status ${executionFlowStatusClass(status)}">${escapeHtml(humanizeToken(status))}</span>
+            <h4>${escapeHtml(label)}</h4>
+          </div>
+          <button
+            type="button"
+            class="ticket-execution-flow-node-toggle"
+            data-ticket-execution-flow-node-toggle
+            data-ticket-execution-flow-node-id="${escapeHtml(nodeId)}"
+            aria-expanded="${expanded ? "true" : "false"}"
+            aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(label)}"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
+          </button>
+        </header>
+        <div class="ticket-execution-flow-node-copy">
+          ${
+            decision
+              ? `<p><span>Decision</span>${escapeHtml(humanizeToken(decision))}</p>`
+              : ""
+          }
+          ${
+            reason
+              ? `<p><span>Reason</span>${escapeHtml(truncateText(reason, 260))}</p>`
+              : summary
+                ? `<p><span>Summary</span>${escapeHtml(truncateText(summary, 260))}</p>`
+                : ""
+          }
+        </div>
+        <div class="ticket-execution-flow-node-meta">
+          ${completedAt !== "-" ? `<span>Updated ${escapeHtml(completedAt)}</span>` : ""}
+          ${duration !== "-" ? `<span>${escapeHtml(duration)}</span>` : ""}
+          ${selectedChunkIds.length ? `<span>${escapeHtml(formatNumber(selectedChunkIds.length))} chunks</span>` : ""}
+          ${citations.length ? `<span>${escapeHtml(formatNumber(citations.length))} citations</span>` : ""}
+          ${hasFailure ? "<span>Needs review</span>" : ""}
+        </div>
+        <div class="ticket-execution-flow-node-details" ${expanded ? "" : "hidden"}>
+          ${
+            hasStructuredDetails
+              ? buildExecutionFlowDetailGrid([
+                  { label: "Kind", value: safeNode.kind },
+                  { label: "Started", value: formatDateTime(safeNode.started_at) },
+                  { label: "Completed", value: formatDateTime(safeNode.completed_at) },
+                  { label: "Duration", value: duration },
+                  { label: "Phase", value: details.phase },
+                  { label: "Event Count", value: details.event_count },
+                  { label: "Retrieval Strategy", value: details.retrieval_strategy },
+                  { label: "Selected Chunks", value: selectedChunkIds },
+                  { label: "Fallback Reason", value: details.fallback_reason },
+                  { label: "Deadline Exhausted", value: details.deadline_exhausted },
+                  {
+                    label: "Trace Id",
+                    value:
+                      openaiTracing.latest_trace_id
+                      || openaiTracing.trace_id
+                      || openaiTracing.trace
+                      || details.openai_trace_id,
+                  },
+                  { label: "Trace Group", value: openaiTracing.group_id || openaiTracing.trace_group },
+                  { label: "Route Reason", value: details.route_reason },
+                  { label: "Ticket Status", value: details.ticket_status },
+                ])
+              : '<div class="detail-empty-state compact">No structured execution details are available for this node yet.</div>'
+          }
+          ${buildExecutionFlowEventList(events)}
+          ${
+            safeNode.kind === "rag"
+              ? `
+                ${buildExecutionFlowEvidenceList(
+                  "RAG Evidence",
+                  selectedContexts,
+                  "No selected RAG evidence has been captured for this run yet."
+                )}
+                ${buildExecutionFlowEvidenceList(
+                  "Citations",
+                  citations,
+                  "No citations were attached to the final answer."
+                )}
+              `
+              : ""
+          }
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function buildTicketExecutionFlowSection() {
+  const flow = ticketExecutionFlow && typeof ticketExecutionFlow === "object" ? ticketExecutionFlow : null;
+  const nodes = Array.isArray(flow?.nodes) ? flow.nodes : [];
+  const summary = flow?.summary && typeof flow.summary === "object" ? flow.summary : {};
+  const status = normalizeExecutionFlowStatus(flow?.status);
+  const flowMeta = [
+    flow?.run_id ? `Run ${flow.run_id}` : "",
+    summary?.final_action ? humanizeToken(summary.final_action) : "",
+    summary?.total_latency_ms ? `${formatDurationMs(summary.total_latency_ms)} total` : "",
+  ].filter((item) => normalizeString(item));
+
+  let bodyHtml = "";
+  if (ticketExecutionFlowLoading && !flow) {
+    bodyHtml = `
+      <div class="detail-summary-state" role="status" aria-live="polite" aria-busy="true">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <p>Loading the normalized execution flow for this ticket.</p>
+      </div>
+    `;
+  } else if (ticketExecutionFlowError && !flow) {
+    bodyHtml = `
+      <div class="detail-empty-state">
+        <strong>Execution flow is unavailable.</strong>
+        <p>${escapeHtml(ticketExecutionFlowError)}</p>
+      </div>
+    `;
+  } else if (!nodes.length) {
+    bodyHtml = '<div class="detail-empty-state">No execution flow has been recorded for this ticket yet.</div>';
+  } else {
+    bodyHtml = `
+      <div class="ticket-execution-flow-list">
+        ${nodes.map((node, index) => buildTicketExecutionFlowNode(node, index, nodes.length)).join("")}
+      </div>
+    `;
+  }
+
+  return `
+    <section class="panel-card detail-panel ticket-execution-flow-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Execution Flow</p>
+          <h3>Execution Flow</h3>
+          <p>Customer Message, Route Agent, RAG Retrieval, Review Agent, and Final Outcome in one normalized chain.</p>
+        </div>
+        <div class="ticket-execution-flow-summary">
+          <span class="ticket-execution-flow-status ${executionFlowStatusClass(status)}">${escapeHtml(humanizeToken(status))}</span>
+          ${flowMeta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+        </div>
+      </div>
+      ${
+        ticketExecutionFlowError && flow
+          ? `<p class="detail-note">Execution flow refresh failed: ${escapeHtml(ticketExecutionFlowError)}</p>`
+          : ""
+      }
+      ${bodyHtml}
+    </section>
   `;
 }
 
@@ -1674,6 +2001,8 @@ function renderTicketDetail() {
 
       ${buildLinkedSubTicketsSection(ticket)}
 
+      ${buildTicketExecutionFlowSection()}
+
       ${buildTicketRuntimeDisclosure(ticket)}
     </div>
   `;
@@ -1898,6 +2227,55 @@ async function loadTicketDetailSummary(ticketId, { silent = false } = {}) {
   }
 }
 
+async function loadTicketExecutionFlow(ticketId, { silent = false } = {}) {
+  const requestedTicketId = normalizeString(ticketId);
+  if (!requestedTicketId) {
+    return;
+  }
+
+  if (!silent || !ticketExecutionFlow) {
+    ticketExecutionFlowLoading = true;
+    ticketExecutionFlowError = "";
+    if (!ticketDetailLoading) {
+      renderTicketDetail();
+    }
+  }
+
+  try {
+    const payload = await fetchJson(
+      `/api/dashboard/tickets/${encodeURIComponent(requestedTicketId)}/execution-flow`
+    );
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
+    ticketExecutionFlow = payload && typeof payload === "object" ? payload : null;
+    ticketExecutionFlowError = "";
+
+    const failedNode = Array.isArray(ticketExecutionFlow?.nodes)
+      ? ticketExecutionFlow.nodes.find((node) =>
+          ["failed", "cancelled"].includes(normalizeExecutionFlowStatus(node?.status))
+        )
+      : null;
+    if (failedNode?.id) {
+      ticketExecutionFlowExpandedNodeIds.add(String(failedNode.id));
+    } else if (!ticketExecutionFlowExpandedNodeIds.size) {
+      ticketExecutionFlowExpandedNodeIds.add("final_outcome");
+    }
+  } catch (error) {
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
+    ticketExecutionFlowError = `Failed to load execution flow: ${error.message}`;
+  } finally {
+    if (selectedTicketId === requestedTicketId) {
+      ticketExecutionFlowLoading = false;
+      if (!ticketDetailLoading) {
+        renderTicketDetail();
+      }
+    }
+  }
+}
+
 function isTicketEvent(payload) {
   return (
     !normalizeString(payload?.ingestion_id)
@@ -2018,10 +2396,12 @@ function openTicketDetail(ticketId, triggerElement = null) {
   selectedTicketId = requestedTicketId;
   ticketDetailLoading = true;
   ticketDetailSummaryLoading = true;
+  ticketExecutionFlowLoading = true;
   openTicketDetailModalShell(requestedTicketId);
   renderTicketDetail();
   void loadTicketDetail(requestedTicketId);
   void loadTicketDetailSummary(requestedTicketId);
+  void loadTicketExecutionFlow(requestedTicketId);
 }
 
 async function refreshDashboard({ showLoading = true } = {}) {
@@ -2044,6 +2424,7 @@ async function refreshDashboard({ showLoading = true } = {}) {
       await Promise.all([
         loadTicketDetail(selectedTicketId, { silent: true }),
         loadTicketDetailSummary(selectedTicketId, { silent: true }),
+        loadTicketExecutionFlow(selectedTicketId, { silent: true }),
       ]);
     }
   } finally {
@@ -2086,6 +2467,21 @@ function handleDocumentClick(event) {
   const runtimeToggleButton = event.target.closest("[data-ticket-detail-runtime-toggle]");
   if (runtimeToggleButton) {
     ticketDetailRuntimeExpanded = !ticketDetailRuntimeExpanded;
+    renderTicketDetail();
+    return;
+  }
+
+  const executionFlowNodeToggleButton = event.target.closest("[data-ticket-execution-flow-node-toggle]");
+  if (executionFlowNodeToggleButton) {
+    const nodeId = normalizeString(executionFlowNodeToggleButton.dataset.ticketExecutionFlowNodeId);
+    if (!nodeId) {
+      return;
+    }
+    if (ticketExecutionFlowExpandedNodeIds.has(nodeId)) {
+      ticketExecutionFlowExpandedNodeIds.delete(nodeId);
+    } else {
+      ticketExecutionFlowExpandedNodeIds.add(nodeId);
+    }
     renderTicketDetail();
     return;
   }
