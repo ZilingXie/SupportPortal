@@ -5,6 +5,13 @@ For delegated code work, prefer the project-local `control-cc` skill when the us
 
 `control-cc` may create temporary detached candidate worktrees under `/tmp/control-cc-runs/...` from the active task branch for isolated Claude Code execution. Candidate worktrees are not task branches: do not push, finalize, merge, or treat them as authoritative. Export reviewed patches from candidates, integrate them sequentially into the real `codex/<thread>` task worktree, then clean the candidates.
 
+## Claude Code Handoff Boundary
+1. When Claude Code is used to write code, Claude Code is an implementation worker only. It may edit files and run task-appropriate verification in the assigned worktree, but it must not commit, push, create PRs, merge, run finalization scripts, or clean up task worktrees.
+2. Claude Code must work from an explicit plan. After implementation, it must hand the plan, changed-file summary, verification evidence, and known risks to Codex review with `/codex:review`.
+3. Codex owns review, acceptance, any needed follow-up fixes, commits, PR creation, merge/finalization, CodeGraph sync, live stack verification when required, and cleanup.
+4. If Codex review finds issues, Codex should make the required corrections directly unless it explicitly delegates another no-commit implementation pass to Claude Code.
+5. Do not ask Claude Code to use `/codex:rescue` or any other command as a shortcut for committing, merging, finalizing, or cleaning up its own work.
+
 ## CodeGraph First For Code Context
 1. For any task that requires understanding, locating, tracing, or changing code, prefer the project CodeGraph tools before native file search or broad file reads. Use CodeGraph for structural questions such as where a symbol is defined, who calls it, what it calls, how data flows between symbols, what would be affected by a change, or which files and symbols are relevant to a task.
 2. Use native search such as `rg` primarily for literal text, comments, log messages, configuration keys, documentation wording, or after CodeGraph has already identified the specific files that need direct inspection.

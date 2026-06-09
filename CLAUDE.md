@@ -1,6 +1,26 @@
 # Claude Code Rules
 
-> **Note**: When invoked with `/repair-worker`, treat the provided payload as the task contract. Follow the project-local `repair-worker` skill and avoid unrelated changes. The standard isolate/plan/execute/review/fix/merge workflow below does not apply to `/repair-worker` tasks.
+> **Note**: When invoked with `/repair-worker`, treat the provided payload as the task contract. Follow the project-local `repair-worker` skill and avoid unrelated changes. The standard plan/execute/review handoff workflow below does not apply to `/repair-worker` tasks.
+
+## Authority
+
+1. `AGENTS.md` is the repository source of truth. Follow it unless a direct user instruction for the current task explicitly says otherwise.
+2. `CLAUDE.md` adds Claude Code-specific operating rules. If `CLAUDE.md` appears less strict than `AGENTS.md`, follow the stricter `AGENTS.md` rule.
+3. For delegated code work, Claude Code is an implementation worker. Codex owns review, acceptance, commits, PR creation, merges, finalization, and cleanup.
+
+## Non-Negotiable Boundary
+
+When Claude Code writes code or edits repo-tracked files:
+
+1. Do not commit.
+2. Do not push.
+3. Do not create pull requests.
+4. Do not merge branches.
+5. Do not run `scripts/workflow/finalize_task_to_main.sh`.
+6. Do not delete or clean up task worktrees.
+7. Do not use `/codex:rescue` as a shortcut to commit, merge, finalize, or clean up your own work.
+
+After implementation, stop with a handoff to Codex review. Codex will review the diff, make any needed corrections, commit, create or update the PR, merge, run required post-merge verification, and clean up.
 
 ## CodeGraph First
 
@@ -11,7 +31,7 @@ For any task that requires understanding, locating, tracing, or changing code, p
 | "Where is X defined?" / "Find symbol named X" | `codegraph_search` |
 | "What calls function Y?" | `codegraph_callers` |
 | "What does Y call?" | `codegraph_callees` |
-| "How does X reach/become Y?" | `codegraph_trace` — returns the call path when statically available; may point to dynamic dispatch hops (callbacks, React, JSX) that need manual inspection |
+| "How does X reach/become Y?" | `codegraph_trace` |
 | "What would break if I changed Z?" | `codegraph_impact` |
 | "Show me Y's signature / source / docstring" | `codegraph_node` |
 | "Give me focused context for a task/area" | `codegraph_context` |
@@ -21,65 +41,63 @@ For any task that requires understanding, locating, tracing, or changing code, p
 
 ### Rules of thumb
 
-- **Answer directly — don't delegate exploration.** `codegraph_context` → ONE `codegraph_explore` is the standard 2-call pattern. For a flow question, `codegraph_trace` from→to returns the whole path in one call.
-- **Trust codegraph results.** They come from a full AST parse. Do not re-verify with grep.
-- **Fall back when needed.** If CodeGraph is unavailable, uninitialized, or stale, report it explicitly and fall back to the narrowest native search (`rg`, `grep`).
-- **Don't grep first** when looking up a symbol by name. `codegraph_search` is faster.
-- **Don't chain `codegraph_search` + `codegraph_node`** — `codegraph_context` does both in one call.
-- **Don't loop `codegraph_node`** — `codegraph_explore` returns many symbols' source in one capped call.
-- **Index lag**: file watcher debounces ~500ms behind writes; don't re-query immediately after editing.
-
-Use native search (`rg`, `grep`) only for literal text — comments, log messages, config keys, docs wording — or after CodeGraph has identified the specific files to inspect.
-
----
+- Answer directly; do not delegate codebase exploration to other agents.
+- Use `codegraph_context` followed by at most one `codegraph_explore` for broad task context.
+- Use `codegraph_trace` for static flow questions.
+- Trust CodeGraph results from the AST index; do not re-check symbol lookups with grep.
+- Fall back only when needed. If CodeGraph is unavailable, uninitialized, or stale, report it explicitly and use the narrowest native search.
+- Use native search such as `rg` only for literal text, comments, log messages, config keys, documentation wording, or files already identified by CodeGraph.
+- Remember index lag: file watcher updates may be about 500ms behind writes.
 
 ## Code Change Workflow
 
 When a task involves modifying code or files, follow this workflow:
 
-### 1. Isolate
-Create a new branch and worktree so changes stay off `main`. The project provides a standard workflow via `scripts/workflow/create_task_worktree.sh <slug>` which handles clean root `main` sync, branch creation, and worktree setup. For simple tasks, `EnterWorktree` is also available. Always confirm you are on the correct branch before editing.
+### 1. Confirm assignment
+
+Read `AGENTS.md`, confirm the expected branch/worktree, and stay inside the assigned task worktree. If no task worktree or plan has been assigned, stop and ask Codex or the user for the plan and worktree.
 
 ### 2. Plan
-Make an implementation plan before writing any code:
-```
+
+Make or follow an explicit implementation plan before writing code. For Claude Code sessions that support plan mode, use:
+
+```text
 EnterPlanMode
 ```
-Explore the codebase, design the approach, and get user approval before implementing.
+
+The plan should state target files, intended behavior, verification commands, and any risk or dependency.
 
 ### 3. Execute
-Implement the changes according to the approved plan.
 
-### 4. Review
-Hand off all changes to Codex for review:
-```
+Implement the approved plan. Keep changes scoped to the task. Avoid unrelated refactors, generated junk files, and broad formatting churn.
+
+### 4. Verify
+
+Run the narrowest task-appropriate verification available in the assigned worktree. If verification cannot run, explain exactly why and include the command that was attempted.
+
+### 5. Stop before commit
+
+Do not stage for commit unless Codex explicitly requests staged output for review, and still do not commit. Leave the working tree ready for Codex to inspect.
+
+### 6. Handoff to Codex review
+
+Hand off all changes with:
+
+```text
 /codex:review
 ```
-Codex reviews the diff for bugs, edge cases, security issues, and design problems.
 
-### 5. Fix
-If Codex finds issues, let it fix them:
-```
-/codex:rescue --resume 修复审查发现的 N 个问题并优化实现
-```
-
-### 6. Merge & Cleanup
-After review and fixes pass, finalize the task branch to `main`. The canonical path is `scripts/workflow/finalize_task_to_main.sh`, which handles task classification, targeted verification, squash-merge, CodeGraph sync, and post-merge live stack verification. For simpler workflows, you can also delegate to Codex:
-```
-/codex:rescue --resume 审查通过，合并分支到 main 并清理 worktree
-```
-
----
+Include the implementation plan, changed-file summary, verification evidence, and known risks or skipped checks. After this handoff, wait for Codex review. If Codex finds issues, Codex owns the corrections unless it explicitly delegates another no-commit implementation pass.
 
 ## Agent Delegation
 
-### When to Use Agents
+### When to use agents
 
 | Agent | Use For |
 |---|---|
 | `planner` | Complex multi-step features, before writing code |
 | `architect` | System design decisions, technology choices |
-| `code-reviewer` | Before finalizing PRs |
+| `code-reviewer` | Extra local review before Codex review |
 | `security-reviewer` | Auth, payments, user input handling |
 | `database-reviewer` | Schema changes, query optimization |
 | `tdd-guide` | When writing tests first is required |
@@ -87,15 +105,14 @@ After review and fixes pass, finalize the task branch to `main`. The canonical p
 | `refactor-cleaner` | Dead code removal, deduplication |
 | `doc-updater` | Documentation sync with code changes |
 
-### Delegation Rules
+### Delegation rules
 
-- Use agents for domain-specific review (code-reviewer, security-reviewer) and implementation subproblems — not for codebase exploration (use CodeGraph directly)
-- Delegate parallelizable research to multiple agents at once
-- Use the right specialist for each domain
-- Don't use agents for trivial one-line changes
-- Review agent output before committing
-
----
+- Use agents for domain-specific review and implementation subproblems, not for codebase exploration.
+- Delegate parallelizable research to multiple agents only when the work is genuinely independent.
+- Use the right specialist for each domain.
+- Do not use agents for trivial one-line changes.
+- Review agent output before handing work to Codex.
+- Agent output does not authorize commits, pushes, PRs, merges, finalization, or cleanup.
 
 ## Codex Integration
 
@@ -103,29 +120,20 @@ After review and fixes pass, finalize the task branch to `main`. The canonical p
 
 | Command | Purpose |
 |---|---|
-| `/codex:review` | Code review against local git diff (read-only) |
+| `/codex:review` | Required handoff for Codex review against the local git diff |
 | `/codex:adversarial-review` | Challenging review that questions design choices |
-| `/codex:rescue` | Delegate investigation, fixes, or optimization to Codex |
 | `/codex:status` | View active and recent Codex jobs |
 | `/codex:result <job-id>` | View completed job results |
 | `/codex:cancel <job-id>` | Cancel a running job |
 | `/codex:setup` | Check Codex CLI, config, and auth status |
 
-### Quick Reference
+### Quick reference
 
 | Scenario | Command |
 |---|---|
-| Review my changes | `/codex:review` |
-| Review + question my design | `/codex:adversarial-review` |
-| Fix issues from last review | `/codex:rescue --resume 修复审查发现的这些问题：xxx` |
-| One-shot review + fix | `/codex:rescue 审查当前 diff 并修复发现的问题` |
-| Large PR, run in background | `/codex:review --background` |
-| Investigate CI failure | `/codex:rescue 调查 CI 失败原因并修复` |
-| Continue previous rescue | `/codex:rescue --resume` |
-| Check job progress | `/codex:status` |
+| Review my completed implementation | `/codex:review` |
+| Review and question my design | `/codex:adversarial-review` |
+| Large review in background | `/codex:review --background` |
+| Check review progress | `/codex:status` |
 
----
-
-## Other Rules
-
-When invoked with `/repair-worker`, treat the provided payload as the task contract. Follow the project-local `repair-worker` skill and avoid unrelated changes.
+Do not use `/codex:rescue` unless Codex or the user explicitly asks for it. Claude Code should not use Codex commands to trigger commits, merges, finalization, or cleanup for its own work.
