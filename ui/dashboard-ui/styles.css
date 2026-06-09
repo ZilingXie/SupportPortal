@@ -2021,6 +2021,61 @@ html.material-symbols-pending .material-symbols-outlined {
   font-size: 12px;
 }
 
+.message-attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.message-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(100%, 360px);
+  min-height: 42px;
+  padding: 7px 10px;
+  border: 1px solid rgba(161, 174, 187, 0.36);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-attachment:hover {
+  border-color: rgba(24, 94, 129, 0.34);
+  background: rgba(246, 249, 252, 0.96);
+}
+
+.message-attachment-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.message-attachment-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.message-attachment-meta {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.message-attachment .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 18px;
+}
+
 .ticket-detail-rag-plan-toggle {
   display: inline-flex;
   align-items: center;

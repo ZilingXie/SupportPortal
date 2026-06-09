@@ -12,6 +12,7 @@ if importlib.util.find_spec("psycopg") is None:
 import psycopg
 
 from backend.repositories.event_repository import PostgresEventRepository, create_event_repository
+from backend.repositories.asset_repository import PostgresAssetRepository, create_asset_repository
 from backend.repositories.knowledge_repository import (
     PostgresKnowledgeRepository,
     _vector_type_dimension,
@@ -269,6 +270,17 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("meta JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
 
+    def test_asset_storage_contract_includes_asset_tables_and_repository(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/asset_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_assets", sql_source)
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_asset_events", sql_source)
+        self.assertIn("meta JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
+        self.assertIn("CREATE TABLE IF NOT EXISTS {}", repo_source)
+        self.assertIn("support_assets", repo_source)
+        self.assertIn("support_asset_events", repo_source)
+
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):
@@ -278,6 +290,11 @@ class RepositoryConfigurationTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):
                 create_event_repository()
+
+    def test_asset_repository_requires_ticket_db_dsn(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(RuntimeError):
+                create_asset_repository()
 
     def test_knowledge_repository_requires_pgvector_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -300,6 +317,25 @@ class RepositoryConfigurationTests(unittest.TestCase):
             repository = create_event_repository()
         self.assertIsInstance(repository, PostgresEventRepository)
         self.assertEqual(repository._schema, "supportportal")
+
+    def test_asset_repository_defaults_to_supportportal_schema(self) -> None:
+        with patch.dict(os.environ, {"TICKET_DB_DSN": "postgresql://example"}, clear=True):
+            repository = create_asset_repository()
+        self.assertIsInstance(repository, PostgresAssetRepository)
+        self.assertEqual(repository._schema, "supportportal")
+
+    def test_asset_repository_reads_ticket_db_pool_timeout_as_float(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://example",
+                "TICKET_DB_POOL_TIMEOUT_SECONDS": "7.5",
+            },
+            clear=True,
+        ):
+            repository = create_asset_repository()
+        self.assertIsInstance(repository, PostgresAssetRepository)
+        self.assertEqual(repository._pool_timeout_seconds, 7.5)
 
     def test_ticket_repository_reads_connect_retry_settings(self) -> None:
         with patch.dict(

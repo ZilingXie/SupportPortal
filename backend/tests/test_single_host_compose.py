@@ -189,6 +189,23 @@ class SingleHostComposeTests(unittest.TestCase):
             content,
         )
 
+    def test_api_service_exposes_asset_storage_defaults(self) -> None:
+        api_block = self._service_block("api")
+        env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+        base_requirements = REQUIREMENTS_BASE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("ASSET_STORAGE_PROVIDER: ${ASSET_STORAGE_PROVIDER:-s3}", api_block)
+        self.assertIn("ASSET_S3_BUCKET: ${ASSET_S3_BUCKET:-}", api_block)
+        self.assertIn("ASSET_S3_REGION: ${ASSET_S3_REGION:-}", api_block)
+        self.assertIn("ASSET_S3_PREFIX: ${ASSET_S3_PREFIX:-supportportal}", api_block)
+        self.assertIn("ASSET_UPLOAD_MAX_BYTES: ${ASSET_UPLOAD_MAX_BYTES:-20971520}", api_block)
+        self.assertIn("ASSET_ALLOWED_EXTENSIONS: ${ASSET_ALLOWED_EXTENSIONS:-.log,.err,.txt}", api_block)
+        self.assertIn("ASSET_PRESIGN_TTL_SECONDS: ${ASSET_PRESIGN_TTL_SECONDS:-300}", api_block)
+        self.assertIn("ASSET_S3_KMS_KEY_ID: ${ASSET_S3_KMS_KEY_ID:-}", api_block)
+        self.assertIn("ASSET_STORAGE_PROVIDER=s3", env_example)
+        self.assertIn("ASSET_ALLOWED_EXTENSIONS=.log,.err,.txt", env_example)
+        self.assertIn("boto3>=", base_requirements)
+
     def test_engineer_investigation_reply_defaults_are_present_for_api_service(self) -> None:
         api_block = self._service_block("api")
 

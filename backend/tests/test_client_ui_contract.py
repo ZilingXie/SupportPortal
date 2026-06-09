@@ -93,12 +93,29 @@ class ClientUiContractTests(unittest.TestCase):
                 getElementById(id) {{
                   return id === "app" ? appRoot : toastRoot;
                 }},
-                createElement() {{
+                createElement(tagName = "") {{
                   return {{
+                    tagName,
                     className: "",
                     textContent: "",
+                    style: {{}},
+                    files: [],
+                    setAttribute() {{}},
+                    appendChild() {{}},
+                    addEventListener(eventName, handler) {{
+                      this[`on${{eventName}}`] = handler;
+                    }},
+                    click() {{
+                      this.clicked = true;
+                      if (typeof this.onclick === "function") {{
+                        this.onclick({{ target: this }});
+                      }}
+                    }},
                     remove() {{}},
                   }};
+                }},
+                body: {{
+                  appendChild() {{}},
                 }},
               }},
               window: {{
@@ -1359,6 +1376,20 @@ class ClientUiContractTests(unittest.TestCase):
                 state.view = "chat-ticket";
                 state.activeTicketId = ticket.id;
                 state.newTicketPreviewTicketId = ticket.id;
+                state.attachmentsByTicket[ticket.id] = [
+                  {
+                    assetId: "ASSET-UPLOADED-001",
+                    status: "uploaded",
+                    originalFilename: "client.log",
+                    sizeBytes: 128,
+                  },
+                  {
+                    assetId: "ASSET-PENDING-001",
+                    status: "uploading",
+                    originalFilename: "pending.log",
+                    sizeBytes: 256,
+                  },
+                ];
 
                 const calls = [];
                 fetch = (url, options = undefined) => {
@@ -1401,6 +1432,9 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (Object.prototype.hasOwnProperty.call(requestBody, "product")) {
                   throw new Error("Client2 draft first send should omit product when none is known.");
+                }
+                if (JSON.stringify(requestBody.asset_ids) !== JSON.stringify(["ASSET-UPLOADED-001"])) {
+                  throw new Error(`Client2 query should include only uploaded attachment ids, got ${JSON.stringify(requestBody)}.`);
                 }
                 const pending = state.pendingByTicket[ticket.id];
                 if (!pending || pending.phase !== "queued") {
@@ -1611,18 +1645,26 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client2_markdown_toolbar_attach_shows_placeholder_toast(self) -> None:
+    def test_client2_markdown_toolbar_attach_opens_log_file_picker(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
                 """
                 const notices = [];
                 toast = (message) => notices.push(message);
+                let pickerOpened = false;
+                openAttachmentFilePicker = () => {
+                  pickerOpened = true;
+                  return true;
+                };
                 const handled = handleComposerToolbarAction("attach", null);
                 if (handled !== false) {
-                  throw new Error("Attach placeholder should not claim it edited the composer text.");
+                  throw new Error("Attach action should not claim it edited the composer text.");
                 }
-                if (notices.length !== 1 || notices[0] !== "Attachments are not available yet.") {
-                  throw new Error(`Attach placeholder should show the not-yet-available toast, got ${JSON.stringify(notices)}.`);
+                if (!pickerOpened) {
+                  throw new Error("Attach action should open the log file picker.");
+                }
+                if (notices.some((message) => String(message).includes("not available"))) {
+                  throw new Error(`Attach action should not show the placeholder toast, got ${JSON.stringify(notices)}.`);
                 }
               """
             )
@@ -2440,6 +2482,45 @@ class ClientUiContractTests(unittest.TestCase):
                 });
                 if (normalized.messages[0].contentFormat !== "markdown") {
                   throw new Error("Backend ticket normalization should preserve customer message content_format.");
+                }
+
+                const attachmentMessage = {
+                  role: "customer",
+                  content: "Please check this log.",
+                  created_at: "2026-04-21T09:01:00.000Z",
+                  content_format: "markdown",
+                  attachments: [
+                    {
+                      asset_id: "ASSET-CLIENT-001",
+                      original_filename: "client.log",
+                      size_bytes: 2048,
+                      agent_read_enabled: false,
+                    },
+                  ],
+                };
+                const attachmentHtml = renderMessageBody({
+                  role: "user",
+                  content: attachmentMessage.content,
+                  content_format: attachmentMessage.content_format,
+                  attachments: attachmentMessage.attachments,
+                });
+                if (!attachmentHtml.includes('data-asset-download-id="ASSET-CLIENT-001"')) {
+                  throw new Error(`Customer attachments should render a download button, got ${attachmentHtml}.`);
+                }
+                if (!attachmentHtml.includes("client.log") || !attachmentHtml.includes("2.0 KB")) {
+                  throw new Error(`Customer attachments should render filename and size, got ${attachmentHtml}.`);
+                }
+
+                const mappedAttachmentTicket = normalizeBackendTicket({
+                  ticket_id: "TK-ATTACH-001",
+                  customer_id: "user-1",
+                  status: "communicating",
+                  created_at: "2026-04-21T09:00:00.000Z",
+                  updated_at: "2026-04-21T09:01:00.000Z",
+                  messages: [attachmentMessage],
+                });
+                if (!mappedAttachmentTicket.messages[0].attachments || mappedAttachmentTicket.messages[0].attachments[0].assetId !== "ASSET-CLIENT-001") {
+                  throw new Error(`Backend ticket sync should preserve attachment summaries, got ${JSON.stringify(mappedAttachmentTicket)}.`);
                 }
               """
             )

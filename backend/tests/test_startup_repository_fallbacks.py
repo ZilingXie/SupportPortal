@@ -16,6 +16,7 @@ os.environ.setdefault("SILICONFLOW_EMBEDDING_DIMENSIONS", "1024")
 
 import backend.main as main
 import backend.rag_api as rag_api
+from backend.repositories.asset_repository import InMemoryAssetRepository
 from backend.repositories.event_repository import InMemoryEventRepository
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 
@@ -60,26 +61,46 @@ class _FlakyRepository:
 class StartupRepositoryFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         self.original_ticket_repository = main.ticket_repository
+        self.original_asset_repository = main.asset_repository
         self.original_event_repository = rag_api.event_repository
         self.original_knowledge_repository = rag_api.knowledge_repository
 
     def tearDown(self) -> None:
         main.ticket_repository = self.original_ticket_repository
+        main.asset_repository = self.original_asset_repository
         rag_api.event_repository = self.original_event_repository
         rag_api.knowledge_repository = self.original_knowledge_repository
 
     def test_main_startup_falls_back_to_in_memory_ticket_repository_when_ticket_db_init_fails(self) -> None:
         main.ticket_repository = _FailingRepository("connection timeout expired")
+        main.asset_repository = _FailingRepository("connection timeout expired")
 
-        with patch("backend.main.time.sleep"):
-            main.startup_event()
+        with patch.dict(os.environ, {"TICKET_DB_STARTUP_INIT_RETRIES": "0"}, clear=False):
+            with patch("backend.main.time.sleep"):
+                main.startup_event()
 
         self.assertIsInstance(main.ticket_repository, InMemoryTicketRepository)
         self.assertEqual(main.ticket_repository.storage_mode(), "memory")
+        self.assertIsInstance(main.asset_repository, InMemoryAssetRepository)
+        self.assertEqual(main.asset_repository.storage_mode(), "memory")
+
+    def test_main_startup_falls_back_to_in_memory_asset_repository_when_asset_db_init_fails(self) -> None:
+        main.ticket_repository = _FailingRepository("connection timeout expired")
+        main.asset_repository = _FailingRepository("connection timeout expired")
+
+        with patch.dict(os.environ, {"TICKET_DB_STARTUP_INIT_RETRIES": "0"}, clear=False):
+            with patch("backend.main.time.sleep"):
+                main.startup_event()
+
+        self.assertIsInstance(main.ticket_repository, InMemoryTicketRepository)
+        self.assertEqual(main.ticket_repository.storage_mode(), "memory")
+        self.assertIsInstance(main.asset_repository, InMemoryAssetRepository)
+        self.assertEqual(main.asset_repository.storage_mode(), "memory")
 
     def test_main_startup_retries_transient_ticket_db_init_failure_before_falling_back(self) -> None:
         repository = _FlakyRepository(failures=1)
         main.ticket_repository = repository
+        main.asset_repository = InMemoryAssetRepository()
 
         with patch.dict(
             os.environ,
@@ -96,6 +117,18 @@ class StartupRepositoryFallbackTests(unittest.TestCase):
         self.assertEqual(repository.storage_mode(), "postgres")
         self.assertEqual(repository.initialize_calls, 2)
         sleep_mock.assert_called_once_with(0.25)
+
+    def test_main_startup_keeps_ticket_repository_when_asset_repository_init_fails(self) -> None:
+        ticket_repository = _TrackingKnowledgeRepository()
+        main.ticket_repository = ticket_repository
+        main.asset_repository = _FailingRepository("connection timeout expired")
+
+        main.startup_event()
+
+        self.assertIs(main.ticket_repository, ticket_repository)
+        self.assertEqual(ticket_repository.initialize_calls, 1)
+        self.assertIsInstance(main.asset_repository, InMemoryAssetRepository)
+        self.assertEqual(main.asset_repository.storage_mode(), "memory")
 
     def test_rag_api_startup_falls_back_to_in_memory_event_repository_when_event_db_init_fails(self) -> None:
         rag_api.event_repository = _FailingRepository("connection timeout expired")
