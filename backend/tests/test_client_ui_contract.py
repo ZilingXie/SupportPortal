@@ -2893,6 +2893,20 @@ class ClientUiContractTests(unittest.TestCase):
                 state.view = "chat-ticket";
                 state.activeTicketId = ticket.id;
                 state.newTicketPreviewTicketId = null;
+                state.attachmentsByTicket[ticket.id] = [
+                  {
+                    assetId: "ASSET-COMPOSER-UPLOADED",
+                    originalFilename: "composer-ready.log",
+                    sizeBytes: 8192,
+                    status: "uploaded",
+                  },
+                  {
+                    assetId: "ASSET-COMPOSER-UPLOADING",
+                    originalFilename: "still-uploading.log",
+                    sizeBytes: 1024,
+                    status: "uploading",
+                  },
+                ];
 
                 const html = renderChatTicket();
                 if (!html.includes("new-ticket-postsend-shell")) {
@@ -2942,6 +2956,15 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("join-channel.log") || !html.includes("4.0 KB")) {
                   throw new Error("Existing client2 tickets should render uploaded attachment name and size.");
+                }
+                if (!html.includes('data-asset-download-id="ASSET-COMPOSER-UPLOADED"')) {
+                  throw new Error("Existing client2 tickets should render uploaded composer attachments in the sidebar before send.");
+                }
+                if (!html.includes("composer-ready.log") || !html.includes("8.0 KB")) {
+                  throw new Error("Existing client2 tickets should render uploaded composer attachment name and size.");
+                }
+                if (html.includes('data-asset-download-id="ASSET-COMPOSER-UPLOADING"')) {
+                  throw new Error("Existing client2 tickets should not render uploading composer attachments in the sidebar.");
                 }
                 if (!html.includes("Join a channel")) {
                   throw new Error("Existing client2 tickets should keep source chips in the postsend shell.");
