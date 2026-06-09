@@ -1835,6 +1835,285 @@ def _build_dashboard_ticket_payload(
     return payload
 
 
+def _dashboard_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _dashboard_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _dashboard_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _dashboard_latest_message(ticket: dict[str, Any], roles: set[str] | None = None) -> dict[str, Any] | None:
+    messages = ticket.get("messages")
+    if not isinstance(messages, list):
+        return None
+    normalized_roles = {item.lower() for item in roles or set()}
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        role = _dashboard_text(message.get("role")).lower()
+        if normalized_roles and role not in normalized_roles:
+            continue
+        return message
+    return None
+
+
+def _dashboard_flow_status(value: Any, *, default: str = "queued") -> str:
+    normalized = _dashboard_text(value).lower()
+    if normalized in {"completed", "complete", "done", "success", "succeeded"}:
+        return "completed"
+    if normalized in {"cancelled", "canceled"}:
+        return "cancelled"
+    if normalized in {"failed", "failure", "error", "errored"}:
+        return "failed"
+    if normalized in {"skipped", "skip", "disabled", "not_applicable", "not applicable"}:
+        return "skipped"
+    if normalized in {"started", "running", "in_progress", "in progress", "processing"}:
+        return "running"
+    return default
+
+
+def _dashboard_flow_events_for_agent(agent_events: list[dict[str, Any]], agent_name: str) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in agent_events
+        if isinstance(event, dict) and _dashboard_text(event.get("agent_name")) == agent_name
+    ]
+
+
+def _dashboard_flow_event_summary(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _dashboard_dict(event.get("payload"))
+    return {
+        "agent_name": _dashboard_text(event.get("agent_name")) or None,
+        "phase": _dashboard_text(event.get("phase")) or None,
+        "event_type": _dashboard_text(event.get("event_type")) or None,
+        "created_at": event.get("created_at"),
+        "decision": _dashboard_text(payload.get("decision")) or None,
+        "reason": _dashboard_text(payload.get("reason") or payload.get("error")) or None,
+        "status": _dashboard_text(payload.get("status")) or None,
+        "trace_id": _dashboard_text(
+            payload.get("trace_id")
+            or payload.get("latest_trace_id")
+            or payload.get("openai_trace_id")
+        ) or None,
+        "rag_request_id": _dashboard_text(payload.get("rag_request_id")) or None,
+    }
+
+
+def _dashboard_flow_message_summary(message: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(message, dict):
+        return {}
+    return {
+        "role": _dashboard_text(message.get("role")) or None,
+        "created_at": message.get("created_at"),
+        "content_summary": _dashboard_text(message.get("content"))[:500] or None,
+        "answer_route": _dashboard_text(message.get("answer_route")) or None,
+        "route_reason": _dashboard_text(message.get("route_reason")) or None,
+        "needs_human": bool(message.get("needs_human")) if "needs_human" in message else None,
+    }
+
+
+def _dashboard_flow_agent_node(
+    *,
+    node_id: str,
+    label: str,
+    agent_name: str,
+    summary: dict[str, Any],
+    agent_events: list[dict[str, Any]],
+    default_status: str = "queued",
+    extra_details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    events = _dashboard_flow_events_for_agent(agent_events, agent_name)
+    details = {
+        "phase": _dashboard_text(summary.get("phase")) or None,
+        "event_count": len(events),
+        "events": [_dashboard_flow_event_summary(event) for event in events[:5]],
+    }
+    if extra_details:
+        details.update(extra_details)
+    status = _dashboard_flow_status(summary.get("status") or summary.get("phase"), default=default_status)
+    return {
+        "id": node_id,
+        "label": label,
+        "kind": "rag" if node_id == "rag_service" else "agent",
+        "status": status,
+        "started_at": summary.get("started_at"),
+        "completed_at": summary.get("completed_at"),
+        "duration_ms": summary.get("duration_ms"),
+        "decision": _dashboard_text(summary.get("decision")) or None,
+        "reason": _dashboard_text(summary.get("reason")) or None,
+        "summary": _dashboard_text(summary.get("reason") or summary.get("decision")) or None,
+        "details": details,
+    }
+
+
+def _dashboard_final_action(*, workflow_action: str, ticket: dict[str, Any], final_message: dict[str, Any] | None) -> str:
+    route = _dashboard_text((final_message or {}).get("answer_route")).lower()
+    if workflow_action in {"answer_customer", "resolve_ticket"}:
+        return "close_ticket" if workflow_action == "resolve_ticket" else "answer_customer"
+    if workflow_action.startswith("clarify_customer"):
+        return "clarify_customer"
+    if workflow_action in {"open_engineer_ticket", "open_engineer_case"}:
+        return "escalate_to_engineer"
+    if route in {"handoff", "engineer", "escalate"} or normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS:
+        return "escalate_to_engineer"
+    if route == "rag":
+        return "answer_customer"
+    return "unknown"
+
+
+def _dashboard_final_reason(final_action: str, runtime_state: dict[str, Any], final_message: dict[str, Any] | None) -> str:
+    main_summary = _dashboard_dict(runtime_state.get("main_agent"))
+    reason = _dashboard_text(main_summary.get("reason"))
+    if reason and final_action != "escalate_to_engineer":
+        return reason
+    if final_action == "answer_customer":
+        return "Grounded answer was sent to the customer."
+    if final_action == "clarify_customer":
+        return "The customer was asked for clarification before continuing."
+    if final_action == "escalate_to_engineer":
+        return "The ticket was escalated to an engineer for investigation."
+    if final_action == "close_ticket":
+        return "The ticket was closed after the customer confirmed resolution."
+    if final_message is not None:
+        return "Latest assistant message is available, but the final action is unknown."
+    return "No completed agent outcome has been recorded yet."
+
+
+def _build_dashboard_ticket_execution_flow(ticket: dict[str, Any]) -> dict[str, Any]:
+    payload = copy.deepcopy(ticket)
+    ensure_ticket_defaults(payload)
+    ticket_id = _dashboard_text(payload.get("ticket_id"))
+    runtime_state = _dashboard_dict(payload.get("client_agent_runtime_state"))
+    agent_events = (
+        ticket_repository.list_ticket_agent_events(ticket_id, limit=100)
+        if ticket_id
+        else []
+    )
+    final_message = _dashboard_latest_message(payload, {"assistant"})
+    customer_message = _dashboard_latest_message(payload, {"customer"})
+    retrieval_snapshot = _dashboard_dict((final_message or {}).get("retrieval_plan_snapshot"))
+    timing_summary = _dashboard_dict(retrieval_snapshot.get("tool_timing_summary"))
+    workflow_action = _dashboard_text(runtime_state.get("workflow_action"))
+    final_action = _dashboard_final_action(
+        workflow_action=workflow_action,
+        ticket=payload,
+        final_message=final_message,
+    )
+    runtime_status = _dashboard_flow_status(runtime_state.get("status"), default="queued")
+    flow_status = runtime_status if runtime_state else "queued"
+    route_reason = (
+        _dashboard_text((final_message or {}).get("route_reason"))
+        or _dashboard_text(_dashboard_dict(runtime_state.get("rag_service")).get("decision"))
+        or _dashboard_text(_dashboard_dict(runtime_state.get("main_agent")).get("decision"))
+        or None
+    )
+    needs_human = bool((final_message or {}).get("needs_human")) or final_action == "escalate_to_engineer"
+
+    customer_created_at = (customer_message or {}).get("created_at") or payload.get("created_at")
+    customer_node = {
+        "id": "customer_message",
+        "label": "Customer Message",
+        "kind": "input",
+        "status": "completed" if customer_message else "queued",
+        "started_at": customer_created_at,
+        "completed_at": customer_created_at,
+        "duration_ms": None,
+        "decision": None,
+        "reason": "Customer submitted the latest message." if customer_message else "No customer message has been recorded yet.",
+        "summary": _dashboard_text((customer_message or {}).get("content")) or _dashboard_text(payload.get("subject")) or None,
+        "details": {
+            "message_summary": _dashboard_flow_message_summary(customer_message),
+            "ticket_subject": payload.get("subject"),
+            "product": payload.get("product"),
+        },
+    }
+
+    route_node = _dashboard_flow_agent_node(
+        node_id="route_agent",
+        label="Route Agent",
+        agent_name="route_agent",
+        summary=_dashboard_dict(runtime_state.get("route_agent")),
+        agent_events=agent_events,
+        default_status="queued",
+    )
+
+    rag_summary = _dashboard_dict(runtime_state.get("rag_service") or runtime_state.get("rag_agent"))
+    rag_details = {
+        "retrieval_strategy": retrieval_snapshot.get("retrieval_strategy"),
+        "selected_chunk_ids": _dashboard_list(retrieval_snapshot.get("selected_chunk_ids")),
+        "selected_contexts": _dashboard_list(retrieval_snapshot.get("selected_contexts")),
+        "citations": _dashboard_list((final_message or {}).get("citations")),
+        "tool_timing_summary": timing_summary,
+        "fallback_reason": retrieval_snapshot.get("agent_fallback_reason"),
+        "deadline_exhausted": retrieval_snapshot.get("deadline_exhausted"),
+    }
+    rag_node = _dashboard_flow_agent_node(
+        node_id="rag_service",
+        label="RAG Retrieval",
+        agent_name="rag_service",
+        summary=rag_summary,
+        agent_events=agent_events,
+        default_status="queued",
+        extra_details=rag_details,
+    )
+
+    review_summary = _dashboard_dict(runtime_state.get("review_agent"))
+    review_node = _dashboard_flow_agent_node(
+        node_id="review_agent",
+        label="Review Agent",
+        agent_name="review_agent",
+        summary=review_summary,
+        agent_events=agent_events,
+        default_status="queued",
+        extra_details={"openai_tracing": _dashboard_dict(review_summary.get("openai_tracing"))},
+    )
+
+    final_reason = _dashboard_final_reason(final_action, runtime_state, final_message)
+    final_completed_at = (final_message or {}).get("created_at") or runtime_state.get("completed_at")
+    final_node = {
+        "id": "final_outcome",
+        "label": "Final Outcome",
+        "kind": "outcome",
+        "status": "completed" if final_action != "unknown" else flow_status,
+        "started_at": None,
+        "completed_at": final_completed_at,
+        "duration_ms": None,
+        "decision": final_action,
+        "reason": final_reason,
+        "summary": _dashboard_text((final_message or {}).get("content")) or final_reason,
+        "details": {
+            "message_summary": _dashboard_flow_message_summary(final_message),
+            "ticket_status": payload.get("status"),
+            "route_reason": route_reason,
+        },
+    }
+
+    return {
+        "ticket_id": ticket_id,
+        "run_id": _dashboard_text(runtime_state.get("active_run_id")) or None,
+        "status": flow_status,
+        "summary": {
+            "workflow_action": workflow_action or None,
+            "final_action": final_action,
+            "route_reason": route_reason,
+            "total_latency_ms": timing_summary.get("total_latency_ms"),
+            "needs_human": needs_human,
+        },
+        "nodes": [customer_node, route_node, rag_node, review_node, final_node],
+        "edges": [
+            {"from": "customer_message", "to": "route_agent"},
+            {"from": "route_agent", "to": "rag_service"},
+            {"from": "rag_service", "to": "review_agent"},
+            {"from": "review_agent", "to": "final_outcome"},
+        ],
+    }
+
+
 def _dashboard_ticket_detail_or_404(ticket_id: str, *, include_token_usage: bool) -> dict[str, Any]:
     ticket = ticket_repository.get_ticket(ticket_id)
     if ticket is None:
@@ -2858,6 +3137,12 @@ def list_dashboard_tickets(
 def get_dashboard_ticket_detail(ticket_id: str) -> dict[str, Any]:
     ticket = _dashboard_ticket_detail_or_404(ticket_id, include_token_usage=True)
     return {"ticket": ticket}
+
+
+@app.get("/api/dashboard/tickets/{ticket_id}/execution-flow")
+def get_dashboard_ticket_execution_flow(ticket_id: str) -> dict[str, Any]:
+    ticket = _dashboard_ticket_detail_or_404(ticket_id, include_token_usage=False)
+    return _build_dashboard_ticket_execution_flow(ticket)
 
 
 @app.get("/api/dashboard/tickets/{ticket_id}/summary")

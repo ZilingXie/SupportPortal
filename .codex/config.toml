@@ -1,0 +1,4 @@
+[mcp_servers.codegraph]
+type = "stdio"
+command = "codegraph"
+args = ["serve", "--mcp", "--path", "/Users/xieziling/Desktop/personal_proj/SupportPortal"]
