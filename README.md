@@ -113,7 +113,7 @@ podman machine start
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
 # Official local single-host entry point:
-# with .env.local enabled, this starts local_lightweight + local Postgres/pgvector.
+# with .env.local enabled, this starts local_lightweight + remote/RDS Postgres.
 bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 
 # Confirm the official deployment stack and build provenance.
@@ -125,8 +125,8 @@ Notes:
 1. The official local single-host stack is `deployment`. If `deploymentlw` appears, clean it with `bash scripts/workflow/cleanup_single_host_aux_stack.sh`.
 2. The restart script pins the running image to the current root `main` `app_build.ref`, so old checkouts do not continue processing new tickets.
 3. `restart_single_host_stack.sh` is the recommended entry point. Without `--use-local-env`, it reads only `.env` and defaults to `full + remote DB`.
-4. For local development, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env` to layer `.env.local` and run `local_lightweight + local DB`.
-5. To debug against a remote/RDS database, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote`.
+4. For local development, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env` to layer `.env.local` and run `local_lightweight + remote/RDS DB`.
+5. To debug with an isolated local Postgres/pgvector database, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local`.
 6. `restart_single_host_lightweight_stack.sh` and `restart_single_host_local_stack.sh` remain compatibility wrappers.
 
 ### Common Commands
@@ -165,16 +165,16 @@ bash scripts/workflow/inspect_single_host_stack_mode.sh
 podman-compose -f deployment/docker-compose.single-host.yml restart nginx
 ```
 
-3. After changing `.env.local` or local DB/RAG config:
+3. After changing `.env.local` or local runtime config:
 
 ```bash
 bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 ```
 
-4. After changing `.env` while still using the remote DB lightweight path:
+4. After changing local DB/RAG config while explicitly using local DB:
 
 ```bash
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local
 ```
 
 ## Troubleshooting
