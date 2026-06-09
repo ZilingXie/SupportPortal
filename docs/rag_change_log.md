@@ -11,6 +11,26 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-09 - Add RAG access policy foundation
+
+- Summary:
+  - Added the first access-policy foundation for the RAG scope split.
+  - Introduced normalized constants and helpers for `knowledge_scope` values (`external`, `internal`) and retrieval policies (`client_external_only`, `engineer_internal_first`, `engineer_external_fallback`).
+  - Added tests covering official-to-external mapping, non-official fail-closed internal mapping, scope aliases, policy aliases, invalid-value defaults, and policy-to-scope mapping.
+- Reason:
+  - The RAG scope split needs a deterministic system-owned policy layer before ingestion, API requests, retrieval filtering, client routing, or engineer fallback orchestration can safely use access scopes.
+  - Invalid or ambiguous knowledge inputs must fail closed to `internal`, while invalid retrieval policy inputs default to the client-safe external-only policy.
+- Affected files/config:
+  - `backend/services/rag_access_policy.py`
+  - `backend/tests/test_rag_access_policy.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - No existing RAG rows are modified by this foundation step.
+- Verification:
+  - RED: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_access_policy.py -q` failed with `ModuleNotFoundError: No module named 'backend.services.rag_access_policy'` before implementation.
+  - GREEN: `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_access_policy.py -q` (`7 passed`).
+
 ## 2026-06-09 - Plan RAG external/internal scope split
 
 - Summary:
