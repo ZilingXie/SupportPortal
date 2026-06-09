@@ -337,6 +337,19 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIsInstance(repository, PostgresAssetRepository)
         self.assertEqual(repository._pool_timeout_seconds, 7.5)
 
+    def test_asset_repository_initialize_escapes_jsonb_default_literal_for_sql_formatting(self) -> None:
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresAssetRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(repository, "_connect", return_value=connection):
+            repository.initialize()
+
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
+        self.assertIn("support_assets", executed_sql)
+        self.assertIn("support_asset_events", executed_sql)
+        self.assertIn("idx_support_assets_ticket_customer", executed_sql)
+
     def test_ticket_repository_reads_connect_retry_settings(self) -> None:
         with patch.dict(
             os.environ,
