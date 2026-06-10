@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SupportPortal Engineer AI 自进化计划</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #1f2933;
+      --muted: #64748b;
+      --line: #d9e2ec;
+      --accent: #0f766e;
+      --accent-weak: #d9f4ef;
+      --warn: #b45309;
+      --warn-weak: #fff2cc;
+      --danger: #b91c1c;
+      --danger-weak: #fee2e2;
+      --ok: #166534;
+      --ok-weak: #dcfce7;
+      --info: #1d4ed8;
+      --info-weak: #dbeafe;
+      --shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    header {
+      background: #12343b;
+      color: #f8fafc;
+      padding: 32px 24px;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.25;
+    }
+
+    h1 {
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin-bottom: 14px;
+      font-size: 21px;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    p {
+      margin: 0 0 10px;
+    }
+
+    .subtitle {
+      max-width: 900px;
+      margin-top: 10px;
+      color: #dbeafe;
+      font-size: 15px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 3px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 999px;
+      color: #eef6ff;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    section {
+      margin-bottom: 20px;
+      padding: 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tile {
+      min-height: 100%;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+
+    .tile strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #0f172a;
+    }
+
+    .tile p,
+    li,
+    td,
+    th {
+      font-size: 14px;
+    }
+
+    .callout {
+      padding: 14px 16px;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-weak);
+      border-radius: 6px;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: var(--warn-weak);
+    }
+
+    .callout.danger {
+      border-left-color: var(--danger);
+      background: var(--danger-weak);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    th,
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #eef2f7;
+      color: #243b53;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-width: 78px;
+      justify-content: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status.todo {
+      color: #334155;
+      background: #e2e8f0;
+    }
+
+    .status.doing {
+      color: var(--info);
+      background: var(--info-weak);
+    }
+
+    .status.blocked {
+      color: var(--warn);
+      background: var(--warn-weak);
+    }
+
+    .status.done {
+      color: var(--ok);
+      background: var(--ok-weak);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+
+    .step:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: -8px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .task-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .task {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 10px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+
+    .task input {
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      accent-color: var(--accent);
+    }
+
+    .task-title {
+      margin: 0 0 4px;
+      font-weight: 700;
+    }
+
+    .task-desc {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .owner {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .code {
+      padding: 12px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      white-space: pre;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .no-print {
+      margin-top: 12px;
+    }
+
+    button {
+      min-height: 34px;
+      padding: 7px 12px;
+      border: 1px solid #0f766e;
+      border-radius: 6px;
+      background: #0f766e;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+
+    @media (max-width: 900px) {
+      .grid,
+      .grid.two,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .step:not(:last-child)::after {
+        display: none;
+      }
+
+      .task {
+        grid-template-columns: 28px 1fr;
+      }
+
+      .owner {
+        grid-column: 2;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      header,
+      section {
+        box-shadow: none;
+      }
+
+      .no-print,
+      button {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SupportPortal Engineer AI 自进化计划</h1>
+    <p class="subtitle">本计划将自进化能力收窄到工程师端：EvoAgentX 作为离线优化实验室，Mem0 作为已确认案例记忆层，线上执行仍由 SupportPortal 现有 engineer AI runtime 负责。</p>
+    <div class="meta">
+      <span class="badge">状态：方案已同意，待落地拆解</span>
+      <span class="badge">范围：Engineer AI only</span>
+      <span class="badge">日期：2026-06-10</span>
+      <span class="badge">语言：中文</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>一、核心结论</h2>
+      <div class="callout">
+        <p><strong>推荐方向：</strong>EvoAgentX 不接管线上主链路，而是作为离线自进化引擎；Mem0 不替代数据库，而是作为工程师已确认案例的语义记忆层；client AI 继续使用现有 RAG official_only 主链路。</p>
+      </div>
+      <div class="grid no-print">
+        <button type="button" onclick="markAll(false)">清空勾选</button>
+        <button class="secondary" type="button" onclick="markAll(true)">全部勾选</button>
+        <button class="secondary" type="button" onclick="window.print()">打印 / 导出 PDF</button>
+      </div>
+      <p class="small no-print">勾选状态会保存在当前浏览器的 localStorage 中，适合本地追踪进度。</p>
+    </section>
+
+    <section>
+      <h2>二、架构边界</h2>
+      <div class="grid">
+        <div class="tile">
+          <strong>Client AI</strong>
+          <p>继续使用现有 RAG official_only 主链路。客户侧回答只基于官方知识，不纳入 EvoAgentX 自进化范围。</p>
+        </div>
+        <div class="tile">
+          <strong>Engineer AI Runtime</strong>
+          <p>继续使用现有 engineer_case、engineer_agent_state、handoff_packet、evidence_tools。它是生产执行和审计的 source of truth。</p>
+        </div>
+        <div class="tile">
+          <strong>EvoAgentX Optimization Lab</strong>
+          <p>离线或 shadow 运行，用于优化 engineer prompt、受限拓扑、tool-call policy。只产出候选版本，不直接改生产。</p>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="tile">
+          <strong>Mem0 Case Memory</strong>
+          <p>保存工程师确认后的案例摘要，用于相似案例检索和上下文增强。Postgres 仍保存权威工单、反馈、评估和版本记录。</p>
+        </div>
+        <div class="tile">
+          <strong>治理原则</strong>
+          <p>任何自进化结果必须经过离线评估、shadow 对比、版本记录和人工批准，才能进入灰度或生产。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>三、目标与非目标</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>类别</th>
+            <th>内容</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>目标</td>
+            <td>降低工程师纠正率</td>
+            <td>通过结构化反馈、案例记忆、prompt/tool policy 优化，让 engineer AI 更快给出可审查结论。</td>
+          </tr>
+          <tr>
+            <td>目标</td>
+            <td>提升相似案例复用</td>
+            <td>Mem0 只保存已确认案例，诊断时检索相似症状、根因、证据和解决方案。</td>
+          </tr>
+          <tr>
+            <td>目标</td>
+            <td>受控优化 prompt、拓扑、skill 调用</td>
+            <td>EvoAgentX 负责提出候选版本；生产上线由 SupportPortal 版本门禁控制。</td>
+          </tr>
+          <tr>
+            <td>非目标</td>
+            <td>替换 client AI RAG</td>
+            <td>client AI 继续 official_only RAG，不引入 Mem0 案例记忆作为客户直接回答依据。</td>
+          </tr>
+          <tr>
+            <td>非目标</td>
+            <td>自动跳过工程师审批</td>
+            <td>工程师审批和客户安全校验是硬边界，不允许 optimizer 改写或绕过。</td>
+          </tr>
+          <tr>
+            <td>非目标</td>
+            <td>让 Mem0 成为事实源</td>
+            <td>Mem0 是检索增强层；权威记录、审计和版本仍在 SupportPortal 数据库。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>四、数据流</h2>
+      <div class="flow">
+        <div class="step">
+          <h3>1. 工程师处理</h3>
+          <p>工程师审查 AI 初稿、补充证据、确认或纠正结论。</p>
+        </div>
+        <div class="step">
+          <h3>2. 结构化反馈</h3>
+          <p>记录根因、证据锚点、可发客户结论、仍缺信息和置信度。</p>
+        </div>
+        <div class="step">
+          <h3>3. 案例入库</h3>
+          <p>确认后的案例写入 Postgres 和 Mem0；未确认猜测不进长期记忆。</p>
+        </div>
+        <div class="step">
+          <h3>4. 离线优化</h3>
+          <p>EvoAgentX 基于评估集生成 prompt、拓扑和工具策略候选版本。</p>
+        </div>
+        <div class="step">
+          <h3>5. 门禁上线</h3>
+          <p>shadow eval 通过后人工批准，再灰度上线并持续监控。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>五、反馈与记忆 Schema</h2>
+      <div class="grid two">
+        <div>
+          <h3>工程师结构化反馈</h3>
+          <div class="code">{
+  "decision": "approved | corrected | rejected",
+  "corrected_root_cause": "...",
+  "evidence_anchors": ["log id", "doc path", "repro result"],
+  "customer_safe_conclusion": "...",
+  "internal_only_notes": "...",
+  "missing_information": ["..."],
+  "confidence": "confirmed | likely | insufficient",
+  "labels": ["retrieval_gap", "tool_order_issue"],
+  "ticket_id": "...",
+  "engineer_case_id": "..."
+}</div>
+        </div>
+        <div>
+          <h3>Mem0 案例记忆</h3>
+          <div class="code">{
+  "product": "Agora RTC",
+  "symptom": "...",
+  "root_cause": "...",
+  "resolution": "...",
+  "evidence_summary": "...",
+  "customer_safe_summary": "...",
+  "internal_only_summary": "...",
+  "source_ticket_id": "...",
+  "prompt_version": "...",
+  "workflow_version": "...",
+  "confidence": "confirmed"
+}</div>
+        </div>
+      </div>
+      <div class="callout warn" style="margin-top: 14px;">
+        <p><strong>写入门槛：</strong>只有工程师确认后的案例可以进入 Mem0。AI 草稿、未验证 root cause、客户原始敏感信息和内部不可外泄细节必须经过摘要、脱敏和标签隔离。</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>六、可进化对象与锁死边界</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>层级</th>
+            <th>允许进化</th>
+            <th>必须锁死</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Prompt</td>
+            <td>engineer investigation reply、case synthesis、tool selection prompt。</td>
+            <td>客户侧 official_only RAG 回答边界、内部证据不可外泄规则。</td>
+          </tr>
+          <tr>
+            <td>拓扑</td>
+            <td>先查 Mem0 还是先查 internal RAG、是否并行查询、official fallback 触发顺序。</td>
+            <td>handoff intake、evidence access policy、customer-safe validator、engineer approval、audit log。</td>
+          </tr>
+          <tr>
+            <td>Skill / 工具调用</td>
+            <td>工具选择、调用顺序、fallback 条件、参数模板、证据充分性阈值。</td>
+            <td>工具 allowlist、权限边界、审批流程、数据隔离策略。</td>
+          </tr>
+          <tr>
+            <td>案例记忆</td>
+            <td>相似案例召回、案例摘要模板、标签体系、案例排序策略。</td>
+            <td>权威工单记录、审计日志、确认状态、敏感信息处理规则。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>七、阶段计划</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>交付物</th>
+            <th>验收标准</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>阶段 0：边界固化</td>
+            <td>工程师端自进化设计文档、版本字段、数据边界说明。</td>
+            <td>明确 client AI 不进入自进化范围；engineer AI runtime 仍为生产主链路。</td>
+            <td><span class="status doing">待开始</span></td>
+          </tr>
+          <tr>
+            <td>阶段 1：结构化反馈</td>
+            <td>工程师反馈表单、反馈 API、Postgres 反馈表。</td>
+            <td>每次确认或纠正都能生成可评估样本。</td>
+            <td><span class="status todo">待开始</span></td>
+          </tr>
+          <tr>
+            <td>阶段 2：Mem0 案例记忆</td>
+            <td>案例摘要器、Mem0 写入器、相似案例检索器。</td>
+            <td>确认案例可检索，未确认案例不会进入长期记忆。</td>
+            <td><span class="status todo">待开始</span></td>
+          </tr>
+          <tr>
+            <td>阶段 3：离线评估集</td>
+            <td>从反馈样本生成 eval dataset，覆盖常见症状、根因和证据类型。</td>
+            <td>能对当前 prompt/tool policy 计算基线分数。</td>
+            <td><span class="status todo">待开始</span></td>
+          </tr>
+          <tr>
+            <td>阶段 4：EvoAgentX 优化实验室</td>
+            <td>prompt、拓扑、skill policy 的候选版本生成流程。</td>
+            <td>候选版本只进入 shadow eval，不直接改生产。</td>
+            <td><span class="status todo">待开始</span></td>
+          </tr>
+          <tr>
+            <td>阶段 5：上线门禁与灰度</td>
+            <td>版本注册、人工批准、feature flag、回滚机制。</td>
+            <td>新版本通过质量、安全、泄露风险和回归门禁后才可灰度。</td>
+            <td><span class="status todo">待开始</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>八、任务清单</h2>
+      <ul class="task-list" id="taskList">
+        <li class="task">
+          <input type="checkbox" data-task="boundary-doc">
+          <div>
+            <p class="task-title">固化 engineer-only 范围</p>
+            <p class="task-desc">更新正式设计文档，明确 client AI 继续 official_only RAG，EvoAgentX 只服务 engineer AI 优化。</p>
+          </div>
+          <span class="owner">架构</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="version-fields">
+          <div>
+            <p class="task-title">定义版本字段</p>
+            <p class="task-desc">为 prompt_version、workflow_version、tool_policy_version、memory_index_version、eval_dataset_version 建立记录规则。</p>
+          </div>
+          <span class="owner">后端</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="feedback-schema">
+          <div>
+            <p class="task-title">实现结构化 HITL 反馈</p>
+            <p class="task-desc">把工程师通过、纠正、拒绝、证据锚点、客户安全结论、缺失信息和置信度结构化。</p>
+          </div>
+          <span class="owner">后端 / UI</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="case-memory-schema">
+          <div>
+            <p class="task-title">定义 Mem0 案例写入规则</p>
+            <p class="task-desc">只写入 confirmed 案例；做摘要、脱敏、internal/customer-safe 字段隔离。</p>
+          </div>
+          <span class="owner">RAG / 记忆</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="case-retrieval">
+          <div>
+            <p class="task-title">接入相似案例检索</p>
+            <p class="task-desc">在 engineer evidence 阶段检索 Mem0 案例，并与 internal RAG、official fallback 合并成统一 evidence packet。</p>
+          </div>
+          <span class="owner">后端</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="eval-dataset">
+          <div>
+            <p class="task-title">建立离线评估集</p>
+            <p class="task-desc">从历史确认案例和反馈样本生成评估集，覆盖正确性、证据充分性、客户安全和内部泄露风险。</p>
+          </div>
+          <span class="owner">评估</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="evoagentx-lab">
+          <div>
+            <p class="task-title">搭建 EvoAgentX 优化实验室</p>
+            <p class="task-desc">离线生成 prompt、拓扑和工具策略候选版本，并保存优化输入、输出、分数和 diff。</p>
+          </div>
+          <span class="owner">优化</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="shadow-gate">
+          <div>
+            <p class="task-title">建立 shadow eval 门禁</p>
+            <p class="task-desc">候选版本必须优于基线且不触发安全失败，才能进入人工审批。</p>
+          </div>
+          <span class="owner">质量</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="rollout">
+          <div>
+            <p class="task-title">灰度与回滚</p>
+            <p class="task-desc">用 feature flag 控制新版本流量，记录指标，失败时快速回滚到上一稳定版本。</p>
+          </div>
+          <span class="owner">运维</span>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>九、质量门禁</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>门禁</th>
+            <th>通过标准</th>
+            <th>失败处理</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>正确性</td>
+            <td>候选版本在离线评估集上的 root cause、next step、证据引用分数高于当前生产基线。</td>
+            <td>拒绝候选版本，保留优化日志供分析。</td>
+          </tr>
+          <tr>
+            <td>客户安全</td>
+            <td>不夸大 root cause，不把内部证据直接暴露给客户，不绕过工程师审批。</td>
+            <td>一票否决。</td>
+          </tr>
+          <tr>
+            <td>回归</td>
+            <td>历史高价值案例不能明显退化；关键场景必须稳定。</td>
+            <td>回到优化阶段，扩大评估样本。</td>
+          </tr>
+          <tr>
+            <td>版本治理</td>
+            <td>每个候选版本都有 prompt/workflow/tool/memory/eval 版本记录和 diff。</td>
+            <td>不得灰度。</td>
+          </tr>
+          <tr>
+            <td>可回滚</td>
+            <td>灰度前有上一稳定版本，且 feature flag 可立即回退。</td>
+            <td>不得上线。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>十、指标</h2>
+      <div class="grid">
+        <div class="tile">
+          <strong>工程师纠正率</strong>
+          <p>需要工程师纠正 AI 结论的比例。目标是持续下降。</p>
+        </div>
+        <div class="tile">
+          <strong>案例命中率</strong>
+          <p>Mem0 检索到可用相似案例的比例。目标是随确认案例增加而上升。</p>
+        </div>
+        <div class="tile">
+          <strong>证据充分率</strong>
+          <p>AI 结论包含可追溯证据锚点的比例。目标是提升可审查性。</p>
+        </div>
+        <div class="tile">
+          <strong>客户安全失败率</strong>
+          <p>内部证据泄露、root cause 夸大、未经批准生成客户回复的失败率。目标必须接近 0。</p>
+        </div>
+        <div class="tile">
+          <strong>优化收益</strong>
+          <p>候选版本相对当前生产版本的离线评估提升幅度。</p>
+        </div>
+        <div class="tile">
+          <strong>回滚次数</strong>
+          <p>灰度后因质量或安全问题回滚的次数。用于约束优化策略风险。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>十一、关键风险</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>风险</th>
+            <th>影响</th>
+            <th>缓解措施</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>自进化污染记忆</td>
+            <td>错误案例被反复召回，导致诊断偏移。</td>
+            <td>只有 confirmed 案例入 Mem0；保留 source_ticket_id 和 confidence；支持撤回或降权。</td>
+          </tr>
+          <tr>
+            <td>拓扑优化绕过安全节点</td>
+            <td>可能跳过审批或泄露内部证据。</td>
+            <td>拓扑只允许在白名单节点之间调整；安全节点不可删除、不可重排到危险位置。</td>
+          </tr>
+          <tr>
+            <td>Prompt 优化过拟合</td>
+            <td>离线分数升高但线上泛化变差。</td>
+            <td>使用保留集、历史回归集和 shadow 流量；不让 optimizer 直接发布。</td>
+          </tr>
+          <tr>
+            <td>Mem0 与 Postgres 语义不一致</td>
+            <td>检索结果与权威工单状态冲突。</td>
+            <td>Postgres 为 source of truth；Mem0 记录版本和 ticket id；检索结果必须回查权威状态。</td>
+          </tr>
+          <tr>
+            <td>工具调用策略漂移</td>
+            <td>AI 调用错误工具或错误 fallback。</td>
+            <td>工具 allowlist、参数 schema 校验、调用 trace、失败回退到当前稳定策略。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>十二、后续建议</h2>
+      <div class="callout danger">
+        <p><strong>下一步不要直接实现 EvoAgentX 接管。</strong>先实现结构化反馈和案例记忆，这两件事会为后续 prompt、拓扑、skill 调用优化提供可靠训练和评估基础。</p>
+      </div>
+      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、Mem0 confirmed-case 写入、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
+    </section>
+  </main>
+
+  <script>
+    const storageKey = "supportportal-engineer-ai-evolution-plan";
+    const inputs = Array.from(document.querySelectorAll("input[type='checkbox'][data-task]"));
+
+    function loadState() {
+      try {
+        return JSON.parse(localStorage.getItem(storageKey) || "{}");
+      } catch (_error) {
+        return {};
+      }
+    }
+
+    function saveState() {
+      const state = {};
+      inputs.forEach((input) => {
+        state[input.dataset.task] = input.checked;
+      });
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    }
+
+    function markAll(checked) {
+      inputs.forEach((input) => {
+        input.checked = checked;
+      });
+      saveState();
+    }
+
+    const saved = loadState();
+    inputs.forEach((input) => {
+      input.checked = Boolean(saved[input.dataset.task]);
+      input.addEventListener("change", saveState);
+    });
+  </script>
+</body>
+</html>
