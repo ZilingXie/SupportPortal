@@ -364,7 +364,7 @@
     <h1>SupportPortal Engineer AI 自进化计划</h1>
     <p class="subtitle">本计划将自进化能力收窄到工程师端：EvoAgentX 作为离线优化实验室，Case Memory Layer 作为已确认案例记忆抽象，线上执行仍由 SupportPortal 现有 engineer AI runtime 负责。</p>
     <div class="meta">
-      <span class="badge">状态：阶段 0 已固化，待阶段 1</span>
+      <span class="badge">状态：阶段 1A 反馈 schema 已固化</span>
       <span class="badge">范围：Engineer AI only</span>
       <span class="badge">日期：2026-06-10</span>
       <span class="badge">语言：中文</span>
@@ -378,6 +378,7 @@
         <p><strong>推荐方向：</strong>EvoAgentX 不接管线上主链路，而是作为离线自进化引擎；Case Memory Layer 不替代数据库，而是作为工程师已确认案例的语义记忆抽象；client AI 继续使用现有 RAG official_only 主链路。</p>
       </div>
       <p class="small">阶段 0 source of truth：docs/superpowers/specs/2026-06-10-engineer-ai-evolution-phase0-design.md</p>
+      <p class="small">阶段 1A source of truth：docs/superpowers/specs/2026-06-10-engineer-hitl-feedback-schema-design.md</p>
       <div class="grid no-print">
         <button type="button" onclick="markAll(false)">清空勾选</button>
         <button class="secondary" type="button" onclick="markAll(true)">全部勾选</button>
@@ -660,16 +661,28 @@
         <div>
           <h3>工程师结构化反馈</h3>
           <div class="code">{
-  "decision": "approved | corrected | rejected",
+  "table": "support_engineer_hitl_feedback",
+  "feedback_type": "approve | revise | reject | resolve | reopen",
+  "diagnosis_correctness": "correct | partially_correct | incorrect | not_applicable",
+  "root_cause_correctness": "confirmed | likely | incorrect | unknown | not_applicable",
+  "evidence_quality": "sufficient | partial | insufficient | wrong",
+  "citation_quality": "correct | partial | missing | wrong | not_applicable",
+  "customer_reply_quality": "sendable | needs_edit | unsafe | not_applicable",
   "corrected_root_cause": "...",
-  "evidence_anchors": ["log id", "doc path", "repro result"],
-  "customer_safe_conclusion": "...",
-  "internal_only_notes": "...",
-  "missing_information": ["..."],
-  "confidence": "confirmed | likely | insufficient",
-  "labels": ["retrieval_gap", "tool_order_issue"],
-  "ticket_id": "...",
-  "engineer_case_id": "..."
+  "corrected_solution": "...",
+  "corrected_customer_reply": "...",
+  "missing_information": [{"field": "...", "reason": "..."}],
+  "incorrect_claims": [{"claim": "...", "correction": "..."}],
+  "evidence_refs": [{"kind": "rag_chunk", "source_id": "..."}],
+  "memory_candidate": "yes | no | needs_review",
+  "memory_safety": "customer_safe | internal_only | do_not_store",
+  "client_ticket_id": "...",
+  "engineer_case_id": "...",
+  "prompt_version": "...",
+  "workflow_version": "...",
+  "tool_policy_version": "...",
+  "rag_access_policy_version": "...",
+  "evidence_packet_version": "..."
 }</div>
         </div>
         <div>
@@ -693,7 +706,7 @@
         </div>
       </div>
       <div class="callout warn" style="margin-top: 14px;">
-        <p><strong>写入门槛：</strong>只有工程师确认后的案例可以进入 Case Memory Layer。AI 草稿、未验证 root cause、客户原始敏感信息和内部不可外泄细节必须经过摘要、脱敏和标签隔离。</p>
+        <p><strong>写入门槛：</strong>approve 不等于 confirmed case。只有 memory_candidate=yes 且经过安全标签、摘要和脱敏的反馈，后续阶段才可以进入 Case Memory Layer 候选流程。AI 草稿、未验证 root cause、客户原始敏感信息和内部不可外泄细节不能直接写入长期记忆。</p>
       </div>
     </section>
 
@@ -757,9 +770,15 @@
           </tr>
           <tr>
             <td>阶段 1：结构化反馈</td>
-            <td>工程师反馈表单、反馈 API、Postgres 反馈表。</td>
-            <td>每次确认或纠正都能生成可评估样本。</td>
-            <td><span class="status todo">待开始</span></td>
+            <td>工程师反馈 schema、反馈 API、Postgres 反馈表、工程师反馈表单。</td>
+            <td>每次确认或纠正都能生成可评估样本，并可进入 Case Memory Layer 候选流程。</td>
+            <td><span class="status doing">进行中</span></td>
+          </tr>
+          <tr>
+            <td>阶段 1A：反馈 schema 固化</td>
+            <td>定义 support_engineer_hitl_feedback、质量标签、evidence_refs、memory_candidate、memory_safety 和版本字段；source of truth：docs/superpowers/specs/2026-06-10-engineer-hitl-feedback-schema-design.md。</td>
+            <td>明确 approve 不等于 confirmed case；schema 能服务 Postgres 审计、Case Memory Layer 候选和 Optimization Lab eval。</td>
+            <td><span class="status done">已固化</span></td>
           </tr>
           <tr>
             <td>阶段 2：Case Memory Layer 案例记忆</td>
@@ -815,10 +834,18 @@
           <span class="owner">后端</span>
         </li>
         <li class="task">
+          <input type="checkbox" data-task="feedback-schema-design">
+          <div>
+            <p class="task-title">固化结构化 HITL 反馈 schema</p>
+            <p class="task-desc">定义 support_engineer_hitl_feedback、approve 不等于 confirmed case、memory_candidate、memory_safety、evidence_refs 和版本字段。</p>
+          </div>
+          <span class="owner">后端 / 架构</span>
+        </li>
+        <li class="task">
           <input type="checkbox" data-task="feedback-schema">
           <div>
-            <p class="task-title">实现结构化 HITL 反馈</p>
-            <p class="task-desc">把工程师通过、纠正、拒绝、证据锚点、客户安全结论、缺失信息和置信度结构化。</p>
+            <p class="task-title">实现结构化 HITL 反馈 API / UI</p>
+            <p class="task-desc">基于阶段 1A schema 落地 Postgres 表、反馈 API 和工程师反馈表单。</p>
           </div>
           <span class="owner">后端 / UI</span>
         </li>
@@ -1032,7 +1059,7 @@
       <div class="callout danger">
         <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把重复技术文档问题交给 Case Memory Layer 兜底。</strong>先实现结构化反馈、confirmed-case 记忆、RAG/Case Memory evidence packet 和 RAG 技术文档去重治理，这些基础会决定后续优化是否可靠。</p>
       </div>
-      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
+      <p style="margin-top: 12px;">建议的第一批实施任务是：阶段 1A 先固化结构化 HITL 反馈 schema，再实现反馈 API / UI、RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
     </section>
   </main>
 
