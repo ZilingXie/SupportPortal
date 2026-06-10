@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" class="material-symbols-pending">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Engineer Assignment - SupportPortal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      id="material-symbols-font-stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;700&display=block"
+      rel="stylesheet"
+    />
+    <script>
+      (() => {
+        const revealIcons = () => {
+          document.documentElement.classList.remove("material-symbols-pending");
+        };
+        const stylesheet = document.getElementById("material-symbols-font-stylesheet");
+        if (!stylesheet || !document.fonts || typeof document.fonts.load !== "function") {
+          revealIcons();
+          return;
+        }
+        const timer = window.setTimeout(revealIcons, 2500);
+        const waitForIcons = () => {
+          document.fonts
+            .load('24px "Material Symbols Outlined"')
+            .then(revealIcons)
+            .catch(revealIcons)
+            .finally(() => window.clearTimeout(timer));
+        };
+        stylesheet.addEventListener("load", waitForIcons, { once: true });
+        stylesheet.addEventListener("error", revealIcons, { once: true });
+        if (stylesheet.sheet) {
+          waitForIcons();
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css?v=20260610-assignment-ui-1" />
+  </head>
+  <body>
+    <main
+      id="assignment-root"
+      class="assignment-app"
+      aria-label="Choose a demo engineer for Engineer Assignment"
+      aria-live="polite"
+    >
+      <div id="engineer-selector" hidden></div>
+    </main>
+    <script src="./app.js?v=20260610-assignment-ui-1"></script>
+  </body>
+</html>
