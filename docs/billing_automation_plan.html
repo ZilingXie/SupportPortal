@@ -563,7 +563,7 @@
         phase: "workflow",
         module: "Account API",
         title: "定义 /account HTTP 接入契约",
-        text: "新增 POST /account 端点，接收 HTTP 或 /account UI 手动提交的客户问题 title 和 question；后端先创建工单，再把 title + question 作为 route 输入，只允许 detailed_invoice 和 account_suspension 进入 billing 自动化。",
+        text: "新增 POST /account 端点，接收 HTTP 或 /account UI 手动提交的客户问题 title 和 question；后端先创建工单，再把 title + question 作为 route 输入，只允许 detailed_invoice 和 account_suspension 进入 billing 自动化。2026-06-10 已实施。",
         checks: [
           "请求体包含 title、question，后续可扩展 customer_email、external_id、source 和 created_by。",
           "HTTP 调用和手动 UI 提交走同一个后端入口。",
@@ -577,7 +577,7 @@
         phase: "workflow",
         module: "Route",
         title: "实现 /account route 后创建工单并 follow process",
-        text: "/account 的核心流程是创建工单 -> route -> follow process。复用现有 billing route 和 support_router；命中 detailed_invoice 或 account_suspension 后，校验字段齐全，缺字段返回追问，字段齐全则告知客户已升级内部团队并发送内部邮件。",
+        text: "/account 的核心流程是创建工单 -> route -> follow process。复用现有 billing route 和 support_router；命中 detailed_invoice 或 account_suspension 后，校验字段齐全，缺字段返回追问，字段齐全则告知客户已升级内部团队并发送内部邮件。2026-06-10 已实施。",
         checks: [
           "route 逻辑复用 detect_billing_route 和 build_billing_automation_result，不另写一套分类规则。",
           "创建的 ticket subject 使用提交的 title，客户消息使用 question，并记录来源为 /account-http 或 /account-manual。",
@@ -591,7 +591,7 @@
         phase: "workflow",
         module: "Account UI",
         title: "保留 /client 体验设计 /account 界面",
-        text: "新增 /account 页面，基本保留 /client 的工单创建 UI：用户可以手动输入 title 和 question 创建工单；提交后展示 route 结果、ticket id、客户回复、缺失字段和邮件发送状态。",
+        text: "新增 /account 页面，基本保留 /client 的工单创建 UI：用户可以手动输入 title 和 question 创建工单；提交后展示 route 结果、ticket id、客户回复、缺失字段和邮件发送状态。2026-06-10 已实施。",
         checks: [
           "UI 复用 /client 的布局、设计语言、字体、按钮、composer 和状态提示风格。",
           "/account 和 HTTP 调用创建出来的工单在 dashboard/engineer 侧使用同一套 ticket identity。",

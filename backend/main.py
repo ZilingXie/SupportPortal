@@ -146,6 +146,7 @@ from backend.services.token_usage import aggregate_usage_ledger, resolve_ticket_
 BASE_DIR = Path(__file__).resolve().parent.parent
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
+ACCOUNT_DIR = UI_DIR / "account-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 ASSIGNMENT_DIR = UI_DIR / "assignment-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
@@ -298,6 +299,16 @@ class TicketQueryRequest(BaseModel):
     content_format: str = Field(default="plaintext", pattern="^(plaintext|markdown)$")
     message: str = Field(min_length=1)
     asset_ids: list[str] = Field(default_factory=list)
+
+
+class AccountIntakeRequest(BaseModel):
+    ticket_id: str | None = Field(default=None, max_length=128)
+    title: str = Field(default="", max_length=300)
+    question: str = Field(default="", max_length=12000)
+    customer_email: str | None = Field(default=None, max_length=320)
+    external_id: str | None = Field(default=None, max_length=160)
+    source: str | None = Field(default=None, max_length=80)
+    created_by: str | None = Field(default=None, max_length=160)
 
 
 class AssetUploadIntentRequest(BaseModel):
@@ -455,6 +466,8 @@ app.add_middleware(
 
 if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
+if ACCOUNT_DIR.exists():
+    app.mount("/account", StaticFiles(directory=ACCOUNT_DIR, html=True), name="account-ui")
 if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
 if ASSIGNMENT_DIR.exists():
@@ -2578,6 +2591,153 @@ def get_knowledge_ingestion(ingestion_id: str) -> dict[str, Any]:
 @app.post("/api/client/ack")
 def create_client_ack(request: ClientAckRequest) -> dict[str, Any]:
     return _create_client_ack(request.message)
+
+
+def _normalize_account_source(value: str | None) -> str:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    if normalized in {"manual", "account-manual", "/account-manual"}:
+        return "/account-manual"
+    if normalized in {"ui", "account-ui", "/account-ui"}:
+        return "/account-ui"
+    if normalized in {"http", "account-http", "/account-http"}:
+        return "/account-http"
+    return "/account-http"
+
+
+@app.post("/account")
+async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]:
+    title = " ".join(str(request.title or "").split()).strip()
+    question = str(request.question or "").strip()
+    if not title or not question:
+        raise HTTPException(status_code=400, detail="title and question are required")
+
+    ticket_id = str(request.ticket_id or "").strip() or f"TK-ACC-{uuid4().hex[:6].upper()}"
+    existing_ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
+    if existing_ticket is not None:
+        raise HTTPException(status_code=409, detail="ticket_id already exists")
+
+    account_source = _normalize_account_source(request.source)
+    customer_id = str(request.customer_email or "").strip() or "account-intake"
+    timestamp = now_iso()
+    ticket: dict[str, Any] = {
+        "ticket_id": ticket_id,
+        "customer_id": customer_id,
+        "requester": customer_id,
+        "subject": title,
+        "status": OPEN_STATUS,
+        "source": account_source,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "messages": [
+            {
+                "role": "customer",
+                "content": question,
+                "created_at": timestamp,
+                "content_format": "plaintext",
+                "source": account_source,
+                **({"external_id": str(request.external_id).strip()} if request.external_id else {}),
+                **({"created_by": str(request.created_by).strip()} if request.created_by else {}),
+            }
+        ],
+    }
+    ensure_ticket_defaults(ticket)
+
+    route_input = f"{title}\n\n{question}"
+    ticket_context = [{"role": "customer", "content": question}]
+    decision = decide_support_route(
+        route_input,
+        ticket_subject=title,
+        ticket_context=ticket_context,
+    )
+    route = str(decision.execution_action or decision.route or "").strip()
+    is_billing_route = (
+        str(decision.route_family or "").strip() == "billing_automation"
+        and route in {"detailed_invoice", "account_suspension"}
+    )
+
+    resolution: SupportResolution | None = None
+    response_status = "not_automated"
+    customer_reply = ""
+    missing_fields: list[str] = []
+    collected_fields: dict[str, Any] = {}
+    internal_email_payload: dict[str, Any] | None = None
+    internal_email_send_status = "not_applicable"
+    internal_email_send_reason = ""
+
+    if is_billing_route:
+        resolution = resolve_support_message(
+            question,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            ticket_subject=title,
+            ticket_context=ticket_context,
+            decision=decision,
+        )
+        evidence_summary = resolution.evidence_summary or {}
+        missing_fields = list(evidence_summary.get("billing_missing_fields") or [])
+        collected_fields = dict(evidence_summary.get("billing_collected_fields") or {})
+        internal_email = evidence_summary.get("billing_internal_email")
+        internal_email_payload = dict(internal_email) if isinstance(internal_email, dict) else None
+        internal_email_send_status = str(evidence_summary.get("billing_internal_email_send_status") or "")
+        internal_email_send_reason = str(evidence_summary.get("billing_internal_email_send_reason") or "")
+        customer_reply = str(resolution.answer or "").strip()
+        response_status = "needs_more_info" if missing_fields else "automated"
+        ticket["status"] = COMMUNICATING_STATUS
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": customer_reply,
+            "created_at": now_iso(),
+            "answer_route": resolution.answer_route,
+            "scope_label": resolution.scope_label,
+            "route_family": resolution.route_family,
+            "execution_action": resolution.execution_action,
+            "tooling_profile": resolution.tooling_profile,
+            "route_reason": resolution.route_reason,
+            "route_confidence": resolution.route_confidence,
+            "search_used": bool(resolution.search_used),
+            "matched_signals": list(resolution.matched_signals),
+            "billing_missing_fields": missing_fields,
+            "billing_collected_fields": collected_fields,
+            "billing_internal_email_send_status": internal_email_send_status,
+            "billing_internal_email_send_reason": internal_email_send_reason,
+            **({"billing_internal_email": internal_email_payload} if internal_email_payload else {}),
+        }
+        ticket["messages"].append(assistant_message)
+
+    await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
+
+    event = {
+        "event": "ticket_created",
+        "ticket_id": ticket_id,
+        "status": ticket["status"],
+        "source": account_source,
+        "message": question[:200],
+        "created_at": now_iso(),
+        "answer_route": resolution.answer_route if resolution is not None else None,
+        "scope_label": decision.scope_label,
+        "route_family": decision.route_family,
+        "execution_action": route if is_billing_route else None,
+        "tooling_profile": resolution.tooling_profile if resolution is not None else None,
+        "route_reason": decision.reason,
+        "route_confidence": decision.confidence,
+        "matched_signals": list(decision.matched_signals),
+        "account_intake_status": response_status,
+        "internal_email_send_status": internal_email_send_status,
+    }
+    await async_to_thread(ticket_repository.record_event, ticket_id, event["event"], event)
+    await dispatch_event(["engineer", "dashboard"], event)
+    await dispatch_event(["client"], build_client_sync_event(ticket, event["event"], question[:200]))
+
+    return {
+        "status": response_status,
+        "route": route if is_billing_route else None,
+        "ticket_id": ticket_id,
+        "customer_reply": customer_reply,
+        "missing_fields": missing_fields,
+        "collected_fields": collected_fields,
+        "internal_email_send_status": internal_email_send_status,
+        "internal_email_send_reason": internal_email_send_reason,
+    }
 
 
 def _public_asset_payload(asset: dict[str, Any]) -> dict[str, Any]:
