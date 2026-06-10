@@ -1730,6 +1730,191 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_records_structured_hitl_feedback(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-HITL-UI-1";
+                selectedTicket = {
+                  ticket_id: "TK-HITL-UI-1",
+                  title: "Android 14 token renew regression",
+                  subject: "Parent client ticket subject should stay secondary",
+                  client_ticket_ref: {
+                    ticket_id: "TK-HITL-CLIENT-1",
+                    subject: "Token renewal callback failure",
+                  },
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-06-10T08:00:00+00:00",
+                  updated_at: "2026-06-10T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-HITL-UI-1",
+                    state: "awaiting_confirmation",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    opened_at: "2026-06-10T08:01:00+00:00",
+                    updated_at: "2026-06-10T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "msg-hitl-ui-1",
+                        role: "engineer_ai",
+                        content: "I have enough evidence. Please confirm the customer reply.",
+                        created_at: "2026-06-10T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    run_id: "run-hitl-ui-1",
+                    evidence_packet_id: "packet-hitl-ui-1",
+                    prompt_version: "engineer-investigation-reply-v8",
+                    workflow_version: "engineer-hitl-feedback-v1",
+                    tool_policy_version: "engineer-evidence-tools-v1",
+                    rag_access_policy_version: "rag-access-routing-v1",
+                    evidence_packet_version: "engineer-evidence-packet-v1",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      ready_for_customer_reply: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      solution_or_next_step: "Upgrade to SDK 4.2.2.",
+                    },
+                  },
+                  engineer_hitl_feedback: [
+                    {
+                      feedback_id: "hitl_existing",
+                      feedback_type: "revise",
+                      diagnosis_correctness: "partially_correct",
+                      evidence_quality: "partial",
+                      customer_reply_quality: "needs_edit",
+                      memory_candidate: "needs_review",
+                      memory_safety: "internal_only",
+                      created_at: "2026-06-10T09:06:00+00:00",
+                    },
+                  ],
+                };
+
+                let html = renderTicketDetailView();
+                if (!html.includes("Feedback for AI Learning")) {
+                  throw new Error("Engineer detail should render the structured HITL feedback panel.");
+                }
+                if (!html.includes("hitl_existing")) {
+                  throw new Error("Feedback panel should render the latest stored feedback id for audit traceability.");
+                }
+                if (!html.includes("memory_candidate")) {
+                  throw new Error("Feedback panel should make the memory candidate boundary visible.");
+                }
+                if (!html.includes('data-hitl-feedback-field="feedback_type"')) {
+                  throw new Error("Feedback panel should expose the feedback type control.");
+                }
+                if (!html.includes('data-hitl-feedback-field="corrected_root_cause"')) {
+                  throw new Error("Feedback panel should expose corrected root cause capture.");
+                }
+
+                const requested = [];
+                fetchJson = async (url, options = undefined) => {
+                  requested.push({ url, options });
+                  if (url === "/api/engineer/tickets/TK-HITL-UI-1/feedback" && options?.method === "POST") {
+                    return {
+                      feedback: {
+                        feedback_id: "hitl_created",
+                        feedback_type: JSON.parse(options.body).feedback_type,
+                        memory_candidate: JSON.parse(options.body).memory_candidate,
+                        memory_safety: JSON.parse(options.body).memory_safety,
+                        created_at: "2026-06-10T09:12:00+00:00",
+                      },
+                    };
+                  }
+                  throw new Error(`Unexpected URL: ${url}`);
+                };
+
+                const fieldValues = {
+                  feedback_type: "resolve",
+                  diagnosis_correctness: "correct",
+                  root_cause_correctness: "confirmed",
+                  evidence_quality: "sufficient",
+                  citation_quality: "correct",
+                  customer_reply_quality: "sendable",
+                  corrected_root_cause: "SDK 4.2.1 token renewal callback fails only on Android 14.",
+                  corrected_solution: "Upgrade to SDK 4.2.2 and clear the cached token.",
+                  corrected_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                  missing_information: "exact sdk version\\nlogcat excerpt",
+                  incorrect_claims: "The issue affects every Android version.",
+                  evidence_refs: "logs://token-renew-android14\\nofficial/token-authentication.md",
+                  memory_candidate: "needs_review",
+                  memory_safety: "internal_only",
+                  memory_notes: "Useful only after confirmation; keep internal logs out of customer-safe memory.",
+                };
+                const form = {
+                  querySelector(selector) {
+                    const match = selector.match(/\\[data-hitl-feedback-field="([^"]+)"\\]/);
+                    if (!match) {
+                      return null;
+                    }
+                    return {
+                      value: fieldValues[match[1]] || "",
+                    };
+                  },
+                };
+                const submitButton = {
+                  dataset: { detailAction: "submit-hitl-feedback" },
+                  disabled: false,
+                  closest(selector) {
+                    if (selector === ".detail-hitl-feedback-form") {
+                      return form;
+                    }
+                    return null;
+                  },
+                };
+                const submitTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return submitButton;
+                    }
+                    return null;
+                  },
+                };
+
+                await handleDetailClick({ target: submitTarget });
+                if (requested.length !== 1) {
+                  throw new Error("Submitting HITL feedback should make exactly one API request.");
+                }
+                const request = requested[0];
+                if (request.url !== "/api/engineer/tickets/TK-HITL-UI-1/feedback") {
+                  throw new Error("HITL feedback should post to the selected engineer case feedback endpoint.");
+                }
+                const payload = JSON.parse(request.options.body);
+                if (payload.feedback_type !== "resolve") {
+                  throw new Error("HITL feedback payload should include the selected feedback type.");
+                }
+                if (payload.engineer_id !== "Jack") {
+                  throw new Error("HITL feedback payload should include the current engineer id.");
+                }
+                if (payload.run_id !== "run-hitl-ui-1" || payload.message_id !== "msg-hitl-ui-1" || payload.evidence_packet_id !== "packet-hitl-ui-1") {
+                  throw new Error("HITL feedback payload should preserve run, message, and evidence packet ids.");
+                }
+                if (payload.memory_candidate !== "needs_review" || payload.memory_safety !== "internal_only") {
+                  throw new Error("HITL feedback payload should include explicit memory candidate and safety labels.");
+                }
+                if (!Array.isArray(payload.missing_information) || payload.missing_information[0].value !== "exact sdk version") {
+                  throw new Error("HITL feedback payload should normalize missing information lines.");
+                }
+                if (!Array.isArray(payload.incorrect_claims) || payload.incorrect_claims[0].claim !== "The issue affects every Android version.") {
+                  throw new Error("HITL feedback payload should normalize incorrect claim lines.");
+                }
+                if (!Array.isArray(payload.evidence_refs) || payload.evidence_refs[0].source_id !== "logs://token-renew-android14") {
+                  throw new Error("HITL feedback payload should normalize evidence reference lines.");
+                }
+                if (!selectedTicket.engineer_hitl_feedback.some((item) => item.feedback_id === "hitl_created")) {
+                  throw new Error("Successful HITL feedback should append the returned record to selected ticket state.");
+                }
+              """
+            )
+        )
+
     def test_case_buddy_opening_request_sections_prefer_agent_state_when_available(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(

@@ -2022,6 +2022,117 @@ html.material-symbols-pending .material-symbols-outlined {
   line-height: 1.55;
 }
 
+.detail-hitl-feedback {
+  gap: 14px;
+}
+
+.detail-hitl-feedback-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(224, 224, 255, 0.82);
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detail-hitl-feedback-note {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.detail-hitl-feedback-latest {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(239, 244, 251, 0.9);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.detail-hitl-feedback-latest strong {
+  color: var(--ink);
+  font-family: "Manrope", sans-serif;
+  font-size: 14px;
+  text-transform: capitalize;
+}
+
+.detail-hitl-feedback-latest small {
+  color: var(--ink-muted);
+}
+
+.detail-hitl-feedback-form,
+.detail-hitl-feedback-grid,
+.detail-hitl-feedback-field {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-hitl-feedback-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-hitl-feedback-field-wide {
+  grid-column: 1 / -1;
+}
+
+.detail-hitl-feedback-field span {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.detail-hitl-feedback-field select,
+.detail-hitl-feedback-textbox {
+  width: 100%;
+  border: 1px solid var(--ghost-border);
+  border-radius: 14px;
+  background: rgba(246, 249, 255, 0.94);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.detail-hitl-feedback-field select {
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.detail-hitl-feedback-textbox {
+  min-height: 76px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.detail-hitl-feedback-textbox:empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-muted);
+}
+
+.detail-hitl-feedback-field select:focus,
+.detail-hitl-feedback-textbox:focus {
+  outline: none;
+  border-color: rgba(0, 100, 147, 0.32);
+  box-shadow: 0 0 0 4px rgba(0, 100, 147, 0.08);
+  background: var(--surface-lowest);
+}
+
+.detail-hitl-feedback-submit {
+  justify-self: start;
+}
+
 .message-references {
   display: grid;
   gap: 8px;

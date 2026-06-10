@@ -771,8 +771,8 @@
           <tr>
             <td>阶段 1：结构化反馈</td>
             <td>工程师反馈 schema、反馈 API、Postgres 反馈表、工程师反馈表单。</td>
-            <td>每次确认或纠正都能生成可评估样本，并可进入 Case Memory Layer 候选流程。</td>
-            <td><span class="status doing">进行中</span></td>
+            <td>工程师可以显式记录可评估样本；memory_candidate 只进入候选审查，不直接写长期记忆。</td>
+            <td><span class="status done">已完成</span></td>
           </tr>
           <tr>
             <td>阶段 1A：反馈 schema 固化</td>
@@ -784,6 +784,12 @@
             <td>阶段 1B：反馈 API 与 Postgres 表</td>
             <td>新增 support_engineer_hitl_feedback 表、repository record/list 方法和 /api/engineer/tickets/{ticket_id}/feedback POST/GET。</td>
             <td>工程师端可以记录和读取结构化 HITL 反馈；反馈保留 evidence_refs、memory_candidate、memory_safety 和版本字段。</td>
+            <td><span class="status done">已完成</span></td>
+          </tr>
+          <tr>
+            <td>阶段 1C：工程师反馈 UI</td>
+            <td>在 engineer detail 右侧审查区新增 Feedback for AI Learning 面板，读取历史反馈并提交质量标签、纠正内容、evidence_refs、memory_candidate 和 memory_safety。</td>
+            <td>反馈 UI 只记录结构化审计样本；不把 approve、resolve 或 memory_candidate 自动等同于 confirmed case。</td>
             <td><span class="status done">已完成</span></td>
           </tr>
           <tr>
@@ -859,7 +865,7 @@
           <input type="checkbox" data-task="feedback-ui">
           <div>
             <p class="task-title">实现结构化 HITL 反馈 UI</p>
-            <p class="task-desc">在工程师 approve、revise、reject 和 resolve 流程中收集质量标签、纠正内容和记忆候选标记。</p>
+            <p class="task-desc">在工程师 detail 审查区收集质量标签、纠正内容、证据引用和记忆候选标记；只作为候选审查输入，不直接写长期记忆。</p>
           </div>
           <span class="owner">后端 / UI</span>
         </li>
@@ -1073,7 +1079,7 @@
       <div class="callout danger">
         <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把重复技术文档问题交给 Case Memory Layer 兜底。</strong>先实现结构化反馈、confirmed-case 记忆、RAG/Case Memory evidence packet 和 RAG 技术文档去重治理，这些基础会决定后续优化是否可靠。</p>
       </div>
-      <p style="margin-top: 12px;">建议的第一批实施任务是：阶段 1A 先固化结构化 HITL 反馈 schema，阶段 1B 落地反馈 API / Postgres 表，下一步补工程师反馈 UI、RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
+      <p style="margin-top: 12px;">建议的下一批实施任务是：RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等结构化反馈样本和案例候选流程稳定后，再接 EvoAgentX Optimization Lab。</p>
     </section>
   </main>
 

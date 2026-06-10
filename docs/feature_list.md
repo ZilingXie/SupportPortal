@@ -24,7 +24,6 @@
 - Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。
 - 对话支持上传 txt/log/err 日志附件。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
-- Engineer AI 支持记录结构化 HITL 反馈。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
@@ -42,6 +41,7 @@
 - Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。
 - 对话支持上传 txt/log/err 日志附件。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
+- Engineer AI 支持记录结构化 HITL 反馈。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
