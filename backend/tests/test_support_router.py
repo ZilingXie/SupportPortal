@@ -7,6 +7,10 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
+from backend.services.billing_automation import (
+    build_billing_automation_result,
+    send_billing_internal_email,
+)
 from backend.services.support_router_prompt import build_route_prompt_hints
 from backend.services.support_router import (
     SupportRouteDecision,
@@ -388,6 +392,98 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("Issue date: 6 May 2026", internal_email["body"])
         self.assertIn("Transaction ID: 1104245232004173824", internal_email["body"])
         self.assertIn("Amount: USD 705.97", internal_email["body"])
+
+    def test_resolve_support_message_records_billing_email_send_status_when_ready(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="detailed_invoice",
+            confidence=0.98,
+            reason="billing_detailed_invoice",
+            matched_signals=["detailed invoice"],
+            response_language="en",
+        )
+
+        with patch(
+            "backend.services.support_router.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_mock:
+            resolution = resolve_support_message(
+                "Please send the detailed invoice. Issue date: 6 May 2026. "
+                "Transaction ID: 1104245232004173824. Amount: USD 705.97.",
+                ticket_id="TK-BILL-1",
+                customer_id="customer@example.com",
+                decision=decision,
+            )
+
+        self.assertIsNotNone(resolution.evidence_summary)
+        assert resolution.evidence_summary is not None
+        self.assertEqual(resolution.evidence_summary["billing_internal_email_send_status"], "sent")
+        self.assertEqual(resolution.evidence_summary["billing_internal_email_send_reason"], "")
+        send_mock.assert_called_once()
+        payload = send_mock.call_args.args[0]
+        self.assertEqual(payload["to"], "xieziling@agora.io")
+        self.assertEqual(payload["from"], "xieziling97@163.com")
+        self.assertEqual(payload["subject"], "Detailed invoice request - Ticket TK-BILL-1")
+
+    def test_billing_internal_email_uses_default_recipient_and_sender(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            result = build_billing_automation_result(
+                action="detailed_invoice",
+                message=(
+                    "Please send the detailed invoice. Issue date: 6 May 2026. "
+                    "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                ),
+                ticket_id="TK-BILL-1",
+                customer_email="customer@example.com",
+            )
+
+        self.assertIsNotNone(result.internal_email)
+        assert result.internal_email is not None
+        self.assertEqual(result.internal_email["to"], "xieziling@agora.io")
+        self.assertEqual(result.internal_email["from"], "xieziling97@163.com")
+
+    def test_send_billing_internal_email_skips_when_smtp_password_missing(self) -> None:
+        email_payload = {
+            "to": "xieziling@agora.io",
+            "from": "xieziling97@163.com",
+            "subject": "Detailed invoice request - Ticket TK-BILL-1",
+            "body": "Hi team",
+        }
+
+        with patch.dict(os.environ, {}, clear=True), patch("smtplib.SMTP_SSL") as smtp_mock:
+            result = send_billing_internal_email(email_payload)
+
+        self.assertEqual(result["status"], "skipped_config_missing")
+        self.assertIn("BILLING_AUTOMATION_SMTP_PASSWORD", result["reason"])
+        smtp_mock.assert_not_called()
+
+    def test_send_billing_internal_email_sends_via_smtp_when_configured(self) -> None:
+        email_payload = {
+            "to": "xieziling@agora.io",
+            "from": "xieziling97@163.com",
+            "subject": "Detailed invoice request - Ticket TK-BILL-1",
+            "body": "Hi team",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "BILLING_AUTOMATION_SMTP_PASSWORD": "app-password",
+                "BILLING_AUTOMATION_SMTP_HOST": "smtp.163.com",
+                "BILLING_AUTOMATION_SMTP_PORT": "465",
+            },
+            clear=True,
+        ), patch("smtplib.SMTP_SSL") as smtp_mock:
+            result = send_billing_internal_email(email_payload)
+
+        self.assertEqual(result["status"], "sent")
+        smtp = smtp_mock.return_value.__enter__.return_value
+        smtp.login.assert_called_once_with("xieziling97@163.com", "app-password")
+        sent_message = smtp.send_message.call_args.args[0]
+        self.assertEqual(sent_message["To"], "xieziling@agora.io")
+        self.assertEqual(sent_message["From"], "xieziling97@163.com")
+        self.assertEqual(sent_message["Subject"], "Detailed invoice request - Ticket TK-BILL-1")
+        self.assertEqual(sent_message.get_content().strip(), "Hi team")
 
     def test_resolve_support_message_excludes_detailed_invoice_amount_disputes(self) -> None:
         decision = decide_support_route("The invoice amount is wrong and I want a refund.")

@@ -12,6 +12,28 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-10 - Billing internal email sender configuration
+
+- Area or subsystem: Deterministic billing intake templates and internal email handoff
+- Prompt or model version: `billing-automation-email-v1`
+- Summary: Added SMTP-backed internal email sending for completed billing automation cases, with default recipient `xieziling@agora.io`, default sender `xieziling97@163.com`, and explicit send-status metadata.
+- Reason: Billing automation should move from preparing an internal email payload to attempting the internal handoff when required fields are complete, while failing closed when SMTP credentials are missing.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/services/support_router.py`
+  - `backend/tests/test_support_router.py`
+  - `docs/billing_automation_plan.html`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Completed `account_suspension` and `detailed_invoice` cases now prepare internal emails from `xieziling97@163.com` to `xieziling@agora.io`.
+  - When `BILLING_AUTOMATION_SMTP_PASSWORD` is configured, the backend sends via SMTP SSL using `smtp.163.com:465` by default.
+  - When SMTP credentials or email payload fields are missing, the backend does not send and records `skipped_config_missing` with the reason in route metadata.
+- Verification:
+  - RED: New billing email tests failed before implementation because `send_billing_internal_email` did not exist and route metadata did not include send status.
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_support_router`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/billing_automation.py backend/services/support_router.py backend/tests/test_support_router.py`
+  - `rg -n "xieziling@agora.io|xieziling97@163.com|billing_internal_email_send_status|BILLING_AUTOMATION_SMTP_PASSWORD" backend docs`
+
 ## 2026-06-10 - Billing automation route items
 
 - Area or subsystem: Intent routing and deterministic billing intake templates
