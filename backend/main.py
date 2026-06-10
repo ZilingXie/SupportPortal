@@ -63,6 +63,10 @@ from backend.services.engineer_agent import (
     build_engineer_agent_brief,
     normalize_engineer_agent_state,
 )
+from backend.services.engineer_evidence_tools import (
+    search_engineer_evidence,
+    serialize_engineer_evidence_search_result,
+)
 from backend.services.engineer_cases import (
     apply_case_context_to_engineer_case,
     build_engineer_case_context,
@@ -111,6 +115,7 @@ from backend.services.openai_input_guardrail import (
     evaluate_openai_input_guardrail,
 )
 from backend.services.rag_executor import build_sync_rag_executor
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.rag_sufficiency_judge import judge_rag_answer_sufficiency
 from backend.services.rag_service_client import (
     RagServiceClient,
@@ -434,6 +439,10 @@ task_queue = AsyncRedisTaskQueue()
 rag_service_client = RagServiceClient()
 
 
+def _build_rag_answer_detail(*args: Any, **kwargs: Any) -> Any:
+    raise RuntimeError("Legacy direct RAG answer detail builder is no longer used by backend.main.")
+
+
 def derive_subject(message: str, preferred_subject: str | None = None) -> str:
     return derive_ticket_title(message, preferred_subject=preferred_subject)
 
@@ -444,6 +453,51 @@ def latest_customer_message(ticket: dict[str, Any]) -> str:
         if message.get("role") == "customer":
             return str(message.get("content", "")).strip()
     return ""
+
+
+def _engineer_evidence_ticket_context(ticket: dict[str, Any]) -> list[dict[str, str]]:
+    messages = ticket.get("messages")
+    if not isinstance(messages, list):
+        return []
+    context: list[dict[str, str]] = []
+    for message in messages[-8:]:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip()
+        content = " ".join(str(message.get("content") or "").split()).strip()
+        if not role or not content:
+            continue
+        context.append({"role": role, "content": content})
+    return context
+
+
+def _build_engineer_evidence_for_investigation(
+    *,
+    ticket: dict[str, Any],
+    handoff_packet: dict[str, Any],
+) -> dict[str, Any]:
+    question = (
+        str(handoff_packet.get("latest_customer_message") or "").strip()
+        or latest_customer_message(ticket)
+        or str(ticket.get("subject") or "").strip()
+        or "Engineer investigation needs evidence."
+    )
+    client_findings = (
+        dict(handoff_packet.get("rag_result"))
+        if isinstance(handoff_packet.get("rag_result"), dict)
+        else None
+    )
+    result = search_engineer_evidence(
+        rag_service_client,
+        question=question,
+        ticket_id=str(ticket.get("ticket_id") or "").strip() or None,
+        customer_id=str(ticket.get("customer_id") or "").strip() or None,
+        requester=str(ticket.get("requester") or "").strip() or None,
+        ticket_context=_engineer_evidence_ticket_context(ticket),
+        product=str(ticket.get("product") or handoff_packet.get("product") or "").strip() or None,
+        client_findings=client_findings,
+    )
+    return serialize_engineer_evidence_search_result(result)
 
 
 def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
@@ -2963,6 +3017,7 @@ async def create_or_update_ticket(
                         "citations": [dict(item) for item in execution.citations],
                         "evidence_summary": dict(execution.evidence_summary or {}) or {},
                     },
+                    engineer_evidence_builder=_build_engineer_evidence_for_investigation,
                 )
                 engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
                 if engineer_case_created:
@@ -3496,6 +3551,7 @@ async def request_engineer_assistance(ticket_id: str) -> dict[str, Any]:
         next_status=ESCALATED_STATUS,
         opening_context=opening_context,
         ai_turn_builder=generate_investigation_ai_turn,
+        engineer_evidence_builder=_build_engineer_evidence_for_investigation,
     )
     engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
     if created:
@@ -3597,6 +3653,7 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
             next_status=INVESTIGATING_STATUS,
             opening_context=opening_context,
             ai_turn_builder=generate_investigation_ai_turn,
+            engineer_evidence_builder=_build_engineer_evidence_for_investigation,
         )
         investigation_messages = investigate_result.get("new_internal_messages") or []
         engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
