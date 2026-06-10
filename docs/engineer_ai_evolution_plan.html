@@ -362,9 +362,9 @@
 <body>
   <header>
     <h1>SupportPortal Engineer AI 自进化计划</h1>
-    <p class="subtitle">本计划将自进化能力收窄到工程师端：EvoAgentX 作为离线优化实验室，Mem0 作为已确认案例记忆层，线上执行仍由 SupportPortal 现有 engineer AI runtime 负责。</p>
+    <p class="subtitle">本计划将自进化能力收窄到工程师端：EvoAgentX 作为离线优化实验室，Case Memory Layer 作为已确认案例记忆抽象，线上执行仍由 SupportPortal 现有 engineer AI runtime 负责。</p>
     <div class="meta">
-      <span class="badge">状态：方案已同意，待落地拆解</span>
+      <span class="badge">状态：阶段 0 已固化，待阶段 1</span>
       <span class="badge">范围：Engineer AI only</span>
       <span class="badge">日期：2026-06-10</span>
       <span class="badge">语言：中文</span>
@@ -375,8 +375,9 @@
     <section>
       <h2>一、核心结论</h2>
       <div class="callout">
-        <p><strong>推荐方向：</strong>EvoAgentX 不接管线上主链路，而是作为离线自进化引擎；Mem0 不替代数据库，而是作为工程师已确认案例的语义记忆层；client AI 继续使用现有 RAG official_only 主链路。</p>
+        <p><strong>推荐方向：</strong>EvoAgentX 不接管线上主链路，而是作为离线自进化引擎；Case Memory Layer 不替代数据库，而是作为工程师已确认案例的语义记忆抽象；client AI 继续使用现有 RAG official_only 主链路。</p>
       </div>
+      <p class="small">阶段 0 source of truth：docs/superpowers/specs/2026-06-10-engineer-ai-evolution-phase0-design.md</p>
       <div class="grid no-print">
         <button type="button" onclick="markAll(false)">清空勾选</button>
         <button class="secondary" type="button" onclick="markAll(true)">全部勾选</button>
@@ -403,8 +404,8 @@
       </div>
       <div class="grid two" style="margin-top: 14px;">
         <div class="tile">
-          <strong>Mem0 Case Memory</strong>
-          <p>保存工程师确认后的案例摘要，用于相似案例检索和上下文增强。Postgres 仍保存权威工单、反馈、评估和版本记录。</p>
+          <strong>Case Memory Layer</strong>
+          <p>保存工程师确认后的案例摘要，用于相似案例检索和上下文增强。Mem0、agentmemory、Postgres + pgvector 都是候选 provider；Postgres 仍保存权威工单、反馈、评估和版本记录。</p>
         </div>
         <div class="tile">
           <strong>治理原则</strong>
@@ -432,7 +433,7 @@
           <tr>
             <td>目标</td>
             <td>提升相似案例复用</td>
-            <td>Mem0 只保存已确认案例，诊断时检索相似症状、根因、证据和解决方案。</td>
+            <td>Case Memory Layer 只保存已确认案例，诊断时检索相似症状、根因、证据和解决方案。</td>
           </tr>
           <tr>
             <td>目标</td>
@@ -442,7 +443,7 @@
           <tr>
             <td>非目标</td>
             <td>替换 client AI RAG</td>
-            <td>client AI 继续 official_only RAG，不引入 Mem0 案例记忆作为客户直接回答依据。</td>
+            <td>client AI 继续 official_only RAG，不引入 Case Memory Layer 案例记忆作为客户直接回答依据。</td>
           </tr>
           <tr>
             <td>非目标</td>
@@ -451,8 +452,8 @@
           </tr>
           <tr>
             <td>非目标</td>
-            <td>让 Mem0 成为事实源</td>
-            <td>Mem0 是检索增强层；权威记录、审计和版本仍在 SupportPortal 数据库。</td>
+            <td>让记忆层成为事实源</td>
+            <td>Case Memory Layer 是检索增强层；权威记录、审计和版本仍在 SupportPortal 数据库。</td>
           </tr>
         </tbody>
       </table>
@@ -471,7 +472,7 @@
         </div>
         <div class="step">
           <h3>3. 案例入库</h3>
-          <p>确认后的案例写入 Postgres 和 Mem0；未确认猜测不进长期记忆。</p>
+          <p>确认后的案例写入 Postgres 和 Case Memory Layer；未确认猜测不进长期记忆。</p>
         </div>
         <div class="step">
           <h3>4. 离线优化</h3>
@@ -485,9 +486,9 @@
     </section>
 
     <section>
-      <h2>五、RAG 与 Mem0 知识边界</h2>
+      <h2>五、RAG 与 Case Memory Layer 知识边界</h2>
       <div class="callout warn">
-        <p><strong>不要按 official / non-official 粗暴切分。</strong>更稳的规则是：RAG 放可引用、可追溯、文档型知识；Mem0 放已确认案例、经验、偏好和调查记忆。</p>
+        <p><strong>不要按 official / non-official 粗暴切分。</strong>更稳的规则是：RAG 放可引用、可追溯、文档型知识；Case Memory Layer 放已确认案例、经验、偏好和调查记忆。Mem0 和 agentmemory 都只是候选 provider。</p>
       </div>
       <table style="margin-top: 14px;">
         <thead>
@@ -513,25 +514,25 @@
           </tr>
           <tr>
             <td>工程师确认案例</td>
-            <td>Postgres + Mem0 摘要</td>
+            <td>Postgres + Case Memory Layer 摘要</td>
             <td>Engineer AI；EvoAgentX eval/optimization</td>
             <td>适合语义召回相似症状、根因、证据和解决方案，但权威记录仍在 Postgres。</td>
           </tr>
           <tr>
             <td>工程师纠正 / 复盘</td>
-            <td>Postgres + Mem0 selected memory</td>
+            <td>Postgres + Case Memory Layer selected memory</td>
             <td>Engineer AI；优化器</td>
             <td>结构化反馈用于评估和优化；只有确认后、脱敏后的摘要才进入长期记忆。</td>
           </tr>
           <tr>
             <td>客户偏好 / 历史处理习惯</td>
-            <td>Mem0</td>
+            <td>Case Memory Layer</td>
             <td>Engineer AI</td>
             <td>偏好和历史上下文更像记忆，不适合混进文档检索索引。</td>
           </tr>
           <tr>
             <td>未确认 AI 草稿 / 猜测</td>
-            <td>不进入 Mem0</td>
+            <td>不进入长期记忆</td>
             <td>仅短期上下文</td>
             <td>避免自进化污染记忆；未验证 root cause 不能被长期召回。</td>
           </tr>
@@ -540,17 +541,17 @@
       <div class="grid two" style="margin-top: 14px;">
         <div class="tile">
           <strong>错误切分</strong>
-          <p>official doc 进 RAG；其他所有知识进 Mem0。这个做法会让内部 runbook 和技术文档失去 citation、版本、检索策略和访问控制。</p>
+          <p>official doc 进 RAG；其他所有知识进某个记忆 provider。这个做法会让内部 runbook 和技术文档失去 citation、版本、检索策略和访问控制。</p>
         </div>
         <div class="tile">
           <strong>推荐切分</strong>
-          <p>official/internal 文档都进 RAG，但用 access mode 隔离；confirmed cases、纠正经验和客户偏好进 Mem0。</p>
+          <p>official/internal 文档都进 RAG，但用 access mode 隔离；confirmed cases、纠正经验和客户偏好进入 Case Memory Layer。</p>
         </div>
       </div>
       <h3 style="margin-top: 16px;">Engineer Evidence 推荐顺序</h3>
       <div class="flow">
         <div class="step">
-          <h3>1. Mem0</h3>
+          <h3>1. Case Memory</h3>
           <p>查相似 confirmed cases，获得历史症状、根因、证据和解决方案。</p>
         </div>
         <div class="step">
@@ -575,7 +576,7 @@
     <section>
       <h2>六、RAG 技术文档去重治理</h2>
       <div class="callout">
-        <p><strong>重复或相似技术文档不应直接迁入 Mem0。</strong>这类问题应该在 RAG ingestion 和 retrieval 层治理：RAG 负责 exact dedupe、near-duplicate clustering、canonical document selection、metadata alias 和 citation；Mem0 只保存从已确认案例中提炼出的经验记忆。</p>
+        <p><strong>重复或相似技术文档不应直接迁入 Case Memory Layer。</strong>这类问题应该在 RAG ingestion 和 retrieval 层治理：RAG 负责 exact dedupe、near-duplicate clustering、canonical document selection、metadata alias 和 citation；Case Memory Layer 只保存从已确认案例中提炼出的经验记忆。</p>
       </div>
       <table style="margin-top: 14px;">
         <thead>
@@ -609,12 +610,12 @@
           <tr>
             <td>多个工程师案例指向同一根因</td>
             <td>合并或更新 case memory，保留 related_ticket_ids、related_canonical_doc_ids 和 confidence。</td>
-            <td>Mem0 + Postgres</td>
+            <td>Case Memory Layer + Postgres</td>
           </tr>
           <tr>
             <td>历史处理偏好、常见坑、复盘经验</td>
             <td>沉淀为 selected memory，服务 engineer AI 的经验召回，不作为文档 citation。</td>
-            <td>Mem0</td>
+            <td>Case Memory Layer</td>
           </tr>
         </tbody>
       </table>
@@ -647,8 +648,8 @@
           <p>保证文档证据可引用、可追溯、可版本治理。重复文档治理要影响 chunk、rank、citation 和 source metadata。</p>
         </div>
         <div class="tile">
-          <strong>Mem0 的职责</strong>
-          <p>把多个确认案例沉淀成更紧凑的经验记忆，例如 symptom、confirmed root cause、evidence pattern、resolution 和 related ids。</p>
+          <strong>Case Memory Layer 的职责</strong>
+          <p>把多个确认案例沉淀成更紧凑的经验记忆，例如 symptom、confirmed root cause、evidence pattern、resolution 和 related ids。具体 provider 通过 POC 决定。</p>
         </div>
       </div>
     </section>
@@ -672,7 +673,7 @@
 }</div>
         </div>
         <div>
-          <h3>Mem0 案例记忆</h3>
+          <h3>Case Memory 记忆</h3>
           <div class="code">{
   "product": "Agora RTC",
   "symptom": "...",
@@ -683,6 +684,8 @@
   "internal_only_summary": "...",
   "source_ticket_id": "...",
   "related_canonical_doc_ids": ["..."],
+  "memory_provider": "mem0 | agentmemory | postgres_pgvector",
+  "memory_schema_version": "case-memory-v1",
   "prompt_version": "...",
   "workflow_version": "...",
   "confidence": "confirmed"
@@ -690,7 +693,7 @@
         </div>
       </div>
       <div class="callout warn" style="margin-top: 14px;">
-        <p><strong>写入门槛：</strong>只有工程师确认后的案例可以进入 Mem0。AI 草稿、未验证 root cause、客户原始敏感信息和内部不可外泄细节必须经过摘要、脱敏和标签隔离。</p>
+        <p><strong>写入门槛：</strong>只有工程师确认后的案例可以进入 Case Memory Layer。AI 草稿、未验证 root cause、客户原始敏感信息和内部不可外泄细节必须经过摘要、脱敏和标签隔离。</p>
       </div>
     </section>
 
@@ -712,7 +715,7 @@
           </tr>
           <tr>
             <td>拓扑</td>
-            <td>先查 Mem0 还是先查 internal RAG、是否并行查询、official fallback 触发顺序。</td>
+            <td>先查 Case Memory Layer 还是先查 internal RAG、是否并行查询、official fallback 触发顺序。</td>
             <td>handoff intake、evidence access policy、customer-safe validator、engineer approval、audit log。</td>
           </tr>
           <tr>
@@ -748,9 +751,9 @@
         <tbody>
           <tr>
             <td>阶段 0：边界固化</td>
-            <td>工程师端自进化设计文档、版本字段、RAG/Mem0 知识边界说明。</td>
-            <td>明确 client AI 不进入自进化范围；engineer AI runtime 仍为生产主链路；非官方文档不被误迁到 Mem0。</td>
-            <td><span class="status doing">待开始</span></td>
+            <td>工程师端自进化设计文档、版本字段、RAG/Case Memory Layer 知识边界说明。</td>
+            <td>明确 client AI 不进入自进化范围；engineer AI runtime 仍为生产主链路；记忆层 provider 不被提前锁死。</td>
+            <td><span class="status done">已固化</span></td>
           </tr>
           <tr>
             <td>阶段 1：结构化反馈</td>
@@ -759,8 +762,8 @@
             <td><span class="status todo">待开始</span></td>
           </tr>
           <tr>
-            <td>阶段 2：Mem0 案例记忆</td>
-            <td>案例摘要器、Mem0 写入器、相似案例检索器；RAG 文档知识保留在 official/non_official access modes。</td>
+            <td>阶段 2：Case Memory Layer 案例记忆</td>
+            <td>案例摘要器、provider POC、相似案例检索器；RAG 文档知识保留在 official/non_official access modes。</td>
             <td>确认案例可检索，未确认案例不会进入长期记忆。</td>
             <td><span class="status todo">待开始</span></td>
           </tr>
@@ -822,16 +825,16 @@
         <li class="task">
           <input type="checkbox" data-task="case-memory-schema">
           <div>
-            <p class="task-title">定义 Mem0 案例写入规则</p>
-            <p class="task-desc">只写入 confirmed 案例；做摘要、脱敏、internal/customer-safe 字段隔离。</p>
+            <p class="task-title">定义 Case Memory Layer 写入规则</p>
+            <p class="task-desc">只写入 confirmed 案例；做摘要、脱敏、internal/customer-safe 字段隔离，并保留 provider 可替换性。</p>
           </div>
           <span class="owner">RAG / 记忆</span>
         </li>
         <li class="task">
           <input type="checkbox" data-task="rag-mem0-boundary">
           <div>
-            <p class="task-title">固化 RAG 与 Mem0 知识边界</p>
-            <p class="task-desc">文档型知识保留在 RAG access modes；经验、案例和偏好进入 Mem0，避免把所有非官方知识迁入记忆层。</p>
+            <p class="task-title">固化 RAG 与 Case Memory Layer 知识边界</p>
+            <p class="task-desc">文档型知识保留在 RAG access modes；经验、案例和偏好进入 Case Memory Layer，避免把所有非官方知识迁入记忆层。</p>
           </div>
           <span class="owner">架构 / RAG</span>
         </li>
@@ -839,7 +842,7 @@
           <input type="checkbox" data-task="case-retrieval">
           <div>
             <p class="task-title">接入相似案例检索</p>
-            <p class="task-desc">在 engineer evidence 阶段检索 Mem0 confirmed cases，并与 internal RAG、official fallback 合并成统一 evidence packet。</p>
+            <p class="task-desc">在 engineer evidence 阶段检索 confirmed cases，并与 internal RAG、official fallback 合并成统一 evidence packet。</p>
           </div>
           <span class="owner">后端</span>
         </li>
@@ -940,7 +943,7 @@
         </div>
         <div class="tile">
           <strong>案例命中率</strong>
-          <p>Mem0 检索到可用相似案例的比例。目标是随确认案例增加而上升。</p>
+          <p>Case Memory Layer 检索到可用相似案例的比例。目标是随确认案例增加而上升。</p>
         </div>
         <div class="tile">
           <strong>证据充分率</strong>
@@ -983,7 +986,7 @@
           <tr>
             <td>自进化污染记忆</td>
             <td>错误案例被反复召回，导致诊断偏移。</td>
-            <td>只有 confirmed 案例入 Mem0；保留 source_ticket_id 和 confidence；支持撤回或降权。</td>
+            <td>只有 confirmed 案例入 Case Memory Layer；保留 source_ticket_id 和 confidence；支持撤回或降权。</td>
           </tr>
           <tr>
             <td>拓扑优化绕过安全节点</td>
@@ -996,14 +999,14 @@
             <td>使用保留集、历史回归集和 shadow 流量；不让 optimizer 直接发布。</td>
           </tr>
           <tr>
-            <td>Mem0 与 Postgres 语义不一致</td>
+            <td>Case Memory Layer 与 Postgres 语义不一致</td>
             <td>检索结果与权威工单状态冲突。</td>
-            <td>Postgres 为 source of truth；Mem0 记录版本和 ticket id；检索结果必须回查权威状态。</td>
+            <td>Postgres 为 source of truth；记忆层记录版本和 ticket id；检索结果必须回查权威状态。</td>
           </tr>
           <tr>
-            <td>把所有非官方知识放入 Mem0</td>
+            <td>把所有非官方知识放入记忆层</td>
             <td>内部文档失去 citation、版本、source path 和检索可控性，engineer AI 难以解释证据来源。</td>
-            <td>按知识形态切分：文档型知识进 RAG non_official_only；案例、经验和偏好进 Mem0。</td>
+            <td>按知识形态切分：文档型知识进 RAG non_official_only；案例、经验和偏好进 Case Memory Layer。</td>
           </tr>
           <tr>
             <td>重复技术文档污染 RAG</td>
@@ -1027,9 +1030,9 @@
     <section>
       <h2>十四、后续建议</h2>
       <div class="callout danger">
-        <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把重复技术文档问题交给 Mem0 兜底。</strong>先实现结构化反馈、confirmed-case 记忆、RAG/Mem0 evidence packet 和 RAG 技术文档去重治理，这些基础会决定后续优化是否可靠。</p>
+        <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把重复技术文档问题交给 Case Memory Layer 兜底。</strong>先实现结构化反馈、confirmed-case 记忆、RAG/Case Memory evidence packet 和 RAG 技术文档去重治理，这些基础会决定后续优化是否可靠。</p>
       </div>
-      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、RAG 与 Mem0 知识边界固化、RAG 技术文档去重治理、Mem0 confirmed-case 写入、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
+      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
     </section>
   </main>
 
