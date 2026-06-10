@@ -63,6 +63,7 @@ from backend.services.engineer_agent import (
     build_engineer_agent_brief,
     normalize_engineer_agent_state,
 )
+from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
 from backend.services.engineer_cases import (
     apply_case_context_to_engineer_case,
     build_engineer_case_context,
@@ -4026,6 +4027,35 @@ async def confirm_investigation_reply(
         engineer_case,
         new_messages=result.get("new_internal_messages"),
     )
+    if request.decision == "approve":
+        auto_feedback = build_engineer_auto_hitl_feedback(
+            client_ticket=ticket,
+            engineer_case=engineer_case,
+            closed_investigation=(
+                result.get("closed_investigation")
+                if isinstance(result.get("closed_investigation"), dict)
+                else None
+            ),
+            engineer_id=request.engineer_id,
+            customer_reply=customer_reply,
+            created_at=timestamp,
+        )
+        saved_feedback = ticket_repository.record_engineer_hitl_feedback(auto_feedback)
+        ticket_repository.record_engineer_case_event(
+            str(saved_feedback.get("engineer_case_id") or ""),
+            "engineer_hitl_feedback_auto_reviewed",
+            {
+                "event": "engineer_hitl_feedback_auto_reviewed",
+                "ticket_id": str(saved_feedback.get("engineer_case_id") or ticket_id),
+                "client_ticket_id": str(saved_feedback.get("client_ticket_id") or ""),
+                "engineer_case_id": str(saved_feedback.get("engineer_case_id") or ""),
+                "feedback_id": str(saved_feedback.get("feedback_id") or ""),
+                "feedback_type": str(saved_feedback.get("feedback_type") or ""),
+                "memory_candidate": str(saved_feedback.get("memory_candidate") or ""),
+                "memory_safety": str(saved_feedback.get("memory_safety") or ""),
+                "created_at": str(saved_feedback.get("created_at") or timestamp),
+            },
+        )
     await _record_and_dispatch_investigation_event(ticket, engineer_case)
 
     if request.decision == "approve" and customer_reply:
