@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engineer Portal / 工单分配追踪计划</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #667789;
+      --line: #d9e2ec;
+      --accent: #1d5d8f;
+      --accent-soft: #e5eef7;
+      --done: #1f7a4d;
+      --done-soft: #e0f4e8;
+      --blocked: #a33d35;
+      --blocked-soft: #fde7e4;
+      --shadow: 0 10px 26px rgba(23, 32, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 7px 12px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+    }
+
+    header {
+      background: #19324a;
+      color: #f8fafc;
+      padding: 30px 24px;
+    }
+
+    .header-inner,
+    main {
+      max-width: 1160px;
+      margin: 0 auto;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      font-size: 34px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 860px;
+      margin-bottom: 0;
+      color: #dce8f4;
+    }
+
+    main {
+      padding: 22px 18px 42px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: 1.4fr repeat(4, minmax(110px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .tile,
+    .task,
+    .toolbar,
+    .phase {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .tile {
+      padding: 14px;
+      min-height: 88px;
+    }
+
+    .label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .number {
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .progress-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .bar {
+      width: 100%;
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e6edf4;
+    }
+
+    .bar span {
+      display: block;
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 180ms ease;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 18px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 22px rgba(23, 32, 42, 0.08);
+    }
+
+    .search {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .phase {
+      margin-bottom: 14px;
+      overflow: hidden;
+    }
+
+    .phase-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .phase-head h2 {
+      margin-bottom: 4px;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .phase-head p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .phase-count {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .tasks {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .task {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.2fr);
+      gap: 14px;
+      padding: 14px;
+      box-shadow: none;
+    }
+
+    .task.done {
+      border-color: rgba(31, 122, 77, 0.45);
+      background: #fbfffc;
+    }
+
+    .task.blocked {
+      border-color: rgba(163, 61, 53, 0.42);
+      background: #fffafa;
+    }
+
+    .task h3 {
+      margin-bottom: 7px;
+      font-size: 17px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .task p {
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      margin-right: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .controls {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .control-row {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+    }
+
+    .control-row label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    select {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 6px 8px;
+    }
+
+    .task-progress {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .task-progress .bar {
+      height: 8px;
+    }
+
+    .checks {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checks label {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      color: #26343d;
+      font-size: 14px;
+    }
+
+    .checks input {
+      margin-top: 3px;
+      accent-color: var(--accent);
+    }
+
+    .empty {
+      display: none;
+      padding: 24px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .foot {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .summary,
+      .toolbar,
+      .task {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar {
+        position: static;
+      }
+    }
+
+    @media (max-width: 620px) {
+      header {
+        padding: 24px 16px;
+      }
+
+      main {
+        padding: 16px 12px 32px;
+      }
+
+      .phase-head {
+        display: block;
+      }
+
+      .phase-count {
+        display: block;
+        margin-top: 8px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .toolbar,
+      .foot {
+        display: none;
+      }
+
+      .tile,
+      .task,
+      .phase {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Engineer Portal / 工单分配追踪计划</h1>
+      <p class="subtitle">目标是先解决 Tier One 工单流转、在线状态、单 case 分配、内部 SLA、超时转派和过程审计；真正的 Engineer AI 调查能力放到后续增强。</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary" aria-label="进度概览">
+      <div class="tile">
+        <div class="progress-line">
+          <span>整体完成度</span>
+          <strong id="overallText">0%</strong>
+        </div>
+        <div class="bar"><span id="overallBar"></span></div>
+      </div>
+      <div class="tile">
+        <span class="label">任务</span>
+        <strong class="number" id="taskCount">0</strong>
+      </div>
+      <div class="tile">
+        <span class="label">进行中</span>
+        <strong class="number" id="doingCount">0</strong>
+      </div>
+      <div class="tile">
+        <span class="label">已完成</span>
+        <strong class="number" id="doneCount">0</strong>
+      </div>
+      <div class="tile">
+        <span class="label">阻塞</span>
+        <strong class="number" id="blockedCount">0</strong>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="筛选工具">
+      <input class="search" id="searchInput" type="search" placeholder="搜索任务、阶段、验收点">
+      <div class="chips" id="phaseFilters"></div>
+      <div class="chips" id="statusFilters"></div>
+    </section>
+
+    <div id="board"></div>
+    <div class="empty" id="empty">没有匹配的任务。</div>
+    <p class="foot">勾选项和状态会自动保存在当前浏览器本地；需要重新开始时可用“重置进度”。</p>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "supportportal_engineer_portal_assignment_plan_v1";
+
+    const STATUS = {
+      todo: "未开始",
+      doing: "进行中",
+      blocked: "阻塞",
+      done: "已完成"
+    };
+
+    const PHASES = [
+      {
+        id: "model",
+        title: "一、分配模型",
+        goal: "先把工单生命周期、在线状态、单 case 分配和优先级策略定义清楚。"
+      },
+      {
+        id: "sla",
+        title: "二、SLA 与转派",
+        goal: "用内部 SLA 和超时转派替代人工追问，让过程可以被系统追踪。"
+      },
+      {
+        id: "portal",
+        title: "三、Portal 操作台",
+        goal: "提供一个能处理、流转、同步 Zendesk 的最小工作台。"
+      },
+      {
+        id: "pilot",
+        title: "四、试运行与数据",
+        goal: "用小范围试点验证处理效率、超时情况和质量判断。"
+      }
+    ];
+
+    const TASKS = [
+      {
+        id: "ticket-lifecycle",
+        phase: "model",
+        module: "模型",
+        title: "定义工单生命周期",
+        text: "把一个 engineer case 拆成进入、分配、处理中、提交结论、关闭、客户再回复后的新回合。",
+        checks: [
+          "明确每个状态的进入条件。",
+          "明确每个状态允许的下一步。",
+          "客户再回复时按新问题或新回合处理。"
+        ]
+      },
+      {
+        id: "availability",
+        phase: "model",
+        module: "在线状态",
+        title: "设计 clock in / clock out",
+        text: "工程师在线才接 case；不在线时不会被分配新 case。",
+        checks: [
+          "支持进入 available。",
+          "支持退出 available。",
+          "分配逻辑只选择 available 人员。"
+        ]
+      },
+      {
+        id: "single-case",
+        phase: "model",
+        module: "分配",
+        title: "设计单 case 分配规则",
+        text: "每个人同时只处理一个 case，提交结果后再拿下一个。",
+        checks: [
+          "同一时间不会并行分配多个新 case。",
+          "完成当前 case 后才进入下一轮分配。",
+          "队列中 case 有稳定排序规则。"
+        ]
+      },
+      {
+        id: "priority-policy",
+        phase: "model",
+        module: "优先级",
+        title: "定义 first response 与 regular response 优先级",
+        text: "让系统决定先处理哪类 case，而不是让人手动在队列里挑。",
+        checks: [
+          "first response 优先级高于 regular response。",
+          "同类 case 按等待时间排序。",
+          "特殊高风险 case 可进入人工指定通道。"
+        ]
+      },
+      {
+        id: "internal-sla",
+        phase: "sla",
+        module: "SLA",
+        title: "定义内部处理 SLA",
+        text: "每个 case 在拿到后必须在固定时间内给出结论、建议回复或升级理由。",
+        checks: [
+          "SLA 从分配成功开始计时。",
+          "提交结果后停止计时。",
+          "升级人工或转派也要保留过程记录。"
+        ]
+      },
+      {
+        id: "timeout-transfer",
+        phase: "sla",
+        module: "转派",
+        title: "设计超时转派",
+        text: "超时未处理时，系统把 case 转给下一个 available 人员，并保留原过程。",
+        checks: [
+          "超时能被自动识别。",
+          "转派后能看到前后处理链路。",
+          "无人 available 时进入等待队列。"
+        ]
+      },
+      {
+        id: "handover-rule",
+        phase: "sla",
+        module: "交接",
+        title: "定义下班和未完成 case 的处理",
+        text: "先从简单规则开始：未完成 case 不做复杂 handover，优先通过转派和单 case 模型收口。",
+        checks: [
+          "退出 available 前处理当前 case。",
+          "无法完成时必须提交升级或转派原因。",
+          "后续再评估是否需要复杂 handover。"
+        ]
+      },
+      {
+        id: "audit-events",
+        phase: "sla",
+        module: "审计",
+        title: "记录关键事件",
+        text: "系统要记录分配、接手、提交、超时、转派、关闭这些事件，后续可以直接还原过程。",
+        checks: [
+          "每次分配都有事件记录。",
+          "每次状态变化都有事件记录。",
+          "能按 case 还原完整过程。"
+        ]
+      },
+      {
+        id: "portal-workspace",
+        phase: "portal",
+        module: "工作台",
+        title: "设计最小处理页面",
+        text: "页面只服务当前 case：看客户问题、看 AI 建议、提交结论或升级理由。",
+        checks: [
+          "当前 case 是页面主信息。",
+          "提交动作清楚可见。",
+          "没有同时处理多个 case 的入口。"
+        ]
+      },
+      {
+        id: "portal-queue-view",
+        phase: "portal",
+        module: "队列",
+        title: "设计队列与运行视图",
+        text: "用于看当前队列、在线人数、处理中 case、超时风险和已转派 case。",
+        checks: [
+          "能看到等待队列长度。",
+          "能看到处理中 case 数。",
+          "能看到即将超时和已超时 case。"
+        ]
+      },
+      {
+        id: "zendesk-source",
+        phase: "portal",
+        module: "Zendesk",
+        title: "定义 Zendesk 中转关系",
+        text: "Zendesk 仍是 source of truth；Portal 负责导入、分配、处理和回写。",
+        checks: [
+          "新工单能进入 Portal。",
+          "Portal 结果能回写 Zendesk。",
+          "Zendesk 与 Portal 状态冲突时有处理规则。"
+        ]
+      },
+      {
+        id: "response-quality-check",
+        phase: "portal",
+        module: "质量",
+        title: "定义无效回复识别",
+        text: "避免只发礼貌话术但没有解决问题，例如只说正在查看、重复问已提供信息。",
+        checks: [
+          "提交内容必须包含结论、证据或明确下一步。",
+          "重复索要已知信息会被标记。",
+          "纯礼貌回复不能算完成。"
+        ]
+      },
+      {
+        id: "pilot-split",
+        phase: "pilot",
+        module: "试点",
+        title: "设计小范围试点方式",
+        text: "先让少数 Tier One 人员进入 Portal，其余保持原流程，用真实 case 对比效果。",
+        checks: [
+          "试点 case 来源清楚。",
+          "旧流程与新流程可以对比。",
+          "试点失败时能回到原流程。"
+        ]
+      },
+      {
+        id: "metrics",
+        phase: "pilot",
+        module: "指标",
+        title: "定义试运行指标",
+        text: "核心看处理量、等待时间、超时、转派、有效回复比例和客户继续追问情况。",
+        checks: [
+          "能统计处理量。",
+          "能统计平均处理时间和超时次数。",
+          "能统计转派和升级人工原因。"
+        ]
+      },
+      {
+        id: "rollout-decision",
+        phase: "pilot",
+        module: "复盘",
+        title: "形成扩大或收口决策",
+        text: "试点后判断是否扩大到更多人、是否调整 SLA、是否开始接入 Engineer AI 调查能力。",
+        checks: [
+          "有试点结果摘要。",
+          "有主要问题清单。",
+          "有下一步扩大或收口结论。"
+        ]
+      }
+    ];
+
+    let state = {
+      statuses: {},
+      checks: {},
+      filters: {
+        phase: "all",
+        status: "all",
+        query: ""
+      }
+    };
+
+    const board = document.getElementById("board");
+    const empty = document.getElementById("empty");
+    const searchInput = document.getElementById("searchInput");
+
+    function loadState() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+        state.statuses = saved.statuses || {};
+        state.checks = saved.checks || {};
+      } catch {
+        state.statuses = {};
+        state.checks = {};
+      }
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        statuses: state.statuses,
+        checks: state.checks
+      }));
+    }
+
+    function getStatus(task) {
+      return state.statuses[task.id] || "todo";
+    }
+
+    function isChecked(taskId, index) {
+      return Boolean(state.checks[`${taskId}:${index}`]);
+    }
+
+    function setChecked(taskId, index, checked) {
+      state.checks[`${taskId}:${index}`] = checked;
+      saveState();
+      render();
+    }
+
+    function setStatus(taskId, status) {
+      state.statuses[taskId] = status;
+      saveState();
+      render();
+    }
+
+    function taskCompletion(task) {
+      if (!task.checks.length) return getStatus(task) === "done" ? 100 : 0;
+      const done = task.checks.filter((_, index) => isChecked(task.id, index)).length;
+      return Math.round((done / task.checks.length) * 100);
+    }
+
+    function effectiveCompletion(task) {
+      return getStatus(task) === "done" ? 100 : taskCompletion(task);
+    }
+
+    function taskMatches(task) {
+      const phaseOk = state.filters.phase === "all" || task.phase === state.filters.phase;
+      const statusOk = state.filters.status === "all" || getStatus(task) === state.filters.status;
+      const q = state.filters.query.trim().toLowerCase();
+      const text = [task.module, task.title, task.text, ...task.checks].join(" ").toLowerCase();
+      return phaseOk && statusOk && (!q || text.includes(q));
+    }
+
+    function renderFilters() {
+      const phaseFilters = document.getElementById("phaseFilters");
+      const statusFilters = document.getElementById("statusFilters");
+      phaseFilters.innerHTML = "";
+      statusFilters.innerHTML = "";
+      [{ id: "all", title: "全部阶段" }, ...PHASES].forEach((phase) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `chip${state.filters.phase === phase.id ? " active" : ""}`;
+        button.textContent = phase.title.replace(/^[一二三四]、/, "");
+        button.addEventListener("click", () => {
+          state.filters.phase = phase.id;
+          render();
+        });
+        phaseFilters.appendChild(button);
+      });
+      [{ id: "all", label: "全部状态" }, ...Object.entries(STATUS).map(([id, label]) => ({ id, label }))].forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `chip${state.filters.status === item.id ? " active" : ""}`;
+        button.textContent = item.label;
+        button.addEventListener("click", () => {
+          state.filters.status = item.id;
+          render();
+        });
+        statusFilters.appendChild(button);
+      });
+    }
+
+    function renderTask(task) {
+      const completion = taskCompletion(task);
+      const status = getStatus(task);
+      const article = document.createElement("article");
+      article.className = `task ${status}`;
+      article.innerHTML = `
+        <div>
+          <span class="tag">${escapeHtml(task.module)}</span>
+          <h3>${escapeHtml(task.title)}</h3>
+          <p>${escapeHtml(task.text)}</p>
+        </div>
+        <div class="controls">
+          <div class="control-row">
+            <label>状态</label>
+            <select data-status="${escapeAttr(task.id)}">
+              ${Object.entries(STATUS).map(([value, label]) => `<option value="${value}"${status === value ? " selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </div>
+          <div class="task-progress">
+            <span>${completion}%</span>
+            <div class="bar"><span style="width: ${completion}%"></span></div>
+          </div>
+          <ul class="checks">
+            ${task.checks.map((check, index) => `
+              <li>
+                <label>
+                  <input type="checkbox" data-check-task="${escapeAttr(task.id)}" data-check-index="${index}"${isChecked(task.id, index) ? " checked" : ""}>
+                  <span>${escapeHtml(check)}</span>
+                </label>
+              </li>
+            `).join("")}
+          </ul>
+        </div>
+      `;
+      return article;
+    }
+
+    function render() {
+      renderFilters();
+      board.innerHTML = "";
+      let visible = 0;
+      PHASES.forEach((phase) => {
+        const tasks = TASKS.filter((task) => task.phase === phase.id && taskMatches(task));
+        if (!tasks.length) return;
+        visible += tasks.length;
+        const section = document.createElement("section");
+        section.className = "phase";
+        section.innerHTML = `
+          <div class="phase-head">
+            <div>
+              <h2>${escapeHtml(phase.title)}</h2>
+              <p>${escapeHtml(phase.goal)}</p>
+            </div>
+            <span class="phase-count">${tasks.length} 项</span>
+          </div>
+          <div class="tasks"></div>
+        `;
+        const list = section.querySelector(".tasks");
+        tasks.forEach((task) => list.appendChild(renderTask(task)));
+        board.appendChild(section);
+      });
+      empty.style.display = visible ? "none" : "block";
+      bindControls();
+      updateSummary();
+    }
+
+    function bindControls() {
+      document.querySelectorAll("[data-status]").forEach((select) => {
+        select.addEventListener("change", () => setStatus(select.dataset.status, select.value));
+      });
+      document.querySelectorAll("[data-check-task]").forEach((box) => {
+        box.addEventListener("change", () => setChecked(box.dataset.checkTask, box.dataset.checkIndex, box.checked));
+      });
+    }
+
+    function updateSummary() {
+      const total = TASKS.length;
+      const done = TASKS.filter((task) => getStatus(task) === "done").length;
+      const doing = TASKS.filter((task) => getStatus(task) === "doing").length;
+      const blocked = TASKS.filter((task) => getStatus(task) === "blocked").length;
+      const overall = Math.round(TASKS.reduce((sum, task) => sum + effectiveCompletion(task), 0) / total);
+      document.getElementById("overallText").textContent = `${overall}%`;
+      document.getElementById("overallBar").style.width = `${overall}%`;
+      document.getElementById("taskCount").textContent = total;
+      document.getElementById("doingCount").textContent = doing;
+      document.getElementById("doneCount").textContent = done;
+      document.getElementById("blockedCount").textContent = blocked;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll("\n", " ");
+    }
+
+    searchInput.addEventListener("input", () => {
+      state.filters.query = searchInput.value;
+      render();
+    });
+
+    const resetButton = document.createElement("button");
+    resetButton.type = "button";
+    resetButton.textContent = "重置进度";
+    resetButton.addEventListener("click", () => {
+      if (!confirm("确认重置本页进度？")) return;
+      localStorage.removeItem(STORAGE_KEY);
+      state.statuses = {};
+      state.checks = {};
+      render();
+    });
+    document.querySelector(".toolbar").appendChild(resetButton);
+
+    loadState();
+    render();
+  </script>
+</body>
+</html>
