@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Billing 自动化追踪计划</title>
+  <style>
+    :root {
+      --bg: #f7f8f4;
+      --panel: #ffffff;
+      --ink: #172026;
+      --muted: #64727d;
+      --line: #dfe5dc;
+      --accent: #0f766e;
+      --accent-soft: #e5f4f1;
+      --warn: #9a5b12;
+      --warn-soft: #fff3d6;
+      --done: #1f7a4d;
+      --done-soft: #e1f5e9;
+      --blocked: #a33d35;
+      --blocked-soft: #fde7e4;
+      --shadow: 0 10px 26px rgba(23, 32, 38, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 7px 12px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+    }
+
+    header {
+      background: #12343b;
+      color: #f8fafc;
+      padding: 30px 24px;
+    }
+
+    .header-inner,
+    main {
+      max-width: 1160px;
+      margin: 0 auto;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      font-size: 34px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 840px;
+      margin-bottom: 0;
+      color: #dce9ef;
+    }
+
+    main {
+      padding: 22px 18px 42px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: 1.4fr repeat(4, minmax(110px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .tile,
+    .task,
+    .toolbar,
+    .phase {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .tile {
+      padding: 14px;
+      min-height: 88px;
+    }
+
+    .label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .number {
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .progress-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .bar {
+      width: 100%;
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e7ece4;
+    }
+
+    .bar span {
+      display: block;
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 180ms ease;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 18px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 22px rgba(23, 32, 38, 0.08);
+    }
+
+    .search {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .phase {
+      margin-bottom: 14px;
+      overflow: hidden;
+    }
+
+    .phase-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcf8;
+    }
+
+    .phase-head h2 {
+      margin-bottom: 4px;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .phase-head p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .phase-count {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .tasks {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .task {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.2fr);
+      gap: 14px;
+      padding: 14px;
+      box-shadow: none;
+    }
+
+    .task.done {
+      border-color: rgba(31, 122, 77, 0.45);
+      background: #fbfffc;
+    }
+
+    .task.blocked {
+      border-color: rgba(163, 61, 53, 0.42);
+      background: #fffafa;
+    }
+
+    .task h3 {
+      margin-bottom: 7px;
+      font-size: 17px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .task p {
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      margin-right: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .controls {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .control-row {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+    }
+
+    .control-row label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    select {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 6px 8px;
+    }
+
+    .task-progress {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .task-progress .bar {
+      height: 8px;
+    }
+
+    .checks {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checks label {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      color: #26343d;
+      font-size: 14px;
+    }
+
+    .checks input {
+      margin-top: 3px;
+      accent-color: var(--accent);
+    }
+
+    .empty {
+      display: none;
+      padding: 24px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .foot {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .summary,
+      .toolbar,
+      .task {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar {
+        position: static;
+      }
+    }
+
+    @media (max-width: 620px) {
+      header {
+        padding: 24px 16px;
+      }
+
+      main {
+        padding: 16px 12px 32px;
+      }
+
+      .phase-head {
+        display: block;
+      }
+
+      .phase-count {
+        display: block;
+        margin-top: 8px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .toolbar,
+      .foot {
+        display: none;
+      }
+
+      .tile,
+      .task,
+      .phase {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Billing 自动化追踪计划</h1>
+      <p class="subtitle">目标是先把低风险、规则清晰的 billing case 做成严格 workflow：AI 负责判断、追问和建议回复，高风险问题继续升级人工。</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary" aria-label="进度概览">
+      <div class="tile">
+        <div class="progress-line">
+          <span>整体完成度</span>
+          <strong id="overallText">0%</strong>
+        </div>
+        <div class="bar"><span id="overallBar"></span></div>
+      </div>
+      <div class="tile">
+        <span class="label">任务</span>
+        <strong class="number" id="taskCount">0</strong>
+      </div>
+      <div class="tile">
+        <span class="label">进行中</span>
+        <strong class="number" id="doingCount">0</strong>
+      </div>
+      <div class="tile">
+        <span class="label">已完成</span>
+        <strong class="number" id="doneCount">0</strong>
+      </div>
+      <div class="tile">
+        <span class="label">阻塞</span>
+        <strong class="number" id="blockedCount">0</strong>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="筛选工具">
+      <input class="search" id="searchInput" type="search" placeholder="搜索任务、阶段、验收点">
+      <div class="chips" id="phaseFilters"></div>
+      <div class="chips" id="statusFilters"></div>
+    </section>
+
+    <div id="board"></div>
+    <div class="empty" id="empty">没有匹配的任务。</div>
+    <p class="foot">勾选项和状态会自动保存在当前浏览器本地；需要重新开始时可用“重置进度”。</p>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "supportportal_billing_automation_plan_v1";
+
+    const STATUS = {
+      todo: "未开始",
+      doing: "进行中",
+      blocked: "阻塞",
+      done: "已完成"
+    };
+
+    const PHASES = [
+      {
+        id: "scope",
+        title: "一、收窄范围",
+        goal: "只接低风险、边界清楚、可以写成固定流程的 billing 小类。"
+      },
+      {
+        id: "workflow",
+        title: "二、判断与回复流",
+        goal: "让 AI 做内容判断、信息追问和建议回复，不让它自由发挥。"
+      },
+      {
+        id: "zendesk",
+        title: "三、Zendesk 与人工审核",
+        goal: "先跑建议回复和人工审核，再决定哪些小类可以自动写回。"
+      },
+      {
+        id: "pilot",
+        title: "四、小范围试运行",
+        goal: "用真实 case 小流量验证收益、误判和升级人工边界。"
+      }
+    ];
+
+    const TASKS = [
+      {
+        id: "billing-category-whitelist",
+        phase: "scope",
+        module: "范围",
+        title: "定义 billing 白名单小类",
+        text: "先覆盖 invoice、fraud/company verification、缺信息追问；账单算错和计量计费异常暂不自动处理。",
+        checks: [
+          "列出每个小类的进入条件。",
+          "列出每个小类必须升级人工的条件。",
+          "明确哪些 billing 问题当前不接。"
+        ]
+      },
+      {
+        id: "billing-risk-boundary",
+        phase: "scope",
+        module: "风险",
+        title: "定义自动化边界",
+        text: "保持严格 detection：宁可少接，也不能把需要调查或赔付判断的问题交给自动化。",
+        checks: [
+          "高风险 case 默认升级人工。",
+          "低置信判断默认升级人工。",
+          "客户乱选 ticket type 时不直接相信表单分类。"
+        ]
+      },
+      {
+        id: "billing-real-case-set",
+        phase: "scope",
+        module: "测试集",
+        title: "整理真实 case 测试集",
+        text: "从历史工单里挑样本，覆盖可自动处理、信息缺失、必须人工调查三类。",
+        checks: [
+          "每个样本有客户原始问题。",
+          "每个样本有期望分类。",
+          "每个样本有期望处理路径。"
+        ]
+      },
+      {
+        id: "billing-classifier",
+        phase: "workflow",
+        module: "分类",
+        title: "实现内容分类判断",
+        text: "根据客户实际问题判断是否属于白名单小类，而不是只看 ticket property。",
+        checks: [
+          "输出分类结果。",
+          "输出升级人工原因。",
+          "能识别 invoice、fraud/company verification、账单争议。"
+        ]
+      },
+      {
+        id: "billing-fraud-flow",
+        phase: "workflow",
+        module: "验证",
+        title: "设计 company verification 追问流",
+        text: "需要 company name、company address、company phone 等信息，信息不完整时继续追问。",
+        checks: [
+          "信息齐全才进入下一步。",
+          "个人开发者场景有单独分支。",
+          "拒绝提供信息或无效信息时不继续自动推进。"
+        ]
+      },
+      {
+        id: "billing-invoice-flow",
+        phase: "workflow",
+        module: "Invoice",
+        title: "设计 invoice 请求处理流",
+        text: "对简单 invoice 请求提供固定处理路径；超出简单请求时升级人工。",
+        checks: [
+          "能识别客户只是要 invoice。",
+          "能识别客户在质疑金额或计费逻辑。",
+          "金额争议不会被当作简单 invoice 请求。"
+        ]
+      },
+      {
+        id: "billing-response-template",
+        phase: "workflow",
+        module: "回复",
+        title: "沉淀建议回复模板",
+        text: "每类场景使用固定结构回复，避免 client AI 过度 agent 化。",
+        checks: [
+          "模板语气适合客户沟通。",
+          "模板只问必要信息。",
+          "模板不承诺无法确认的结果。"
+        ]
+      },
+      {
+        id: "billing-zendesk-read",
+        phase: "zendesk",
+        module: "Zendesk",
+        title: "验证工单拉取链路",
+        text: "通过 Zendesk webhook/API 获取新工单内容，进入 billing 判断流程。",
+        checks: [
+          "能拿到客户问题正文。",
+          "能拿到必要 ticket metadata。",
+          "链路失败时不会影响原工单处理。"
+        ]
+      },
+      {
+        id: "billing-human-review",
+        phase: "zendesk",
+        module: "审核",
+        title: "建立人工审核模式",
+        text: "POC 阶段 AI 只生成建议回复，不直接发给客户。",
+        checks: [
+          "人工可以确认建议回复是否可用。",
+          "人工可以标记误判类型。",
+          "审核结果能回流到测试集。"
+        ]
+      },
+      {
+        id: "billing-zendesk-writeback",
+        phase: "zendesk",
+        module: "Zendesk",
+        title: "验证写回 Zendesk",
+        text: "先写回 internal note 或建议 comment，自动公开回复放到后续白名单阶段。",
+        checks: [
+          "能写回建议回复。",
+          "能写回分类与升级原因。",
+          "写回动作可审计。"
+        ]
+      },
+      {
+        id: "billing-limited-automation",
+        phase: "pilot",
+        module: "试运行",
+        title: "启用白名单小类试运行",
+        text: "只让验证充分的小类进入自动化，其他 billing case 继续人工处理。",
+        checks: [
+          "只启用白名单小类。",
+          "每个自动化 case 都能追溯判断依据。",
+          "每个升级人工 case 都记录原因。"
+        ]
+      },
+      {
+        id: "billing-quality-review",
+        phase: "pilot",
+        module: "复盘",
+        title: "复盘覆盖率与误判",
+        text: "用真实运行数据判断是否扩大范围，重点看误接入、升级人工、客户补充信息质量。",
+        checks: [
+          "统计自动处理覆盖率。",
+          "统计误判和升级人工原因。",
+          "明确下一批可扩展小类或收口项。"
+        ]
+      }
+    ];
+
+    let state = {
+      statuses: {},
+      checks: {},
+      filters: {
+        phase: "all",
+        status: "all",
+        query: ""
+      }
+    };
+
+    const board = document.getElementById("board");
+    const empty = document.getElementById("empty");
+    const searchInput = document.getElementById("searchInput");
+
+    function loadState() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+        state.statuses = saved.statuses || {};
+        state.checks = saved.checks || {};
+      } catch {
+        state.statuses = {};
+        state.checks = {};
+      }
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        statuses: state.statuses,
+        checks: state.checks
+      }));
+    }
+
+    function getStatus(task) {
+      return state.statuses[task.id] || "todo";
+    }
+
+    function isChecked(taskId, index) {
+      return Boolean(state.checks[`${taskId}:${index}`]);
+    }
+
+    function setChecked(taskId, index, checked) {
+      state.checks[`${taskId}:${index}`] = checked;
+      saveState();
+      render();
+    }
+
+    function setStatus(taskId, status) {
+      state.statuses[taskId] = status;
+      saveState();
+      render();
+    }
+
+    function taskCompletion(task) {
+      if (!task.checks.length) return getStatus(task) === "done" ? 100 : 0;
+      const done = task.checks.filter((_, index) => isChecked(task.id, index)).length;
+      return Math.round((done / task.checks.length) * 100);
+    }
+
+    function effectiveCompletion(task) {
+      return getStatus(task) === "done" ? 100 : taskCompletion(task);
+    }
+
+    function taskMatches(task) {
+      const phaseOk = state.filters.phase === "all" || task.phase === state.filters.phase;
+      const statusOk = state.filters.status === "all" || getStatus(task) === state.filters.status;
+      const q = state.filters.query.trim().toLowerCase();
+      const text = [task.module, task.title, task.text, ...task.checks].join(" ").toLowerCase();
+      return phaseOk && statusOk && (!q || text.includes(q));
+    }
+
+    function renderFilters() {
+      const phaseFilters = document.getElementById("phaseFilters");
+      const statusFilters = document.getElementById("statusFilters");
+      phaseFilters.innerHTML = "";
+      statusFilters.innerHTML = "";
+      [{ id: "all", title: "全部阶段" }, ...PHASES].forEach((phase) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `chip${state.filters.phase === phase.id ? " active" : ""}`;
+        button.textContent = phase.title.replace(/^[一二三四]、/, "");
+        button.addEventListener("click", () => {
+          state.filters.phase = phase.id;
+          render();
+        });
+        phaseFilters.appendChild(button);
+      });
+      [{ id: "all", label: "全部状态" }, ...Object.entries(STATUS).map(([id, label]) => ({ id, label }))].forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `chip${state.filters.status === item.id ? " active" : ""}`;
+        button.textContent = item.label;
+        button.addEventListener("click", () => {
+          state.filters.status = item.id;
+          render();
+        });
+        statusFilters.appendChild(button);
+      });
+    }
+
+    function renderTask(task) {
+      const completion = taskCompletion(task);
+      const status = getStatus(task);
+      const article = document.createElement("article");
+      article.className = `task ${status}`;
+      article.innerHTML = `
+        <div>
+          <span class="tag">${escapeHtml(task.module)}</span>
+          <h3>${escapeHtml(task.title)}</h3>
+          <p>${escapeHtml(task.text)}</p>
+        </div>
+        <div class="controls">
+          <div class="control-row">
+            <label>状态</label>
+            <select data-status="${escapeAttr(task.id)}">
+              ${Object.entries(STATUS).map(([value, label]) => `<option value="${value}"${status === value ? " selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </div>
+          <div class="task-progress">
+            <span>${completion}%</span>
+            <div class="bar"><span style="width: ${completion}%"></span></div>
+          </div>
+          <ul class="checks">
+            ${task.checks.map((check, index) => `
+              <li>
+                <label>
+                  <input type="checkbox" data-check-task="${escapeAttr(task.id)}" data-check-index="${index}"${isChecked(task.id, index) ? " checked" : ""}>
+                  <span>${escapeHtml(check)}</span>
+                </label>
+              </li>
+            `).join("")}
+          </ul>
+        </div>
+      `;
+      return article;
+    }
+
+    function render() {
+      renderFilters();
+      board.innerHTML = "";
+      let visible = 0;
+      PHASES.forEach((phase) => {
+        const tasks = TASKS.filter((task) => task.phase === phase.id && taskMatches(task));
+        if (!tasks.length) return;
+        visible += tasks.length;
+        const section = document.createElement("section");
+        section.className = "phase";
+        section.innerHTML = `
+          <div class="phase-head">
+            <div>
+              <h2>${escapeHtml(phase.title)}</h2>
+              <p>${escapeHtml(phase.goal)}</p>
+            </div>
+            <span class="phase-count">${tasks.length} 项</span>
+          </div>
+          <div class="tasks"></div>
+        `;
+        const list = section.querySelector(".tasks");
+        tasks.forEach((task) => list.appendChild(renderTask(task)));
+        board.appendChild(section);
+      });
+      empty.style.display = visible ? "none" : "block";
+      bindControls();
+      updateSummary();
+    }
+
+    function bindControls() {
+      document.querySelectorAll("[data-status]").forEach((select) => {
+        select.addEventListener("change", () => setStatus(select.dataset.status, select.value));
+      });
+      document.querySelectorAll("[data-check-task]").forEach((box) => {
+        box.addEventListener("change", () => setChecked(box.dataset.checkTask, box.dataset.checkIndex, box.checked));
+      });
+    }
+
+    function updateSummary() {
+      const total = TASKS.length;
+      const done = TASKS.filter((task) => getStatus(task) === "done").length;
+      const doing = TASKS.filter((task) => getStatus(task) === "doing").length;
+      const blocked = TASKS.filter((task) => getStatus(task) === "blocked").length;
+      const overall = Math.round(TASKS.reduce((sum, task) => sum + effectiveCompletion(task), 0) / total);
+      document.getElementById("overallText").textContent = `${overall}%`;
+      document.getElementById("overallBar").style.width = `${overall}%`;
+      document.getElementById("taskCount").textContent = total;
+      document.getElementById("doingCount").textContent = doing;
+      document.getElementById("doneCount").textContent = done;
+      document.getElementById("blockedCount").textContent = blocked;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll("\n", " ");
+    }
+
+    searchInput.addEventListener("input", () => {
+      state.filters.query = searchInput.value;
+      render();
+    });
+
+    const resetButton = document.createElement("button");
+    resetButton.type = "button";
+    resetButton.textContent = "重置进度";
+    resetButton.addEventListener("click", () => {
+      if (!confirm("确认重置本页进度？")) return;
+      localStorage.removeItem(STORAGE_KEY);
+      state.statuses = {};
+      state.checks = {};
+      render();
+    });
+    document.querySelector(".toolbar").appendChild(resetButton);
+
+    loadState();
+    render();
+  </script>
+</body>
+</html>
