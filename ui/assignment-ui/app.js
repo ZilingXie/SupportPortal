@@ -3,6 +3,7 @@ const ASSIGNMENT_SHIFT_KEY = "supportportal_assignment_daily_shift";
 const ASSIGNMENT_ACTIVE_TICKET_KEY = "supportportal_assignment_active_ticket";
 const ASSIGNMENT_QUEUE_KEY = "supportportal_assignment_queue";
 const ASSIGNMENT_EVENTS_KEY = "supportportal_assignment_events";
+const ASSIGNMENT_SIDEBAR_KEY = "supportportal_assignment_sidebar_collapsed";
 const SLA_MS = 3 * 60 * 60 * 1000;
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -23,27 +24,63 @@ const INITIAL_QUEUE = [
     title: "Black screen after firmware update",
     clientTicket: "TK-040",
     requester: "Acme Operations",
-    issue: "Client AI opened this Engineer Ticket for one unresolved display issue.",
+    priority: "First response",
+    issue:
+      "Customer says the device completed a firmware update, rebooted, and now shows a black screen while the power LED remains on.",
+    context: [
+      "Client AI opened this Engineer Ticket for one unresolved display issue.",
+      "Last customer message: It finished updating, restarted, then the screen stayed black.",
+      "Device telemetry still reports heartbeat and normal temperature.",
+    ],
+    investigation: [
+      "Display service is likely not restarting after firmware update.",
+      "Power and telemetry signals reduce the likelihood of a full device failure.",
+      "Customer-safe next step is service restart before replacement scheduling.",
+    ],
     draft:
-      "Hi there, we found that the device is booting but the display service is not restarting after the firmware update. Please restart the display service once, then confirm whether the screen returns before we schedule a replacement.",
+      "Hi there, we found that the device is still online after the firmware update, but the display service may not have restarted correctly. Please restart the display service once and confirm whether the screen comes back. If it stays black after that restart, we will move to the replacement path.",
   },
   {
     id: "TK-041-1",
     title: "VPN connection drops every 20 minutes",
     clientTicket: "TK-041",
     requester: "Northwind IT",
-    issue: "Client AI needs engineer confirmation before sending network remediation steps.",
+    priority: "Regular response",
+    issue:
+      "Customer reports the VPN stays connected for roughly 20 minutes, then disconnects without a visible client-side error.",
+    context: [
+      "Client AI needs engineer confirmation before sending network remediation steps.",
+      "Gateway logs show repeated session rekey events.",
+      "No account lockout or credential error is present.",
+    ],
+    investigation: [
+      "Drop timing matches a session rekey mismatch.",
+      "Current gateway policy requires the updated VPN profile.",
+      "Ask for tunnel log timestamp only if the profile update does not resolve the drop.",
+    ],
     draft:
-      "Hi there, the logs point to a session rekey mismatch. Please update the VPN profile to the current gateway policy and reconnect. If the drop repeats, send us the latest tunnel log timestamp.",
+      "Hi there, the logs point to a VPN session rekey mismatch rather than an account issue. Please update the VPN profile to the current gateway policy and reconnect. If the connection still drops, send us the latest tunnel log timestamp so we can compare it against the gateway event.",
   },
   {
     id: "TK-042-1",
     title: "Billing export missing settled route items",
     clientTicket: "TK-042",
     requester: "Finance Admin",
-    issue: "Client AI escalated one precise product question for engineer review.",
+    priority: "Regular response",
+    issue:
+      "Customer generated a billing export and cannot find settled route items that should be included in monthly reconciliation.",
+    context: [
+      "Client AI escalated one precise product question for engineer review.",
+      "The selected export type currently includes only open route items.",
+      "Settled items are present when the report scope is widened.",
+    ],
+    investigation: [
+      "The data exists; the issue is report scope selection.",
+      "No backend data repair is needed for this customer.",
+      "Customer should regenerate with All route items.",
+    ],
     draft:
-      "Hi there, the export is filtering out settled route items because the selected report type only includes open items. Switch the report scope to All route items, then regenerate the export.",
+      "Hi there, the settled route items are available, but the export you selected only includes open items. Please change the report scope to All route items and regenerate the export. The settled route items should appear in that version.",
   },
 ];
 
@@ -53,6 +90,7 @@ let shift = readStorage(ASSIGNMENT_SHIFT_KEY, DEFAULT_SHIFT);
 let activeTicket = readStorage(ASSIGNMENT_ACTIVE_TICKET_KEY, null);
 let queue = readStorage(ASSIGNMENT_QUEUE_KEY, INITIAL_QUEUE);
 let events = readStorage(ASSIGNMENT_EVENTS_KEY, []);
+let sidebarCollapsed = readStorage(ASSIGNMENT_SIDEBAR_KEY, false);
 
 const root = document.getElementById("assignment-root");
 
@@ -160,6 +198,28 @@ function saveActiveTicket() {
   writeStorage(ASSIGNMENT_ACTIVE_TICKET_KEY, activeTicket);
 }
 
+function autoAssignIfEligible() {
+  if (!canAssign() || queue.length === 0) return false;
+  const [next, ...rest] = queue;
+  activeTicket = { ...next, assignedAt: Date.now(), engineerId: selectedEngineerId };
+  queue = rest;
+  saveActiveTicket();
+  saveQueue();
+  addEvent("Engineer Ticket auto-assigned", `${activeTicket.id} assigned to ${selectedEngineerId}.`);
+  return true;
+}
+
+function pauseAssignmentOutsideShift() {
+  if (isInShift() || !activeTicket) return false;
+  const { assignedAt, engineerId, ...ticket } = activeTicket;
+  queue = [ticket, ...queue];
+  activeTicket = null;
+  saveActiveTicket();
+  saveQueue();
+  addEvent("Assignment paused", `${ticket.id} returned to queue because ${selectedEngineerId} is out of shift.`);
+  return true;
+}
+
 function renderLogin() {
   const selected = getCandidateEngineer();
   root.innerHTML = `
@@ -173,28 +233,28 @@ function renderLogin() {
               <strong>SupportPortal</strong>
             </div>
           </div>
-          <h1>Shift-aware assignment.</h1>
+          <h1>Start solving the assigned problem.</h1>
           <p class="intro-copy">
-            Mock the first assignment surface without changing the existing Engineer Portal.
+            Sign in with a demo engineer. If the engineer is in shift, the next mock Engineer Ticket is assigned automatically.
           </p>
         </div>
         <ul class="policy-list" aria-label="Assignment policy">
-          <li><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span>UTC+8 daily shift controls assignment eligibility.</span></li>
-          <li><span class="material-symbols-outlined" aria-hidden="true">filter_1</span><span>One engineer works one active Engineer Ticket at a time.</span></li>
-          <li><span class="material-symbols-outlined" aria-hidden="true">timer</span><span>3h SLA from assign drives timeout and transfer state.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span>Outside shift: no active ticket, wait until shift starts.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">assignment</span><span>Inside shift: one Engineer Ticket is auto-assigned.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">fact_check</span><span>Engineer AI drafts the customer reply; the engineer approves and sends.</span></li>
         </ul>
       </aside>
       <section class="selector-panel">
         <div class="panel-head">
           <p class="eyebrow">Choose a demo engineer</p>
-          <h2>Start with a shift identity</h2>
+          <h2>Engineer login</h2>
           <p>Selection is stored locally for this mock assignment UI.</p>
         </div>
         <div id="engineer-selector" class="engineer-selector-grid" role="radiogroup" aria-label="Choose a demo engineer">
           ${DEMO_ENGINEERS.map((engineer) => renderEngineerOption(engineer, engineer.id === selected.id)).join("")}
         </div>
         <button class="primary-action" type="button" data-action="enter-workspace">
-          Enter assignment workspace
+          Enter problem workspace
           <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
         </button>
       </section>
@@ -227,192 +287,204 @@ function renderWorkspace() {
     renderLogin();
     return;
   }
+  pauseAssignmentOutsideShift();
+  autoAssignIfEligible();
   const inShift = isInShift();
   const eligible = canAssign();
   const sla = ticketSlaState();
   root.innerHTML = `
-    <section class="workspace-view">
-      <header class="workspace-topbar">
-        <div class="workspace-identity">
-          <span class="engineer-avatar" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
-          <div>
-            <p class="eyebrow">Engineer Assignment</p>
-            <h1>${escapeHtml(engineer.name)}</h1>
+    <section class="assignment-shell ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}">
+      ${renderSidebarHtml(engineer, inShift, eligible, sla)}
+      <main class="problem-workspace" aria-label="Problem workspace">
+        ${renderWorkspaceHeaderHtml(inShift, sla)}
+        ${activeTicket ? renderActiveTicketHtml(activeTicket, sla) : renderNoTicketHtml(inShift, eligible)}
+      </main>
+    </section>
+  `;
+}
+
+function renderSidebarHtml(engineer, inShift, eligible, sla) {
+  return `
+    <aside class="assignment-sidebar" aria-label="Engineer context">
+      <button class="sidebar-toggle" type="button" data-action="toggle-sidebar" aria-label="${sidebarCollapsed ? "Show engineer context" : "Hide engineer context"}">
+        <span class="material-symbols-outlined" aria-hidden="true">${sidebarCollapsed ? "keyboard_double_arrow_right" : "keyboard_double_arrow_left"}</span>
+      </button>
+      <div class="sidebar-inner">
+        <section class="engineer-context-card">
+          <div class="sidebar-profile">
+            <span class="engineer-avatar" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
+            <div>
+              <p class="eyebrow">Engineer context</p>
+              <h2>${escapeHtml(engineer.name)}</h2>
+              <p>${escapeHtml(engineer.role)}</p>
+            </div>
+          </div>
+          <div class="status-pills">
+            <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
+            <span class="status-pill ${eligible ? "is-success" : "is-warning"}">${eligible ? "Eligible for assignment" : "Not assignable"}</span>
+          </div>
+        </section>
+
+        <section class="context-panel">
+          <div class="panel-head">
+            <p class="eyebrow">UTC+8 daily shift</p>
+            <h3>Shift schedule</h3>
             <p>${formatUtc8Time()}</p>
           </div>
-        </div>
-        <div class="topbar-actions">
+          <form class="shift-form" data-shift-form>
+            <label class="field">
+              <span class="field-label">Start</span>
+              <input name="start" type="time" value="${escapeHtml(shift.start)}" required />
+            </label>
+            <label class="field">
+              <span class="field-label">End</span>
+              <input name="end" type="time" value="${escapeHtml(shift.end)}" required />
+            </label>
+            <button class="secondary-action" type="submit">Save shift</button>
+          </form>
+        </section>
+
+        <section class="context-panel">
+          <div class="panel-head">
+            <p class="eyebrow">Assignment</p>
+            <h3>${activeTicket ? "One active ticket" : "No active Engineer Ticket"}</h3>
+            <p>${activeTicket ? `${activeTicket.id} is locked until reply is sent.` : `${queue.length} tickets waiting in mock queue.`}</p>
+          </div>
+          <div class="sidebar-metrics">
+            <span><strong>${queue.length}</strong> waiting</span>
+            <span><strong>3h</strong> SLA</span>
+            <span><strong>${escapeHtml(sla.label)}</strong></span>
+          </div>
+        </section>
+
+        <section class="context-panel">
+          <div class="panel-head">
+            <p class="eyebrow">Audit trail</p>
+            <h3>Mock events</h3>
+          </div>
+          <div class="event-list">
+            ${events.map((event) => `
+              <article class="event-item">
+                <strong>${escapeHtml(event.title)}</strong>
+                <p>${escapeHtml(event.detail)} · ${escapeHtml(event.createdAt)}</p>
+              </article>
+            `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
+          </div>
+        </section>
+
+        <div class="sidebar-actions">
           <button class="ghost-action" type="button" data-action="reset-demo">Reset mock data</button>
-          <button class="secondary-action" type="button" data-action="sign-out">Change engineer</button>
+          <button class="ghost-action" type="button" data-action="sign-out">Change engineer</button>
         </div>
-      </header>
-
-      ${renderAssignmentStatusStripHtml({ engineer, inShift, eligible, sla })}
-
-      <div class="workspace-grid">
-        <aside class="side-stack">
-          ${renderShiftPanelHtml(inShift)}
-          ${renderQueuePanelHtml()}
-          ${renderEventPanelHtml()}
-        </aside>
-        <main class="main-stack">
-          <section class="ticket-workbench" aria-label="Current assignment workbench">
-            ${activeTicket ? renderActiveTicketHtml(activeTicket, sla) : renderEmptyTicketHtml(eligible)}
-          </section>
-        </main>
       </div>
-    </section>
+    </aside>
   `;
 }
 
-function renderAssignmentStatusStripHtml({ engineer, inShift, eligible, sla }) {
+function renderWorkspaceHeaderHtml(inShift, sla) {
+  const title = activeTicket ? activeTicket.title : inShift ? "No active Engineer Ticket" : "Waiting for your UTC+8 shift";
   return `
-    <section class="assignment-status-strip" aria-label="Assignment status">
-      <article class="metric-tile">
-        <span class="metric-label">Engineer</span>
-        <strong class="metric-value">${escapeHtml(engineer.name)}</strong>
-        <p class="metric-note">Demo selector login</p>
-      </article>
-      <article class="metric-tile">
-        <span class="metric-label">UTC+8 daily shift</span>
-        <strong class="metric-value">${escapeHtml(shift.start)}-${escapeHtml(shift.end)}</strong>
-        <p class="metric-note">${inShift ? "In shift" : "Out of shift"}</p>
-      </article>
-      <article class="metric-tile">
-        <span class="metric-label">Assignment</span>
-        <strong class="metric-value">${eligible ? "Eligible for assignment" : "Not assignable"}</strong>
-        <p class="metric-note">${activeTicket ? "Active Engineer Ticket locked" : "Single-case policy"}</p>
-      </article>
-      <article class="metric-tile">
-        <span class="metric-label">SLA Policy</span>
-        <strong class="metric-value">3h SLA from assign</strong>
-        <p class="metric-note">${escapeHtml(sla.label)}</p>
-      </article>
-    </section>
-  `;
-}
-
-function renderShiftPanelHtml(inShift) {
-  return `
-    <section class="shift-panel">
-      <div class="panel-head">
-        <p class="eyebrow">UTC+8 daily shift</p>
-        <h2>Shift schedule</h2>
-        <p>Manual fixed daily hours for this prototype.</p>
+    <header class="workspace-header">
+      <div>
+        <p class="eyebrow">Problem workspace</p>
+        <h1>${escapeHtml(title)}</h1>
+        <p>${activeTicket ? "Work the assigned problem with Engineer AI, then send the customer-facing reply." : "Assignment will begin automatically when the engineer is eligible."}</p>
       </div>
-      <div class="status-pills">
-        <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
-        <span class="status-pill ${canAssign() ? "is-success" : "is-warning"}">${canAssign() ? "Eligible for assignment" : "Not assignable"}</span>
-      </div>
-      <form class="shift-form" data-shift-form>
-        <label class="field">
-          <span class="field-label">Start</span>
-          <input name="start" type="time" value="${escapeHtml(shift.start)}" required />
-        </label>
-        <label class="field">
-          <span class="field-label">End</span>
-          <input name="end" type="time" value="${escapeHtml(shift.end)}" required />
-        </label>
-        <button class="primary-action" type="submit">Save shift</button>
-      </form>
-    </section>
-  `;
-}
-
-function renderQueuePanelHtml() {
-  return `
-    <section class="queue-panel">
-      <div class="panel-head">
-        <p class="eyebrow">Mock queue</p>
-        <h2>Waiting Engineer Tickets</h2>
-        <p>${queue.length} one-question Engineer Tickets waiting.</p>
-      </div>
-      <div class="queue-actions">
-        <button class="primary-action" type="button" data-action="assign-next" ${canAssign() ? "" : "disabled"}>
-          Assign next mock ticket
+      <div class="workspace-header-actions">
+        <span class="current-ticket-sla ${escapeHtml(sla.className)}">${escapeHtml(sla.label)}</span>
+        <button class="ghost-action mobile-sidebar-action" type="button" data-action="toggle-sidebar">
+          <span class="material-symbols-outlined" aria-hidden="true">left_panel_open</span>
+          Engineer context
         </button>
       </div>
-      <div class="queue-list">
-        ${queue.map((ticket) => `
-          <article class="queue-item">
-            <strong>${escapeHtml(ticket.id)} · ${escapeHtml(ticket.title)}</strong>
-            <p>${escapeHtml(ticket.requester)} · Client Ticket ${escapeHtml(ticket.clientTicket)}</p>
-          </article>
-        `).join("") || '<article class="queue-item"><strong>Queue clear</strong><p>No mock Engineer Tickets are waiting.</p></article>'}
-      </div>
-    </section>
-  `;
-}
-
-function renderEventPanelHtml() {
-  return `
-    <section class="event-panel">
-      <div class="panel-head">
-        <p class="eyebrow">Audit trail</p>
-        <h2>Mock events</h2>
-      </div>
-      <div class="event-list">
-        ${events.map((event) => `
-          <article class="event-item">
-            <strong>${escapeHtml(event.title)}</strong>
-            <p>${escapeHtml(event.detail)} · ${escapeHtml(event.createdAt)}</p>
-          </article>
-        `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
-      </div>
-    </section>
+    </header>
   `;
 }
 
 function renderActiveTicketHtml(ticket, sla) {
   return `
-    <section class="current-ticket-card">
-      <div class="ticket-head">
-        <div>
-          <p class="ticket-kicker">Current Engineer Ticket</p>
-          <h2>${escapeHtml(ticket.title)}</h2>
-          <div class="ticket-meta">
-            <span>${escapeHtml(ticket.id)}</span>
-            <span>Client Ticket ${escapeHtml(ticket.clientTicket)}</span>
-            <span>${escapeHtml(ticket.requester)}</span>
+    <article class="solver-board">
+      <section class="problem-card customer-problem-card">
+        <div class="section-head">
+          <div>
+            <p class="ticket-kicker">Current Engineer Ticket</p>
+            <h2>Customer problem</h2>
+          </div>
+          <span class="priority-chip">${escapeHtml(ticket.priority)}</span>
+        </div>
+        <div class="ticket-meta">
+          <span>${escapeHtml(ticket.id)}</span>
+          <span>Client Ticket ${escapeHtml(ticket.clientTicket)}</span>
+          <span>${escapeHtml(ticket.requester)}</span>
+        </div>
+        <p class="problem-statement">${escapeHtml(ticket.issue)}</p>
+      </section>
+
+      <section class="problem-card context-card">
+        <div class="section-head">
+          <div>
+            <p class="ticket-kicker">Client AI context</p>
+            <h2>Known facts</h2>
           </div>
         </div>
-        <span class="current-ticket-sla ${escapeHtml(sla.className)}">${escapeHtml(sla.label)}</span>
-      </div>
-      <p>${escapeHtml(ticket.issue)}</p>
-      <section class="draft-panel">
-        <p class="eyebrow">Engineer AI Draft Customer Reply</p>
-        <p>${escapeHtml(ticket.draft)}</p>
+        <ul class="evidence-list">
+          ${ticket.context.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+        </ul>
       </section>
-      <div class="ticket-actions">
-        <button class="primary-action" type="button" data-action="approve-ticket">
-          Approve & send customer reply
-        </button>
-        <button class="secondary-action" type="button" data-action="simulate-timeout">
-          Simulate timeout
-        </button>
-      </div>
-      ${sla.overdue ? `
-        <div class="draft-panel" role="status">
-          <p class="eyebrow">Timeout transfer</p>
-          <p>mark engineer timeout, then transfer to next eligible engineer when available.</p>
+
+      <section class="problem-card investigation-panel">
+        <div class="section-head">
+          <div>
+            <p class="ticket-kicker">Engineer AI investigation</p>
+            <h2>Working conclusion</h2>
+          </div>
+          <span class="status-pill ${sla.overdue ? "is-danger" : "is-success"}">${sla.overdue ? "Timeout transfer" : "Ready to review"}</span>
         </div>
-      ` : ""}
-    </section>
+        <ol class="investigation-list">
+          ${ticket.investigation.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+        </ol>
+        ${sla.overdue ? `
+          <div class="timeout-callout" role="status">
+            <strong>Timeout transfer</strong>
+            <p>mark engineer timeout, then transfer to next eligible engineer when available.</p>
+          </div>
+        ` : ""}
+      </section>
+
+      <section class="problem-card reply-panel">
+        <div class="section-head">
+          <div>
+            <p class="ticket-kicker">Draft Customer Reply</p>
+            <h2>Approve final reply</h2>
+          </div>
+        </div>
+        <div class="draft-body">${escapeHtml(ticket.draft)}</div>
+        <div class="ticket-actions">
+          <button class="primary-action" type="button" data-action="approve-ticket">
+            Approve & send customer reply
+          </button>
+          <button class="secondary-action" type="button" data-action="simulate-timeout">
+            Simulate timeout
+          </button>
+        </div>
+      </section>
+    </article>
   `;
 }
 
-function renderEmptyTicketHtml(eligible) {
+function renderNoTicketHtml(inShift, eligible) {
+  const title = inShift ? "No active Engineer Ticket" : "Waiting for your UTC+8 shift";
+  const body = inShift
+    ? "You are in shift, but the mock queue is empty. New Engineer Tickets will appear here automatically when available."
+    : "You are signed in, but assignment is paused outside your shift. When the UTC+8 shift starts, the next Engineer Ticket will be assigned automatically.";
   return `
-    <section class="current-ticket-card empty-ticket">
-      <span class="material-symbols-outlined" aria-hidden="true">assignment</span>
+    <section class="no-ticket-state">
+      <span class="material-symbols-outlined" aria-hidden="true">${inShift ? "assignment_turned_in" : "schedule"}</span>
       <div>
-        <p class="ticket-kicker">Current Engineer Ticket</p>
-        <h2>${eligible ? "Ready for next assignment" : "No assignable state"}</h2>
+        <p class="ticket-kicker">${eligible ? "Ready" : "No active Engineer Ticket"}</p>
+        <h2>${title}</h2>
+        <p>${body}</p>
       </div>
-      <p>${eligible ? "Assign the next mock ticket from the queue." : "Log in, stay inside shift, and finish any active ticket before assignment."}</p>
-      <button class="primary-action" type="button" data-action="assign-next" ${eligible ? "" : "disabled"}>
-        Assign next mock ticket
-      </button>
     </section>
   `;
 }
@@ -421,17 +493,6 @@ function enterWorkspace() {
   selectedEngineerId = getCandidateEngineer().id;
   writeStorage(ASSIGNMENT_AUTH_KEY, selectedEngineerId);
   addEvent("Engineer selected", `${selectedEngineerId} opened /assignment.`);
-  renderWorkspace();
-}
-
-function assignNextTicket() {
-  if (!canAssign() || queue.length === 0) return;
-  const [next, ...rest] = queue;
-  activeTicket = { ...next, assignedAt: Date.now(), engineerId: selectedEngineerId };
-  queue = rest;
-  saveActiveTicket();
-  saveQueue();
-  addEvent("Engineer Ticket assigned", `${activeTicket.id} assigned to ${selectedEngineerId}.`);
   renderWorkspace();
 }
 
@@ -474,6 +535,12 @@ function resetDemo() {
   renderWorkspace();
 }
 
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed;
+  writeStorage(ASSIGNMENT_SIDEBAR_KEY, sidebarCollapsed);
+  renderWorkspace();
+}
+
 root.addEventListener("click", (event) => {
   const engineerButton = event.target.closest("[data-engineer-id]");
   if (engineerButton) {
@@ -491,10 +558,10 @@ root.addEventListener("click", (event) => {
     localStorage.removeItem(ASSIGNMENT_AUTH_KEY);
     renderLogin();
   }
-  if (action === "assign-next") assignNextTicket();
   if (action === "approve-ticket") approveTicket();
   if (action === "simulate-timeout") simulateTimeout();
   if (action === "reset-demo") resetDemo();
+  if (action === "toggle-sidebar") toggleSidebar();
 });
 
 root.addEventListener("submit", (event) => {
