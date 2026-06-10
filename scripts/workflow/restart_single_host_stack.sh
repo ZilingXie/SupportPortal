@@ -131,6 +131,13 @@ else
   "$SCRIPT_DIR/ensure_local_db_relay.sh"
 fi
 
+if [[ -z "${AWS_REGION:-}" && -n "${ASSET_S3_REGION:-}" ]]; then
+  export AWS_REGION="$ASSET_S3_REGION"
+fi
+if [[ -z "${AWS_DEFAULT_REGION:-}" && -n "${ASSET_S3_REGION:-}" ]]; then
+  export AWS_DEFAULT_REGION="$ASSET_S3_REGION"
+fi
+
 export APP_BUILD_REF
 export APP_BUILD_TIME
 export APP_RUNTIME_IMAGE
