@@ -396,7 +396,7 @@
   <header>
     <div class="header-inner">
       <h1>Engineer Portal / 工单分配追踪计划</h1>
-      <p class="subtitle">目标是先解决 Tier One 工单流转、在线状态、单 case 分配、内部 SLA、超时转派和过程审计；真正的 Engineer AI 调查能力放到后续增强。</p>
+      <p class="subtitle">目标是先解决由 Client AI 创建的 Engineer 工单流转、UTC+8 shift 排班、shift 内分配、单 case 处理、3 小时 SLA、超时转派和过程审计；Engineer AI 调查与批准回复沿用现有 Engineer 端闭环。</p>
     </div>
   </header>
 
@@ -452,7 +452,7 @@
       {
         id: "model",
         title: "一、分配模型",
-        goal: "先把工单生命周期、在线状态、单 case 分配和优先级策略定义清楚。"
+        goal: "先把 Engineer 工单定义、shift 排班、分配资格、单 case 分配和优先级策略定义清楚。"
       },
       {
         id: "sla",
@@ -462,7 +462,7 @@
       {
         id: "portal",
         title: "三、Portal 操作台",
-        goal: "提供一个能处理、流转、同步 Zendesk 的最小工作台。"
+        goal: "提供登录、排班维护、当前工单处理、AI 草稿批准和客户回复发送的最小工作台。"
       },
       {
         id: "pilot",
@@ -476,24 +476,36 @@
         id: "ticket-lifecycle",
         phase: "model",
         module: "模型",
-        title: "定义工单生命周期",
-        text: "把一个 engineer case 拆成进入、分配、处理中、提交结论、关闭、客户再回复后的新回合。",
+        title: "定义 Engineer 工单生命周期",
+        text: "Engineer 工单由 Client AI 为一个客户问题创建；进入队列后等待分配，工程师与 Engineer AI 协作，批准面向客户的回复后关闭。",
         checks: [
-          "明确每个状态的进入条件。",
-          "明确每个状态允许的下一步。",
-          "客户再回复时按新问题或新回合处理。"
+          "明确 Engineer 工单不同于客户端 ticket，每个 Engineer 工单只对应一个问题。",
+          "明确进入队列、已分配、处理中、待批准回复、已回复客户、已关闭这些状态。",
+          "同一客户 ticket 后续提出新问题时创建新的 Engineer 工单。"
+        ]
+      },
+      {
+        id: "shift-schedule",
+        phase: "model",
+        module: "排班",
+        title: "设计 UTC+8 shift schedule",
+        text: "工程师需要有手动配置的 shift schedule，系统只在 UTC+8 shift 时间内把工单分配给该工程师。",
+        checks: [
+          "shift schedule 使用 UTC+8 作为统一时区。",
+          "工程师可以在 Engineer Portal 登录后查看和修改自己的 shift。",
+          "分配逻辑能判断当前时间是否落在工程师 shift 内。"
         ]
       },
       {
         id: "availability",
         phase: "model",
         module: "在线状态",
-        title: "设计 clock in / clock out",
-        text: "工程师在线才接 case；不在线时不会被分配新 case。",
+        title: "定义登录与分配资格",
+        text: "工程师登录后才进入 Engineer Portal；登录但不在 shift 内仍不能被分配新 Engineer 工单。",
         checks: [
-          "支持进入 available。",
-          "支持退出 available。",
-          "分配逻辑只选择 available 人员。"
+          "工程师必须登录后才可进入处理工作台。",
+          "登录状态和当前 UTC+8 shift 同时满足时才可被分配。",
+          "不在 shift 内的工程师不能收到新分配，即使已经登录。"
         ]
       },
       {
@@ -501,10 +513,10 @@
         phase: "model",
         module: "分配",
         title: "设计单 case 分配规则",
-        text: "每个人同时只处理一个 case，提交结果后再拿下一个。",
+        text: "工程师每次只处理一个 Engineer 工单；当前工单完成并回复客户后，系统才会分配下一个。",
         checks: [
-          "同一时间不会并行分配多个新 case。",
-          "完成当前 case 后才进入下一轮分配。",
+          "同一工程师同一时间不会并行分配多个 active Engineer 工单。",
+          "批准回复并发送给客户后才进入下一轮分配。",
           "队列中 case 有稳定排序规则。"
         ]
       },
@@ -525,11 +537,11 @@
         phase: "sla",
         module: "SLA",
         title: "定义内部处理 SLA",
-        text: "每个 case 在拿到后必须在固定时间内给出结论、建议回复或升级理由。",
+        text: "每个 Engineer 工单从成功 assign 给工程师开始计 3 小时，工程师和 Engineer AI 需要在 SLA 内产出并批准面向客户的回复。",
         checks: [
-          "SLA 从分配成功开始计时。",
-          "提交结果后停止计时。",
-          "升级人工或转派也要保留过程记录。"
+          "SLA 起点是分配成功时间，不是工单创建时间。",
+          "默认 SLA 时长为 3 小时。",
+          "工程师批准回复并发送给客户后停止计时。"
         ]
       },
       {
@@ -537,11 +549,11 @@
         phase: "sla",
         module: "转派",
         title: "设计超时转派",
-        text: "超时未处理时，系统把 case 转给下一个 available 人员，并保留原过程。",
+        text: "超过 3 小时未完成客户回复时，系统先标记原工程师超时，再把 Engineer 工单转给下一个符合登录和 shift 条件的工程师。",
         checks: [
-          "超时能被自动识别。",
+          "超时能被自动识别并关联到当前负责工程师。",
           "转派后能看到前后处理链路。",
-          "无人 available 时进入等待队列。"
+          "无人满足登录和 shift 条件时进入等待队列。"
         ]
       },
       {
@@ -549,11 +561,11 @@
         phase: "sla",
         module: "交接",
         title: "定义下班和未完成 case 的处理",
-        text: "先从简单规则开始：未完成 case 不做复杂 handover，优先通过转派和单 case 模型收口。",
+        text: "shift 结束前未完成的 Engineer 工单需要进入明确处理：完成回复、提交转派原因，或由系统按超时/下班规则重新分配。",
         checks: [
-          "退出 available 前处理当前 case。",
-          "无法完成时必须提交升级或转派原因。",
-          "后续再评估是否需要复杂 handover。"
+          "shift 结束后工程师不能再收到新分配。",
+          "当前工单无法完成时必须提交升级或转派原因。",
+          "转派事件保留原工程师已提供的信息和 Engineer AI 上下文。"
         ]
       },
       {
@@ -561,11 +573,11 @@
         phase: "sla",
         module: "审计",
         title: "记录关键事件",
-        text: "系统要记录分配、接手、提交、超时、转派、关闭这些事件，后续可以直接还原过程。",
+        text: "系统要记录创建、入队、分配、SLA 开始、接手、AI 草稿、批准回复、发送客户、超时、转派和关闭这些事件。",
         checks: [
-          "每次分配都有事件记录。",
+          "每个 Engineer 工单创建和分配都有事件记录。",
           "每次状态变化都有事件记录。",
-          "能按 case 还原完整过程。"
+          "能按 Engineer 工单还原完整处理链路和 SLA 责任人。"
         ]
       },
       {
@@ -573,11 +585,23 @@
         phase: "portal",
         module: "工作台",
         title: "设计最小处理页面",
-        text: "页面只服务当前 case：看客户问题、看 AI 建议、提交结论或升级理由。",
+        text: "页面只服务当前 Engineer 工单：看客户问题、看 Engineer AI 建议、补充调查信息、批准或要求修改客户回复。",
         checks: [
-          "当前 case 是页面主信息。",
-          "提交动作清楚可见。",
-          "没有同时处理多个 case 的入口。"
+          "当前 Engineer 工单是页面主信息。",
+          "Engineer AI 生成 Draft Customer Reply 后展示给工程师批准。",
+          "没有同时处理多个 Engineer 工单的入口。"
+        ]
+      },
+      {
+        id: "portal-login-shift",
+        phase: "portal",
+        module: "登录与排班",
+        title: "设计登录与 shift 维护页面",
+        text: "Engineer Portal 需要登录界面；登录后工程师可以维护自己的 UTC+8 shift schedule，并看到当前是否可接单。",
+        checks: [
+          "登录态决定是否能进入 Engineer Portal。",
+          "shift 编辑入口清楚可见。",
+          "页面明确展示当前是否在 shift 内、是否可被分配。"
         ]
       },
       {
@@ -585,11 +609,11 @@
         phase: "portal",
         module: "队列",
         title: "设计队列与运行视图",
-        text: "用于看当前队列、在线人数、处理中 case、超时风险和已转派 case。",
+        text: "用于看当前 Engineer 工单队列、登录且在 shift 内的人数、处理中工单、SLA 剩余时间、超时工程师和已转派工单。",
         checks: [
           "能看到等待队列长度。",
-          "能看到处理中 case 数。",
-          "能看到即将超时和已超时 case。"
+          "能看到处理中 Engineer 工单数。",
+          "能看到即将超时、已超时和已转派工单。"
         ]
       },
       {
@@ -597,23 +621,24 @@
         phase: "portal",
         module: "Zendesk",
         title: "定义 Zendesk 中转关系",
-        text: "Zendesk 仍是 source of truth；Portal 负责导入、分配、处理和回写。",
+        text: "客户端 ticket 仍是客户会话的 source of truth；Engineer 工单由 Client AI 为单个问题创建，Engineer Portal 负责分配、处理和回写客户回复。",
         checks: [
-          "新工单能进入 Portal。",
-          "Portal 结果能回写 Zendesk。",
-          "Zendesk 与 Portal 状态冲突时有处理规则。"
+          "Client AI 创建的新 Engineer 工单能进入 Portal 队列。",
+          "工程师批准的客户回复能按现有 Engineer 端闭环发送给客户。",
+          "客户端 ticket 后续新问题会创建新的 Engineer 工单。"
         ]
       },
       {
         id: "response-quality-check",
         phase: "portal",
         module: "质量",
-        title: "定义无效回复识别",
-        text: "避免只发礼貌话术但没有解决问题，例如只说正在查看、重复问已提供信息。",
+        title: "定义客户回复批准标准",
+        text: "Engineer AI 生成客户回复草稿，工程师批准后才发送给客户并关闭 Engineer 工单；无效回复不能通过批准。",
         checks: [
-          "提交内容必须包含结论、证据或明确下一步。",
+          "批准前必须存在 Draft Customer Reply。",
+          "回复必须包含结论、证据或明确下一步。",
           "重复索要已知信息会被标记。",
-          "纯礼貌回复不能算完成。"
+          "纯礼貌回复不能算完成，也不能关闭 Engineer 工单。"
         ]
       },
       {
@@ -633,10 +658,10 @@
         phase: "pilot",
         module: "指标",
         title: "定义试运行指标",
-        text: "核心看处理量、等待时间、超时、转派、有效回复比例和客户继续追问情况。",
+        text: "核心看处理量、等待时间、assign 后 3 小时 SLA、超时工程师、转派、有效回复比例和客户继续追问情况。",
         checks: [
           "能统计处理量。",
-          "能统计平均处理时间和超时次数。",
+          "能统计从 assign 到客户回复发送的平均处理时间和超时次数。",
           "能统计转派和升级人工原因。"
         ]
       },
