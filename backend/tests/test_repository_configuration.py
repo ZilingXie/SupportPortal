@@ -277,6 +277,21 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def record_engineer_hitl_feedback", repo_source)
         self.assertIn("def list_engineer_hitl_feedback", repo_source)
 
+    def test_ticket_storage_contract_includes_case_memory_ledger_table(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_case_memory_ledger", sql_source)
+        self.assertIn("memory_record_id TEXT PRIMARY KEY", sql_source)
+        self.assertIn("source_feedback_id TEXT NOT NULL REFERENCES support_engineer_hitl_feedback", sql_source)
+        self.assertIn("ledger_status TEXT NOT NULL", sql_source)
+        self.assertIn("retrieval_enabled BOOLEAN NOT NULL DEFAULT FALSE", sql_source)
+        self.assertIn("active_memory_status TEXT NOT NULL", sql_source)
+        self.assertIn("memory_schema_version TEXT NOT NULL", sql_source)
+        self.assertIn("support_case_memory_ledger", repo_source)
+        self.assertIn("def record_case_memory_ledger", repo_source)
+        self.assertIn("def list_case_memory_ledger", repo_source)
+
     def test_ticket_storage_contract_includes_support_ticket_message_meta(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")

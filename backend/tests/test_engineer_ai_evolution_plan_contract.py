@@ -46,3 +46,22 @@ class EngineerAiEvolutionPlanContractTests(unittest.TestCase):
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
+
+    def test_engineer_ai_evolution_html_tracks_case_memory_ledger_and_active_memory_split(self) -> None:
+        html_source = Path("docs/engineer_ai_evolution_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            "Case Memory Ledger",
+            "Active Retrieval Memory",
+            "support_case_memory_ledger",
+            "retrieval_enabled",
+            "ledger_only",
+            "candidate",
+            "active",
+            "所有 feedback 都进入 Case Memory Ledger",
+            "Engineer AI 只自动检索 Active Retrieval Memory",
+            "阶段 2A：Case Memory Ledger",
+            'data-task="case-memory-ledger"',
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)

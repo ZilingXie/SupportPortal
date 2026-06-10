@@ -5699,6 +5699,18 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         self.assertEqual(stored_feedback[0]["memory_candidate"], "needs_review")
         self.assertEqual(stored_feedback[0]["memory_safety"], "internal_only")
+        ledger_records = self.repository.list_case_memory_ledger("TK-INV-103-1")
+        self.assertEqual(len(ledger_records), 1)
+        self.assertEqual(ledger_records[0]["source_feedback_id"], "hitl_auto_TK-INV-103-1")
+        self.assertEqual(ledger_records[0]["ledger_status"], "candidate")
+        self.assertFalse(ledger_records[0]["retrieval_enabled"])
+        self.assertEqual(ledger_records[0]["active_memory_status"], "inactive")
+        self.assertEqual(ledger_records[0]["safety_label"], "internal_only")
+        self.assertEqual(ledger_records[0]["quality_label"], "candidate")
+        self.assertEqual(
+            ledger_records[0]["customer_safe_summary"],
+            "Please upgrade to SDK 4.2.2 and retry token renewal.",
+        )
 
     def test_confirmation_revise_records_engineer_note_and_keeps_investigation_active(self) -> None:
         self._seed_ticket(

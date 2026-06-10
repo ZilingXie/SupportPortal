@@ -105,6 +105,11 @@ class EngineerHitlFeedbackApiTests(unittest.TestCase):
         self.assertEqual(feedback["created_by"], "Jack")
         self.assertEqual(feedback["memory_candidate"], "needs_review")
         self.assertEqual(feedback["evidence_refs"][0]["source_id"], "chunk-123")
+        ledger_record = response.json()["case_memory_ledger"]
+        self.assertEqual(ledger_record["source_feedback_id"], feedback["feedback_id"])
+        self.assertEqual(ledger_record["ledger_status"], "candidate")
+        self.assertFalse(ledger_record["retrieval_enabled"])
+        self.assertEqual(ledger_record["active_memory_status"], "inactive")
 
         list_response = self.client.get("/api/engineer/tickets/TK-HITL-001-1/feedback")
 
@@ -114,6 +119,17 @@ class EngineerHitlFeedbackApiTests(unittest.TestCase):
         self.assertEqual(payload["client_ticket_id"], "TK-HITL-001")
         self.assertEqual(len(payload["feedback"]), 1)
         self.assertEqual(payload["feedback"][0]["feedback_id"], feedback["feedback_id"])
+
+        ledger_response = self.client.get(
+            "/api/engineer/tickets/TK-HITL-001-1/case-memory-ledger"
+        )
+
+        self.assertEqual(ledger_response.status_code, 200, msg=ledger_response.text)
+        ledger_payload = ledger_response.json()
+        self.assertEqual(ledger_payload["engineer_case_id"], "TK-HITL-001-1")
+        self.assertEqual(len(ledger_payload["ledger"]), 1)
+        self.assertEqual(ledger_payload["ledger"][0]["source_feedback_id"], feedback["feedback_id"])
+        self.assertFalse(ledger_payload["ledger"][0]["retrieval_enabled"])
 
     def test_engineer_hitl_feedback_rejects_missing_case(self) -> None:
         response = self.client.post(

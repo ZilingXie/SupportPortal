@@ -63,6 +63,7 @@ from backend.services.engineer_agent import (
     build_engineer_agent_brief,
     normalize_engineer_agent_state,
 )
+from backend.services.case_memory_ledger import build_case_memory_ledger_record_from_feedback
 from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
 from backend.services.engineer_evidence_tools import (
     search_engineer_evidence,
@@ -3711,6 +3712,28 @@ def get_ticket_summary(ticket_id: str) -> dict[str, Any]:
     }
 
 
+def _record_case_memory_ledger_from_feedback(feedback: dict[str, Any]) -> dict[str, Any]:
+    ledger_record = build_case_memory_ledger_record_from_feedback(feedback)
+    saved_record = ticket_repository.record_case_memory_ledger(ledger_record)
+    ticket_repository.record_engineer_case_event(
+        str(saved_record.get("engineer_case_id") or ""),
+        "case_memory_ledger_recorded",
+        {
+            "event": "case_memory_ledger_recorded",
+            "ticket_id": str(saved_record.get("engineer_case_id") or ""),
+            "client_ticket_id": str(saved_record.get("client_ticket_id") or ""),
+            "engineer_case_id": str(saved_record.get("engineer_case_id") or ""),
+            "memory_record_id": str(saved_record.get("memory_record_id") or ""),
+            "source_feedback_id": str(saved_record.get("source_feedback_id") or ""),
+            "ledger_status": str(saved_record.get("ledger_status") or ""),
+            "retrieval_enabled": bool(saved_record.get("retrieval_enabled")),
+            "active_memory_status": str(saved_record.get("active_memory_status") or ""),
+            "created_at": str(saved_record.get("created_at") or now_iso()),
+        },
+    )
+    return saved_record
+
+
 @app.post("/api/engineer/tickets/{ticket_id}/feedback")
 def record_engineer_hitl_feedback(
     ticket_id: str,
@@ -3756,6 +3779,7 @@ def record_engineer_hitl_feedback(
             "created_at": now_iso(),
         }
     )
+    ledger_record = _record_case_memory_ledger_from_feedback(feedback)
     ticket_repository.record_engineer_case_event(
         str(feedback.get("engineer_case_id") or ""),
         "engineer_hitl_feedback_recorded",
@@ -3771,7 +3795,7 @@ def record_engineer_hitl_feedback(
             "created_at": str(feedback.get("created_at") or now_iso()),
         },
     )
-    return {"ticket_id": ticket_id, "feedback": feedback}
+    return {"ticket_id": ticket_id, "feedback": feedback, "case_memory_ledger": ledger_record}
 
 
 @app.get("/api/engineer/tickets/{ticket_id}/feedback")
@@ -3790,6 +3814,28 @@ def list_engineer_hitl_feedback(
         "engineer_case_id": engineer_case_id,
         "client_ticket_id": client_ticket_id,
         "feedback": ticket_repository.list_engineer_hitl_feedback(
+            engineer_case_id,
+            limit=limit,
+        ),
+    }
+
+
+@app.get("/api/engineer/tickets/{ticket_id}/case-memory-ledger")
+def list_case_memory_ledger(
+    ticket_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    engineer_case = _resolve_engineer_case_payload(ticket_id)
+    if engineer_case is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    engineer_case_id = str(engineer_case.get("engineer_case_id") or ticket_id).strip()
+    client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
+    client_ticket_id = str(client_ref.get("ticket_id") or engineer_case.get("client_ticket_id") or "").strip()
+    return {
+        "ticket_id": ticket_id,
+        "engineer_case_id": engineer_case_id,
+        "client_ticket_id": client_ticket_id,
+        "ledger": ticket_repository.list_case_memory_ledger(
             engineer_case_id,
             limit=limit,
         ),
@@ -4258,6 +4304,7 @@ async def confirm_investigation_reply(
             created_at=timestamp,
         )
         saved_feedback = ticket_repository.record_engineer_hitl_feedback(auto_feedback)
+        _record_case_memory_ledger_from_feedback(saved_feedback)
         ticket_repository.record_engineer_case_event(
             str(saved_feedback.get("engineer_case_id") or ""),
             "engineer_hitl_feedback_auto_reviewed",
