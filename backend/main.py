@@ -1249,6 +1249,8 @@ def resolve_support_message(
 ) -> SupportResolution:
     return resolve_support_route_message(
         message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
