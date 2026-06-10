@@ -141,6 +141,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
+ASSIGNMENT_DIR = UI_DIR / "assignment-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 SHARED_UI_DIR = UI_DIR / "shared-ui"
 
@@ -450,6 +451,8 @@ if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
 if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
+if ASSIGNMENT_DIR.exists():
+    app.mount("/assignment", StaticFiles(directory=ASSIGNMENT_DIR, html=True), name="assignment-ui")
 if DASHBOARD_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard-ui")
 if SHARED_UI_DIR.exists():
@@ -1249,6 +1252,8 @@ def resolve_support_message(
 ) -> SupportResolution:
     return resolve_support_route_message(
         message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,

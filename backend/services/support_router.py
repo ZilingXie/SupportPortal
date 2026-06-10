@@ -9,6 +9,13 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from backend.services.api_semantics import is_api_semantics_mismatch_message
+from backend.services.billing_automation import (
+    BILLING_ROUTE_FAMILY,
+    BILLING_SCOPE_LABEL,
+    BILLING_TOOLING_PROFILE,
+    build_billing_automation_result,
+    detect_billing_route,
+)
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
     INTENT_ROUTER_SCENARIO,
@@ -183,6 +190,10 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
 
     if clean_scope == "ticket_resolution":
         return "ticket_resolution", "resolve_ticket", "deterministic_resolution"
+    if clean_scope == BILLING_SCOPE_LABEL:
+        if normalized_action in {"account_suspension", "detailed_invoice"}:
+            return BILLING_ROUTE_FAMILY, normalized_action, BILLING_TOOLING_PROFILE
+        return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
     if clean_scope == "agora_technical":
         return "agora_docs_rag", "rag", "agora_docs_only"
     if clean_scope == "agora_non_technical":
@@ -342,6 +353,17 @@ def _heuristic_route_decision(
     text = _normalize_text(message)
     if not text:
         return None
+
+    billing_match = detect_billing_route(text)
+    if billing_match is not None:
+        return _build_route_decision(
+            scope_label=BILLING_SCOPE_LABEL,
+            action=billing_match.action,
+            confidence=0.98,
+            reason=billing_match.reason,
+            matched_signals=_sanitize_matched_signals(billing_match.matched_signals),
+            response_language=response_language,
+        )
 
     if is_customer_resolved_confirmation_candidate(
         text,
@@ -538,16 +560,26 @@ def _llm_route_decision(
         LOGGER.warning("Intent router response did not return valid JSON")
         return None
     scope_label = _normalize_text(payload.get("scope_label")).lower()
-    if scope_label not in {"ticket_resolution", "small_talk", "non_agora", "agora_non_technical", "agora_technical"}:
+    if scope_label not in {
+        "ticket_resolution",
+        BILLING_SCOPE_LABEL,
+        "small_talk",
+        "non_agora",
+        "agora_non_technical",
+        "agora_technical",
+    }:
         return None
     try:
         confidence = float(payload.get("confidence") or 0.0)
     except (TypeError, ValueError):
         confidence = 0.0
     matched_signals = _sanitize_matched_signals(payload.get("matched_signals"))
+    action = _normalize_text(payload.get("action") or payload.get("execution_action")).lower()
+    if scope_label == BILLING_SCOPE_LABEL and action not in {"account_suspension", "detailed_invoice"}:
+        return None
     return _build_route_decision(
         scope_label=scope_label,
-        action="",
+        action=action,
         confidence=max(0.0, min(1.0, confidence)),
         reason=_normalize_text(payload.get("reason")) or "llm_fallback",
         matched_signals=matched_signals,
@@ -830,6 +862,8 @@ def search_agora_public_info(
 def resolve_support_message(
     message: str,
     *,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
@@ -848,6 +882,35 @@ def resolve_support_message(
         current_ticket_status=current_ticket_status,
         has_active_engineer_case=has_active_engineer_case,
     )
+    if decision.route_family == BILLING_ROUTE_FAMILY:
+        billing_result = build_billing_automation_result(
+            action=str(decision.execution_action or decision.route),
+            message=message,
+            ticket_id=ticket_id,
+            customer_email=customer_id,
+        )
+        return SupportResolution(
+            answer=billing_result.customer_reply,
+            confidence=round(decision.confidence, 2),
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="workflow",
+            scope_label=decision.scope_label,
+            route_family=decision.route_family,
+            execution_action=decision.execution_action,
+            tooling_profile=decision.tooling_profile,
+            route_reason=decision.reason,
+            route_confidence=decision.confidence,
+            search_used=False,
+            matched_signals=list(decision.matched_signals),
+            evidence_summary={
+                "billing_action": str(decision.execution_action or decision.route),
+                "billing_missing_fields": list(billing_result.missing_fields),
+                "billing_collected_fields": dict(billing_result.collected_fields),
+                **({"billing_internal_email": dict(billing_result.internal_email)} if billing_result.internal_email else {}),
+            },
+        )
     if decision.execution_action == "resolve_ticket":
         return SupportResolution(
             answer=build_resolved_confirmation_reply(message),
