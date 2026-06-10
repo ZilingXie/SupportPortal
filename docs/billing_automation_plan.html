@@ -398,7 +398,7 @@
   <header>
     <div class="header-inner">
       <h1>Billing 自动化追踪计划</h1>
-      <p class="subtitle">目标是先把低风险、规则清晰的 billing case 做成严格 workflow：AI 负责判断、追问和建议回复，高风险问题继续升级人工。</p>
+      <p class="subtitle">目标是先把低风险、规则清晰的 billing case 做成严格 workflow：AI 负责判断、追问、校验字段，信息齐全后告知客户已升级内部团队，并发送内部邮件。</p>
     </div>
   </header>
 
@@ -454,17 +454,17 @@
       {
         id: "scope",
         title: "一、收窄范围",
-        goal: "只接低风险、边界清楚、可以写成固定流程的 billing 小类。"
+        goal: "只接 account_suspension 和 detailed_invoice 两个边界清楚、可以写成固定流程的 billing 小类。"
       },
       {
         id: "workflow",
         title: "二、判断与回复流",
-        goal: "让 AI 做内容判断、信息追问和建议回复，不让它自由发挥。"
+        goal: "让 AI 做内容判断、信息追问、字段齐全校验和升级告知，不让它自由发挥。"
       },
       {
         id: "zendesk",
         title: "三、Zendesk 与人工审核",
-        goal: "先跑建议回复和人工审核，再决定哪些小类可以自动写回。"
+        goal: "先跑客户升级告知、内部邮件和人工可审计链路，再决定是否扩大自动化范围。"
       },
       {
         id: "pilot",
@@ -479,11 +479,11 @@
         phase: "scope",
         module: "范围",
         title: "定义 billing 白名单小类",
-        text: "先覆盖 invoice、fraud/company verification、缺信息追问；账单算错和计量计费异常暂不自动处理。",
+        text: "白名单 v1 只覆盖 account_suspension 和 detailed_invoice；统一流程是收集必要信息、校验字段齐全、告知客户已升级内部团队、发送内部邮件到固定邮箱。",
         checks: [
-          "列出每个小类的进入条件。",
-          "列出每个小类必须升级人工的条件。",
-          "明确哪些 billing 问题当前不接。"
+          "account_suspension 必填 Company name、Company location、Website、Contact email、Phone number、Use Case。",
+          "detailed_invoice 必填 Issue date、Transaction ID、Amount。",
+          "明确账单争议、扣费错误、退款、赔付和需要裁决的问题当前不接。"
         ]
       },
       {
@@ -491,11 +491,11 @@
         phase: "scope",
         module: "风险",
         title: "定义自动化边界",
-        text: "保持严格 detection：宁可少接，也不能把需要调查或赔付判断的问题交给自动化。",
+        text: "保持严格 detection：宁可少接，也不能把需要调查、赔付判断、账号恢复裁决或金额争议的问题交给自动化。",
         checks: [
-          "高风险 case 默认升级人工。",
+          "高风险 case 默认转人工处理。",
           "低置信判断默认升级人工。",
-          "客户乱选 ticket type 时不直接相信表单分类。"
+          "AI 不承诺账号恢复、invoice 生成结果、处理时效、退款或赔付。"
         ]
       },
       {
@@ -503,7 +503,7 @@
         phase: "scope",
         module: "测试集",
         title: "整理真实 case 测试集",
-        text: "从历史工单里挑样本，覆盖可自动处理、信息缺失、必须人工调查三类。",
+        text: "从历史工单里挑样本，覆盖 account_suspension、detailed_invoice、信息缺失、必须人工处理四类。",
         checks: [
           "每个样本有客户原始问题。",
           "每个样本有期望分类。",
@@ -519,43 +519,43 @@
         checks: [
           "输出分类结果。",
           "输出升级人工原因。",
-          "能识别 invoice、fraud/company verification、账单争议。"
+          "能识别 account_suspension、detailed_invoice、账单争议和非白名单 billing case。"
         ]
       },
       {
-        id: "billing-fraud-flow",
+        id: "billing-suspension-flow",
         phase: "workflow",
-        module: "验证",
-        title: "设计 company verification 追问流",
-        text: "需要 company name、company address、company phone 等信息，信息不完整时继续追问。",
+        module: "Account",
+        title: "设计 account_suspension 信息收集流",
+        text: "需要 Company name、Company location、Website、Contact email、Phone number、Use Case；信息不完整时继续追问。",
         checks: [
-          "信息齐全才进入下一步。",
-          "个人开发者场景有单独分支。",
-          "拒绝提供信息或无效信息时不继续自动推进。"
+          "信息齐全才告知客户已升级内部团队。",
+          "拒绝提供信息或无效信息时不发送内部邮件。",
+          "不承诺恢复账号或解释封禁裁决。"
         ]
       },
       {
         id: "billing-invoice-flow",
         phase: "workflow",
         module: "Invoice",
-        title: "设计 invoice 请求处理流",
-        text: "对简单 invoice 请求提供固定处理路径；超出简单请求时升级人工。",
+        title: "设计 detailed_invoice 信息收集流",
+        text: "需要 Issue date、Transaction ID、Amount；信息齐全后告知客户已升级内部团队，并进入内部邮件流程。",
         checks: [
-          "能识别客户只是要 invoice。",
+          "能识别客户只是要 detailed invoice。",
           "能识别客户在质疑金额或计费逻辑。",
-          "金额争议不会被当作简单 invoice 请求。"
+          "金额争议不会被当作 detailed_invoice 请求。"
         ]
       },
       {
         id: "billing-response-template",
         phase: "workflow",
         module: "回复",
-        title: "沉淀建议回复模板",
-        text: "每类场景使用固定结构回复，避免 client AI 过度 agent 化。",
+        title: "沉淀追问与升级告知模板",
+        text: "每类场景使用固定结构追问缺失字段；字段齐全后只告知客户已升级内部团队。",
         checks: [
           "模板语气适合客户沟通。",
           "模板只问必要信息。",
-          "模板不承诺无法确认的结果。"
+          "模板不承诺无法确认的结果、处理时效、退款或赔付。"
         ]
       },
       {
@@ -575,23 +575,24 @@
         phase: "zendesk",
         module: "审核",
         title: "建立人工审核模式",
-        text: "POC 阶段 AI 只生成建议回复，不直接发给客户。",
+        text: "POC 阶段人工可以审核客户升级告知和内部邮件内容，确认字段齐全后再启用自动发送。",
         checks: [
-          "人工可以确认建议回复是否可用。",
+          "人工可以确认升级告知是否可用。",
+          "人工可以确认内部邮件是否包含必填信息、ticket id 和客户原始问题。",
           "人工可以标记误判类型。",
           "审核结果能回流到测试集。"
         ]
       },
       {
-        id: "billing-zendesk-writeback",
+        id: "billing-internal-email",
         phase: "zendesk",
-        module: "Zendesk",
-        title: "验证写回 Zendesk",
-        text: "先写回 internal note 或建议 comment，自动公开回复放到后续白名单阶段。",
+        module: "邮件",
+        title: "验证内部邮件发送",
+        text: "字段齐全后发送内部邮件到固定邮箱；邮件包含白名单小类、必填信息、ticket id 和客户原始问题。",
         checks: [
-          "能写回建议回复。",
-          "能写回分类与升级原因。",
-          "写回动作可审计。"
+          "能发送到配置的固定内部邮箱。",
+          "能记录邮件发送状态和失败原因。",
+          "发送动作可审计且不会重复发送。"
         ]
       },
       {
