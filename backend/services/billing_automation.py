@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
+import smtplib
 from dataclasses import dataclass
+from email.message import EmailMessage
 from typing import Any
 
+
+LOGGER = logging.getLogger(__name__)
 
 BILLING_SCOPE_LABEL = "billing"
 BILLING_ROUTE_FAMILY = "billing_automation"
@@ -12,6 +17,15 @@ BILLING_TOOLING_PROFILE = "deterministic_billing_intake"
 BILLING_ACTION_ACCOUNT_SUSPENSION = "account_suspension"
 BILLING_ACTION_DETAILED_INVOICE = "detailed_invoice"
 BILLING_INTERNAL_EMAIL_ENV = "BILLING_AUTOMATION_INTERNAL_EMAIL"
+BILLING_INTERNAL_EMAIL_FROM_ENV = "BILLING_AUTOMATION_EMAIL_FROM"
+BILLING_SMTP_HOST_ENV = "BILLING_AUTOMATION_SMTP_HOST"
+BILLING_SMTP_PORT_ENV = "BILLING_AUTOMATION_SMTP_PORT"
+BILLING_SMTP_USERNAME_ENV = "BILLING_AUTOMATION_SMTP_USERNAME"
+BILLING_SMTP_PASSWORD_ENV = "BILLING_AUTOMATION_SMTP_PASSWORD"
+DEFAULT_BILLING_INTERNAL_EMAIL = "xieziling@agora.io"
+DEFAULT_BILLING_EMAIL_FROM = "xieziling97@163.com"
+DEFAULT_BILLING_SMTP_HOST = "smtp.163.com"
+DEFAULT_BILLING_SMTP_PORT = 465
 
 
 @dataclass(frozen=True)
@@ -137,8 +151,66 @@ def build_billing_automation_result(
     )
 
 
+def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[str, str]:
+    payload = dict(email_payload or {})
+    to_address = _clean_text(payload.get("to")) or DEFAULT_BILLING_INTERNAL_EMAIL
+    from_address = _clean_text(payload.get("from")) or DEFAULT_BILLING_EMAIL_FROM
+    subject = _clean_text(payload.get("subject"))
+    body = str(payload.get("body") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    smtp_host = _clean_text(os.getenv(BILLING_SMTP_HOST_ENV)) or DEFAULT_BILLING_SMTP_HOST
+    smtp_port = _safe_int(os.getenv(BILLING_SMTP_PORT_ENV), DEFAULT_BILLING_SMTP_PORT)
+    smtp_username = _clean_text(os.getenv(BILLING_SMTP_USERNAME_ENV)) or from_address
+    smtp_password = _clean_text(os.getenv(BILLING_SMTP_PASSWORD_ENV))
+
+    missing = [
+        name
+        for name, value in (
+            ("to", to_address),
+            ("from", from_address),
+            ("subject", subject),
+            ("body", body),
+            (BILLING_SMTP_PASSWORD_ENV, smtp_password),
+        )
+        if not value
+    ]
+    if missing:
+        return {
+            "status": "skipped_config_missing",
+            "reason": f"missing {', '.join(missing)}",
+        }
+
+    message = EmailMessage()
+    message["To"] = to_address
+    message["From"] = from_address
+    message["Subject"] = subject
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15) as smtp:
+            smtp.login(smtp_username, smtp_password)
+            smtp.send_message(message)
+    except Exception as exc:
+        LOGGER.warning("Billing internal email send failed: %s", exc)
+        return {
+            "status": "failed",
+            "reason": str(exc),
+        }
+    return {
+        "status": "sent",
+        "reason": "",
+    }
+
+
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _matched_signals(text: str, patterns: tuple[tuple[re.Pattern[str], str], ...]) -> list[str]:
@@ -203,7 +275,8 @@ def _build_internal_email(
 ) -> dict[str, str]:
     normalized_ticket_id = _clean_text(ticket_id) or "{{ticket_id}}"
     normalized_customer_email = _clean_text(customer_email) or "{{customer_email}}"
-    to_address = _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_ENV)) or "{{billing_internal_email}}"
+    to_address = _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_ENV)) or DEFAULT_BILLING_INTERNAL_EMAIL
+    from_address = _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_FROM_ENV)) or DEFAULT_BILLING_EMAIL_FROM
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
         subject = f"Account suspension review request - Ticket {normalized_ticket_id}"
         field_order = (
@@ -233,6 +306,7 @@ def _build_internal_email(
     )
     return {
         "to": to_address,
+        "from": from_address,
         "subject": subject,
         "body": body,
     }

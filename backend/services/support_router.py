@@ -15,6 +15,7 @@ from backend.services.billing_automation import (
     BILLING_TOOLING_PROFILE,
     build_billing_automation_result,
     detect_billing_route,
+    send_billing_internal_email,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
@@ -889,6 +890,11 @@ def resolve_support_message(
             ticket_id=ticket_id,
             customer_email=customer_id,
         )
+        email_send_result = (
+            send_billing_internal_email(billing_result.internal_email)
+            if billing_result.internal_email
+            else {"status": "not_ready", "reason": "missing_required_fields"}
+        )
         return SupportResolution(
             answer=billing_result.customer_reply,
             confidence=round(decision.confidence, 2),
@@ -908,6 +914,8 @@ def resolve_support_message(
                 "billing_action": str(decision.execution_action or decision.route),
                 "billing_missing_fields": list(billing_result.missing_fields),
                 "billing_collected_fields": dict(billing_result.collected_fields),
+                "billing_internal_email_send_status": str(email_send_result.get("status") or ""),
+                "billing_internal_email_send_reason": str(email_send_result.get("reason") or ""),
                 **({"billing_internal_email": dict(billing_result.internal_email)} if billing_result.internal_email else {}),
             },
         )
