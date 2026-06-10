@@ -174,6 +174,34 @@ CREATE TABLE IF NOT EXISTS support_engineer_hitl_feedback (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_case_memory_ledger (
+    memory_record_id TEXT PRIMARY KEY,
+    source_feedback_id TEXT NOT NULL REFERENCES support_engineer_hitl_feedback(feedback_id) ON DELETE CASCADE,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    feedback_type TEXT NOT NULL,
+    ledger_status TEXT NOT NULL,
+    retrieval_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    active_memory_status TEXT NOT NULL,
+    symptom TEXT,
+    root_cause TEXT,
+    solution TEXT,
+    customer_safe_summary TEXT,
+    internal_only_summary TEXT,
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    safety_label TEXT NOT NULL,
+    quality_label TEXT NOT NULL,
+    memory_schema_version TEXT NOT NULL,
+    prompt_version TEXT,
+    workflow_version TEXT,
+    tool_policy_version TEXT,
+    rag_access_policy_version TEXT,
+    evidence_packet_version TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
     ON support_tickets (status, updated_at DESC);
 
@@ -215,3 +243,12 @@ CREATE INDEX IF NOT EXISTS idx_support_engineer_hitl_feedback_case_created
 
 CREATE INDEX IF NOT EXISTS idx_support_engineer_hitl_feedback_ticket_created
     ON support_engineer_hitl_feedback (client_ticket_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_case_memory_ledger_case_created
+    ON support_case_memory_ledger (engineer_case_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_case_memory_ledger_ticket_created
+    ON support_case_memory_ledger (client_ticket_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_case_memory_ledger_retrieval
+    ON support_case_memory_ledger (retrieval_enabled, ledger_status, updated_at DESC);

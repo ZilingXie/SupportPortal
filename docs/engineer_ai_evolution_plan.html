@@ -708,6 +708,61 @@
       <div class="callout warn" style="margin-top: 14px;">
         <p><strong>写入门槛：</strong>approve 不等于 confirmed case。只有 memory_candidate=yes 且经过安全标签、摘要和脱敏的反馈，后续阶段才可以进入 Case Memory Layer 候选流程。AI 草稿、未验证 root cause、客户原始敏感信息和内部不可外泄细节不能直接写入长期记忆。</p>
       </div>
+      <h3 style="margin-top: 18px;">Case Memory Ledger 与 Active Retrieval Memory</h3>
+      <div class="callout">
+        <p><strong>阶段 2A 原则：</strong>所有 feedback 都进入 Case Memory Ledger；Engineer AI 只自动检索 Active Retrieval Memory。Ledger 是完整审计账本，Active Retrieval Memory 是经过人工或规则晋升后的可召回知识子集。</p>
+      </div>
+      <table style="margin-top: 14px;">
+        <thead>
+          <tr>
+            <th>层级</th>
+            <th>写入范围</th>
+            <th>默认状态</th>
+            <th>用途</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Case Memory Ledger</td>
+            <td>approve、revise、reject、resolve、reopen 等所有结构化 HITL feedback。</td>
+            <td>support_case_memory_ledger；retrieval_enabled=false；active_memory_status=inactive。</td>
+            <td>保留学习来源、纠正内容、质量标签、安全标签和版本字段，供审计、复盘、晋升和离线 eval 使用。</td>
+          </tr>
+          <tr>
+            <td>Active Retrieval Memory</td>
+            <td>只包含从 Ledger 中通过安全、质量和确认门禁晋升的记录。</td>
+            <td>retrieval_enabled=true；active_memory_status=active。</td>
+            <td>后续阶段作为 Engineer AI 的自动相似案例召回来源；不会直接暴露给 client AI。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="tile">
+          <strong>Ledger 状态流</strong>
+          <p>ledger_only 表示只保留审计；candidate 表示可进入晋升审查；active 表示已进入主动召回；rejected 或 superseded 表示被否决或被新记录替代。</p>
+        </div>
+        <div class="tile">
+          <strong>Phase 2A 不做的事</strong>
+          <p>不接入 Mem0，不让 Engineer AI 自动检索 Ledger，不把 memory_candidate 直接等同于 confirmed case。</p>
+        </div>
+      </div>
+      <div class="code" style="margin-top: 14px;">{
+  "table": "support_case_memory_ledger",
+  "memory_record_id": "cm_${source_feedback_id}",
+  "source_feedback_id": "...",
+  "ledger_status": "ledger_only | candidate | active | rejected | superseded",
+  "retrieval_enabled": false,
+  "active_memory_status": "inactive | active | disabled | superseded",
+  "symptom": "...",
+  "root_cause": "...",
+  "solution": "...",
+  "customer_safe_summary": "...",
+  "internal_only_summary": "...",
+  "safety_label": "customer_safe | internal_only | do_not_store",
+  "quality_label": "candidate | ledger_only | rejected_feedback | active_ready",
+  "memory_schema_version": "case-memory-ledger-v1",
+  "metadata": {"memory_candidate": "yes | no | needs_review"}
+}</div>
     </section>
 
     <section>
@@ -799,6 +854,12 @@
             <td><span class="status todo">待开始</span></td>
           </tr>
           <tr>
+            <td>阶段 2A：Case Memory Ledger</td>
+            <td>新增 support_case_memory_ledger，所有 HITL feedback 自动入账；默认 retrieval_enabled=false、active_memory_status=inactive。</td>
+            <td>所有 feedback 都进入 Case Memory Ledger；Engineer AI 只自动检索 Active Retrieval Memory；Ledger candidate 不会自动变成 active。</td>
+            <td><span class="status done">已完成</span></td>
+          </tr>
+          <tr>
             <td>阶段 3：RAG 文档去重治理</td>
             <td>exact dedupe、near-duplicate clustering、canonical topic、alias metadata 和 conflict review 规则。</td>
             <td>重复技术文档不会挤占主索引；相似但冲突的文档不会被自动合并。</td>
@@ -868,6 +929,14 @@
             <p class="task-desc">在工程师 detail 审查区展示只读 Feedback for AI Learning：调查中提示关闭后自动复盘，关闭后展示 AI 生成的质量标签、纠正内容、证据引用和记忆候选标记；只作为候选审查输入，不直接写长期记忆。</p>
           </div>
           <span class="owner">后端 / UI</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="case-memory-ledger">
+          <div>
+            <p class="task-title">实现 Case Memory Ledger</p>
+            <p class="task-desc">所有 HITL feedback 写入 support_case_memory_ledger；默认关闭 retrieval_enabled，只把通过晋升门禁的记录留给后续 Active Retrieval Memory。</p>
+          </div>
+          <span class="owner">后端 / 记忆</span>
         </li>
         <li class="task">
           <input type="checkbox" data-task="case-memory-schema">

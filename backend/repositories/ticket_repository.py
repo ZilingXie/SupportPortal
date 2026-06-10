@@ -33,6 +33,16 @@ _VALID_HITL_CITATION_QUALITY = {"correct", "partial", "missing", "wrong", "not_a
 _VALID_HITL_CUSTOMER_REPLY_QUALITY = {"sendable", "needs_edit", "unsafe", "not_applicable"}
 _VALID_HITL_MEMORY_CANDIDATE = {"yes", "no", "needs_review"}
 _VALID_HITL_MEMORY_SAFETY = {"customer_safe", "internal_only", "do_not_store"}
+_VALID_CASE_MEMORY_LEDGER_STATUSES = {"ledger_only", "candidate", "active", "rejected", "superseded"}
+_VALID_CASE_MEMORY_ACTIVE_STATUSES = {"inactive", "active", "disabled", "superseded"}
+_VALID_CASE_MEMORY_QUALITY_LABELS = {
+    "candidate",
+    "ledger_only",
+    "rejected_feedback",
+    "active_ready",
+}
+_VALID_CASE_MEMORY_SAFETY_LABELS = {"customer_safe", "internal_only", "do_not_store"}
+_CASE_MEMORY_LEDGER_SCHEMA_VERSION = "case-memory-ledger-v1"
 _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
     "connection timeout expired",
     "server closed the connection unexpectedly",
@@ -347,6 +357,77 @@ def _normalize_engineer_hitl_feedback(feedback: dict[str, Any]) -> dict[str, Any
     return normalized
 
 
+def _normalize_case_memory_ledger(record: dict[str, Any]) -> dict[str, Any]:
+    memory_record_id = str(record.get("memory_record_id") or "").strip()
+    if not memory_record_id:
+        raise ValueError("memory_record_id is required")
+    source_feedback_id = str(record.get("source_feedback_id") or "").strip()
+    if not source_feedback_id:
+        raise ValueError("source_feedback_id is required")
+    engineer_case_id = str(record.get("engineer_case_id") or "").strip()
+    if not engineer_case_id:
+        raise ValueError("engineer_case_id is required")
+    client_ticket_id = str(record.get("client_ticket_id") or "").strip()
+    if not client_ticket_id:
+        raise ValueError("client_ticket_id is required")
+
+    normalized = copy.deepcopy(record)
+    normalized["memory_record_id"] = memory_record_id
+    normalized["source_feedback_id"] = source_feedback_id
+    normalized["engineer_case_id"] = engineer_case_id
+    normalized["client_ticket_id"] = client_ticket_id
+    normalized["feedback_type"] = _normalize_enum(
+        normalized.get("feedback_type"),
+        _VALID_HITL_FEEDBACK_TYPES,
+        "approve",
+    )
+    normalized["ledger_status"] = _normalize_enum(
+        normalized.get("ledger_status"),
+        _VALID_CASE_MEMORY_LEDGER_STATUSES,
+        "ledger_only",
+    )
+    normalized["retrieval_enabled"] = bool(normalized.get("retrieval_enabled"))
+    normalized["active_memory_status"] = _normalize_enum(
+        normalized.get("active_memory_status"),
+        _VALID_CASE_MEMORY_ACTIVE_STATUSES,
+        "inactive",
+    )
+    for key in (
+        "symptom",
+        "root_cause",
+        "solution",
+        "customer_safe_summary",
+        "internal_only_summary",
+        "prompt_version",
+        "workflow_version",
+        "tool_policy_version",
+        "rag_access_policy_version",
+        "evidence_packet_version",
+    ):
+        normalized[key] = str(normalized.get(key) or "").strip() or None
+    normalized["evidence_refs"] = _normalize_json_list(normalized.get("evidence_refs"))
+    normalized["safety_label"] = _normalize_enum(
+        normalized.get("safety_label"),
+        _VALID_CASE_MEMORY_SAFETY_LABELS,
+        "do_not_store",
+    )
+    normalized["quality_label"] = _normalize_enum(
+        normalized.get("quality_label"),
+        _VALID_CASE_MEMORY_QUALITY_LABELS,
+        "ledger_only",
+    )
+    normalized["memory_schema_version"] = (
+        str(normalized.get("memory_schema_version") or "").strip()
+        or _CASE_MEMORY_LEDGER_SCHEMA_VERSION
+    )
+    normalized["metadata"] = (
+        copy.deepcopy(normalized.get("metadata")) if isinstance(normalized.get("metadata"), dict) else {}
+    )
+    normalized["created_at"] = normalized.get("created_at") or _utc_now()
+    normalized["updated_at"] = normalized.get("updated_at") or normalized["created_at"]
+    return normalized
+
+
 def _safe_positive_int(value: Any, default_value: int) -> int:
     try:
         parsed = int(str(value).strip())
@@ -643,6 +724,16 @@ class TicketRepository(Protocol):
     ) -> list[dict[str, Any]]:
         ...
 
+    def record_case_memory_ledger(self, record: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def list_case_memory_ledger(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        ...
+
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         ...
 
@@ -706,6 +797,7 @@ class InMemoryTicketRepository:
         self._engineer_cases: dict[str, dict[str, Any]] = {}
         self._engineer_case_events: list[dict[str, Any]] = []
         self._engineer_hitl_feedback: list[dict[str, Any]] = []
+        self._case_memory_ledger: list[dict[str, Any]] = []
 
     def initialize(self) -> None:
         return None
@@ -1109,6 +1201,30 @@ class InMemoryTicketRepository:
         rows = [
             item
             for item in reversed(self._engineer_hitl_feedback)
+            if str(item.get("engineer_case_id") or "").strip() == normalized_case_id
+        ]
+        return [copy.deepcopy(item) for item in rows[:safe_limit]]
+
+    def record_case_memory_ledger(self, record: dict[str, Any]) -> dict[str, Any]:
+        saved = _normalize_case_memory_ledger(record)
+        self._case_memory_ledger = [
+            item
+            for item in self._case_memory_ledger
+            if str(item.get("memory_record_id") or "").strip() != str(saved["memory_record_id"])
+        ]
+        self._case_memory_ledger.append(saved)
+        return copy.deepcopy(saved)
+
+    def list_case_memory_ledger(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        normalized_case_id = str(engineer_case_id).strip()
+        rows = [
+            item
+            for item in reversed(self._case_memory_ledger)
             if str(item.get("engineer_case_id") or "").strip() == normalized_case_id
         ]
         return [copy.deepcopy(item) for item in rows[:safe_limit]]
@@ -1990,6 +2106,44 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            memory_record_id TEXT PRIMARY KEY,
+                            source_feedback_id TEXT NOT NULL REFERENCES {}(feedback_id) ON DELETE CASCADE,
+                            engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                            client_ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            feedback_type TEXT NOT NULL,
+                            ledger_status TEXT NOT NULL,
+                            retrieval_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                            active_memory_status TEXT NOT NULL,
+                            symptom TEXT,
+                            root_cause TEXT,
+                            solution TEXT,
+                            customer_safe_summary TEXT,
+                            internal_only_summary TEXT,
+                            evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            safety_label TEXT NOT NULL,
+                            quality_label TEXT NOT NULL,
+                            memory_schema_version TEXT NOT NULL,
+                            prompt_version TEXT,
+                            workflow_version TEXT,
+                            tool_policy_version TEXT,
+                            rag_access_policy_version TEXT,
+                            evidence_packet_version TEXT,
+                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_case_memory_ledger"),
+                        self._table("support_engineer_hitl_feedback"),
+                        self._table("support_engineer_cases"),
+                        self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
                         INSERT INTO {} (config_key, config_value, updated_at)
                         VALUES (%s, %s, NOW())
                         ON CONFLICT (config_key) DO UPDATE SET
@@ -2073,6 +2227,26 @@ class PostgresTicketRepository:
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (client_ticket_id, created_at DESC)").format(
                         sql.Identifier("idx_support_engineer_hitl_feedback_ticket_created"),
                         self._table("support_engineer_hitl_feedback"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_case_memory_ledger_case_created"),
+                        self._table("support_case_memory_ledger"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (client_ticket_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_case_memory_ledger_ticket_created"),
+                        self._table("support_case_memory_ledger"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (retrieval_enabled, ledger_status, updated_at DESC)"
+                    ).format(
+                        sql.Identifier("idx_support_case_memory_ledger_retrieval"),
+                        self._table("support_case_memory_ledger"),
                     )
                 )
                 self._backfill_engineer_cases_from_legacy_storage(cur)
@@ -3558,6 +3732,185 @@ class PostgresTicketRepository:
             ]
 
         return self._run_with_connection_retry("list_engineer_hitl_feedback", _operation)
+
+    def record_case_memory_ledger(self, record: dict[str, Any]) -> dict[str, Any]:
+        saved = _normalize_case_memory_ledger(record)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                memory_record_id,
+                                source_feedback_id,
+                                engineer_case_id,
+                                client_ticket_id,
+                                feedback_type,
+                                ledger_status,
+                                retrieval_enabled,
+                                active_memory_status,
+                                symptom,
+                                root_cause,
+                                solution,
+                                customer_safe_summary,
+                                internal_only_summary,
+                                evidence_refs,
+                                safety_label,
+                                quality_label,
+                                memory_schema_version,
+                                prompt_version,
+                                workflow_version,
+                                tool_policy_version,
+                                rag_access_policy_version,
+                                evidence_packet_version,
+                                metadata,
+                                created_at,
+                                updated_at
+                            )
+                            VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            )
+                            ON CONFLICT (memory_record_id) DO UPDATE SET
+                                source_feedback_id = EXCLUDED.source_feedback_id,
+                                engineer_case_id = EXCLUDED.engineer_case_id,
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                feedback_type = EXCLUDED.feedback_type,
+                                ledger_status = EXCLUDED.ledger_status,
+                                retrieval_enabled = EXCLUDED.retrieval_enabled,
+                                active_memory_status = EXCLUDED.active_memory_status,
+                                symptom = EXCLUDED.symptom,
+                                root_cause = EXCLUDED.root_cause,
+                                solution = EXCLUDED.solution,
+                                customer_safe_summary = EXCLUDED.customer_safe_summary,
+                                internal_only_summary = EXCLUDED.internal_only_summary,
+                                evidence_refs = EXCLUDED.evidence_refs,
+                                safety_label = EXCLUDED.safety_label,
+                                quality_label = EXCLUDED.quality_label,
+                                memory_schema_version = EXCLUDED.memory_schema_version,
+                                prompt_version = EXCLUDED.prompt_version,
+                                workflow_version = EXCLUDED.workflow_version,
+                                tool_policy_version = EXCLUDED.tool_policy_version,
+                                rag_access_policy_version = EXCLUDED.rag_access_policy_version,
+                                evidence_packet_version = EXCLUDED.evidence_packet_version,
+                                metadata = EXCLUDED.metadata,
+                                created_at = EXCLUDED.created_at,
+                                updated_at = EXCLUDED.updated_at
+                            """
+                        ).format(self._table("support_case_memory_ledger")),
+                        (
+                            saved["memory_record_id"],
+                            saved["source_feedback_id"],
+                            saved["engineer_case_id"],
+                            saved["client_ticket_id"],
+                            saved["feedback_type"],
+                            saved["ledger_status"],
+                            saved["retrieval_enabled"],
+                            saved["active_memory_status"],
+                            saved["symptom"],
+                            saved["root_cause"],
+                            saved["solution"],
+                            saved["customer_safe_summary"],
+                            saved["internal_only_summary"],
+                            Json(saved["evidence_refs"]),
+                            saved["safety_label"],
+                            saved["quality_label"],
+                            saved["memory_schema_version"],
+                            saved["prompt_version"],
+                            saved["workflow_version"],
+                            saved["tool_policy_version"],
+                            saved["rag_access_policy_version"],
+                            saved["evidence_packet_version"],
+                            Json(saved["metadata"]),
+                            saved["created_at"],
+                            saved["updated_at"],
+                        ),
+                    )
+            return copy.deepcopy(saved)
+
+        return self._run_with_connection_retry("record_case_memory_ledger", _operation)
+
+    def list_case_memory_ledger(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            memory_record_id,
+                            source_feedback_id,
+                            engineer_case_id,
+                            client_ticket_id,
+                            feedback_type,
+                            ledger_status,
+                            retrieval_enabled,
+                            active_memory_status,
+                            symptom,
+                            root_cause,
+                            solution,
+                            customer_safe_summary,
+                            internal_only_summary,
+                            evidence_refs,
+                            safety_label,
+                            quality_label,
+                            memory_schema_version,
+                            prompt_version,
+                            workflow_version,
+                            tool_policy_version,
+                            rag_access_policy_version,
+                            evidence_packet_version,
+                            metadata,
+                            created_at,
+                            updated_at
+                        FROM {}
+                        WHERE engineer_case_id = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_case_memory_ledger")),
+                    (engineer_case_id, safe_limit),
+                )
+                rows = cur.fetchall()
+            return [
+                {
+                    "memory_record_id": str(row[0]),
+                    "source_feedback_id": str(row[1]),
+                    "engineer_case_id": str(row[2]),
+                    "client_ticket_id": str(row[3]),
+                    "feedback_type": str(row[4]),
+                    "ledger_status": str(row[5]),
+                    "retrieval_enabled": bool(row[6]),
+                    "active_memory_status": str(row[7]),
+                    "symptom": str(row[8]) if row[8] is not None else None,
+                    "root_cause": str(row[9]) if row[9] is not None else None,
+                    "solution": str(row[10]) if row[10] is not None else None,
+                    "customer_safe_summary": str(row[11]) if row[11] is not None else None,
+                    "internal_only_summary": str(row[12]) if row[12] is not None else None,
+                    "evidence_refs": row[13] if isinstance(row[13], list) else [],
+                    "safety_label": str(row[14]),
+                    "quality_label": str(row[15]),
+                    "memory_schema_version": str(row[16]),
+                    "prompt_version": str(row[17]) if row[17] is not None else None,
+                    "workflow_version": str(row[18]) if row[18] is not None else None,
+                    "tool_policy_version": str(row[19]) if row[19] is not None else None,
+                    "rag_access_policy_version": str(row[20]) if row[20] is not None else None,
+                    "evidence_packet_version": str(row[21]) if row[21] is not None else None,
+                    "metadata": row[22] if isinstance(row[22], dict) else {},
+                    "created_at": _to_iso(row[23]),
+                    "updated_at": _to_iso(row[24]),
+                }
+                for row in rows
+            ]
+
+        return self._run_with_connection_retry("list_case_memory_ledger", _operation)
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self.list_ticket_investigations(ticket_id=ticket_id, include_messages=True)
