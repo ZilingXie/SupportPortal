@@ -19,9 +19,12 @@ from backend.services.engineer_agent import (
     fallback_engineer_agent_state,
     normalize_engineer_agent_state,
 )
+from backend.services.engineer_cases import build_engineer_case_context, build_new_engineer_case
+from backend.services.engineer_evidence_tools import EngineerEvidenceSearchResult
 from backend.services.investigation_flow import (
     build_investigation_opening_context,
     default_public_investigation_reply,
+    start_or_refresh_investigation,
 )
 from backend.services.llm_factory import LlmInvocationError, LlmTextResult
 from backend.services.openai_input_guardrail import OpenAIInputGuardrailResult
@@ -123,10 +126,17 @@ class InvestigationFlowTests(unittest.TestCase):
             AsyncMock(return_value=OpenAIInputGuardrailResult.allow_result()),
         )
         self.guardrail_mock = self.guardrail_patcher.start()
+        self.engineer_evidence_search_patcher = patch.object(
+            main,
+            "search_engineer_evidence",
+            Mock(return_value=EngineerEvidenceSearchResult(internal=None, official=None, errors=[])),
+        )
+        self.engineer_evidence_search_patcher.start()
         self.client = TestClient(main.app)
 
     def tearDown(self) -> None:
         self.client.close()
+        self.engineer_evidence_search_patcher.stop()
         self.guardrail_patcher.stop()
         self.input_guardrail_enabled_patcher.stop()
         main.ticket_repository = self.original_repository
@@ -171,6 +181,144 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertIn("20 分钟", reply)
         self.assertNotIn("24 " + "小时", reply)
+
+    def test_start_investigation_attaches_engineer_evidence_to_opening_context(self) -> None:
+        ticket = {
+            "ticket_id": "TK-EVIDENCE-1",
+            "customer_id": "C-001",
+            "requester": "Taylor",
+            "subject": "Cloud Recording portrait output",
+            "status": "open",
+            "product": "cloud_recording",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Cloud Recording output is portrait even though I set landscape layout.",
+                }
+            ],
+            "active_investigation": None,
+            "engineer_handoff_packet": None,
+            "engineer_agent_state": None,
+        }
+
+        def _evidence_builder(*, ticket, handoff_packet):
+            return {
+                "access_modes": ["non_official_only", "official_only"],
+                "internal": {
+                    "answer_summary": "Internal troubleshooting says misplaced transcodingConfig causes portrait output.",
+                    "confidence": 0.82,
+                    "reason": "grounded_answer",
+                    "needs_engineer_guidance": False,
+                },
+                "official_fallback": {
+                    "answer_summary": "Official docs place transcodingConfig under recordingConfig.",
+                    "confidence": 0.78,
+                    "reason": "grounded_answer",
+                    "needs_engineer_guidance": False,
+                    "sources": ["https://docs.agora.io/en/cloud-recording/reference"],
+                    "citations": [{"chunk_id": "official-1"}],
+                },
+                "errors": [],
+            }
+
+        result = start_or_refresh_investigation(
+            ticket,
+            trigger_reason="rag_insufficient_evidence",
+            trigger_source="support_query",
+            now_value="2026-06-10T08:00:00+00:00",
+            engineer_evidence_builder=_evidence_builder,
+        )
+
+        handoff = ticket["engineer_handoff_packet"]
+        self.assertEqual(
+            handoff["engineer_evidence"]["internal"]["answer_summary"],
+            "Internal troubleshooting says misplaced transcodingConfig causes portrait output.",
+        )
+        self.assertNotIn("sources", handoff["engineer_evidence"]["internal"])
+        self.assertEqual(
+            handoff["engineer_evidence"]["official_fallback"]["sources"],
+            ["https://docs.agora.io/en/cloud-recording/reference"],
+        )
+        self.assertEqual(ticket["active_investigation"]["draft_customer_reply"], "")
+        opening_message = result["new_internal_messages"][0]["content"]
+        self.assertIn("Internal troubleshooting says misplaced transcodingConfig", opening_message)
+        self.assertIn("Official docs place transcodingConfig", opening_message)
+
+    def test_main_engineer_evidence_builder_uses_ticket_handoff_context(self) -> None:
+        ticket = {
+            "ticket_id": "TK-EVIDENCE-2",
+            "customer_id": "C-001",
+            "requester": "Taylor",
+            "subject": "Cloud Recording portrait output",
+            "product": "cloud_recording",
+            "messages": [
+                {"role": "customer", "content": "Cloud Recording output is portrait."},
+                {"role": "assistant", "content": "I could not answer from official docs."},
+            ],
+        }
+        handoff_packet = {
+            "latest_customer_message": "Why is Cloud Recording portrait?",
+            "product": "cloud_recording",
+            "rag_result": {
+                "candidate_answer": "Official docs were insufficient.",
+                "official_semantics_needed": True,
+            },
+        }
+        detail = RagTicketAnswerDetail(
+            answer="Internal evidence summary",
+            confidence=0.74,
+            sources=["internal://hidden"],
+            citations=[{"chunk_id": "private"}],
+            needs_engineer_guidance=False,
+            reason="grounded_answer",
+        )
+
+        with patch.object(
+            main,
+            "search_engineer_evidence",
+            return_value=EngineerEvidenceSearchResult(internal=detail, official=None, errors=[]),
+        ) as search_mock:
+            payload = main._build_engineer_evidence_for_investigation(
+                ticket=ticket,
+                handoff_packet=handoff_packet,
+            )
+
+        kwargs = search_mock.call_args.kwargs
+        self.assertIs(search_mock.call_args.args[0], main.rag_service_client)
+        self.assertEqual(kwargs["question"], "Why is Cloud Recording portrait?")
+        self.assertEqual(kwargs["ticket_id"], "TK-EVIDENCE-2")
+        self.assertEqual(kwargs["customer_id"], "C-001")
+        self.assertEqual(kwargs["product"], "cloud_recording")
+        self.assertEqual(kwargs["client_findings"], handoff_packet["rag_result"])
+        self.assertEqual(kwargs["ticket_context"][0]["role"], "customer")
+        self.assertEqual(payload["access_modes"], ["non_official_only"])
+        self.assertEqual(payload["internal"]["answer_summary"], "Internal evidence summary")
+        self.assertNotIn("sources", payload["internal"])
+
+    def test_engineer_case_context_preserves_customer_identity_for_evidence_search(self) -> None:
+        ticket = {
+            "ticket_id": "TK-EVIDENCE-3",
+            "customer_id": "C-CASE",
+            "requester": "Taylor",
+            "subject": "Cloud Recording portrait output",
+            "product": "cloud_recording",
+            "messages": [{"role": "customer", "content": "Why is the output portrait?"}],
+        }
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="EC-EVIDENCE-3",
+            case_sequence=1,
+            title="Cloud Recording portrait output",
+            status="investigating",
+            trigger_source="support_query",
+            trigger_reason="rag_insufficient_evidence",
+            now_value="2026-06-10T08:00:00+00:00",
+        )
+
+        context = build_engineer_case_context(ticket, engineer_case)
+
+        self.assertEqual(context["customer_id"], "C-CASE")
+        self.assertEqual(context["requester"], "Taylor")
 
     def test_engineer_request_models_default_to_jack(self) -> None:
         self.assertEqual(main.TicketActionRequest(action="investigate").engineer_id, "Jack")

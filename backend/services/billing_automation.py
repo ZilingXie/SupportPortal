@@ -17,6 +17,8 @@ BILLING_TOOLING_PROFILE = "deterministic_billing_intake"
 BILLING_ACTION_ACCOUNT_SUSPENSION = "account_suspension"
 BILLING_ACTION_DETAILED_INVOICE = "detailed_invoice"
 BILLING_INTERNAL_EMAIL_ENV = "BILLING_AUTOMATION_INTERNAL_EMAIL"
+BILLING_ACCOUNT_SUSPENSION_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL"
+BILLING_DETAILED_INVOICE_EMAIL_ENV = "BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL"
 BILLING_INTERNAL_EMAIL_FROM_ENV = "BILLING_AUTOMATION_EMAIL_FROM"
 BILLING_SMTP_HOST_ENV = "BILLING_AUTOMATION_SMTP_HOST"
 BILLING_SMTP_PORT_ENV = "BILLING_AUTOMATION_SMTP_PORT"
@@ -213,6 +215,21 @@ def _safe_int(value: Any, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _destination_email_for_action(action: str) -> str:
+    action_env = (
+        BILLING_ACCOUNT_SUSPENSION_EMAIL_ENV
+        if action == BILLING_ACTION_ACCOUNT_SUSPENSION
+        else BILLING_DETAILED_INVOICE_EMAIL_ENV
+        if action == BILLING_ACTION_DETAILED_INVOICE
+        else ""
+    )
+    return (
+        _clean_text(os.getenv(action_env))
+        or _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_ENV))
+        or DEFAULT_BILLING_INTERNAL_EMAIL
+    )
+
+
 def _matched_signals(text: str, patterns: tuple[tuple[re.Pattern[str], str], ...]) -> list[str]:
     signals: list[str] = []
     for pattern, signal in patterns:
@@ -275,7 +292,7 @@ def _build_internal_email(
 ) -> dict[str, str]:
     normalized_ticket_id = _clean_text(ticket_id) or "{{ticket_id}}"
     normalized_customer_email = _clean_text(customer_email) or "{{customer_email}}"
-    to_address = _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_ENV)) or DEFAULT_BILLING_INTERNAL_EMAIL
+    to_address = _destination_email_for_action(action)
     from_address = _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_FROM_ENV)) or DEFAULT_BILLING_EMAIL_FROM
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
         subject = f"Account suspension review request - Ticket {normalized_ticket_id}"

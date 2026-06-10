@@ -588,9 +588,10 @@
         phase: "zendesk",
         module: "邮件",
         title: "验证内部邮件发送",
-        text: "字段齐全后从 xieziling97@163.com 发送内部邮件到 xieziling@agora.io；邮件包含白名单小类、必填信息、ticket id 和客户原始问题。",
+        text: "字段齐全后从 xieziling97@163.com 发送内部邮件；account_suspension 和 detailed_invoice 各自使用独立 destination 变量，当前都设置为 xieziling@agora.io。",
         checks: [
-          "默认收件邮箱是 xieziling@agora.io。",
+          "account_suspension 收件变量是 BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL。",
+          "detailed_invoice 收件变量是 BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL。",
           "默认发件邮箱是 xieziling97@163.com。",
           "能记录邮件发送状态和失败原因。",
           "发送动作可审计且不会重复发送。"

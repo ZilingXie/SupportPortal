@@ -38,6 +38,49 @@ For each new entry, record:
   - RED: New UI contract test failed before implementation because the feedback panel still rendered the old manual form.
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_engineer_hitl_review backend.tests.test_investigation_flow.InvestigationFlowTests.test_confirmation_approve_sends_customer_reply_and_closes_investigation backend.tests.test_engineer_ui_contract.EngineerUiContractTests.test_engineer_detail_shows_read_only_auto_hitl_review -v`
 
+## 2026-06-10 - Billing destination email variables
+
+- Area or subsystem: Deterministic billing intake templates and internal email handoff
+- Prompt or model version: `billing-automation-email-v2`
+- Summary: Split billing automation internal email destinations into `BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL` and `BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL`, while keeping the generic destination as a fallback.
+- Reason: Account suspension and detailed invoice handoffs may need separate routing later, but both should currently send to `xieziling@agora.io`.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/tests/test_support_router.py`
+  - `.env.example`
+  - `docs/billing_automation_plan.html`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `account_suspension` internal email payloads read `BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL` first.
+  - `detailed_invoice` internal email payloads read `BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL` first.
+  - If an action-specific destination is unset, the payload falls back to `BILLING_AUTOMATION_INTERNAL_EMAIL`, then the built-in `xieziling@agora.io` default.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_support_router`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/billing_automation.py backend/tests/test_support_router.py`
+  - `rg -n "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL|BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL|xieziling@agora.io|xieziling97@163.com" backend docs .env.example`
+
+## 2026-06-10 - Engineer investigation opening evidence context
+
+- Area or subsystem: Engineer investigation handoff and evidence tool routing
+- Prompt or model version: `engineer-evidence-orchestration-v1`
+- Summary: New engineer investigations now receive sanitized internal-first evidence summaries in the opening engineer AI context, with official fallback evidence included separately when available.
+- Reason: When Client AI cannot safely answer from official docs or a case is explicitly escalated, Engineer AI should begin from internal/non-official evidence while keeping customer-facing drafts free of internal source details.
+- Affected files or config:
+  - `backend/services/engineer_evidence_tools.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/main.py`
+  - `backend/tests/test_engineer_evidence_tools.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Engineer opening messages include internal evidence and official fallback summaries when the server-side evidence builder attaches them to the handoff packet.
+  - Internal evidence citations and source details stay out of the serialized handoff payload used for customer-safe context.
+  - Existing follow-up messages in an already active investigation do not rerun the engineer evidence search.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_engineer_evidence_tools.py backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_start_investigation_attaches_engineer_evidence_to_opening_context backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_main_engineer_evidence_builder_uses_ticket_handoff_context backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_engineer_case_context_preserves_customer_identity_for_evidence_search -q`
+
 ## 2026-06-10 - Billing internal email sender configuration
 
 - Area or subsystem: Deterministic billing intake templates and internal email handoff

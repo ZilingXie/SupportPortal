@@ -442,6 +442,59 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.internal_email["to"], "xieziling@agora.io")
         self.assertEqual(result.internal_email["from"], "xieziling97@163.com")
 
+    def test_billing_internal_email_uses_action_specific_destinations(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL": "suspension@example.com",
+                "BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL": "invoice@example.com",
+            },
+            clear=True,
+        ):
+            suspension = build_billing_automation_result(
+                action="account_suspension",
+                message=(
+                    "Our account was suspended. Company name: ExampleCo. Company location: San Francisco, CA. "
+                    "Website: https://example.com. Contact email: ops@example.com. Phone number: +1 415 555 0100. "
+                    "Use Case: We provide live shopping video support."
+                ),
+                ticket_id="TK-SUSP-1",
+                customer_email="customer@example.com",
+            )
+            invoice = build_billing_automation_result(
+                action="detailed_invoice",
+                message=(
+                    "Please send the detailed invoice. Issue date: 6 May 2026. "
+                    "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                ),
+                ticket_id="TK-BILL-1",
+                customer_email="customer@example.com",
+            )
+
+        assert suspension.internal_email is not None
+        assert invoice.internal_email is not None
+        self.assertEqual(suspension.internal_email["to"], "suspension@example.com")
+        self.assertEqual(invoice.internal_email["to"], "invoice@example.com")
+
+    def test_billing_internal_email_action_destination_falls_back_to_generic_destination(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"BILLING_AUTOMATION_INTERNAL_EMAIL": "billing@example.com"},
+            clear=True,
+        ):
+            result = build_billing_automation_result(
+                action="detailed_invoice",
+                message=(
+                    "Please send the detailed invoice. Issue date: 6 May 2026. "
+                    "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                ),
+                ticket_id="TK-BILL-1",
+                customer_email="customer@example.com",
+            )
+
+        assert result.internal_email is not None
+        self.assertEqual(result.internal_email["to"], "billing@example.com")
+
     def test_send_billing_internal_email_skips_when_smtp_password_missing(self) -> None:
         email_payload = {
             "to": "xieziling@agora.io",
