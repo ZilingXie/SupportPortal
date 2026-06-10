@@ -781,6 +781,12 @@
             <td><span class="status done">已固化</span></td>
           </tr>
           <tr>
+            <td>阶段 1B：反馈 API 与 Postgres 表</td>
+            <td>新增 support_engineer_hitl_feedback 表、repository record/list 方法和 /api/engineer/tickets/{ticket_id}/feedback POST/GET。</td>
+            <td>工程师端可以记录和读取结构化 HITL 反馈；反馈保留 evidence_refs、memory_candidate、memory_safety 和版本字段。</td>
+            <td><span class="status done">已完成</span></td>
+          </tr>
+          <tr>
             <td>阶段 2：Case Memory Layer 案例记忆</td>
             <td>案例摘要器、provider POC、相似案例检索器；RAG 文档知识保留在 official/non_official access modes。</td>
             <td>确认案例可检索，未确认案例不会进入长期记忆。</td>
@@ -844,8 +850,16 @@
         <li class="task">
           <input type="checkbox" data-task="feedback-schema">
           <div>
-            <p class="task-title">实现结构化 HITL 反馈 API / UI</p>
-            <p class="task-desc">基于阶段 1A schema 落地 Postgres 表、反馈 API 和工程师反馈表单。</p>
+            <p class="task-title">实现结构化 HITL 反馈 API</p>
+            <p class="task-desc">基于阶段 1A schema 落地 Postgres 表、repository record/list 方法和工程师反馈 API。</p>
+          </div>
+          <span class="owner">后端</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="feedback-ui">
+          <div>
+            <p class="task-title">实现结构化 HITL 反馈 UI</p>
+            <p class="task-desc">在工程师 approve、revise、reject 和 resolve 流程中收集质量标签、纠正内容和记忆候选标记。</p>
           </div>
           <span class="owner">后端 / UI</span>
         </li>
@@ -1059,7 +1073,7 @@
       <div class="callout danger">
         <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把重复技术文档问题交给 Case Memory Layer 兜底。</strong>先实现结构化反馈、confirmed-case 记忆、RAG/Case Memory evidence packet 和 RAG 技术文档去重治理，这些基础会决定后续优化是否可靠。</p>
       </div>
-      <p style="margin-top: 12px;">建议的第一批实施任务是：阶段 1A 先固化结构化 HITL 反馈 schema，再实现反馈 API / UI、RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
+      <p style="margin-top: 12px;">建议的第一批实施任务是：阶段 1A 先固化结构化 HITL 反馈 schema，阶段 1B 落地反馈 API / Postgres 表，下一步补工程师反馈 UI、RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
     </section>
   </main>
 
