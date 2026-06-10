@@ -573,7 +573,88 @@
     </section>
 
     <section>
-      <h2>六、反馈与记忆 Schema</h2>
+      <h2>六、RAG 技术文档去重治理</h2>
+      <div class="callout">
+        <p><strong>重复或相似技术文档不应直接迁入 Mem0。</strong>这类问题应该在 RAG ingestion 和 retrieval 层治理：RAG 负责 exact dedupe、near-duplicate clustering、canonical document selection、metadata alias 和 citation；Mem0 只保存从已确认案例中提炼出的经验记忆。</p>
+      </div>
+      <table style="margin-top: 14px;">
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>推荐处理</th>
+            <th>归属</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>完全重复文档</td>
+            <td>用 source_id、source_url、content_hash 或 normalized_content_hash 做 skip/upsert，避免重复 chunk 进入主索引。</td>
+            <td>RAG ingestion</td>
+          </tr>
+          <tr>
+            <td>同一文档不同版本</td>
+            <td>最新或正式版本标为 primary；旧版本标记 archived/shadow，并保留 version、superseded_by、effective_at metadata。</td>
+            <td>RAG ingestion + metadata</td>
+          </tr>
+          <tr>
+            <td>多篇技术文章讲同一问题</td>
+            <td>聚成 canonical topic，选权威、最新、最完整的一篇或一组 chunk 作为 primary；其他文档作为 alias/source support。</td>
+            <td>RAG canonicalization</td>
+          </tr>
+          <tr>
+            <td>内容相似但结论冲突</td>
+            <td>不要自动合并。标记 conflict，进入人工 review 或规则判定，避免错误覆盖有效证据。</td>
+            <td>RAG governance</td>
+          </tr>
+          <tr>
+            <td>多个工程师案例指向同一根因</td>
+            <td>合并或更新 case memory，保留 related_ticket_ids、related_canonical_doc_ids 和 confidence。</td>
+            <td>Mem0 + Postgres</td>
+          </tr>
+          <tr>
+            <td>历史处理偏好、常见坑、复盘经验</td>
+            <td>沉淀为 selected memory，服务 engineer AI 的经验召回，不作为文档 citation。</td>
+            <td>Mem0</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3 style="margin-top: 16px;">推荐治理流水线</h3>
+      <div class="flow">
+        <div class="step">
+          <h3>1. Normalize</h3>
+          <p>统一格式、标题、URL、空白、代码块和 boilerplate，生成稳定 hash。</p>
+        </div>
+        <div class="step">
+          <h3>2. Exact Dedupe</h3>
+          <p>通过 content hash 和 source identity 跳过或更新完全重复文档。</p>
+        </div>
+        <div class="step">
+          <h3>3. Near Duplicate</h3>
+          <p>用 embedding、simhash 或 minhash 聚类相似文档，形成候选 canonical group。</p>
+        </div>
+        <div class="step">
+          <h3>4. Canonical Select</h3>
+          <p>按权威性、新鲜度、完整度和产品匹配选择 primary 文档或 primary chunk。</p>
+        </div>
+        <div class="step">
+          <h3>5. Index + Alias</h3>
+          <p>primary 进入 RAG 主索引；重复文档保留 alias、archived、related_source metadata。</p>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="tile">
+          <strong>RAG 的职责</strong>
+          <p>保证文档证据可引用、可追溯、可版本治理。重复文档治理要影响 chunk、rank、citation 和 source metadata。</p>
+        </div>
+        <div class="tile">
+          <strong>Mem0 的职责</strong>
+          <p>把多个确认案例沉淀成更紧凑的经验记忆，例如 symptom、confirmed root cause、evidence pattern、resolution 和 related ids。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>七、反馈与记忆 Schema</h2>
       <div class="grid two">
         <div>
           <h3>工程师结构化反馈</h3>
@@ -601,6 +682,7 @@
   "customer_safe_summary": "...",
   "internal_only_summary": "...",
   "source_ticket_id": "...",
+  "related_canonical_doc_ids": ["..."],
   "prompt_version": "...",
   "workflow_version": "...",
   "confidence": "confirmed"
@@ -613,7 +695,7 @@
     </section>
 
     <section>
-      <h2>七、可进化对象与锁死边界</h2>
+      <h2>八、可进化对象与锁死边界</h2>
       <table>
         <thead>
           <tr>
@@ -643,12 +725,17 @@
             <td>相似案例召回、案例摘要模板、标签体系、案例排序策略。</td>
             <td>权威工单记录、审计日志、确认状态、敏感信息处理规则。</td>
           </tr>
+          <tr>
+            <td>RAG 文档治理</td>
+            <td>exact dedupe、near-duplicate clustering、canonical selection、alias metadata、相似文档降权策略。</td>
+            <td>citation、source path、access mode、conflict review、archived/shadow 状态。</td>
+          </tr>
         </tbody>
       </table>
     </section>
 
     <section>
-      <h2>八、阶段计划</h2>
+      <h2>九、阶段计划</h2>
       <table>
         <thead>
           <tr>
@@ -678,19 +765,25 @@
             <td><span class="status todo">待开始</span></td>
           </tr>
           <tr>
-            <td>阶段 3：离线评估集</td>
+            <td>阶段 3：RAG 文档去重治理</td>
+            <td>exact dedupe、near-duplicate clustering、canonical topic、alias metadata 和 conflict review 规则。</td>
+            <td>重复技术文档不会挤占主索引；相似但冲突的文档不会被自动合并。</td>
+            <td><span class="status todo">待开始</span></td>
+          </tr>
+          <tr>
+            <td>阶段 4：离线评估集</td>
             <td>从反馈样本生成 eval dataset，覆盖常见症状、根因和证据类型。</td>
             <td>能对当前 prompt/tool policy 计算基线分数。</td>
             <td><span class="status todo">待开始</span></td>
           </tr>
           <tr>
-            <td>阶段 4：EvoAgentX 优化实验室</td>
+            <td>阶段 5：EvoAgentX 优化实验室</td>
             <td>prompt、拓扑、skill policy 的候选版本生成流程。</td>
             <td>候选版本只进入 shadow eval，不直接改生产。</td>
             <td><span class="status todo">待开始</span></td>
           </tr>
           <tr>
-            <td>阶段 5：上线门禁与灰度</td>
+            <td>阶段 6：上线门禁与灰度</td>
             <td>版本注册、人工批准、feature flag、回滚机制。</td>
             <td>新版本通过质量、安全、泄露风险和回归门禁后才可灰度。</td>
             <td><span class="status todo">待开始</span></td>
@@ -700,7 +793,7 @@
     </section>
 
     <section>
-      <h2>九、任务清单</h2>
+      <h2>十、任务清单</h2>
       <ul class="task-list" id="taskList">
         <li class="task">
           <input type="checkbox" data-task="boundary-doc">
@@ -751,6 +844,14 @@
           <span class="owner">后端</span>
         </li>
         <li class="task">
+          <input type="checkbox" data-task="rag-doc-dedupe">
+          <div>
+            <p class="task-title">建立 RAG 技术文档去重治理</p>
+            <p class="task-desc">在 ingestion/retrieval 层实现 exact dedupe、near-duplicate clustering、canonical selection、alias metadata 和 conflict review。</p>
+          </div>
+          <span class="owner">RAG</span>
+        </li>
+        <li class="task">
           <input type="checkbox" data-task="eval-dataset">
           <div>
             <p class="task-title">建立离线评估集</p>
@@ -786,7 +887,7 @@
     </section>
 
     <section>
-      <h2>十、质量门禁</h2>
+      <h2>十一、质量门禁</h2>
       <table>
         <thead>
           <tr>
@@ -817,6 +918,11 @@
             <td>不得灰度。</td>
           </tr>
           <tr>
+            <td>文档治理</td>
+            <td>重复技术文档有 canonical/alias/archived 状态；相似但冲突的文档不会自动合并。</td>
+            <td>不得把该文档批次发布到主索引。</td>
+          </tr>
+          <tr>
             <td>可回滚</td>
             <td>灰度前有上一稳定版本，且 feature flag 可立即回退。</td>
             <td>不得上线。</td>
@@ -826,7 +932,7 @@
     </section>
 
     <section>
-      <h2>十一、指标</h2>
+      <h2>十二、指标</h2>
       <div class="grid">
         <div class="tile">
           <strong>工程师纠正率</strong>
@@ -852,11 +958,19 @@
           <strong>回滚次数</strong>
           <p>灰度后因质量或安全问题回滚的次数。用于约束优化策略风险。</p>
         </div>
+        <div class="tile">
+          <strong>文档重复率</strong>
+          <p>技术文档主索引中 exact/near duplicate chunk 的比例。目标是持续下降。</p>
+        </div>
+        <div class="tile">
+          <strong>Canonical 覆盖率</strong>
+          <p>高频技术问题是否有明确 canonical topic 或 primary source。目标是持续上升。</p>
+        </div>
       </div>
     </section>
 
     <section>
-      <h2>十二、关键风险</h2>
+      <h2>十三、关键风险</h2>
       <table>
         <thead>
           <tr>
@@ -892,6 +1006,16 @@
             <td>按知识形态切分：文档型知识进 RAG non_official_only；案例、经验和偏好进 Mem0。</td>
           </tr>
           <tr>
+            <td>重复技术文档污染 RAG</td>
+            <td>相似 chunk 挤占 topK，降低证据多样性，也可能让旧版本覆盖新版本。</td>
+            <td>在 ingestion 前做 hash 去重和 near-duplicate clustering；retrieval 侧保留 family diversity 和 canonical boost。</td>
+          </tr>
+          <tr>
+            <td>相似但冲突的文档被误合并</td>
+            <td>会掩盖真实差异，导致 engineer AI 引用错误结论。</td>
+            <td>冲突文档必须进入 conflict review，禁止自动 canonical merge。</td>
+          </tr>
+          <tr>
             <td>工具调用策略漂移</td>
             <td>AI 调用错误工具或错误 fallback。</td>
             <td>工具 allowlist、参数 schema 校验、调用 trace、失败回退到当前稳定策略。</td>
@@ -901,11 +1025,11 @@
     </section>
 
     <section>
-      <h2>十三、后续建议</h2>
+      <h2>十四、后续建议</h2>
       <div class="callout danger">
-        <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把所有非官方知识迁入 Mem0。</strong>先实现结构化反馈、confirmed-case 记忆和 RAG/Mem0 evidence packet，这三件事会为后续 prompt、拓扑、skill 调用优化提供可靠基础。</p>
+        <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把重复技术文档问题交给 Mem0 兜底。</strong>先实现结构化反馈、confirmed-case 记忆、RAG/Mem0 evidence packet 和 RAG 技术文档去重治理，这些基础会决定后续优化是否可靠。</p>
       </div>
-      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、RAG 与 Mem0 知识边界固化、Mem0 confirmed-case 写入、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
+      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、RAG 与 Mem0 知识边界固化、RAG 技术文档去重治理、Mem0 confirmed-case 写入、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
     </section>
   </main>
 
