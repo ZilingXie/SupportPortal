@@ -85,6 +85,12 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn(".investigation-panel", css)
         self.assertIn(".reply-panel", css)
         self.assertIn(".current-ticket-sla", css)
+        self.assertIn("font-size: clamp(24px, 3vw, 30px);", css)
+        self.assertIn("font-size: 18px;", css)
+        self.assertIn("font-size: 14px;", css)
+        self.assertNotIn("font-size: clamp(32px, 4vw, 48px);", css)
+        self.assertNotIn("font-size: clamp(30px, 4vw, 46px);", css)
+        self.assertNotIn("font-size: 17px;", css)
 
     def test_assignment_ui_does_not_modify_existing_engineer_ui_contract(self) -> None:
         engineer_html = Path("ui/engineer-ui/index.html").read_text(encoding="utf-8")
