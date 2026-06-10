@@ -292,6 +292,19 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def record_case_memory_ledger", repo_source)
         self.assertIn("def list_case_memory_ledger", repo_source)
 
+    def test_ticket_repository_initialize_escapes_case_memory_ledger_jsonb_default_for_sql_formatting(self) -> None:
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(repository, "_connect", return_value=connection):
+            repository.initialize()
+
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+        self.assertIn("support_case_memory_ledger", executed_sql)
+        self.assertIn("metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
+
     def test_ticket_storage_contract_includes_support_ticket_message_meta(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
