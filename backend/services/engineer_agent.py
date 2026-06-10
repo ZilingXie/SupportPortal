@@ -1492,6 +1492,24 @@ def _default_known_facts(ticket: dict[str, Any], handoff_packet: dict[str, Any])
     return facts[:4]
 
 
+def _engineer_evidence_knowledge_parts(handoff_packet: dict[str, Any]) -> list[str]:
+    evidence = handoff_packet.get("engineer_evidence")
+    if not isinstance(evidence, dict):
+        return []
+    parts: list[str] = []
+    internal = evidence.get("internal")
+    if isinstance(internal, dict):
+        internal_summary = _clean_text(internal.get("answer_summary"))
+        if internal_summary:
+            parts.append(f"Internal evidence: {internal_summary}")
+    official = evidence.get("official_fallback")
+    if isinstance(official, dict):
+        official_summary = _clean_text(official.get("answer_summary"))
+        if official_summary:
+            parts.append(f"Official fallback evidence: {official_summary}")
+    return parts
+
+
 def _normalize_known_fact_text(value: Any) -> str:
     return " ".join(_clean_text(value).lower().split())
 
@@ -1597,6 +1615,10 @@ def fallback_engineer_agent_state(
             else f"{_PUBLIC_ASSISTANT_NAME} has limited grounded knowledge for this issue."
         )
     )
+    evidence_parts = _engineer_evidence_knowledge_parts(packet)
+    for evidence_part in evidence_parts:
+        if evidence_part not in knowledge_summary:
+            knowledge_summary = f"{knowledge_summary} {evidence_part}".strip()
     why_not_solved = _clean_text(existing.get("why_not_solved")) or _why_not_solved_text(
         _clean_text(packet.get("unresolved_reason"))
     )

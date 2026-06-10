@@ -68,6 +68,8 @@ def build_engineer_case_context(
         active_investigation = copy.deepcopy(investigation)
     return {
         "ticket_id": str(engineer_case.get("engineer_case_id") or "").strip(),
+        "customer_id": str(client_ticket.get("customer_id") or "").strip(),
+        "requester": str(client_ticket.get("requester") or "").strip(),
         "subject": str(engineer_case.get("title") or client_ticket.get("subject") or "Engineer case").strip(),
         "status": _normalize_status(engineer_case.get("status")),
         "product": str(client_ticket.get("product") or "").strip() or None,

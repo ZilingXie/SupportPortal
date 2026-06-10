@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from backend.services.engineer_evidence_tools import search_engineer_evidence
+from backend.services.engineer_evidence_tools import serialize_engineer_evidence_search_result, search_engineer_evidence
+from backend.services.engineer_evidence_tools import EngineerEvidenceSearchResult
 from backend.services.rag_service_client import RagTicketAnswerDetail
 
 
@@ -15,6 +16,37 @@ def _detail(*, needs_engineer_guidance: bool) -> RagTicketAnswerDetail:
         needs_engineer_guidance=needs_engineer_guidance,
         reason="grounded_answer" if not needs_engineer_guidance else "insufficient_evidence",
     )
+
+
+def test_serialize_engineer_evidence_keeps_internal_citations_out_of_payload() -> None:
+    internal = RagTicketAnswerDetail(
+        answer="Internal runbook says the portrait output usually means transcodingConfig was misplaced.",
+        confidence=0.82,
+        sources=["internal://runbooks/cloud-recording"],
+        citations=[{"chunk_id": "internal-1", "source_path": "technical/private.md"}],
+        needs_engineer_guidance=False,
+        reason="grounded_answer",
+        evidence_summary={"quality_signals": {"selected_doc_count": 1}},
+    )
+    official = RagTicketAnswerDetail(
+        answer="Official docs describe transcodingConfig under recordingConfig.",
+        confidence=0.78,
+        sources=["https://docs.agora.io/en/cloud-recording/reference"],
+        citations=[{"chunk_id": "official-1", "source_path": "official/cloud-recording.md"}],
+        needs_engineer_guidance=False,
+        reason="grounded_answer",
+    )
+
+    payload = serialize_engineer_evidence_search_result(
+        EngineerEvidenceSearchResult(internal=internal, official=official, errors=[]),
+    )
+
+    assert payload["access_modes"] == ["non_official_only", "official_only"]
+    assert payload["internal"]["answer_summary"].startswith("Internal runbook")
+    assert "sources" not in payload["internal"]
+    assert "citations" not in payload["internal"]
+    assert payload["official_fallback"]["sources"] == ["https://docs.agora.io/en/cloud-recording/reference"]
+    assert payload["official_fallback"]["citations"] == [{"chunk_id": "official-1", "source_path": "official/cloud-recording.md"}]
 
 
 def test_engineer_evidence_search_queries_non_official_first() -> None:

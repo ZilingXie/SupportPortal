@@ -11,6 +11,29 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-10 - Engineer evidence orchestration on investigation opening
+
+- Summary:
+  - Added engineer-side evidence orchestration for newly opened investigations: the server now searches engineer evidence with the non-official/internal RAG mode first and serializes a sanitized handoff payload.
+  - Official RAG fallback evidence is preserved separately when the engineer evidence search needs or receives an official fallback.
+  - Internal evidence summaries are attached to engineer handoff context without exposing internal sources or citations.
+- Reason:
+  - Client AI is limited to official docs, while Engineer AI needs internal-first evidence when customer-facing RAG cannot safely answer or a case is explicitly escalated.
+- Affected files/config:
+  - `backend/services/engineer_evidence_tools.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/main.py`
+  - `backend/tests/test_engineer_evidence_tools.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No ingestion, schema, chunking, embedding, vector-table, BM25 index, or backfill changes.
+  - Existing metadata filters remain the access boundary: engineer evidence search calls non-official mode first and official-only mode only as fallback.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_engineer_evidence_tools.py backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_start_investigation_attaches_engineer_evidence_to_opening_context backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_main_engineer_evidence_builder_uses_ticket_handoff_context backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_engineer_case_context_preserves_customer_identity_for_evidence_search -q`
+
 ## 2026-06-09 - Enforce RAG official and non-official access with existing metadata
 
 - Summary:
