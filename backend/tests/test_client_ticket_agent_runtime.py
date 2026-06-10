@@ -803,6 +803,57 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
         )
 
+    def test_billing_detailed_invoice_route_skips_rag_and_prepares_internal_email(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+        from backend.services.support_router import decide_support_route
+
+        execution = execute_client_ticket_agent_runtime(
+            message=(
+                "Please send the detailed invoice. Issue date: 6 May 2026. "
+                "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+            ),
+            ticket_id="TK-BILL-1",
+            customer_id="C-001",
+            ticket_subject="Detailed invoice request",
+            ticket_context=[],
+            product="audio_video_calling",
+            message_id="2026-06-10T00:00:00+00:00",
+            requester="Taylor",
+            route_agent=decide_support_route,
+            route_executor=lambda **kwargs: resolve_support_message(
+                kwargs["message"],
+                ticket_id=kwargs.get("ticket_id"),
+                customer_id=kwargs.get("customer_id"),
+                ticket_subject=kwargs.get("ticket_subject"),
+                ticket_context=kwargs.get("ticket_context"),
+                product=kwargs.get("product"),
+                latest_assistant_message=kwargs.get("latest_assistant_message"),
+                current_ticket_status=kwargs.get("current_ticket_status"),
+                has_active_engineer_case=bool(kwargs.get("has_active_engineer_case")),
+                decision=kwargs.get("decision"),
+            ),
+            rag_executor=lambda **_kwargs: self.fail("rag executor should not run for billing route"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for billing route"),
+        )
+
+        self.assertEqual(execution.result.answer_route, "workflow")
+        self.assertEqual(execution.result.route_family, "billing_automation")
+        self.assertEqual(execution.result.execution_action, "detailed_invoice")
+        self.assertEqual(execution.result.tooling_profile, "deterministic_billing_intake")
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertTrue(execution.result.answer.startswith("Hi Taylor,"))
+        self.assertIn("We’ve escalated your detailed invoice request", execution.result.answer)
+        self.assertTrue(execution.result.answer.endswith("Best Regards,\nSid"))
+        self.assertIsNotNone(execution.result.evidence_summary)
+        assert execution.result.evidence_summary is not None
+        internal_email = execution.result.evidence_summary["billing_internal_email"]
+        self.assertEqual(internal_email["subject"], "Detailed invoice request - Ticket TK-BILL-1")
+        self.assertIn("Customer email: C-001", internal_email["body"])
+        self.assertIn("Transaction ID: 1104245232004173824", internal_email["body"])
+        self.assertEqual(execution.runtime_state.route_agent.get("decision"), "detailed_invoice")
+        self.assertEqual(execution.runtime_state.rag_service.get("reason"), "non_rag_route")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+
     def test_rag_route_starts_rag_agent_only_after_route_agent_returns(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 

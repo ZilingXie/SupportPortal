@@ -7,6 +7,10 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
+from backend.services.billing_automation import (
+    build_billing_automation_result,
+    send_billing_internal_email,
+)
 from backend.services.support_router_prompt import build_route_prompt_hints
 from backend.services.support_router import (
     SupportRouteDecision,
@@ -250,6 +254,241 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     self.assertEqual(decision.reason, "agora_product_portfolio")
 
         urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_fast_paths_account_suspension_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route("Our account was suspended and we need help getting it reviewed.")
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.execution_action, "account_suspension")
+        self.assertEqual(decision.tooling_profile, "deterministic_billing_intake")
+        self.assertEqual(decision.route, "account_suspension")
+        self.assertEqual(decision.reason, "billing_account_suspension")
+        self.assertIn("account suspended", decision.matched_signals)
+        urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_fast_paths_detailed_invoice_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route(
+                "Please send a detailed invoice for Transaction ID 1104245232004173824, "
+                "Issue date 6 May 2026, Amount USD 705.97."
+            )
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.execution_action, "detailed_invoice")
+        self.assertEqual(decision.tooling_profile, "deterministic_billing_intake")
+        self.assertEqual(decision.route, "detailed_invoice")
+        self.assertEqual(decision.reason, "billing_detailed_invoice")
+        self.assertIn("detailed invoice", decision.matched_signals)
+        urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_accepts_llm_billing_scope_only_with_execution_action(self) -> None:
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "billing",
+                    "execution_action": "detailed_invoice",
+                    "confidence": 0.91,
+                    "reason": "billing_detailed_invoice",
+                    "matched_signals": ["invoice details"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route("I need a billing document for my last payment.")
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.execution_action, "detailed_invoice")
+        self.assertEqual(decision.tooling_profile, "deterministic_billing_intake")
+
+    def test_resolve_support_message_collects_missing_account_suspension_fields(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="account_suspension",
+            confidence=0.98,
+            reason="billing_account_suspension",
+            matched_signals=["account suspended"],
+            response_language="en",
+        )
+
+        resolution = resolve_support_message(
+            "Our account was suspended. Company name: ExampleCo. Website: https://example.com",
+            decision=decision,
+        )
+
+        self.assertEqual(resolution.answer_route, "workflow")
+        self.assertEqual(resolution.route_family, "billing_automation")
+        self.assertEqual(resolution.execution_action, "account_suspension")
+        self.assertEqual(resolution.tooling_profile, "deterministic_billing_intake")
+        self.assertFalse(resolution.needs_engineer_guidance)
+        self.assertIn("Company location:", resolution.answer)
+        self.assertIn("Contact email:", resolution.answer)
+        self.assertIn("Phone number:", resolution.answer)
+        self.assertIn("Use Case:", resolution.answer)
+        self.assertNotIn("Company name:", resolution.answer)
+
+    def test_resolve_support_message_builds_account_suspension_internal_email_when_ready(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="account_suspension",
+            confidence=0.98,
+            reason="billing_account_suspension",
+            matched_signals=["account suspended"],
+            response_language="en",
+        )
+
+        resolution = resolve_support_message(
+            (
+                "Our account was suspended. Company name: ExampleCo. Company location: San Francisco, CA. "
+                "Website: https://example.com. Contact email: ops@example.com. Phone number: +1 415 555 0100. "
+                "Use Case: We provide live shopping video support."
+            ),
+            decision=decision,
+        )
+
+        self.assertEqual(resolution.answer_route, "workflow")
+        self.assertEqual(resolution.execution_action, "account_suspension")
+        self.assertIn("We’ve escalated your account suspension request", resolution.answer)
+        self.assertIsNotNone(resolution.evidence_summary)
+        assert resolution.evidence_summary is not None
+        internal_email = resolution.evidence_summary["billing_internal_email"]
+        self.assertEqual(internal_email["subject"], "Account suspension review request - Ticket {{ticket_id}}")
+        self.assertIn("Company name: ExampleCo", internal_email["body"])
+        self.assertIn("Contact email: ops@example.com", internal_email["body"])
+
+    def test_resolve_support_message_builds_detailed_invoice_internal_email_when_ready(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="detailed_invoice",
+            confidence=0.98,
+            reason="billing_detailed_invoice",
+            matched_signals=["detailed invoice"],
+            response_language="en",
+        )
+
+        resolution = resolve_support_message(
+            "Please send the detailed invoice. Issue date: 6 May 2026. "
+            "Transaction ID: 1104245232004173824. Amount: USD 705.97.",
+            decision=decision,
+        )
+
+        self.assertEqual(resolution.answer_route, "workflow")
+        self.assertEqual(resolution.execution_action, "detailed_invoice")
+        self.assertIn("We’ve escalated your detailed invoice request", resolution.answer)
+        self.assertIsNotNone(resolution.evidence_summary)
+        assert resolution.evidence_summary is not None
+        internal_email = resolution.evidence_summary["billing_internal_email"]
+        self.assertEqual(internal_email["subject"], "Detailed invoice request - Ticket {{ticket_id}}")
+        self.assertIn("Issue date: 6 May 2026", internal_email["body"])
+        self.assertIn("Transaction ID: 1104245232004173824", internal_email["body"])
+        self.assertIn("Amount: USD 705.97", internal_email["body"])
+
+    def test_resolve_support_message_records_billing_email_send_status_when_ready(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="detailed_invoice",
+            confidence=0.98,
+            reason="billing_detailed_invoice",
+            matched_signals=["detailed invoice"],
+            response_language="en",
+        )
+
+        with patch(
+            "backend.services.support_router.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_mock:
+            resolution = resolve_support_message(
+                "Please send the detailed invoice. Issue date: 6 May 2026. "
+                "Transaction ID: 1104245232004173824. Amount: USD 705.97.",
+                ticket_id="TK-BILL-1",
+                customer_id="customer@example.com",
+                decision=decision,
+            )
+
+        self.assertIsNotNone(resolution.evidence_summary)
+        assert resolution.evidence_summary is not None
+        self.assertEqual(resolution.evidence_summary["billing_internal_email_send_status"], "sent")
+        self.assertEqual(resolution.evidence_summary["billing_internal_email_send_reason"], "")
+        send_mock.assert_called_once()
+        payload = send_mock.call_args.args[0]
+        self.assertEqual(payload["to"], "xieziling@agora.io")
+        self.assertEqual(payload["from"], "xieziling97@163.com")
+        self.assertEqual(payload["subject"], "Detailed invoice request - Ticket TK-BILL-1")
+
+    def test_billing_internal_email_uses_default_recipient_and_sender(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            result = build_billing_automation_result(
+                action="detailed_invoice",
+                message=(
+                    "Please send the detailed invoice. Issue date: 6 May 2026. "
+                    "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                ),
+                ticket_id="TK-BILL-1",
+                customer_email="customer@example.com",
+            )
+
+        self.assertIsNotNone(result.internal_email)
+        assert result.internal_email is not None
+        self.assertEqual(result.internal_email["to"], "xieziling@agora.io")
+        self.assertEqual(result.internal_email["from"], "xieziling97@163.com")
+
+    def test_send_billing_internal_email_skips_when_smtp_password_missing(self) -> None:
+        email_payload = {
+            "to": "xieziling@agora.io",
+            "from": "xieziling97@163.com",
+            "subject": "Detailed invoice request - Ticket TK-BILL-1",
+            "body": "Hi team",
+        }
+
+        with patch.dict(os.environ, {}, clear=True), patch("smtplib.SMTP_SSL") as smtp_mock:
+            result = send_billing_internal_email(email_payload)
+
+        self.assertEqual(result["status"], "skipped_config_missing")
+        self.assertIn("BILLING_AUTOMATION_SMTP_PASSWORD", result["reason"])
+        smtp_mock.assert_not_called()
+
+    def test_send_billing_internal_email_sends_via_smtp_when_configured(self) -> None:
+        email_payload = {
+            "to": "xieziling@agora.io",
+            "from": "xieziling97@163.com",
+            "subject": "Detailed invoice request - Ticket TK-BILL-1",
+            "body": "Hi team",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "BILLING_AUTOMATION_SMTP_PASSWORD": "app-password",
+                "BILLING_AUTOMATION_SMTP_HOST": "smtp.163.com",
+                "BILLING_AUTOMATION_SMTP_PORT": "465",
+            },
+            clear=True,
+        ), patch("smtplib.SMTP_SSL") as smtp_mock:
+            result = send_billing_internal_email(email_payload)
+
+        self.assertEqual(result["status"], "sent")
+        smtp = smtp_mock.return_value.__enter__.return_value
+        smtp.login.assert_called_once_with("xieziling97@163.com", "app-password")
+        sent_message = smtp.send_message.call_args.args[0]
+        self.assertEqual(sent_message["To"], "xieziling@agora.io")
+        self.assertEqual(sent_message["From"], "xieziling97@163.com")
+        self.assertEqual(sent_message["Subject"], "Detailed invoice request - Ticket TK-BILL-1")
+        self.assertEqual(sent_message.get_content().strip(), "Hi team")
+
+    def test_resolve_support_message_excludes_detailed_invoice_amount_disputes(self) -> None:
+        decision = decide_support_route("The invoice amount is wrong and I want a refund.")
+
+        self.assertNotEqual(decision.execution_action, "detailed_invoice")
 
     def test_decide_support_route_uses_llm_classification_for_public_info(self) -> None:
         payload = {

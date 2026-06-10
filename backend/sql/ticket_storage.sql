@@ -143,6 +143,37 @@ CREATE TABLE IF NOT EXISTS support_engineer_case_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_engineer_hitl_feedback (
+    feedback_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    run_id TEXT,
+    message_id TEXT,
+    evidence_packet_id TEXT,
+    feedback_type TEXT NOT NULL,
+    diagnosis_correctness TEXT NOT NULL,
+    root_cause_correctness TEXT NOT NULL,
+    evidence_quality TEXT NOT NULL,
+    citation_quality TEXT NOT NULL,
+    customer_reply_quality TEXT NOT NULL,
+    missing_information JSONB NOT NULL DEFAULT '[]'::jsonb,
+    incorrect_claims JSONB NOT NULL DEFAULT '[]'::jsonb,
+    corrected_root_cause TEXT,
+    corrected_solution TEXT,
+    corrected_customer_reply TEXT,
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    memory_candidate TEXT NOT NULL,
+    memory_safety TEXT NOT NULL,
+    memory_notes TEXT,
+    prompt_version TEXT,
+    workflow_version TEXT,
+    tool_policy_version TEXT,
+    rag_access_policy_version TEXT,
+    evidence_packet_version TEXT,
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
     ON support_tickets (status, updated_at DESC);
 
@@ -178,3 +209,9 @@ CREATE INDEX IF NOT EXISTS idx_support_engineer_case_messages_created
 
 CREATE INDEX IF NOT EXISTS idx_support_engineer_case_events_created
     ON support_engineer_case_events (engineer_case_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_hitl_feedback_case_created
+    ON support_engineer_hitl_feedback (engineer_case_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_hitl_feedback_ticket_created
+    ON support_engineer_hitl_feedback (client_ticket_id, created_at DESC);

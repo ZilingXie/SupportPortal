@@ -74,6 +74,9 @@ let tellAiDraft = "";
 let tellAiDraftRichHtml = "";
 let investigationReviseMode = false;
 let tellAiSubmitting = false;
+let hitlFeedbackLoading = false;
+let hitlFeedbackSubmitting = false;
+let hitlFeedbackRequestSeq = 0;
 let investigationComposerToolbarState = buildDefaultComposerToolbarState();
 let engineerComposerRuntime = null;
 let localInvestigationThreadState = null;
@@ -1370,6 +1373,287 @@ function getReplyReadiness(ticket) {
     : null;
 }
 
+function getEngineerHitlFeedbackRecords(ticket) {
+  return Array.isArray(ticket?.engineer_hitl_feedback) ? ticket.engineer_hitl_feedback : [];
+}
+
+function getLatestEngineerHitlFeedback(ticket) {
+  return getEngineerHitlFeedbackRecords(ticket)[0] || null;
+}
+
+function getLatestInvestigationMessageId(ticket) {
+  const displayInvestigation = getDisplayInvestigation(ticket);
+  const messages = Array.isArray(displayInvestigation?.messages) ? displayInvestigation.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const messageId = String(messages[index]?.id || "").trim();
+    if (messageId) {
+      return messageId;
+    }
+  }
+  return "";
+}
+
+function splitFeedbackTextLines(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function feedbackFormFieldValue(form, fieldName) {
+  if (!form || typeof form.querySelector !== "function") {
+    return "";
+  }
+  const field = form.querySelector(`[data-hitl-feedback-field="${fieldName}"]`);
+  return String(field?.value ?? field?.textContent ?? "").trim();
+}
+
+function buildHitlFeedbackPayloadFromForm(form, ticket) {
+  const agentState = getEngineerAgentState(ticket) || {};
+  return {
+    engineer_id: ENGINEER_ID,
+    run_id: String(agentState.run_id || "").trim() || undefined,
+    message_id: getLatestInvestigationMessageId(ticket) || undefined,
+    evidence_packet_id: String(agentState.evidence_packet_id || "").trim() || undefined,
+    feedback_type: feedbackFormFieldValue(form, "feedback_type") || "revise",
+    diagnosis_correctness: feedbackFormFieldValue(form, "diagnosis_correctness") || "partially_correct",
+    root_cause_correctness: feedbackFormFieldValue(form, "root_cause_correctness") || "unknown",
+    evidence_quality: feedbackFormFieldValue(form, "evidence_quality") || "partial",
+    citation_quality: feedbackFormFieldValue(form, "citation_quality") || "not_applicable",
+    customer_reply_quality: feedbackFormFieldValue(form, "customer_reply_quality") || "needs_edit",
+    missing_information: splitFeedbackTextLines(feedbackFormFieldValue(form, "missing_information")).map((value) => ({
+      value,
+    })),
+    incorrect_claims: splitFeedbackTextLines(feedbackFormFieldValue(form, "incorrect_claims")).map((claim) => ({
+      claim,
+    })),
+    corrected_root_cause: feedbackFormFieldValue(form, "corrected_root_cause") || undefined,
+    corrected_solution: feedbackFormFieldValue(form, "corrected_solution") || undefined,
+    corrected_customer_reply: feedbackFormFieldValue(form, "corrected_customer_reply") || undefined,
+    evidence_refs: splitFeedbackTextLines(feedbackFormFieldValue(form, "evidence_refs")).map((sourceId) => ({
+      source_id: sourceId,
+    })),
+    memory_candidate: feedbackFormFieldValue(form, "memory_candidate") || "no",
+    memory_safety: feedbackFormFieldValue(form, "memory_safety") || "do_not_store",
+    memory_notes: feedbackFormFieldValue(form, "memory_notes") || undefined,
+    prompt_version: String(agentState.prompt_version || "").trim() || undefined,
+    workflow_version: String(agentState.workflow_version || "").trim() || "engineer-hitl-feedback-v1",
+    tool_policy_version: String(agentState.tool_policy_version || "").trim() || undefined,
+    rag_access_policy_version: String(agentState.rag_access_policy_version || "").trim() || undefined,
+    evidence_packet_version: String(agentState.evidence_packet_version || "").trim() || undefined,
+  };
+}
+
+function renderHitlFeedbackSelectHtml({ field, label, value, options }) {
+  return `
+    <label class="detail-hitl-feedback-field">
+      <span>${escapeHtml(label)}</span>
+      <select data-hitl-feedback-field="${escapeHtml(field)}">
+        ${options
+          .map(
+            (option) => `
+              <option value="${escapeHtml(option.value)}" ${option.value === value ? "selected" : ""}>
+                ${escapeHtml(option.label)}
+              </option>
+            `
+          )
+          .join("")}
+      </select>
+    </label>
+  `;
+}
+
+function renderHitlFeedbackTextareaHtml({ field, label, placeholder = "" }) {
+  return `
+    <label class="detail-hitl-feedback-field detail-hitl-feedback-field-wide">
+      <span>${escapeHtml(label)}</span>
+      <div
+        class="detail-hitl-feedback-textbox"
+        data-hitl-feedback-field="${escapeHtml(field)}"
+        data-placeholder="${escapeHtml(placeholder)}"
+        role="textbox"
+        contenteditable="true"
+        aria-label="${escapeHtml(label)}"
+      ></div>
+    </label>
+  `;
+}
+
+function renderHitlFeedbackPanelHtml(ticket) {
+  const latestFeedback = getLatestEngineerHitlFeedback(ticket);
+  const feedbackCount = getEngineerHitlFeedbackRecords(ticket).length;
+  const disabled = hitlFeedbackSubmitting ? "disabled" : "";
+  const suggestedFeedbackType =
+    normalizeStatusValue(ticket?.status) === "resolved" ? "resolve" : "revise";
+  return `
+    <section class="panel-card detail-hitl-feedback">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">HITL Feedback</p>
+          <h3 class="panel-card-title">Feedback for AI Learning</h3>
+        </div>
+        <span class="detail-hitl-feedback-count">${feedbackCount ? `${feedbackCount} saved` : "No saved feedback"}</span>
+      </div>
+      <p class="detail-hitl-feedback-note">
+        Record quality labels for eval and memory review. memory_candidate is a review signal only.
+      </p>
+      ${
+        hitlFeedbackLoading
+          ? `<div class="detail-hitl-feedback-latest" role="status">Loading feedback history...</div>`
+          : latestFeedback
+          ? `
+            <div class="detail-hitl-feedback-latest" aria-label="Latest HITL feedback">
+              <span class="mono">${escapeHtml(latestFeedback.feedback_id || "-")}</span>
+              <strong>${escapeHtml(latestFeedback.feedback_type || "feedback")}</strong>
+              <small>${escapeHtml(latestFeedback.memory_candidate || "memory_candidate")} · ${escapeHtml(
+                latestFeedback.memory_safety || "memory_safety"
+              )}</small>
+            </div>
+          `
+          : `<div class="detail-hitl-feedback-latest">No feedback recorded for this engineer case yet.</div>`
+      }
+      <form class="detail-hitl-feedback-form">
+        <div class="detail-hitl-feedback-grid">
+          ${renderHitlFeedbackSelectHtml({
+            field: "feedback_type",
+            label: "Feedback type",
+            value: suggestedFeedbackType,
+            options: [
+              { value: "approve", label: "Approve" },
+              { value: "revise", label: "Revise" },
+              { value: "reject", label: "Reject" },
+              { value: "resolve", label: "Resolve" },
+              { value: "reopen", label: "Reopen" },
+            ],
+          })}
+          ${renderHitlFeedbackSelectHtml({
+            field: "diagnosis_correctness",
+            label: "Diagnosis",
+            value: "partially_correct",
+            options: [
+              { value: "correct", label: "Correct" },
+              { value: "partially_correct", label: "Partially correct" },
+              { value: "incorrect", label: "Incorrect" },
+              { value: "not_applicable", label: "N/A" },
+            ],
+          })}
+          ${renderHitlFeedbackSelectHtml({
+            field: "root_cause_correctness",
+            label: "Root cause",
+            value: "unknown",
+            options: [
+              { value: "confirmed", label: "Confirmed" },
+              { value: "likely", label: "Likely" },
+              { value: "incorrect", label: "Incorrect" },
+              { value: "unknown", label: "Unknown" },
+              { value: "not_applicable", label: "N/A" },
+            ],
+          })}
+          ${renderHitlFeedbackSelectHtml({
+            field: "evidence_quality",
+            label: "Evidence",
+            value: "partial",
+            options: [
+              { value: "sufficient", label: "Sufficient" },
+              { value: "partial", label: "Partial" },
+              { value: "insufficient", label: "Insufficient" },
+              { value: "wrong", label: "Wrong" },
+            ],
+          })}
+          ${renderHitlFeedbackSelectHtml({
+            field: "citation_quality",
+            label: "Citations",
+            value: "not_applicable",
+            options: [
+              { value: "correct", label: "Correct" },
+              { value: "partial", label: "Partial" },
+              { value: "missing", label: "Missing" },
+              { value: "wrong", label: "Wrong" },
+              { value: "not_applicable", label: "N/A" },
+            ],
+          })}
+          ${renderHitlFeedbackSelectHtml({
+            field: "customer_reply_quality",
+            label: "Customer reply",
+            value: "needs_edit",
+            options: [
+              { value: "sendable", label: "Sendable" },
+              { value: "needs_edit", label: "Needs edit" },
+              { value: "unsafe", label: "Unsafe" },
+              { value: "not_applicable", label: "N/A" },
+            ],
+          })}
+        </div>
+        ${renderHitlFeedbackTextareaHtml({
+          field: "corrected_root_cause",
+          label: "Corrected root cause",
+          placeholder: "What root cause should future evals learn from?",
+        })}
+        ${renderHitlFeedbackTextareaHtml({
+          field: "corrected_solution",
+          label: "Corrected solution",
+          placeholder: "Customer-safe fix or next engineering step.",
+        })}
+        ${renderHitlFeedbackTextareaHtml({
+          field: "corrected_customer_reply",
+          label: "Corrected customer reply",
+          placeholder: "Final wording that would be safe to send.",
+        })}
+        <div class="detail-hitl-feedback-grid">
+          ${renderHitlFeedbackTextareaHtml({
+            field: "missing_information",
+            label: "Missing information",
+            placeholder: "One item per line.",
+          })}
+          ${renderHitlFeedbackTextareaHtml({
+            field: "incorrect_claims",
+            label: "Incorrect claims",
+            placeholder: "One claim per line.",
+          })}
+          ${renderHitlFeedbackTextareaHtml({
+            field: "evidence_refs",
+            label: "Evidence refs",
+            placeholder: "logs://... or source path, one per line.",
+          })}
+          ${renderHitlFeedbackSelectHtml({
+            field: "memory_candidate",
+            label: "memory_candidate",
+            value: "no",
+            options: [
+              { value: "no", label: "No" },
+              { value: "needs_review", label: "Needs review" },
+              { value: "yes", label: "Yes" },
+            ],
+          })}
+          ${renderHitlFeedbackSelectHtml({
+            field: "memory_safety",
+            label: "memory_safety",
+            value: "do_not_store",
+            options: [
+              { value: "do_not_store", label: "Do not store" },
+              { value: "internal_only", label: "Internal only" },
+              { value: "customer_safe", label: "Customer safe" },
+            ],
+          })}
+          ${renderHitlFeedbackTextareaHtml({
+            field: "memory_notes",
+            label: "Memory notes",
+            placeholder: "Why this should or should not become a memory candidate.",
+          })}
+        </div>
+        <button
+          class="btn btn-primary detail-hitl-feedback-submit"
+          type="button"
+          data-detail-action="submit-hitl-feedback"
+          ${disabled}
+        >
+          ${hitlFeedbackSubmitting ? "Saving Feedback..." : "Save Feedback"}
+        </button>
+      </form>
+    </section>
+  `;
+}
+
 function hasValidatedInvestigationApproval(ticket, activeInvestigation) {
   const draftCustomerReply = String(activeInvestigation?.draft_customer_reply || "").trim();
   return Boolean(
@@ -2342,6 +2626,9 @@ function resetDetailWorkspaceState() {
   tellAiDraftRichHtml = "";
   investigationReviseMode = false;
   tellAiSubmitting = false;
+  hitlFeedbackLoading = false;
+  hitlFeedbackSubmitting = false;
+  hitlFeedbackRequestSeq += 1;
   investigationComposerToolbarState = buildDefaultComposerToolbarState();
 }
 
@@ -3035,6 +3322,7 @@ function buildTicketDetailViewState() {
       Boolean(draftCustomerReply) &&
       !approvalUiState.showApprovalBlock &&
       !showApproveInFlightState,
+    hitlFeedbackPanelHtml: renderHitlFeedbackPanelHtml(ticket),
     draftCustomerReply,
     controlsDisabled: tellAiSubmitting,
     messages: Array.isArray(ticket.messages) ? ticket.messages : [],
@@ -3144,6 +3432,7 @@ function renderTicketDetailInsightPanelHtml(viewState) {
       </div>
     </section>
     ${viewState.replyReadinessReviewHtml}
+    ${viewState.hitlFeedbackPanelHtml}
   `;
 }
 
@@ -3384,6 +3673,7 @@ async function refreshSelectedTicket(options = {}) {
     detailRefreshState.inFlightController = null;
     detailLoading = false;
     renderTicketDetail();
+    refreshSelectedTicketHitlFeedback(requestedTicketId).catch(() => {});
   } catch (error) {
     if (selectedTicketId !== requestedTicketId) {
       return;
@@ -3405,6 +3695,68 @@ async function refreshSelectedTicket(options = {}) {
     if (!silent) {
       window.alert(`Failed to load ticket detail: ${error.message}`);
     }
+    renderTicketDetail();
+  }
+}
+
+async function refreshSelectedTicketHitlFeedback(ticketId) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  if (!normalizedTicketId) {
+    return;
+  }
+  const requestSeq = ++hitlFeedbackRequestSeq;
+  hitlFeedbackLoading = true;
+  renderTicketDetail();
+  try {
+    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(normalizedTicketId)}/feedback`);
+    if (requestSeq !== hitlFeedbackRequestSeq || normalizeDetailTicketId(selectedTicketId) !== normalizedTicketId) {
+      return;
+    }
+    if (selectedTicket && normalizeDetailTicketId(selectedTicket.ticket_id || selectedTicketId) === normalizedTicketId) {
+      selectedTicket = {
+        ...selectedTicket,
+        engineer_hitl_feedback: Array.isArray(payload.feedback) ? payload.feedback : [],
+      };
+    }
+  } catch {
+    // Feedback history should not block opening or refreshing the engineer workspace.
+  } finally {
+    if (requestSeq === hitlFeedbackRequestSeq && normalizeDetailTicketId(selectedTicketId) === normalizedTicketId) {
+      hitlFeedbackLoading = false;
+      renderTicketDetail();
+    }
+  }
+}
+
+async function submitHitlFeedback(ticketId, form) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  if (!normalizedTicketId || !selectedTicket) {
+    return;
+  }
+  const payload = buildHitlFeedbackPayloadFromForm(form, selectedTicket);
+  hitlFeedbackSubmitting = true;
+  renderTicketDetail();
+  try {
+    const response = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(normalizedTicketId)}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const feedback = response?.feedback && typeof response.feedback === "object" ? response.feedback : null;
+    if (feedback && selectedTicket && normalizeDetailTicketId(selectedTicket.ticket_id || selectedTicketId) === normalizedTicketId) {
+      const existingFeedback = getEngineerHitlFeedbackRecords(selectedTicket);
+      selectedTicket = {
+        ...selectedTicket,
+        engineer_hitl_feedback: [
+          feedback,
+          ...existingFeedback.filter(
+            (item) => String(item?.feedback_id || "").trim() !== String(feedback.feedback_id || "").trim()
+          ),
+        ],
+      };
+    }
+  } finally {
+    hitlFeedbackSubmitting = false;
     renderTicketDetail();
   }
 }
@@ -3796,6 +4148,24 @@ async function handleDetailClick(event) {
     } finally {
       tellAiSubmitting = false;
       renderTicketDetail();
+      button.disabled = false;
+    }
+    return;
+  }
+
+  if (action === "submit-hitl-feedback") {
+    const form =
+      typeof button.closest === "function" ? button.closest(".detail-hitl-feedback-form") : null;
+    if (!form) {
+      window.alert("Feedback form is unavailable.");
+      return;
+    }
+    button.disabled = true;
+    try {
+      await submitHitlFeedback(selectedTicketId, form);
+    } catch (error) {
+      window.alert(`Save feedback failed: ${error.message}`);
+    } finally {
       button.disabled = false;
     }
     return;

@@ -146,6 +146,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
+ASSIGNMENT_DIR = UI_DIR / "assignment-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 SHARED_UI_DIR = UI_DIR / "shared-ui"
 
@@ -367,6 +368,37 @@ class InvestigationConfirmationRequest(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
 
 
+class EngineerHitlFeedbackRequest(BaseModel):
+    engineer_id: str = Field(default="Jack", max_length=128)
+    run_id: str | None = Field(default=None, max_length=160)
+    message_id: str | None = Field(default=None, max_length=160)
+    evidence_packet_id: str | None = Field(default=None, max_length=160)
+    feedback_type: str = Field(pattern="^(approve|revise|reject|resolve|reopen)$")
+    diagnosis_correctness: str = Field(
+        pattern="^(correct|partially_correct|incorrect|not_applicable)$"
+    )
+    root_cause_correctness: str = Field(
+        pattern="^(confirmed|likely|incorrect|unknown|not_applicable)$"
+    )
+    evidence_quality: str = Field(pattern="^(sufficient|partial|insufficient|wrong)$")
+    citation_quality: str = Field(pattern="^(correct|partial|missing|wrong|not_applicable)$")
+    customer_reply_quality: str = Field(pattern="^(sendable|needs_edit|unsafe|not_applicable)$")
+    missing_information: list[dict[str, Any]] = Field(default_factory=list)
+    incorrect_claims: list[dict[str, Any]] = Field(default_factory=list)
+    corrected_root_cause: str | None = Field(default=None, max_length=12000)
+    corrected_solution: str | None = Field(default=None, max_length=12000)
+    corrected_customer_reply: str | None = Field(default=None, max_length=12000)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    memory_candidate: str = Field(pattern="^(yes|no|needs_review)$")
+    memory_safety: str = Field(pattern="^(customer_safe|internal_only|do_not_store)$")
+    memory_notes: str | None = Field(default=None, max_length=4000)
+    prompt_version: str | None = Field(default=None, max_length=160)
+    workflow_version: str | None = Field(default=None, max_length=160)
+    tool_policy_version: str | None = Field(default=None, max_length=160)
+    rag_access_policy_version: str | None = Field(default=None, max_length=160)
+    evidence_packet_version: str | None = Field(default=None, max_length=160)
+
+
 class CancelPendingRequest(BaseModel):
     customer_id: str | None = None
     message_created_at: str = Field(min_length=1, max_length=64)
@@ -424,6 +456,8 @@ if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
 if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
+if ASSIGNMENT_DIR.exists():
+    app.mount("/assignment", StaticFiles(directory=ASSIGNMENT_DIR, html=True), name="assignment-ui")
 if DASHBOARD_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard-ui")
 if SHARED_UI_DIR.exists():
@@ -1272,6 +1306,8 @@ def resolve_support_message(
 ) -> SupportResolution:
     return resolve_support_route_message(
         message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
@@ -3511,6 +3547,91 @@ def get_ticket_summary(ticket_id: str) -> dict[str, Any]:
         "next_action_needed": next_action_needed,
         "model": model,
         "generated_at": now_iso(),
+    }
+
+
+@app.post("/api/engineer/tickets/{ticket_id}/feedback")
+def record_engineer_hitl_feedback(
+    ticket_id: str,
+    request: EngineerHitlFeedbackRequest,
+) -> dict[str, Any]:
+    engineer_case = _resolve_engineer_case_payload(ticket_id)
+    if engineer_case is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
+    client_ticket_id = str(client_ref.get("ticket_id") or engineer_case.get("client_ticket_id") or "").strip()
+    if not client_ticket_id:
+        raise HTTPException(status_code=400, detail="Engineer case is missing client ticket reference")
+
+    feedback = ticket_repository.record_engineer_hitl_feedback(
+        {
+            "feedback_id": f"hitl_{uuid4().hex}",
+            "engineer_case_id": str(engineer_case.get("engineer_case_id") or ticket_id).strip(),
+            "client_ticket_id": client_ticket_id,
+            "run_id": request.run_id,
+            "message_id": request.message_id,
+            "evidence_packet_id": request.evidence_packet_id,
+            "feedback_type": request.feedback_type,
+            "diagnosis_correctness": request.diagnosis_correctness,
+            "root_cause_correctness": request.root_cause_correctness,
+            "evidence_quality": request.evidence_quality,
+            "citation_quality": request.citation_quality,
+            "customer_reply_quality": request.customer_reply_quality,
+            "missing_information": request.missing_information,
+            "incorrect_claims": request.incorrect_claims,
+            "corrected_root_cause": request.corrected_root_cause,
+            "corrected_solution": request.corrected_solution,
+            "corrected_customer_reply": request.corrected_customer_reply,
+            "evidence_refs": request.evidence_refs,
+            "memory_candidate": request.memory_candidate,
+            "memory_safety": request.memory_safety,
+            "memory_notes": request.memory_notes,
+            "prompt_version": request.prompt_version,
+            "workflow_version": request.workflow_version,
+            "tool_policy_version": request.tool_policy_version,
+            "rag_access_policy_version": request.rag_access_policy_version,
+            "evidence_packet_version": request.evidence_packet_version,
+            "created_by": request.engineer_id,
+            "created_at": now_iso(),
+        }
+    )
+    ticket_repository.record_engineer_case_event(
+        str(feedback.get("engineer_case_id") or ""),
+        "engineer_hitl_feedback_recorded",
+        {
+            "event": "engineer_hitl_feedback_recorded",
+            "ticket_id": str(feedback.get("engineer_case_id") or ticket_id),
+            "client_ticket_id": str(feedback.get("client_ticket_id") or ""),
+            "engineer_case_id": str(feedback.get("engineer_case_id") or ""),
+            "feedback_id": str(feedback.get("feedback_id") or ""),
+            "feedback_type": str(feedback.get("feedback_type") or ""),
+            "memory_candidate": str(feedback.get("memory_candidate") or ""),
+            "memory_safety": str(feedback.get("memory_safety") or ""),
+            "created_at": str(feedback.get("created_at") or now_iso()),
+        },
+    )
+    return {"ticket_id": ticket_id, "feedback": feedback}
+
+
+@app.get("/api/engineer/tickets/{ticket_id}/feedback")
+def list_engineer_hitl_feedback(
+    ticket_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    engineer_case = _resolve_engineer_case_payload(ticket_id)
+    if engineer_case is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    engineer_case_id = str(engineer_case.get("engineer_case_id") or ticket_id).strip()
+    client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
+    client_ticket_id = str(client_ref.get("ticket_id") or engineer_case.get("client_ticket_id") or "").strip()
+    return {
+        "ticket_id": ticket_id,
+        "engineer_case_id": engineer_case_id,
+        "client_ticket_id": client_ticket_id,
+        "feedback": ticket_repository.list_engineer_hitl_feedback(
+            engineer_case_id,
+            limit=limit,
+        ),
     }
 
 

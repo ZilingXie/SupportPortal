@@ -263,6 +263,20 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def record_ticket_agent_event", repo_source)
         self.assertIn("def list_ticket_agent_events", repo_source)
 
+    def test_ticket_storage_contract_includes_engineer_hitl_feedback_table(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_engineer_hitl_feedback", sql_source)
+        self.assertIn("feedback_id TEXT PRIMARY KEY", sql_source)
+        self.assertIn("engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases", sql_source)
+        self.assertIn("memory_candidate TEXT NOT NULL", sql_source)
+        self.assertIn("memory_safety TEXT NOT NULL", sql_source)
+        self.assertIn("evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb", sql_source)
+        self.assertIn("support_engineer_hitl_feedback", repo_source)
+        self.assertIn("def record_engineer_hitl_feedback", repo_source)
+        self.assertIn("def list_engineer_hitl_feedback", repo_source)
+
     def test_ticket_storage_contract_includes_support_ticket_message_meta(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
