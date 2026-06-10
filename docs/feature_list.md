@@ -25,6 +25,7 @@
 - 对话支持上传 txt/log/err 日志附件。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Billing 白名单问题会自动收集字段并升级内部团队处理。
+- Account 入口可通过 HTTP 或手动 UI 创建客户工单并触发 Billing 白名单流程。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
@@ -61,6 +62,7 @@
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 - Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
 - 对话支持上传 txt/log/err 日志附件。
+- Account 入口可通过 HTTP 或手动 UI 创建客户工单并触发 Billing 白名单流程。
 
 ### 未完成
 - 待补充。

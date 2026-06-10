@@ -12,6 +12,33 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-10 - Account billing intake endpoint
+
+- Area or subsystem: Account-side ticket intake, support routing, and deterministic billing workflow
+- Prompt or model version: `account-billing-intake-v1`
+- Summary: Added a `/account` intake path that creates client tickets from HTTP or manual UI submissions, routes `title + question`, and runs the existing billing automation process for `detailed_invoice` and `account_suspension`.
+- Reason: Account-side requests should preserve the client ticket experience while letting billing whitelist cases enter the same field collection, escalation acknowledgement, and internal email workflow.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/tests/test_account_intake.py`
+  - `backend/tests/test_account_ui_contract.py`
+  - `ui/account-ui/index.html`
+  - `ui/account-ui/app.js`
+  - `ui/account-ui/styles.css`
+  - `docs/billing_automation_plan.html`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `POST /account` creates a client ticket before routing and returns `status`, `route`, `ticket_id`, `customer_reply`, `missing_fields`, and `internal_email_send_status`.
+  - `detailed_invoice` and `account_suspension` requests use existing billing route/process behavior, including missing-field prompts and internal email send metadata.
+  - Non-whitelist account submissions remain as tickets with `not_automated` status and do not send internal email.
+  - `/account` serves a client-style manual submission UI backed by the same endpoint.
+- Verification:
+  - RED: `backend.tests.test_account_intake` failed with 404 before `POST /account` existed.
+  - RED: `backend.tests.test_account_ui_contract` failed because `ui/account-ui` files did not exist.
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_intake backend.tests.test_account_ui_contract`
+  - `node --check ui/account-ui/app.js`
+
 ## 2026-06-10 - Engineer case auto HITL review
 
 - Area or subsystem: Engineer investigation closure and AI learning feedback
