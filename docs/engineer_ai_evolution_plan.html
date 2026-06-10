@@ -485,7 +485,95 @@
     </section>
 
     <section>
-      <h2>五、反馈与记忆 Schema</h2>
+      <h2>五、RAG 与 Mem0 知识边界</h2>
+      <div class="callout warn">
+        <p><strong>不要按 official / non-official 粗暴切分。</strong>更稳的规则是：RAG 放可引用、可追溯、文档型知识；Mem0 放已确认案例、经验、偏好和调查记忆。</p>
+      </div>
+      <table style="margin-top: 14px;">
+        <thead>
+          <tr>
+            <th>知识类型</th>
+            <th>推荐归属</th>
+            <th>使用方</th>
+            <th>原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>官方文档</td>
+            <td>RAG official_only</td>
+            <td>Client AI；Engineer AI fallback</td>
+            <td>需要稳定引用、版本追踪、citation 和客户安全边界。</td>
+          </tr>
+          <tr>
+            <td>内部技术文档 / runbook / troubleshooting docs</td>
+            <td>RAG non_official_only</td>
+            <td>Engineer AI</td>
+            <td>仍属于文档型知识，需要 chunk、BM25/FTS/vector、source path、访问控制和可追溯证据。</td>
+          </tr>
+          <tr>
+            <td>工程师确认案例</td>
+            <td>Postgres + Mem0 摘要</td>
+            <td>Engineer AI；EvoAgentX eval/optimization</td>
+            <td>适合语义召回相似症状、根因、证据和解决方案，但权威记录仍在 Postgres。</td>
+          </tr>
+          <tr>
+            <td>工程师纠正 / 复盘</td>
+            <td>Postgres + Mem0 selected memory</td>
+            <td>Engineer AI；优化器</td>
+            <td>结构化反馈用于评估和优化；只有确认后、脱敏后的摘要才进入长期记忆。</td>
+          </tr>
+          <tr>
+            <td>客户偏好 / 历史处理习惯</td>
+            <td>Mem0</td>
+            <td>Engineer AI</td>
+            <td>偏好和历史上下文更像记忆，不适合混进文档检索索引。</td>
+          </tr>
+          <tr>
+            <td>未确认 AI 草稿 / 猜测</td>
+            <td>不进入 Mem0</td>
+            <td>仅短期上下文</td>
+            <td>避免自进化污染记忆；未验证 root cause 不能被长期召回。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="tile">
+          <strong>错误切分</strong>
+          <p>official doc 进 RAG；其他所有知识进 Mem0。这个做法会让内部 runbook 和技术文档失去 citation、版本、检索策略和访问控制。</p>
+        </div>
+        <div class="tile">
+          <strong>推荐切分</strong>
+          <p>official/internal 文档都进 RAG，但用 access mode 隔离；confirmed cases、纠正经验和客户偏好进 Mem0。</p>
+        </div>
+      </div>
+      <h3 style="margin-top: 16px;">Engineer Evidence 推荐顺序</h3>
+      <div class="flow">
+        <div class="step">
+          <h3>1. Mem0</h3>
+          <p>查相似 confirmed cases，获得历史症状、根因、证据和解决方案。</p>
+        </div>
+        <div class="step">
+          <h3>2. Internal RAG</h3>
+          <p>用 non_official_only 查内部技术文档、runbook 和排障资料。</p>
+        </div>
+        <div class="step">
+          <h3>3. Official RAG</h3>
+          <p>需要 API 语义、客户安全引用或官方依据时 fallback official_only。</p>
+        </div>
+        <div class="step">
+          <h3>4. Evidence Packet</h3>
+          <p>合并案例记忆、内部文档证据和官方引用，标记 internal/customer-safe 边界。</p>
+        </div>
+        <div class="step">
+          <h3>5. Draft / Ask</h3>
+          <p>证据足够则生成客户草稿待审批；不足则向工程师请求下一项证据。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>六、反馈与记忆 Schema</h2>
       <div class="grid two">
         <div>
           <h3>工程师结构化反馈</h3>
@@ -525,7 +613,7 @@
     </section>
 
     <section>
-      <h2>六、可进化对象与锁死边界</h2>
+      <h2>七、可进化对象与锁死边界</h2>
       <table>
         <thead>
           <tr>
@@ -560,7 +648,7 @@
     </section>
 
     <section>
-      <h2>七、阶段计划</h2>
+      <h2>八、阶段计划</h2>
       <table>
         <thead>
           <tr>
@@ -573,8 +661,8 @@
         <tbody>
           <tr>
             <td>阶段 0：边界固化</td>
-            <td>工程师端自进化设计文档、版本字段、数据边界说明。</td>
-            <td>明确 client AI 不进入自进化范围；engineer AI runtime 仍为生产主链路。</td>
+            <td>工程师端自进化设计文档、版本字段、RAG/Mem0 知识边界说明。</td>
+            <td>明确 client AI 不进入自进化范围；engineer AI runtime 仍为生产主链路；非官方文档不被误迁到 Mem0。</td>
             <td><span class="status doing">待开始</span></td>
           </tr>
           <tr>
@@ -585,7 +673,7 @@
           </tr>
           <tr>
             <td>阶段 2：Mem0 案例记忆</td>
-            <td>案例摘要器、Mem0 写入器、相似案例检索器。</td>
+            <td>案例摘要器、Mem0 写入器、相似案例检索器；RAG 文档知识保留在 official/non_official access modes。</td>
             <td>确认案例可检索，未确认案例不会进入长期记忆。</td>
             <td><span class="status todo">待开始</span></td>
           </tr>
@@ -612,7 +700,7 @@
     </section>
 
     <section>
-      <h2>八、任务清单</h2>
+      <h2>九、任务清单</h2>
       <ul class="task-list" id="taskList">
         <li class="task">
           <input type="checkbox" data-task="boundary-doc">
@@ -647,10 +735,18 @@
           <span class="owner">RAG / 记忆</span>
         </li>
         <li class="task">
+          <input type="checkbox" data-task="rag-mem0-boundary">
+          <div>
+            <p class="task-title">固化 RAG 与 Mem0 知识边界</p>
+            <p class="task-desc">文档型知识保留在 RAG access modes；经验、案例和偏好进入 Mem0，避免把所有非官方知识迁入记忆层。</p>
+          </div>
+          <span class="owner">架构 / RAG</span>
+        </li>
+        <li class="task">
           <input type="checkbox" data-task="case-retrieval">
           <div>
             <p class="task-title">接入相似案例检索</p>
-            <p class="task-desc">在 engineer evidence 阶段检索 Mem0 案例，并与 internal RAG、official fallback 合并成统一 evidence packet。</p>
+            <p class="task-desc">在 engineer evidence 阶段检索 Mem0 confirmed cases，并与 internal RAG、official fallback 合并成统一 evidence packet。</p>
           </div>
           <span class="owner">后端</span>
         </li>
@@ -690,7 +786,7 @@
     </section>
 
     <section>
-      <h2>九、质量门禁</h2>
+      <h2>十、质量门禁</h2>
       <table>
         <thead>
           <tr>
@@ -730,7 +826,7 @@
     </section>
 
     <section>
-      <h2>十、指标</h2>
+      <h2>十一、指标</h2>
       <div class="grid">
         <div class="tile">
           <strong>工程师纠正率</strong>
@@ -760,7 +856,7 @@
     </section>
 
     <section>
-      <h2>十一、关键风险</h2>
+      <h2>十二、关键风险</h2>
       <table>
         <thead>
           <tr>
@@ -791,6 +887,11 @@
             <td>Postgres 为 source of truth；Mem0 记录版本和 ticket id；检索结果必须回查权威状态。</td>
           </tr>
           <tr>
+            <td>把所有非官方知识放入 Mem0</td>
+            <td>内部文档失去 citation、版本、source path 和检索可控性，engineer AI 难以解释证据来源。</td>
+            <td>按知识形态切分：文档型知识进 RAG non_official_only；案例、经验和偏好进 Mem0。</td>
+          </tr>
+          <tr>
             <td>工具调用策略漂移</td>
             <td>AI 调用错误工具或错误 fallback。</td>
             <td>工具 allowlist、参数 schema 校验、调用 trace、失败回退到当前稳定策略。</td>
@@ -800,11 +901,11 @@
     </section>
 
     <section>
-      <h2>十二、后续建议</h2>
+      <h2>十三、后续建议</h2>
       <div class="callout danger">
-        <p><strong>下一步不要直接实现 EvoAgentX 接管。</strong>先实现结构化反馈和案例记忆，这两件事会为后续 prompt、拓扑、skill 调用优化提供可靠训练和评估基础。</p>
+        <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把所有非官方知识迁入 Mem0。</strong>先实现结构化反馈、confirmed-case 记忆和 RAG/Mem0 evidence packet，这三件事会为后续 prompt、拓扑、skill 调用优化提供可靠基础。</p>
       </div>
-      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、Mem0 confirmed-case 写入、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
+      <p style="margin-top: 12px;">建议的第一批实施任务是：结构化 HITL 反馈、RAG 与 Mem0 知识边界固化、Mem0 confirmed-case 写入、engineer evidence packet 合并、离线 eval dataset。等这些数据闭环稳定后，再接 EvoAgentX Optimization Lab。</p>
     </section>
   </main>
 
