@@ -380,6 +380,27 @@ def latest_customer_message(ticket: dict[str, Any]) -> str:
     return ""
 
 
+def _engineer_evidence_opening_summary(ticket: dict[str, Any]) -> str:
+    handoff_packet = ticket.get("engineer_handoff_packet")
+    if not isinstance(handoff_packet, dict):
+        return ""
+    evidence = handoff_packet.get("engineer_evidence")
+    if not isinstance(evidence, dict):
+        return ""
+    parts: list[str] = []
+    internal = evidence.get("internal")
+    if isinstance(internal, dict):
+        internal_summary = _compact_text(internal.get("answer_summary"))
+        if internal_summary:
+            parts.append(f"Internal evidence: {internal_summary}")
+    official = evidence.get("official_fallback")
+    if isinstance(official, dict):
+        official_summary = _compact_text(official.get("answer_summary"))
+        if official_summary:
+            parts.append(f"Official fallback evidence: {official_summary}")
+    return " ".join(parts).strip()
+
+
 def default_investigation_prompt(
     ticket: dict[str, Any],
     investigation: dict[str, Any],
@@ -403,6 +424,7 @@ def default_investigation_prompt(
 
     customer_text = latest_customer_message(ticket)
     subject = str(ticket.get("subject") or "this issue").strip()
+    engineer_evidence_summary = _engineer_evidence_opening_summary(ticket)
 
     if isinstance(opening_context, dict):
         issue_summary = _compact_text(opening_context.get("issue_summary")) or (customer_text or subject)
@@ -411,13 +433,14 @@ def default_investigation_prompt(
         issue_line = issue_summary
         if rag_answer_summary:
             issue_line = f"{issue_line} {rag_answer_summary}".strip()
-        base_turn["message"] = "\n".join(
-            [
-                "Engineer Request:",
-                f"Issue: {issue_line}",
-                f"Action Needed: {action_needed}",
-            ]
-        )
+        message_lines = [
+            "Engineer Request:",
+            f"Issue: {issue_line}",
+        ]
+        if engineer_evidence_summary:
+            message_lines.append(f"Engineer Evidence: {engineer_evidence_summary}")
+        message_lines.append(f"Action Needed: {action_needed}")
+        base_turn["message"] = "\n".join(message_lines)
         base_turn["sources"] = _limited_sources(opening_context.get("sources"))
         base_turn["citations"] = _limited_citations(opening_context.get("citations"))
         return base_turn
@@ -429,6 +452,8 @@ def default_investigation_prompt(
             "Please confirm the reproduction scope, SDK version, and whether the issue is limited to a specific platform. "
             f"Customer issue: {customer_text or subject}"
         )
+    if engineer_evidence_summary:
+        request = f"{request}\nEngineer Evidence: {engineer_evidence_summary}"
     base_turn["message"] = request
     return base_turn
 
@@ -502,6 +527,21 @@ def _build_handoff_rag_result(execution_context: dict[str, Any] | None = None) -
             else {}
         ),
     }
+
+
+def _build_engineer_evidence_payload(
+    engineer_evidence_builder: Callable[..., dict[str, Any] | None] | None,
+    *,
+    ticket: dict[str, Any],
+    handoff_packet: dict[str, Any],
+) -> dict[str, Any] | None:
+    if engineer_evidence_builder is None:
+        return None
+    try:
+        payload = engineer_evidence_builder(ticket=ticket, handoff_packet=handoff_packet)
+    except Exception as exc:  # pragma: no cover - defensive path keeps investigation opening resilient.
+        return {"errors": [f"builder:{exc.__class__.__name__}"]}
+    return payload if isinstance(payload, dict) and payload else None
 
 
 def _update_ticket_level_agent_state(
@@ -586,6 +626,7 @@ def start_or_refresh_investigation(
     opening_context: dict[str, Any] | None = None,
     ai_turn_builder: Callable[..., dict[str, Any]] = default_investigation_prompt,
     execution_context: dict[str, Any] | None = None,
+    engineer_evidence_builder: Callable[..., dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     ensure_ticket_investigation_defaults(ticket)
     surface_legacy_pending_question(ticket)
@@ -614,6 +655,13 @@ def start_or_refresh_investigation(
             "updated_at": now_value,
             "messages": [],
         }
+        evidence_payload = _build_engineer_evidence_payload(
+            engineer_evidence_builder,
+            ticket=ticket,
+            handoff_packet=ticket["engineer_handoff_packet"],
+        )
+        if evidence_payload is not None:
+            ticket["engineer_handoff_packet"]["engineer_evidence"] = evidence_payload
     else:
         active_investigation = existing_active
         active_investigation["trigger_reason"] = str(trigger_reason or active_investigation.get("trigger_reason") or "")

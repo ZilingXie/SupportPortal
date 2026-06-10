@@ -18,6 +18,53 @@ class EngineerEvidenceSearchResult:
         return self.official is not None
 
 
+def _serialize_evidence_detail(
+    detail: RagTicketAnswerDetail,
+    *,
+    include_customer_safe_sources: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "answer_summary": str(detail.answer or "").strip(),
+        "confidence": detail.confidence,
+        "reason": str(detail.reason or "").strip(),
+        "needs_engineer_guidance": bool(detail.needs_engineer_guidance),
+    }
+    if isinstance(detail.evidence_summary, dict) and detail.evidence_summary:
+        payload["evidence_summary"] = dict(detail.evidence_summary)
+    if include_customer_safe_sources:
+        payload["sources"] = list(detail.sources or [])
+        payload["citations"] = [
+            dict(item)
+            for item in list(detail.citations or [])
+            if isinstance(item, dict)
+        ]
+    return payload
+
+
+def serialize_engineer_evidence_search_result(
+    result: EngineerEvidenceSearchResult,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "access_modes": [],
+        "internal": None,
+        "official_fallback": None,
+        "errors": list(result.errors or []),
+    }
+    if result.internal is not None:
+        payload["access_modes"].append("non_official_only")
+        payload["internal"] = _serialize_evidence_detail(
+            result.internal,
+            include_customer_safe_sources=False,
+        )
+    if result.official is not None:
+        payload["access_modes"].append("official_only")
+        payload["official_fallback"] = _serialize_evidence_detail(
+            result.official,
+            include_customer_safe_sources=True,
+        )
+    return payload
+
+
 def _needs_official_fallback(detail: RagTicketAnswerDetail | None, *, force_official_fallback: bool) -> bool:
     if force_official_fallback:
         return True
