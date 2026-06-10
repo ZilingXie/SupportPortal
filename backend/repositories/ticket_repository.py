@@ -25,6 +25,14 @@ _VALID_STATUSES = {"open", "communicating", "escalated", "investigating", "resol
 _VALID_ROLES = {"customer", "assistant", "engineer", "system"}
 _VALID_INVESTIGATION_ROLES = {"engineer_ai", "engineer", "system"}
 _VALID_INVESTIGATION_STATES = {"active", "awaiting_confirmation", "closed"}
+_VALID_HITL_FEEDBACK_TYPES = {"approve", "revise", "reject", "resolve", "reopen"}
+_VALID_HITL_DIAGNOSIS_CORRECTNESS = {"correct", "partially_correct", "incorrect", "not_applicable"}
+_VALID_HITL_ROOT_CAUSE_CORRECTNESS = {"confirmed", "likely", "incorrect", "unknown", "not_applicable"}
+_VALID_HITL_EVIDENCE_QUALITY = {"sufficient", "partial", "insufficient", "wrong"}
+_VALID_HITL_CITATION_QUALITY = {"correct", "partial", "missing", "wrong", "not_applicable"}
+_VALID_HITL_CUSTOMER_REPLY_QUALITY = {"sendable", "needs_edit", "unsafe", "not_applicable"}
+_VALID_HITL_MEMORY_CANDIDATE = {"yes", "no", "needs_review"}
+_VALID_HITL_MEMORY_SAFETY = {"customer_safe", "internal_only", "do_not_store"}
 _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
     "connection timeout expired",
     "server closed the connection unexpectedly",
@@ -89,6 +97,11 @@ def _normalize_investigation_role(value: Any) -> str:
 def _normalize_investigation_state(value: Any) -> str:
     state = str(value or "active").strip().lower()
     return state if state in _VALID_INVESTIGATION_STATES else "active"
+
+
+def _normalize_enum(value: Any, allowed: set[str], default: str) -> str:
+    normalized = str(value or default).strip().lower()
+    return normalized if normalized in allowed else default
 
 
 def _derive_engineer_case_investigation_state(
@@ -243,6 +256,95 @@ def _ticket_message_meta(message: dict[str, Any] | None) -> dict[str, Any]:
             continue
         meta[normalized_key] = copy.deepcopy(value)
     return meta
+
+
+def _normalize_json_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [copy.deepcopy(item) for item in value if isinstance(item, dict)]
+
+
+def _normalize_engineer_hitl_feedback(feedback: dict[str, Any]) -> dict[str, Any]:
+    feedback_id = str(feedback.get("feedback_id") or "").strip()
+    if not feedback_id:
+        raise ValueError("feedback_id is required")
+    engineer_case_id = str(feedback.get("engineer_case_id") or "").strip()
+    if not engineer_case_id:
+        raise ValueError("engineer_case_id is required")
+    client_ticket_id = str(feedback.get("client_ticket_id") or "").strip()
+    if not client_ticket_id:
+        raise ValueError("client_ticket_id is required")
+    created_by = str(feedback.get("created_by") or feedback.get("engineer_id") or "").strip()
+    if not created_by:
+        raise ValueError("created_by is required")
+
+    normalized = copy.deepcopy(feedback)
+    normalized["feedback_id"] = feedback_id
+    normalized["engineer_case_id"] = engineer_case_id
+    normalized["client_ticket_id"] = client_ticket_id
+    normalized["run_id"] = str(normalized.get("run_id") or "").strip() or None
+    normalized["message_id"] = str(normalized.get("message_id") or "").strip() or None
+    normalized["evidence_packet_id"] = str(normalized.get("evidence_packet_id") or "").strip() or None
+    normalized["feedback_type"] = _normalize_enum(
+        normalized.get("feedback_type"),
+        _VALID_HITL_FEEDBACK_TYPES,
+        "approve",
+    )
+    normalized["diagnosis_correctness"] = _normalize_enum(
+        normalized.get("diagnosis_correctness"),
+        _VALID_HITL_DIAGNOSIS_CORRECTNESS,
+        "not_applicable",
+    )
+    normalized["root_cause_correctness"] = _normalize_enum(
+        normalized.get("root_cause_correctness"),
+        _VALID_HITL_ROOT_CAUSE_CORRECTNESS,
+        "unknown",
+    )
+    normalized["evidence_quality"] = _normalize_enum(
+        normalized.get("evidence_quality"),
+        _VALID_HITL_EVIDENCE_QUALITY,
+        "insufficient",
+    )
+    normalized["citation_quality"] = _normalize_enum(
+        normalized.get("citation_quality"),
+        _VALID_HITL_CITATION_QUALITY,
+        "not_applicable",
+    )
+    normalized["customer_reply_quality"] = _normalize_enum(
+        normalized.get("customer_reply_quality"),
+        _VALID_HITL_CUSTOMER_REPLY_QUALITY,
+        "not_applicable",
+    )
+    normalized["missing_information"] = _normalize_json_list(normalized.get("missing_information"))
+    normalized["incorrect_claims"] = _normalize_json_list(normalized.get("incorrect_claims"))
+    normalized["corrected_root_cause"] = str(normalized.get("corrected_root_cause") or "").strip() or None
+    normalized["corrected_solution"] = str(normalized.get("corrected_solution") or "").strip() or None
+    normalized["corrected_customer_reply"] = (
+        str(normalized.get("corrected_customer_reply") or "").strip() or None
+    )
+    normalized["evidence_refs"] = _normalize_json_list(normalized.get("evidence_refs"))
+    normalized["memory_candidate"] = _normalize_enum(
+        normalized.get("memory_candidate"),
+        _VALID_HITL_MEMORY_CANDIDATE,
+        "no",
+    )
+    normalized["memory_safety"] = _normalize_enum(
+        normalized.get("memory_safety"),
+        _VALID_HITL_MEMORY_SAFETY,
+        "do_not_store",
+    )
+    normalized["memory_notes"] = str(normalized.get("memory_notes") or "").strip() or None
+    for version_key in (
+        "prompt_version",
+        "workflow_version",
+        "tool_policy_version",
+        "rag_access_policy_version",
+        "evidence_packet_version",
+    ):
+        normalized[version_key] = str(normalized.get(version_key) or "").strip() or None
+    normalized["created_by"] = created_by
+    normalized["created_at"] = normalized.get("created_at") or _utc_now()
+    return normalized
 
 
 def _safe_positive_int(value: Any, default_value: int) -> int:
@@ -531,6 +633,16 @@ class TicketRepository(Protocol):
     ) -> list[dict[str, Any]]:
         ...
 
+    def record_engineer_hitl_feedback(self, feedback: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def list_engineer_hitl_feedback(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        ...
+
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         ...
 
@@ -593,6 +705,7 @@ class InMemoryTicketRepository:
         self._investigations: dict[str, list[dict[str, Any]]] = {}
         self._engineer_cases: dict[str, dict[str, Any]] = {}
         self._engineer_case_events: list[dict[str, Any]] = []
+        self._engineer_hitl_feedback: list[dict[str, Any]] = []
 
     def initialize(self) -> None:
         return None
@@ -975,6 +1088,30 @@ class InMemoryTicketRepository:
             if str(item.get("engineer_case_id") or "").strip() == normalized_case_id
         ]
         return [copy.deepcopy(item) for item in filtered[:safe_limit]]
+
+    def record_engineer_hitl_feedback(self, feedback: dict[str, Any]) -> dict[str, Any]:
+        saved = _normalize_engineer_hitl_feedback(feedback)
+        self._engineer_hitl_feedback = [
+            item
+            for item in self._engineer_hitl_feedback
+            if str(item.get("feedback_id") or "").strip() != str(saved["feedback_id"])
+        ]
+        self._engineer_hitl_feedback.append(saved)
+        return copy.deepcopy(saved)
+
+    def list_engineer_hitl_feedback(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        normalized_case_id = str(engineer_case_id).strip()
+        rows = [
+            item
+            for item in reversed(self._engineer_hitl_feedback)
+            if str(item.get("engineer_case_id") or "").strip() == normalized_case_id
+        ]
+        return [copy.deepcopy(item) for item in rows[:safe_limit]]
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self._investigations.get(ticket_id, [])
@@ -1813,6 +1950,46 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            feedback_id TEXT PRIMARY KEY,
+                            engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                            client_ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            run_id TEXT,
+                            message_id TEXT,
+                            evidence_packet_id TEXT,
+                            feedback_type TEXT NOT NULL,
+                            diagnosis_correctness TEXT NOT NULL,
+                            root_cause_correctness TEXT NOT NULL,
+                            evidence_quality TEXT NOT NULL,
+                            citation_quality TEXT NOT NULL,
+                            customer_reply_quality TEXT NOT NULL,
+                            missing_information JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            incorrect_claims JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            corrected_root_cause TEXT,
+                            corrected_solution TEXT,
+                            corrected_customer_reply TEXT,
+                            evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            memory_candidate TEXT NOT NULL,
+                            memory_safety TEXT NOT NULL,
+                            memory_notes TEXT,
+                            prompt_version TEXT,
+                            workflow_version TEXT,
+                            tool_policy_version TEXT,
+                            rag_access_policy_version TEXT,
+                            evidence_packet_version TEXT,
+                            created_by TEXT NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_engineer_hitl_feedback"),
+                        self._table("support_engineer_cases"),
+                        self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
                         INSERT INTO {} (config_key, config_value, updated_at)
                         VALUES (%s, %s, NOW())
                         ON CONFLICT (config_key) DO UPDATE SET
@@ -1884,6 +2061,18 @@ class PostgresTicketRepository:
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, created_at DESC)").format(
                         sql.Identifier("idx_support_engineer_case_events_created"),
                         self._table("support_engineer_case_events"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_hitl_feedback_case_created"),
+                        self._table("support_engineer_hitl_feedback"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (client_ticket_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_hitl_feedback_ticket_created"),
+                        self._table("support_engineer_hitl_feedback"),
                     )
                 )
                 self._backfill_engineer_cases_from_legacy_storage(cur)
@@ -3175,6 +3364,200 @@ class PostgresTicketRepository:
             return events
 
         return self._run_with_connection_retry("list_engineer_case_events", _operation)
+
+    def record_engineer_hitl_feedback(self, feedback: dict[str, Any]) -> dict[str, Any]:
+        saved = _normalize_engineer_hitl_feedback(feedback)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                feedback_id,
+                                engineer_case_id,
+                                client_ticket_id,
+                                run_id,
+                                message_id,
+                                evidence_packet_id,
+                                feedback_type,
+                                diagnosis_correctness,
+                                root_cause_correctness,
+                                evidence_quality,
+                                citation_quality,
+                                customer_reply_quality,
+                                missing_information,
+                                incorrect_claims,
+                                corrected_root_cause,
+                                corrected_solution,
+                                corrected_customer_reply,
+                                evidence_refs,
+                                memory_candidate,
+                                memory_safety,
+                                memory_notes,
+                                prompt_version,
+                                workflow_version,
+                                tool_policy_version,
+                                rag_access_policy_version,
+                                evidence_packet_version,
+                                created_by,
+                                created_at
+                            )
+                            VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            )
+                            ON CONFLICT (feedback_id) DO UPDATE SET
+                                engineer_case_id = EXCLUDED.engineer_case_id,
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                run_id = EXCLUDED.run_id,
+                                message_id = EXCLUDED.message_id,
+                                evidence_packet_id = EXCLUDED.evidence_packet_id,
+                                feedback_type = EXCLUDED.feedback_type,
+                                diagnosis_correctness = EXCLUDED.diagnosis_correctness,
+                                root_cause_correctness = EXCLUDED.root_cause_correctness,
+                                evidence_quality = EXCLUDED.evidence_quality,
+                                citation_quality = EXCLUDED.citation_quality,
+                                customer_reply_quality = EXCLUDED.customer_reply_quality,
+                                missing_information = EXCLUDED.missing_information,
+                                incorrect_claims = EXCLUDED.incorrect_claims,
+                                corrected_root_cause = EXCLUDED.corrected_root_cause,
+                                corrected_solution = EXCLUDED.corrected_solution,
+                                corrected_customer_reply = EXCLUDED.corrected_customer_reply,
+                                evidence_refs = EXCLUDED.evidence_refs,
+                                memory_candidate = EXCLUDED.memory_candidate,
+                                memory_safety = EXCLUDED.memory_safety,
+                                memory_notes = EXCLUDED.memory_notes,
+                                prompt_version = EXCLUDED.prompt_version,
+                                workflow_version = EXCLUDED.workflow_version,
+                                tool_policy_version = EXCLUDED.tool_policy_version,
+                                rag_access_policy_version = EXCLUDED.rag_access_policy_version,
+                                evidence_packet_version = EXCLUDED.evidence_packet_version,
+                                created_by = EXCLUDED.created_by,
+                                created_at = EXCLUDED.created_at
+                            """
+                        ).format(self._table("support_engineer_hitl_feedback")),
+                        (
+                            saved["feedback_id"],
+                            saved["engineer_case_id"],
+                            saved["client_ticket_id"],
+                            saved["run_id"],
+                            saved["message_id"],
+                            saved["evidence_packet_id"],
+                            saved["feedback_type"],
+                            saved["diagnosis_correctness"],
+                            saved["root_cause_correctness"],
+                            saved["evidence_quality"],
+                            saved["citation_quality"],
+                            saved["customer_reply_quality"],
+                            Json(saved["missing_information"]),
+                            Json(saved["incorrect_claims"]),
+                            saved["corrected_root_cause"],
+                            saved["corrected_solution"],
+                            saved["corrected_customer_reply"],
+                            Json(saved["evidence_refs"]),
+                            saved["memory_candidate"],
+                            saved["memory_safety"],
+                            saved["memory_notes"],
+                            saved["prompt_version"],
+                            saved["workflow_version"],
+                            saved["tool_policy_version"],
+                            saved["rag_access_policy_version"],
+                            saved["evidence_packet_version"],
+                            saved["created_by"],
+                            saved["created_at"],
+                        ),
+                    )
+            return copy.deepcopy(saved)
+
+        return self._run_with_connection_retry("record_engineer_hitl_feedback", _operation)
+
+    def list_engineer_hitl_feedback(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            feedback_id,
+                            engineer_case_id,
+                            client_ticket_id,
+                            run_id,
+                            message_id,
+                            evidence_packet_id,
+                            feedback_type,
+                            diagnosis_correctness,
+                            root_cause_correctness,
+                            evidence_quality,
+                            citation_quality,
+                            customer_reply_quality,
+                            missing_information,
+                            incorrect_claims,
+                            corrected_root_cause,
+                            corrected_solution,
+                            corrected_customer_reply,
+                            evidence_refs,
+                            memory_candidate,
+                            memory_safety,
+                            memory_notes,
+                            prompt_version,
+                            workflow_version,
+                            tool_policy_version,
+                            rag_access_policy_version,
+                            evidence_packet_version,
+                            created_by,
+                            created_at
+                        FROM {}
+                        WHERE engineer_case_id = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_engineer_hitl_feedback")),
+                    (engineer_case_id, safe_limit),
+                )
+                rows = cur.fetchall()
+            return [
+                {
+                    "feedback_id": str(row[0]),
+                    "engineer_case_id": str(row[1]),
+                    "client_ticket_id": str(row[2]),
+                    "run_id": str(row[3]) if row[3] is not None else None,
+                    "message_id": str(row[4]) if row[4] is not None else None,
+                    "evidence_packet_id": str(row[5]) if row[5] is not None else None,
+                    "feedback_type": str(row[6]),
+                    "diagnosis_correctness": str(row[7]),
+                    "root_cause_correctness": str(row[8]),
+                    "evidence_quality": str(row[9]),
+                    "citation_quality": str(row[10]),
+                    "customer_reply_quality": str(row[11]),
+                    "missing_information": row[12] if isinstance(row[12], list) else [],
+                    "incorrect_claims": row[13] if isinstance(row[13], list) else [],
+                    "corrected_root_cause": str(row[14]) if row[14] is not None else None,
+                    "corrected_solution": str(row[15]) if row[15] is not None else None,
+                    "corrected_customer_reply": str(row[16]) if row[16] is not None else None,
+                    "evidence_refs": row[17] if isinstance(row[17], list) else [],
+                    "memory_candidate": str(row[18]),
+                    "memory_safety": str(row[19]),
+                    "memory_notes": str(row[20]) if row[20] is not None else None,
+                    "prompt_version": str(row[21]) if row[21] is not None else None,
+                    "workflow_version": str(row[22]) if row[22] is not None else None,
+                    "tool_policy_version": str(row[23]) if row[23] is not None else None,
+                    "rag_access_policy_version": str(row[24]) if row[24] is not None else None,
+                    "evidence_packet_version": str(row[25]) if row[25] is not None else None,
+                    "created_by": str(row[26]),
+                    "created_at": _to_iso(row[27]),
+                }
+                for row in rows
+            ]
+
+        return self._run_with_connection_retry("list_engineer_hitl_feedback", _operation)
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self.list_ticket_investigations(ticket_id=ticket_id, include_messages=True)
