@@ -12,6 +12,31 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-10 - Billing automation route items
+
+- Area or subsystem: Intent routing and deterministic billing intake templates
+- Prompt or model version: `billing-automation-route-v1`
+- Summary: Added deterministic `billing` route items for `account_suspension` and `detailed_invoice`, with fixed missing-field prompts, escalation acknowledgement templates, and internal email payload templates.
+- Reason: Billing automation v1 should only handle two strict whitelist cases, collect required fields, tell the customer the case was escalated to the internal team, and prepare an internal email without using RAG or free-form model generation.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/services/support_router.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/main.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Account suspension messages now route to `billing / account_suspension / deterministic_billing_intake`.
+  - Detailed invoice requests now route to `billing / detailed_invoice / deterministic_billing_intake`, while amount disputes and refund requests stay out of the detailed-invoice route.
+  - Billing routes skip RAG and review, ask only for missing required fields, and when fields are complete return a customer escalation acknowledgement plus a prepared internal email payload.
+- Verification:
+  - RED: Newly added support-router tests failed before implementation because billing messages fell through to the LLM router and billing decisions resolved as `refuse`.
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_support_router backend.tests.test_client_ticket_agent_runtime.ClientTicketAgentRuntimeContractTests.test_billing_detailed_invoice_route_skips_rag_and_prepares_internal_email`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/billing_automation.py backend/services/support_router.py backend/services/client_ticket_agent_runtime.py backend/main.py backend/tests/test_support_router.py backend/tests/test_client_ticket_agent_runtime.py`
+  - `python3 scripts/verify_feature_list.py`
+
 ## 2026-06-09 - RAG access-aware AI evidence routing
 
 - Area or subsystem: Client RAG executor and engineer evidence tools

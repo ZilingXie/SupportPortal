@@ -1055,7 +1055,7 @@ def _resolve_latest_trace_ref(openai_tracing: Any) -> dict[str, Any] | None:
     return None
 
 
-def _ensure_web_search_customer_reply_email(
+def _ensure_answer_customer_reply_email(
     resolution: SupportResolution,
     *,
     workflow_action: str,
@@ -1065,7 +1065,7 @@ def _ensure_web_search_customer_reply_email(
 ) -> SupportResolution:
     if (
         workflow_action != WORKFLOW_ACTION_ANSWER_CUSTOMER
-        or _clean_text(resolution.answer_route).lower() != "web_search"
+        or _clean_text(resolution.answer_route).lower() not in {"web_search", "workflow"}
     ):
         return resolution
     if not is_dataclass(resolution):
@@ -2050,7 +2050,7 @@ def execute_client_ticket_agent_runtime(
                     else WORKFLOW_ACTION_ANSWER_CUSTOMER
                 )
             )
-            resolution = _ensure_web_search_customer_reply_email(
+            resolution = _ensure_answer_customer_reply_email(
                 resolution,
                 workflow_action=workflow_action,
                 message=message,
