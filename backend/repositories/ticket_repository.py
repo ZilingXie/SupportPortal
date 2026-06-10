@@ -2129,7 +2129,7 @@ class PostgresTicketRepository:
                             tool_policy_version TEXT,
                             rag_access_policy_version TEXT,
                             evidence_packet_version TEXT,
-                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
