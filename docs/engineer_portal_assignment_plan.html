@@ -605,6 +605,23 @@
         ]
       },
       {
+        id: "assignment-ui-prototype",
+        phase: "portal",
+        module: "/assignment",
+        title: "完成独立 Assignment UI 原型",
+        text: "新增独立 /assignment 页面作为前端 mock 原型，不修改现有 /engineer；页面覆盖工程师选择器、每日固定 UTC+8 shift、分配资格、单 active Engineer 工单、assign 后 3 小时 SLA 倒计时和超时转派模拟。",
+        status: "done",
+        completedChecks: true,
+        checks: [
+          "登录区使用 Jack、Maya、Leo 工程师选择器，并用 localStorage 保存当前工程师。",
+          "shift 支持每日固定 start/end time 编辑，统一 UTC+8，并展示 In shift / Out of shift。",
+          "只有登录且在 shift 内、且没有 active Engineer Ticket 时，才显示 Eligible for assignment。",
+          "mock ticket 从 queue 分配到当前工程师后开始 3 小时 SLA 倒计时。",
+          "工程师批准并发送 Engineer AI 生成的客户回复后关闭当前 Engineer Ticket，并允许领取下一个。",
+          "SLA 超时后展示 timeout / transfer 状态，模拟标记原工程师超时并转派。"
+        ]
+      },
+      {
         id: "portal-queue-view",
         phase: "portal",
         module: "队列",
@@ -712,11 +729,16 @@
     }
 
     function getStatus(task) {
-      return state.statuses[task.id] || "todo";
+      return state.statuses[task.id] || task.status || "todo";
     }
 
     function isChecked(taskId, index) {
-      return Boolean(state.checks[`${taskId}:${index}`]);
+      const key = `${taskId}:${index}`;
+      if (Object.prototype.hasOwnProperty.call(state.checks, key)) {
+        return Boolean(state.checks[key]);
+      }
+      const task = TASKS.find((item) => item.id === taskId);
+      return Boolean(task && task.completedChecks && getStatus(task) === "done");
     }
 
     function setChecked(taskId, index, checked) {
@@ -732,6 +754,7 @@
     }
 
     function taskCompletion(task) {
+      if (getStatus(task) === "done") return 100;
       if (!task.checks.length) return getStatus(task) === "done" ? 100 : 0;
       const done = task.checks.filter((_, index) => isChecked(task.id, index)).length;
       return Math.round((done / task.checks.length) * 100);
