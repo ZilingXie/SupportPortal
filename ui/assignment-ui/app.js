@@ -253,7 +253,7 @@ function renderLogin() {
         <div id="engineer-selector" class="engineer-selector-grid" role="radiogroup" aria-label="Choose a demo engineer">
           ${DEMO_ENGINEERS.map((engineer) => renderEngineerOption(engineer, engineer.id === selected.id)).join("")}
         </div>
-        <button class="primary-action" type="button" data-action="enter-workspace">
+        <button class="btn btn-primary" type="button" data-action="enter-workspace">
           Enter problem workspace
           <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
         </button>
@@ -305,14 +305,23 @@ function renderWorkspace() {
 
 function renderSidebarHtml(engineer, inShift, eligible, sla) {
   return `
-    <aside class="assignment-sidebar" aria-label="Engineer context">
+    <aside class="engineer-rail assignment-sidebar" aria-label="Engineer context">
       <button class="sidebar-toggle" type="button" data-action="toggle-sidebar" aria-label="${sidebarCollapsed ? "Show engineer context" : "Hide engineer context"}">
         <span class="material-symbols-outlined" aria-hidden="true">${sidebarCollapsed ? "keyboard_double_arrow_right" : "keyboard_double_arrow_left"}</span>
       </button>
       <div class="sidebar-inner">
-        <section class="engineer-context-card">
+        <div class="rail-brand">
+          <div class="rail-brand-icon">
+            <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+          </div>
+          <div class="rail-brand-copy">
+            <span class="rail-brand-title">Concierge AI</span>
+            <span class="rail-brand-subtitle">Assignment Command</span>
+          </div>
+        </div>
+        <section class="engineer-context-card panel-card">
           <div class="sidebar-profile">
-            <span class="engineer-avatar" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
+            <span class="engineer-avatar mono" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
             <div>
               <p class="eyebrow">Engineer context</p>
               <h2>${escapeHtml(engineer.name)}</h2>
@@ -325,7 +334,7 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
           </div>
         </section>
 
-        <section class="context-panel">
+        <section class="context-panel panel-card">
           <div class="panel-head">
             <p class="eyebrow">UTC+8 daily shift</p>
             <h3>Shift schedule</h3>
@@ -340,11 +349,11 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
               <span class="field-label">End</span>
               <input name="end" type="time" value="${escapeHtml(shift.end)}" required />
             </label>
-            <button class="secondary-action" type="submit">Save shift</button>
+            <button class="btn btn-ghost" type="submit">Save shift</button>
           </form>
         </section>
 
-        <section class="context-panel">
+        <section class="context-panel panel-card">
           <div class="panel-head">
             <p class="eyebrow">Assignment</p>
             <h3>${activeTicket ? "One active ticket" : "No active Engineer Ticket"}</h3>
@@ -357,7 +366,7 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
           </div>
         </section>
 
-        <section class="context-panel">
+        <section class="context-panel panel-card">
           <div class="panel-head">
             <p class="eyebrow">Audit trail</p>
             <h3>Mock events</h3>
@@ -373,8 +382,8 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
         </section>
 
         <div class="sidebar-actions">
-          <button class="ghost-action" type="button" data-action="reset-demo">Reset mock data</button>
-          <button class="ghost-action" type="button" data-action="sign-out">Change engineer</button>
+          <button class="btn btn-ghost" type="button" data-action="reset-demo">Reset mock data</button>
+          <button class="btn btn-outline" type="button" data-action="sign-out">Change engineer</button>
         </div>
       </div>
     </aside>
@@ -392,7 +401,7 @@ function renderWorkspaceHeaderHtml(inShift, sla) {
       </div>
       <div class="workspace-header-actions">
         <span class="current-ticket-sla ${escapeHtml(sla.className)}">${escapeHtml(sla.label)}</span>
-        <button class="ghost-action mobile-sidebar-action" type="button" data-action="toggle-sidebar">
+        <button class="btn btn-ghost mobile-sidebar-action" type="button" data-action="toggle-sidebar">
           <span class="material-symbols-outlined" aria-hidden="true">left_panel_open</span>
           Engineer context
         </button>
@@ -404,7 +413,7 @@ function renderWorkspaceHeaderHtml(inShift, sla) {
 function renderActiveTicketHtml(ticket, sla) {
   return `
     <article class="solver-board">
-      <section class="problem-card customer-problem-card">
+      <section class="problem-card panel-card customer-problem-card">
         <div class="section-head">
           <div>
             <p class="ticket-kicker">Current Engineer Ticket</p>
@@ -420,7 +429,7 @@ function renderActiveTicketHtml(ticket, sla) {
         <p class="problem-statement">${escapeHtml(ticket.issue)}</p>
       </section>
 
-      <section class="problem-card context-card">
+      <section class="problem-card panel-card context-card">
         <div class="section-head">
           <div>
             <p class="ticket-kicker">Client AI context</p>
@@ -432,7 +441,7 @@ function renderActiveTicketHtml(ticket, sla) {
         </ul>
       </section>
 
-      <section class="problem-card investigation-panel">
+      <section class="problem-card panel-card investigation-panel">
         <div class="section-head">
           <div>
             <p class="ticket-kicker">Engineer AI investigation</p>
@@ -451,19 +460,22 @@ function renderActiveTicketHtml(ticket, sla) {
         ` : ""}
       </section>
 
-      <section class="problem-card reply-panel">
+      <section class="problem-card panel-card reply-panel">
         <div class="section-head">
           <div>
             <p class="ticket-kicker">Draft Customer Reply</p>
             <h2>Approve final reply</h2>
           </div>
         </div>
-        <div class="draft-body">${escapeHtml(ticket.draft)}</div>
+        <div class="detail-investigation-draft">
+          <p class="detail-investigation-draft-label">Draft Customer Reply</p>
+          <div class="detail-investigation-draft-body">${escapeHtml(ticket.draft)}</div>
+        </div>
         <div class="ticket-actions">
-          <button class="primary-action" type="button" data-action="approve-ticket">
+          <button class="btn btn-primary" type="button" data-action="approve-ticket">
             Approve & send customer reply
           </button>
-          <button class="secondary-action" type="button" data-action="simulate-timeout">
+          <button class="btn btn-ghost" type="button" data-action="simulate-timeout">
             Simulate timeout
           </button>
         </div>
@@ -478,7 +490,7 @@ function renderNoTicketHtml(inShift, eligible) {
     ? "You are in shift, but the mock queue is empty. New Engineer Tickets will appear here automatically when available."
     : "You are signed in, but assignment is paused outside your shift. When the UTC+8 shift starts, the next Engineer Ticket will be assigned automatically.";
   return `
-    <section class="no-ticket-state">
+    <section class="no-ticket-state panel-card">
       <span class="material-symbols-outlined" aria-hidden="true">${inShift ? "assignment_turned_in" : "schedule"}</span>
       <div>
         <p class="ticket-kicker">${eligible ? "Ready" : "No active Engineer Ticket"}</p>
