@@ -5617,7 +5617,42 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
 
-        with patch.object(main, "dispatch_event", AsyncMock()):
+        auto_feedback = {
+            "feedback_id": "hitl_auto_TK-INV-103-1",
+            "engineer_case_id": "TK-INV-103-1",
+            "client_ticket_id": "TK-INV-103",
+            "run_id": None,
+            "message_id": "INV-103-m1",
+            "evidence_packet_id": None,
+            "feedback_type": "resolve",
+            "diagnosis_correctness": "correct",
+            "root_cause_correctness": "confirmed",
+            "evidence_quality": "sufficient",
+            "citation_quality": "not_applicable",
+            "customer_reply_quality": "sendable",
+            "missing_information": [],
+            "incorrect_claims": [],
+            "corrected_root_cause": "Token renew callback does not fire on the affected SDK.",
+            "corrected_solution": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            "corrected_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            "evidence_refs": [{"source_id": "INV-103-m1"}],
+            "memory_candidate": "needs_review",
+            "memory_safety": "internal_only",
+            "memory_notes": "Auto-reviewed after engineer approval; keep as candidate for audit.",
+            "prompt_version": "engineer-hitl-auto-review-test",
+            "workflow_version": "engineer-auto-hitl-review-v1",
+            "tool_policy_version": None,
+            "rag_access_policy_version": None,
+            "evidence_packet_version": None,
+            "created_by": "engineer_ai_auto_review",
+            "created_at": "2026-03-29T09:03:00+00:00",
+        }
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "build_engineer_auto_hitl_feedback",
+            Mock(return_value=auto_feedback),
+        ) as auto_review:
             response = self.client.post(
                 "/api/engineer/tickets/TK-INV-103-1/investigation/confirmation",
                 json={
@@ -5652,6 +5687,18 @@ class InvestigationFlowTests(unittest.TestCase):
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103")]
         self.assertIn("ticket_investigation_closed", event_types)
         self.assertIn("ticket_guidance_applied", event_types)
+        auto_review.assert_called_once()
+        stored_feedback = self.repository.list_engineer_hitl_feedback("TK-INV-103-1")
+        self.assertEqual(len(stored_feedback), 1)
+        self.assertEqual(stored_feedback[0]["feedback_id"], "hitl_auto_TK-INV-103-1")
+        self.assertEqual(stored_feedback[0]["feedback_type"], "resolve")
+        self.assertEqual(stored_feedback[0]["created_by"], "engineer_ai_auto_review")
+        self.assertEqual(
+            stored_feedback[0]["corrected_customer_reply"],
+            "Please upgrade to SDK 4.2.2 and retry token renewal.",
+        )
+        self.assertEqual(stored_feedback[0]["memory_candidate"], "needs_review")
+        self.assertEqual(stored_feedback[0]["memory_safety"], "internal_only")
 
     def test_confirmation_revise_records_engineer_note_and_keeps_investigation_active(self) -> None:
         self._seed_ticket(

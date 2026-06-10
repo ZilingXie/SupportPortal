@@ -770,8 +770,8 @@
           </tr>
           <tr>
             <td>阶段 1：结构化反馈</td>
-            <td>工程师反馈 schema、反馈 API、Postgres 反馈表、工程师反馈表单。</td>
-            <td>工程师可以显式记录可评估样本；memory_candidate 只进入候选审查，不直接写长期记忆。</td>
+            <td>工程师反馈 schema、反馈 API、Postgres 反馈表、关闭后自动复盘面板。</td>
+            <td>工程师关闭 case 后由 AI 自动 review 全历史并填充 Feedback for AI Learning；memory_candidate 只进入候选审查，不直接写长期记忆。</td>
             <td><span class="status done">已完成</span></td>
           </tr>
           <tr>
@@ -787,9 +787,9 @@
             <td><span class="status done">已完成</span></td>
           </tr>
           <tr>
-            <td>阶段 1C：工程师反馈 UI</td>
-            <td>在 engineer detail 右侧审查区新增 Feedback for AI Learning 面板，读取历史反馈并提交质量标签、纠正内容、evidence_refs、memory_candidate 和 memory_safety。</td>
-            <td>反馈 UI 只记录结构化审计样本；不把 approve、resolve 或 memory_candidate 自动等同于 confirmed case。</td>
+            <td>阶段 1C：关闭后自动复盘 UI</td>
+            <td>在 engineer detail 右侧审查区展示只读 Feedback for AI Learning 面板：调查中显示关闭后复盘 pending，关闭后展示 AI 自动生成的质量标签、纠正内容、evidence_refs、memory_candidate 和 memory_safety。</td>
+            <td>反馈 UI 不提供手动填写表单；自动复盘只记录结构化审计样本，不把 approve、resolve 或 memory_candidate 自动等同于 confirmed case。</td>
             <td><span class="status done">已完成</span></td>
           </tr>
           <tr>
@@ -864,8 +864,8 @@
         <li class="task">
           <input type="checkbox" data-task="feedback-ui">
           <div>
-            <p class="task-title">实现结构化 HITL 反馈 UI</p>
-            <p class="task-desc">在工程师 detail 审查区收集质量标签、纠正内容、证据引用和记忆候选标记；只作为候选审查输入，不直接写长期记忆。</p>
+            <p class="task-title">实现关闭后自动复盘 UI</p>
+            <p class="task-desc">在工程师 detail 审查区展示只读 Feedback for AI Learning：调查中提示关闭后自动复盘，关闭后展示 AI 生成的质量标签、纠正内容、证据引用和记忆候选标记；只作为候选审查输入，不直接写长期记忆。</p>
           </div>
           <span class="owner">后端 / UI</span>
         </li>

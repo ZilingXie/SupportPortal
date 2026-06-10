@@ -12,6 +12,32 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-10 - Engineer case auto HITL review
+
+- Area or subsystem: Engineer investigation closure and AI learning feedback
+- Prompt or model version: `engineer-hitl-auto-review-v1`
+- Summary: Added a closed-case AI review step that generates structured `support_engineer_hitl_feedback` records after an engineer approves and closes an investigation.
+- Reason: Engineer AI learning feedback should come from the full closed investigation history, not from a manual form during active investigation.
+- Affected files or config:
+  - `backend/services/engineer_hitl_review.py`
+  - `backend/main.py`
+  - `backend/tests/test_engineer_hitl_review.py`
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/styles.css`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `docs/engineer_ai_evolution_plan.html`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Approving an engineer investigation now records one deterministic `hitl_auto_<engineer_case_id>` learning review candidate.
+  - The engineer UI no longer exposes manual HITL feedback fields; active cases show a pending-after-close message and closed cases show the read-only auto review.
+  - The review remains an eval/memory candidate only and is not written to long-term memory.
+- Verification:
+  - RED: New backend test failed before implementation because `build_engineer_auto_hitl_feedback` did not exist.
+  - RED: New UI contract test failed before implementation because the feedback panel still rendered the old manual form.
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_engineer_hitl_review backend.tests.test_investigation_flow.InvestigationFlowTests.test_confirmation_approve_sends_customer_reply_and_closes_investigation backend.tests.test_engineer_ui_contract.EngineerUiContractTests.test_engineer_detail_shows_read_only_auto_hitl_review -v`
+
 ## 2026-06-10 - Billing destination email variables
 
 - Area or subsystem: Deterministic billing intake templates and internal email handoff
