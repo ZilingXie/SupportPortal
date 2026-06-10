@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-10 - Billing destination email variables
+
+- Area or subsystem: Deterministic billing intake templates and internal email handoff
+- Prompt or model version: `billing-automation-email-v2`
+- Summary: Split billing automation internal email destinations into `BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL` and `BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL`, while keeping the generic destination as a fallback.
+- Reason: Account suspension and detailed invoice handoffs may need separate routing later, but both should currently send to `xieziling@agora.io`.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/tests/test_support_router.py`
+  - `.env.example`
+  - `docs/billing_automation_plan.html`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `account_suspension` internal email payloads read `BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL` first.
+  - `detailed_invoice` internal email payloads read `BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL` first.
+  - If an action-specific destination is unset, the payload falls back to `BILLING_AUTOMATION_INTERNAL_EMAIL`, then the built-in `xieziling@agora.io` default.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_support_router`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/billing_automation.py backend/tests/test_support_router.py`
+  - `rg -n "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL|BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL|xieziling@agora.io|xieziling97@163.com" backend docs .env.example`
+
 ## 2026-06-10 - Engineer investigation opening evidence context
 
 - Area or subsystem: Engineer investigation handoff and evidence tool routing
