@@ -1,0 +1,35 @@
+# GraphRAG 配置文件
+# 命令行使用: python3 ingest_gbt.py
+# 或: export GRAPHRAG_CONFIG=graphrag_config.yaml
+
+neo4j:
+  uri: "bolt://localhost:7688"
+  user: "neo4j"
+  password: "graphiti123"
+
+llm:
+  api_key: "${DEEPSEEK_API_KEY}"   # 从环境变量读取
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+
+embedding:
+  model: "bge-m3:latest"
+  base_url: "http://localhost:11434/v1/"
+  dim: 1024
+
+schema:
+  path: "schemas/gbt25338.yaml"
+  mode: "strict"
+  second_pass_extraction: true
+  second_pass_mode: "conditional"  # always | conditional
+  second_pass_min_entities: 2      # first-pass entities below this triggers entity refinement
+  second_pass_min_edges: 1         # first-pass edges below this triggers edge refinement
+
+pipeline:
+  chunk_size: 1200
+  chunk_overlap: 100
+  num_chains: 2              # Read+Split 并行线程数
+  num_threads_per_chain: 1   # Extractor 并发 (1=串行, CPU紧张时)
+  max_concurrency: 1         # Extract 消费者数
+  progress: true
+  ingest_mode: "append"        # append (always ingest) | upsert (skip unchanged chunks)

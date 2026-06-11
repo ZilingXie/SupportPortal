@@ -27,3 +27,14 @@ artifacts/
 .codex/tmp/
 official_doc/
 local_knowledge/
+
+# Local deployment overrides
+deployment/.env_override
+
+# Vendored cusmem local experiment outputs
+vendor/cusmem/v10_logs/
+vendor/cusmem/v11_logs/
+vendor/cusmem/*_complete.xlsx
+vendor/cusmem/communities.xlsx
+vendor/cusmem/comparison_*.json
+vendor/cusmem/GBT+25338.1-2019.pdf

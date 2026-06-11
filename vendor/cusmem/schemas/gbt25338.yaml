@@ -1,0 +1,229 @@
+# GB/T 25338.1-2019 domain schema.
+# Users can copy this file and point graphrag_config.yaml schema.path to the copy.
+
+schema:
+  mode: strict
+  description: "城市轨道交通转辙机标准知识图谱 schema"
+
+entity_types:
+  Standard:
+    description: "标准/规范：GB/T、IEC、ISO 等标准编号及其名称"
+    ontology: "铁路信号 -> 标准体系 -> 标准"
+    properties:
+      official_name:
+        type: string
+        description: "标准规范名称"
+      standard_number:
+        type: string
+        description: "标准编号，如 GB/T 25338.1-2019"
+      synonyms:
+        type: list[string]
+        description: "别名、简称或 OCR 变体"
+
+  Product:
+    description: "产品/设备：转辙机、电机、锁闭装置、电液转辙机、驼峰用快速转辙机等"
+    ontology: "铁路信号 -> 转辙设备 -> 产品"
+    properties:
+      official_name:
+        type: string
+        description: "规范产品名称"
+      product_type:
+        type: string
+        description: "产品类别或设备类型"
+      synonyms:
+        type: list[string]
+        description: "别名、简称、OCR 误识别变体"
+
+  TechnicalTerm:
+    description: "技术术语/定义：锁闭检测杆、额定转换力、转换时间等"
+    ontology: "铁路信号 -> 术语定义 -> 技术术语"
+    properties:
+      official_name:
+        type: string
+        description: "规范术语名称"
+      definition:
+        type: string
+        description: "原文明确给出的定义"
+      synonyms:
+        type: list[string]
+        description: "同义词、简称或英文名"
+
+  TechnicalParameter:
+    description: "技术参数/数值：文本中明确出现的温度、湿度、力值、电压、频率、加速度、时间等参数值"
+    ontology: "铁路信号 -> 技术条件 -> 技术参数"
+    properties:
+      parameter_name:
+        type: string
+        description: "参数名称"
+      value:
+        type: string
+        description: "参数值，保留原文单位和比较符"
+      unit:
+        type: string
+        description: "单位"
+      applicable_condition:
+        type: string
+        description: "适用对象或适用场景"
+
+  Rating:
+    description: "防护/性能等级：IP54、IP66、IP55、B级绝缘、F级绝缘、V-2阻燃等"
+    ontology: "铁路信号 -> 技术条件 -> 等级"
+    properties:
+      rating_name:
+        type: string
+        description: "等级名称"
+      standard_basis:
+        type: string
+        description: "定义或引用的标准依据"
+      applicable_object:
+        type: string
+        description: "适用对象"
+
+  TestItem:
+    description: "检测/测试项目：振动试验、盐雾试验、绝缘电阻测试、介质强度试验等"
+    ontology: "铁路信号 -> 试验检测 -> 测试项目"
+    properties:
+      test_name:
+        type: string
+        description: "检测或测试名称"
+      test_basis:
+        type: string
+        description: "检测依据"
+      test_condition:
+        type: string
+        description: "检测条件"
+      acceptance_criteria:
+        type: string
+        description: "判定标准"
+
+  Organization:
+    description: "机构/组织：起草单位、标准化机构、制造企业、检测机构等"
+    ontology: "铁路信号 -> 组织机构"
+    properties:
+      official_name:
+        type: string
+        description: "机构全称"
+      abbreviation:
+        type: string
+        description: "简称"
+      role:
+        type: string
+        description: "组织角色"
+
+  Person:
+    description: "人员：标准起草人、审查人、专家、作者等自然人姓名"
+    ontology: "铁路信号 -> 组织机构 -> 人员"
+    properties:
+      official_name:
+        type: string
+        description: "人员姓名规范写法"
+      role:
+        type: string
+        description: "人员角色，如主要起草人"
+      affiliation:
+        type: string
+        description: "所属单位"
+
+  Section:
+    description: "标准章节条款：第4章、5.4、7.3 等章节或条款编号"
+    ontology: "铁路信号 -> 标准体系 -> 章节条款"
+    properties:
+      section_number:
+        type: string
+        description: "章节或条款编号"
+      title:
+        type: string
+        description: "章节标题"
+      standard:
+        type: string
+        description: "所属标准"
+
+  EnvironmentalCondition:
+    description: "环境条件：温度范围、湿度范围、海拔高度、气压、腐蚀性气体等使用/储存环境要求"
+    ontology: "铁路信号 -> 技术条件 -> 环境条件"
+    properties:
+      condition_name:
+        type: string
+        description: "环境条件名称，如温度、湿度、气压"
+      value:
+        type: string
+        description: "条件值，保留原文单位和比较符"
+      usage_scope:
+        type: string
+        description: "使用环境、储存环境或试验环境"
+
+edge_types:
+  REFERENCES:
+    description: "标准、章节或条款引用另一个标准、文件或章节"
+    source_types: ["Standard", "Section"]
+    target_types: ["Standard", "Section"]
+
+  REPLACES:
+    description: "一个标准替代另一个标准"
+    source_types: ["Standard"]
+    target_types: ["Standard"]
+
+  IDENTICAL_TO:
+    description: "标准或术语与另一个标准、术语等同或等效"
+    source_types: ["Standard", "TechnicalTerm"]
+    target_types: ["Standard", "TechnicalTerm"]
+
+  DEFINES:
+    description: "标准或章节定义某个技术术语"
+    source_types: ["Standard", "Section"]
+    target_types: ["TechnicalTerm"]
+
+  SPECIFIES:
+    description: "标准、章节或产品规定某项技术参数、环境条件或等级"
+    source_types: ["Standard", "Section", "Product"]
+    target_types: ["TechnicalParameter", "EnvironmentalCondition", "Rating"]
+
+  HAS_ATTRIBUTE:
+    description: "实体具有某个属性、参数或条件"
+    source_types: ["Product", "TechnicalTerm"]
+    target_types: ["TechnicalParameter", "EnvironmentalCondition"]
+
+  HAS_RATING:
+    description: "产品或部件具有某个防护、绝缘或性能等级"
+    source_types: ["Product"]
+    target_types: ["Rating"]
+
+  HAS_COMPONENT:
+    description: "产品具有某个组成部件"
+    source_types: ["Product"]
+    target_types: ["Product"]
+
+  PRODUCES:
+    description: "组织生产某个产品"
+    source_types: ["Organization"]
+    target_types: ["Product"]
+
+  DRAFTED_BY:
+    description: "标准由某个组织或人员起草"
+    source_types: ["Standard"]
+    target_types: ["Organization", "Person"]
+
+  PROPOSED_BY:
+    description: "标准由某个组织提出、归口或主管"
+    source_types: ["Standard"]
+    target_types: ["Organization"]
+
+  HAS_TEST_METHOD:
+    description: "产品、标准或章节规定某个检测/测试项目"
+    source_types: ["Product", "Standard", "Section"]
+    target_types: ["TestItem"]
+
+  HAS_TEST_CONDITION:
+    description: "测试项目具有某个试验条件或环境条件"
+    source_types: ["TestItem"]
+    target_types: ["TechnicalParameter", "EnvironmentalCondition"]
+
+  BELONGS_TO_SERIES:
+    description: "产品属于某个系列、类别或标准族"
+    source_types: ["Product"]
+    target_types: ["Product", "Standard"]
+
+  IS_PART_OF:
+    description: "章节、部件或测试项属于更大的标准、产品或测试体系"
+    source_types: ["Section", "Product", "TestItem"]
+    target_types: ["Standard", "Product", "Section"]
