@@ -65,3 +65,21 @@ class EngineerAiEvolutionPlanContractTests(unittest.TestCase):
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
+
+    def test_engineer_ai_evolution_html_tracks_online_multi_agent_plan(self) -> None:
+        html_source = Path("docs/engineer_ai_evolution_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            "EvoAgentX 计划暂停",
+            "线上 Engineer Multi-Agent 主链路",
+            "Engineer Guardrail",
+            "Plan Agent",
+            "Memory Review Agent",
+            "Implement Agent",
+            "Conclude Agent",
+            "工程师批准后必须再走现有 guardrail",
+            "工程师 revise 后重新进入 Plan Agent",
+            'data-task="online-multi-agent-orchestrator"',
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
