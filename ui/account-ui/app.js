@@ -26,12 +26,14 @@ const applySharedComposerToolbarStateToButtons =
   SharedComposer.applyComposerToolbarStateToButtons || (() => {});
 
 const state = {
+  view: "create",
   title: "",
   question: "",
   customerEmail: "",
   source: "account-ui",
   isSubmitting: false,
-  result: null,
+  history: [],
+  activeItem: null,
   error: "",
   composerToolbarState: buildDefaultComposerToolbarState(),
 };
@@ -53,14 +55,13 @@ function statusLabel(status) {
     needs_more_info: "Needs more info",
     not_automated: "Not automated",
   };
-  return labels[status] || "Ready";
+  return labels[status] || "Not automated";
 }
 
-function resultTone(status) {
-  if (status === "automated") return "success";
-  if (status === "needs_more_info") return "warning";
-  if (status === "not_automated") return "neutral";
-  return "danger";
+function routeClass(route) {
+  if (route === "detailed_invoice") return "route-invoice";
+  if (route === "account_suspension") return "route-suspension";
+  return "route-other";
 }
 
 function showToast(message) {
@@ -71,147 +72,53 @@ function showToast(message) {
   }, 3200);
 }
 
-function resultMarkup() {
-  if (state.error) {
-    return `
-      <div class="result-card danger">
-        <div class="result-title">
-          <span>Submission failed</span>
-          <span class="status-pill">Error</span>
-        </div>
-        <p class="result-copy">${escapeHtml(state.error)}</p>
-      </div>
-    `;
+async function fetchBillingTickets() {
+  try {
+    const response = await fetch("/api/account/billing-tickets?limit=30");
+    if (!response.ok) return;
+    const data = await response.json();
+    state.history = data.billing_tickets || [];
+  } catch {
+    state.history = [];
   }
-
-  if (!state.result) {
-    return `
-      <div class="result-card neutral">
-        <div class="result-title">
-          <span>Route preview</span>
-          <span class="status-pill">Waiting</span>
-        </div>
-        <p class="result-copy">Submit a title and customer question to create a ticket, route it, and run the billing process when eligible.</p>
-      </div>
-    `;
-  }
-
-  const result = state.result;
-  const missingFields = Array.isArray(result.missing_fields) ? result.missing_fields : [];
-  return `
-    <div class="result-card ${resultTone(result.status)}">
-      <div class="result-title">
-        <span>${escapeHtml(statusLabel(result.status))}</span>
-        <span class="status-pill">${escapeHtml(result.route || "manual review")}</span>
-      </div>
-      <div class="meta-grid">
-        <div class="meta-row">
-          <span class="meta-label">Ticket ID</span>
-          <span class="meta-value">${escapeHtml(result.ticket_id || "")}</span>
-        </div>
-        <div class="meta-row">
-          <span class="meta-label">Internal email</span>
-          <span class="meta-value">${escapeHtml(result.internal_email_send_status || "not_applicable")}</span>
-        </div>
-        ${
-          result.internal_email_send_reason
-            ? `<div class="meta-row"><span class="meta-label">Email reason</span><span class="meta-value">${escapeHtml(result.internal_email_send_reason)}</span></div>`
-            : ""
-        }
-      </div>
-    </div>
-    ${
-      missingFields.length
-        ? `<div class="result-card warning"><div class="result-title"><span>Missing fields</span><span class="status-pill">${missingFields.length}</span></div><ul class="missing-list">${missingFields
-            .map((field) => `<li>${escapeHtml(field)}</li>`)
-            .join("")}</ul></div>`
-        : ""
-    }
-    ${
-      result.customer_reply
-        ? `<div class="result-card success"><div class="result-title"><span>Customer reply</span></div><p class="result-copy">${renderMarkdownMessage(result.customer_reply)}</p></div>`
-        : ""
-    }
-  `;
 }
 
-function render() {
-  appRoot.innerHTML = `
-    <main class="account-shell">
-      <aside class="side-panel">
-        <div class="brand">
-          <div class="brand-mark"><span class="material-symbols-outlined">support_agent</span></div>
-          <div>
-            <div class="eyebrow">Account intake</div>
-            <h1>Support Portal</h1>
-          </div>
-        </div>
-        <p class="side-copy">Create a customer ticket from an account-side request, route it, and let the billing workflow handle detailed invoice or account suspension cases.</p>
-        <div class="history-stack">
-          <button class="history-item" type="button">
-            <strong>Same ticket identity</strong>
-            <span>Account-created tickets appear in the existing dashboard and engineer views.</span>
-          </button>
-          <button class="history-item" type="button">
-            <strong>Billing whitelist only</strong>
-            <span>Only detailed invoice and account suspension enter automation.</span>
-          </button>
-          <button class="history-item" type="button">
-            <strong>Process first</strong>
-            <span>Create ticket, route, validate fields, then reply or send internal email.</span>
-          </button>
-        </div>
-      </aside>
-      <section class="workbench">
-        <div class="workbench-header">
-          <div>
-            <span class="pill"><span class="material-symbols-outlined">route</span>HTTP or manual</span>
-            <h2>Create and route an account ticket</h2>
-          </div>
-          <button class="ghost-button" type="button" data-action="reset">Reset</button>
-        </div>
-        <div class="intake-grid">
-          <form class="panel form-stack" data-account-form>
-            <label class="field">
-              <span class="field-label">Title</span>
-              <input class="input" name="title" value="${escapeHtml(state.title)}" placeholder="Detailed invoice request" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span class="field-label">Customer email</span>
-              <input class="input" name="customerEmail" value="${escapeHtml(state.customerEmail)}" placeholder="customer@example.com" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span class="field-label">Question</span>
-              <textarea class="textarea" name="question" placeholder="Issue date: 6 May 2026&#10;Transaction ID: 1104245232004173824&#10;Amount: USD 705.97">${escapeHtml(state.question)}</textarea>
-            </label>
-            <div class="actions">
-              <button class="primary-button" type="submit" ${state.isSubmitting ? "disabled" : ""}>
-                <span class="material-symbols-outlined">send</span>
-                ${state.isSubmitting ? "Creating..." : "Create ticket"}
-              </button>
-            </div>
-          </form>
-          <section class="panel result-panel">
-            ${resultMarkup()}
-          </section>
-        </div>
-      </section>
-    </main>
-  `;
-  bind();
+async function fetchBillingTicketDetail(billingTicketId) {
+  try {
+    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
-function readForm(form) {
-  const formData = new FormData(form);
-  state.title = String(formData.get("title") || "").trim();
-  state.customerEmail = String(formData.get("customerEmail") || "").trim();
-  state.question = String(formData.get("question") || "").trim();
+async function openBillingTicket(billingTicketId) {
+  const detail = await fetchBillingTicketDetail(billingTicketId);
+  if (!detail) {
+    showToast("Failed to load billing ticket details.");
+    return;
+  }
+  state.activeItem = detail;
+  state.view = "detail";
+  render();
+}
+
+function openCreateView() {
+  state.activeItem = null;
+  state.view = "create";
+  state.error = "";
+  render();
 }
 
 async function submitAccountIntake(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  readForm(form);
+  const formData = new FormData(form);
+  state.title = String(formData.get("title") || "").trim();
+  state.question = String(formData.get("question") || "").trim();
+  state.customerEmail = String(formData.get("customerEmail") || "").trim();
+
   if (!state.title || !state.question) {
     state.error = "Title and question are required.";
     render();
@@ -237,25 +144,212 @@ async function submitAccountIntake(event) {
     if (!response.ok) {
       throw new Error(payload.detail || "Account intake failed.");
     }
-    state.result = payload;
     showToast(payload.ticket_id ? `Ticket ${payload.ticket_id} created` : "Ticket created");
-  } catch (error) {
-    state.error = error instanceof Error ? error.message : "Account intake failed.";
+    await fetchBillingTickets();
+    if (payload.billing_ticket_id) {
+      await openBillingTicket(payload.billing_ticket_id);
+    }
+    state.title = "";
+    state.question = "";
+    state.customerEmail = "";
+  } catch (err) {
+    state.error = err instanceof Error ? err.message : "Account intake failed.";
   } finally {
     state.isSubmitting = false;
     render();
   }
 }
 
-function resetForm() {
-  state.title = "";
-  state.question = "";
-  state.customerEmail = "";
-  state.result = null;
-  state.error = "";
-  state.composerToolbarState = buildDefaultComposerToolbarState();
-  composerRuntime = null;
-  render();
+function renderHistorySidebar() {
+  if (!state.history.length) {
+    return `
+      <div class="history-empty">
+        <span class="material-symbols-outlined">receipt_long</span>
+        <p>No billing tickets yet</p>
+      </div>
+    `;
+  }
+  return state.history
+    .map(
+      (item) => `
+    <button class="history-item ${
+      state.activeItem && state.activeItem.billing_ticket_id === item.billing_ticket_id
+        ? "history-item--active"
+        : ""
+    }" type="button" data-action="open-billing-ticket" data-id="${escapeHtml(item.billing_ticket_id)}">
+      <div class="history-item-header">
+        <strong>${escapeHtml(item.title || "")}</strong>
+        <span class="status-chip ${routeClass(item.route)}">${escapeHtml(item.route || "manual review")}</span>
+      </div>
+      <div class="history-item-meta">
+        <span class="status-badge status-badge--${escapeHtml(item.automation_status || "not_automated")}">${escapeHtml(statusLabel(item.automation_status))}</span>
+        <span class="history-time">${escapeHtml((item.updated_at || item.created_at || "").slice(0, 16).replace("T", " "))}</span>
+      </div>
+    </button>
+  `
+    )
+    .join("");
+}
+
+function renderCreateForm() {
+  return `
+    <div class="panel form-stack">
+      <div class="form-header">
+        <h3>Create a billing ticket</h3>
+        <p class="form-desc">Submit an account-side request to route and process billing automation.</p>
+      </div>
+      <form data-account-form>
+        <label class="field">
+          <span class="field-label">Title</span>
+          <input class="input" name="title" value="${escapeHtml(state.title)}" placeholder="Detailed invoice request" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span class="field-label">Customer email</span>
+          <input class="input" name="customerEmail" value="${escapeHtml(state.customerEmail)}" placeholder="customer@example.com" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span class="field-label">Question</span>
+          <textarea class="textarea" name="question" placeholder="Issue date: 6 May 2026&#10;Transaction ID: 1104245232004173824&#10;Amount: USD 705.97">${escapeHtml(state.question)}</textarea>
+        </label>
+        <div class="actions">
+          <button class="primary-button" type="submit" ${state.isSubmitting ? "disabled" : ""}>
+            <span class="material-symbols-outlined">send</span>
+            ${state.isSubmitting ? "Creating..." : "Create ticket"}
+          </button>
+        </div>
+      </form>
+      ${
+        state.error
+          ? `<div class="error-banner"><span class="material-symbols-outlined">error</span>${escapeHtml(state.error)}</div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderDetailView() {
+  const item = state.activeItem;
+  if (!item) return "";
+
+  let missingFields = [];
+  if (Array.isArray(item.missing_fields)) missingFields = item.missing_fields;
+  else if (typeof item.missing_fields === "string") {
+    try { missingFields = JSON.parse(item.missing_fields || "[]"); } catch {}
+  }
+
+  let collectedFields = {};
+  if (typeof item.collected_fields === "object" && item.collected_fields !== null) {
+    collectedFields = item.collected_fields;
+  }
+
+  return `
+    <div class="panel detail-stack">
+      <div class="detail-header">
+        <h3>${escapeHtml(item.title || "")}</h3>
+        <span class="status-chip ${routeClass(item.route)}">${escapeHtml(item.route || "manual review")}</span>
+      </div>
+      <div class="meta-grid">
+        <div class="meta-row">
+          <span class="meta-label">Billing ticket ID</span>
+          <span class="meta-value">${escapeHtml(item.billing_ticket_id || "")}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Client ticket ID</span>
+          <span class="meta-value">${escapeHtml(item.client_ticket_id || "")}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Source</span>
+          <span class="meta-value">${escapeHtml(item.source || "")}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Status</span>
+          <span class="meta-value status-badge status-badge--${escapeHtml(item.automation_status || "not_automated")}">${escapeHtml(statusLabel(item.automation_status))}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Email</span>
+          <span class="meta-value">${escapeHtml(item.internal_email_send_status || "not_applicable")}</span>
+        </div>
+        ${
+          item.internal_email_send_reason
+            ? `<div class="meta-row"><span class="meta-label">Email reason</span><span class="meta-value">${escapeHtml(item.internal_email_send_reason)}</span></div>`
+            : ""
+        }
+        ${
+          item.route_reason
+            ? `<div class="meta-row"><span class="meta-label">Route reason</span><span class="meta-value">${escapeHtml(item.route_reason)}</span></div>`
+            : ""
+        }
+        ${
+          item.created_at
+            ? `<div class="meta-row"><span class="meta-label">Created</span><span class="meta-value">${escapeHtml(item.created_at.slice(0, 16).replace("T", " "))}</span></div>`
+            : ""
+        }
+      </div>
+      ${
+        missingFields.length
+          ? `<div class="detail-section warning"><div class="detail-section-title">Missing fields</div><ul class="missing-list">${missingFields
+              .map((field) => `<li>${escapeHtml(field)}</li>`)
+              .join("")}</ul></div>`
+          : ""
+      }
+      ${
+        Object.keys(collectedFields).length
+          ? `<div class="detail-section"><div class="detail-section-title">Collected fields</div><ul class="collected-list">${Object.entries(collectedFields)
+              .map(([k, v]) => `<li><strong>${escapeHtml(k)}</strong>: ${escapeHtml(String(v))}</li>`)
+              .join("")}</ul></div>`
+          : ""
+      }
+      ${
+        item.question
+          ? `<div class="detail-section"><div class="detail-section-title">Customer question</div><p class="result-copy">${escapeHtml(item.question)}</p></div>`
+          : ""
+      }
+      ${
+        item.customer_reply
+          ? `<div class="detail-section success"><div class="detail-section-title">Customer reply</div><p class="result-copy">${renderMarkdownMessage(item.customer_reply)}</p></div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function render() {
+  appRoot.innerHTML = `
+    <main class="account-shell">
+      <aside class="side-panel">
+        <div class="brand">
+          <div class="brand-mark"><span class="material-symbols-outlined">support_agent</span></div>
+          <div>
+            <div class="eyebrow">Account intake</div>
+            <h1>Support Portal</h1>
+          </div>
+        </div>
+        <div class="side-actions">
+          <button class="primary-button primary-button--small" type="button" data-action="new-ticket">
+            <span class="material-symbols-outlined">add</span>
+            New ticket
+          </button>
+        </div>
+        <div class="history-stack" id="history-list">
+          ${renderHistorySidebar()}
+        </div>
+      </aside>
+      <section class="workbench">
+        <div class="workbench-header">
+          <div>
+            <span class="pill"><span class="material-symbols-outlined">route</span>HTTP or manual</span>
+            <h2>${state.view === "create" ? "Create and route an account ticket" : "Billing ticket detail"}</h2>
+          </div>
+          ${state.view === "detail" ? `<button class="ghost-button" type="button" data-action="back-to-create">Back to create</button>` : ""}
+        </div>
+        <div class="intake-grid">
+          ${state.view === "create" ? renderCreateForm() : ""}
+          ${state.view === "detail" ? renderDetailView() : ""}
+        </div>
+      </section>
+    </main>
+  `;
+  bind();
 }
 
 function bind() {
@@ -263,14 +357,28 @@ function bind() {
   if (form) {
     form.addEventListener("submit", submitAccountIntake);
   }
-  const resetButton = document.querySelector('[data-action="reset"]');
-  if (resetButton) {
-    resetButton.addEventListener("click", resetForm);
+  const historyList = document.getElementById("history-list");
+  if (historyList) {
+    historyList.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-action='open-billing-ticket']");
+      if (!button) return;
+      const id = button.dataset.id;
+      if (id) openBillingTicket(id);
+    });
   }
+  document.querySelectorAll("[data-action='new-ticket']").forEach((el) => {
+    el.addEventListener("click", openCreateView);
+  });
+  document.querySelectorAll("[data-action='back-to-create']").forEach((el) => {
+    el.addEventListener("click", openCreateView);
+  });
   applySharedComposerToolbarStateToButtons(document, state.composerToolbarState);
 }
 
 renderSharedComposerFormattingToolbarButtons(state.composerToolbarState);
 serializeRichComposerHtmlToMarkdown("");
 void composerRuntime;
-render();
+(async () => {
+  await fetchBillingTickets();
+  render();
+})();

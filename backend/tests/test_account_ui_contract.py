@@ -33,10 +33,13 @@ class AccountUiContractTests(unittest.TestCase):
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
         self.assertIn('fetch("/account"', app_source)
+        self.assertIn('fetch("/api/account/billing-tickets', app_source)
         self.assertIn("title", app_source)
         self.assertIn("question", app_source)
-        self.assertIn("ticket_id", app_source)
-        self.assertIn("internal_email_send_status", app_source)
+        self.assertIn("billing_ticket_id", app_source)
+        self.assertIn("history", app_source)
+        self.assertIn("renderHistorySidebar", app_source)
+        self.assertIn("renderDetailView", app_source)
         self.assertIn("not_automated", app_source)
         self.assertIn("needs_more_info", app_source)
 
