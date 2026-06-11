@@ -93,7 +93,7 @@ async def run():
 
     # ── Ingest ─────────────────────────────────────────────────────────
     input_path = os.environ.get('GRAPHRAG_INPUT',
-                                str(Path(__file__).with_name('GBT+25338.1-2019.pdf')))
+                                str(Path(__file__).with_name('GBT+25338.1-2019.txt')))
     logger.info('Input: %s', input_path)
 
     rag = GraphRAG(config)

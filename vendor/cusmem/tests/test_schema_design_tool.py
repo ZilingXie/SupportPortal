@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from inspect import signature
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,43 @@ def test_offline_text_chunk_pattern_and_term_stages(tmp_path: Path) -> None:
     assert '转辙机' in candidates
 
 
+def test_text_extraction_no_longer_exposes_pdf_or_ocr_controls() -> None:
+    from tools.schema_design.text_extraction import extract_text
+
+    assert list(signature(extract_text).parameters) == ['input_path', 'output_dir']
+
+
+def test_text_extraction_rejects_pdf_inputs(tmp_path: Path) -> None:
+    from tools.schema_design.text_extraction import extract_text
+
+    source = tmp_path / 'manual.pdf'
+    source.write_text('pretend pdf payload', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='Unsupported input file type: .pdf'):
+        extract_text(source, tmp_path / 'run')
+
+
+def test_text_quality_gate_mentions_preconverted_text_not_ocr_tools(tmp_path: Path) -> None:
+    from tools.schema_design.pipeline import PipelineBlockedError, SchemaDesignPipeline
+
+    source = tmp_path / 'source.txt'
+    source.write_text('bad', encoding='utf-8')
+    pipeline = SchemaDesignPipeline(source, tmp_path / 'run')
+    pipeline.state.mark_completed(
+        'stage1_text_extraction',
+        {'output_files': {}, 'metrics': {'needs_ocr_ratio': 1.0, 'ocr_pages': 0}},
+        input_paths=[source],
+    )
+
+    with pytest.raises(PipelineBlockedError) as exc_info:
+        pipeline._gate_needs_ocr()
+
+    message = str(exc_info.value)
+    assert 'pre-converted .txt or .md' in message
+    assert 'tesseract' not in message
+    assert 'paddleocr' not in message
+
+
 def test_chunk_length_split_drops_short_text() -> None:
     from tools.schema_design.chunking import _split_by_length
 
@@ -106,6 +144,7 @@ def test_classify_term_uses_tfidf_to_suppress_low_signal_frequent_terms() -> Non
 
 
 def test_schema_validation_prompt_rules_quality_and_reports(tmp_path: Path) -> None:
+    from tools.schema_design.prompt_rules import generate_prompt_rules
     from tools.schema_design.quality import (
         determine_conclusion,
         generate_final_report,
@@ -116,7 +155,6 @@ def test_schema_validation_prompt_rules_quality_and_reports(tmp_path: Path) -> N
         generate_review_checklist,
         validate_candidate_schema,
     )
-    from tools.schema_design.prompt_rules import generate_prompt_rules
     from tools.schema_design.state import PipelineState
 
     schema_yaml = tmp_path / 'candidate_schema.yaml'

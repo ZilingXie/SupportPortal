@@ -27,7 +27,7 @@ async def main():
     print(f'\n关系类型: {list((config.edge_types or {}).keys())}')
     print('\n开始录入 GB/T 25338.1-2019 ...\n')
 
-    default_input = Path(__file__).with_name('GBT+25338.1-2019.pdf')
+    default_input = Path(__file__).with_name('GBT+25338.1-2019.txt')
     input_path = os.environ.get('GRAPHRAG_INPUT', str(default_input))
 
     rag = GraphRAG(config)
