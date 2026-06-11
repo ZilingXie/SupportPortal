@@ -83,3 +83,22 @@ class EngineerAiEvolutionPlanContractTests(unittest.TestCase):
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
+
+    def test_engineer_multi_agent_implementation_plan_tracks_step1_backend_skeleton(self) -> None:
+        plan_source = Path(
+            "docs/superpowers/plans/2026-06-11-engineer-ai-multi-agent-mainline.md"
+        ).read_text(encoding="utf-8")
+        required_terms = [
+            "Current Next Step",
+            "Task 1: Backend Skeleton And Data Contracts",
+            "ENGINEER_MULTI_AGENT_PLAN_VERSION",
+            "build_initial_multi_agent_plan",
+            "review_multi_agent_plan",
+            "record_multi_agent_task_result",
+            "build_multi_agent_conclusion",
+            "test_first_step_does_not_call_llms_or_repositories",
+            "python3 -m unittest backend.tests.test_engineer_multi_agent -v",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, plan_source)
