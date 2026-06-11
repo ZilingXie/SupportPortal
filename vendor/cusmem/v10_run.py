@@ -152,7 +152,7 @@ async def run():
     # ── Run ingestion ─────────────────────────────────────────────────────
     timer.checkpoint('setup')
 
-    default_input = Path(__file__).with_name('GBT+25338.1-2019.pdf')
+    default_input = Path(__file__).with_name('GBT+25338.1-2019.txt')
     input_path = os.environ.get('GRAPHRAG_INPUT', str(default_input))
     logger.info(f'Input: {input_path}')
 

@@ -11,6 +11,39 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-11 - Remove PDF and OCR ingestion support from vendor/cusmem
+
+- Summary:
+  - Removed all PDF reading, table extraction, and OCR (Docker tesseract) support from the RAG ingestion pipeline.
+  - The main `Reader` and `Scanner` no longer accept `.pdf` files; the default `file_pattern` now matches `txt|md|docx|csv|json` only.
+  - The schema design `extract_text()` stage no longer collects or processes `.pdf` files.
+  - Removed unused PDF/OCR controls from the schema design text-extraction API and updated the text-quality gate to ask for pre-converted text instead of OCR tools.
+  - Removed PDF/OCR helper methods: `_read_pdf()`, `_extract_tables()`, `_table_to_markdown()`, `_extract_pdf_text()`, `_needs_ocr()`, `_ocr_pdf()` (components.py), and `_read_pdf_pages()`, `_try_pdf_text_extraction()`, `_extract_with_pymupdf()`, `_extract_with_pdfminer()`, `_extract_with_pdfplumber()`, `_extract_with_pypdf2()`, `_ocr_pages()`, `_docker_available()`, `_image_available()` (text_extraction.py).
+  - Renamed `_clean_pdf_text()` to `_clean_text()` in components.py.
+  - Entry-point scripts (`ingest_gbt.py`, `v10_run.py`, `v11_run.py`) now default to `.txt` instead of `.pdf` for `GRAPHRAG_INPUT`.
+- Reason:
+  - PDF ingestion is no longer a supported input capability. Users must convert PDFs to `.txt` or `.md` before ingestion.
+- Affected files/config:
+  - `vendor/cusmem/graphiti_rag/config.py`
+  - `vendor/cusmem/graphiti_rag/components.py`
+  - `vendor/cusmem/tools/schema_design/text_extraction.py`
+  - `vendor/cusmem/tools/schema_design/pipeline.py`
+  - `vendor/cusmem/tools/schema_design/README.md`
+  - `vendor/cusmem/ingest_gbt.py`
+  - `vendor/cusmem/v10_run.py`
+  - `vendor/cusmem/v11_run.py`
+  - `vendor/cusmem/tests/test_pdf_ingestion_removed.py`
+  - `vendor/cusmem/tests/test_schema_design_tool.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Existing ingested data is unaffected. New PDF inputs must be pre-converted to `.txt` or `.md`.
+  - No schema, chunking, embedding, vector-table, BM25 index, or backfill changes.
+- Verification:
+  - `cd vendor/cusmem && uv run --with pytest --with pyyaml python -m pytest tests/test_pdf_ingestion_removed.py tests/test_schema_design_tool.py -q`
+  - `cd vendor/cusmem && uv run --with ruff ruff check graphiti_rag/components.py graphiti_rag/config.py tools/schema_design/text_extraction.py tests/test_pdf_ingestion_removed.py tests/test_schema_design_tool.py`
+  - `git diff --check`
+  - Static search confirmed no residual `pdfminer`/`pdfplumber`/`PyPDF2`/`pypdfium2`/`tesseract`/`_read_pdf`/`_ocr_pdf` references in Python source.
+
 ## 2026-06-10 - Engineer evidence orchestration on investigation opening
 
 - Summary:

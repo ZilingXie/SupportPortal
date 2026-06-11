@@ -957,14 +957,13 @@ class SchemaDesignPipeline:
         metrics = stage1.get('metrics', {})
         needs_ocr_ratio = metrics.get('needs_ocr_ratio', 0)
         ocr_pages = metrics.get('ocr_pages', 0)
-        # If OCR was actually applied, the gate passes (OCR handled the quality issue)
+        # Legacy metrics keep the OCR names, but this pipeline now requires pre-converted text.
         if ocr_pages > 0:
             return
         if needs_ocr_ratio > 0.30:
             raise PipelineBlockedError(
                 f'Stage 1 文本质量不达标: needs_ocr_ratio={needs_ocr_ratio:.1%} > 30%'
-                f' 且未执行 OCR（ocr_pages={ocr_pages}）。'
-                f' 请安装 tesseract 或 paddleocr，或升级 PDF 文本质量。'
+                f'。请提供 pre-converted .txt or .md 文本输入后重试。'
             )
 
     def _gate_chunk_count(self, min_chunks: int = 10) -> None:

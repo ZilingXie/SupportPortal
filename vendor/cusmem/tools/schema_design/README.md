@@ -211,7 +211,7 @@ tools/schema_design/
 │   └── prompt_rules.py         # 抽取 Prompt 生成
 │
 ├── 基础处理
-│   ├── text_extraction.py      # 文本提取（PDF/DOCX/TXT）
+│   ├── text_extraction.py      # 文本提取（TXT/Markdown）
 │   ├── chunking.py             # 文档分块
 │   ├── patterns.py             # 正则模式识别
 │   └── terms.py                # 词频统计
