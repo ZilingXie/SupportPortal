@@ -1,0 +1,253 @@
+meta:
+  domain: 城市轨道交通信号与全自动运行
+  goals:
+    - 系统组成建模
+    - 操作规程关联
+    - 人员角色与职责
+    - 指标/参数合规
+    - 故障诊断
+
+entity_type_candidates:
+  - id: System
+    name: 系统/设备
+    description: 城市轨道交通信号系统中的设备、系统、子系统
+    examples:
+      - 信号系统
+      - 车辆
+      - 站台门
+      - 综合监控系统
+      - CBTC系统
+    allowed: true
+
+  - id: Component
+    name: 部件/子系统
+    description: 系统或设备的内部组成部分
+    examples:
+      - 列车自动监控子系统
+      - 通信接口
+      - 列车控制与管理系统
+      - 联锁子系统
+    allowed: true
+
+  - id: Procedure
+    name: 操作/规程
+    description: 系统或人员需要执行的操作、流程、指令
+    examples:
+      - FAM模式
+      - 休眠指令
+      - 唤醒指令
+      - 自动对标停车指令
+      - 远程限制运行模式
+    allowed: true
+
+  - id: PersonnelRole
+    name: 人员角色
+    description: 负责操作、监控、管理系统的具体人员角色
+    examples:
+      - 控制中心行车调度员
+      - 司机
+      - 系统集成协调商
+      - 车站值班员
+    allowed: true
+
+  - id: Organization
+    name: 组织/机构
+    description: 负责管理、调度或执行任务的机构或部门
+    examples:
+      - 运营单位
+      - 调度中心
+      - 车辆基地
+      - 控制中心
+    allowed: true
+
+  - id: Metric
+    name: 指标/参数
+    description: 需被测量、监控、满足或作为操作依据的指标或状态
+    examples:
+      - 蓄电池欠压
+      - 列车故障退出全自动运行模式率
+      - 站台门隔离状态
+      - 驾驶模式
+    allowed: true
+
+  - id: Threshold
+    name: 阈值/限制
+    description: 数值阈值或限制条件
+    examples:
+      - 不应超过
+      - 必须符合
+      - 禁止
+    allowed: true
+
+  - id: Location
+    name: 位置/区域
+    description: 运营线路中的地点、区域、车站
+    examples:
+      - 车辆基地
+      - 存车线
+      - 站台
+      - 自动化区域
+    allowed: true
+
+  - id: Standard
+    name: 标准/规范
+    description: 引用的标准、规范、法规文件
+    examples:
+      - GB/T 38374
+      - 中华人民共和国安全生产法
+      - 国务院办公厅关于保障城市轨道交通安全运行的意见
+    allowed: true
+
+relation_type_candidates:
+  - id: HAS_COMPONENT
+    name: 包含组件
+    description: 系统包含子系统或组件
+    source_candidates:
+      - System
+    target_candidates:
+      - System
+      - Component
+    trigger_words:
+      - 由
+      - 包括
+      - 组成
+      - 配备
+      - 包含
+    allowed: true
+
+  - id: PERFORMS
+    name: 执行操作
+    description: 系统或人员执行某项操作或流程
+    source_candidates:
+      - System
+      - PersonnelRole
+    target_candidates:
+      - Procedure
+    trigger_words:
+      - 执行
+      - 进行
+      - 操作
+      - 实施
+    allowed: true
+
+  - id: SATISFIES
+    name: 满足指标
+    description: 系统或设备满足某项指标要求
+    source_candidates:
+      - System
+      - Component
+    target_candidates:
+      - Metric
+      - Threshold
+    trigger_words:
+      - 应满足
+      - 符合
+      - 达到
+      - 满足
+    allowed: true
+
+  - id: GOVERNED_BY
+    name: 管理归属
+    description: 人员角色受组织管理
+    source_candidates:
+      - PersonnelRole
+    target_candidates:
+      - Organization
+    trigger_words:
+      - 负责
+      - 管理
+      - 隶属于
+      - 归属于
+    allowed: true
+
+  - id: FOLLOWS
+    name: 遵循规程
+    description: 人员或系统在操作时遵循某项规程或指标
+    source_candidates:
+      - PersonnelRole
+      - Procedure
+      - System
+    target_candidates:
+      - Procedure
+      - Metric
+      - Threshold
+    trigger_words:
+      - 按照
+      - 依据
+      - 根据
+      - 遵循
+    allowed: true
+
+  - id: RESTRICTS
+    name: 施加限制
+    description: 阈值或规则对系统/操作施加限制
+    source_candidates:
+      - Threshold
+      - Metric
+    target_candidates:
+      - System
+      - Procedure
+    trigger_words:
+      - 不应超过
+      - 禁止
+      - 限制
+      - 不宜
+    allowed: true
+
+  - id: REFERENCES
+    name: 引用标准
+    description: 文档或条款引用其他标准
+    source_candidates:
+      - System
+      - Procedure
+      - Metric
+    target_candidates:
+      - Standard
+    trigger_words:
+      - 引用
+      - 参见
+      - 按照
+      - 符合
+    allowed: true
+
+  - id: LOCATED_AT
+    name: 位于
+    description: 系统或设备位于某个位置
+    source_candidates:
+      - System
+      - Component
+    target_candidates:
+      - Location
+    trigger_words:
+      - 位于
+      - 设置于
+      - 在
+      - 处于
+    allowed: true
+
+attribute_candidates:
+  - id: standard_no
+    name: 标准编号
+    applies_to:
+      - Standard
+  - id: threshold_value
+    name: 阈值
+    applies_to:
+      - Threshold
+      - Metric
+  - id: unit
+    name: 单位
+    applies_to:
+      - Metric
+  - id: source_clause
+    name: 来源条款
+    applies_to:
+      - "*"
+
+filter_candidates:
+  - id: clause_number
+    description: 章节号、条款号不作为实体
+  - id: bare_number
+    description: 裸数字不作为实体
+  - id: unit_only
+    description: 裸单位不作为实体

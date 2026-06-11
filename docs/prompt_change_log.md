@@ -2170,3 +2170,22 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py backend/tests/test_rag_qa.py backend/tests/test_rag_prompt_guards.py -q -k 'usage_configuration_code_language or usage_configuration_answer_prompt_receives_selected_evidence_language or config_examples_when_field_evidence_has_no_language_tag or supports_config_example_without_language_tag or receives_config_evidence_without_language or weak_config_words or language_metadata_alone or rag_answer_prompt_guides or generic_join'`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_qa.py backend/services/prompts/rag_answer.py`
+
+- Date: 2026-06-11
+- Area or subsystem: Vendored cusmem GraphRAG source
+- Prompt or model version: `vendor-cusmem-import-v1`
+- Summary: Added a sanitized vendored cusmem source tree containing Graphiti/GraphRAG prompt modules, model configuration examples, schemas, and tests for future integration research.
+- Reason: SupportPortal needs the external project available locally before any adapter work; this import keeps the code reviewable while avoiding runtime wiring and excluding local secrets or private-address scripts.
+- Affected files or config:
+  - `.gitignore`
+  - `vendor/cusmem/`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - No production prompt or model behavior changes; the vendored prompt/model files are not imported by the SupportPortal runtime in this task.
+- Verification:
+  - `git diff --check origin/main..HEAD`
+  - Excluded-file check confirmed omitted local scripts, logs, copied PDF, comparison JSON files, and spreadsheet outputs are absent from `vendor/cusmem/`.
+  - Changed-scope secret scan confirmed no disallowed real-secret patterns in `.gitignore`, changelogs, or `vendor/cusmem/`.
+  - Private-address scan confirmed `103.151.172.84` and `neo4j@openspg` are absent from `vendor/cusmem/`.
+  - `python3 -m compileall -q vendor/cusmem`

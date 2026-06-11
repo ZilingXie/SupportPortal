@@ -1,0 +1,732 @@
+meta:
+  schema_version: "0.1"
+  domain: 城轨信号智能运维
+  description: >
+    面向城市轨道交通信号系统、CBTC/ATS/联锁/道岔/计轴/电源屏/报警/故障/检修/标准规范等资料的知识图谱候选池。
+    本文件不是最终 schema，而是候选 schema pool。商业大模型只能从候选池中选择、合并、裁剪，不允许自由新增类型。
+  goals:
+    - 设备关系建模
+    - 故障诊断
+    - 报警根因分析
+    - 标准合规判断
+    - 运维处置知识沉淀
+    - 检修作业辅助
+    - 技术要求追溯
+
+selection_policy:
+  llm_can_select: true
+  llm_can_merge: true
+  llm_can_rename_display_name: true
+  llm_can_add_outside_pool: false
+  if_missing_type: output_missing_candidate_request
+
+entity_type_candidates:
+
+  - id: SignalSystem
+    name: 信号系统
+    description: 城轨信号领域中的系统级对象
+    examples:
+      - CBTC系统
+      - ATC系统
+      - ATS系统
+      - 联锁系统
+      - 信号集中监测系统
+      - 列车运行控制系统
+    allowed: true
+    priority: high
+
+  - id: Subsystem
+    name: 子系统
+    description: 信号系统内部的功能子系统或组成部分
+    examples:
+      - ATP子系统
+      - ATO子系统
+      - ATS子系统
+      - 车载子系统
+      - 地面子系统
+      - 数据通信子系统
+      - 维护支持子系统
+    allowed: true
+    priority: high
+
+  - id: Equipment
+    name: 设备
+    description: 现场或中心部署的信号设备、控制设备、检测设备、通信设备
+    examples:
+      - 转辙机
+      - 信号机
+      - 计轴设备
+      - 轨道电路
+      - 应答器
+      - 区域控制器
+      - 车载控制器
+      - 联锁机
+      - 电源屏
+      - 信号集中监测机
+    allowed: true
+    priority: high
+
+  - id: Component
+    name: 部件
+    description: 设备内部的组成部件、模块、板卡、机械或电气部件
+    examples:
+      - 电动机
+      - 表示杆
+      - 锁闭杆
+      - 动作杆
+      - 接点组
+      - 继电器
+      - 采集板
+      - 通信板
+      - 电源模块
+      - 传感器
+    allowed: true
+    priority: high
+
+  - id: LineElement
+    name: 线路要素
+    description: 与信号控制、列车运行、设备布置相关的线路、区段、站场对象
+    examples:
+      - 车站
+      - 区间
+      - 计轴区段
+      - 轨道区段
+      - 道岔区段
+      - 信号机防护区段
+      - 站台
+      - 折返线
+      - 车辆段
+    allowed: true
+    priority: medium
+
+  - id: Location
+    name: 位置
+    description: 设备、故障、报警、检修事件发生或安装的位置
+    examples:
+      - 上行线
+      - 下行线
+      - 站台端
+      - 设备房
+      - 轨旁
+      - 控制中心
+      - 集中站
+      - 正线
+      - 车辆基地
+    allowed: true
+    priority: medium
+
+  - id: OperationMode
+    name: 运营模式
+    description: 列车运行、控制、降级、切换、人工/自动驾驶相关模式
+    examples:
+      - CBTC模式
+      - 后备模式
+      - 点式模式
+      - 自动驾驶模式
+      - 人工驾驶模式
+      - 降级模式
+      - 全自动运行模式
+      - 非限制人工驾驶模式
+    allowed: true
+    priority: medium
+
+  - id: Function
+    name: 功能
+    description: 系统、子系统或设备提供的业务功能、控制功能、安全功能、监测功能
+    examples:
+      - 列车自动防护
+      - 列车自动运行
+      - 列车自动监控
+      - 进路控制
+      - 道岔控制
+      - 列车定位
+      - 速度监督
+      - 故障报警
+      - 状态监测
+    allowed: true
+    priority: high
+
+  - id: Interface
+    name: 接口
+    description: 系统、子系统、设备之间的数据、通信、控制或物理接口
+    examples:
+      - ATS-CBTC接口
+      - ATP-ATO接口
+      - 联锁-ATS接口
+      - ZC-CI接口
+      - 车地通信接口
+      - 维护接口
+      - 继电接口
+      - 以太网接口
+    allowed: true
+    priority: high
+
+  - id: DataItem
+    name: 数据项
+    description: 系统接口、监测、报警、控制过程中传输或采集的数据字段
+    examples:
+      - 列车位置
+      - 列车速度
+      - 进路状态
+      - 道岔位置
+      - 信号机状态
+      - 区段占用状态
+      - 报警码
+      - 设备状态
+      - 心跳状态
+    allowed: true
+    priority: medium
+
+  - id: ControlCommand
+    name: 控制命令
+    description: 系统、设备或调度操作中下发的控制指令
+    examples:
+      - 扳动道岔命令
+      - 开放信号命令
+      - 排列进路命令
+      - 取消进路命令
+      - 紧急停车命令
+      - 复位命令
+      - 模式切换命令
+    allowed: true
+    priority: medium
+
+  - id: Status
+    name: 状态
+    description: 设备、系统、区段、进路、列车等对象的运行状态、逻辑状态或物理状态
+    examples:
+      - 正常
+      - 故障
+      - 占用
+      - 空闲
+      - 定位
+      - 反位
+      - 锁闭
+      - 解锁
+      - 在线
+      - 离线
+      - 主用
+      - 备用
+    allowed: true
+    priority: medium
+
+  - id: Alarm
+    name: 报警
+    description: 系统、设备、接口或业务运行过程中产生的报警信息
+    examples:
+      - 道岔表示不一致报警
+      - 通信中断报警
+      - 计轴占用异常报警
+      - 电源故障报警
+      - 板卡离线报警
+      - 心跳超时报警
+      - ATS报警
+      - 联锁报警
+    allowed: true
+    priority: high
+
+  - id: FaultMode
+    name: 故障模式
+    description: 设备、系统、接口、数据或运行过程可能出现的故障类型
+    examples:
+      - 表示不一致
+      - 转换不到位
+      - 通信中断
+      - 采集异常
+      - 计轴故障
+      - 轨道区段红光带
+      - 电源失效
+      - 板卡故障
+      - 信号开放失败
+    allowed: true
+    priority: high
+
+  - id: Symptom
+    name: 故障现象
+    description: 故障发生后可观察到的现象、表现、告警、异常状态或运行影响
+    examples:
+      - 道岔无法转换
+      - 信号机不能开放
+      - 区段持续占用
+      - 设备离线
+      - 列车定位丢失
+      - 进路无法排列
+      - 报警频繁出现
+      - 显示状态异常
+    allowed: true
+    priority: high
+
+  - id: Cause
+    name: 原因
+    description: 导致故障、报警、异常或性能下降的直接原因、间接原因、根因
+    examples:
+      - 电缆断线
+      - 接点接触不良
+      - 机械卡阻
+      - 电源波动
+      - 网络中断
+      - 参数配置错误
+      - 板卡损坏
+      - 传感器异常
+      - 施工影响
+    allowed: true
+    priority: high
+
+  - id: Impact
+    name: 影响
+    description: 故障、报警、异常、风险对运营、行车、安全、设备功能造成的影响
+    examples:
+      - 影响列车运行
+      - 影响进路办理
+      - 影响道岔转换
+      - 降级运行
+      - 运营延误
+      - 安全风险增加
+      - 设备不可用
+    allowed: true
+    priority: medium
+
+  - id: MaintenanceAction
+    name: 处置措施
+    description: 针对故障、报警、异常、检修任务采取的检查、处理、恢复、维修动作
+    examples:
+      - 检查电缆
+      - 复位设备
+      - 更换板卡
+      - 清扫接点
+      - 调整缺口
+      - 测量电压
+      - 校核配置
+      - 重启服务
+      - 检查通信链路
+    allowed: true
+    priority: high
+
+  - id: InspectionItem
+    name: 检查项
+    description: 巡检、检修、试验、验收、维护过程中需要检查或测试的项目
+    examples:
+      - 道岔转换试验
+      - 表示电压检查
+      - 绝缘电阻测试
+      - 通信连通性检查
+      - 接口功能测试
+      - 报警功能测试
+      - 联锁关系试验
+      - 电源切换试验
+    allowed: true
+    priority: high
+
+  - id: Requirement
+    name: 技术要求
+    description: 标准、规范、设计文件、维护规程中提出的功能、性能、安全、接口、环境、检验等要求
+    examples:
+      - 功能要求
+      - 性能要求
+      - 安全要求
+      - 接口要求
+      - 环境要求
+      - 电磁兼容要求
+      - 检验要求
+      - 可靠性要求
+    allowed: true
+    priority: high
+
+  - id: PerformanceIndex
+    name: 性能指标
+    description: 可测量、可判断、可比较的技术参数、性能参数、运行指标
+    examples:
+      - 转换时间
+      - 额定转换力
+      - 动作电流
+      - 表示电压
+      - 绝缘电阻
+      - 响应时间
+      - 通信时延
+      - 可用性
+      - 故障率
+      - 平均无故障时间
+    allowed: true
+    priority: high
+
+  - id: ThresholdRule
+    name: 阈值规则
+    description: 用于合规判断、分类判断、性能判断、报警判断的数值阈值、范围、上下限或条件规则
+    examples:
+      - 转换时间不大于6s
+      - 绝缘电阻不小于规定值
+      - 通信时延小于阈值
+      - 温度范围为-40℃至70℃
+      - 电压应在允许范围内
+    allowed: true
+    priority: high
+
+  - id: Risk
+    name: 风险
+    description: 安全、运营、设备、维护方面的潜在风险或危险状态
+    examples:
+      - 行车安全风险
+      - 设备失效风险
+      - 误开放风险
+      - 误动作风险
+      - 通信中断风险
+      - 故障扩散风险
+    allowed: true
+    priority: medium
+
+  - id: Standard
+    name: 标准规范
+    description: 国家标准、行业标准、企业标准、技术规范、规程、办法、设计文件等文档级依据
+    examples:
+      - GB/T 25338.1
+      - 城市轨道交通信号系统规范
+      - CBTC系统技术要求
+      - 维护规程
+      - 设计说明书
+      - 接口规范
+      - 检修规程
+    allowed: true
+    priority: high
+
+  - id: DocumentSection
+    name: 文档章节
+    description: 标准、规范、手册、规程中的章节、条款、附录，用于证据追溯，不建议作为核心业务实体
+    examples:
+      - 第4.1条
+      - 5.2 技术要求
+      - 附录A
+      - 规范性引用文件
+      - 检验规则
+    allowed: true
+    priority: low
+    use_as_core_entity: false
+
+  - id: EventRecord
+    name: 事件记录
+    description: 故障、报警、工单、操作、检修、状态变化等有时间属性的事件记录
+    examples:
+      - 报警记录
+      - 故障记录
+      - 检修记录
+      - 操作记录
+      - 状态变化记录
+      - 事件日志
+    allowed: true
+    priority: medium
+
+  - id: WorkOrder
+    name: 工单
+    description: 运维、检修、故障处理、巡检、抢修等工作单据或任务记录
+    examples:
+      - 故障工单
+      - 检修工单
+      - 巡检任务
+      - 抢修记录
+      - 缺陷处理单
+    allowed: true
+    priority: medium
+
+  - id: Organization
+    name: 组织机构
+    description: 责任单位、维护单位、厂家、部门、班组、调度机构等主体
+    examples:
+      - 维护中心
+      - 信号专业
+      - 设备厂家
+      - 调度中心
+      - 施工单位
+      - 运营公司
+      - 检修班组
+    allowed: true
+    priority: low
+
+relation_type_candidates:
+
+  - id: HAS_SUBSYSTEM
+    name: 包含子系统
+    description: 系统包含或由某个子系统组成
+    source_candidates: [SignalSystem]
+    target_candidates: [Subsystem]
+    trigger_words: [包含, 包括, 由, 组成, 下设]
+    examples: [CBTC系统 HAS_SUBSYSTEM ATP子系统, CBTC系统 HAS_SUBSYSTEM ATO子系统]
+    allowed: true
+    priority: high
+
+  - id: HAS_COMPONENT
+    name: 包含部件
+    description: 设备、系统、子系统包含某个部件、模块、板卡或装置
+    source_candidates: [SignalSystem, Subsystem, Equipment]
+    target_candidates: [Component, Equipment]
+    trigger_words: [包含, 包括, 由, 组成, 配备, 设有]
+    examples: [转辙机 HAS_COMPONENT 电动机, 转辙机 HAS_COMPONENT 表示杆]
+    allowed: true
+    priority: high
+
+  - id: BELONGS_TO_SYSTEM
+    name: 属于系统
+    description: 子系统、设备、功能、接口归属于某个系统
+    source_candidates: [Subsystem, Equipment, Function, Interface, DataItem]
+    target_candidates: [SignalSystem, Subsystem]
+    trigger_words: [属于, 归属, 接入, 纳入, 作为]
+    examples: [ATS子系统 BELONGS_TO_SYSTEM CBTC系统, 计轴设备 BELONGS_TO_SYSTEM 信号系统]
+    allowed: true
+    priority: medium
+
+  - id: LOCATED_AT
+    name: 位于
+    description: 设备、部件、报警、故障、工单、事件发生或安装在某位置
+    source_candidates: [Equipment, Component, Alarm, FaultMode, EventRecord, WorkOrder]
+    target_candidates: [Location, LineElement]
+    trigger_words: [位于, 安装于, 设置于, 发生于, 出现在, 对应]
+    examples: [计轴设备 LOCATED_AT 计轴区段, 道岔故障 LOCATED_AT 道岔区段]
+    allowed: true
+    priority: medium
+
+  - id: PROVIDES_FUNCTION
+    name: 提供功能
+    description: 系统、子系统、设备提供某项功能
+    source_candidates: [SignalSystem, Subsystem, Equipment]
+    target_candidates: [Function]
+    trigger_words: [实现, 提供, 具备, 支持, 完成]
+    examples: [ATS系统 PROVIDES_FUNCTION 列车自动监控, ATP子系统 PROVIDES_FUNCTION 速度监督]
+    allowed: true
+    priority: high
+
+  - id: HAS_INTERFACE
+    name: 具有接口
+    description: 系统、子系统、设备具有或开放某类接口
+    source_candidates: [SignalSystem, Subsystem, Equipment]
+    target_candidates: [Interface]
+    trigger_words: [接口, 连接, 通信, 交互, 对接, 传输]
+    examples: [ATS系统 HAS_INTERFACE ATS-CBTC接口, 联锁系统 HAS_INTERFACE 联锁-ATS接口]
+    allowed: true
+    priority: high
+
+  - id: CONNECTS_TO
+    name: 连接到
+    description: 系统、子系统、设备、接口之间存在通信、控制、物理或逻辑连接
+    source_candidates: [SignalSystem, Subsystem, Equipment, Interface]
+    target_candidates: [SignalSystem, Subsystem, Equipment, Interface]
+    trigger_words: [连接, 接入, 对接, 通信, 互联, 传输]
+    examples: [ATS系统 CONNECTS_TO 联锁系统, 车载设备 CONNECTS_TO 地面设备]
+    allowed: true
+    priority: high
+
+  - id: EXCHANGES_DATA
+    name: 交换数据
+    description: 系统、接口、设备之间传输或交换数据项
+    source_candidates: [SignalSystem, Subsystem, Equipment, Interface]
+    target_candidates: [DataItem]
+    trigger_words: [发送, 接收, 上传, 下发, 传输, 交换, 采集]
+    examples: [ATS系统 EXCHANGES_DATA 列车位置, 联锁系统 EXCHANGES_DATA 进路状态]
+    allowed: true
+    priority: medium
+
+  - id: SENDS_COMMAND
+    name: 下发命令
+    description: 系统、子系统、设备、人员向目标对象下发控制命令
+    source_candidates: [SignalSystem, Subsystem, Equipment, Organization]
+    target_candidates: [ControlCommand]
+    trigger_words: [下发, 发送, 执行, 控制, 命令, 操作]
+    examples: [ATS系统 SENDS_COMMAND 排列进路命令, 联锁系统 SENDS_COMMAND 扳动道岔命令]
+    allowed: true
+    priority: medium
+
+  - id: CONTROLS
+    name: 控制
+    description: 系统、子系统、设备或命令控制另一个设备、状态、功能或线路要素
+    source_candidates: [SignalSystem, Subsystem, Equipment, ControlCommand]
+    target_candidates: [Equipment, Function, LineElement, Status]
+    trigger_words: [控制, 驱动, 操作, 办理, 锁闭, 解锁, 开放]
+    examples: [联锁系统 CONTROLS 道岔, 扳动道岔命令 CONTROLS 转辙机]
+    allowed: true
+    priority: high
+
+  - id: HAS_STATUS
+    name: 具有状态
+    description: 系统、设备、部件、线路要素、接口具有某个运行状态或逻辑状态
+    source_candidates: [SignalSystem, Subsystem, Equipment, Component, Interface, LineElement]
+    target_candidates: [Status]
+    trigger_words: [状态, 处于, 显示, 表示, 为, 呈现]
+    examples: [道岔 HAS_STATUS 定位, 计轴区段 HAS_STATUS 占用]
+    allowed: true
+    priority: medium
+
+  - id: GENERATES_ALARM
+    name: 产生报警
+    description: 系统、设备、接口、故障或事件产生报警
+    source_candidates: [SignalSystem, Subsystem, Equipment, Component, Interface, FaultMode, EventRecord]
+    target_candidates: [Alarm]
+    trigger_words: [报警, 告警, 产生, 触发, 上报, 提示]
+    examples: [计轴设备 GENERATES_ALARM 计轴占用异常报警, 通信中断 GENERATES_ALARM 通信中断报警]
+    allowed: true
+    priority: high
+
+  - id: HAS_FAULT
+    name: 存在故障
+    description: 系统、设备、部件、接口存在或发生某类故障模式
+    source_candidates: [SignalSystem, Subsystem, Equipment, Component, Interface]
+    target_candidates: [FaultMode]
+    trigger_words: [故障, 异常, 失效, 不良, 损坏, 中断, 超时]
+    examples: [转辙机 HAS_FAULT 转换不到位, 通信链路 HAS_FAULT 通信中断]
+    allowed: true
+    priority: high
+
+  - id: HAS_SYMPTOM
+    name: 表现为
+    description: 故障、报警、事件表现为某种现象
+    source_candidates: [FaultMode, Alarm, EventRecord]
+    target_candidates: [Symptom]
+    trigger_words: [表现为, 现象, 出现, 显示, 发生, 导致]
+    examples: [转换不到位 HAS_SYMPTOM 道岔无法转换, 通信中断 HAS_SYMPTOM 设备离线]
+    allowed: true
+    priority: high
+
+  - id: HAS_CAUSE
+    name: 原因为
+    description: 故障、报警、现象、事件具有某个直接原因或根因
+    source_candidates: [FaultMode, Alarm, Symptom, EventRecord]
+    target_candidates: [Cause]
+    trigger_words: [原因, 由于, 因为, 可能由于, 根因, 造成原因]
+    examples: [道岔无法转换 HAS_CAUSE 机械卡阻, 设备离线 HAS_CAUSE 网络中断]
+    allowed: true
+    priority: high
+
+  - id: CAUSES
+    name: 导致
+    description: 原因、故障、异常、风险导致另一故障、现象、报警或影响
+    source_candidates: [Cause, FaultMode, Risk, Alarm]
+    target_candidates: [FaultMode, Symptom, Alarm, Impact, Risk]
+    trigger_words: [导致, 引起, 造成, 诱发, 影响, 使]
+    examples: [网络中断 CAUSES 设备离线, 机械卡阻 CAUSES 转换不到位]
+    allowed: true
+    priority: high
+
+  - id: AFFECTS
+    name: 影响
+    description: 故障、报警、风险、状态影响系统、设备、功能、运营或安全
+    source_candidates: [FaultMode, Alarm, Risk, Status, EventRecord]
+    target_candidates: [SignalSystem, Subsystem, Equipment, Function, OperationMode, Impact]
+    trigger_words: [影响, 造成, 导致, 降级, 中断, 限制]
+    examples: [通信中断 AFFECTS 列车自动监控, 道岔故障 AFFECTS 进路办理]
+    allowed: true
+    priority: high
+
+  - id: MITIGATED_BY
+    name: 通过措施处理
+    description: 故障、报警、风险、现象可以通过某个处置措施处理、缓解或恢复
+    source_candidates: [FaultMode, Alarm, Symptom, Risk]
+    target_candidates: [MaintenanceAction]
+    trigger_words: [处理, 处置, 恢复, 排查, 检查, 更换, 复位, 调整]
+    examples: [转换不到位 MITIGATED_BY 调整缺口, 通信中断 MITIGATED_BY 检查通信链路]
+    allowed: true
+    priority: high
+
+  - id: EXECUTES_ACTION
+    name: 执行措施
+    description: 工单、组织、人员、事件执行某项处置、检修、检查或操作措施
+    source_candidates: [WorkOrder, Organization, EventRecord]
+    target_candidates: [MaintenanceAction, InspectionItem]
+    trigger_words: [执行, 完成, 处理, 检查, 检修, 巡检, 测试]
+    examples: [故障工单 EXECUTES_ACTION 更换板卡, 检修班组 EXECUTES_ACTION 道岔转换试验]
+    allowed: true
+    priority: medium
+
+  - id: VERIFIED_BY
+    name: 由检查项验证
+    description: 技术要求、性能指标、功能、故障修复结果由检查项、试验项或测试项验证
+    source_candidates: [Requirement, PerformanceIndex, Function, FaultMode, MaintenanceAction]
+    target_candidates: [InspectionItem]
+    trigger_words: [检验, 试验, 测试, 验证, 检查, 测量]
+    examples: [绝缘电阻 VERIFIED_BY 绝缘电阻测试, 道岔控制功能 VERIFIED_BY 道岔转换试验]
+    allowed: true
+    priority: high
+
+  - id: HAS_REQUIREMENT
+    name: 具有要求
+    description: 系统、设备、功能、接口、标准包含或规定某项技术要求
+    source_candidates: [SignalSystem, Subsystem, Equipment, Function, Interface, Standard]
+    target_candidates: [Requirement]
+    trigger_words: [要求, 应, 应符合, 应满足, 规定, 需, 必须]
+    examples: [CBTC系统 HAS_REQUIREMENT 安全要求, 接口规范 HAS_REQUIREMENT 接口要求]
+    allowed: true
+    priority: high
+
+  - id: HAS_INDEX
+    name: 具有指标
+    description: 系统、设备、功能、要求具有某个性能指标或技术参数
+    source_candidates: [SignalSystem, Subsystem, Equipment, Function, Requirement]
+    target_candidates: [PerformanceIndex]
+    trigger_words: [指标, 参数, 性能, 应满足, 应符合, 不大于, 不小于]
+    examples: [转辙机 HAS_INDEX 转换时间, 通信接口 HAS_INDEX 通信时延]
+    allowed: true
+    priority: high
+
+  - id: HAS_THRESHOLD
+    name: 具有阈值规则
+    description: 性能指标、技术要求、报警条件具有阈值、范围、上下限或判断规则
+    source_candidates: [PerformanceIndex, Requirement, Alarm]
+    target_candidates: [ThresholdRule]
+    trigger_words: [不大于, 不小于, 大于, 小于, 范围, 阈值, 上限, 下限, 应在]
+    examples: [转换时间 HAS_THRESHOLD 转换时间不大于6s, 通信时延 HAS_THRESHOLD 通信时延小于阈值]
+    allowed: true
+    priority: high
+
+  - id: SATISFIES_REQUIREMENT
+    name: 满足要求
+    description: 系统、设备、功能、指标、处置结果满足某项技术要求或标准要求
+    source_candidates: [SignalSystem, Subsystem, Equipment, Function, PerformanceIndex, MaintenanceAction]
+    target_candidates: [Requirement, ThresholdRule]
+    trigger_words: [满足, 符合, 达到, 不低于, 不超过, 通过]
+    examples: [转辙机 SATISFIES_REQUIREMENT 技术要求, 绝缘电阻 SATISFIES_REQUIREMENT 阈值规则]
+    allowed: true
+    priority: medium
+
+  - id: REFERENCES_STANDARD
+    name: 引用标准
+    description: 标准、要求、检查项、技术指标引用或依据另一个标准规范
+    source_candidates: [Standard, Requirement, InspectionItem, PerformanceIndex]
+    target_candidates: [Standard]
+    trigger_words: [引用, 依据, 按照, 参照, 符合, 执行]
+    examples: [技术要求 REFERENCES_STANDARD GB/T标准, 检验项目 REFERENCES_STANDARD 检验规范]
+    allowed: true
+    priority: high
+
+  - id: RECORDED_IN
+    name: 记录于
+    description: 故障、报警、处置、检查、事件记录在工单或事件记录中
+    source_candidates: [FaultMode, Alarm, MaintenanceAction, InspectionItem, EventRecord]
+    target_candidates: [WorkOrder, EventRecord]
+    trigger_words: [记录, 记载, 工单, 日志, 台账, 填报]
+    examples: [通信中断报警 RECORDED_IN 报警记录, 更换板卡 RECORDED_IN 故障工单]
+    allowed: true
+    priority: medium
+
+  - id: OCCURS_AT
+    name: 发生于时间
+    description: 报警、故障、事件、工单、处置发生在某个时间点或时间段
+    source_candidates: [Alarm, FaultMode, EventRecord, WorkOrder, MaintenanceAction]
+    target_candidates: [Status]
+    trigger_words: [发生时间, 开始时间, 结束时间, 持续, 时间]
+    examples: [报警事件 OCCURS_AT 发生时间]
+    allowed: false
+    priority: low
+    note: 时间通常作为属性，不建议建成关系；默认不选。
+
+filter_candidates:
+  - id: clause_number
+    description: 章节号、条款号、附录号不作为核心业务实体
+  - id: bare_number
+    description: 裸数字不作为实体
+  - id: unit_only
+    description: 裸单位不作为实体
+  - id: value_only
+    description: 纯数值加单位不单独作为实体
+  - id: catalog_metadata
+    description: 编目元数据不作为实体
+  - id: punctuation_fragment
+    description: 孤立标点、目录点线、无意义符号不作为实体
+  - id: ocr_fragment
+    description: OCR 乱码、编码残留、单字母碎片不作为实体
+  - id: sentence_as_entity
+    description: 整句事实陈述不作为实体

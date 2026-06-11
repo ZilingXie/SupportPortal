@@ -4577,3 +4577,26 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_rag_api.py -k 'fallback_table_selected_readiness or knowledge_index_guard_trips'`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_rag_qa.py -k 'resolve_active_vector_table or probe_customer_rag_index_readiness'`
+
+## 2026-06-11 - Vendored cusmem GraphRAG source import
+
+- Summary:
+  - Added a sanitized vendored copy of the cusmem Graphiti/GraphRAG project under `vendor/cusmem/` for future SupportPortal graph-RAG integration work.
+  - Preserved source code, package metadata, schemas, tests, documentation, and Apache-2.0 licensing while excluding local secrets, local experiment outputs, copied benchmark artifacts, and scripts with hard-coded private service addresses.
+- Reason:
+  - SupportPortal needs a local, reviewable copy of the external cusmem project before building a narrow adapter or runtime integration.
+- Affected files/config:
+  - `.gitignore`
+  - `vendor/cusmem/`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No SupportPortal runtime RAG schema, ingestion flow, chunking strategy, embedding configuration, vector table, or backfill changes.
+  - The vendored code is not wired into the running SupportPortal stack by this import alone.
+  - Excluded local experiment artifacts include logs, comparison JSON files, spreadsheet outputs, the copied GB/T PDF, and private-address scripts.
+- Verification:
+  - `git diff --check origin/main..HEAD`
+  - Excluded-file check confirmed omitted local scripts, logs, copied PDF, comparison JSON files, and spreadsheet outputs are absent from `vendor/cusmem/`.
+  - Changed-scope secret scan confirmed no disallowed real-secret patterns in `.gitignore`, changelogs, or `vendor/cusmem/`.
+  - Private-address scan confirmed `103.151.172.84` and `neo4j@openspg` are absent from `vendor/cusmem/`.
+  - `python3 -m compileall -q vendor/cusmem`
