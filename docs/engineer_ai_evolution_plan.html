@@ -361,12 +361,12 @@
 </head>
 <body>
   <header>
-    <h1>SupportPortal Engineer AI 自进化计划</h1>
-    <p class="subtitle">本计划将自进化能力收窄到工程师端：EvoAgentX 作为离线优化实验室，Case Memory Layer 作为已确认案例记忆抽象，线上执行仍由 SupportPortal 现有 engineer AI runtime 负责。</p>
+    <h1>SupportPortal Engineer AI 多 Agent 演进计划</h1>
+    <p class="subtitle">本计划暂停 EvoAgentX 计划，把线上工程师端主链路调整为受控 Engineer Multi-Agent 调查流程；现有 Engineer AI guardrail 功能继续保留，作为工程师批准后的客户安全校验。</p>
     <div class="meta">
-      <span class="badge">状态：阶段 1A 反馈 schema 已固化</span>
+      <span class="badge">状态：线上 multi-agent 主链路规划</span>
       <span class="badge">范围：Engineer AI only</span>
-      <span class="badge">日期：2026-06-10</span>
+      <span class="badge">日期：2026-06-11</span>
       <span class="badge">语言：中文</span>
     </div>
   </header>
@@ -375,7 +375,7 @@
     <section>
       <h2>一、核心结论</h2>
       <div class="callout">
-        <p><strong>推荐方向：</strong>EvoAgentX 不接管线上主链路，而是作为离线自进化引擎；Case Memory Layer 不替代数据库，而是作为工程师已确认案例的语义记忆抽象；client AI 继续使用现有 RAG official_only 主链路。</p>
+        <p><strong>推荐方向：</strong>EvoAgentX 计划暂停；线上 Engineer AI 从 guardrail-only 升级为 Engineer Multi-Agent 主链路。新流程是 engineer 端工单创建后触发多 agent 调查，Conclude Agent 给出结论，工程师批准或 revise；批准后必须经过现有 Engineer Guardrail，revise 后重新进入 Plan Agent 流程。</p>
       </div>
       <p class="small">阶段 0 source of truth：docs/superpowers/specs/2026-06-10-engineer-ai-evolution-phase0-design.md</p>
       <p class="small">阶段 1A source of truth：docs/superpowers/specs/2026-06-10-engineer-hitl-feedback-schema-design.md</p>
@@ -396,11 +396,11 @@
         </div>
         <div class="tile">
           <strong>Engineer AI Runtime</strong>
-          <p>继续使用现有 engineer_case、engineer_agent_state、handoff_packet、evidence_tools。它是生产执行和审计的 source of truth。</p>
+          <p>线上主链路升级为 Engineer Multi-Agent Investigation；继续使用 engineer_case、engineer_agent_state、handoff_packet、evidence_tools 作为生产执行和审计 source of truth。</p>
         </div>
         <div class="tile">
-          <strong>EvoAgentX Optimization Lab</strong>
-          <p>离线或 shadow 运行，用于优化 engineer prompt、受限拓扑、tool-call policy。只产出候选版本，不直接改生产。</p>
+          <strong>EvoAgentX 计划暂停</strong>
+          <p>当前不引入 EvoAgentX 作为优化实验室，也不让外部 optimizer 产生线上候选拓扑；先把多 agent 调查闭环做成可审计、可批准、可 revise 的生产主链路。</p>
         </div>
       </div>
       <div class="grid two" style="margin-top: 14px;">
@@ -410,7 +410,7 @@
         </div>
         <div class="tile">
           <strong>治理原则</strong>
-          <p>任何自进化结果必须经过离线评估、shadow 对比、版本记录和人工批准，才能进入灰度或生产。</p>
+          <p>Plan、Review、Implement、Conclude 只能服务工程师调查；客户回复仍必须经工程师批准和 Engineer Guardrail，任何 agent 都不能绕过审批、权限和审计日志。</p>
         </div>
       </div>
     </section>
@@ -429,7 +429,7 @@
           <tr>
             <td>目标</td>
             <td>降低工程师纠正率</td>
-            <td>通过结构化反馈、案例记忆、prompt/tool policy 优化，让 engineer AI 更快给出可审查结论。</td>
+            <td>通过 Plan Agent、Memory Review Agent、Implement Agent 和 Conclude Agent 的受控协作，让 engineer AI 更快给出可审查结论。</td>
           </tr>
           <tr>
             <td>目标</td>
@@ -438,8 +438,8 @@
           </tr>
           <tr>
             <td>目标</td>
-            <td>受控优化 prompt、拓扑、skill 调用</td>
-            <td>EvoAgentX 负责提出候选版本；生产上线由 SupportPortal 版本门禁控制。</td>
+            <td>上线可 revise 的多 agent 调查闭环</td>
+            <td>工程师可以批准 conclusion，也可以指出 agent 做错了什么或下一步该做什么；revise 后重新走 Plan Agent 流程。</td>
           </tr>
           <tr>
             <td>非目标</td>
@@ -449,7 +449,12 @@
           <tr>
             <td>非目标</td>
             <td>自动跳过工程师审批</td>
-            <td>工程师审批和客户安全校验是硬边界，不允许 optimizer 改写或绕过。</td>
+            <td>工程师审批和客户安全校验是硬边界，不允许任何 agent 改写或绕过。</td>
+          </tr>
+          <tr>
+            <td>非目标</td>
+            <td>继续推进 EvoAgentX</td>
+            <td>EvoAgentX 计划暂停；当前阶段不做离线 optimizer、shadow optimizer 或自动候选版本生成。</td>
           </tr>
           <tr>
             <td>非目标</td>
@@ -464,25 +469,93 @@
       <h2>四、数据流</h2>
       <div class="flow">
         <div class="step">
-          <h3>1. 工程师处理</h3>
-          <p>工程师审查 AI 初稿、补充证据、确认或纠正结论。</p>
+          <h3>1. 工单创建</h3>
+          <p>engineer 端工单创建后，系统基于 client ticket、handoff packet 和历史 investigation state 启动线上 Engineer Multi-Agent 主链路。</p>
         </div>
         <div class="step">
-          <h3>2. 结构化反馈</h3>
-          <p>记录根因、证据锚点、可发客户结论、仍缺信息和置信度。</p>
+          <h3>2. 多 Agent 调查</h3>
+          <p>Plan Agent 创建调查计划，Memory Review Agent 结合 Active Retrieval Memory 优化计划并标记顺序或并行，Implement Agent 执行证据任务。</p>
         </div>
         <div class="step">
-          <h3>3. 案例入库</h3>
-          <p>确认后的案例写入 Postgres 和 Case Memory Layer；未确认猜测不进长期记忆。</p>
+          <h3>3. Conclude</h3>
+          <p>Conclude Agent 汇总 evidence packet，给出 conclusion、置信度、风险、缺失信息和建议客户草稿。</p>
         </div>
         <div class="step">
-          <h3>4. 离线优化</h3>
-          <p>EvoAgentX 基于评估集生成 prompt、拓扑和工具策略候选版本。</p>
+          <h3>4. 工程师审查</h3>
+          <p>工程师可以 approve，也可以 revise：告诉 agent 下一步该做什么，或指出哪里做错。工程师 revise 后重新进入 Plan Agent。</p>
         </div>
         <div class="step">
-          <h3>5. 门禁上线</h3>
-          <p>shadow eval 通过后人工批准，再灰度上线并持续监控。</p>
+          <h3>5. Guardrail</h3>
+          <p>工程师批准后必须再走现有 guardrail，校验客户安全、内部信息泄露和 root cause 夸大风险，只有通过后才进入客户回复流程。</p>
         </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>四 A、线上 Engineer Multi-Agent 主链路</h2>
+      <div class="callout">
+        <p><strong>主链路定位：</strong>现在线上 engineer AI 的 guardrail 功能保留，但不再让它承担完整调查职责。新增 multi-agent 调查链路负责计划、记忆审查、证据执行和总结；guardrail 只在工程师批准后做最终安全校验。</p>
+      </div>
+      <table style="margin-top: 14px;">
+        <thead>
+          <tr>
+            <th>Agent / 模块</th>
+            <th>职责</th>
+            <th>输入</th>
+            <th>输出</th>
+            <th>边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Plan Agent</td>
+            <td>根据上下文、可用 skill/tool 列表和 engineer revise 指令创建调查计划。</td>
+            <td>client ticket、handoff_packet、engineer_agent_state、历史 investigation messages、revise note。</td>
+            <td>结构化 plan：目标、假设、任务、所需证据、风险、每步依赖。</td>
+            <td>不直接调用工具，不生成客户最终回复。</td>
+          </tr>
+          <tr>
+            <td>Memory Review Agent</td>
+            <td>检索 Active Retrieval Memory 和相关历史经验，优化计划，并判断执行顺序与是否可并行。</td>
+            <td>Plan Agent 输出、Active Retrieval Memory、Case Memory Layer 检索结果。</td>
+            <td>reviewed_plan、dependency graph、parallel groups、blocked reasons、历史不要做的事。</td>
+            <td>不能读取 inactive ledger；不能把未确认记忆当事实。</td>
+          </tr>
+          <tr>
+            <td>Implement Agent</td>
+            <td>按 reviewed_plan 顺序或并行执行调查任务，调用允许的 evidence tools、internal RAG、official RAG fallback 和只读上下文摘要。</td>
+            <td>dependency graph、tool allowlist、证据任务参数。</td>
+            <td>task results、evidence_refs、失败原因、仍缺信息。</td>
+            <td>只做调查和证据收集，不审批、不发送客户回复、不写长期记忆。</td>
+          </tr>
+          <tr>
+            <td>Conclude Agent</td>
+            <td>整合所有任务结果，生成给工程师看的 conclusion。</td>
+            <td>reviewed_plan、task results、evidence packet、guardrail policy。</td>
+            <td>conclusion、confidence、root cause status、customer-safe draft、risk flags、next action。</td>
+            <td>conclusion 只给 engineer 审查；客户草稿必须等待工程师 approve 和 Engineer Guardrail。</td>
+          </tr>
+          <tr>
+            <td>Engineer Guardrail</td>
+            <td>保留现有线上 guardrail 功能，在工程师批准后执行最终安全校验。</td>
+            <td>工程师批准的 conclusion / customer draft、evidence packet、customer-safe policy。</td>
+            <td>pass / fail、失败原因、安全改写建议或请求重新 revise。</td>
+            <td>guardrail 不做完整调查；只负责批准后的安全边界。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="tile">
+          <strong>Approve 路径</strong>
+          <p>Conclude Agent 输出 conclusion 后，工程师点击 approve；工程师批准后必须再走现有 guardrail，通过后才允许客户回复进入发送或沟通流程。</p>
+        </div>
+        <div class="tile">
+          <strong>Revise 路径</strong>
+          <p>工程师 revise 时必须保存 revise note，说明 agent 做错了什么或下一步该做什么；工程师 revise 后重新进入 Plan Agent，并把上一轮 plan、evidence 和错误反馈纳入上下文。</p>
+        </div>
+      </div>
+      <div class="callout warn" style="margin-top: 14px;">
+        <p><strong>后续学习 Agent：</strong>不放入第一版线上闭环。等 ticket 关闭且结论被确认后，再由独立 learning agent 总结整个流程，提炼最佳实践和不该做的事，经过脱敏、安全标签和人工或规则晋升后，才进入 Mem0 / Case Memory Layer 候选。</p>
       </div>
     </section>
 
@@ -516,13 +589,13 @@
           <tr>
             <td>工程师确认案例</td>
             <td>Postgres + Case Memory Layer 摘要</td>
-            <td>Engineer AI；EvoAgentX eval/optimization</td>
+            <td>Engineer Multi-Agent；replay eval</td>
             <td>适合语义召回相似症状、根因、证据和解决方案，但权威记录仍在 Postgres。</td>
           </tr>
           <tr>
             <td>工程师纠正 / 复盘</td>
             <td>Postgres + Case Memory Layer selected memory</td>
-            <td>Engineer AI；优化器</td>
+            <td>Engineer Multi-Agent；revise loop；后续学习 agent</td>
             <td>结构化反馈用于评估和优化；只有确认后、脱敏后的摘要才进入长期记忆。</td>
           </tr>
           <tr>
@@ -832,7 +905,7 @@
           <tr>
             <td>阶段 1A：反馈 schema 固化</td>
             <td>定义 support_engineer_hitl_feedback、质量标签、evidence_refs、memory_candidate、memory_safety 和版本字段；source of truth：docs/superpowers/specs/2026-06-10-engineer-hitl-feedback-schema-design.md。</td>
-            <td>明确 approve 不等于 confirmed case；schema 能服务 Postgres 审计、Case Memory Layer 候选和 Optimization Lab eval。</td>
+            <td>明确 approve 不等于 confirmed case；schema 能服务 Postgres 审计、Case Memory Layer 候选和 multi-agent replay eval。</td>
             <td><span class="status done">已固化</span></td>
           </tr>
           <tr>
@@ -849,8 +922,8 @@
           </tr>
           <tr>
             <td>阶段 2：Case Memory Layer 案例记忆</td>
-            <td>案例摘要器、provider POC、相似案例检索器；RAG 文档知识保留在 official/non_official access modes。</td>
-            <td>确认案例可检索，未确认案例不会进入长期记忆。</td>
+            <td>Active Retrieval Memory 查询接口、相似案例检索器；RAG 文档知识保留在 official/non_official access modes。</td>
+            <td>Engineer Multi-Agent 只能自动检索 active memory；确认案例可检索，未确认案例不会进入长期记忆。</td>
             <td><span class="status todo">待开始</span></td>
           </tr>
           <tr>
@@ -860,6 +933,12 @@
             <td><span class="status done">已完成</span></td>
           </tr>
           <tr>
+            <td>阶段 2B：线上 Multi-Agent 调查主链路</td>
+            <td>Plan Agent、Memory Review Agent、Implement Agent、Conclude Agent、dependency graph scheduler、revise loop 和 Engineer Guardrail 接入。</td>
+            <td>engineer 工单创建后自动产出 conclusion；工程师可 approve 或 revise；approve 后必须经过 guardrail；revise 后重新进入 Plan Agent。</td>
+            <td><span class="status doing">计划中</span></td>
+          </tr>
+          <tr>
             <td>阶段 3：RAG 文档去重治理</td>
             <td>exact dedupe、near-duplicate clustering、canonical topic、alias metadata 和 conflict review 规则。</td>
             <td>重复技术文档不会挤占主索引；相似但冲突的文档不会被自动合并。</td>
@@ -867,20 +946,20 @@
           </tr>
           <tr>
             <td>阶段 4：离线评估集</td>
-            <td>从反馈样本生成 eval dataset，覆盖常见症状、根因和证据类型。</td>
-            <td>能对当前 prompt/tool policy 计算基线分数。</td>
+            <td>从 feedback、revise notes 和 approved conclusions 生成 multi-agent replay eval dataset。</td>
+            <td>能回放 plan、review、implementation、conclusion 和 guardrail 结果。</td>
             <td><span class="status todo">待开始</span></td>
           </tr>
           <tr>
             <td>阶段 5：EvoAgentX 优化实验室</td>
-            <td>prompt、拓扑、skill policy 的候选版本生成流程。</td>
-            <td>候选版本只进入 shadow eval，不直接改生产。</td>
-            <td><span class="status todo">待开始</span></td>
+            <td>EvoAgentX 计划暂停；不创建 optimizer 接管流程，不生成自动候选版本。</td>
+            <td>只有线上 multi-agent 调查闭环、revise 反馈和 guardrail 质量稳定后，才重新评估是否恢复。</td>
+            <td><span class="status blocked">暂停</span></td>
           </tr>
           <tr>
             <td>阶段 6：上线门禁与灰度</td>
-            <td>版本注册、人工批准、feature flag、回滚机制。</td>
-            <td>新版本通过质量、安全、泄露风险和回归门禁后才可灰度。</td>
+            <td>线上 multi-agent feature flag、guardrail fallback、版本注册、回滚机制。</td>
+            <td>新主链路通过 conclusion 质量、安全、泄露风险、revise loop 和 guardrail 门禁后才扩大流量。</td>
             <td><span class="status todo">待开始</span></td>
           </tr>
         </tbody>
@@ -894,7 +973,7 @@
           <input type="checkbox" data-task="boundary-doc">
           <div>
             <p class="task-title">固化 engineer-only 范围</p>
-            <p class="task-desc">更新正式设计文档，明确 client AI 继续 official_only RAG，EvoAgentX 只服务 engineer AI 优化。</p>
+            <p class="task-desc">更新正式设计文档，明确 client AI 继续 official_only RAG，EvoAgentX 计划暂停，线上主链路改为 Engineer Multi-Agent 调查。</p>
           </div>
           <span class="owner">架构</span>
         </li>
@@ -939,6 +1018,54 @@
           <span class="owner">后端 / 记忆</span>
         </li>
         <li class="task">
+          <input type="checkbox" data-task="online-multi-agent-orchestrator">
+          <div>
+            <p class="task-title">接入线上 Engineer Multi-Agent 主链路</p>
+            <p class="task-desc">在 engineer 端工单创建后启动 multi-agent orchestrator，保留现有 Engineer Guardrail 作为工程师 approve 后的最终安全门禁。</p>
+          </div>
+          <span class="owner">后端</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="plan-agent">
+          <div>
+            <p class="task-title">实现 Plan Agent</p>
+            <p class="task-desc">根据 ticket、handoff_packet、skill/tool 列表和 engineer revise note 创建结构化调查计划，输出目标、假设、任务、依赖和风险。</p>
+          </div>
+          <span class="owner">后端 / Agent</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="memory-review-agent">
+          <div>
+            <p class="task-title">实现 Memory Review Agent 与调度判断</p>
+            <p class="task-desc">只检索 Active Retrieval Memory，优化计划，标记 sequential / parallel / blocked，并输出 dependency graph 和历史不要做的事。</p>
+          </div>
+          <span class="owner">后端 / 记忆</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="implement-agent">
+          <div>
+            <p class="task-title">实现 Implement Agent 执行层</p>
+            <p class="task-desc">按 reviewed_plan 顺序或并行执行只读 evidence tasks，调用 allowlisted tools、internal RAG、official fallback，并记录 evidence_refs 和失败原因。</p>
+          </div>
+          <span class="owner">后端 / Agent</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="conclude-agent">
+          <div>
+            <p class="task-title">实现 Conclude Agent</p>
+            <p class="task-desc">汇总 plan、memory review 和 task results，给 engineer 输出 conclusion、confidence、risk flags、缺失信息和 customer-safe draft 候选。</p>
+          </div>
+          <span class="owner">后端 / Agent</span>
+        </li>
+        <li class="task">
+          <input type="checkbox" data-task="engineer-approve-revise-loop">
+          <div>
+            <p class="task-title">实现工程师 approve / revise 闭环</p>
+            <p class="task-desc">approve 后必须进入 Engineer Guardrail；revise 时保存工程师指出的问题或下一步指令，并重新触发 Plan Agent。</p>
+          </div>
+          <span class="owner">后端 / UI</span>
+        </li>
+        <li class="task">
           <input type="checkbox" data-task="case-memory-schema">
           <div>
             <p class="task-title">定义 Case Memory Layer 写入规则</p>
@@ -974,23 +1101,23 @@
           <input type="checkbox" data-task="eval-dataset">
           <div>
             <p class="task-title">建立离线评估集</p>
-            <p class="task-desc">从历史确认案例和反馈样本生成评估集，覆盖正确性、证据充分性、客户安全和内部泄露风险。</p>
+            <p class="task-desc">从 feedback、revise notes 和 approved conclusions 生成 multi-agent replay eval，覆盖计划质量、证据充分性、客户安全和 guardrail 拦截。</p>
           </div>
           <span class="owner">评估</span>
         </li>
         <li class="task">
           <input type="checkbox" data-task="evoagentx-lab">
           <div>
-            <p class="task-title">搭建 EvoAgentX 优化实验室</p>
-            <p class="task-desc">离线生成 prompt、拓扑和工具策略候选版本，并保存优化输入、输出、分数和 diff。</p>
+            <p class="task-title">暂停 EvoAgentX 优化实验室</p>
+            <p class="task-desc">EvoAgentX 计划暂停；当前阶段不搭建 optimizer，不生成自动候选版本，等线上 multi-agent 闭环稳定后再重新评估。</p>
           </div>
-          <span class="owner">优化</span>
+          <span class="owner">架构</span>
         </li>
         <li class="task">
           <input type="checkbox" data-task="shadow-gate">
           <div>
             <p class="task-title">建立 shadow eval 门禁</p>
-            <p class="task-desc">候选版本必须优于基线且不触发安全失败，才能进入人工审批。</p>
+            <p class="task-desc">上线前以 shadow / replay 方式评估 multi-agent 主链路，不生成 EvoAgentX 候选版本；安全失败一票否决。</p>
           </div>
           <span class="owner">质量</span>
         </li>
@@ -1018,13 +1145,13 @@
         <tbody>
           <tr>
             <td>正确性</td>
-            <td>候选版本在离线评估集上的 root cause、next step、证据引用分数高于当前生产基线。</td>
-            <td>拒绝候选版本，保留优化日志供分析。</td>
+            <td>Conclude Agent 的 root cause status、next step、证据引用和缺失信息必须与 evidence packet 一致。</td>
+            <td>保持 investigation active，要求工程师 revise 或让 Plan Agent 重新规划。</td>
           </tr>
           <tr>
             <td>客户安全</td>
-            <td>不夸大 root cause，不把内部证据直接暴露给客户，不绕过工程师审批。</td>
-            <td>一票否决。</td>
+            <td>不夸大 root cause，不把内部证据直接暴露给客户，不绕过工程师审批；工程师批准后必须再走现有 guardrail。</td>
+            <td>一票否决；回到 revise loop 或请求更多证据。</td>
           </tr>
           <tr>
             <td>回归</td>
@@ -1033,8 +1160,8 @@
           </tr>
           <tr>
             <td>版本治理</td>
-            <td>每个候选版本都有 prompt/workflow/tool/memory/eval 版本记录和 diff。</td>
-            <td>不得灰度。</td>
+            <td>每轮 multi-agent run 都记录 plan_version、workflow_version、tool_policy_version、memory_index_version、guardrail_version 和 evidence_packet_version。</td>
+            <td>不得扩大线上流量。</td>
           </tr>
           <tr>
             <td>文档治理</td>
@@ -1043,7 +1170,7 @@
           </tr>
           <tr>
             <td>可回滚</td>
-            <td>灰度前有上一稳定版本，且 feature flag 可立即回退。</td>
+            <td>multi-agent 主链路由 feature flag 控制，并可立即回退到现有 guardrail-only 行为。</td>
             <td>不得上线。</td>
           </tr>
         </tbody>
@@ -1066,16 +1193,24 @@
           <p>AI 结论包含可追溯证据锚点的比例。目标是提升可审查性。</p>
         </div>
         <div class="tile">
+          <strong>Conclusion 批准率</strong>
+          <p>工程师无需 revise 即批准 conclusion 的比例。目标是随着 plan 和 memory review 质量提升而上升。</p>
+        </div>
+        <div class="tile">
+          <strong>Revise 收敛轮数</strong>
+          <p>从首次 conclusion 到工程师批准平均需要的 revise 轮数。目标是减少重复调查和无效问题。</p>
+        </div>
+        <div class="tile">
           <strong>客户安全失败率</strong>
           <p>内部证据泄露、root cause 夸大、未经批准生成客户回复的失败率。目标必须接近 0。</p>
         </div>
         <div class="tile">
-          <strong>优化收益</strong>
-          <p>候选版本相对当前生产版本的离线评估提升幅度。</p>
+          <strong>Guardrail 拦截率</strong>
+          <p>工程师批准后被 Engineer Guardrail 拦截的比例。用于发现 conclusion 或客户草稿中的安全问题。</p>
         </div>
         <div class="tile">
           <strong>回滚次数</strong>
-          <p>灰度后因质量或安全问题回滚的次数。用于约束优化策略风险。</p>
+          <p>multi-agent 主链路因质量或安全问题回退到 guardrail-only 的次数。</p>
         </div>
         <div class="tile">
           <strong>文档重复率</strong>
@@ -1105,14 +1240,14 @@
             <td>只有 confirmed 案例入 Case Memory Layer；保留 source_ticket_id 和 confidence；支持撤回或降权。</td>
           </tr>
           <tr>
-            <td>拓扑优化绕过安全节点</td>
+            <td>多 Agent 绕过安全节点</td>
             <td>可能跳过审批或泄露内部证据。</td>
-            <td>拓扑只允许在白名单节点之间调整；安全节点不可删除、不可重排到危险位置。</td>
+            <td>Engineer approval、Engineer Guardrail、audit log 是不可跳过节点；orchestrator schema 必须强制执行。</td>
           </tr>
           <tr>
-            <td>Prompt 优化过拟合</td>
-            <td>离线分数升高但线上泛化变差。</td>
-            <td>使用保留集、历史回归集和 shadow 流量；不让 optimizer 直接发布。</td>
+            <td>Plan Agent 被 revise 指令误导</td>
+            <td>工程师 revise note 可能只描述局部错误，导致下一轮 plan 忽略原始证据。</td>
+            <td>每轮重新合并 ticket、handoff、上一轮 evidence 和 revise note；Conclude Agent 必须标注哪些结论来自证据，哪些来自工程师指令。</td>
           </tr>
           <tr>
             <td>Case Memory Layer 与 Postgres 语义不一致</td>
@@ -1139,6 +1274,11 @@
             <td>AI 调用错误工具或错误 fallback。</td>
             <td>工具 allowlist、参数 schema 校验、调用 trace、失败回退到当前稳定策略。</td>
           </tr>
+          <tr>
+            <td>Guardrail 被误当作调查 agent</td>
+            <td>会把现有 guardrail 扩展成不可审计的隐式调查逻辑。</td>
+            <td>Engineer Guardrail 只保留批准后的客户安全校验；调查必须由 Plan / Review / Implement / Conclude 链路完成并记录。</td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -1146,9 +1286,9 @@
     <section>
       <h2>十四、后续建议</h2>
       <div class="callout danger">
-        <p><strong>下一步不要直接实现 EvoAgentX 接管，也不要把重复技术文档问题交给 Case Memory Layer 兜底。</strong>先实现结构化反馈、confirmed-case 记忆、RAG/Case Memory evidence packet 和 RAG 技术文档去重治理，这些基础会决定后续优化是否可靠。</p>
+        <p><strong>下一步不要推进 EvoAgentX，也不要把现有 guardrail 扩展成隐式调查 agent。</strong>先把线上 Engineer Multi-Agent 主链路做成可审计、可 revise、可回退的生产流程，并确保工程师批准后必须再走现有 guardrail。</p>
       </div>
-      <p style="margin-top: 12px;">建议的下一批实施任务是：RAG 与 Case Memory Layer 知识边界固化、RAG 技术文档去重治理、Case Memory provider POC、engineer evidence packet 合并、离线 eval dataset。等结构化反馈样本和案例候选流程稳定后，再接 EvoAgentX Optimization Lab。</p>
+      <p style="margin-top: 12px;">建议的下一批实施任务是：multi-agent orchestrator、Plan Agent、Memory Review Agent、Implement Agent、Conclude Agent、engineer approve / revise loop、Engineer Guardrail 接入，以及基于 revise notes 的 replay eval。EvoAgentX 等线上闭环稳定后再重新评估。</p>
     </section>
   </main>
 
