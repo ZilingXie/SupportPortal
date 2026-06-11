@@ -28,6 +28,9 @@ artifacts/
 official_doc/
 local_knowledge/
 
+# Reasonix local desktop metadata
+.reasonix/desktop-topic-*.json
+
 # Local deployment overrides
 deployment/.env_override
 
