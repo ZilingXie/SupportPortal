@@ -323,4 +323,3 @@ def test_stage12_uses_graph_ingest_when_llm_is_available(tmp_path: Path, monkeyp
     assert result['graph_ingest']['files'] == 1
     assert not (output_dir / 'full_extraction_skipped.json').exists()
     assert pipeline.state.data['stages']['stage12_full_extraction']['metrics']['status'] == 'EXECUTED'
-

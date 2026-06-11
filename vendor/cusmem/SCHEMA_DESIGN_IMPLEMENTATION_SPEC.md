@@ -1,6 +1,6 @@
 # Schema 设计自动化：实现规格补充
 
-> 本文档是 `SCHEMA_DESIGN_EXECUTION_PLAYBOOK.md` 的配套实现规格。  
+> 本文档是 `SCHEMA_DESIGN_EXECUTION_PLAYBOOK.md` 的配套实现规格。
 > Playbook 说了"做什么"，本文档说"怎么做"——精确到可以直接写代码的粒度。
 
 ---
@@ -25,14 +25,14 @@ uv run python -m tools.schema_design \
 ```python
 class SchemaDesignPipeline:
     """编排 12 个阶段，管理状态和人工审核点。"""
-    
+
     def __init__(self, input_path: Path, output_dir: Path, llm_cfg: LLMConfig, mode: str):
         self.input = input_path
         self.out = output_dir
         self.llm = llm_cfg
         self.mode = mode  # 'auto' | 'interactive'
         self.state = PipelineState.load(output_dir / 'pipeline_state.json')
-    
+
     def run(self) -> dict:
         # 13 个阶段与 Playbook 的对应关系：
         #   Playbook 1-6  → Stage1-6   (文本→统计→schema 草案)
@@ -67,7 +67,7 @@ class SchemaDesignPipeline:
                 self._wait_for_human_approval(stage)
         self._emit_schema_config()
         return self._emit_final_config()
-    
+
     def _emit_schema_config(self) -> dict:
         """输出主产物 schema_config.yaml：可直接被 graphiti_rag/schema_loader.py 加载。"""
         schema = self.state.get('candidate_schema')
@@ -87,11 +87,11 @@ class SchemaDesignPipeline:
 
 class PipelineState:
     """持久化每个阶段的完成状态和输出产物路径。"""
-    
+
     def __init__(self, state_path: Path):
         self.path = state_path
         self.data = self._load()  # {stage_name: {'completed': bool, 'outputs': {...}, 'hash': str}}
-    
+
     def is_completed(self, stage_name: str) -> bool:
         """检查阶段是否已完成。用输入文件 hash 判断是否需要重跑。"""
         entry = self.data.get(stage_name, {})
@@ -99,7 +99,7 @@ class PipelineState:
             return False
         # 检查该阶段的输入产物是否被后续阶段修改
         return self._inputs_unchanged(stage_name, entry.get('input_hashes', {}))
-    
+
     def mark_completed(self, stage_name: str, result: dict):
         self.data[stage_name] = {
             'completed': True,
@@ -172,24 +172,24 @@ def _extract_text_layer_pymupdf(pdf_path: Path) -> list[PageText]:
         # get_text("dict") 返回按块组织的文本，保留坐标
         text_dict = page.get_text("dict")
         blocks = text_dict.get("blocks", [])
-        
+
         # 提取纯文本（按阅读顺序）
         text = page.get_text("text")
-        
+
         # 统计字符
         char_count = len(text.strip())
         cjk_chars = sum(1 for c in text if '一' <= c <= '鿿' or '㐀' <= c <= '䶿')
         cjk_ratio = cjk_chars / max(char_count, 1)
-        
+
         # 检测乱码：cid 标记、控制字符、异常符号
         cid_count = text.count('(cid:')
         garbled_chars = sum(1 for c in text if _is_garbled_char(c))
         garbled_ratio = garbled_chars / max(char_count, 1)
-        
+
         # 统计对象
         image_count = len(page.get_images())
         line_count = len(text.strip().split('\n'))
-        
+
         pages.append(PageText(
             page_number=i + 1,
             text=text,
@@ -264,37 +264,37 @@ def _score_page_quality(page: PageText, tables: list[TableData] | None) -> PageQ
     """对单页质量打分，决定是否需要 OCR。"""
     reasons = []
     needs_ocr = False
-    
+
     # 规则 1：字符数太少
     if page.char_count < 80:
         reasons.append('low_char_count')
         needs_ocr = True
-    
+
     # 规则 2：有 cid 标记（文本层损坏）
     if page.cid_count > 0:
         reasons.append('cid_present')
         needs_ocr = True
-    
+
     # 规则 3：中文文档但中文字符比例过低
     if page.cjk_ratio < 0.2 and page.char_count > 80:
         reasons.append('low_cjk_ratio')
         needs_ocr = True
-    
+
     # 规则 4：乱码比例高
     if page.garbled_ratio > 0.05:
         reasons.append('high_garbled_ratio')
         needs_ocr = True
-    
+
     # 规则 5：主要是图片
     if page.image_count > 3 and page.char_count < 200:
         reasons.append('image_heavy')
         needs_ocr = True
-    
+
     # 规则 6：文本顺序严重错乱
     if _detect_text_order_anomaly(page):
         reasons.append('text_order_anomaly')
         needs_ocr = True
-    
+
     return PageQuality(
         page_number=page.page_number,
         char_count=page.char_count,
@@ -311,7 +311,7 @@ def _score_page_quality(page: PageText, tables: list[TableData] | None) -> PageQ
 
 def _detect_text_order_anomaly(page: PageText) -> bool:
     """检测文本阅读顺序是否异常。
-    
+
     启发式：如果行号与块坐标的 y 顺序不一致，
     或者文本中出现大量错位的章节号，判定为异常。
     """
@@ -337,25 +337,25 @@ def _run_selective_ocr(
 ) -> dict[int, OcrResult]:
     """只对 needs_ocr=true 的页面执行 OCR。"""
     ocr_results = {}
-    
+
     # 判断是否需要进入批量 OCR 模式
     total = len(quality_by_page)
     needs_ocr_count = sum(1 for q in quality_by_page.values() if q.needs_ocr)
-    
+
     if needs_ocr_count == 0:
         return ocr_results
-    
+
     for page_num, quality in quality_by_page.items():
         if not quality.needs_ocr:
             continue
-        
+
         if ocr_engine == 'paddleocr':
             ocr_text = _ocr_page_paddleocr(pdf_path, page_num)
         elif ocr_engine == 'tesseract':
             ocr_text = _ocr_page_tesseract(pdf_path, page_num)
         else:
             raise ValueError(f"Unknown OCR engine: {ocr_engine}")
-        
+
         ocr_quality = _score_ocr_quality(ocr_text)
         ocr_results[page_num] = OcrResult(
             page_number=page_num,
@@ -363,13 +363,13 @@ def _run_selective_ocr(
             engine=ocr_engine,
             quality=ocr_quality,
         )
-    
+
     return ocr_results
 
 
 def _ocr_page_paddleocr(pdf_path: Path, page_num: int) -> str:
     """用 PaddleOCR 对单个 PDF 页面执行 OCR。
-    
+
     步骤：
     1. 用 pypdfium2 或 PyMuPDF 渲染页面为 300 DPI 图片
     2. 调用 PaddleOCR 识别
@@ -377,23 +377,23 @@ def _ocr_page_paddleocr(pdf_path: Path, page_num: int) -> str:
     """
     from paddleocr import PaddleOCR
     import fitz
-    
+
     ocr = PaddleOCR(lang='ch', use_angle_cls=True, show_log=False)
     doc = fitz.open(str(pdf_path))
     page = doc[page_num - 1]
-    
+
     # 渲染为图片（300 DPI）
     mat = fitz.Matrix(300 / 72, 300 / 72)
     pix = page.get_pixmap(matrix=mat)
     img_data = pix.tobytes("png")
-    
+
     # OCR 识别
     result = ocr.ocr(img_data, cls=True)
     doc.close()
-    
+
     if not result or not result[0]:
         return ''
-    
+
     # 按 y 坐标排序后拼接
     lines = []
     for line in result[0]:
@@ -401,28 +401,28 @@ def _ocr_page_paddleocr(pdf_path: Path, page_num: int) -> str:
         confidence = line[1][1]
         bbox = line[0]
         lines.append((bbox[0][1], text, confidence))  # y 坐标用于排序
-    
+
     lines.sort(key=lambda x: (x[0], x[1]))  # 按 y 坐标、再按文本排序
     return '\n'.join(text for _, text, _ in lines)
 
 
 def _ocr_page_tesseract(pdf_path: Path, page_num: int) -> str:
     """用 Tesseract 对单个 PDF 页面执行 OCR。
-    
+
     当前项目已使用 Docker 镜像 tesseractshadow/tesseract4re:latest。
     保留此路径作为轻量兜底。
     """
     import subprocess
     import fitz
-    
+
     doc = fitz.open(str(pdf_path))
     page = doc[page_num - 1]
     pix = page.get_pixmap(dpi=300)
-    
+
     # 写临时文件
     tmp_img = Path(f'/tmp/ocr_page_{page_num}.png')
     pix.save(str(tmp_img))
-    
+
     # 调用 tesseract
     result = subprocess.run(
         ['tesseract', str(tmp_img), 'stdout', '-l', 'chi_sim+eng'],
@@ -461,32 +461,32 @@ def _merge_text_and_ocr(
     table_data: list[TableData] | None,
 ) -> FinalPage:
     """按规则合并文本层和 OCR 结果，保留 provenance。"""
-    
+
     # 规则 1：没有 OCR 结果，直接使用文本层
     if ocr_result is None:
         final_text = text_page.text
         source = 'text_layer'
-    
+
     # 规则 2：OCR 结果显著短于文本层（< 50%），拒绝 OCR
     elif len(ocr_result.text) < len(text_page.text) * 0.5:
         final_text = text_page.text
         source = 'text_layer'  # OCR rejected
-    
+
     # 规则 3：文本层质量问题，用 OCR 替换
     elif text_page.garbled_ratio > 0.05 or text_page.cid_count > 0:
         final_text = ocr_result.text
         source = 'ocr'
-    
+
     # 规则 4：两者各有优势，合并（OCR 补充文本层缺失部分）
     else:
         final_text = text_page.text  # 默认保留文本层
         source = 'text_layer'  # OCR 作为补充但不替换
-    
+
     # 追加表格
     if table_data:
         table_md = '\n\n'.join(t.markdown for t in table_data)
         final_text = final_text + '\n\n' + table_md
-    
+
     return FinalPage(
         doc_id='',  # 由调用者填充
         page=page_num,
@@ -512,7 +512,7 @@ def _post_ocr_audit(
     """OCR 后重新检测异常短词和高频 near miss。"""
     import re
     from rapidfuzz import fuzz
-    
+
     # 1. 提取所有长度 2-6 的中文片段
     short_chinese = []
     for page in pages:
@@ -522,21 +522,21 @@ def _post_ocr_audit(
                 page=page.page,
                 context=_extract_context(page.text, match.start(), match.end()),
             ))
-    
+
     # 2. 统计频次，标记低频 + 形态异常的
     from collections import Counter
     term_freq = Counter(t.short_term for t in short_chinese)
-    
+
     suspects = []
     entity_alignment_candidates = []
-    
+
     for term_info in short_chinese:
         freq = term_freq[term_info.term]
         if freq == 1:
             # 低频 + 含异常标点 → 可疑 OCR 碎片
             if re.search(r'[,，.。!！;；]', term_info.term):
                 suspects.append(term_info)
-        
+
         # 3. 找相似词对（编辑距离 1-2 的 term 对）
         for other_term in term_freq:
             if term_info.term >= other_term:
@@ -550,7 +550,7 @@ def _post_ocr_audit(
                     freq1=term_freq[term_info.term],
                     freq2=term_freq[other_term],
                 ))
-    
+
     return PostOcrAudit(suspects=suspects, entity_alignment_candidates=entity_alignment_candidates)
 
 
@@ -647,10 +647,10 @@ def build_chunks(
 def _detect_headers_footers(pages: list[dict]) -> tuple[set[str], set[str]]:
     """统计每页首 2 行和末 2 行，找出重复率 >= 30% 的行。"""
     from collections import Counter
-    
+
     first_lines = Counter()
     last_lines = Counter()
-    
+
     for page in pages:
         lines = page['text'].strip().split('\n')
         if len(lines) >= 2:
@@ -659,13 +659,13 @@ def _detect_headers_footers(pages: list[dict]) -> tuple[set[str], set[str]]:
         if len(lines) >= 4:
             last_lines[lines[-1].strip()] += 1
             last_lines[lines[-2].strip()] += 1
-    
+
     n = len(pages)
     threshold = max(3, n * 0.3)  # 至少 3 页
-    
+
     headers = {line for line, cnt in first_lines.items() if cnt >= threshold and len(line) > 3}
     footers = {line for line, cnt in last_lines.items() if cnt >= threshold and len(line) > 3}
-    
+
     return headers, footers
 ```
 
@@ -723,19 +723,19 @@ def _split_by_sections(
     """先按章节切，超长再按长度切。"""
     chunks = []
     chunk_id_counter = 0
-    
+
     for page in pages:
         doc_id = page['doc_id']
         page_num = page['page']
         text = page['text']
         tables = page.get('tables', [])
-        
+
         # 清洗
         text = _clean_text(text, headers, footers)
-        
+
         # 找章节边界
         boundaries = _find_section_boundaries(text)
-        
+
         if not boundaries:
             # 没有章节边界：按长度切
             sub_chunks = _split_by_length(text, max_chars, min_chars, overlap_chars)
@@ -745,10 +745,10 @@ def _split_by_sections(
             for i, boundary in enumerate(boundaries):
                 start_line = boundary.line_index
                 end_line = boundaries[i + 1].line_index if i + 1 < len(boundaries) else len(text.split('\n'))
-                
+
                 lines = text.split('\n')
                 section_text = '\n'.join(lines[start_line:end_line])
-                
+
                 if len(section_text) <= max_chars:
                     sub_chunks.append((section_text, boundary.section_number, boundary.title))
                 else:
@@ -757,13 +757,13 @@ def _split_by_sections(
                     for j, lc in enumerate(length_chunks):
                         label = f"{boundary.section_number}.{j + 1}" if boundary.section_number else ''
                         sub_chunks.append((lc, label, boundary.title))
-        
+
         # 为每个 sub-chunk 分配元数据
         section_path = _compute_section_path(boundaries)
         for text_segment, section_label, section_title in sub_chunks:
             is_toc = _is_table_of_contents(text_segment)
             is_table = _contains_table(text_segment, tables)
-            
+
             chunks.append(Chunk(
                 doc_id=doc_id,
                 chunk_id=f"{doc_id}-p{page_num:02d}-c{chunk_id_counter:03d}",
@@ -777,7 +777,7 @@ def _split_by_sections(
                 is_toc=is_toc,
             ))
             chunk_id_counter += 1
-    
+
     return chunks
 
 
@@ -833,25 +833,25 @@ def _split_by_length(text: str, max_chars: int, min_chars: int, overlap: int) ->
     """按长度切分文本。优先在段落/句子边界处切。"""
     if len(text) <= max_chars:
         return [text] if len(text) >= min_chars else []
-    
+
     chunks = []
     pos = 0
     while pos < len(text):
         end = min(pos + max_chars, len(text))
-        
+
         if end < len(text):
             # 在窗口内找最佳切分点（段落边界 > 句号 > 换行）
             search_start = max(pos + min_chars, end - 200)
             cut = _find_best_cut_point(text, search_start, end)
             if cut:
                 end = cut
-        
+
         chunk = text[pos:end].strip()
         if len(chunk) >= min_chars:
             chunks.append(chunk)
-        
+
         pos = end - overlap if end < len(text) else end
-    
+
     return chunks
 
 
@@ -881,11 +881,11 @@ def _is_table_of_contents(text: str) -> bool:
     """判断是否是目录页。启发式：有密集的点线 + 页码。"""
     dotted_line_pattern = re.compile(r'\.{4,}|\…{2,}')
     page_num_pattern = re.compile(r'\d{1,3}\s*$', re.MULTILINE)
-    
+
     lines = text.strip().split('\n')
     dotted_count = sum(1 for l in lines if dotted_line_pattern.search(l))
     page_ref_count = sum(1 for l in lines if page_num_pattern.search(l))
-    
+
     return dotted_count >= 5 or (page_ref_count >= 5 and len(lines) <= 80)
 
 
@@ -970,7 +970,7 @@ PATTERNS = {
             re.compile(r'^\d{4}$'),  # 纯年份
         ],
     },
-    
+
     'sections': {
         'patterns': [
             # 第X章、第X节
@@ -981,7 +981,7 @@ PATTERNS = {
             re.compile(r'附录\s*[A-ZＡ-Ｚ]'),
         ],
     },
-    
+
     'numeric_values': {
         'patterns': [
             # 带单位的数值（核心模式）
@@ -1007,7 +1007,7 @@ PATTERNS = {
             re.compile(r'^\d+(?:\.\d+)?$', re.MULTILINE),
         ],
     },
-    
+
     'ratings': {
         'patterns': [
             # IP 等级
@@ -1020,7 +1020,7 @@ PATTERNS = {
             re.compile(r'(绝缘等级|防护等级|防火等级|防爆等级)\s*[：:]\s*[A-Z0-9]+'),
         ],
     },
-    
+
     'dates': {
         'patterns': [
             # 中文日期
@@ -1031,7 +1031,7 @@ PATTERNS = {
             re.compile(r'(?:发布|实施|实施|废止|生效)日期\s*[：:]\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}'),
         ],
     },
-    
+
     'organizations': {
         'patterns': [
             re.compile(
@@ -1041,14 +1041,14 @@ PATTERNS = {
             ),
         ],
     },
-    
+
     'persons': {
         'patterns': [
             # 主要起草人：张三、李四
             re.compile(r'(?:主要起草人|起草人|主审|审核|批准)\s*[：:]\s*([^。\n]{5,200})'),
         ],
     },
-    
+
     'relation_triggers': {
         'patterns': [
             # 规定类
@@ -1075,35 +1075,35 @@ PATTERNS = {
 
 def _extract_patterns(chunks: list[dict], pattern_name: str) -> list[PatternMatch]:
     """对给定的 chunk 列表运行一组正则，返回所有匹配项。
-    
-    返回字段：value, count, sample_chunk_id, sample_context, page_start, 
+
+    返回字段：value, count, sample_chunk_id, sample_context, page_start,
               match_start, match_end, pattern_used, is_excluded
     """
     from collections import Counter
-    
+
     config = PATTERNS[pattern_name]
     include_patterns = config['patterns']
     exclude_patterns = config.get('exclude_patterns', [])
-    
+
     matches = []
     seen_values = Counter()
-    
+
     for chunk in chunks:
         text = chunk['text']
         for pat in include_patterns:
             for m in pat.finditer(text):
                 value = m.group(0).strip()
-                
+
                 # 检查是否应排除
                 excluded = any(ep.match(value) for ep in exclude_patterns)
-                
+
                 # 提取上下文
                 ctx_start = max(0, m.start() - 60)
                 ctx_end = min(len(text), m.end() + 60)
                 context = text[ctx_start:ctx_end]
-                
+
                 seen_values[value] += 1
-                
+
                 matches.append(PatternMatch(
                     value=value,
                     sample_chunk_id=chunk['chunk_id'],
@@ -1114,7 +1114,7 @@ def _extract_patterns(chunks: list[dict], pattern_name: str) -> list[PatternMatc
                     pattern_used=pat.pattern[:80],  # 前 80 字符用于调试
                     is_excluded=excluded,
                 ))
-    
+
     # 按频次降序排列，去重保留频次
     unique_matches = []
     seen = set()
@@ -1124,7 +1124,7 @@ def _extract_patterns(chunks: list[dict], pattern_name: str) -> list[PatternMatc
         seen.add(m.value)
         m.count = seen_values[m.value]
         unique_matches.append(m)
-    
+
     return unique_matches
 ```
 
@@ -1179,7 +1179,7 @@ from collections import Counter
 
 def _extract_token_frequencies(chunks: list[dict]) -> dict:
     """从所有 chunk 中提取多种 token 的频次统计。"""
-    
+
     # 1. jieba 分词 token
     jieba_tokens = Counter()
     for chunk in chunks:
@@ -1188,7 +1188,7 @@ def _extract_token_frequencies(chunks: list[dict]) -> dict:
             w = w.strip()
             if len(w) >= 2 and not _is_stopword(w):
                 jieba_tokens[w] += 1
-    
+
     # 2. char n-gram（捕获专业短语）
     all_texts = [chunk['text'] for chunk in chunks]
     vectorizer = TfidfVectorizer(
@@ -1200,17 +1200,17 @@ def _extract_token_frequencies(chunks: list[dict]) -> dict:
     )
     tfidf_matrix = vectorizer.fit_transform(all_texts)
     feature_names = vectorizer.get_feature_names_out()
-    
+
     # 取 top TF-IDF terms
     tfidf_scores = {}
     for i, term in enumerate(feature_names):
         col = tfidf_matrix.getcol(i)
         tfidf_scores[term] = float(col.sum())
-    
+
     # 3. 正则 token（调用阶段三的结果，不再重复提取）
     # 4. 每章关键词（按 section_path 分组）
     section_terms = _extract_per_section_terms(chunks, vectorizer)
-    
+
     return {
         'jieba_tokens': jieba_tokens,
         'char_ngrams': tfidf_scores,
@@ -1252,7 +1252,7 @@ def _classify_term(
 
     注意：ENTITY_ALIGNMENT_CANDIDATE 不由本函数产出——它由 OCR 后复检阶段
     的 rapidfuzz 相似词对生成，直接写入 entity_alignment_candidates sheet。
-    
+
     分类规则（优先级从高到低）：
     1. 纯数字/数值模式 + 无中文 → NOISE（除非有单位，则可能是 ATTRIBUTE）
     2. 匹配关系触发正则 → RELATION_TRIGGER
@@ -1264,26 +1264,26 @@ def _classify_term(
     # 规则 1：纯数值/单位
     if is_numeric and not is_chinese:
         return 'ATTRIBUTE'  # 参数值，作为属性而非实体
-    
+
     # 规则 2：关系触发词
     if pattern_type == 'relation_triggers':
         return 'RELATION_TRIGGER'
-    
+
     # 规则 3：高频中文名词短语 → 候选实体
     if is_chinese and freq >= 3 and len(term) >= 2:
         # 排除纯动词和形容词
         if not _looks_like_noun(term):
             return 'ATTRIBUTE'
         return 'ENTITY'
-    
+
     # 规则 4：低频短词
     if freq < 3 and len(term) <= 3:
         return 'NOISE'
-    
+
     # 规则 5：英文缩写
     if not is_chinese and len(term) <= 10 and freq >= 3:
         return 'ENTITY'
-    
+
     return 'UNSURE'
 
 
@@ -1379,12 +1379,12 @@ def _cluster_chunks(
     terms: dict,  # 阶段四的输出
 ) -> TopicClusters:
     """对 chunk 做主题聚类。"""
-    
+
     # 确定 cluster 数量
     if cluster_count is None:
         n = len(chunks)
         cluster_count = max(4, min(12, n // 20))
-    
+
     # 向量化：char n-gram TF-IDF + 正则 token 加权
     texts = [c['text'] for c in chunks]
     vectorizer = TfidfVectorizer(
@@ -1395,7 +1395,7 @@ def _cluster_chunks(
         max_features=5000,
     )
     X = vectorizer.fit_transform(texts)
-    
+
     # 聚类
     kmeans = MiniBatchKMeans(
         n_clusters=cluster_count,
@@ -1404,35 +1404,35 @@ def _cluster_chunks(
         batch_size=100,
     )
     labels = kmeans.fit_predict(X)
-    
+
     # 对每个 cluster：提取 top terms + 代表 chunk
     clusters = []
     for cluster_id in range(cluster_count):
         mask = labels == cluster_id
         cluster_chunks = [chunks[i] for i in range(len(chunks)) if mask[i]]
-        
+
         if not cluster_chunks:
             continue
-        
+
         # Top terms：该 cluster 中 TF-IDF 均值最高的词
         cluster_X = X[mask]
         mean_tfidf = np.array(cluster_X.mean(axis=0)).flatten()
         top_indices = mean_tfidf.argsort()[-15:][::-1]
         top_terms = [vectorizer.get_feature_names_out()[i] for i in top_indices]
-        
+
         # 代表 chunk：选择离 cluster 中心最近的 3 个
         center = kmeans.cluster_centers_[cluster_id]
         distances = cosine_similarity(cluster_X, center.reshape(1, -1)).flatten()
         closest_idx = distances.argsort()[-3:][::-1]
         representative_chunks = [cluster_chunks[i] for i in closest_idx]
-        
+
         clusters.append(ClusterInfo(
             cluster_id=cluster_id,
             chunk_count=len(cluster_chunks),
             top_terms=top_terms,
             representative_chunks=representative_chunks,
         ))
-    
+
     return TopicClusters(clusters=clusters, vectorizer=vectorizer)
 ```
 
@@ -1501,7 +1501,7 @@ LLM 未配置时（`llm=None`）调用 `_build_default_schema()` 生成 3 实体
 ```python
 def _select_sample_chunks(chunks: list[dict], n: int = 30) -> list[dict]:
     """按覆盖面选样本 chunk，不是随机抽。
-    
+
     固定配额：
     - 目录/前言：2 个
     - 术语和定义章节：3 个
@@ -1514,7 +1514,7 @@ def _select_sample_chunks(chunks: list[dict], n: int = 30) -> list[dict]:
     """
     selected = []
     used = set()
-    
+
     def _pick(candidates, k, label):
         nonlocal selected, used
         for c in candidates:
@@ -1524,38 +1524,38 @@ def _select_sample_chunks(chunks: list[dict], n: int = 30) -> list[dict]:
             used.add(c['chunk_id'])
             if len([s for s in selected if s.get('stratum') == label]) >= k:
                 break
-    
+
     # 1. 目录 chunk
     toc = [c for c in chunks if c.get('is_toc')]
     _pick(toc, 2, 'toc')
-    
+
     # 2. 术语和定义
     terms = [c for c in chunks if _has_section_keyword(c, ['术语', '定义'])]
     _pick(terms, 3, 'definitions')
-    
+
     # 3. 引用文件
     refs = [c for c in chunks if _has_section_keyword(c, ['规范性引用', '参考文献'])]
     _pick(refs, 2, 'references')
-    
+
     # 4. 组织/人员
     orgs = [c for c in chunks if _has_section_keyword(c, ['起草', '归口', '提出'])]
     _pick(orgs, 2, 'organizations')
-    
+
     # 5. 表格
     tables = [c for c in chunks if c.get('is_table')]
     _pick(tables, 5, 'tables')
-    
+
     # 6. 高编号密度
     dense = [c for c in chunks if _count_pattern_matches(c['text'], r'\d+(?:\.\d+){2,}') >= 3]
     _pick(dense, 3, 'dense_numbering')
-    
+
     # 7. 主体技术要求（填充剩余配额）
     body = [c for c in chunks if not c.get('is_toc') and '技术要求' in c.get('section_title', '')]
     if not body:
         body = [c for c in chunks if c['chunk_id'] not in used]
     remaining = n - len(selected)
     _pick(body, remaining, 'body')
-    
+
     # 为 selected 添加 stratum 标签（在上面的 _pick 中已设置）
     return selected[:n]
 
@@ -1579,54 +1579,54 @@ def _build_llm_context(
     sample_chunks: list[dict],
 ) -> str:
     """将统计证据压缩为 LLM 友好格式。严格控制 token 量。"""
-    
+
     lines = []
-    
+
     # 1. 文档主题摘要（~500 tokens）
     lines.append('## 文档主题')
     for t in topics.llm_summaries:
         lines.append(f"- {t['name']}: {t['summary']}")
-    
+
     # 2. Top 50 对象词（ENTITY 类的 term）(~300 tokens)
     lines.append('\n## Top 50 候选对象词（高频名词短语）')
     entity_terms = [t for t in terms.top_terms if t.term_type_guess == 'ENTITY'][:50]
     for t in entity_terms:
         lines.append(f"- {t.term} (频次: {t.freq})")
-    
+
     # 3. Top 50 参数/数值模式（~300 tokens）
     lines.append('\n## Top 50 参数/数值模式')
     for p in patterns.numeric_values[:50]:
         lines.append(f"- {p.value} (频次: {p.count})")
-    
+
     # 4. Top 30 编号/引用模式
     lines.append('\n## Top 30 编号/引用')
     for p in patterns.standards[:30] + patterns.sections[:30]:
         lines.append(f"- {p.value} (频次: {p.count})")
-    
+
     # 5. Top 30 关系触发词
     lines.append('\n## Top 30 关系触发词')
     for p in patterns.relation_triggers[:30]:
         lines.append(f"- {p.value} (频次: {p.count})")
-    
+
     # 6. 主题聚类摘要
     lines.append('\n## 主题聚类')
     for t in topics.llm_summaries:
         lines.append(f"- [{t['name']}] {t['summary']} (覆盖 {t['chunk_count']} 个 chunk)")
-    
+
     # 7. 代表性 chunk（10-20 个）—— 每个截前 800 字符
     lines.append('\n## 代表性文档片段')
     for i, c in enumerate(sample_chunks[:20]):
         excerpt = c['text'][:800]
         lines.append(f"\n### 片段 {i+1} (页码 {c['page_start']}, 章节 {c.get('section_title', '未知')})")
         lines.append(excerpt)
-    
+
     # 8. 噪声词候选
     noise_terms = [t for t in terms.top_terms if t.term_type_guess == 'NOISE'][:20]
     if noise_terms:
         lines.append('\n## 候选噪声词（建议过滤）')
         for t in noise_terms:
             lines.append(f"- {t.term} (原因: {t.noise_reason})")
-    
+
     # 9. 实体对齐候选（同义词引导候选）
     alignment_candidates = getattr(terms, 'entity_alignment_candidates', [])[:20]
     if alignment_candidates:
@@ -1635,7 +1635,7 @@ def _build_llm_context(
             lines.append(f"- {a.term1} ↔ {a.term2} (相似度: {a.similarity}%, 频次: {a.freq1}/{a.freq2})")
             lines.append(f"  上下文1: {a.context1}")
             lines.append(f"  上下文2: {a.context2}")
-    
+
     return '\n'.join(lines)
 ```
 
@@ -2353,25 +2353,25 @@ def _generate_sample_quality_report(
     schema: dict,
 ) -> SampleQualityReport:
     """生成小样本质量报告。所有指标都有精确的计算公式。"""
-    
+
     n_entities = len(entities)
     n_edges = len(edges)
     n_chunks = len({e.get('chunk_id', '') for e in entities})
-    
+
     # 1. 实体类型分布
     entity_type_dist = Counter()
     for e in entities:
         for label in e.get('labels', ['Entity']):
             if label != 'Entity':
                 entity_type_dist[label] += 1
-    
+
     # 2. Entity fallback 占比
     entity_fallback = sum(1 for e in entities if e.get('labels') == ['Entity'])
     fallback_ratio = entity_fallback / max(n_entities, 1)
-    
+
     # 3. 边类型分布
     edge_type_dist = Counter(e.get('name', 'RELATES_TO') for e in edges)
-    
+
     # 4. 零度实体（在样本范围内）
     entity_names_with_edges = set()
     for e in edges:
@@ -2379,26 +2379,26 @@ def _generate_sample_quality_report(
         entity_names_with_edges.add(e.get('target_entity_name', ''))
     zero_degree = [e for e in entities if e['name'] not in entity_names_with_edges]
     zero_degree_ratio = len(zero_degree) / max(n_entities, 1)
-    
+
     # 5. Entity-not-found 边占比
     entity_not_found = sum(
-        1 for r in rejected_edges 
+        1 for r in rejected_edges
         if r.get('reason') in ('source_not_found', 'target_not_found')
     )
     enf_ratio = entity_not_found / max(n_edges + len(rejected_edges), 1)
-    
+
     # 6. 边/实体比
     edge_entity_ratio = n_edges / max(n_entities, 1)
-    
+
     # 7. 每 chunk 平均实体数和边数
     avg_entities_per_chunk = n_entities / max(n_chunks, 1)
     avg_edges_per_chunk = n_edges / max(n_chunks, 1)
-    
+
     # 8. 关系类型覆盖率（schema 中定义的边类型有多少被实际用到）
     defined_edge_types = set((schema.get('edge_types') or {}).keys())
     used_edge_types = set(edge_type_dist.keys())
     edge_type_coverage = len(used_edge_types & defined_edge_types) / max(len(defined_edge_types), 1)
-    
+
     # 9. 同名异类型实体
     name_to_types = {}
     for e in entities:
@@ -2406,11 +2406,11 @@ def _generate_sample_quality_report(
             l for l in e.get('labels', []) if l != 'Entity'
         )
     cross_type_duplicates = {n: ts for n, ts in name_to_types.items() if len(ts) > 1}
-    
+
     # 10. 拒绝原因分布
     entity_reject_reasons = Counter(r['reason'] for r in rejected_entities)
     edge_reject_reasons = Counter(r['reason'] for r in rejected_edges)
-    
+
     # 11. 结论
     conclusion = _determine_conclusion(
         fallback_ratio=fallback_ratio,
@@ -2419,7 +2419,7 @@ def _generate_sample_quality_report(
         edge_type_coverage=edge_type_coverage,
         garbage_ratio=None,  # 从 entity names 中检测
     )
-    
+
     return SampleQualityReport(
         entity_count=n_entities,
         edge_count=n_edges,
@@ -2459,35 +2459,35 @@ def _determine_conclusion(
     garbage_ratio: float | None,
 ) -> str:
     """决策树：PASS / FIX_SCHEMA / FIX_PROMPT / FIX_ENTITY_ALIGNMENT / FIX_TEXT_EXTRACTION。
-    
+
     按优先级判断（先判断最严重的）：
     """
     # 1. 如果 entity-not-found 比例过高 → 先检查是否文本质量导致的
     if enf_ratio > 0.15 and garbage_ratio and garbage_ratio > 0.10:
         return 'FIX_TEXT_EXTRACTION'  # 文本质量差导致 LLM 产生幻觉
-    
+
     # 2. 如果零度率 > 35% → schema 或 prompt 有严重问题
     if zero_degree_ratio > 0.35:
         if fallback_ratio > 0.20:
             return 'FIX_SCHEMA'  # Entity fallback 太高 → 实体类型定义不够清晰
         else:
             return 'FIX_PROMPT'  # 实体 OK 但缺边 → 边提取规则不够强
-    
+
     # 3. 如果 entity-not-found 高但零度率 OK → 实体对齐问题
     if enf_ratio > 0.10:
         return 'FIX_ENTITY_ALIGNMENT'  # LLM 在边端点写了近似名称，但该名称没有进入 name/official_name/synonyms 索引
-    
+
     # 4. 如果关系覆盖率 < 40% → schema 边类型定义太细
     if edge_type_coverage < 0.40:
         return 'FIX_SCHEMA'  # 合并或删除用不上的边类型
-    
+
     # 5. 全部通过阈值
     if (fallback_ratio <= SAMPLE_QUALITY_THRESHOLDS['entity_fallback_ratio'] and
         zero_degree_ratio <= SAMPLE_QUALITY_THRESHOLDS['zero_degree_ratio'] and
         enf_ratio <= SAMPLE_QUALITY_THRESHOLDS['entity_not_found_ratio'] and
         edge_type_coverage >= SAMPLE_QUALITY_THRESHOLDS['edge_type_coverage']):
         return 'PASS'
-    
+
     # 6. 不满足 PASS 但也不命中上面的严重问题 → 综合判断
     issues = []
     if fallback_ratio > 0.15:
@@ -2496,7 +2496,7 @@ def _determine_conclusion(
         issues.append(('prompt', f'Zero-degree {zero_degree_ratio:.1%}'))
     if enf_ratio > 0.10:
         issues.append(('entity_alignment', f'Entity-not-found {enf_ratio:.1%}'))
-    
+
     # 按最多的 issues 类别
     from collections import Counter
     issue_types = Counter(t for t, _ in issues)
@@ -2522,7 +2522,7 @@ FIX_STRATEGIES = {
             '重新生成 pages.jsonl → chunks.jsonl → 重跑阶段三到九',
         ],
     },
-    
+
     'FIX_SCHEMA': {
         'priority': 2,
         'description': 'Schema 类型定义不清晰或粒度不合适',
@@ -2536,7 +2536,7 @@ FIX_STRATEGIES = {
         ],
         'update_files': ['candidate_schema.yaml', 'prompt_rules'],
     },
-    
+
     'FIX_PROMPT': {
         'priority': 3,
         'description': 'Prompt 规则不够强或 good/bad examples 不足',
@@ -2549,7 +2549,7 @@ FIX_STRATEGIES = {
         ],
         'update_files': ['prompt_rules'],
     },
-    
+
     'FIX_ENTITY_ALIGNMENT': {
         'priority': 4,
         'description': '实体名变体没有进入 official_name/synonyms，导致边端点解析失败',
@@ -2575,7 +2575,7 @@ def _generate_fix_suggestions(
 ) -> list[FixSuggestion]:
     """基于质量报告自动生成具体的修复建议。"""
     suggestions = []
-    
+
     # 1. Entity fallback 分析
     if report.entity_fallback_ratio > 0.15:
         fallback_entities = [e for e in report.entities if e.get('labels') == ['Entity']]
@@ -2588,7 +2588,7 @@ def _generate_fix_suggestions(
             detail=f'共 {len(fallback_entities)} 个实体被标记为泛型 Entity。常见模式: {common_patterns}',
             action='为这些模式增加专门的实体类型，或合并现有类型的定义以覆盖它们',
         ))
-    
+
     # 2. 零度实体分析
     if report.zero_degree_ratio > 0.25:
         zd_by_type = Counter()
@@ -2604,7 +2604,7 @@ def _generate_fix_suggestions(
                 detail=f'这些实体被提取了但没有边连接',
                 action=f'在边 prompt 中增加规则：所有 {entity_type} 必须有至少一条边（或标注为合法孤立）',
             ))
-    
+
     # 3. Entity-not-found 分析
     enf_edges = [e for e in rejected_edges if e.get('reason') in ('source_not_found', 'target_not_found')]
     if enf_edges:
@@ -2615,10 +2615,10 @@ def _generate_fix_suggestions(
                 missing_names[e.get('source_entity_name', '')] += 1
             if e['reason'] == 'target_not_found':
                 missing_names[e.get('target_entity_name', '')] += 1
-        
+
         for name, count in missing_names.most_common(10):
             # 检查是否有候选
-            candidates = [e.get('candidate_source') or e.get('candidate_target') for e in enf_edges 
+            candidates = [e.get('candidate_source') or e.get('candidate_target') for e in enf_edges
                          if e.get('source_entity_name') == name or e.get('target_entity_name') == name]
             candidate = next((c for c in candidates if c), None)
             if candidate:
@@ -2637,7 +2637,7 @@ def _generate_fix_suggestions(
                     detail='LLM 可能产生了幻觉实体名',
                     action='在边 prompt 的 bad examples 中增加此名称，要求 LLM 不要使用不存在的实体名',
                 ))
-    
+
     # 4. 关系类型覆盖分析
     defined_types = set((schema.get('edge_types') or {}).keys())
     used_types = set(report.edge_type_distribution.keys())
@@ -2650,7 +2650,7 @@ def _generate_fix_suggestions(
             detail='可能定义太细或文档中不存在此类关系',
             action='考虑删除或合并这些边类型；或检查 trigger_words 是否太窄',
         ))
-    
+
     return suggestions
 ```
 
@@ -2666,9 +2666,9 @@ def preflight_check(
     output_dir: Path,
 ) -> PreflightResult:
     """全量抽取前的自动化检查。全部通过才允许进入阶段十二。"""
-    
+
     checks = []
-    
+
     # Check 1：文本质量
     stage1 = state.data.get('stage1_text_extraction', {})
     metrics = stage1.get('metrics', {})
@@ -2684,7 +2684,7 @@ def preflight_check(
                f"每页均字={metrics.get('avg_chars_per_page', '?')}, "
                f"乱码率={metrics.get('garbled_ratio', '?')}",
     ))
-    
+
     # Check 2：chunks 完整
     chunks_path = output_dir / 'chunks.jsonl'
     checks.append(CheckItem(
@@ -2693,7 +2693,7 @@ def preflight_check(
         passed=chunks_path.exists() and chunks_path.stat().st_size > 0,
         detail=str(chunks_path),
     ))
-    
+
     # Check 3：schema 已审核
     stage7 = state.data.get('stage7_human_review', {})
     checks.append(CheckItem(
@@ -2702,7 +2702,7 @@ def preflight_check(
         passed=stage7.get('completed', False) and stage7.get('review_approved', False),
         detail='在 interactive 模式下需输入 done 确认',
     ))
-    
+
     # Check 4：小样本通过门槛
     stage9 = state.data.get('stage9_sample_extraction', {})
     sample_metrics = stage9.get('metrics', {})
@@ -2715,7 +2715,7 @@ def preflight_check(
                f"Zero-degree={sample_metrics.get('zero_degree_ratio', '?')}, "
                f"ENF={sample_metrics.get('entity_not_found_ratio', '?')}",
     ))
-    
+
     # Check 5：prompt 规则已更新
     stage8 = state.data.get('stage8_prompt_generation', {})
     checks.append(CheckItem(
@@ -2724,7 +2724,7 @@ def preflight_check(
         passed=stage8.get('completed', False),
         detail='prompt_rules.yaml 应包含 entity_prompt 和 edge_prompt',
     ))
-    
+
     # Check 6：同义词引导已审核
     checks.append(CheckItem(
         id='synonym_guidance_reviewed',
@@ -2732,7 +2732,7 @@ def preflight_check(
         passed=stage7.get('synonym_guidance_reviewed', False),
         detail='审核 entity_alignment_candidates 并确认同义词对，写入 synonym_guidance',
     ))
-    
+
     # Check 7：schema YAML 结构合法
     schema_path = output_dir / 'candidate_schema.yaml'
     if schema_path.exists():
@@ -2743,9 +2743,9 @@ def preflight_check(
             passed=validation.valid,
             detail=f'Errors: {len(validation.errors)}, Warnings: {len(validation.warnings)}',
         ))
-    
+
     all_passed = all(c.passed for c in checks)
-    
+
     return PreflightResult(
         passed=all_passed,
         checks=checks,
@@ -2798,39 +2798,39 @@ def generate_final_report(
     output_dir: Path,
 ) -> FinalReport:
     """全量抽取后自动生成复盘报告。"""
-    
+
     # 1. 实体类型分布（排序）
     entity_type_dist = Counter()
     for e in entities:
         for label in e.get('labels', []):
             if label != 'Entity':
                 entity_type_dist[label] += 1
-    
+
     # 2. 边类型分布（排序）
     edge_type_dist = Counter(e.get('name', 'RELATES_TO') for e in edges)
-    
+
     # 3. 零度实体分解（按类型 + 按 cleanup 分类）
     zero_degree_breakdown = _classify_zero_degree_entities(zero_degree_entities)
-    
+
     # 4. 拒绝原因 Top 10
     entity_reject_top = Counter(r['reason'] for r in rejected_entities).most_common(10)
     edge_reject_top = Counter(r['reason'] for r in rejected_edges).most_common(10)
-    
+
     # 5. 未出现的类型
     defined_entity_types = set((schema.get('entity_types') or {}).keys())
     defined_edge_types = set((schema.get('edge_types') or {}).keys())
     missing_entity_types = defined_entity_types - set(entity_type_dist.keys())
     missing_edge_types = defined_edge_types - set(edge_type_dist.keys())
-    
+
     # 6. 异常膨胀的类型
     overrepresented_edges = [
         (name, cnt) for name, cnt in edge_type_dist.items()
         if cnt > len(edges) * 0.30  # 占比超过 30%
     ]
-    
+
     # 7. 新增实体对齐候选（从 rejected_edges 的 fixable 记录提取）
     new_entity_alignment_candidates = _extract_entity_alignment_candidates_from_rejections(rejected_edges)
-    
+
     report = {
         'summary': {
             'total_entities': len(entities),
@@ -2859,7 +2859,7 @@ def generate_final_report(
             overrepresented_edges, zero_degree_breakdown,
         ),
     }
-    
+
     return FinalReport(**report)
 ```
 
@@ -2874,25 +2874,25 @@ def _generate_schema_improvements(
 ) -> list[str]:
     """自动生成 schema 改进建议。"""
     suggestions = []
-    
+
     # 哪种实体类型最多？是否合理？
     # （在报告中的 entity_type_distribution 已包含）
-    
+
     # 哪些类型没被抽到？
     if missing_entity_types:
         suggestions.append(f'未出现的实体类型: {missing_entity_types}。考虑从 schema 中删除或修改定义。')
     if missing_edge_types:
         suggestions.append(f'未出现的边类型: {missing_edge_types}。考虑删除或扩大触发词范围。')
-    
+
     # 异常膨胀的关系
     for name, cnt in overrepresented_edges:
         suggestions.append(f'关系类型 "{name}" 出现 {cnt} 次，占比过高。建议：增加 bad examples 和端点约束，或拆分类型。')
-    
+
     # 零度剩余分析
     for category, entities in zero_degree.items():
         if len(entities) > 5:
             suggestions.append(f'{category} 类零度实体 {len(entities)} 个。建议在边 prompt 中针对性加强连通性规则。')
-    
+
     return suggestions
 ```
 

@@ -50,7 +50,7 @@ Only stable releases are built automatically (pre-release versions are skipped).
          image: zepai/graphiti:latest
          ports:
             - "8000:8000"
-         
+
          environment:
             - OPENAI_API_KEY=${OPENAI_API_KEY}
             - NEO4J_URI=bolt://neo4j:${NEO4J_PORT}
@@ -58,7 +58,7 @@ Only stable releases are built automatically (pre-release versions are skipped).
             - NEO4J_PASSWORD=${NEO4J_PASSWORD}
       neo4j:
          image: neo4j:5.22.0
-         
+
          ports:
             - "7474:7474"  # HTTP
             - "${NEO4J_PORT}:${NEO4J_PORT}"  # Bolt

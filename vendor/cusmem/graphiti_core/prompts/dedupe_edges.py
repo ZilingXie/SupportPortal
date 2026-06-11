@@ -57,7 +57,7 @@ def resolve_edge(context: dict[str, Any]) -> list[Message]:
 → duplicate_facts=[0], contradicted_facts=[]
 
 已有: idx=1 "Alice是软件工程师"
-新:   "Alice是高级工程师"  
+新:   "Alice是高级工程师"
 → duplicate_facts=[], contradicted_facts=[1]
 
 输出格式：{{"duplicate_facts": [], "contradicted_facts": []}}

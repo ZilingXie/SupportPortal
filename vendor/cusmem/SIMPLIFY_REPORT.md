@@ -153,15 +153,15 @@
 
 ## 功能保留清单
 
-✅ `add_episode` — 文本摄入 + 实体/边提取  
-✅ `add_episode_bulk` — 批量摄入  
-✅ `search` / `search_` — 混合搜索 (语义 + BM25 + RRF)  
-✅ `build_communities` / `update_community` — 社区检测  
-✅ `retrieve_episodes` — 获取历史 episodes  
-✅ Saga 叙事线 — `_get_or_create_saga`  
-✅ 自定义 entity_types / edge_types — Pydantic schema  
-✅ `build_indices_and_constraints` — Neo4j 索引管理  
-✅ BGE Reranker — 本地重排序  
+✅ `add_episode` — 文本摄入 + 实体/边提取
+✅ `add_episode_bulk` — 批量摄入
+✅ `search` / `search_` — 混合搜索 (语义 + BM25 + RRF)
+✅ `build_communities` / `update_community` — 社区检测
+✅ `retrieve_episodes` — 获取历史 episodes
+✅ Saga 叙事线 — `_get_or_create_saga`
+✅ 自定义 entity_types / edge_types — Pydantic schema
+✅ `build_indices_and_constraints` — Neo4j 索引管理
+✅ BGE Reranker — 本地重排序
 ✅ 并发控制 — `semaphore_gather` / `max_coroutines`
 
 ## 验证结果

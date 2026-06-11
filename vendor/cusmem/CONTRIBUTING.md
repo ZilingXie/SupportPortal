@@ -167,7 +167,7 @@ All third-party integrations must be optional dependencies to keep the core libr
 2. **Use TYPE_CHECKING pattern**: In your integration module, import dependencies conditionally:
    ```python
    from typing import TYPE_CHECKING
-   
+
    if TYPE_CHECKING:
        import your_package
        from your_package import SomeType

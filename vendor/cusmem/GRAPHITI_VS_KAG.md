@@ -176,7 +176,7 @@ extractor = SchemaConstraintExtractor(types=spg_types, relations=spg_relations)
 
 ```
 Graphiti (对话驱动)              KAG (文档驱动)
-    
+
 一条消息 ──→ LLM ──→ 知识图谱      一份文档 ──→ 多Extractor ──→ SGPGraph
     ↓                              ↓
 增量更新 + 去重                    批量构建 + Schema对齐

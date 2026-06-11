@@ -339,7 +339,7 @@ add_episode(text)
   ├── retrieve_episodes()         获取历史 context
   ├── extract_nodes()             LLM 提取实体
   ├── resolve_extracted_nodes()   去重 (embedding + LLM)
-  ├── extract_edges()             LLM 提取关系  
+  ├── extract_edges()             LLM 提取关系
   ├── resolve_extracted_edges()   边去重 + 搜索冲突
   ├── extract_attributes()        属性提取
   ├── _process_episode_data()     保存 + Saga 串联
