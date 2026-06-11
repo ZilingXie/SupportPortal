@@ -26,6 +26,7 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Billing 白名单问题会自动收集字段并升级内部团队处理。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并触发 Billing 白名单流程。
+- Account 入口可查看 Billing ticket 历史和详情。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
