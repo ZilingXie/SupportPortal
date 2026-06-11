@@ -12,6 +12,9 @@ For delegated code work, prefer the project-local `control-cc` skill when the us
 4. If Codex review finds issues, Codex should make the required corrections directly unless it explicitly delegates another no-commit implementation pass to Claude Code.
 5. Do not ask Claude Code to use `/codex:rescue` or any other command as a shortcut for committing, merging, finalizing, or cleaning up its own work.
 
+## Reasonix Handoff Boundary
+Reasonix-specific worker rules live in `REASONIX.md`. When the user gives a Codex-written plan to Reasonix, Reasonix is an implementation worker and should stop before commit with a branch/worktree handoff for Codex review. This does not change Codex's role: Codex should still plan, implement, review, finalize, or merge according to the user's direct request and the rest of this `AGENTS.md`.
+
 ## CodeGraph First For Code Context
 1. For any task that requires understanding, locating, tracing, or changing code, prefer the project CodeGraph tools before native file search or broad file reads. Use CodeGraph for structural questions such as where a symbol is defined, who calls it, what it calls, how data flows between symbols, what would be affected by a change, or which files and symbols are relevant to a task.
 2. Use native search such as `rg` primarily for literal text, comments, log messages, configuration keys, documentation wording, or after CodeGraph has already identified the specific files that need direct inspection.
