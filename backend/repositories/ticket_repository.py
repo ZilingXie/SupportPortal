@@ -787,6 +787,15 @@ class TicketRepository(Protocol):
     ) -> dict[str, Any] | None:
         ...
 
+    def save_billing_ticket(self, billing_ticket: dict[str, Any]) -> None:
+        ...
+
+    def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
+        ...
+
+    def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
+        ...
+
 
 class InMemoryTicketRepository:
     def __init__(self) -> None:
@@ -798,6 +807,7 @@ class InMemoryTicketRepository:
         self._engineer_case_events: list[dict[str, Any]] = []
         self._engineer_hitl_feedback: list[dict[str, Any]] = []
         self._case_memory_ledger: list[dict[str, Any]] = []
+        self._billing_tickets: dict[str, dict[str, Any]] = {}
 
     def initialize(self) -> None:
         return None
@@ -1384,6 +1394,28 @@ class InMemoryTicketRepository:
             include_messages=include_messages,
             message_limit=message_limit,
         )
+
+    def save_billing_ticket(self, billing_ticket: dict[str, Any]) -> None:
+        billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
+        if not billing_ticket_id:
+            raise ValueError("billing_ticket_id is required")
+        saved = copy.deepcopy(billing_ticket)
+        saved.setdefault("created_at", _utc_now())
+        saved.setdefault("updated_at", saved["created_at"])
+        self._billing_tickets[billing_ticket_id] = saved
+
+    def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
+        ticket = self._billing_tickets.get(str(billing_ticket_id).strip())
+        return copy.deepcopy(ticket) if ticket is not None else None
+
+    def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 30)
+        items = sorted(
+            self._billing_tickets.values(),
+            key=lambda item: str(item.get("created_at") or ""),
+            reverse=True,
+        )
+        return [copy.deepcopy(item) for item in items[:safe_limit]]
 
 
 def _find_trace_customer_message_index(
@@ -2247,6 +2279,45 @@ class PostgresTicketRepository:
                     ).format(
                         sql.Identifier("idx_support_case_memory_ledger_retrieval"),
                         self._table("support_case_memory_ledger"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            billing_ticket_id TEXT PRIMARY KEY,
+                            client_ticket_id TEXT NOT NULL UNIQUE REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            source TEXT NOT NULL,
+                            external_id TEXT,
+                            created_by TEXT,
+                            title TEXT NOT NULL,
+                            question TEXT NOT NULL,
+                            route TEXT,
+                            route_reason TEXT,
+                            route_confidence REAL,
+                            matched_signals JSONB,
+                            automation_status TEXT NOT NULL,
+                            missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            collected_fields JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            customer_reply TEXT,
+                            internal_email_payload JSONB,
+                            internal_email_send_status TEXT,
+                            internal_email_send_reason TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_billing_tickets"),
+                        self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (created_at DESC)"
+                    ).format(
+                        sql.Identifier("idx_support_billing_tickets_created"),
+                        self._table("support_billing_tickets"),
                     )
                 )
                 self._backfill_engineer_cases_from_legacy_storage(cur)
@@ -4176,6 +4247,116 @@ class PostgresTicketRepository:
             ]
 
         return self._run_with_connection_retry("list_ticket_agent_events", _operation)
+
+    def save_billing_ticket(self, billing_ticket: dict[str, Any]) -> None:
+        billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
+        if not billing_ticket_id:
+            raise ValueError("billing_ticket_id is required")
+        client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
+        if not client_ticket_id:
+            raise ValueError("client_ticket_id is required")
+
+        created_at = billing_ticket.get("created_at") or _utc_now()
+        updated_at = billing_ticket.get("updated_at") or created_at
+
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                billing_ticket_id, client_ticket_id, source, external_id,
+                                created_by, title, question, route, route_reason,
+                                route_confidence, matched_signals, automation_status,
+                                missing_fields, collected_fields, customer_reply,
+                                internal_email_payload, internal_email_send_status,
+                                internal_email_send_reason, created_at, updated_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (billing_ticket_id) DO UPDATE SET
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                source = EXCLUDED.source,
+                                external_id = EXCLUDED.external_id,
+                                created_by = EXCLUDED.created_by,
+                                title = EXCLUDED.title,
+                                question = EXCLUDED.question,
+                                route = EXCLUDED.route,
+                                route_reason = EXCLUDED.route_reason,
+                                route_confidence = EXCLUDED.route_confidence,
+                                matched_signals = EXCLUDED.matched_signals,
+                                automation_status = EXCLUDED.automation_status,
+                                missing_fields = EXCLUDED.missing_fields,
+                                collected_fields = EXCLUDED.collected_fields,
+                                customer_reply = EXCLUDED.customer_reply,
+                                internal_email_payload = EXCLUDED.internal_email_payload,
+                                internal_email_send_status = EXCLUDED.internal_email_send_status,
+                                internal_email_send_reason = EXCLUDED.internal_email_send_reason,
+                                updated_at = EXCLUDED.updated_at
+                            """
+                        ).format(self._table("support_billing_tickets")),
+                        (
+                            billing_ticket_id,
+                            client_ticket_id,
+                            str(billing_ticket.get("source") or "").strip(),
+                            str(billing_ticket.get("external_id") or "").strip() or None,
+                            str(billing_ticket.get("created_by") or "").strip() or None,
+                            str(billing_ticket.get("title") or "").strip(),
+                            str(billing_ticket.get("question") or "").strip(),
+                            str(billing_ticket.get("route") or "").strip() or None,
+                            str(billing_ticket.get("route_reason") or "").strip() or None,
+                            float(billing_ticket["route_confidence"]) if billing_ticket.get("route_confidence") is not None else None,
+                            Json(billing_ticket.get("matched_signals")) if isinstance(billing_ticket.get("matched_signals"), list) else None,
+                            str(billing_ticket.get("automation_status") or "").strip(),
+                            Json(billing_ticket.get("missing_fields")) if isinstance(billing_ticket.get("missing_fields"), list) else Json([]),
+                            Json(billing_ticket.get("collected_fields")) if isinstance(billing_ticket.get("collected_fields"), dict) else Json({}),
+                            str(billing_ticket.get("customer_reply") or "").strip() or None,
+                            Json(billing_ticket.get("internal_email_payload")) if isinstance(billing_ticket.get("internal_email_payload"), dict) else None,
+                            str(billing_ticket.get("internal_email_send_status") or "").strip() or None,
+                            str(billing_ticket.get("internal_email_send_reason") or "").strip() or None,
+                            created_at,
+                            updated_at,
+                        ),
+                    )
+
+        self._run_with_connection_retry("save_billing_ticket", _operation)
+
+    def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE billing_ticket_id = %s"
+                    ).format(self._table("support_billing_tickets")),
+                    (str(billing_ticket_id).strip(),),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return None
+                col_names = [desc[0] for desc in cur.description]
+                return dict(zip(col_names, rows[0]))
+
+        return self._run_with_connection_retry("get_billing_ticket", _operation)
+
+    def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 30)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT * FROM {}
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_billing_tickets")),
+                    (safe_limit,),
+                )
+                col_names = [desc[0] for desc in cur.description]
+                return [dict(zip(col_names, row)) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry("list_billing_tickets", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:

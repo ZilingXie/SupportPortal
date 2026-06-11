@@ -2707,6 +2707,29 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
 
     await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
 
+    billing_ticket_id = f"BT-{ticket_id}"
+    billing_ticket: dict[str, Any] = {
+        "billing_ticket_id": billing_ticket_id,
+        "client_ticket_id": ticket_id,
+        "source": account_source,
+        "external_id": str(request.external_id).strip() or None,
+        "created_by": str(request.created_by).strip() or None,
+        "title": title,
+        "question": question,
+        "route": route if is_billing_route else None,
+        "route_reason": decision.reason,
+        "route_confidence": decision.confidence,
+        "matched_signals": list(decision.matched_signals),
+        "automation_status": response_status,
+        "missing_fields": missing_fields,
+        "collected_fields": collected_fields,
+        "customer_reply": customer_reply or None,
+        "internal_email_payload": internal_email_payload,
+        "internal_email_send_status": internal_email_send_status,
+        "internal_email_send_reason": internal_email_send_reason,
+    }
+    await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+
     event = {
         "event": "ticket_created",
         "ticket_id": ticket_id,
@@ -2733,12 +2756,41 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "status": response_status,
         "route": route if is_billing_route else None,
         "ticket_id": ticket_id,
+        "billing_ticket_id": billing_ticket_id,
         "customer_reply": customer_reply,
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
     }
+
+
+@app.get("/api/account/billing-tickets")
+def list_billing_tickets(limit: int = 30) -> dict[str, Any]:
+    safe_limit = max(1, min(limit, 100))
+    tickets = ticket_repository.list_billing_tickets(limit=safe_limit)
+    items = [
+        {
+            "billing_ticket_id": item.get("billing_ticket_id"),
+            "client_ticket_id": item.get("client_ticket_id"),
+            "source": item.get("source"),
+            "title": item.get("title"),
+            "route": item.get("route"),
+            "automation_status": item.get("automation_status"),
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
+        }
+        for item in tickets
+    ]
+    return {"billing_tickets": items, "count": len(items)}
+
+
+@app.get("/api/account/billing-tickets/{billing_ticket_id}")
+def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
+    ticket = ticket_repository.get_billing_ticket(billing_ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="billing ticket not found")
+    return ticket
 
 
 def _public_asset_payload(asset: dict[str, Any]) -> dict[str, Any]:
