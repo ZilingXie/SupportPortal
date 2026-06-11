@@ -4595,4 +4595,8 @@ For each new entry, record:
   - The vendored code is not wired into the running SupportPortal stack by this import alone.
   - Excluded local experiment artifacts include logs, comparison JSON files, spreadsheet outputs, the copied GB/T PDF, and private-address scripts.
 - Verification:
-  - Pending final task verification before PR finalization: git diff checks, secret scan, Python compile check for vendored source, and repository finalization verification.
+  - `git diff --check origin/main..HEAD`
+  - Excluded-file check confirmed omitted local scripts, logs, copied PDF, comparison JSON files, and spreadsheet outputs are absent from `vendor/cusmem/`.
+  - Changed-scope secret scan confirmed no disallowed real-secret patterns in `.gitignore`, changelogs, or `vendor/cusmem/`.
+  - Private-address scan confirmed `103.151.172.84` and `neo4j@openspg` are absent from `vendor/cusmem/`.
+  - `python3 -m compileall -q vendor/cusmem`

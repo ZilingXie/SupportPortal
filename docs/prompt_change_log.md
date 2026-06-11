@@ -2184,4 +2184,8 @@ For each new entry, record:
 - Expected behavior change:
   - No production prompt or model behavior changes; the vendored prompt/model files are not imported by the SupportPortal runtime in this task.
 - Verification:
-  - Pending final task verification before PR finalization: git diff checks, secret scan, Python compile check for vendored source, and repository finalization verification.
+  - `git diff --check origin/main..HEAD`
+  - Excluded-file check confirmed omitted local scripts, logs, copied PDF, comparison JSON files, and spreadsheet outputs are absent from `vendor/cusmem/`.
+  - Changed-scope secret scan confirmed no disallowed real-secret patterns in `.gitignore`, changelogs, or `vendor/cusmem/`.
+  - Private-address scan confirmed `103.151.172.84` and `neo4j@openspg` are absent from `vendor/cusmem/`.
+  - `python3 -m compileall -q vendor/cusmem`
