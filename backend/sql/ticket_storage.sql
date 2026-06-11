@@ -56,6 +56,29 @@ CREATE TABLE IF NOT EXISTS support_ticket_agent_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_billing_tickets (
+    billing_ticket_id TEXT PRIMARY KEY,
+    client_ticket_id TEXT NOT NULL UNIQUE REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    external_id TEXT,
+    created_by TEXT,
+    title TEXT NOT NULL,
+    question TEXT NOT NULL,
+    route TEXT,
+    route_reason TEXT,
+    route_confidence REAL,
+    matched_signals JSONB,
+    automation_status TEXT NOT NULL,
+    missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+    collected_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+    customer_reply TEXT,
+    internal_email_payload JSONB,
+    internal_email_send_status TEXT,
+    internal_email_send_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS support_assets (
     asset_id TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL,
@@ -213,6 +236,9 @@ CREATE INDEX IF NOT EXISTS idx_support_ticket_events_ticket_created
 
 CREATE INDEX IF NOT EXISTS idx_support_ticket_agent_events_ticket_created
     ON support_ticket_agent_events (ticket_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_billing_tickets_created
+    ON support_billing_tickets (created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_support_assets_ticket_customer
     ON support_assets (ticket_id, customer_id);
