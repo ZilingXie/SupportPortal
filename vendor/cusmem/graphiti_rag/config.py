@@ -21,7 +21,7 @@ class Config:
     embedding_dim: int = 1024
 
     # Pipeline
-    file_pattern: str = r'.*\.(txt|md|pdf|docx|csv|json)$'
+    file_pattern: str = r'.*\.(txt|md|docx|csv|json)$'
     chunk_size: int = 1000
     chunk_overlap: int = 200
 
