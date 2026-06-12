@@ -302,6 +302,7 @@ button:disabled {
   font-weight: 700;
 }
 
+.status-badge--automation,
 .status-badge--automated {
   background: #dceff1;
   color: var(--success);

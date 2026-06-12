@@ -51,6 +51,7 @@ function escapeHtml(value) {
 
 function statusLabel(status) {
   const labels = {
+    automation: "Automation",
     automated: "Automated",
     needs_more_info: "Needs more info",
     not_automated: "Not automated",
@@ -164,8 +165,8 @@ async function submitAccountIntake(event) {
     }
     showToast(payload.ticket_id ? `Ticket ${payload.ticket_id} created` : "Ticket created");
     await fetchTickets();
-    if (payload.billing_ticket_id || payload.ticket_id) {
-      await openTicket(payload.billing_ticket_id || payload.ticket_id);
+    if (payload.ticket_id) {
+      await openTicket(payload.ticket_id);
     }
     state.title = "";
     state.question = "";
@@ -192,9 +193,9 @@ function renderHistorySidebar() {
     ${state.history
       .map(
         (item) => {
-          const itemId = item.billing_ticket_id || item.ticket_id || "";
-          const itemTicketId = item.ticket_id || item.support_ticket_id || item.client_ticket_id || "";
-          const activeTicketId = state.activeItem ? (state.activeItem.ticket_id || state.activeItem.support_ticket_id || state.activeItem.client_ticket_id || "") : "";
+          const itemId = item.ticket_id || item.billing_ticket_id || "";
+          const itemTicketId = item.ticket_id || item.client_ticket_id || "";
+          const activeTicketId = state.activeItem ? (state.activeItem.ticket_id || state.activeItem.client_ticket_id || "") : "";
           const activeBillingId = state.activeItem ? (state.activeItem.billing_ticket_id || "") : "";
           const isActive = (activeBillingId && activeBillingId === itemId) || (activeTicketId && activeTicketId === itemTicketId);
           const itemSource = item.source || "";
@@ -270,8 +271,7 @@ function renderDetailView() {
 
   const itemSource = item.source || "";
   const itemStatus = item.status || item.automation_status || "not_automated";
-  const ticketId = item.ticket_id || item.support_ticket_id || item.client_ticket_id || "";
-  const supportTicketId = item.support_ticket_id || item.client_ticket_id || "";
+  const ticketId = item.ticket_id || item.client_ticket_id || "";
 
   return `
     <div class="panel detail-stack">
@@ -284,10 +284,7 @@ function renderDetailView() {
           <span class="meta-label">Ticket ID</span>
           <span class="meta-value">${escapeHtml(ticketId)}</span>
         </div>
-        <div class="meta-row">
-          <span class="meta-label">Support ticket ID</span>
-          <span class="meta-value">${escapeHtml(supportTicketId)}</span>
-        </div>
+
         <div class="meta-row">
           <span class="meta-label">Source</span>
           <span class="meta-value"><span class="source-badge ${sourceClass(itemSource)}">${escapeHtml(sourceLabel(itemSource))}</span></span>

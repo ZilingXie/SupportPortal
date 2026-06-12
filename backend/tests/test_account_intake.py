@@ -26,11 +26,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.client.close()
         main.ticket_repository = self.original_repository
 
-    def test_account_intake_creates_ticket_routes_invoice_and_sends_internal_email(self) -> None:
+    def test_account_intake_creates_ticket_routes_invoice_and_marks_automation(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.services.support_router.send_billing_internal_email",
-            return_value={"status": "sent", "reason": ""},
-        ) as send_mock:
+            side_effect=AssertionError("account intake automation should not send email"),
+        ):
             response = self.client.post(
                 "/account",
                 json={
@@ -46,14 +46,13 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "automated")
+        self.assertEqual(payload["status"], "automation")
         self.assertEqual(payload["route"], "detailed_invoice")
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["missing_fields"], [])
-        self.assertIn("We’ve escalated your detailed invoice request", payload["customer_reply"])
-        self.assertEqual(payload["internal_email_send_status"], "sent")
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
         self.assertEqual(payload["internal_email_send_reason"], "")
-        send_mock.assert_called_once()
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)
@@ -64,11 +63,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(ticket["source"], "manual")
         self.assertEqual(
             [message["role"] for message in ticket["messages"]],
-            ["customer", "assistant"],
+            ["customer"],
         )
-        assistant_message = ticket["messages"][-1]
-        self.assertEqual(assistant_message["execution_action"], "detailed_invoice")
-        self.assertEqual(assistant_message["billing_internal_email_send_status"], "sent")
 
         event_payloads = [
             item["payload"]
@@ -78,6 +74,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(event_payloads)
         self.assertEqual(event_payloads[0]["source"], "manual")
         self.assertEqual(event_payloads[0]["execution_action"], "detailed_invoice")
+        self.assertEqual(event_payloads[0]["account_intake_status"], "automation")
 
     def test_account_intake_preserves_non_automated_ticket_without_email(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
@@ -97,7 +94,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "not_automated")
-        self.assertIsNone(payload["route"])
+        self.assertEqual(payload["route"], "web_search")
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["missing_fields"], [])
@@ -152,13 +149,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertTrue(str(payload["billing_ticket_id"] or "").startswith("BT-TK-ACC-"))
-        self.assertEqual(payload.get("support_ticket_id"), payload.get("ticket_id"))
+        self.assertNotIn("support_ticket_id", payload)
 
     def test_account_intake_saves_billing_ticket(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.services.support_router.send_billing_internal_email",
-            return_value={"status": "sent", "reason": ""},
-        ):
+        with patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/account",
                 json={
@@ -179,7 +173,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["client_ticket_id"], payload["ticket_id"])
-        self.assertEqual(bt["automation_status"], "automated")
+        self.assertEqual(bt["automation_status"], "automation")
         self.assertEqual(bt["route"], "detailed_invoice")
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["external_id"], "ext-123")
@@ -204,7 +198,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["automation_status"], "not_automated")
-        self.assertIsNone(bt["route"])
+        self.assertEqual(bt["route"], "web_search")
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["customer_reply"], None)
 
@@ -228,7 +222,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(len(data["tickets"]), 3)
         for item in data["tickets"]:
             self.assertTrue(str(item["ticket_id"] or "").startswith("TK-ACC-"))
-            self.assertEqual(item["ticket_id"], item["support_ticket_id"])
+            self.assertNotIn("support_ticket_id", item)
             self.assertIn("status", item)
         for item in data["billing_tickets"]:
             self.assertIn("billing_ticket_id", item)
@@ -255,11 +249,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         detail = response.json()
         self.assertEqual(detail["billing_ticket_id"], bt_id)
         self.assertEqual(detail["ticket_id"], detail.get("client_ticket_id"))
-        self.assertEqual(detail.get("support_ticket_id"), detail.get("client_ticket_id"))
-        self.assertEqual(detail["automation_status"], "needs_more_info")
-        self.assertEqual(detail["status"], "needs_more_info")
+        self.assertNotIn("support_ticket_id", detail)
+        self.assertEqual(detail["automation_status"], "automation")
+        self.assertEqual(detail["status"], "automation")
         self.assertEqual(detail["route"], "detailed_invoice")
-        self.assertTrue(detail["missing_fields"])
+        self.assertEqual(detail.get("missing_fields") or [], [])
 
     def test_billing_ticket_view_model_normalizes_legacy_api_source(self) -> None:
         self.repository.save_billing_ticket(
@@ -283,8 +277,84 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(detail_response.status_code, 200)
         detail = detail_response.json()
         self.assertEqual(detail["ticket_id"], "TK-LEGACY-001")
-        self.assertEqual(detail["support_ticket_id"], "TK-LEGACY-001")
+        self.assertNotIn("support_ticket_id", detail)
         self.assertEqual(detail["source"], "api")
+
+
+    def test_account_intake_suspension_route_marks_automation(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended. I cannot log in.",
+                    "customer_email": "customer@example.com",
+                    "source": "account-ui",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["route"], "account_suspension")
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertNotIn("support_ticket_id", payload)
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["automation_status"], "automation")
+        self.assertEqual(bt["route"], "account_suspension")
+
+    def test_billing_tickets_detail_by_canonical_ticket_id(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Canonical lookup test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+        ticket_id = create_response.json()["ticket_id"]
+
+        response = self.client.get(f"/api/account/billing-tickets/{ticket_id}")
+        self.assertEqual(response.status_code, 200)
+        detail = response.json()
+        self.assertEqual(detail["ticket_id"], ticket_id)
+        self.assertEqual(detail["title"], "Canonical lookup test")
+
+    def test_billing_tickets_detail_by_canonical_ticket_id_is_not_limited_to_recent_items(self) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-OLD-001",
+                "client_ticket_id": "TK-OLD-001",
+                "source": "manual",
+                "title": "Old canonical ticket",
+                "question": "old question",
+                "automation_status": "not_automated",
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+        for i in range(205):
+            self.repository.save_billing_ticket(
+                {
+                    "billing_ticket_id": f"BT-TK-NEW-{i:03d}",
+                    "client_ticket_id": f"TK-NEW-{i:03d}",
+                    "source": "manual",
+                    "title": f"New ticket {i}",
+                    "question": "new question",
+                    "automation_status": "not_automated",
+                    "created_at": f"2026-02-01T00:{i % 60:02d}:00+00:00",
+                }
+            )
+
+        response = self.client.get("/api/account/billing-tickets/TK-OLD-001")
+        self.assertEqual(response.status_code, 200, response.text)
+        detail = response.json()
+        self.assertEqual(detail["ticket_id"], "TK-OLD-001")
+        self.assertEqual(detail["title"], "Old canonical ticket")
 
     def test_billing_tickets_detail_api_404(self) -> None:
         response = self.client.get("/api/account/billing-tickets/BT-nonexistent")

@@ -12,6 +12,30 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-12 - Account intake routing behaviour change: unified ticket ID, no automation execution
+
+- Area or subsystem: Account-side ticket intake, support routing
+- Prompt or model version: `account-intake-v2`
+- Summary: Unified external ticket identity to a single `ticket_id` across `/account` API, billing ticket view-model, and account UI. Changed billing route behaviour so `detailed_invoice` and `account_suspension` routes now mark `automation_status = "automation"` without executing the full billing automation pipeline (no `resolve_support_message()`, no customer reply generation, no missing-field collection, no internal email send). Non-billing routes continue to record `not_automated` with full route metadata.
+- Reason: Deterministic routing change — account intake should separate route classification from automation execution. External ticket identity should be a single canonical `ticket_id` rather than exposing `support_ticket_id` as a second identity.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/tests/test_account_intake.py`
+  - `backend/tests/test_account_ui_contract.py`
+  - `ui/account-ui/app.js`
+  - `ui/account-ui/styles.css`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `POST /account` no longer returns `support_ticket_id`; only `ticket_id` and `billing_ticket_id`.
+  - `detailed_invoice` and `account_suspension` requests now receive `status = "automation"`, empty `customer_reply`, empty `missing_fields`, and `internal_email_send_status = "not_applicable"`.
+  - Non-whitelist account submissions remain `not_automated` while preserving the route result and route metadata.
+  - `/api/account/billing-tickets/{id}` now supports direct lookup by canonical `ticket_id` (e.g. `TK-ACC-XXXXXX`) in addition to `BT-...` billing ticket IDs.
+  - Account UI shows a single `Ticket ID` row in detail view, uses `ticket_id` as the primary key for history navigation, and displays `Automation` / `Not automated` status labels.
+- Verification:
+  - `python -m unittest backend.tests.test_account_intake backend.tests.test_account_ui_contract`
+  - `node --check ui/account-ui/app.js`
+
 ## 2026-06-10 - Account billing intake endpoint
 
 - Area or subsystem: Account-side ticket intake, support routing, and deterministic billing workflow

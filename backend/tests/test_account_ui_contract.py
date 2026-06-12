@@ -42,6 +42,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("renderDetailView", app_source)
         self.assertIn("not_automated", app_source)
         self.assertIn("needs_more_info", app_source)
+        self.assertIn("automation", app_source)
         self.assertIn("No tickets yet", app_source)
         self.assertIn("Ticket detail", app_source)
         self.assertIn("Recent tickets", app_source)
@@ -59,3 +60,8 @@ class AccountUiContractTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_account_styles_include_automation_status_badge(self) -> None:
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".status-badge--automation", styles)

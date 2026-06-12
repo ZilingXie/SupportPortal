@@ -793,6 +793,9 @@ class TicketRepository(Protocol):
     def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ...
 
+    def get_billing_ticket_by_client_ticket_id(self, client_ticket_id: str) -> dict[str, Any] | None:
+        ...
+
     def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
         ...
 
@@ -1407,6 +1410,15 @@ class InMemoryTicketRepository:
     def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ticket = self._billing_tickets.get(str(billing_ticket_id).strip())
         return copy.deepcopy(ticket) if ticket is not None else None
+
+    def get_billing_ticket_by_client_ticket_id(self, client_ticket_id: str) -> dict[str, Any] | None:
+        normalized_client_ticket_id = str(client_ticket_id).strip()
+        if not normalized_client_ticket_id:
+            return None
+        for ticket in self._billing_tickets.values():
+            if str(ticket.get("client_ticket_id") or "").strip() == normalized_client_ticket_id:
+                return copy.deepcopy(ticket)
+        return None
 
     def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
@@ -4337,6 +4349,23 @@ class PostgresTicketRepository:
                 return dict(zip(col_names, rows[0]))
 
         return self._run_with_connection_retry("get_billing_ticket", _operation)
+
+    def get_billing_ticket_by_client_ticket_id(self, client_ticket_id: str) -> dict[str, Any] | None:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE client_ticket_id = %s"
+                    ).format(self._table("support_billing_tickets")),
+                    (str(client_ticket_id).strip(),),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return None
+                col_names = [desc[0] for desc in cur.description]
+                return dict(zip(col_names, rows[0]))
+
+        return self._run_with_connection_retry("get_billing_ticket_by_client_ticket_id", _operation)
 
     def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
