@@ -827,11 +827,11 @@
       <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 Engineer Multi-Agent 生命周期架构优化、multi-agent skeleton 合并、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
       <section class="hero-judgment" aria-label="Current QBR judgment">
         <h2>当前判断</h2>
-        <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已完成生命周期架构优化和后端契约骨架，但 Summary/Plan/Execute/Review 真实链路仍未接管 runtime；RAG/KG 已完成 cusmem 产品化整理，下一步才是 SupportPortal adapter 与评测。</p>
+        <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已完成生命周期架构优化和后端契约骨架，但 Summary/Plan/Execute/Review 真实链路仍未接管 runtime；RAG/KG 已完成 cusmem 产品化整理，本轮计划收敛为“官网文档 KG 辅助 Client AI RAG”，下一步是 SupportPortal adapter、图数据库选型和运行时降级边界。</p>
         <ul class="review-list" aria-label="QBR review notes">
           <li>QBR 可以把 Billing 作为最强 demo，但必须明确当前是 route + 记录状态，不是真正执行 automation；Zendesk、幂等和人工审核仍是试运行前置条件。</li>
           <li>Assignment 和 Multi-Agent 都要避免过度承诺：前者是 localStorage 原型，后者是生命周期架构 + skeleton + plan，还不是生产主链路。</li>
-          <li>RAG/KG 适合讲架构方向和边界，不能把 vendored cusmem 等同于已上线的 KG 检索能力。</li>
+          <li>RAG/KG 适合讲架构方向和边界：KG 先只入库官网文档，作为 Client AI RAG 的 query expansion、rerank 和带来源 fact 辅助，不能替代 RAG citation。</li>
         </ul>
       </section>
       <div class="hero-meta">
@@ -929,7 +929,7 @@ flowchart TD
       </div>
       <div class="timeline-step">
         <b>4. RAG vs KG</b>
-        <p>把知识边界讲清楚：文档和 citation 留在 RAG，确认案例和经验进入 Case Memory/KG；cusmem 已产品化整理，下一步才是 SupportPortal adapter、schema source 和对照评测。</p>
+        <p>把知识边界讲清楚：Client AI 的官网文档回答仍以 RAG chunk 和 citation 为 source of truth；KG 先只承接官网文档概念/关系，作为 RAG 辅助信号；图数据库先用 Docker Neo4j 做本地方案评估，再比较 AWS Neptune/Serverless。</p>
       </div>
     </section>
 
@@ -949,6 +949,10 @@ flowchart TD
     };
 
     const RECENT_UPDATES = [
+      {
+        key: "RAG/KG",
+        copy: "RAG/KG 计划收敛为官网文档 KG 辅助 Client AI RAG：RAG 保持 citation source of truth，KG 先做概念/关系、query expansion、rerank 和可降级增强。"
+      },
       {
         key: "#446",
         copy: "Account intake v2 已合入：/account 统一只暴露一个 ticket_id，billing 白名单只记录 automation 状态，不执行字段收集、客户回复或内部邮件。"
@@ -1121,29 +1125,32 @@ flowchart TD
         short: "RAG vs KG",
         title: "RAG vs KG / Case Memory",
         status: "doing",
-        thesis: "RAG 主链路继续承载可引用文档证据；KG/Case Memory 方向已经有边界、ledger 和 vendored GraphRAG product-form source，但运行时 KG 检索仍未接入主链路。",
+        thesis: "RAG 主链路继续承载可引用官网文档证据；KG 本轮计划收敛为 Client AI RAG 的辅助层，只入库官网文档概念/关系，不替代 citation，也暂不把 confirmed case memory 接入客户可见路径。",
         done: [
-          "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate。",
+          "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate；Client AI 仍以官网文档 chunk/citation 生成答案。",
           "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
-          "知识边界已固定：文档型知识、citation、source path 和重复文档治理留在 RAG；confirmed cases、经验、偏好和 selected memory 进入 Case Memory Layer。",
+          "知识边界已固定：官网文档型知识、citation、source path 和重复文档治理留在 RAG；本阶段 KG 只从官网文档派生概念图谱，confirmed cases/经验仍留作后续 Case Memory Layer。",
           "Case Memory Ledger 已实现为完整审计账本，Active Retrieval Memory 作为后续可召回子集，ledger candidate 不会自动变 active。",
           "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。",
           "`python3 -m graphiti_rag` CLI、core/validate/full schema-design preset、lazy imports 和 no-Neo4j help path 已有回归测试覆盖。",
           "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。"
         ],
         review: [
-          "目前 KG/Case Memory 的可信点是边界清晰、ledger 可审计、cusmem 已产品化整理；还不能说运行时 KG 已参与答复。",
-          "QBR 里应把 RAG 定义为 citation/source-of-truth 层，把 KG/Case Memory 定义为 confirmed-case 经验召回层。",
-          "下一步必须用 RAG-only vs RAG+KG 对照评测证明收益，否则不要把 KG 接到客户可见路径。"
+          "目前 KG/Case Memory 的可信点是边界清晰、ledger 可审计、cusmem 已产品化整理；本阶段只规划官网文档 KG 辅助 Client AI RAG，还不能说运行时 KG 已参与答复。",
+          "QBR 里应把 RAG 定义为 citation/source-of-truth 层，把 KG 定义为官网文档概念/关系辅助层；Case Memory 仍是后续 confirmed-case 经验召回方向。",
+          "下一步先完善方案与边界：KG 不直接回答、不替代 RAG citation；在线查询必须可超时降级到 RAG-only；是否做 RAG-only vs RAG+KG 对照评测留到后续阶段。"
         ],
         next: [
-          { id: "kg-active-memory", status: "todo", label: "实现 Active Retrieval Memory 查询接口和 confirmed case 晋升/撤回/降权规则。", horizon: "Case Memory" },
-          { id: "kg-adapter", status: "todo", label: "为 vendored cusmem/GraphRAG 写 SupportPortal adapter，明确输入、输出、脱敏和版本字段。", horizon: "Adapter" },
-          { id: "kg-eval", status: "todo", label: "建立 RAG-only vs RAG+KG 对照评测，比较召回、证据可解释性、幻觉风险和延迟。", horizon: "Evaluation" },
-          { id: "kg-schema-source", status: "todo", label: "确定 SupportPortal 首个领域 schema 来源：从 confirmed cases 生成，还是从人工 schema design 工具输出。", horizon: "Schema" },
-          { id: "rag-dedupe", status: "todo", label: "推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review。", horizon: "RAG Governance" },
-          { id: "kg-runtime-boundary", status: "todo", label: "定义线上触发顺序：Case Memory、internal RAG、official fallback 是串行、并行还是按 query class 选择。", horizon: "Runtime" },
-          { id: "kg-citations", status: "blocked", label: "KG 不能替代 Postgres source of truth；引用和审计必须回查权威 ticket/feedback 状态后才能展示。", horizon: "Safety" }
+          { id: "kg-official-docs-scope", status: "todo", label: "将 KG 首期范围收敛为官网文档概念/关系入库，只服务 Client AI RAG 辅助，不接 confirmed case memory。", horizon: "Scope" },
+          { id: "kg-adapter", status: "todo", label: "为 vendored cusmem/GraphRAG 写 SupportPortal adapter，明确官网文档输入、schema 版本、source_url、document_id 和 chunk_id。", horizon: "Adapter" },
+          { id: "kg-provenance", status: "todo", label: "强制 KG entity/edge 保留 provenance；没有可回查 RAG chunk 的 fact 不允许进入答案上下文。", horizon: "Safety" },
+          { id: "kg-graph-db", status: "todo", label: "图数据库先评估 Docker Neo4j 本地方案，再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选。", horizon: "Infrastructure" },
+          { id: "kg-model-config", status: "todo", label: "复用项目 .env 的 OpenAI LLM 与 BGE embedding 配置，替换 vendor 默认硬编码 endpoint，并补齐 KG_* 环境变量边界。", horizon: "Config" },
+          { id: "kg-async-ingest", status: "todo", label: "KG 构建走后台异步任务和 chunk hash/upsert，不能阻塞官网文档 RAG 入库或 Client AI 在线回答。", horizon: "Reliability" },
+          { id: "kg-runtime-boundary", status: "todo", label: "定义线上调用顺序：RAG 先检索，KG 只做 query expansion/rerank/带来源 fact 增强；KG 超时或失败降级到 RAG-only。", horizon: "Runtime" },
+          { id: "kg-schema-source", status: "todo", label: "首个领域 schema 先从官网文档高价值实体开始：Product、API、Feature、ErrorCode、Symptom、Solution、Limitation、Platform、Version。", horizon: "Schema" },
+          { id: "rag-dedupe", status: "todo", label: "推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review，保证 KG 派生来源稳定。", horizon: "RAG Governance" },
+          { id: "kg-citations", status: "blocked", label: "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。", horizon: "Safety" }
         ],
         sources: [
           "docs/rag_retrieval_chain.md",
