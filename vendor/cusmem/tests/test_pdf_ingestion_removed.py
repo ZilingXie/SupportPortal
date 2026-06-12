@@ -24,9 +24,12 @@ def test_default_file_pattern_excludes_pdf() -> None:
 
     assert pattern.match('manual.txt')
     assert pattern.match('manual.md')
-    assert pattern.match('manual.docx')
-    assert pattern.match('manual.csv')
-    assert pattern.match('manual.json')
+    assert pattern.match('manual.markdown')
+    assert not pattern.match('manualtxt')
+    assert not pattern.match('manualxmd')
+    assert not pattern.match('manual.docx')
+    assert not pattern.match('manual.csv')
+    assert not pattern.match('manual.json')
     assert not pattern.match('manual.pdf')
 
 
@@ -34,6 +37,7 @@ def test_scanner_skips_pdf_files_by_default(tmp_path: Path) -> None:
     Scanner = _load_module('graphrag_components_under_test', 'graphiti_rag/components.py').Scanner
 
     (tmp_path / 'manual.txt').write_text('ready for ingestion', encoding='utf-8')
+    (tmp_path / 'manualtxt').write_text('missing extension should be ignored', encoding='utf-8')
     (tmp_path / 'manual.pdf').write_text('pdf content should be ignored', encoding='utf-8')
 
     matches = {Path(path).name for path in Scanner().scan(str(tmp_path))}
@@ -49,3 +53,11 @@ def test_reader_rejects_pdf_files(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match='Unsupported format: .pdf'):
         Reader().read(str(source))
+
+
+def test_config_file_points_to_the_new_graphrag_cli() -> None:
+    config_text = (PROJECT_ROOT / 'graphrag_config.yaml').read_text(encoding='utf-8')
+
+    assert 'python3 -m graphiti_rag --input docs/ --schema schemas/your_domain.yaml' in config_text
+    assert 'python3 -m graphiti_rag.ingest' not in config_text
+    assert 'schemas/gbt25338.yaml' not in config_text

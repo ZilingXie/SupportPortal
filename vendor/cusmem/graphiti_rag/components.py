@@ -51,7 +51,7 @@ class Scanner:
 
     def __init__(
         self,
-        file_pattern: str = r'.*\.(txt|md|docx|csv|json)$',
+        file_pattern: str = r'.*\.(txt|md|markdown)$',
         rank: int = 0,
         world_size: int = 1,
     ):
@@ -100,58 +100,30 @@ class Reader:
         self.encoding = encoding
 
     def read(self, file_path: str) -> Chunk:
-        """Read file synchronously (called from ThreadPool)."""
+        """Read file synchronously (called from ThreadPool).
+
+        Supports .txt, .md, .markdown.  Frontmatter (YAML --- ... ---) is
+        stripped from Markdown files.
+        """
         path = Path(file_path)
         ext = path.suffix.lower()
 
-        if ext in ('.txt', '.md', '.markdown', '.csv', '.json'):
-            text = path.read_text(encoding=self.encoding, errors='replace')
-            if ext in ('.md', '.markdown') and text.startswith('---'):
-                end = text.find('---', 3)
-                if end != -1:
-                    text = text[end + 3 :].strip()
-        elif ext == '.docx':
-            text = self._read_docx(path)
-        else:
-            raise ValueError(f'Unsupported format: {ext}')
+        if ext not in ('.txt', '.md', '.markdown'):
+            raise ValueError(f'Unsupported format: {ext}. Supported: .txt, .md, .markdown')
+
+        text = path.read_text(encoding=self.encoding, errors='replace')
+        if ext in ('.md', '.markdown') and text.startswith('---'):
+            end = text.find('---', 3)
+            if end != -1:
+                text = text[end + 3 :].strip()
 
         text = self._clean_text(text)
         return Chunk(text=text, index=0, source=str(path), end_char=len(text))
 
     def _clean_text(self, text: str) -> str:
-        """Normalize text from CJK-encoded Latin characters."""
-        import unicodedata
-
-        # Fullwidth ASCII → halfwidth (ＧＢ／Ｔ → GB/T)
-        result = unicodedata.normalize('NFKC', text)
-        # CJK Compatibility block: map common garbled symbols
-        char_map = {
-            '（': '(',
-            '）': ')',
-            '，': ',',
-            '．': '.',
-            '：': ':',
-            '；': ';',
-            '－': '-',
-            '／': '/',
-            '＼': '\\',
-            '［': '[',
-            '］': ']',
-        }
-        for k, v in char_map.items():
-            result = result.replace(k, v)
-        # Remove stray control chars
-        result = result.replace('\x00', '')
+        """Normalize whitespace and strip null bytes."""
+        result = text.replace('\x00', '')
         return result.strip()
-
-    def _read_docx(self, path: Path) -> str:
-        try:
-            from docx import Document
-
-            doc = Document(str(path))
-            return '\n\n'.join(p.text for p in doc.paragraphs if p.text.strip())
-        except ImportError:
-            raise ImportError('Install python-docx: pip install python-docx') from None
 
 
 # ─── Splitter ──────────────────────────────────────────────────────────
@@ -210,7 +182,10 @@ class Splitter:
 
 
 class Extractor:
-    """Extract entities + edges from a Chunk using Graphiti's LLM pipeline.
+    """Extract entities + edges from a Chunk using Graphiti's native add_episode().
+
+    This is the boundary point: we call graphiti_core directly for graph operations,
+    wrapping it only for document-level concerns (chunking, concurrency, error handling).
 
     KAG parallel pattern: each chunk processed independently within chain threads.
     Async extraction with semaphore for concurrency control.

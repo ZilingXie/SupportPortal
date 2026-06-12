@@ -10,12 +10,22 @@ from tools.schema_design.candidate_evidence_profiler import profile_candidate_ev
 from tools.schema_design.chunking import build_chunks
 from tools.schema_design.confidence import compute_confidence
 from tools.schema_design.decision_brief import build_decision_brief
-from tools.schema_design.io_utils import ensure_dir, read_json, read_jsonl, write_json, write_yaml, yaml_load
+from tools.schema_design.io_utils import (
+    ensure_dir,
+    read_json,
+    read_jsonl,
+    write_json,
+    write_yaml,
+    yaml_load,
+)
 from tools.schema_design.llm_client import LLMClient
 from tools.schema_design.local_dryrun import run_local_sample_extraction
 from tools.schema_design.patterns import profile_patterns
 from tools.schema_design.prompt_rules import generate_prompt_rules
-from tools.schema_design.quality import generate_final_report, generate_sample_quality_report, preflight_check
+from tools.schema_design.quality import (
+    generate_final_report,
+    preflight_check,
+)
 from tools.schema_design.schema_critic import critic_review, repair_schema
 from tools.schema_design.schema_generation import draft_schema, draft_schema_multi
 from tools.schema_design.schema_selection_from_pool import select_schema_from_pool
@@ -27,7 +37,48 @@ from tools.schema_design.user_candidate_pool import load_candidate_pool, normali
 
 
 class SchemaDesignPipeline:
-    """Coordinate schema design stages and persist auditable artifacts."""
+    """Coordinate schema design stages and persist auditable artifacts.
+
+    Stage inventory (14 stages total):
+
+    Core stages — always useful for any domain:
+      1  text_extraction     txt/md → pages.jsonl
+      2  chunking            pages → chunks.jsonl (with section paths)
+      6  schema_generation   LLM or rule-based → candidate_schema.yaml
+      8  prompt_rules        schema → entity/edge extraction prompts
+     12  full_extraction     chunks + schema → graph ingest via GraphRAG
+
+    Validation stages — useful with LLM:
+      9  sample_extraction   small-batch LLM extraction + quality report
+     10  quality_fix         auto-fix loop (critic → repair)
+
+    Optional stages — situational:
+     11  preflight_check     artifact existence check before full run
+     13  final_report        quality summary from extraction artifacts
+
+    Infrastructure stages (feed schema generation):
+      3  patterns            regex-based pattern inventory (standards, units, ratings)
+      4  terms               TF-IDF term frequency profiling (feeds stage 6)
+
+    Experimental / legacy stages (GB/T-era, friend-project logic):
+      5  topics              section-title-based topic clustering
+     55  decision_brief      auto-generated schema design brief
+      7  auto_review         superseded by stage 6 critic+repair
+
+    Presets (use --preset):
+      core        stages 1,2,3,4,6,8,12      — minimal working pipeline
+      validate    stages 1,2,3,4,6,8,9,10,12 — core + sample validation
+      full        all 14 stages              — complete experimental pipeline
+    """
+
+    # ── Preset definitions ─────────────────────────────────────────────
+    PRESETS: dict[str, set[int]] = {
+        'core':     {1, 2, 3, 4, 6, 8, 12},
+        'validate': {1, 2, 3, 4, 6, 8, 9, 10, 12},
+        'full':     {1, 2, 3, 4, 5, 55, 6, 7, 8, 9, 10, 11, 12, 13},
+    }
+
+    DEFAULT_PRESET = 'core'
 
     def __init__(
         self,
@@ -40,6 +91,7 @@ class SchemaDesignPipeline:
         max_fix_rounds: int = 3,
         candidate_pool: Path | None = None,
         selection_mode: str = 'legacy',  # 'pool' | 'legacy'
+        preset: str = 'core',  # 'core' | 'validate' | 'full'
     ) -> None:
         self.input_path = input_path
         self.output_dir = ensure_dir(output_dir)
@@ -49,6 +101,7 @@ class SchemaDesignPipeline:
         self.max_fix_rounds = max_fix_rounds
         self.candidate_pool_path = candidate_pool
         self.selection_mode = selection_mode  # 'pool' if candidate_pool else 'legacy'
+        self.preset = preset if preset in self.PRESETS else 'core'
         self._normalized_pool: dict[str, Any] | None = None
         self.state = PipelineState.load(self.output_dir / 'pipeline_state.json', input_path=input_path)
         self._llm: LLMClient | None = None
@@ -69,10 +122,8 @@ class SchemaDesignPipeline:
         return self._llm
 
     def run(self, only_stages: set[int] | None = None, *, no_gates: bool = False) -> dict[str, Any]:
-        stages_enabled = only_stages or {
-            1, 2, 3, 4, 5, 55, 6, 7, 8, 9, 10, 11, 12, 13
-        }
-        gates_enabled = only_stages is None and not no_gates  # quality gates only for full runs
+        stages_enabled = only_stages or self.PRESETS.get(self.preset, self.PRESETS['core'])
+        gates_enabled = only_stages is None and not no_gates  # quality gates only for full preset runs
 
         # ── Stages 1-5: Text → Chunks → Patterns → Terms → Topics ──────
         if 1 in stages_enabled and 1 not in self.skip_stages:
@@ -445,7 +496,7 @@ class SchemaDesignPipeline:
 
         else:
             # Fallback: single schema (rule-based or LLM without brief)
-            result = draft_schema(
+            draft_schema(
                 self.output_dir / 'pattern_inventory.json',
                 self.output_dir / 'term_frequency.json',
                 self.output_dir,
@@ -456,7 +507,10 @@ class SchemaDesignPipeline:
 
         # Validate and write review checklist
         schema_path = self.output_dir / 'candidate_schema.yaml'
-        from tools.schema_design.schema_generation import generate_review_checklist, validate_candidate_schema
+        from tools.schema_design.schema_generation import (
+            generate_review_checklist,
+            validate_candidate_schema,
+        )
         review_path = self.output_dir / 'candidate_schema_review.md'
         review_path.write_text(generate_review_checklist(schema_path), encoding='utf-8')
         validation = validate_candidate_schema(schema_path)
@@ -728,8 +782,7 @@ class SchemaDesignPipeline:
                 'reason': 'Local dry-run requires LLM for entity/edge extraction.',
             },
         )
-        schema = yaml_load(self.output_dir / 'candidate_schema.yaml')
-        report = generate_sample_quality_report([], [], [], [], schema)
+        yaml_load(self.output_dir / 'candidate_schema.yaml')
         self.state.mark_completed(
             'stage9_sample_extraction',
             {

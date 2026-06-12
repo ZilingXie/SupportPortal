@@ -24,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--max-fix-rounds', type=int, default=3, help='Maximum auto-fix rounds (default: 3)')
     parser.add_argument('--confidence-threshold', type=float, default=0.65,
                         help='Minimum confidence to skip human review (default: 0.65)')
+    parser.add_argument('--preset', choices=('core', 'validate', 'full'), default='core',
+                        help='Pipeline preset: core (minimal), validate (core+sample), full (all 14 stages)')
     parser.add_argument('--candidate-pool', type=Path, default=None,
                         help='Path to candidate_pool.yaml for pool selection mode')
     parser.add_argument('--selection-mode', choices=('pool', 'legacy'), default='legacy',
@@ -66,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         max_fix_rounds=args.max_fix_rounds,
         candidate_pool=args.candidate_pool,
         selection_mode=selection_mode,
+        preset=args.preset,
     )
     pipeline.run(only_stages=only_stages, no_gates=args.no_gates)
     return 0

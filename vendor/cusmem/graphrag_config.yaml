@@ -1,5 +1,5 @@
 # GraphRAG 配置文件
-# 命令行使用: python3 ingest_gbt.py
+# 命令行使用: python3 -m graphiti_rag --input docs/ --schema schemas/your_domain.yaml
 # 或: export GRAPHRAG_CONFIG=graphrag_config.yaml
 
 neo4j:
@@ -18,7 +18,7 @@ embedding:
   dim: 1024
 
 schema:
-  path: "schemas/gbt25338.yaml"
+  path: null  # Set your domain schema here or pass --schema on the CLI.
   mode: "strict"
   second_pass_extraction: true
   second_pass_mode: "conditional"  # always | conditional

@@ -44,6 +44,40 @@ For each new entry, record:
   - `git diff --check`
   - Static search confirmed no residual `pdfminer`/`pdfplumber`/`PyPDF2`/`pypdfium2`/`tesseract`/`_read_pdf`/`_ocr_pdf` references in Python source.
 
+## 2026-06-11 - Refactor vendored cusmem into a text-first product-form pipeline
+
+- Summary:
+  - Narrowed `graphiti_rag` ingestion inputs to `.txt`, `.md`, and `.markdown`, and aligned the scanner, config default pattern, CLI help, and config-file usage docs to the same contract.
+  - Added a new `python3 -m graphiti_rag` CLI entry point for document ingestion with lazy imports so `--help` and argument parsing work without loading Neo4j or LLM runtime dependencies.
+  - Added `SchemaDesignPipeline` presets (`core`, `validate`, `full`) so the default schema-design flow is a smaller product-form path instead of always running the full experimental stage set.
+  - Archived GB/T-specific and experiment-era run scripts, candidate pools, and report artifacts under `vendor/cusmem/archive/` with an archive README to separate product code from historical material.
+  - Added regression coverage for the text-first core flow: text extraction, chunking, schema generation, preset-driven pipeline execution, CLI parsing, and schema loading without Neo4j.
+- Reason:
+  - The vendored `cusmem` project is being reshaped from a friend-project research bundle into a narrower, text-first integration surface that is easier to understand, test, and reuse inside SupportPortal.
+- Affected files/config:
+  - `vendor/cusmem/graphiti_rag/__init__.py`
+  - `vendor/cusmem/graphiti_rag/__main__.py`
+  - `vendor/cusmem/graphiti_rag/components.py`
+  - `vendor/cusmem/graphiti_rag/config.py`
+  - `vendor/cusmem/graphrag_config.yaml`
+  - `vendor/cusmem/tools/schema_design/__main__.py`
+  - `vendor/cusmem/tools/schema_design/pipeline.py`
+  - `vendor/cusmem/DEPLOYMENT.md`
+  - `vendor/cusmem/tests/test_core_pipeline.py`
+  - `vendor/cusmem/tests/test_pdf_ingestion_removed.py`
+  - `vendor/cusmem/tests/test_schema_design_tool.py`
+  - `vendor/cusmem/archive/README.md`
+  - `vendor/cusmem/archive/*`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Existing graph data is unaffected.
+  - New ingestion flows now assume pre-converted text/Markdown inputs instead of the broader legacy mix of document types and GB/T-era helper scripts.
+  - Historical experiment files remain available under `vendor/cusmem/archive/` but are no longer part of the active product path.
+- Verification:
+  - `cd vendor/cusmem && uv run --with pytest --with pyyaml python -m pytest tests/test_pdf_ingestion_removed.py tests/test_core_pipeline.py tests/test_schema_design_tool.py -q`
+  - `cd vendor/cusmem && uv run --with ruff ruff check graphiti_rag/__main__.py graphiti_rag/__init__.py graphiti_rag/components.py graphiti_rag/config.py tests/test_pdf_ingestion_removed.py tests/test_core_pipeline.py tests/test_schema_design_tool.py tools/schema_design/__main__.py tools/schema_design/pipeline.py`
+  - `git diff --check`
+
 ## 2026-06-10 - Engineer evidence orchestration on investigation opening
 
 - Summary:
