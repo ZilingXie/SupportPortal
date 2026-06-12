@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SupportPortal QBR Plan</title>
+  <title>SupportPortal QBR 计划</title>
   <style>
     :root {
       --paper: #f4efe3;
@@ -200,6 +200,65 @@
       background: rgba(244, 239, 227, 0.78);
       backdrop-filter: blur(16px);
       box-shadow: 0 12px 30px rgba(31, 45, 38, 0.1);
+    }
+
+    .snapshot {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 22px;
+      margin: 22px 0 8px;
+    }
+
+    .snapshot-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(251, 247, 236, 0.82);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+      padding: 24px;
+    }
+
+    .snapshot-card h2 {
+      margin: 0 0 12px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 0.98;
+      letter-spacing: -0.05em;
+    }
+
+    .snapshot-card p {
+      margin: 0;
+      color: #3f4943;
+      line-height: 1.65;
+    }
+
+    .update-list {
+      list-style: none;
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .update-list li {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .update-list li:last-child { border-bottom: 0; }
+
+    .update-key {
+      color: var(--blueprint);
+      font-weight: 850;
+      letter-spacing: 0.04em;
+    }
+
+    .update-copy {
+      color: #3f4943;
+      line-height: 1.55;
     }
 
     .filter {
@@ -569,7 +628,7 @@
     }
 
     @media (max-width: 980px) {
-      .hero-grid, .lane-head, .lane-body, .timeline { grid-template-columns: 1fr; }
+      .hero-grid, .snapshot, .lane-head, .lane-body, .timeline { grid-template-columns: 1fr; }
       .ring { justify-self: start; width: 116px; height: 116px; }
       .toolbar { position: static; }
       .section-title { display: block; }
@@ -592,13 +651,14 @@
 <body>
   <div class="page">
     <header class="hero">
-      <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR Tracker · 2026-06-12</div>
-      <h1>四条优化主线，一张可追踪计划图。</h1>
-      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing ticket routing、RAG vs KG 四个维度的已完成进展、未完成计划和下一步验收点收束到一个单页 HTML。状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
+      <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR 追踪 · 2026-06-12</div>
+      <h1>四条优化主线，一张可追踪进度板。</h1>
+      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 multi-agent skeleton 合并、主线实施计划 HTML 化，以及后续真实主链路接入顺序；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
       <div class="hero-meta">
-        <span class="meta-pill">来源：docs + CodeGraph + tests + changelog</span>
+        <span class="meta-pill">同步点：main @ 2026-06-12</span>
+        <span class="meta-pill">来源：docs + tests + changelog + recent merges</span>
         <span class="meta-pill">追踪粒度：QBR / milestone</span>
-        <span class="meta-pill">默认不改动线上行为</span>
+        <span class="meta-pill">页面本身不改动线上行为</span>
       </div>
       <div class="hero-grid" id="heroMetrics"></div>
     </header>
@@ -607,6 +667,17 @@
       <div class="filter" id="laneFilters"></div>
       <input id="searchInput" class="search" type="search" placeholder="搜索任务、来源或计划">
     </nav>
+
+    <section class="snapshot" aria-label="Progress snapshot">
+      <div class="snapshot-card">
+        <h2>当前判断</h2>
+        <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已有后端契约骨架和中文主线计划，但真实生命周期仍未接管；RAG/KG 已完成 cusmem 产品化整理，下一步才是 SupportPortal adapter 与评测。</p>
+      </div>
+      <div class="snapshot-card">
+        <h2>最近合入</h2>
+        <ul class="update-list" id="recentUpdates"></ul>
+      </div>
+    </section>
 
     <section class="section-title">
       <div>
@@ -628,7 +699,7 @@
     <section class="timeline" aria-label="Suggested QBR route">
       <div class="timeline-step">
         <b>1. Billing</b>
-        <p>展示确定性最强的白名单自动化：字段收集、route、ticket 持久化、邮件升级和历史查询已经闭环，下一步是 Zendesk 与试运行质量复盘。</p>
+        <p>展示确定性最强的白名单自动化：字段收集、route、ticket id、持久化、邮件升级和历史查询已经闭环，下一步是 Zendesk、幂等和试运行质量复盘。</p>
       </div>
       <div class="timeline-step">
         <b>2. Assignment</b>
@@ -636,11 +707,11 @@
       </div>
       <div class="timeline-step">
         <b>3. Multi-Agent</b>
-        <p>展示 Engineer AI 从 guardrail-only 走向 multi-agent 主链路的骨架和安全边界；下一步把 Plan/Review/Implement/Conclude 接进真实生命周期。</p>
+        <p>展示 Engineer AI 从 guardrail-only 走向 multi-agent 主链路的骨架、安全边界和中文实施计划；当前下一步是任务 2：先把真实 Plan Agent 接进生命周期，再继续补 Memory Review/Implement/Conclude。</p>
       </div>
       <div class="timeline-step">
         <b>4. RAG vs KG</b>
-        <p>把知识边界讲清楚：文档和 citation 留在 RAG，确认案例和经验进入 Case Memory/KG；下一步才是 Active Retrieval Memory 与 GraphRAG adapter。</p>
+        <p>把知识边界讲清楚：文档和 citation 留在 RAG，确认案例和经验进入 Case Memory/KG；cusmem 已产品化整理，下一步才是 SupportPortal adapter、schema source 和对照评测。</p>
       </div>
     </section>
 
@@ -659,22 +730,47 @@
       blocked: "暂停/阻塞"
     };
 
+    const RECENT_UPDATES = [
+      {
+        key: "#439",
+        copy: "Engineer AI multi-agent 主线实施计划已转成中文 HTML，并由 contract test 锁定路径与关键标题。"
+      },
+      {
+        key: "#441",
+        copy: "新增本 QBR tracker 页面，把四条主线放到同一张可筛选、可勾选、可备注的进度板里。"
+      },
+      {
+        key: "#440",
+        copy: "Account/Billing ticket id 已统一，billing history/detail API 与 UI 现在围绕 billing_ticket_id 展示。"
+      },
+      {
+        key: "#438",
+        copy: "vendored cusmem 已从 GB/T 研究包整理成 text-first product-form pipeline，并移除 PDF/OCR 默认入口。"
+      },
+      {
+        key: "#436",
+        copy: "Engineer Multi-Agent 已有后端 skeleton、版本常量和契约测试，但还没有接入线上调查生命周期。"
+      }
+    ];
+
     const LANES = [
       {
         id: "engineer-multi-agent",
         short: "Multi-Agent",
         title: "Engineer AI multi-agent",
         status: "doing",
-        thesis: "已经完成边界、反馈、ledger 和第一版后端 skeleton；真正的线上 Plan/Review/Implement/Conclude 主链路仍在建设中。",
+        thesis: "已经完成边界、反馈、ledger、中文主线实施计划和第一版后端 skeleton；线上仍是 guardrail-first，当前下一步是任务 2：实现真实 Plan Agent。",
         done: [
           "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
           "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
           "Case Memory Ledger 已落地：所有 feedback 入账，默认 retrieval_enabled=false / active_memory_status=inactive，不会自动进入长期记忆。",
           "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
-          "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。"
+          "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
+          "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，QBR 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
+          "主线计划的当前下一步已明确固定为任务 2：实现真实 Plan Agent；任务 1 只交付 skeleton，不触碰 runtime、UI 或 guardrail。"
         ],
         next: [
-          { id: "ma-plan-agent", status: "todo", label: "实现真实 Plan Agent：从 ticket、handoff、历史消息和 revise note 生成可执行计划。", horizon: "Phase 2B" },
+          { id: "ma-plan-agent", status: "todo", label: "当前下一步：实现真实 Plan Agent，从 ticket、handoff、历史消息和 revise note 生成可执行计划。", horizon: "Task 2" },
           { id: "ma-memory-review", status: "todo", label: "实现 Memory Review Agent + Active Retrieval Memory 查询，只消费 active memory，不碰 inactive ledger。", horizon: "Phase 2B" },
           { id: "ma-implement-agent", status: "todo", label: "实现 Implement Agent 调用 internal RAG、official fallback 和 evidence tools，并记录 evidence packet。", horizon: "Phase 2B" },
           { id: "ma-conclude-agent", status: "todo", label: "实现 Conclude Agent 输出可审查 conclusion、缺失信息、root-cause status 和 customer-safe draft。", horizon: "Phase 2B" },
@@ -690,6 +786,7 @@
           "docs/superpowers/plans/2026-06-10-engineer-evidence-orchestration.md",
           "backend/services/engineer_multi_agent.py",
           "backend/tests/test_engineer_multi_agent.py",
+          "backend/tests/test_engineer_ai_evolution_plan_contract.py",
           "backend/tests/test_case_memory_ledger.py"
         ]
       },
@@ -698,13 +795,14 @@
         short: "Assignment",
         title: "Ticket assignment UI demo",
         status: "doing",
-        thesis: "独立 /assignment 原型已经完成并可演示核心体验；生产级调度、持久化、审计和真实队列接入还未开始。",
+        thesis: "独立 /assignment 原型已经完成并可演示核心体验；生产级调度、持久化、审计和真实队列接入仍未开始。",
         done: [
           "`/assignment` 独立静态原型已完成，不改现有 `/engineer`，用于演示工程师选择、排班和单工单处理。",
           "原型包含 Jack/Maya/Leo 工程师选择器、localStorage 登录状态、UTC+8 每日固定 shift 和 In shift / Out of shift 展示。",
           "已演示登录且在 shift 内、且没有 active Engineer Ticket 时才 eligible for assignment。",
           "Mock ticket assign 后开始 3 小时 SLA 倒计时，approve 并发送 Engineer AI draft 后关闭当前工单并允许领取下一个。",
-          "SLA 超时/transfer 状态可模拟，契约测试确认 standalone page、solver-focused flow 和不影响现有 engineer UI。"
+          "SLA 超时/transfer 状态可模拟，契约测试确认 standalone page、solver-focused flow 和不影响现有 engineer UI。",
+          "该主线当前适合 QBR demo，不应被描述为已具备生产排班或自动分配能力。"
         ],
         next: [
           { id: "assign-data-model", status: "todo", label: "定义生产 Engineer Ticket 生命周期、状态机和队列持久化模型。", horizon: "Model" },
@@ -728,20 +826,21 @@
         short: "Billing",
         title: "Billing ticket routing",
         status: "doing",
-        thesis: "确定性 billing 白名单 POC 已贯通 /account intake、route、ticket、邮件和历史查询；接下来要接真实来源、审核和试运行指标。",
+        thesis: "确定性 billing 白名单 POC 已贯通 /account intake、route、ticket、邮件和历史查询；ticket id 已统一，下一步要接真实来源、审核和试运行指标。",
         done: [
           "白名单 v1 收窄到 `account_suspension` 和 `detailed_invoice`，金额争议、退款、赔付、裁决类问题默认不自动化。",
           "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
           "`POST /account` 已实现创建客户工单 -> route -> follow process；字段缺失时追问，字段齐全时升级内部团队并准备/发送内部邮件。",
           "`/account` 手动 UI 已复用 client 体验，并展示 route、ticket id、客户回复、缺失字段、邮件状态和 billing ticket id。",
           "Billing ticket 持久化、历史列表和详情 API 已完成；`support_billing_tickets` schema 与 repository contract 有测试覆盖。",
+          "Account/Billing ticket id 已统一为 `billing_ticket_id` 视角，list/detail API 和 UI 都能展示可追踪的 billing ticket。",
           "内部邮件已支持 action-specific destination env，2026-06-10 detailed_invoice 真实 SMTP 发送测试已确认 sent。"
         ],
         next: [
           { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单、缺字段、非白名单、高风险人工。", horizon: "Scope" },
           { id: "billing-zendesk", status: "todo", label: "接入 Zendesk webhook/API 拉取新工单内容和必要 metadata。", horizon: "Source" },
           { id: "billing-human-review", status: "todo", label: "建立人工审核模式，审核升级告知和内部邮件，误判回流测试集。", horizon: "Review" },
-          { id: "billing-idempotency", status: "todo", label: "为 external_id 补幂等，避免重复 /account 请求重复建单或重复发邮件。", horizon: "Reliability" },
+          { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单或重复发邮件。", horizon: "Reliability" },
           { id: "billing-pilot", status: "todo", label: "启用小流量试运行，统计覆盖率、误判、升级人工原因和客户补充信息质量。", horizon: "Pilot" },
           { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" }
         ],
@@ -750,6 +849,7 @@
           "backend/services/billing_automation.py",
           "backend/services/support_router.py",
           "backend/main.py",
+          "backend/sql/ticket_storage.sql",
           "backend/tests/test_support_router.py",
           "backend/tests/test_account_intake.py",
           "backend/tests/test_account_ui_contract.py",
@@ -763,18 +863,21 @@
         short: "RAG vs KG",
         title: "RAG vs KG / Case Memory",
         status: "doing",
-        thesis: "RAG 主链路继续承载可引用文档证据；KG/Case Memory 方向已经有边界、ledger 和 vendored GraphRAG source，但运行时 KG 检索仍未接入主链路。",
+        thesis: "RAG 主链路继续承载可引用文档证据；KG/Case Memory 方向已经有边界、ledger 和 vendored GraphRAG product-form source，但运行时 KG 检索仍未接入主链路。",
         done: [
           "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate。",
           "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
           "知识边界已固定：文档型知识、citation、source path 和重复文档治理留在 RAG；confirmed cases、经验、偏好和 selected memory 进入 Case Memory Layer。",
           "Case Memory Ledger 已实现为完整审计账本，Active Retrieval Memory 作为后续可召回子集，ledger candidate 不会自动变 active。",
-          "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。"
+          "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。",
+          "`python3 -m graphiti_rag` CLI、core/validate/full schema-design preset、lazy imports 和 no-Neo4j help path 已有回归测试覆盖。",
+          "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。"
         ],
         next: [
           { id: "kg-active-memory", status: "todo", label: "实现 Active Retrieval Memory 查询接口和 confirmed case 晋升/撤回/降权规则。", horizon: "Case Memory" },
           { id: "kg-adapter", status: "todo", label: "为 vendored cusmem/GraphRAG 写 SupportPortal adapter，明确输入、输出、脱敏和版本字段。", horizon: "Adapter" },
           { id: "kg-eval", status: "todo", label: "建立 RAG-only vs RAG+KG 对照评测，比较召回、证据可解释性、幻觉风险和延迟。", horizon: "Evaluation" },
+          { id: "kg-schema-source", status: "todo", label: "确定 SupportPortal 首个领域 schema 来源：从 confirmed cases 生成，还是从人工 schema design 工具输出。", horizon: "Schema" },
           { id: "rag-dedupe", status: "todo", label: "推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review。", horizon: "RAG Governance" },
           { id: "kg-runtime-boundary", status: "todo", label: "定义线上触发顺序：Case Memory、internal RAG、official fallback 是串行、并行还是按 query class 选择。", horizon: "Runtime" },
           { id: "kg-citations", status: "blocked", label: "KG 不能替代 Postgres source of truth；引用和审计必须回查权威 ticket/feedback 状态后才能展示。", horizon: "Safety" }
@@ -856,6 +959,15 @@
       `).join("");
     }
 
+    function renderRecentUpdates() {
+      document.getElementById("recentUpdates").innerHTML = RECENT_UPDATES.map((item) => `
+        <li>
+          <span class="update-key">${escapeHtml(item.key)}</span>
+          <span class="update-copy">${escapeHtml(item.copy)}</span>
+        </li>
+      `).join("");
+    }
+
     function laneMatches(lane) {
       if (activeLane !== "all" && lane.id !== activeLane) return false;
       if (!query) return true;
@@ -934,6 +1046,7 @@
     function render() {
       renderHeroMetrics();
       renderFilters();
+      renderRecentUpdates();
       const lanes = LANES.filter(laneMatches);
       document.getElementById("lanes").innerHTML = lanes.map(renderLane).join("");
       document.getElementById("emptyState").style.display = lanes.length ? "none" : "block";
