@@ -1028,6 +1028,18 @@ p {
   margin-bottom: 6px;
 }
 
+.welcome-shift-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.welcome-shift-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* ==========================================================================
    Admin view
    ========================================================================== */
@@ -1164,6 +1176,14 @@ p {
   .welcome-engineer-card h1,
   .admin-header-body h1 {
     font-size: clamp(28px, 6vw, 40px);
+  }
+
+  .welcome-shift-form {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-shift-actions .btn {
+    width: 100%;
   }
 
   .welcome-avatar {

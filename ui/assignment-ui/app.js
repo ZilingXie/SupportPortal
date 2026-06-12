@@ -407,6 +407,19 @@ function renderWelcome() {
             </div>
             <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
           </div>
+          <form class="welcome-shift-form" data-shift-form>
+            <label class="field">
+              <span class="field-label">Start</span>
+              <input name="start" type="time" value="${escapeHtml(shift.start)}" required />
+            </label>
+            <label class="field">
+              <span class="field-label">End</span>
+              <input name="end" type="time" value="${escapeHtml(shift.end)}" required />
+            </label>
+            <div class="welcome-shift-actions">
+              <button class="btn btn-ghost" type="submit">Save shift</button>
+            </div>
+          </form>
           ${!inShift ? `<p class="welcome-shift-note">Next shift: ${escapeHtml(nextShiftInfo())}</p>` : ""}
         </article>
 
