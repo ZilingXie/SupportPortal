@@ -510,6 +510,7 @@ p {
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
 .status-pill.is-success,
