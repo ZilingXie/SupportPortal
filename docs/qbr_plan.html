@@ -950,6 +950,10 @@ flowchart TD
 
     const RECENT_UPDATES = [
       {
+        key: "KG Scope",
+        copy: "KG 首期 scope gate 已落地：只接受 official + official_markdown_upload 进入 Client AI RAG auxiliary 计划，拒绝 technical、external benchmark 和 confirmed case memory。"
+      },
+      {
         key: "RAG/KG",
         copy: "RAG/KG 计划收敛为官网文档 KG 辅助 Client AI RAG：RAG 保持 citation source of truth，KG 先做概念/关系、query expansion、rerank 和可降级增强。"
       },
@@ -1133,15 +1137,16 @@ flowchart TD
           "Case Memory Ledger 已实现为完整审计账本，Active Retrieval Memory 作为后续可召回子集，ledger candidate 不会自动变 active。",
           "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。",
           "`python3 -m graphiti_rag` CLI、core/validate/full schema-design preset、lazy imports 和 no-Neo4j help path 已有回归测试覆盖。",
-          "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。"
+          "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。",
+          "KG 首期 scope gate 已落地：只有 `official` + `official_markdown_upload` 可生成 Client AI RAG auxiliary 入库计划；technical article、external benchmark 和 confirmed case memory 会被拒绝。"
         ],
         review: [
-          "目前 KG/Case Memory 的可信点是边界清晰、ledger 可审计、cusmem 已产品化整理；本阶段只规划官网文档 KG 辅助 Client AI RAG，还不能说运行时 KG 已参与答复。",
+          "目前 KG/Case Memory 的可信点是边界清晰、ledger 可审计、cusmem 已产品化整理；本阶段已补官网文档-only scope gate，但还没有接实际 KG adapter、图数据库或运行时检索。",
           "QBR 里应把 RAG 定义为 citation/source-of-truth 层，把 KG 定义为官网文档概念/关系辅助层；Case Memory 仍是后续 confirmed-case 经验召回方向。",
           "下一步先完善方案与边界：KG 不直接回答、不替代 RAG citation；在线查询必须可超时降级到 RAG-only；是否做 RAG-only vs RAG+KG 对照评测留到后续阶段。"
         ],
         next: [
-          { id: "kg-official-docs-scope", status: "todo", label: "将 KG 首期范围收敛为官网文档概念/关系入库，只服务 Client AI RAG 辅助，不接 confirmed case memory。", horizon: "Scope" },
+          { id: "kg-official-docs-scope", status: "done", label: "已将 KG 首期范围收敛为官网文档概念/关系入库，只服务 Client AI RAG 辅助，不接 confirmed case memory。", horizon: "Scope" },
           { id: "kg-adapter", status: "todo", label: "为 vendored cusmem/GraphRAG 写 SupportPortal adapter，明确官网文档输入、schema 版本、source_url、document_id 和 chunk_id。", horizon: "Adapter" },
           { id: "kg-provenance", status: "todo", label: "强制 KG entity/edge 保留 provenance；没有可回查 RAG chunk 的 fact 不允许进入答案上下文。", horizon: "Safety" },
           { id: "kg-graph-db", status: "todo", label: "图数据库先评估 Docker Neo4j 本地方案，再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选。", horizon: "Infrastructure" },
@@ -1160,6 +1165,8 @@ flowchart TD
           "docs/rag_change_log.md",
           "backend/services/case_memory_ledger.py",
           "backend/tests/test_case_memory_ledger.py",
+          "backend/services/kg_official_docs_scope.py",
+          "backend/tests/test_kg_official_docs_scope.py",
           "vendor/cusmem/graphiti_rag/",
           "vendor/cusmem/tests/"
         ]
