@@ -41,6 +41,8 @@ class QbrPlanContractTests(unittest.TestCase):
             "最多 2 次 replan",
             "Guardrail final approve",
             "Summary Agent 第一版（deterministic summary packet）已完成",
+            "Plan Agent 第一版已完成",
+            "engineer_agent_state.active_plan",
             "engineer_handoff_packet",
             "engineer-summary-packet-v1",
             "class=\"mermaid\"",
@@ -56,6 +58,7 @@ class QbrPlanContractTests(unittest.TestCase):
                 self.assertIn(term, html_source)
         self.assertNotIn("当前下一步：实现 Summary Agent", html_source)
         self.assertNotIn("当前下一步：实现真实 Plan Agent", html_source)
+        self.assertNotIn("当前下一步是实现 Plan Agent", html_source)
 
     def test_qbr_plan_tracks_assignment_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")

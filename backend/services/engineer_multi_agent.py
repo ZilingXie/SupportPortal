@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.services.engineer_plan_agent import (
+    build_plan_dependencies,
+    resolve_plan_memory_context,
+    resolve_plan_skill_context,
+)
+
 ENGINEER_MULTI_AGENT_PLAN_VERSION = "engineer-multi-agent-plan-v1"
 ENGINEER_MULTI_AGENT_WORKFLOW_VERSION = "engineer-multi-agent-workflow-v1"
 
@@ -38,14 +44,18 @@ def build_initial_multi_agent_plan(
     if clean_revise_note:
         context_parts.append(f"Revise note: {clean_revise_note}")
     context_summary = " ".join(context_parts) or f"Investigate {subject}."
-    tasks = [
+    tasks: list[dict[str, Any]] = [
         {
             "task_id": "task_context_review",
             "title": "Review ticket and handoff context",
+            "description": "Read the full ticket history, handoff packet, and escalation context to normalize the issue understanding.",
+            "skill": "context_review",
             "agent": "implement",
             "tool": "context_summary",
             "depends_on": [],
             "can_parallelize": False,
+            "expected_output": "Normalized issue summary with known facts, missing information, and investigation scope.",
+            "blockers": [],
             "status": "planned",
         }
     ]
@@ -54,10 +64,14 @@ def build_initial_multi_agent_plan(
             {
                 "task_id": "task_internal_rag",
                 "title": "Search internal troubleshooting knowledge",
+                "description": "Query the internal knowledge base for relevant troubleshooting patterns.",
+                "skill": "internal_knowledge_search",
                 "agent": "implement",
                 "tool": "internal_rag",
                 "depends_on": ["task_context_review"],
                 "can_parallelize": True,
+                "expected_output": "Ranked list of relevant internal evidence with source references.",
+                "blockers": [],
                 "status": "planned",
             }
         )
@@ -66,13 +80,23 @@ def build_initial_multi_agent_plan(
             {
                 "task_id": "task_official_rag_fallback",
                 "title": "Check official documentation for customer-safe wording",
+                "description": "Search the public documentation for accurate, customer-safe descriptions.",
+                "skill": "official_docs_fallback",
                 "agent": "implement",
                 "tool": "official_rag",
                 "depends_on": ["task_context_review"],
                 "can_parallelize": True,
+                "expected_output": "Official documentation references suitable for customer-facing replies.",
+                "blockers": [],
                 "status": "planned",
             }
         )
+    dependencies = build_plan_dependencies(tasks=tasks)
+    memory_context = resolve_plan_memory_context(mem0_context=None)
+    skill_context = resolve_plan_skill_context(
+        skill_inventory={"installed": True, "skills": skills} if skills else None
+    )
+    parallel_candidates = [t["task_id"] for t in tasks if t.get("can_parallelize")]
     return {
         "plan_id": _stable_id("map", ticket_id),
         "ticket_id": ticket_id,
@@ -83,6 +107,15 @@ def build_initial_multi_agent_plan(
         "revise_note": clean_revise_note,
         "available_skills": skills,
         "tasks": tasks,
+        "hypotheses": [],
+        "dependencies": dependencies,
+        "blockers": [],
+        "memory_context": memory_context,
+        "skill_context": skill_context,
+        "scheduler_hints": {
+            "parallel_groups": [parallel_candidates] if parallel_candidates else [],
+            "serial_steps": ["task_context_review"],
+        },
         "risk_flags": [],
         "created_by": "plan_agent",
     }

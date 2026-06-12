@@ -2785,6 +2785,22 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         self.assertIsInstance(agent_state.get("reply_readiness"), dict)
         self.assertFalse(agent_state["reply_readiness"]["ready_for_customer_reply"])
+        # Plan Agent fields
+        self.assertIn("active_plan", agent_state)
+        active_plan = agent_state["active_plan"]
+        self.assertIsInstance(active_plan, dict)
+        self.assertEqual(active_plan["plan_version"], "engineer-plan-v1")
+        self.assertEqual(active_plan["plan_agent_version"], "engineer-plan-agent-v1")
+        self.assertEqual(active_plan["created_by"], "plan_agent")
+        self.assertIn("hypotheses", active_plan)
+        self.assertIn("tasks", active_plan)
+        self.assertIn("dependencies", active_plan)
+        self.assertIn("blockers", active_plan)
+        self.assertEqual(active_plan["memory_context"]["mode"], "fallback_unavailable")
+        self.assertEqual(active_plan["skill_context"]["mode"], "allowlist_fallback")
+        self.assertEqual(agent_state["plan_id"], active_plan["plan_id"])
+        self.assertEqual(agent_state["plan_version"], "engineer-plan-v1")
+        self.assertEqual(agent_state["plan_agent_version"], "engineer-plan-agent-v1")
 
     def test_fallback_engineer_agent_state_omits_candidate_answer_from_known_facts(self) -> None:
         state = fallback_engineer_agent_state(
@@ -2981,6 +2997,72 @@ class InvestigationFlowTests(unittest.TestCase):
             state["known_facts"],
             ["Verified Web SDK log shows token renew callback never fires on Android 14."],
         )
+
+    def test_normalize_engineer_agent_state_preserves_active_plan_fields(self) -> None:
+        active_plan = {
+            "plan_id": "plan_summary_ec_001_r1",
+            "plan_version": "engineer-plan-v1",
+            "plan_agent_version": "engineer-plan-agent-v1",
+            "created_by": "plan_agent",
+            "objective": "Investigate camera issue.",
+            "hypotheses": [],
+            "tasks": [],
+            "dependencies": [],
+            "blockers": [],
+            "memory_context": {"mode": "fallback_unavailable", "memory_refs": [], "fallback_reason": "mem0_not_configured"},
+            "skill_context": {"mode": "allowlist_fallback", "selected_skills": ["context_review"]},
+        }
+        state = normalize_engineer_agent_state(
+            {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Camera black screen on Android.",
+                "active_plan": active_plan,
+                "plan_id": active_plan["plan_id"],
+                "plan_version": active_plan["plan_version"],
+                "plan_agent_version": active_plan["plan_agent_version"],
+            },
+            ticket={
+                "subject": "Camera black screen",
+                "active_investigation": {"draft_customer_reply": ""},
+            },
+            handoff_packet={
+                "latest_customer_message": "Camera is black.",
+                "rag_result": {"candidate_answer": "Check permissions."},
+                "unresolved_reason": "rag_insufficient_evidence",
+            },
+            now_value="2026-06-20T10:00:00Z",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(state["plan_id"], "plan_summary_ec_001_r1")
+        self.assertEqual(state["plan_version"], "engineer-plan-v1")
+        self.assertEqual(state["plan_agent_version"], "engineer-plan-agent-v1")
+        self.assertIsInstance(state["active_plan"], dict)
+        self.assertEqual(state["active_plan"]["plan_id"], "plan_summary_ec_001_r1")
+        self.assertEqual(state["active_plan"]["memory_context"]["mode"], "fallback_unavailable")
+
+    def test_normalize_without_active_plan_still_works(self) -> None:
+        """normalize_engineer_agent_state should not crash when active_plan is absent."""
+        state = normalize_engineer_agent_state(
+            {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Basic issue.",
+            },
+            ticket={
+                "subject": "Basic issue",
+                "active_investigation": {"draft_customer_reply": ""},
+            },
+            handoff_packet={
+                "latest_customer_message": "Help.",
+                "rag_result": {},
+                "unresolved_reason": "rag_insufficient_evidence",
+            },
+            now_value="2026-06-20T10:00:00Z",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(state["phase"], "gather_missing_inputs")
+        self.assertIn("issue_understanding", state)
 
     def test_customer_follow_up_during_investigation_keeps_same_thread_and_clears_confirmation(self) -> None:
         self._seed_ticket(
