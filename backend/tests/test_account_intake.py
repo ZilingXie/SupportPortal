@@ -61,7 +61,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(ticket["subject"], "Detailed invoice request")
         self.assertEqual(ticket["requester"], "customer@example.com")
         self.assertEqual(ticket["customer_id"], "customer@example.com")
-        self.assertEqual(ticket["source"], "/account-ui")
+        self.assertEqual(ticket["source"], "manual")
         self.assertEqual(
             [message["role"] for message in ticket["messages"]],
             ["customer", "assistant"],
@@ -76,7 +76,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             if item["event_type"] == "ticket_created"
         ]
         self.assertTrue(event_payloads)
-        self.assertEqual(event_payloads[0]["source"], "/account-ui")
+        self.assertEqual(event_payloads[0]["source"], "manual")
         self.assertEqual(event_payloads[0]["execution_action"], "detailed_invoice")
 
     def test_account_intake_preserves_non_automated_ticket_without_email(self) -> None:
@@ -107,7 +107,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(ticket)
         assert ticket is not None
         self.assertEqual(ticket["subject"], "General support question")
-        self.assertEqual(ticket["source"], "/account-manual")
+        self.assertEqual(ticket["source"], "manual")
         self.assertEqual([message["role"] for message in ticket["messages"]], ["customer"])
 
     def test_account_intake_requires_title_and_question(self) -> None:
@@ -150,7 +150,9 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
+        self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertTrue(str(payload["billing_ticket_id"] or "").startswith("BT-TK-ACC-"))
+        self.assertEqual(payload.get("support_ticket_id"), payload.get("ticket_id"))
 
     def test_account_intake_saves_billing_ticket(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
@@ -179,7 +181,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["client_ticket_id"], payload["ticket_id"])
         self.assertEqual(bt["automation_status"], "automated")
         self.assertEqual(bt["route"], "detailed_invoice")
-        self.assertEqual(bt["source"], "/account-ui")
+        self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["external_id"], "ext-123")
         self.assertEqual(bt["created_by"], "tester")
         self.assertEqual(bt["title"], "Detailed invoice request")
@@ -203,7 +205,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert bt is not None
         self.assertEqual(bt["automation_status"], "not_automated")
         self.assertIsNone(bt["route"])
-        self.assertEqual(bt["source"], "/account-manual")
+        self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["customer_reply"], None)
 
     def test_billing_tickets_list_api(self) -> None:
@@ -222,6 +224,12 @@ class AccountIntakeApiTests(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["count"], 3)
         self.assertEqual(len(data["billing_tickets"]), 3)
+        self.assertIn("tickets", data)
+        self.assertEqual(len(data["tickets"]), 3)
+        for item in data["tickets"]:
+            self.assertTrue(str(item["ticket_id"] or "").startswith("TK-ACC-"))
+            self.assertEqual(item["ticket_id"], item["support_ticket_id"])
+            self.assertIn("status", item)
         for item in data["billing_tickets"]:
             self.assertIn("billing_ticket_id", item)
             self.assertIn("client_ticket_id", item)
@@ -246,9 +254,37 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         detail = response.json()
         self.assertEqual(detail["billing_ticket_id"], bt_id)
+        self.assertEqual(detail["ticket_id"], detail.get("client_ticket_id"))
+        self.assertEqual(detail.get("support_ticket_id"), detail.get("client_ticket_id"))
         self.assertEqual(detail["automation_status"], "needs_more_info")
+        self.assertEqual(detail["status"], "needs_more_info")
         self.assertEqual(detail["route"], "detailed_invoice")
         self.assertTrue(detail["missing_fields"])
+
+    def test_billing_ticket_view_model_normalizes_legacy_api_source(self) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-LEGACY-001",
+                "client_ticket_id": "TK-LEGACY-001",
+                "source": "/account-http",
+                "title": "Legacy API ticket",
+                "question": "legacy question",
+                "automation_status": "not_automated",
+            }
+        )
+
+        list_response = self.client.get("/api/account/billing-tickets?limit=30")
+        self.assertEqual(list_response.status_code, 200)
+        list_payload = list_response.json()
+        self.assertEqual(list_payload["tickets"][0]["ticket_id"], "TK-LEGACY-001")
+        self.assertEqual(list_payload["tickets"][0]["source"], "api")
+
+        detail_response = self.client.get("/api/account/billing-tickets/BT-TK-LEGACY-001")
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertEqual(detail["ticket_id"], "TK-LEGACY-001")
+        self.assertEqual(detail["support_ticket_id"], "TK-LEGACY-001")
+        self.assertEqual(detail["source"], "api")
 
     def test_billing_tickets_detail_api_404(self) -> None:
         response = self.client.get("/api/account/billing-tickets/BT-nonexistent")
