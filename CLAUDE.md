@@ -17,7 +17,7 @@ When Claude Code writes code or edits repo-tracked files:
 3. Do not create pull requests.
 4. Do not merge branches.
 5. Do not run `scripts/workflow/finalize_task_to_main.sh`.
-6. Do not delete or clean up task worktrees.
+6. Do not delete or clean up task workspaces or task worktrees.
 7. Do not use `/codex:rescue` as a shortcut to commit, merge, finalize, or clean up your own work.
 
 After implementation, stop with a handoff to Codex review. Codex will review the diff, make any needed corrections, commit, create or update the PR, merge, run required post-merge verification, and clean up.
@@ -53,9 +53,16 @@ For any task that requires understanding, locating, tracing, or changing code, p
 
 When a task involves modifying code or files, follow this workflow:
 
+### Workspace rule
+
+- Work only inside the assigned project-local task workspace, normally `/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/<thread-slug>`.
+- Do not use `~/.config/superpowers/worktrees/...` or `~/.codex/worktrees/...` as the default SupportPortal task workspace.
+- Do not create task branches manually from the root workspace. Codex should create them with `scripts/workflow/create_task_worktree.sh <thread-name-or-slug>`.
+- If you find the root workspace on a `codex/*` branch, stop and report it instead of continuing.
+
 ### 1. Confirm assignment
 
-Read `AGENTS.md`, confirm the expected branch/worktree, and stay inside the assigned task worktree. If no task worktree or plan has been assigned, stop and ask Codex or the user for the plan and worktree.
+Read `AGENTS.md`, confirm the expected `codex/<thread>` branch and project-local task workspace, and stay inside the assigned workspace. The root workspace at `/Users/xieziling/Desktop/personal_proj/SupportPortal` must remain on clean `main`; do not edit repo-tracked files there. If no task workspace or plan has been assigned, stop and ask Codex or the user for the plan and workspace.
 
 ### 2. Plan
 
@@ -73,7 +80,7 @@ Implement the approved plan. Keep changes scoped to the task. Avoid unrelated re
 
 ### 4. Verify
 
-Run the narrowest task-appropriate verification available in the assigned worktree. If verification cannot run, explain exactly why and include the command that was attempted.
+Run the narrowest task-appropriate verification available in the assigned task workspace. If verification cannot run, explain exactly why and include the command that was attempted.
 
 ### 5. Stop before commit
 
