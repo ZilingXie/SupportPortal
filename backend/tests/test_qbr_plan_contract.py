@@ -40,7 +40,9 @@ class QbrPlanContractTests(unittest.TestCase):
             "unable_to_resolve",
             "最多 2 次 replan",
             "Guardrail final approve",
-            "当前下一步：实现 Summary Agent",
+            "Summary Agent 第一版（deterministic summary packet）已完成",
+            "engineer_handoff_packet",
+            "engineer-summary-packet-v1",
             "class=\"mermaid\"",
             "flowchart TD",
             "Create Engineer Ticket with summary packet",
@@ -52,6 +54,7 @@ class QbrPlanContractTests(unittest.TestCase):
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
+        self.assertNotIn("当前下一步：实现 Summary Agent", html_source)
         self.assertNotIn("当前下一步：实现真实 Plan Agent", html_source)
 
     def test_qbr_plan_tracks_assignment_lane(self) -> None:

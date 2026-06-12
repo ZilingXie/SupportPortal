@@ -925,7 +925,7 @@ flowchart TD
       </div>
       <div class="timeline-step">
         <b>3. Multi-Agent</b>
-        <p>展示 Engineer AI 从 guardrail-only 走向 Summary Agent、Plan Agent、Execute Agent、Review Agent 的调查主链路；当前下一步是先实现 Summary Agent 和 summary packet，再把 Plan Agent 接入 mem0/skill fallback。</p>
+        <p>展示 Engineer AI 从 guardrail-only 走向 Summary Agent、Plan Agent、Execute Agent、Review Agent 的调查主链路；Summary Agent 第一版（deterministic summary packet）已完成，summary packet 写入 engineer_handoff_packet（engineer-summary-packet-v1）；当前下一步是实现 Plan Agent 并接入 mem0/skill fallback。</p>
       </div>
       <div class="timeline-step">
         <b>4. RAG vs KG</b>
@@ -1005,7 +1005,7 @@ flowchart TD
         short: "Multi-Agent",
         title: "Engineer AI multi-agent",
         status: "doing",
-        thesis: "已经完成边界、反馈、ledger、第一版后端 skeleton 和新版生命周期架构；线上仍是 guardrail-first，当前下一步是实现 Summary Agent 与 summary packet，然后再推进 Plan/Execute/Review 链路。",
+        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构和 Summary Agent（deterministic summary packet 写入 engineer_handoff_packet）；线上仍是 guardrail-first，当前下一步是实现 Plan Agent，然后再推进 Execute/Review 链路。",
         done: [
           "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
           "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
@@ -1024,7 +1024,7 @@ flowchart TD
           "Engineer approve 后仍必须走 guardrail 生成/校验 customer-facing reply，并再交给 engineer 最终 approve；关闭工单时只写 Case Memory candidate，不自动变 active memory。"
         ],
         next: [
-          { id: "ma-summary-agent", status: "todo", label: "当前下一步：实现 Summary Agent 和 summary packet，把 client escalation 上下文、线索、缺失信息和 redaction boundary 转成 Engineer ticket 输入。", horizon: "Task 2" },
+          { id: "ma-summary-agent", status: "done", label: "Summary Agent 第一版已实现：deterministic summary packet builder，输出写入 engineer_handoff_packet（engineer-summary-packet-v1），记录 escalation 上下文、线索、缺失信息和 redaction boundary。", horizon: "Task 2" },
           { id: "ma-plan-agent", status: "todo", label: "实现 Plan Agent：基于 summary packet、mem0（未接入时 fallback）和 skill list（未安装时用 allowlist fallback）生成 hypotheses、tasks、dependencies 和 blockers。", horizon: "Task 3" },
           { id: "ma-execute-agent", status: "todo", label: "实现 Execute Agent：规划并启动 allowlisted subagents，区分 parallel groups 与串行依赖，收集 task results 和 evidence packet。", horizon: "Task 4" },
           { id: "ma-review-agent", status: "todo", label: "实现 Review Agent：根据执行结果和客户工单总结输出 ready_for_engineer、replan_required 或 unable_to_resolve，并限制最多 2 次 replan。", horizon: "Task 5" },

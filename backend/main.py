@@ -76,6 +76,7 @@ from backend.services.engineer_cases import (
     close_case_context_active_investigation,
     derive_engineer_case_title,
 )
+from backend.services.engineer_summary_agent import build_engineer_summary_packet
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     ESCALATED_STATUS,
@@ -3227,6 +3228,24 @@ async def create_or_update_ticket(
                     trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                     now_value=now_iso(),
                 )
+                summary_packet = build_engineer_summary_packet(
+                    client_ticket=ticket,
+                    engineer_case=engineer_case,
+                    customer_message=effective_customer_message,
+                    execution=execution,
+                    route_payload=execution_route_payload,
+                    now_value=now_iso(),
+                )
+                engineer_case["engineer_handoff_packet"] = summary_packet
+                engineer_case["engineer_agent_state"] = {
+                    **(engineer_case.get("engineer_agent_state") or {}),
+                    "summary_packet_id": summary_packet["packet_id"],
+                    "summary_agent_version": summary_packet["summary_agent_version"],
+                    "summary_packet_version": summary_packet["packet_version"],
+                    "issue_understanding": summary_packet["engineer_ticket_input"]["opening_summary"],
+                    "missing_information": list(summary_packet.get("missing_information") or []),
+                    "next_request_for_engineer": summary_packet["engineer_ticket_input"]["requested_action"],
+                }
                 case_context = build_engineer_case_context(ticket, engineer_case)
                 opening_context = build_investigation_opening_context(
                     case_context,
