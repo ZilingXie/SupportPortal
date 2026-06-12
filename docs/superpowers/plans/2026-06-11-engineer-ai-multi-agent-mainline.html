@@ -370,7 +370,7 @@
         <li>补上 <code>record_multi_agent_task_result</code> 的最小实现：规范化 status、evidence_refs、missing_information。</li>
         <li>补上 <code>build_multi_agent_conclusion</code> 的最小实现：从 task_results 导出 <code>conclusion_status</code>、<code>confidence</code>、<code>root_cause_status</code>、<code>next_action</code>。</li>
         <li>再次运行 <code>python3 -m unittest backend.tests.test_engineer_multi_agent -v</code>，预期全部通过。</li>
-        <li>运行 <code>python3 -m unittest backend.tests.test_engineer_ai_evolution_plan_contract -v</code>，确认计划文档契约仍然通过。</li>
+        <li>运行 <code>python3 -m unittest backend.tests.test_qbr_plan_contract -v</code>，确认唯一维护中的 QBR 计划文档契约仍然通过。</li>
         <li>任务 1 到此为止，不继续改 runtime 接入、Memory Review 查询、UI 或 guardrail。</li>
       </ol>
     </section>
@@ -412,7 +412,7 @@
 
     <section>
       <h2>十一、任务 9：文档与日志更新</h2>
-      <p>根据实现范围更新 <code>docs/engineer_ai_evolution_plan.html</code>，必要时补 <code>docs/prompt_change_log.md</code>、<code>docs/rag_change_log.md</code> 和 <code>docs/feature_list.md</code>，并运行对应验证。</p>
+      <p>根据实现范围更新 <code>docs/qbr_plan.html</code>，必要时补 <code>docs/prompt_change_log.md</code>、<code>docs/rag_change_log.md</code> 和 <code>docs/feature_list.md</code>，并运行对应验证。</p>
     </section>
 
     <section>
@@ -423,7 +423,7 @@
       <pre><code>python3 -m unittest backend.tests.test_engineer_multi_agent -v
 python3 -m unittest backend.tests.test_engineer_hitl_review -v
 python3 -m unittest backend.tests.test_engineer_ui_contract -v
-python3 -m unittest backend.tests.test_engineer_ai_evolution_plan_contract -v</code></pre>
+python3 -m unittest backend.tests.test_qbr_plan_contract -v</code></pre>
       <p class="small">如果是 stack-relevant 改动，合并到 <code>main</code> 后还必须按仓库工作流执行 single-host live verification。</p>
     </section>
   </main>
