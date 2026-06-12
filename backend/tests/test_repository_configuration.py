@@ -292,6 +292,22 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def record_case_memory_ledger", repo_source)
         self.assertIn("def list_case_memory_ledger", repo_source)
 
+    def test_ticket_storage_contract_includes_billing_ticket_table(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_billing_tickets", sql_source)
+        self.assertIn("billing_ticket_id TEXT PRIMARY KEY", sql_source)
+        self.assertIn("client_ticket_id TEXT NOT NULL UNIQUE REFERENCES support_tickets", sql_source)
+        self.assertIn("automation_status TEXT NOT NULL", sql_source)
+        self.assertIn("missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb", sql_source)
+        self.assertIn("collected_fields JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
+        self.assertIn("idx_support_billing_tickets_created", sql_source)
+        self.assertIn("support_billing_tickets", repo_source)
+        self.assertIn("def save_billing_ticket", repo_source)
+        self.assertIn("def get_billing_ticket", repo_source)
+        self.assertIn("def list_billing_tickets", repo_source)
+
     def test_ticket_repository_initialize_escapes_case_memory_ledger_jsonb_default_for_sql_formatting(self) -> None:
         cursor = _ReusableCursor()
         connection = _ReusableConnection(cursor)
