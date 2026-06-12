@@ -693,7 +693,7 @@
     <header class="hero">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR 追踪 · 2026-06-12</div>
       <h1>四条优化主线，一张可追踪进度板。</h1>
-      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 multi-agent skeleton 合并、主线实施计划 HTML 化、ticket id 统一和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
+      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 multi-agent skeleton 合并、主线实施计划 HTML 化、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
       <div class="hero-meta">
         <span class="meta-pill">同步点：main @ 2026-06-12</span>
         <span class="meta-pill">来源：docs + tests + changelog + recent merges</span>
@@ -714,7 +714,7 @@
         <h2>当前判断</h2>
         <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已有后端契约骨架和中文主线计划，但真实生命周期仍未接管；RAG/KG 已完成 cusmem 产品化整理，下一步才是 SupportPortal adapter 与评测。</p>
         <ul class="review-list" aria-label="QBR review notes">
-          <li>QBR 可以把 Billing 作为最强 demo，但必须把 Zendesk、幂等和人工审核标为试运行前置条件。</li>
+          <li>QBR 可以把 Billing 作为最强 demo，但必须明确当前是 route + 记录状态，不是真正执行 automation；Zendesk、幂等和人工审核仍是试运行前置条件。</li>
           <li>Assignment 和 Multi-Agent 都要避免过度承诺：前者是 localStorage 原型，后者是 skeleton + plan，还不是生产主链路。</li>
           <li>RAG/KG 适合讲架构方向和边界，不能把 vendored cusmem 等同于已上线的 KG 检索能力。</li>
         </ul>
@@ -745,7 +745,7 @@
     <section class="timeline" aria-label="Suggested QBR route">
       <div class="timeline-step">
         <b>1. Billing</b>
-        <p>展示确定性最强的白名单自动化：字段收集、route、ticket 持久化、邮件升级、历史查询，以及对外 `TK-...` ticket id 统一已经闭环，下一步是 Zendesk、幂等和试运行质量复盘。</p>
+        <p>展示确定性最强的白名单路由闭环：`/account` case 持久化、route、单一 `TK-...` ticket id、automation 状态记录和历史查询已经闭环；当前不执行自动化动作，下一步是 Zendesk、幂等和人工审核试运行。</p>
       </div>
       <div class="timeline-step">
         <b>2. Assignment</b>
@@ -777,6 +777,10 @@
     };
 
     const RECENT_UPDATES = [
+      {
+        key: "#446",
+        copy: "Account intake v2 已合入：/account 统一只暴露一个 ticket_id，billing 白名单只记录 automation 状态，不执行字段收集、客户回复或内部邮件。"
+      },
       {
         key: "#444",
         copy: "QBR tracker 成为唯一维护中的计划页，旧的 billing、assignment、engineer-evolution 计划页已从 docs 入口收敛。"
@@ -895,27 +899,27 @@
         short: "Billing",
         title: "Billing intake / ticket routing",
         status: "doing",
-        thesis: "确定性 billing 白名单 POC 已贯通 /account intake、route、ticket、邮件和历史查询；ticket id 已统一，下一步要接真实来源、审核和试运行指标。",
+        thesis: "确定性 billing 白名单 POC 已贯通 /account intake、route、ticket 持久化、automation 状态记录和历史查询；对外 ticket id 已统一为单一 `TK-...`，当前不执行 automation，下一步要接真实来源、审核和试运行指标。",
         done: [
           "白名单 v1 收窄到 `account_suspension` 和 `detailed_invoice`，金额争议、退款、赔付、裁决类问题默认不自动化。",
           "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
-          "`POST /account` 已实现创建客户工单 -> route -> follow process；字段缺失时追问，字段齐全时升级内部团队并准备/发送内部邮件。",
-          "`/account` 手动 UI 已复用 client 体验，并展示 route、canonical `TK-...` ticket id、客户回复、缺失字段、邮件状态和最近 ticket 历史。",
-          "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 ticket view-model 已统一：`ticket_id` 指向 support ticket，`source` 统一为 `manual` / `api`，左侧 Recent tickets 列表已修复。",
-          "Billing ticket 历史列表和详情 API 已完成；底层 schema、repository contract 和 account intake 测试覆盖了 companion table 存取。",
-          "内部邮件已支持 action-specific destination env，2026-06-10 detailed_invoice 真实 SMTP 发送测试已确认 sent。"
+          "`POST /account` 已实现创建客户工单 -> route -> 记录结果；`account_suspension` 和 `detailed_invoice` 只标记 `automation_status = automation`，不调用 follow process、不追问字段、不生成客户回复、不发送内部邮件。",
+          "`/account` 手动 UI 已复用 client 体验，并展示 route、单一 canonical `TK-...` ticket id、Automation / Not automated 状态和最近 ticket 历史；详情页不再展示第二个 Support ticket ID。",
+          "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 view-model 只保留一个 `ticket_id`；`billing_ticket_id` 保持为内部 companion key，`source` 统一为 `manual` / `api`。",
+          "Billing ticket 历史列表和详情 API 已完成；详情 API 支持用 canonical `ticket_id` 直接查询，不再依赖 Recent tickets 列表窗口。",
+          "底层 billing automation helper 仍支持 action-specific destination env 和内部邮件，但 `/account` intake 当前只记录路由结果，不触发邮件发送。"
         ],
         review: [
-          "这是四条主线里最接近小流量试运行的一条，因为 routing、字段收集、ticket view-model 和邮件链路都有测试证据。",
-          "试运行前必须补 Zendesk/external_id 幂等，否则 webhook 重放会带来重复建单或重复发邮件风险。",
-          "白名单不要扩大过快；先用真实 case 回放证明 account_suspension 和 detailed_invoice 的误判率。"
+          "这是四条主线里最接近小流量试运行的一条，因为 routing、ticket view-model、状态记录、历史查询和 live `/account` smoke 都有测试证据。",
+          "试运行前必须补 Zendesk/external_id 幂等，否则 webhook 重放仍会带来重复建单和重复状态记录风险。",
+          "白名单不要扩大过快；先用真实 case 回放证明 account_suspension 和 detailed_invoice 的 route 误判率，再决定是否真正执行 automation。"
         ],
         next: [
-          { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单、缺字段、非白名单、高风险人工。", horizon: "Scope" },
+          { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单 route、非白名单、Not automated、高风险人工。", horizon: "Scope" },
           { id: "billing-zendesk", status: "todo", label: "接入 Zendesk webhook/API 拉取新工单内容和必要 metadata。", horizon: "Source" },
-          { id: "billing-human-review", status: "todo", label: "建立人工审核模式，审核升级告知和内部邮件，误判回流测试集。", horizon: "Review" },
-          { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单或重复发邮件。", horizon: "Reliability" },
-          { id: "billing-pilot", status: "todo", label: "启用小流量试运行，统计覆盖率、误判、升级人工原因和客户补充信息质量。", horizon: "Pilot" },
+          { id: "billing-human-review", status: "todo", label: "建立人工审核模式，先审核 route 与 automation 状态，再决定是否允许生成客户告知或内部邮件。", horizon: "Review" },
+          { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单或重复写入 automation 状态。", horizon: "Reliability" },
+          { id: "billing-pilot", status: "todo", label: "启用小流量试运行，统计覆盖率、route 误判、Not automated 原因和人工审核结果。", horizon: "Pilot" },
           { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" }
         ],
         sources: [

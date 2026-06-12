@@ -39,6 +39,11 @@ class QbrPlanContractTests(unittest.TestCase):
         required_terms = [
             "Billing intake / ticket routing",
             "canonical `TK-...` ticket id",
+            "account-intake-v2",
+            "automation_status = automation",
+            "不调用 follow process",
+            "不发送内部邮件",
+            "不再展示第二个 Support ticket ID",
             "`support_billing_tickets` companion table",
             "`source` 统一为 `manual` / `api`",
             "Recent tickets",
