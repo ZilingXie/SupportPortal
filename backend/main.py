@@ -2597,12 +2597,31 @@ def create_client_ack(request: ClientAckRequest) -> dict[str, Any]:
 def _normalize_account_source(value: str | None) -> str:
     normalized = str(value or "").strip().lower().replace("_", "-")
     if normalized in {"manual", "account-manual", "/account-manual"}:
-        return "/account-manual"
+        return "manual"
     if normalized in {"ui", "account-ui", "/account-ui"}:
-        return "/account-ui"
+        return "manual"
     if normalized in {"http", "account-http", "/account-http"}:
-        return "/account-http"
-    return "/account-http"
+        return "api"
+    return "api"
+
+
+def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
+    support_ticket_id = (
+        str(ticket.get("support_ticket_id") or "").strip()
+        or str(ticket.get("client_ticket_id") or "").strip()
+        or str(ticket.get("ticket_id") or "").strip()
+    )
+    billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip() or None
+    status = str(ticket.get("status") or ticket.get("automation_status") or "").strip() or "not_automated"
+    return {
+        **ticket,
+        "ticket_id": support_ticket_id,
+        "support_ticket_id": support_ticket_id,
+        "billing_ticket_id": billing_ticket_id,
+        "source": _normalize_account_source(ticket.get("source")),
+        "status": status,
+        "automation_status": status,
+    }
 
 
 @app.post("/account")
@@ -2756,6 +2775,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "status": response_status,
         "route": route if is_billing_route else None,
         "ticket_id": ticket_id,
+        "support_ticket_id": ticket_id,
         "billing_ticket_id": billing_ticket_id,
         "customer_reply": customer_reply,
         "missing_fields": missing_fields,
@@ -2771,26 +2791,24 @@ def list_billing_tickets(limit: int = 30) -> dict[str, Any]:
     tickets = ticket_repository.list_billing_tickets(limit=safe_limit)
     items = [
         {
+            **_build_account_ticket_view_model(item),
             "billing_ticket_id": item.get("billing_ticket_id"),
             "client_ticket_id": item.get("client_ticket_id"),
-            "source": item.get("source"),
-            "title": item.get("title"),
-            "route": item.get("route"),
-            "automation_status": item.get("automation_status"),
-            "created_at": item.get("created_at"),
-            "updated_at": item.get("updated_at"),
         }
         for item in tickets
     ]
-    return {"billing_tickets": items, "count": len(items)}
+    return {"tickets": items, "billing_tickets": items, "count": len(items)}
 
 
 @app.get("/api/account/billing-tickets/{billing_ticket_id}")
 def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     ticket = ticket_repository.get_billing_ticket(billing_ticket_id)
     if ticket is None:
-        raise HTTPException(status_code=404, detail="billing ticket not found")
-    return ticket
+        raise HTTPException(status_code=404, detail="ticket not found")
+    return {
+        **ticket,
+        **_build_account_ticket_view_model(ticket),
+    }
 
 
 def _public_asset_payload(asset: dict[str, Any]) -> dict[str, Any]:

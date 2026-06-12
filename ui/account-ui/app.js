@@ -30,7 +30,7 @@ const state = {
   title: "",
   question: "",
   customerEmail: "",
-  source: "account-ui",
+  source: "manual",
   isSubmitting: false,
   history: [],
   activeItem: null,
@@ -64,6 +64,24 @@ function routeClass(route) {
   return "route-other";
 }
 
+function normalizeSource(source) {
+  const normalized = String(source || "").trim().toLowerCase().replaceAll("_", "-");
+  if (normalized === "api" || normalized === "http" || normalized === "account-http" || normalized === "/account-http") {
+    return "api";
+  }
+  return "manual";
+}
+
+function sourceLabel(source) {
+  if (normalizeSource(source) === "api") return "API";
+  return "Manual";
+}
+
+function sourceClass(source) {
+  if (normalizeSource(source) === "api") return "source-api";
+  return "source-manual";
+}
+
 function showToast(message) {
   if (!toastRoot) return;
   toastRoot.innerHTML = `<div class="toast">${escapeHtml(message)}</div>`;
@@ -72,20 +90,20 @@ function showToast(message) {
   }, 3200);
 }
 
-async function fetchBillingTickets() {
+async function fetchTickets() {
   try {
     const response = await fetch("/api/account/billing-tickets?limit=30");
     if (!response.ok) return;
     const data = await response.json();
-    state.history = data.billing_tickets || [];
+    state.history = data.tickets || data.billing_tickets || [];
   } catch {
     state.history = [];
   }
 }
 
-async function fetchBillingTicketDetail(billingTicketId) {
+async function fetchTicketDetail(ticketId) {
   try {
-    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}`);
+    const response = await fetch(`/api/account/billing-tickets/${ticketId}`);
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -93,10 +111,10 @@ async function fetchBillingTicketDetail(billingTicketId) {
   }
 }
 
-async function openBillingTicket(billingTicketId) {
-  const detail = await fetchBillingTicketDetail(billingTicketId);
+async function openTicket(ticketId) {
+  const detail = await fetchTicketDetail(ticketId);
   if (!detail) {
-    showToast("Failed to load billing ticket details.");
+    showToast("Failed to load ticket details.");
     return;
   }
   state.activeItem = detail;
@@ -145,9 +163,9 @@ async function submitAccountIntake(event) {
       throw new Error(payload.detail || "Account intake failed.");
     }
     showToast(payload.ticket_id ? `Ticket ${payload.ticket_id} created` : "Ticket created");
-    await fetchBillingTickets();
-    if (payload.billing_ticket_id) {
-      await openBillingTicket(payload.billing_ticket_id);
+    await fetchTickets();
+    if (payload.billing_ticket_id || payload.ticket_id) {
+      await openTicket(payload.billing_ticket_id || payload.ticket_id);
     }
     state.title = "";
     state.question = "";
@@ -165,37 +183,45 @@ function renderHistorySidebar() {
     return `
       <div class="history-empty">
         <span class="material-symbols-outlined">receipt_long</span>
-        <p>No billing tickets yet</p>
+        <p>No tickets yet</p>
       </div>
     `;
   }
-  return state.history
-    .map(
-      (item) => `
-    <button class="history-item ${
-      state.activeItem && state.activeItem.billing_ticket_id === item.billing_ticket_id
-        ? "history-item--active"
-        : ""
-    }" type="button" data-action="open-billing-ticket" data-id="${escapeHtml(item.billing_ticket_id)}">
+  return `
+    <div class="history-section-title">Recent tickets</div>
+    ${state.history
+      .map(
+        (item) => {
+          const itemId = item.billing_ticket_id || item.ticket_id || "";
+          const itemTicketId = item.ticket_id || item.support_ticket_id || item.client_ticket_id || "";
+          const activeTicketId = state.activeItem ? (state.activeItem.ticket_id || state.activeItem.support_ticket_id || state.activeItem.client_ticket_id || "") : "";
+          const activeBillingId = state.activeItem ? (state.activeItem.billing_ticket_id || "") : "";
+          const isActive = (activeBillingId && activeBillingId === itemId) || (activeTicketId && activeTicketId === itemTicketId);
+          const itemSource = item.source || "";
+          const itemStatus = item.status || item.automation_status || "not_automated";
+          return `
+    <button class="history-item ${isActive ? "history-item--active" : ""}" type="button" data-action="open-ticket" data-id="${escapeHtml(itemId)}">
       <div class="history-item-header">
         <strong>${escapeHtml(item.title || "")}</strong>
-        <span class="status-chip ${routeClass(item.route)}">${escapeHtml(item.route || "manual review")}</span>
+        <span class="source-badge ${sourceClass(itemSource)}">${escapeHtml(sourceLabel(itemSource))}</span>
       </div>
       <div class="history-item-meta">
-        <span class="status-badge status-badge--${escapeHtml(item.automation_status || "not_automated")}">${escapeHtml(statusLabel(item.automation_status))}</span>
+        <span class="status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         <span class="history-time">${escapeHtml((item.updated_at || item.created_at || "").slice(0, 16).replace("T", " "))}</span>
       </div>
     </button>
-  `
-    )
-    .join("");
+  `;
+        }
+      )
+      .join("")}
+  `;
 }
 
 function renderCreateForm() {
   return `
     <div class="panel form-stack">
       <div class="form-header">
-        <h3>Create a billing ticket</h3>
+        <h3>Create a ticket</h3>
         <p class="form-desc">Submit an account-side request to route and process billing automation.</p>
       </div>
       <form data-account-form>
@@ -242,6 +268,11 @@ function renderDetailView() {
     collectedFields = item.collected_fields;
   }
 
+  const itemSource = item.source || "";
+  const itemStatus = item.status || item.automation_status || "not_automated";
+  const ticketId = item.ticket_id || item.support_ticket_id || item.client_ticket_id || "";
+  const supportTicketId = item.support_ticket_id || item.client_ticket_id || "";
+
   return `
     <div class="panel detail-stack">
       <div class="detail-header">
@@ -250,20 +281,20 @@ function renderDetailView() {
       </div>
       <div class="meta-grid">
         <div class="meta-row">
-          <span class="meta-label">Billing ticket ID</span>
-          <span class="meta-value">${escapeHtml(item.billing_ticket_id || "")}</span>
+          <span class="meta-label">Ticket ID</span>
+          <span class="meta-value">${escapeHtml(ticketId)}</span>
         </div>
         <div class="meta-row">
-          <span class="meta-label">Client ticket ID</span>
-          <span class="meta-value">${escapeHtml(item.client_ticket_id || "")}</span>
+          <span class="meta-label">Support ticket ID</span>
+          <span class="meta-value">${escapeHtml(supportTicketId)}</span>
         </div>
         <div class="meta-row">
           <span class="meta-label">Source</span>
-          <span class="meta-value">${escapeHtml(item.source || "")}</span>
+          <span class="meta-value"><span class="source-badge ${sourceClass(itemSource)}">${escapeHtml(sourceLabel(itemSource))}</span></span>
         </div>
         <div class="meta-row">
           <span class="meta-label">Status</span>
-          <span class="meta-value status-badge status-badge--${escapeHtml(item.automation_status || "not_automated")}">${escapeHtml(statusLabel(item.automation_status))}</span>
+          <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         </div>
         <div class="meta-row">
           <span class="meta-label">Email</span>
@@ -338,7 +369,7 @@ function render() {
         <div class="workbench-header">
           <div>
             <span class="pill"><span class="material-symbols-outlined">route</span>HTTP or manual</span>
-            <h2>${state.view === "create" ? "Create and route an account ticket" : "Billing ticket detail"}</h2>
+            <h2>${state.view === "create" ? "Create and route an account ticket" : "Ticket detail"}</h2>
           </div>
           ${state.view === "detail" ? `<button class="ghost-button" type="button" data-action="back-to-create">Back to create</button>` : ""}
         </div>
@@ -360,10 +391,10 @@ function bind() {
   const historyList = document.getElementById("history-list");
   if (historyList) {
     historyList.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-action='open-billing-ticket']");
+      const button = event.target.closest("[data-action='open-ticket']");
       if (!button) return;
       const id = button.dataset.id;
-      if (id) openBillingTicket(id);
+      if (id) openTicket(id);
     });
   }
   document.querySelectorAll("[data-action='new-ticket']").forEach((el) => {
@@ -379,6 +410,6 @@ renderSharedComposerFormattingToolbarButtons(state.composerToolbarState);
 serializeRichComposerHtmlToMarkdown("");
 void composerRuntime;
 (async () => {
-  await fetchBillingTickets();
+  await fetchTickets();
   render();
 })();

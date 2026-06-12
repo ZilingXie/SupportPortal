@@ -76,7 +76,7 @@ button:disabled {
   padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   overflow-y: auto;
 }
 
@@ -142,11 +142,24 @@ button:disabled {
   font-size: 13px;
 }
 
+/* --- Sidebar history list --- */
+
 .history-stack {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   flex: 1;
   overflow-y: auto;
+  min-height: 0;
+}
+
+.history-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  padding: 8px 4px 4px 4px;
 }
 
 .history-empty {
@@ -170,35 +183,40 @@ button:disabled {
 
 .history-item {
   border: 0;
-  border-radius: 16px;
-  padding: 12px 14px;
+  border-radius: 14px;
+  padding: 10px 12px;
   text-align: left;
   color: var(--ink);
-  background: var(--surface-container);
-  transition: background 0.15s;
+  background: var(--surface-lowest);
+  border-left: 3px solid transparent;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .history-item:hover {
-  background: var(--surface-container-high);
+  background: var(--surface-container);
+  border-left-color: var(--surface-container-high);
 }
 
 .history-item--active {
-  background: var(--primary);
-  color: #ffffff;
+  background: var(--surface-container-low);
+  color: var(--ink);
+  border-left-color: var(--primary);
+  box-shadow: 0 2px 8px rgba(0, 100, 147, 0.1);
 }
 
-.history-item--active .history-time,
-.history-item--active .status-badge {
-  color: rgba(255, 255, 255, 0.82);
+.history-item--active .history-time {
+  color: var(--ink-muted);
 }
 
 .history-item-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 6px;
 }
 
 .history-item-header strong {
@@ -206,20 +224,47 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .history-item-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .history-time {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--ink-muted);
 }
+
+/* --- Source badge --- */
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+.source-manual {
+  background: #e8eaf6;
+  color: var(--secondary);
+}
+
+.source-api {
+  background: #e0f2f1;
+  color: var(--success);
+}
+
+/* --- Status chip (route) --- */
 
 .status-chip {
   display: inline-flex;

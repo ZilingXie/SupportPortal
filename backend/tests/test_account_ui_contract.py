@@ -42,6 +42,13 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("renderDetailView", app_source)
         self.assertIn("not_automated", app_source)
         self.assertIn("needs_more_info", app_source)
+        self.assertIn("No tickets yet", app_source)
+        self.assertIn("Ticket detail", app_source)
+        self.assertIn("Recent tickets", app_source)
+        self.assertIn('"manual"', app_source)
+        self.assertIn('"api"', app_source)
+        self.assertIn("sourceLabel", app_source)
+        self.assertIn("sourceClass", app_source)
 
     def test_account_app_javascript_syntax(self) -> None:
         result = subprocess.run(
