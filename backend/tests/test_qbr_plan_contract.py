@@ -5,6 +5,27 @@ import unittest
 
 
 class QbrPlanContractTests(unittest.TestCase):
+    def test_qbr_plan_top_layout_merges_judgment_and_collapses_recent_updates(self) -> None:
+        html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            "font-size: clamp(32px, 4vw, 64px);",
+            "min-height: 420px;",
+            'class="hero-judgment"',
+            'aria-label="Current QBR judgment"',
+            'class="recent-updates-disclosure"',
+            "查看最近合入",
+            "默认收起",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
+        self.assertLess(
+            html_source.index('class="hero-judgment"'),
+            html_source.index('class="hero-meta"'),
+        )
+        self.assertNotIn('<section class="snapshot"', html_source)
+        self.assertNotIn('<details class="recent-updates-disclosure" open', html_source)
+
     def test_qbr_plan_tracks_multi_agent_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
         required_terms = [
