@@ -71,6 +71,8 @@ class AssignmentUiContractTests(unittest.TestCase):
         # Welcome page daily shift card now includes inline editable form
         self.assertIn("welcome-shift-form", app_source)
         self.assertIn("welcome-shift-form", css)
+        self.assertIn("repeat(auto-fit, minmax(min(100%, 150px), 1fr))", css)
+        self.assertIn(".welcome-shift-form input", css)
         self.assertIn("Save shift", app_source)
 
         # Sidebar / workspace retained
