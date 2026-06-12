@@ -311,12 +311,32 @@ def build_investigation_opening_context(
             "error traces, and provide a workaround or the missing doc path if available."
         )
 
+    handoff_packet = (
+        ticket.get("engineer_handoff_packet")
+        if isinstance(ticket.get("engineer_handoff_packet"), dict)
+        else None
+    )
+    summary_input = handoff_packet.get("engineer_ticket_input", {}) if isinstance(handoff_packet, dict) else {}
+    missing_info = (
+        list(handoff_packet.get("missing_information", []))
+        if isinstance(handoff_packet, dict)
+        else []
+    )
     return {
         "issue_summary": latest_customer,
         "rag_answer_summary": rag_summary,
         "action_needed": _compact_text(action_needed),
         "sources": normalized_sources,
         "citations": normalized_citations,
+        **(
+            {
+                "summary_opening": _compact_text(summary_input.get("opening_summary")),
+                "summary_requested_action": _compact_text(summary_input.get("requested_action")),
+                "missing_information": missing_info,
+            }
+            if isinstance(handoff_packet, dict)
+            else {}
+        ),
     }
 
 
@@ -427,9 +447,21 @@ def default_investigation_prompt(
     engineer_evidence_summary = _engineer_evidence_opening_summary(ticket)
 
     if isinstance(opening_context, dict):
-        issue_summary = _compact_text(opening_context.get("issue_summary")) or (customer_text or subject)
+        summary_opening = _compact_text(opening_context.get("summary_opening"))
+        summary_requested_action = _compact_text(opening_context.get("summary_requested_action"))
+        missing_information = [
+            _compact_text(item)
+            for item in list(opening_context.get("missing_information") or [])
+            if _compact_text(item)
+        ]
+        issue_summary = summary_opening or _compact_text(opening_context.get("issue_summary")) or (customer_text or subject)
         rag_answer_summary = _compact_text(opening_context.get("rag_answer_summary"))
-        action_needed = _compact_text(opening_context.get("action_needed"))
+        action_needed = summary_requested_action or _compact_text(opening_context.get("action_needed"))
+        if missing_information:
+            action_needed = (
+                f"{action_needed} Missing information to confirm: "
+                f"{'; '.join(missing_information[:6])}"
+            ).strip()
         issue_line = issue_summary
         if rag_answer_summary:
             issue_line = f"{issue_line} {rag_answer_summary}".strip()

@@ -2213,3 +2213,31 @@ For each new entry, record:
   - Changed-scope secret scan confirmed no disallowed real-secret patterns in `.gitignore`, changelogs, or `vendor/cusmem/`.
   - Private-address scan confirmed `103.151.172.84` and `neo4j@openspg` are absent from `vendor/cusmem/`.
   - `python3 -m compileall -q vendor/cusmem`
+
+- Date: 2026-06-12
+- Area or subsystem: Engineer escalation opening context
+- Prompt or model version: `engineer-summary-packet-v1`
+- Summary: Added deterministic Summary Agent packet input to the engineer investigation opening request while preserving legacy Engineer Agent handoff fields.
+- Reason: Client escalations need a stable summary packet that carries the customer context, current clues, missing information, and redaction boundary into the Engineer ticket before Plan Agent is introduced.
+- Affected files or config:
+  - `backend/services/engineer_summary_agent.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/main.py`
+  - `backend/tests/test_engineer_summary_agent.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/qbr_plan.html`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Escalated Engineer tickets now receive an `engineer_handoff_packet` with Summary Agent metadata, structured engineer-ticket input, missing information, and a customer redaction boundary.
+  - The first Engineer Request prefers the Summary Agent opening summary and requested action, then appends missing information that the engineer should confirm.
+  - Existing Engineer Agent fallback and revise paths continue to read legacy handoff fields from the same packet.
+- Verification:
+  - `rtk python3 -m unittest backend.tests.test_engineer_summary_agent -v`
+  - `rtk python3 -m unittest backend.tests.test_qbr_plan_contract -v`
+  - `rtk python3 -m unittest backend.tests.test_engineer_multi_agent -v`
+  - `rtk python3 -m unittest backend.tests.test_engineer_hitl_review -v`
+  - `rtk python3 scripts/verify_feature_list.py`
+  - `rtk python3 -m py_compile backend/services/engineer_summary_agent.py backend/services/engineer_agent.py backend/services/investigation_flow.py backend/main.py backend/tests/test_engineer_summary_agent.py`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow -v`

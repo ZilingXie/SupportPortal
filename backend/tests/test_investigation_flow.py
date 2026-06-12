@@ -2759,6 +2759,11 @@ class InvestigationFlowTests(unittest.TestCase):
         agent_state = ticket["engineer_agent_state"]
         self.assertIsInstance(handoff, dict)
         self.assertIsInstance(agent_state, dict)
+        self.assertEqual(handoff["created_by"], "summary_agent")
+        self.assertEqual(handoff["packet_version"], "engineer-summary-packet-v1")
+        self.assertIn("engineer_ticket_input", handoff)
+        self.assertIn("redaction_boundary", handoff)
+        self.assertEqual(agent_state["summary_packet_version"], "engineer-summary-packet-v1")
         self.assertEqual(handoff["latest_customer_message"], "Android 14 token renewal still fails after I upgraded the SDK.")
         self.assertEqual(handoff["rag_result"]["candidate_answer"], resolution.answer)
         self.assertEqual(

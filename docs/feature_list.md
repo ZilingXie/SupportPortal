@@ -27,6 +27,7 @@
 - Billing 白名单问题会自动收集字段并升级内部团队处理。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并触发 Billing 白名单流程。
 - Account 入口可查看 Billing ticket 历史和详情。
+- Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
@@ -47,6 +48,7 @@
 - Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
 - Engineer Assignment 原型支持工程师选择、welcome readiness 页面、显式领取动作和 read-only admin queue 视图。
+- Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。

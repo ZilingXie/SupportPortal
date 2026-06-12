@@ -1405,24 +1405,28 @@ def build_engineer_handoff_packet(
         else existing_client_agent_runtime_state
     )
 
-    return {
-        "source": _clean_text(source) or _clean_text(existing.get("source")) or "support_query",
-        "product": _clean_text(ticket.get("product")) or _clean_text(existing.get("product")),
-        "conversation_summary": _build_conversation_summary(ticket),
-        "latest_customer_message": latest_customer_message(ticket),
-        "latest_client_ai_reply": latest_public_assistant_message(ticket),
-        "route_summary": normalized_route_summary,
-        "rag_result": normalized_rag_result,
-        "client_intake_state": normalized_client_intake_state,
-        "client_agent_runtime_state": normalized_client_agent_runtime_state,
-        "unresolved_reason": _clean_text(trigger_reason)
-        or _clean_text(existing.get("unresolved_reason"))
-        or _clean_text(normalized_route_summary.get("route_reason"))
-        or "unknown",
-        "customer_language_hint": _customer_language_hint(ticket),
-        "created_at": _clean_text(existing.get("created_at")) or now_value,
-        "updated_at": now_value,
-    }
+    packet = copy.deepcopy(existing)
+    packet.update(
+        {
+            "source": _clean_text(source) or _clean_text(existing.get("source")) or "support_query",
+            "product": _clean_text(ticket.get("product")) or _clean_text(existing.get("product")),
+            "conversation_summary": _build_conversation_summary(ticket),
+            "latest_customer_message": latest_customer_message(ticket),
+            "latest_client_ai_reply": latest_public_assistant_message(ticket),
+            "route_summary": normalized_route_summary,
+            "rag_result": normalized_rag_result,
+            "client_intake_state": normalized_client_intake_state,
+            "client_agent_runtime_state": normalized_client_agent_runtime_state,
+            "unresolved_reason": _clean_text(trigger_reason)
+            or _clean_text(existing.get("unresolved_reason"))
+            or _clean_text(normalized_route_summary.get("route_reason"))
+            or "unknown",
+            "customer_language_hint": _customer_language_hint(ticket),
+            "created_at": _clean_text(existing.get("created_at")) or now_value,
+            "updated_at": now_value,
+        }
+    )
+    return packet
 
 
 def _why_not_solved_text(unresolved_reason: str) -> str:
@@ -1648,7 +1652,7 @@ def fallback_engineer_agent_state(
         else (existing_known_facts or fallback_known_facts)
     )
 
-    return {
+    state = {
         "phase": phase,
         "issue_understanding": issue_understanding,
         "knowledge_summary": knowledge_summary,
@@ -1662,6 +1666,15 @@ def fallback_engineer_agent_state(
         "reply_readiness": _default_reply_readiness(),
         "last_refreshed_at": _clean_text(existing.get("last_refreshed_at")) or now_value,
     }
+    for source_key, state_key in (
+        ("packet_id", "summary_packet_id"),
+        ("summary_agent_version", "summary_agent_version"),
+        ("packet_version", "summary_packet_version"),
+    ):
+        value = _clean_text(packet.get(source_key))
+        if value:
+            state[state_key] = value
+    return state
 
 
 def normalize_engineer_agent_state(
