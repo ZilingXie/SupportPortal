@@ -858,19 +858,19 @@
         short: "Assignment",
         title: "Ticket assignment UI demo",
         status: "doing",
-        thesis: "独立 /assignment 原型已经完成并可演示核心体验；生产级调度、持久化、审计和真实队列接入仍未开始。",
+        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready + read-only admin queue view 三段式 demo；生产级调度、持久化、审计和真实队列接入仍未开始。",
         done: [
-          "`/assignment` 独立静态原型已完成，不改现有 `/engineer`，用于演示工程师选择、排班和单工单处理。",
-          "原型包含 Jack/Maya/Leo 工程师选择器、localStorage 登录状态、UTC+8 每日固定 shift 和 In shift / Out of shift 展示。",
-          "已演示登录且在 shift 内、且没有 active Engineer Ticket 时才 eligible for assignment。",
-          "Mock ticket assign 后开始 3 小时 SLA 倒计时，approve 并发送 Engineer AI draft 后关闭当前工单并允许领取下一个。",
-          "SLA 超时/transfer 状态可模拟，契约测试确认 standalone page、solver-focused flow 和不影响现有 engineer UI。",
-          "该主线当前适合 QBR demo，不应被描述为已具备生产排班或自动分配能力。"
+          "`/assignment` 已从登录自动分配改为三段式 demo：选择 engineer → welcome/readiness 页面 → 点击 I'm ready to roll 后领取 ticket 并进入 workspace。",
+          "原型包含 Jack/Maya/Leo 工程师选择器、localStorage 登录状态、UTC+8 每日固定 shift、welcome readiness overview 和显式领取动作。",
+          "Out of shift 时 I'm ready to roll 按钮 disable，显示原因和下一段 shift 信息；in shift 时点击按钮从 queue 领取下一张 case。",
+          "关闭/approve 当前 ticket 后不自动连续领取下一张，展示 I'm ready for the next case CTA 由工程师再次显式领取。",
+          "新增 read-only `/assignment/admin` 页面展示 mock queue 中等待工程师处理的 cases、active assignment、engineer readiness 和 shift 状态，无手动分配控制。",
+          "SLA 超时/transfer 状态可模拟，契约测试确认 welcome + ready CTA + admin 入口、显式领取行为和不影响现有 engineer UI。"
         ],
         review: [
-          "当前 demo 的重点应该是“工程师进入 shift 后直接解决问题”，工程师资料只能作为可隐藏上下文。",
-          "生产化最缺的是 server-side queue、assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。",
-          "如果继续推进，下一步应先定真实 Engineer Ticket 与 shift 数据模型，再接现有 Engineer Portal。"
+          "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",
+          "`/assignment/admin` 是纯 read-only 观察页，无 force assign/reset/requeue 控制，避免被误解为生产调度器。",
+          "生产化最缺的是 server-side queue、assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。"
         ],
         next: [
           { id: "assign-data-model", status: "todo", label: "定义生产 Engineer Ticket 生命周期、状态机和队列持久化模型。", horizon: "Model" },
@@ -883,6 +883,7 @@
         sources: [
           "docs/prompt_change_log.md",
           "ui/assignment-ui/index.html",
+          "ui/assignment-ui/admin/index.html",
           "ui/assignment-ui/app.js",
           "ui/assignment-ui/styles.css",
           "backend/tests/test_assignment_ui_contract.py",
