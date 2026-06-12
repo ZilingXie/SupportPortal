@@ -339,6 +339,68 @@
       line-height: 1.6;
     }
 
+    .architecture-diagram {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), transparent 42%),
+        rgba(251, 247, 236, 0.86);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+    }
+
+    .architecture-diagram header {
+      display: grid;
+      gap: 10px;
+      padding: 24px 26px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .architecture-diagram h3 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 0.98;
+      letter-spacing: -0.05em;
+    }
+
+    .architecture-diagram p {
+      max-width: 860px;
+      margin: 0;
+      color: #3f4943;
+      line-height: 1.65;
+    }
+
+    .mermaid-card {
+      margin: 0;
+      padding: 22px;
+      overflow-x: auto;
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    .mermaid-card .mermaid {
+      min-width: 980px;
+      margin: 0 auto;
+      padding: 18px;
+      border: 1px dashed rgba(29, 37, 34, 0.18);
+      border-radius: 22px;
+      background: rgba(251, 247, 236, 0.82);
+      color: var(--ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .diagram-note {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0 26px 24px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
     .lanes {
       display: grid;
       gap: 22px;
@@ -673,6 +735,7 @@
       .toolbar { position: static; }
       .section-title { display: block; }
       .section-title p { margin-top: 10px; }
+      .mermaid-card .mermaid { min-width: 760px; }
       .footer { display: block; }
     }
 
@@ -723,6 +786,44 @@
         <h2>最近合入</h2>
         <ul class="update-list" id="recentUpdates"></ul>
       </div>
+    </section>
+
+    <section class="section-title">
+      <div>
+        <h2>Engineer AI Agent 架构</h2>
+      </div>
+      <p>这张 Mermaid 图固定当前讨论后的 multi-agent 生命周期：client escalation 先被总结成可审计 packet，再进入 AI 调查循环，最后由工程师和 guardrail 共同完成客户回复。</p>
+    </section>
+
+    <section class="architecture-diagram" aria-label="Engineer AI multi-agent Mermaid architecture diagram">
+      <header>
+        <h3>Summary → Plan → Execute → Review → Guardrail</h3>
+        <p>当前只是计划与契约方向，不代表线上 runtime 已接管；mem0 和 skill list 尚未完成时，Plan Agent 必须使用 deterministic fallback。</p>
+      </header>
+      <div class="mermaid-card">
+        <pre class="mermaid">
+flowchart TD
+  C["Client AI handle 不了客户问题"] --> E["Escalate to Engineer"]
+  E --> S["Summary Agent: 整理上下文、线索、缺失信息和 redaction boundary"]
+  S --> T["Create Engineer Ticket with summary packet"]
+  T --> P["Plan Agent: summary packet + mem0 + skill list / fallback"]
+  P --> X["Execute Agent: 调度 allowlisted subagents"]
+  X --> G["Evidence packet + task results"]
+  G --> R["Review Agent: 判断下一步"]
+  R -->|ready_for_engineer| F["告诉工程师发现"]
+  R -->|replan_required, max 2 retries| P
+  R -->|unable_to_resolve| U["告诉工程师目前信息无法回答或解决"]
+  F --> H["Engineer 操作"]
+  U --> H
+  H -->|revise| P
+  H -->|approve| Q["Guardrail: 生成或校验 customer-facing reply"]
+  Q --> A["Engineer final approve"]
+  A --> Y["回复客户"]
+  Y --> Z["关闭 Engineer 工单"]
+  Z --> M["写 audit event + Case Memory candidate"]
+        </pre>
+      </div>
+      <p class="diagram-note">Review Agent 的三种决策是 <code>ready_for_engineer</code>、<code>replan_required</code>、<code>unable_to_resolve</code>；关闭工单后只写 Case Memory candidate，不自动晋升 active memory。</p>
     </section>
 
     <section class="section-title">
@@ -1189,6 +1290,24 @@
     });
 
     render();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    if (window.mermaid) {
+      window.mermaid.initialize({
+        startOnLoad: true,
+        theme: "base",
+        themeVariables: {
+          primaryColor: "#fbf7ec",
+          primaryTextColor: "#1d2522",
+          primaryBorderColor: "#1f4f68",
+          lineColor: "#7f6a40",
+          secondaryColor: "#e9f0e8",
+          tertiaryColor: "#f4efe3",
+          fontFamily: "Avenir Next, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif"
+        }
+      });
+    }
   </script>
 </body>
 </html>

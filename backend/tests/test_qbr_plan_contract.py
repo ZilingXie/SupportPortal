@@ -20,6 +20,13 @@ class QbrPlanContractTests(unittest.TestCase):
             "最多 2 次 replan",
             "Guardrail final approve",
             "当前下一步：实现 Summary Agent",
+            "class=\"mermaid\"",
+            "flowchart TD",
+            "Create Engineer Ticket with summary packet",
+            "Evidence packet + task results",
+            "max 2 retries",
+            "Case Memory candidate",
+            "mermaid.min.js",
         ]
         for term in required_terms:
             with self.subTest(term=term):
