@@ -1678,6 +1678,10 @@ def fallback_engineer_agent_state(
         plan_value = existing.get(plan_key)
         if plan_value is not None and (isinstance(plan_value, dict) or _clean_text(plan_value)):
             state[plan_key] = plan_value
+    for exec_key in ("active_execution", "execution_id", "execution_version", "execute_agent_version", "evidence_packet", "task_results"):
+        exec_value = existing.get(exec_key)
+        if exec_value is not None and (isinstance(exec_value, dict) or isinstance(exec_value, list) or _clean_text(exec_value)):
+            state[exec_key] = exec_value
     return state
 
 
@@ -1731,8 +1735,20 @@ def normalize_engineer_agent_state(
         plan_value = value.get(plan_key)
         if plan_value is not None and (isinstance(plan_value, dict) or _clean_text(plan_value)):
             merged[plan_key] = plan_value
-        elif plan_key not in merged or merged.get(plan_key) is None:
-            merged[plan_key] = fallback.get(plan_key)
+        elif plan_key not in merged:
+            fb_val = fallback.get(plan_key)
+            if fb_val is not None and (isinstance(fb_val, dict) or _clean_text(fb_val)):
+                merged[plan_key] = fb_val
+    # Preserve Execute Agent fields from the incoming state so that
+    # investigation refresh does not drop the active_execution.
+    for exec_key in ("active_execution", "execution_id", "execution_version", "execute_agent_version", "evidence_packet", "task_results"):
+        exec_value = value.get(exec_key)
+        if exec_value is not None and (isinstance(exec_value, dict) or isinstance(exec_value, list) or _clean_text(exec_value)):
+            merged[exec_key] = exec_value
+        elif exec_key not in merged:
+            fb_val = fallback.get(exec_key)
+            if fb_val is not None and (isinstance(fb_val, dict) or isinstance(fb_val, list) or _clean_text(fb_val)):
+                merged[exec_key] = fb_val
     if _should_prefer_intake_issue_understanding(
         current_issue_understanding,
         fallback["issue_understanding"],

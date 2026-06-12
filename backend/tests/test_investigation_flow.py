@@ -2801,6 +2801,29 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(agent_state["plan_id"], active_plan["plan_id"])
         self.assertEqual(agent_state["plan_version"], "engineer-plan-v1")
         self.assertEqual(agent_state["plan_agent_version"], "engineer-plan-agent-v1")
+        # Execute Agent fields
+        self.assertIn("active_execution", agent_state)
+        active_execution = agent_state["active_execution"]
+        self.assertIsInstance(active_execution, dict)
+        self.assertEqual(active_execution["execution_version"], "engineer-execution-v1")
+        self.assertEqual(active_execution["execute_agent_version"], "engineer-execute-agent-v1")
+        self.assertEqual(active_execution["created_by"], "execute_agent")
+        self.assertIn("scheduler", active_execution)
+        self.assertIn("execution_order", active_execution["scheduler"])
+        self.assertGreaterEqual(len(active_execution["scheduler"]["execution_order"]), 1)
+        self.assertIsInstance(active_execution["task_results"], list)
+        self.assertGreaterEqual(len(active_execution["task_results"]), 1)
+        self.assertIn("evidence_packet", active_execution)
+        evidence_packet = active_execution["evidence_packet"]
+        self.assertIsInstance(evidence_packet, dict)
+        self.assertEqual(evidence_packet["packet_version"], "engineer-evidence-packet-v1")
+        self.assertIn("customer_safe_summary", evidence_packet)
+        self.assertIn("internal_summary", evidence_packet)
+        self.assertEqual(agent_state["execution_id"], active_execution["execution_id"])
+        self.assertEqual(agent_state["execution_version"], "engineer-execution-v1")
+        self.assertEqual(agent_state["execute_agent_version"], "engineer-execute-agent-v1")
+        self.assertIsInstance(agent_state["task_results"], list)
+        self.assertGreaterEqual(len(agent_state["task_results"]), 1)
 
     def test_fallback_engineer_agent_state_omits_candidate_answer_from_known_facts(self) -> None:
         state = fallback_engineer_agent_state(
@@ -3063,6 +3086,76 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(state["phase"], "gather_missing_inputs")
         self.assertIn("issue_understanding", state)
+
+    def test_normalize_engineer_agent_state_preserves_active_execution_fields(self) -> None:
+        """normalize_engineer_agent_state keeps active_execution fields."""
+        active_execution = {
+            "execution_id": "exec_plan_summary_ec_001_r1",
+            "execution_version": "engineer-execution-v1",
+            "execute_agent_version": "engineer-execute-agent-v1",
+            "created_by": "execute_agent",
+            "status": "partial",
+            "task_results": [{"task_id": "task_context_review", "status": "succeeded"}],
+            "evidence_packet": {"packet_id": "evidence_plan_summary_ec_001_r1", "packet_version": "engineer-evidence-packet-v1"},
+        }
+        state = normalize_engineer_agent_state(
+            {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Camera black screen.",
+                "active_execution": active_execution,
+                "execution_id": active_execution["execution_id"],
+                "execution_version": active_execution["execution_version"],
+                "execute_agent_version": active_execution["execute_agent_version"],
+                "evidence_packet": active_execution["evidence_packet"],
+                "task_results": active_execution["task_results"],
+            },
+            ticket={
+                "subject": "Camera black screen",
+                "active_investigation": {"draft_customer_reply": ""},
+            },
+            handoff_packet={
+                "latest_customer_message": "Camera is black.",
+                "rag_result": {"candidate_answer": "Check permissions."},
+                "unresolved_reason": "rag_insufficient_evidence",
+            },
+            now_value="2026-06-20T10:00:00Z",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(state["execution_id"], "exec_plan_summary_ec_001_r1")
+        self.assertEqual(state["execution_version"], "engineer-execution-v1")
+        self.assertEqual(state["execute_agent_version"], "engineer-execute-agent-v1")
+        self.assertIsInstance(state["active_execution"], dict)
+        self.assertEqual(state["active_execution"]["execution_id"], "exec_plan_summary_ec_001_r1")
+        self.assertEqual(state["active_execution"]["status"], "partial")
+        self.assertEqual(state["evidence_packet"]["packet_id"], "evidence_plan_summary_ec_001_r1")
+        self.assertIsInstance(state["task_results"], list)
+        self.assertEqual(len(state["task_results"]), 1)
+
+    def test_normalize_without_active_execution_still_works(self) -> None:
+        """normalize_engineer_agent_state should not crash when active_execution is absent."""
+        state = normalize_engineer_agent_state(
+            {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Basic issue.",
+            },
+            ticket={
+                "subject": "Basic issue",
+                "active_investigation": {"draft_customer_reply": ""},
+            },
+            handoff_packet={
+                "latest_customer_message": "Help.",
+                "rag_result": {},
+                "unresolved_reason": "rag_insufficient_evidence",
+            },
+            now_value="2026-06-20T10:00:00Z",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(state["phase"], "gather_missing_inputs")
+        self.assertIn("issue_understanding", state)
+        # Execution fields should be absent or None-equivalent
+        self.assertNotIn("active_execution", state)
 
     def test_customer_follow_up_during_investigation_keeps_same_thread_and_clears_confirmation(self) -> None:
         self._seed_ticket(
