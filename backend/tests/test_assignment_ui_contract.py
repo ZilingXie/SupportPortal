@@ -18,13 +18,15 @@ class AssignmentUiContractTests(unittest.TestCase):
             Path("ui/assignment-ui/index.html"),
             Path("ui/assignment-ui/styles.css"),
             Path("ui/assignment-ui/app.js"),
+            Path("ui/assignment-ui/admin/index.html"),
         ):
             self.assertTrue(path.exists(), f"{path} should exist")
 
-    def test_assignment_ui_contains_solver_focused_assignment_flow(self) -> None:
+    def test_assignment_ui_contains_welcome_ready_and_admin_flow(self) -> None:
         html = Path("ui/assignment-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/assignment-ui/app.js").read_text(encoding="utf-8")
         css = Path("ui/assignment-ui/styles.css").read_text(encoding="utf-8")
+        admin_html = Path("ui/assignment-ui/admin/index.html").read_text(encoding="utf-8")
 
         self.assertIn("Engineer Assignment", html)
         self.assertIn("Choose a demo engineer", html)
@@ -39,6 +41,34 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn("writeStorage(ASSIGNMENT_AUTH_KEY, selectedEngineerId);", app_source)
         self.assertIn("writeStorage(ASSIGNMENT_SHIFT_KEY, shift);", app_source)
 
+        # Welcome / readiness page markers
+        self.assertIn("renderWelcome", app_source)
+        self.assertIn("I&rsquo;m ready to roll", app_source)
+        self.assertIn("ready-to-roll", app_source)
+        self.assertIn("ready-for-next", app_source)
+        self.assertIn("View readiness overview", app_source)
+        self.assertIn("enter-welcome", app_source)
+        self.assertIn("workspaceActive", app_source)
+        self.assertIn("ASSIGNMENT_WORKSPACE_KEY", app_source)
+
+        # Out-of-shift disabled behavior
+        self.assertIn("disabled", app_source)
+        self.assertIn("!inShift", app_source)
+
+        # Welcome page info cards
+        self.assertIn("welcome-view", app_source)
+        self.assertIn("welcome-hero", app_source)
+        self.assertIn("welcome-grid", app_source)
+        self.assertIn("welcome-info-card", app_source)
+        self.assertIn("welcome-actions", app_source)
+        self.assertIn("UTC+8 current time", app_source)
+        self.assertIn("Daily shift", app_source)
+        self.assertIn("Queue status", app_source)
+        self.assertIn("Active ticket", app_source)
+        self.assertIn("SLA policy", app_source)
+        self.assertIn("Signed in as", app_source)
+
+        # Sidebar / workspace retained
         self.assertIn("assignment-sidebar", app_source)
         self.assertIn("engineer-rail", app_source)
         self.assertIn("rail-brand", app_source)
@@ -54,7 +84,20 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn("Engineer AI investigation", app_source)
         self.assertIn("Draft Customer Reply", app_source)
         self.assertIn("Approve & send customer reply", app_source)
-        self.assertIn("autoAssignIfEligible", app_source)
+
+        # Explicit assignment instead of auto-assign
+        self.assertIn("assignNextTicket", app_source)
+        self.assertIn("readyToRoll", app_source)
+        self.assertIn("readyForNextCase", app_source)
+        self.assertIn("releaseActiveAssignment", app_source)
+        self.assertIn("releaseActiveAssignment();", app_source)
+        self.assertIn("queue = [ticket, ...queue];", app_source)
+        self.assertIn("activeTicket = null;", app_source)
+        self.assertIn("Assignment released", app_source)
+        self.assertIn("activeTicket.engineerId !== selectedEngineerId", app_source)
+        self.assertNotIn("autoAssignIfEligible", app_source)
+
+        # Still handles pause outside shift
         self.assertIn("pauseAssignmentOutsideShift", app_source)
         self.assertIn("returned to queue", app_source)
         self.assertIn("Waiting for your UTC+8 shift", app_source)
@@ -65,13 +108,29 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn("18:00", app_source)
         self.assertIn("In shift", app_source)
         self.assertIn("Out of shift", app_source)
-        self.assertIn("Eligible for assignment", app_source)
+        self.assertIn("Ready for next", app_source)
         self.assertIn("Not assignable", app_source)
         self.assertIn("Current Engineer Ticket", app_source)
         self.assertIn("3h SLA from assign", app_source)
         self.assertIn("mark engineer timeout", app_source)
         self.assertIn("transfer to next eligible engineer", app_source)
         self.assertIn("simulate-timeout", app_source)
+
+        # Admin page
+        self.assertIn("Assignment Admin", admin_html)
+        self.assertIn("renderAdmin", app_source)
+        self.assertIn("admin-view", app_source)
+        self.assertIn("admin-header", app_source)
+        self.assertIn("admin-status-strip", app_source)
+        self.assertIn("admin-queue-section", app_source)
+        self.assertIn("Queue overview", app_source)
+        self.assertIn("Read-only", app_source)
+        self.assertIn("activeTicket.engineerId", app_source)
+        self.assertIn("isAdminPage", app_source)
+        self.assertIn("/admin", app_source)
+        self.assertNotIn("force assign", app_source.lower())
+
+        # CSS
         self.assertIn(".engineer-selector-grid", css)
         self.assertIn(".assignment-shell", css)
         self.assertIn(".assignment-sidebar", css)
@@ -88,6 +147,16 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn("scrollbar-width: none;", css)
         self.assertIn(".sidebar-inner::-webkit-scrollbar", css)
         self.assertIn("display: none;", css)
+        self.assertIn(".welcome-view", css)
+        self.assertIn(".welcome-hero", css)
+        self.assertIn(".welcome-grid", css)
+        self.assertIn(".welcome-info-card", css)
+        self.assertIn(".welcome-actions", css)
+        self.assertIn(".btn-ready", css)
+        self.assertIn(".admin-view", css)
+        self.assertIn(".admin-header", css)
+        self.assertIn(".admin-status-strip", css)
+        self.assertIn(".admin-queue-section", css)
         self.assertIn("font-size: clamp(24px, 3vw, 30px);", css)
         self.assertIn("font-size: 18px;", css)
         self.assertIn("font-size: 14px;", css)

@@ -878,3 +878,296 @@ p {
     white-space: normal;
   }
 }
+
+/* ==========================================================================
+   Welcome (readiness) view
+   ========================================================================== */
+
+.welcome-view {
+  display: grid;
+  gap: 22px;
+  width: min(1120px, calc(100% - 56px));
+  margin: 0 auto;
+  padding: 40px 0 56px;
+}
+
+.welcome-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--ghost-border);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-float);
+  padding: 36px;
+}
+
+.welcome-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(130deg, rgba(0, 176, 255, 0.14), transparent 42%),
+    radial-gradient(circle at 100% 0%, rgba(76, 86, 175, 0.14), transparent 30%);
+  pointer-events: none;
+}
+
+.welcome-hero-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.welcome-hero-body {
+  position: relative;
+  z-index: 1;
+  margin-top: 28px;
+}
+
+.welcome-engineer-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.welcome-avatar {
+  width: 72px;
+  height: 72px;
+  font-size: 28px;
+  border-radius: 24px;
+}
+
+.welcome-engineer-card h1 {
+  max-width: 16ch;
+  margin: 4px 0 0;
+  font-size: 40px;
+  line-height: 0.98;
+}
+
+.welcome-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.welcome-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.welcome-info-card {
+  padding: 22px;
+  gap: 10px;
+}
+
+.welcome-info-card .section-head {
+  justify-content: space-between;
+}
+
+.welcome-info-card .material-symbols-outlined {
+  color: var(--primary);
+  font-size: 28px;
+}
+
+.welcome-shift-note {
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.welcome-sla-card {
+  background: rgba(202, 230, 255, 0.42);
+}
+
+.welcome-actions {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  text-align: center;
+}
+
+.btn-ready {
+  min-height: 58px;
+  padding: 0 32px;
+  font-size: 18px;
+  border-radius: 22px;
+}
+
+.btn-ready:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.welcome-disabled-reason {
+  max-width: 48ch;
+  color: var(--ink-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.welcome-ready-hint {
+  max-width: 48ch;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.welcome-events {
+  padding: 22px;
+}
+
+.welcome-events .panel-head {
+  margin-bottom: 6px;
+}
+
+/* ==========================================================================
+   Admin view
+   ========================================================================== */
+
+.admin-view {
+  display: grid;
+  gap: 22px;
+  width: min(1120px, calc(100% - 56px));
+  margin: 0 auto;
+  padding: 40px 0 56px;
+}
+
+.admin-header {
+  display: grid;
+  gap: 18px;
+  padding: 36px;
+  border: 1px solid var(--ghost-border);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-float);
+}
+
+.admin-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.admin-header-body h1 {
+  max-width: 18ch;
+  margin: 4px 0 0;
+  font-size: 40px;
+  line-height: 0.98;
+}
+
+.admin-header-body p {
+  max-width: 62ch;
+  margin-top: 10px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.admin-status-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.admin-status-card {
+  gap: 8px;
+}
+
+.admin-status-card .section-head {
+  justify-content: space-between;
+}
+
+.admin-status-card .material-symbols-outlined {
+  color: var(--primary);
+  font-size: 28px;
+}
+
+.admin-card-detail {
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.admin-queue-section {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-queue-head {
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.admin-queue-list {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-queue-item {
+  gap: 12px;
+}
+
+.admin-queue-item-head {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-events-section {
+  padding: 22px;
+}
+
+/* ==========================================================================
+   No-ticket state adjustments
+   ========================================================================== */
+
+.no-ticket-state .btn {
+  margin-top: 12px;
+}
+
+/* ==========================================================================
+   Responsive adjustments
+   ========================================================================== */
+
+@media (max-width: 760px) {
+  .welcome-view,
+  .admin-view {
+    width: min(100% - 24px, 1120px);
+    padding: 18px 0 28px;
+  }
+
+  .welcome-hero,
+  .admin-header {
+    border-radius: 24px;
+    padding: 22px;
+  }
+
+  .welcome-grid,
+  .admin-status-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-engineer-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .welcome-engineer-card h1,
+  .admin-header-body h1 {
+    font-size: clamp(28px, 6vw, 40px);
+  }
+
+  .welcome-avatar {
+    width: 56px;
+    height: 56px;
+    font-size: 22px;
+  }
+}

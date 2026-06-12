@@ -25,8 +25,10 @@ class QbrPlanContractTests(unittest.TestCase):
             "Ticket assignment UI demo",
             "/assignment",
             "UTC+8",
-            "3 小时 SLA",
-            "eligible for assignment",
+            "I'm ready to roll",
+            "I'm ready for the next case",
+            "read-only",
+            "/assignment/admin",
         ]
         for term in required_terms:
             with self.subTest(term=term):

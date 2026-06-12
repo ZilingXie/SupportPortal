@@ -4,6 +4,7 @@ const ASSIGNMENT_ACTIVE_TICKET_KEY = "supportportal_assignment_active_ticket";
 const ASSIGNMENT_QUEUE_KEY = "supportportal_assignment_queue";
 const ASSIGNMENT_EVENTS_KEY = "supportportal_assignment_events";
 const ASSIGNMENT_SIDEBAR_KEY = "supportportal_assignment_sidebar_collapsed";
+const ASSIGNMENT_WORKSPACE_KEY = "supportportal_assignment_workspace_active";
 const SLA_MS = 3 * 60 * 60 * 1000;
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -91,8 +92,10 @@ let activeTicket = readStorage(ASSIGNMENT_ACTIVE_TICKET_KEY, null);
 let queue = readStorage(ASSIGNMENT_QUEUE_KEY, INITIAL_QUEUE);
 let events = readStorage(ASSIGNMENT_EVENTS_KEY, []);
 let sidebarCollapsed = readStorage(ASSIGNMENT_SIDEBAR_KEY, false);
+let workspaceActive = readStorage(ASSIGNMENT_WORKSPACE_KEY, false);
 
 const root = document.getElementById("assignment-root");
+const isAdminPage = window.location.pathname.includes("/admin");
 
 function readStorage(key, fallback) {
   try {
@@ -137,6 +140,12 @@ function formatUtc8Time(date = utc8Now()) {
   return `${year}-${month}-${day} ${hour}:${minute} UTC+8`;
 }
 
+function formatUtc8TimeShort(date = utc8Now()) {
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${hour}:${minute} UTC+8`;
+}
+
 function minutesFromTime(value) {
   const match = String(value || "").match(/^(\d{2}):(\d{2})$/);
   if (!match) return 0;
@@ -152,8 +161,24 @@ function isInShift(now = utc8Now()) {
   return current >= start || current < end;
 }
 
+function nextShiftInfo() {
+  const now = utc8Now();
+  const current = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const start = minutesFromTime(shift.start);
+  if (current >= start) {
+    return `Tomorrow at ${shift.start} UTC+8`;
+  }
+  const diffMin = start - current;
+  const hours = Math.floor(diffMin / 60);
+  const mins = diffMin % 60;
+  if (hours > 0) {
+    return `In ${hours}h ${String(mins).padStart(2, "0")}m (${shift.start} UTC+8)`;
+  }
+  return `In ${mins}m (${shift.start} UTC+8)`;
+}
+
 function ticketSlaState(ticket = activeTicket) {
-  if (!ticket?.assignedAt) {
+  if (!ticket || !ticket.assignedAt) {
     return { label: "3h SLA from assign", className: "is-muted", remainingMs: SLA_MS, overdue: false };
   }
   const elapsed = Date.now() - Number(ticket.assignedAt || 0);
@@ -198,27 +223,44 @@ function saveActiveTicket() {
   writeStorage(ASSIGNMENT_ACTIVE_TICKET_KEY, activeTicket);
 }
 
-function autoAssignIfEligible() {
+function saveWorkspaceActive() {
+  writeStorage(ASSIGNMENT_WORKSPACE_KEY, workspaceActive);
+}
+
+function assignNextTicket() {
   if (!canAssign() || queue.length === 0) return false;
   const [next, ...rest] = queue;
   activeTicket = { ...next, assignedAt: Date.now(), engineerId: selectedEngineerId };
   queue = rest;
   saveActiveTicket();
   saveQueue();
-  addEvent("Engineer Ticket auto-assigned", `${activeTicket.id} assigned to ${selectedEngineerId}.`);
+  addEvent("Engineer Ticket assigned", `${activeTicket.id} assigned to ${selectedEngineerId}.`);
   return true;
 }
 
-function pauseAssignmentOutsideShift() {
-  if (isInShift() || !activeTicket) return false;
+function releaseActiveAssignment(title = "Assignment released", detail = "") {
+  if (!activeTicket) return false;
   const { assignedAt, engineerId, ...ticket } = activeTicket;
   queue = [ticket, ...queue];
   activeTicket = null;
   saveActiveTicket();
   saveQueue();
-  addEvent("Assignment paused", `${ticket.id} returned to queue because ${selectedEngineerId} is out of shift.`);
+  addEvent(title, detail || `${ticket.id} returned to queue.`);
   return true;
 }
+
+function pauseAssignmentOutsideShift() {
+  if (isInShift() || !activeTicket) return false;
+  releaseActiveAssignment(
+    "Assignment paused",
+    `${activeTicket.id} returned to queue because ${selectedEngineerId} is out of shift.`
+  );
+  return true;
+}
+
+// =============================================================================
+// Login view
+// =============================================================================
 
 function renderLogin() {
   const selected = getCandidateEngineer();
@@ -235,12 +277,12 @@ function renderLogin() {
           </div>
           <h1>Start solving the assigned problem.</h1>
           <p class="intro-copy">
-            Sign in with a demo engineer. If the engineer is in shift, the next mock Engineer Ticket is assigned automatically.
+            Sign in with a demo engineer. Before entering the workspace you will see a readiness overview — then explicitly claim your next case.
           </p>
         </div>
         <ul class="policy-list" aria-label="Assignment policy">
-          <li><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span>Outside shift: no active ticket, wait until shift starts.</span></li>
-          <li><span class="material-symbols-outlined" aria-hidden="true">assignment</span><span>Inside shift: one Engineer Ticket is auto-assigned.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span>Outside shift: I&rsquo;m ready to roll is disabled until your UTC+8 shift starts.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">assignment</span><span>Inside shift: click I&rsquo;m ready to roll to claim the next waiting case.</span></li>
           <li><span class="material-symbols-outlined" aria-hidden="true">fact_check</span><span>Engineer AI drafts the customer reply; the engineer approves and sends.</span></li>
         </ul>
       </aside>
@@ -253,8 +295,8 @@ function renderLogin() {
         <div id="engineer-selector" class="engineer-selector-grid" role="radiogroup" aria-label="Choose a demo engineer">
           ${DEMO_ENGINEERS.map((engineer) => renderEngineerOption(engineer, engineer.id === selected.id)).join("")}
         </div>
-        <button class="btn btn-primary" type="button" data-action="enter-workspace">
-          Enter problem workspace
+        <button class="btn btn-primary" type="button" data-action="enter-welcome">
+          View readiness overview
           <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
         </button>
       </section>
@@ -281,6 +323,147 @@ function renderEngineerOption(engineer, selected) {
   `;
 }
 
+// =============================================================================
+// Welcome (readiness) view
+// =============================================================================
+
+function renderWelcome() {
+  const engineer = getSelectedEngineer();
+  if (!engineer) {
+    renderLogin();
+    return;
+  }
+  const inShift = isInShift();
+  const sla = ticketSlaState();
+  const waitingCount = queue.length;
+  const hasActiveTicket = Boolean(activeTicket);
+
+  root.innerHTML = `
+    <section class="welcome-view">
+      <header class="welcome-hero">
+        <div class="welcome-hero-top">
+          <div class="brand-lockup">
+            <span class="brand-icon material-symbols-outlined" aria-hidden="true">bolt</span>
+            <div>
+              <p class="eyebrow">Concierge AI</p>
+              <strong>Assignment Command</strong>
+            </div>
+          </div>
+          <button class="btn btn-ghost" type="button" data-action="sign-out">Change engineer</button>
+        </div>
+        <div class="welcome-hero-body">
+          <div class="welcome-engineer-card">
+            <span class="engineer-avatar welcome-avatar" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
+            <div>
+              <p class="eyebrow">Signed in as</p>
+              <h1>${escapeHtml(engineer.name)}</h1>
+              <p>${escapeHtml(engineer.role)}</p>
+            </div>
+          </div>
+          <div class="welcome-status-strip">
+            <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
+            <span class="status-pill ${hasActiveTicket ? "is-warning" : "is-muted"}">${hasActiveTicket ? "Active ticket open" : "No active ticket"}</span>
+            <span class="status-pill is-muted">${waitingCount} waiting in queue</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="welcome-grid">
+        <article class="panel-card welcome-info-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">UTC+8 current time</p>
+              <h2>${formatUtc8Time()}</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
+          </div>
+        </article>
+
+        <article class="panel-card welcome-info-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">Daily shift</p>
+              <h2>${escapeHtml(shift.start)} &#8211; ${escapeHtml(shift.end)} UTC+8</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
+          </div>
+          ${!inShift ? `<p class="welcome-shift-note">Next shift: ${escapeHtml(nextShiftInfo())}</p>` : ""}
+        </article>
+
+        <article class="panel-card welcome-info-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">Queue status</p>
+              <h2>${waitingCount} case${waitingCount !== 1 ? "s" : ""} waiting</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">queue</span>
+          </div>
+          ${waitingCount === 0 ? `<p class="welcome-shift-note">No waiting cases in the mock queue right now.</p>` : ""}
+        </article>
+
+        <article class="panel-card welcome-info-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">Active ticket</p>
+              <h2>${hasActiveTicket ? escapeHtml(activeTicket.id) : "None"}</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">assignment</span>
+          </div>
+          ${hasActiveTicket ? `<p class="welcome-shift-note">${escapeHtml(activeTicket.title)} &#183; ${escapeHtml(sla.label)}</p>` : ""}
+        </article>
+
+        <article class="panel-card welcome-info-card welcome-sla-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">SLA policy</p>
+              <h2>3h from assignment</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">timer</span>
+          </div>
+          <p class="welcome-shift-note">First response target. Overdue cases are flagged and eligible for transfer.</p>
+        </article>
+      </section>
+
+      <div class="welcome-actions">
+        <button
+          class="btn btn-primary btn-ready"
+          type="button"
+          data-action="ready-to-roll"
+          ${!inShift ? "disabled" : ""}
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span>
+          I&rsquo;m ready to roll
+        </button>
+        ${!inShift
+          ? `<p class="welcome-disabled-reason">You are outside your UTC+8 shift. Ready is disabled until your shift starts. Next shift: ${escapeHtml(nextShiftInfo())}.</p>`
+          : `<p class="welcome-ready-hint">Click to claim the next waiting case and enter the problem workspace.</p>`}
+      </div>
+
+      <div class="welcome-events panel-card">
+        <div class="panel-head">
+          <p class="eyebrow">Audit trail</p>
+          <h3>Mock events</h3>
+        </div>
+        <div class="event-list">
+          ${events.map((event) => `
+            <article class="event-item">
+              <strong>${escapeHtml(event.title)}</strong>
+              <p>${escapeHtml(event.detail)} &#183; ${escapeHtml(event.createdAt)}</p>
+            </article>
+          `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
+        </div>
+        <div class="sidebar-actions" style="margin-top:12px;">
+          <button class="btn btn-ghost" type="button" data-action="reset-demo">Reset mock data</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+// =============================================================================
+// Workspace view
+// =============================================================================
+
 function renderWorkspace() {
   const engineer = getSelectedEngineer();
   if (!engineer) {
@@ -288,7 +471,6 @@ function renderWorkspace() {
     return;
   }
   pauseAssignmentOutsideShift();
-  autoAssignIfEligible();
   const inShift = isInShift();
   const eligible = canAssign();
   const sla = ticketSlaState();
@@ -330,7 +512,7 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
           </div>
           <div class="status-pills">
             <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
-            <span class="status-pill ${eligible ? "is-success" : "is-warning"}">${eligible ? "Eligible for assignment" : "Not assignable"}</span>
+            <span class="status-pill ${eligible ? "is-success" : "is-warning"}">${eligible ? "Ready for next" : "Not assignable"}</span>
           </div>
         </section>
 
@@ -375,7 +557,7 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
             ${events.map((event) => `
               <article class="event-item">
                 <strong>${escapeHtml(event.title)}</strong>
-                <p>${escapeHtml(event.detail)} · ${escapeHtml(event.createdAt)}</p>
+                <p>${escapeHtml(event.detail)} &#183; ${escapeHtml(event.createdAt)}</p>
               </article>
             `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
           </div>
@@ -397,7 +579,7 @@ function renderWorkspaceHeaderHtml(inShift, sla) {
       <div>
         <p class="eyebrow">Problem workspace</p>
         <h1>${escapeHtml(title)}</h1>
-        <p>${activeTicket ? "Work the assigned problem with Engineer AI, then send the customer-facing reply." : "Assignment will begin automatically when the engineer is eligible."}</p>
+        <p>${activeTicket ? "Work the assigned problem with Engineer AI, then send the customer-facing reply." : "Click I&rsquo;m ready for the next case to claim a waiting ticket from the queue."}</p>
       </div>
       <div class="workspace-header-actions">
         <span class="current-ticket-sla ${escapeHtml(sla.className)}">${escapeHtml(sla.label)}</span>
@@ -486,25 +668,233 @@ function renderActiveTicketHtml(ticket, sla) {
 
 function renderNoTicketHtml(inShift, eligible) {
   const title = inShift ? "No active Engineer Ticket" : "Waiting for your UTC+8 shift";
-  const body = inShift
-    ? "You are in shift, but the mock queue is empty. New Engineer Tickets will appear here automatically when available."
-    : "You are signed in, but assignment is paused outside your shift. When the UTC+8 shift starts, the next Engineer Ticket will be assigned automatically.";
+  const waitingCount = queue.length;
+
+  if (inShift && waitingCount > 0) {
+    return `
+      <section class="no-ticket-state panel-card">
+        <span class="material-symbols-outlined" aria-hidden="true">assignment_turned_in</span>
+        <div>
+          <p class="ticket-kicker">Ready</p>
+          <h2>${waitingCount} case${waitingCount !== 1 ? "s" : ""} waiting in queue</h2>
+          <p>You are in shift. Click below to claim the next waiting Engineer Ticket.</p>
+        </div>
+        <button class="btn btn-primary" type="button" data-action="ready-for-next">
+          <span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span>
+          I&rsquo;m ready for the next case
+        </button>
+      </section>
+    `;
+  }
+
+  if (inShift && waitingCount === 0) {
+    return `
+      <section class="no-ticket-state panel-card">
+        <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
+        <div>
+          <p class="ticket-kicker">Queue empty</p>
+          <h2>No waiting cases</h2>
+          <p>You are in shift, but the mock queue is currently empty. Check back later or reset the demo data to reload the initial queue.</p>
+        </div>
+      </section>
+    `;
+  }
+
   return `
     <section class="no-ticket-state panel-card">
-      <span class="material-symbols-outlined" aria-hidden="true">${inShift ? "assignment_turned_in" : "schedule"}</span>
+      <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
       <div>
-        <p class="ticket-kicker">${eligible ? "Ready" : "No active Engineer Ticket"}</p>
+        <p class="ticket-kicker">Out of shift</p>
         <h2>${title}</h2>
-        <p>${body}</p>
+        <p>You are signed in, but assignment is paused outside your shift. When your UTC+8 shift starts, click I&rsquo;m ready for the next case to claim a ticket. Next shift: ${escapeHtml(nextShiftInfo())}.</p>
       </div>
     </section>
   `;
 }
 
-function enterWorkspace() {
+// =============================================================================
+// Admin view
+// =============================================================================
+
+function renderAdmin() {
+  const waitingCases = queue.map((ticket, index) => ({
+    ...ticket,
+    position: index + 1,
+  }));
+
+  const hasActive = Boolean(activeTicket);
+  const inShift = isInShift();
+  const selectedEngineer = getSelectedEngineer();
+
+  root.innerHTML = `
+    <section class="admin-view">
+      <header class="admin-header">
+        <div class="admin-header-top">
+          <div class="brand-lockup">
+            <span class="brand-icon material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
+            <div>
+              <p class="eyebrow">Assignment Admin</p>
+              <strong>SupportPortal</strong>
+            </div>
+          </div>
+          <a href="/assignment" class="btn btn-ghost">
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+            Back to engineer demo
+          </a>
+        </div>
+        <div class="admin-header-body">
+          <h1>Queue overview</h1>
+          <p>Read-only view of the mock assignment queue. No manual controls &#8212; this is a demo observation page.</p>
+        </div>
+      </header>
+
+      <section class="admin-status-strip">
+        <div class="admin-status-card panel-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">Active assignment</p>
+              <h2>${hasActive ? escapeHtml(activeTicket.id) : "None"}</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">assignment_ind</span>
+          </div>
+          ${hasActive ? `<p class="admin-card-detail">${escapeHtml(activeTicket.title)} &#183; assigned to ${escapeHtml(activeTicket.engineerId || "\u2014")}</p>` : `<p class="admin-card-detail">No engineer is currently working on a ticket.</p>`}
+        </div>
+
+        <div class="admin-status-card panel-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">Engineer readiness</p>
+              <h2>${selectedEngineer ? escapeHtml(selectedEngineer.name) : "None selected"}</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">person</span>
+          </div>
+          <p class="admin-card-detail">
+            ${selectedEngineer
+              ? `${escapeHtml(selectedEngineer.role)} &#183; ${inShift ? "In shift" : "Out of shift"} &#183; ${workspaceActive ? "In workspace" : "At welcome"}`
+              : "No engineer is signed in on the demo."}
+          </p>
+        </div>
+
+        <div class="admin-status-card panel-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">Shift window</p>
+              <h2>${escapeHtml(shift.start)} &#8211; ${escapeHtml(shift.end)} UTC+8</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
+          </div>
+          <p class="admin-card-detail">Current UTC+8 time: ${formatUtc8Time()}</p>
+        </div>
+      </section>
+
+      <section class="admin-queue-section">
+        <div class="section-head admin-queue-head">
+          <div>
+            <p class="ticket-kicker">Waiting queue</p>
+            <h2>${waitingCases.length} case${waitingCases.length !== 1 ? "s" : ""} waiting</h2>
+          </div>
+          <span class="status-pill is-muted">Read-only</span>
+        </div>
+
+        ${waitingCases.length === 0 ? `
+          <div class="no-ticket-state panel-card" style="min-height:auto; padding:40px 34px;">
+            <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
+            <div>
+              <p class="ticket-kicker">Queue empty</p>
+              <h2>No waiting cases</h2>
+              <p>The mock queue is currently empty.</p>
+            </div>
+          </div>
+        ` : `
+          <div class="admin-queue-list">
+            ${waitingCases.map((ticket) => `
+              <article class="admin-queue-item panel-card">
+                <div class="admin-queue-item-head">
+                  <div class="section-head">
+                    <div>
+                      <p class="ticket-kicker">Position #${ticket.position} &#183; ${escapeHtml(ticket.id)}</p>
+                      <h2>${escapeHtml(ticket.title)}</h2>
+                    </div>
+                    <span class="priority-chip">${escapeHtml(ticket.priority)}</span>
+                  </div>
+                  <div class="ticket-meta">
+                    <span>Client Ticket ${escapeHtml(ticket.clientTicket)}</span>
+                    <span>${escapeHtml(ticket.requester)}</span>
+                    <span>SLA: 3h from assignment</span>
+                  </div>
+                </div>
+                <p class="problem-statement">${escapeHtml(ticket.issue)}</p>
+              </article>
+            `).join("")}
+          </div>
+        `}
+      </section>
+
+      <section class="admin-events-section panel-card">
+        <div class="panel-head">
+          <p class="eyebrow">Audit trail</p>
+          <h3>Mock events</h3>
+        </div>
+        <div class="event-list">
+          ${events.map((event) => `
+            <article class="event-item">
+              <strong>${escapeHtml(event.title)}</strong>
+              <p>${escapeHtml(event.detail)} &#183; ${escapeHtml(event.createdAt)}</p>
+            </article>
+          `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+// =============================================================================
+// Actions
+// =============================================================================
+
+function enterWelcome() {
   selectedEngineerId = getCandidateEngineer().id;
   writeStorage(ASSIGNMENT_AUTH_KEY, selectedEngineerId);
+  workspaceActive = false;
+  saveWorkspaceActive();
   addEvent("Engineer selected", `${selectedEngineerId} opened /assignment.`);
+  renderWelcome();
+}
+
+function readyToRoll() {
+  const engineer = getSelectedEngineer();
+  if (!engineer) {
+    renderLogin();
+    return;
+  }
+  if (!isInShift()) {
+    renderWelcome();
+    return;
+  }
+
+  if (activeTicket && activeTicket.engineerId !== selectedEngineerId) {
+    releaseActiveAssignment(
+      "Assignment released",
+      `${activeTicket.id} returned to queue before ${selectedEngineerId} entered the workspace.`
+    );
+  }
+
+  if (!activeTicket) {
+    assignNextTicket();
+  }
+
+  workspaceActive = true;
+  saveWorkspaceActive();
+  addEvent("Ready to roll", `${selectedEngineerId} entered the problem workspace.`);
+  renderWorkspace();
+}
+
+function readyForNextCase() {
+  if (!canAssign()) {
+    renderWorkspace();
+    return;
+  }
+  assignNextTicket();
   renderWorkspace();
 }
 
@@ -532,7 +922,20 @@ function saveShift(form) {
   };
   writeStorage(ASSIGNMENT_SHIFT_KEY, shift);
   addEvent("Shift updated", `${shift.start}-${shift.end} UTC+8 daily shift saved.`);
-  renderWorkspace();
+  if (workspaceActive) {
+    renderWorkspace();
+  } else {
+    renderWelcome();
+  }
+}
+
+function signOut() {
+  releaseActiveAssignment();
+  selectedEngineerId = "";
+  workspaceActive = false;
+  localStorage.removeItem(ASSIGNMENT_AUTH_KEY);
+  localStorage.removeItem(ASSIGNMENT_WORKSPACE_KEY);
+  renderLogin();
 }
 
 function resetDemo() {
@@ -540,11 +943,13 @@ function resetDemo() {
   activeTicket = null;
   queue = INITIAL_QUEUE.map((ticket) => ({ ...ticket }));
   events = [];
+  workspaceActive = false;
   writeStorage(ASSIGNMENT_SHIFT_KEY, shift);
   writeStorage(ASSIGNMENT_QUEUE_KEY, queue);
   writeStorage(ASSIGNMENT_ACTIVE_TICKET_KEY, activeTicket);
   writeStorage(ASSIGNMENT_EVENTS_KEY, events);
-  renderWorkspace();
+  writeStorage(ASSIGNMENT_WORKSPACE_KEY, workspaceActive);
+  renderWelcome();
 }
 
 function toggleSidebar() {
@@ -552,6 +957,10 @@ function toggleSidebar() {
   writeStorage(ASSIGNMENT_SIDEBAR_KEY, sidebarCollapsed);
   renderWorkspace();
 }
+
+// =============================================================================
+// Event delegation
+// =============================================================================
 
 root.addEventListener("click", (event) => {
   const engineerButton = event.target.closest("[data-engineer-id]");
@@ -564,12 +973,11 @@ root.addEventListener("click", (event) => {
   const actionButton = event.target.closest("[data-action]");
   if (!actionButton) return;
   const action = String(actionButton.dataset.action || "");
-  if (action === "enter-workspace") enterWorkspace();
-  if (action === "sign-out") {
-    selectedEngineerId = "";
-    localStorage.removeItem(ASSIGNMENT_AUTH_KEY);
-    renderLogin();
-  }
+
+  if (action === "enter-welcome") enterWelcome();
+  if (action === "ready-to-roll") readyToRoll();
+  if (action === "ready-for-next") readyForNextCase();
+  if (action === "sign-out") signOut();
   if (action === "approve-ticket") approveTicket();
   if (action === "simulate-timeout") simulateTimeout();
   if (action === "reset-demo") resetDemo();
@@ -584,13 +992,32 @@ root.addEventListener("submit", (event) => {
 });
 
 window.setInterval(() => {
-  if (getSelectedEngineer()) {
-    renderWorkspace();
+  if (isAdminPage) {
+    renderAdmin();
+    return;
+  }
+  const engineer = getSelectedEngineer();
+  if (engineer) {
+    if (workspaceActive) {
+      renderWorkspace();
+    } else {
+      renderWelcome();
+    }
   }
 }, 30000);
 
-if (selectedEngineerId) {
-  renderWorkspace();
+// =============================================================================
+// Initial render
+// =============================================================================
+
+if (isAdminPage) {
+  renderAdmin();
+} else if (selectedEngineerId) {
+  if (workspaceActive) {
+    renderWorkspace();
+  } else {
+    renderWelcome();
+  }
 } else {
   renderLogin();
 }

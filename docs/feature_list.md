@@ -46,7 +46,7 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
-- Engineer Assignment 原型支持工程师选择、UTC+8 固定排班、单工单分配和 3 小时 SLA 演示。
+- Engineer Assignment 原型支持工程师选择、welcome readiness 页面、显式领取动作和 read-only admin queue 视图。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
