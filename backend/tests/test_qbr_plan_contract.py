@@ -75,6 +75,14 @@ class QbrPlanContractTests(unittest.TestCase):
             "/assignment/admin",
             "Daily shift 卡片已支持直接修改 Start / End 并保存",
             "Save shift",
+            "Engineer overview",
+            "weekly schedule",
+            "on shift now",
+            "Online",
+            "admin-only shift",
+            "weekly schedule grid",
+            "engineer/day picker",
+            "overnight shift 跨到次日显示",
         ]
         for term in required_terms:
             with self.subTest(term=term):

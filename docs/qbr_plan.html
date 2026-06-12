@@ -1061,13 +1061,18 @@ flowchart TD
           "Daily shift 卡片已支持直接修改 Start / End 并保存，复用 Save shift 写入 localStorage 后立即刷新 In shift / Out of shift 与 ready 状态。",
           "Out of shift 时 I'm ready to roll 按钮 disable，显示原因和下一段 shift 信息；in shift 时点击按钮从 queue 领取下一张 case。",
           "关闭/approve 当前 ticket 后不自动连续领取下一张，展示 I'm ready for the next case CTA 由工程师再次显式领取。",
-          "新增 read-only `/assignment/admin` 页面展示 mock queue 中等待工程师处理的 cases、active assignment、engineer readiness 和 shift 状态，无手动分配控制。",
+          "`/assignment/admin` 扩展为 Queue & engineer overview 双区域：包含 waiting queue、active assignment、on shift now、online coverage 状态卡。",
+          "新增 Engineer overview section：当前 on-shift 列表、online/offline 固定 mock 状态、weekly schedule 网格和 admin-only shift 侧边编辑面板。",
+          "Weekly schedule 使用 Monday–Sunday × 00:00–23:00 UTC+8 小时网格，每个 engineer 固定颜色 chip，支持 overnight shift 跨到次日显示。",
+          "Admin 页提供 engineer/day picker，可为没有现有 chip 的空白日期新建或调整 shift。",
+          "Admin schedule 独立于 `/assignment` 的 ASSIGNMENT_SHIFT_KEY，使用专用 localStorage key，两者互不影响。",
           "SLA 超时/transfer 状态可模拟，契约测试确认 welcome + ready CTA + admin 入口、显式领取行为和不影响现有 engineer UI。"
         ],
         review: [
           "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",
           "Welcome 页 Daily shift 卡片现在就是排班调整入口，避免为了改 shift 先进入 workspace/sidebar。",
-          "`/assignment/admin` 是纯 read-only 观察页，无 force assign/reset/requeue 控制，避免被误解为生产调度器。",
+          "Admin 页新增 Engineer overview、weekly schedule grid 和 engineer/day picker 提供 demo 排班可视化，admin-only shift 编辑不联动 /assignment 个人 shift。",
+          "Online/Offline 状态使用固定 mock 数据展示，不联动 /assignment 登录状态或 workspace 状态。",
           "生产化最缺的是 server-side queue、assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。"
         ],
         next: [

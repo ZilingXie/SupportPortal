@@ -47,7 +47,7 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
-- Engineer Assignment 原型支持工程师选择、welcome readiness 页面、显式领取动作和 read-only admin queue 视图。
+- Engineer Assignment 原型支持工程师选择、welcome readiness 页面、显式领取动作、admin queue 视图和 weekly schedule 排班 demo。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 - Engineer AI 会在调查前生成结构化 Plan Agent 计划。
 - Engineer AI 会按 Plan Agent 计划执行 allowlisted subagents 并生成 evidence packet。
