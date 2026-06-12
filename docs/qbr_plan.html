@@ -693,7 +693,7 @@
     <header class="hero">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR 追踪 · 2026-06-12</div>
       <h1>四条优化主线，一张可追踪进度板。</h1>
-      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 multi-agent skeleton 合并、主线实施计划 HTML 化、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
+      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 Engineer Multi-Agent 生命周期架构优化、multi-agent skeleton 合并、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
       <div class="hero-meta">
         <span class="meta-pill">同步点：main @ 2026-06-12</span>
         <span class="meta-pill">来源：docs + tests + changelog + recent merges</span>
@@ -712,10 +712,10 @@
     <section class="snapshot" aria-label="Progress snapshot">
       <div class="snapshot-card">
         <h2>当前判断</h2>
-        <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已有后端契约骨架和中文主线计划，但真实生命周期仍未接管；RAG/KG 已完成 cusmem 产品化整理，下一步才是 SupportPortal adapter 与评测。</p>
+        <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已完成生命周期架构优化和后端契约骨架，但 Summary/Plan/Execute/Review 真实链路仍未接管 runtime；RAG/KG 已完成 cusmem 产品化整理，下一步才是 SupportPortal adapter 与评测。</p>
         <ul class="review-list" aria-label="QBR review notes">
           <li>QBR 可以把 Billing 作为最强 demo，但必须明确当前是 route + 记录状态，不是真正执行 automation；Zendesk、幂等和人工审核仍是试运行前置条件。</li>
-          <li>Assignment 和 Multi-Agent 都要避免过度承诺：前者是 localStorage 原型，后者是 skeleton + plan，还不是生产主链路。</li>
+          <li>Assignment 和 Multi-Agent 都要避免过度承诺：前者是 localStorage 原型，后者是生命周期架构 + skeleton + plan，还不是生产主链路。</li>
           <li>RAG/KG 适合讲架构方向和边界，不能把 vendored cusmem 等同于已上线的 KG 检索能力。</li>
         </ul>
       </div>
@@ -753,7 +753,7 @@
       </div>
       <div class="timeline-step">
         <b>3. Multi-Agent</b>
-        <p>展示 Engineer AI 从 guardrail-only 走向 multi-agent 主链路的骨架、安全边界和中文实施计划；当前下一步是任务 2：先把真实 Plan Agent 接进生命周期，再继续补 Memory Review/Implement/Conclude。</p>
+        <p>展示 Engineer AI 从 guardrail-only 走向 Summary Agent、Plan Agent、Execute Agent、Review Agent 的调查主链路；当前下一步是先实现 Summary Agent 和 summary packet，再把 Plan Agent 接入 mem0/skill fallback。</p>
       </div>
       <div class="timeline-step">
         <b>4. RAG vs KG</b>
@@ -812,6 +812,10 @@
       {
         key: "#436",
         copy: "Engineer Multi-Agent 已有后端 skeleton、版本常量和契约测试，但还没有接入线上调查生命周期。"
+      },
+      {
+        key: "Plan",
+        copy: "Engineer Multi-Agent 架构计划已优化为 Summary → Plan → Execute → Review → Engineer approve/revise → Guardrail final approve → close ticket 的生命周期。"
       }
     ];
 
@@ -821,7 +825,7 @@
         short: "Multi-Agent",
         title: "Engineer AI multi-agent",
         status: "doing",
-        thesis: "已经完成边界、反馈、ledger、中文主线实施计划和第一版后端 skeleton；线上仍是 guardrail-first，当前下一步是任务 2：实现真实 Plan Agent。",
+        thesis: "已经完成边界、反馈、ledger、第一版后端 skeleton 和新版生命周期架构；线上仍是 guardrail-first，当前下一步是实现 Summary Agent 与 summary packet，然后再推进 Plan/Execute/Review 链路。",
         done: [
           "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
           "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
@@ -829,21 +833,25 @@
           "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
           "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
           "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，QBR 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
-          "主线计划的当前下一步已明确固定为任务 2：实现真实 Plan Agent；任务 1 只交付 skeleton，不触碰 runtime、UI 或 guardrail。"
+          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket；当前仍只更新计划，不触碰 runtime、UI 或 guardrail。"
         ],
         review: [
           "当前证据能证明的是契约和计划已经稳定，不是线上 Engineer AI 已经 multi-agent 化。",
-          "Task 2 应优先补 Plan Agent 的输入/输出契约、失败 fallback 和 replay 测试，再考虑 UI 暴露。",
-          "所有 memory 读取仍必须走 active memory 边界，inactive ledger 不能因为 QBR demo 被绕过。"
+          "Summary Agent 应先输出结构化 summary packet，再创建 Engineer ticket；它要记录客户上下文、已知线索、escalation reason、缺失信息和 redaction boundary。",
+          "Plan Agent 第一版要能在 mem0 和 skill list 未完成时 deterministic fallback，只基于 summary packet 和内置 allowlisted skills 产出计划。",
+          "Execute Agent 应是 scheduler/orchestrator：只调度 allowlisted subagents，显式记录 dependencies、parallel groups、task results 和 evidence packet。",
+          "Review Agent 是关键门禁，决策固定为 ready_for_engineer、replan_required、unable_to_resolve；replan 最多 2 次且必须记录原因。",
+          "Engineer approve 后仍必须走 guardrail 生成/校验 customer-facing reply，并再交给 engineer 最终 approve；关闭工单时只写 Case Memory candidate，不自动变 active memory。"
         ],
         next: [
-          { id: "ma-plan-agent", status: "todo", label: "当前下一步：实现真实 Plan Agent，从 ticket、handoff、历史消息和 revise note 生成可执行计划。", horizon: "Task 2" },
-          { id: "ma-memory-review", status: "todo", label: "实现 Memory Review Agent + Active Retrieval Memory 查询，只消费 active memory，不碰 inactive ledger。", horizon: "Phase 2B" },
-          { id: "ma-implement-agent", status: "todo", label: "实现 Implement Agent 调用 internal RAG、official fallback 和 evidence tools，并记录 evidence packet。", horizon: "Phase 2B" },
-          { id: "ma-conclude-agent", status: "todo", label: "实现 Conclude Agent 输出可审查 conclusion、缺失信息、root-cause status 和 customer-safe draft。", horizon: "Phase 2B" },
-          { id: "ma-revise-approve", status: "todo", label: "把 approve/revise 接入 multi-agent 生命周期：approve 仍过 guardrail，revise 回到 Plan Agent。", horizon: "Phase 2B" },
-          { id: "ma-ui-flag", status: "todo", label: "在 Engineer UI 展示 conclusion/revise 输入，并加 feature flag、fallback、版本注册和回滚门禁。", horizon: "Rollout" },
-          { id: "ma-eval", status: "todo", label: "从 feedback、revise notes 和 approved conclusions 生成 replay eval dataset。", horizon: "Phase 4" }
+          { id: "ma-summary-agent", status: "todo", label: "当前下一步：实现 Summary Agent 和 summary packet，把 client escalation 上下文、线索、缺失信息和 redaction boundary 转成 Engineer ticket 输入。", horizon: "Task 2" },
+          { id: "ma-plan-agent", status: "todo", label: "实现 Plan Agent：基于 summary packet、mem0（未接入时 fallback）和 skill list（未安装时用 allowlist fallback）生成 hypotheses、tasks、dependencies 和 blockers。", horizon: "Task 3" },
+          { id: "ma-execute-agent", status: "todo", label: "实现 Execute Agent：规划并启动 allowlisted subagents，区分 parallel groups 与串行依赖，收集 task results 和 evidence packet。", horizon: "Task 4" },
+          { id: "ma-review-agent", status: "todo", label: "实现 Review Agent：根据执行结果和客户工单总结输出 ready_for_engineer、replan_required 或 unable_to_resolve，并限制最多 2 次 replan。", horizon: "Task 5" },
+          { id: "ma-revise-approve", status: "todo", label: "把 engineer approve/revise 接入生命周期：revise 携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent。", horizon: "Runtime" },
+          { id: "ma-guardrail-final", status: "todo", label: "approve 后通过 guardrail 生成/校验 customer-facing reply，再交给 engineer 做最后 approve，避免直接自动回复客户。", horizon: "Runtime" },
+          { id: "ma-close-memory", status: "todo", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
+          { id: "ma-eval", status: "todo", label: "从 summary packet、review decisions、replan notes、engineer revise 和 approved replies 生成 replay eval dataset。", horizon: "Evaluation" }
         ],
         sources: [
           "docs/superpowers/plans/2026-06-11-engineer-ai-multi-agent-mainline.html",
