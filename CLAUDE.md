@@ -59,6 +59,7 @@ When a task involves modifying code or files, follow this workflow:
 - Do not use `~/.config/superpowers/worktrees/...` or `~/.codex/worktrees/...` as the default SupportPortal task workspace.
 - Do not create task branches manually from the root workspace. Codex should create them with `scripts/workflow/create_task_worktree.sh <thread-name-or-slug>`.
 - If you find the root workspace on a `codex/*` branch, stop and report it instead of continuing.
+- Other unrelated `codex/*` branches or `.worktrees/...` task workspaces are not blockers. Continue when the root workspace is clean `main` and your assigned workspace is the expected branch.
 
 ### 1. Confirm assignment
 

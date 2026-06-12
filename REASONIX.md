@@ -49,6 +49,8 @@ The script must create the workspace under `/Users/xieziling/Desktop/personal_pr
 
 If Codex or the user assigns an existing task branch/workspace, use that exact branch/workspace after confirming it is not another thread's workspace and is not detached.
 
+Other unrelated `codex/*` branches or `.worktrees/...` task workspaces are not blockers. Do not stop just because they exist, even if they are paused or dirty; continue when the root workspace is clean `main` and your assigned workspace is valid.
+
 ## Implementation Rules
 
 - Follow the Codex-written plan unless the user explicitly changes it.
