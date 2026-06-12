@@ -78,6 +78,7 @@ from backend.services.engineer_cases import (
 )
 from backend.services.engineer_summary_agent import build_engineer_summary_packet
 from backend.services.engineer_plan_agent import build_engineer_plan
+from backend.services.engineer_execute_agent import execute_engineer_plan
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     ESCALATED_STATUS,
@@ -3246,6 +3247,13 @@ async def create_or_update_ticket(
                     revise_context=None,
                     now_value=now_iso_value,
                 )
+                execution_packet = execute_engineer_plan(
+                    active_plan=engineer_plan,
+                    summary_packet=summary_packet,
+                    engineer_agent_state=engineer_case.get("engineer_agent_state"),
+                    execution_context=None,
+                    now_value=now_iso_value,
+                )
                 engineer_case["engineer_agent_state"] = {
                     **(engineer_case.get("engineer_agent_state") or {}),
                     "summary_packet_id": summary_packet["packet_id"],
@@ -3258,6 +3266,12 @@ async def create_or_update_ticket(
                     "plan_id": engineer_plan["plan_id"],
                     "plan_version": engineer_plan["plan_version"],
                     "plan_agent_version": engineer_plan["plan_agent_version"],
+                    "active_execution": execution_packet,
+                    "execution_id": execution_packet["execution_id"],
+                    "execution_version": execution_packet["execution_version"],
+                    "execute_agent_version": execution_packet["execute_agent_version"],
+                    "evidence_packet": execution_packet["evidence_packet"],
+                    "task_results": execution_packet["task_results"],
                 }
                 case_context = build_engineer_case_context(ticket, engineer_case)
                 opening_context = build_investigation_opening_context(

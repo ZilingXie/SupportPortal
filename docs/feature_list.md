@@ -50,6 +50,7 @@
 - Engineer Assignment 原型支持工程师选择、welcome readiness 页面、显式领取动作、admin queue 视图和 weekly schedule 排班 demo。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 - Engineer AI 会在调查前生成结构化 Plan Agent 计划。
+- Engineer AI 会按 Plan Agent 计划执行 allowlisted subagents 并生成 evidence packet。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。

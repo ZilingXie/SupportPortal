@@ -168,3 +168,98 @@ class EngineerMultiAgentContractTests(unittest.TestCase):
             self.assertIn("expected_output", task)
             self.assertIn("blockers", task)
             self.assertEqual(task["status"], "planned")
+
+
+class EngineerMultiAgentExecutionSummaryTests(unittest.TestCase):
+    """Tests for the Execute Agent execution summary wrapper."""
+
+    def test_build_execution_summary_extracts_core_fields(self) -> None:
+        from backend.services.engineer_multi_agent import build_multi_agent_execution_summary
+
+        execution_packet = {
+            "execution_id": "exec_plan_test_r1",
+            "execution_version": "engineer-execution-v1",
+            "execute_agent_version": "engineer-execute-agent-v1",
+            "plan_id": "plan_test_r1",
+            "status": "partial",
+            "task_results": [
+                {
+                    "task_id": "task_context_review",
+                    "skill": "context_review",
+                    "status": "succeeded",
+                    "summary": "Context reviewed successfully.",
+                    "evidence_refs": [{"kind": "customer_message", "text": "Camera issue."}],
+                    "missing_information": [],
+                },
+                {
+                    "task_id": "task_internal_knowledge_search",
+                    "skill": "internal_knowledge_search",
+                    "status": "blocked",
+                    "summary": "No internal evidence available.",
+                    "evidence_refs": [],
+                    "missing_information": ["Internal evidence is not available yet."],
+                },
+            ],
+            "evidence_packet": {
+                "internal_summary": "Investigation partial.",
+            },
+            "blockers": [
+                {
+                    "blocker_id": "blocker_001",
+                    "type": "dependency_blocked",
+                    "description": "Internal evidence not available.",
+                },
+            ],
+        }
+
+        summary = build_multi_agent_execution_summary(execution_packet)
+
+        self.assertEqual(summary["execution_id"], "exec_plan_test_r1")
+        self.assertEqual(summary["execution_status"], "partial")
+        self.assertEqual(summary["plan_id"], "plan_test_r1")
+        self.assertEqual(summary["task_count"], 2)
+        self.assertEqual(summary["succeeded_count"], 1)
+        self.assertEqual(summary["blocked_count"], 1)
+        self.assertEqual(summary["conclusion_status"], "needs_engineer_input")
+        self.assertEqual(summary["confidence"], "low")
+        self.assertIn("Internal evidence is not available yet.", summary["missing_information"])
+        self.assertEqual(len(summary["blockers"]), 1)
+        self.assertEqual(summary["created_by"], "execute_agent_summary_wrapper")
+
+    def test_execution_summary_detects_readiness(self) -> None:
+        from backend.services.engineer_multi_agent import build_multi_agent_execution_summary
+
+        execution_packet = {
+            "execution_id": "exec_ready_r1",
+            "plan_id": "plan_ready_r1",
+            "status": "completed",
+            "task_results": [
+                {
+                    "task_id": "task_context_review",
+                    "skill": "context_review",
+                    "status": "succeeded",
+                    "summary": "All evidence collected.",
+                    "evidence_refs": [{"kind": "evidence", "text": "Found issue."}],
+                    "missing_information": [],
+                },
+            ],
+            "evidence_packet": {},
+            "blockers": [],
+        }
+
+        summary = build_multi_agent_execution_summary(execution_packet)
+
+        self.assertEqual(summary["conclusion_status"], "ready_for_engineer_review")
+        self.assertEqual(summary["confidence"], "medium")
+        self.assertEqual(summary["missing_information"], [])
+        self.assertEqual(summary["blocked_count"], 0)
+
+    def test_execution_summary_handles_empty_packet(self) -> None:
+        from backend.services.engineer_multi_agent import build_multi_agent_execution_summary
+
+        summary = build_multi_agent_execution_summary({})
+
+        self.assertEqual(summary["task_count"], 0)
+        self.assertEqual(summary["conclusion_status"], "needs_engineer_input")
+        self.assertEqual(summary["confidence"], "low")
+        self.assertEqual(summary["blockers"], [])

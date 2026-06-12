@@ -42,6 +42,7 @@ class QbrPlanContractTests(unittest.TestCase):
             "Guardrail final approve",
             "Summary Agent 第一版（deterministic summary packet）已完成",
             "Plan Agent 第一版已完成",
+            "Execute Agent 第一版已实现 deterministic scheduler",
             "engineer_agent_state.active_plan",
             "engineer_handoff_packet",
             "engineer-summary-packet-v1",
@@ -52,6 +53,7 @@ class QbrPlanContractTests(unittest.TestCase):
             "max 2 retries",
             "Case Memory candidate",
             "mermaid.min.js",
+            "当前下一步是实现 Review Agent",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -59,6 +61,7 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn("当前下一步：实现 Summary Agent", html_source)
         self.assertNotIn("当前下一步：实现真实 Plan Agent", html_source)
         self.assertNotIn("当前下一步是实现 Plan Agent", html_source)
+        self.assertNotIn("当前下一步是实现 Execute Agent", html_source)
 
     def test_qbr_plan_tracks_assignment_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")

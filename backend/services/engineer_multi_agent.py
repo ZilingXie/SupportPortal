@@ -206,3 +206,59 @@ def build_multi_agent_conclusion(
         ),
         "created_by": "conclude_agent",
     }
+
+
+def build_multi_agent_execution_summary(execution_packet: dict[str, Any]) -> dict[str, Any]:
+    """Build a lightweight execution summary from an Execute Agent execution packet.
+
+    This wrapper aligns the Execute Agent output with the existing
+    multi_agent task_result convention so downstream consumers can
+    consume either format without refactoring the legacy skeleton.
+    """
+    task_results = _clean_list(execution_packet.get("task_results"))
+    evidence_packet = (
+        execution_packet.get("evidence_packet")
+        if isinstance(execution_packet.get("evidence_packet"), dict)
+        else {}
+    )
+    blockers = _clean_list(execution_packet.get("blockers"))
+
+    all_evidence: list[dict[str, Any]] = []
+    all_missing: list[str] = []
+    summaries: list[str] = []
+
+    for result in task_results:
+        if not isinstance(result, dict):
+            continue
+        summaries.append(_clean_text(result.get("summary")))
+        all_evidence.extend(
+            dict(item) for item in _clean_list(result.get("evidence_refs")) if isinstance(item, dict)
+        )
+        all_missing.extend(
+            _clean_text(item) for item in _clean_list(result.get("missing_information")) if _clean_text(item)
+        )
+
+    unique_missing = list(dict.fromkeys(all_missing))
+    has_evidence = bool(all_evidence)
+    needs_input = bool(unique_missing) or not has_evidence
+
+    return {
+        "execution_id": _clean_text(execution_packet.get("execution_id")),
+        "execution_status": _clean_text(execution_packet.get("status")),
+        "plan_id": _clean_text(execution_packet.get("plan_id")),
+        "task_count": len(task_results),
+        "succeeded_count": sum(1 for r in task_results if isinstance(r, dict) and r.get("status") == "succeeded"),
+        "blocked_count": sum(1 for r in task_results if isinstance(r, dict) and r.get("status") in ("blocked", "failed")),
+        "summary": " ".join(part for part in summaries if part) or _clean_text(evidence_packet.get("internal_summary")),
+        "conclusion_status": "needs_engineer_input" if needs_input else "ready_for_engineer_review",
+        "confidence": "low" if needs_input else "medium",
+        "evidence_refs": all_evidence,
+        "missing_information": unique_missing,
+        "blockers": [dict(b) for b in blockers if isinstance(b, dict)],
+        "next_action": (
+            "Ask the engineer for the missing information."
+            if needs_input
+            else "Ask the engineer to review the execution summary."
+        ),
+        "created_by": "execute_agent_summary_wrapper",
+    }
