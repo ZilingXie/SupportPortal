@@ -653,7 +653,7 @@
     <header class="hero">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR 追踪 · 2026-06-12</div>
       <h1>四条优化主线，一张可追踪进度板。</h1>
-      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 multi-agent skeleton 合并、主线实施计划 HTML 化，以及后续真实主链路接入顺序；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
+      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 multi-agent skeleton 合并、主线实施计划 HTML 化、ticket id 统一和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
       <div class="hero-meta">
         <span class="meta-pill">同步点：main @ 2026-06-12</span>
         <span class="meta-pill">来源：docs + tests + changelog + recent merges</span>
@@ -699,7 +699,7 @@
     <section class="timeline" aria-label="Suggested QBR route">
       <div class="timeline-step">
         <b>1. Billing</b>
-        <p>展示确定性最强的白名单自动化：字段收集、route、ticket id、持久化、邮件升级和历史查询已经闭环，下一步是 Zendesk、幂等和试运行质量复盘。</p>
+        <p>展示确定性最强的白名单自动化：字段收集、route、ticket 持久化、邮件升级、历史查询，以及对外 `TK-...` ticket id 统一已经闭环，下一步是 Zendesk、幂等和试运行质量复盘。</p>
       </div>
       <div class="timeline-step">
         <b>2. Assignment</b>
@@ -824,16 +824,16 @@
       {
         id: "billing-routing",
         short: "Billing",
-        title: "Billing ticket routing",
+        title: "Billing intake / ticket routing",
         status: "doing",
         thesis: "确定性 billing 白名单 POC 已贯通 /account intake、route、ticket、邮件和历史查询；ticket id 已统一，下一步要接真实来源、审核和试运行指标。",
         done: [
           "白名单 v1 收窄到 `account_suspension` 和 `detailed_invoice`，金额争议、退款、赔付、裁决类问题默认不自动化。",
           "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
           "`POST /account` 已实现创建客户工单 -> route -> follow process；字段缺失时追问，字段齐全时升级内部团队并准备/发送内部邮件。",
-          "`/account` 手动 UI 已复用 client 体验，并展示 route、ticket id、客户回复、缺失字段、邮件状态和 billing ticket id。",
-          "Billing ticket 持久化、历史列表和详情 API 已完成；`support_billing_tickets` schema 与 repository contract 有测试覆盖。",
-          "Account/Billing ticket id 已统一为 `billing_ticket_id` 视角，list/detail API 和 UI 都能展示可追踪的 billing ticket。",
+          "`/account` 手动 UI 已复用 client 体验，并展示 route、canonical `TK-...` ticket id、客户回复、缺失字段、邮件状态和最近 ticket 历史。",
+          "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 ticket view-model 已统一：`ticket_id` 指向 support ticket，`source` 统一为 `manual` / `api`，左侧 Recent tickets 列表已修复。",
+          "Billing ticket 历史列表和详情 API 已完成；底层 schema、repository contract 和 account intake 测试覆盖了 companion table 存取。",
           "内部邮件已支持 action-specific destination env，2026-06-10 detailed_invoice 真实 SMTP 发送测试已确认 sent。"
         ],
         next: [
