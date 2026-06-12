@@ -5,6 +5,7 @@ const ASSIGNMENT_QUEUE_KEY = "supportportal_assignment_queue";
 const ASSIGNMENT_EVENTS_KEY = "supportportal_assignment_events";
 const ASSIGNMENT_SIDEBAR_KEY = "supportportal_assignment_sidebar_collapsed";
 const ASSIGNMENT_WORKSPACE_KEY = "supportportal_assignment_workspace_active";
+const ASSIGNMENT_ADMIN_SCHEDULE_KEY = "supportportal_assignment_admin_schedule";
 const SLA_MS = 3 * 60 * 60 * 1000;
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -13,6 +14,51 @@ const DEMO_ENGINEERS = [
   { id: "Maya", name: "Maya", role: "Tier One Engineer", initials: "M" },
   { id: "Leo", name: "Leo", role: "Tier One Engineer", initials: "L" },
 ];
+
+const ENGINEER_COLORS = {
+  Jack: { bg: "#cae6ff", fg: "#006493", cssVar: "var(--primary)" },
+  Maya: { bg: "#b8e8e0", fg: "#006875", cssVar: "var(--success)" },
+  Leo: { bg: "#ffe0b2", fg: "#9f5d12", cssVar: "var(--warning)" },
+};
+
+const ADMIN_PRESENCE_MOCK = {
+  Jack: "online",
+  Maya: "online",
+  Leo: "offline",
+};
+
+const DEFAULT_ADMIN_SCHEDULE = {
+  Jack: {
+    monday:    { start: "09:00", end: "18:00" },
+    tuesday:   { start: "09:00", end: "18:00" },
+    wednesday: { start: "09:00", end: "18:00" },
+    thursday:  { start: "09:00", end: "18:00" },
+    friday:    { start: "09:00", end: "18:00" },
+    saturday:  { start: "", end: "" },
+    sunday:    { start: "", end: "" },
+  },
+  Maya: {
+    monday:    { start: "14:00", end: "22:00" },
+    tuesday:   { start: "14:00", end: "22:00" },
+    wednesday: { start: "14:00", end: "22:00" },
+    thursday:  { start: "14:00", end: "22:00" },
+    friday:    { start: "14:00", end: "22:00" },
+    saturday:  { start: "", end: "" },
+    sunday:    { start: "", end: "" },
+  },
+  Leo: {
+    monday:    { start: "", end: "" },
+    tuesday:   { start: "", end: "" },
+    wednesday: { start: "22:00", end: "06:00" },
+    thursday:  { start: "22:00", end: "06:00" },
+    friday:    { start: "22:00", end: "06:00" },
+    saturday:  { start: "22:00", end: "06:00" },
+    sunday:    { start: "22:00", end: "06:00" },
+  },
+};
+
+const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const DEFAULT_SHIFT = {
   start: "09:00",
@@ -94,6 +140,8 @@ let events = readStorage(ASSIGNMENT_EVENTS_KEY, []);
 let sidebarCollapsed = readStorage(ASSIGNMENT_SIDEBAR_KEY, false);
 let workspaceActive = readStorage(ASSIGNMENT_WORKSPACE_KEY, false);
 let slaCountdownTimer = null;
+let adminSchedule = normalizeAdminSchedule(readStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, DEFAULT_ADMIN_SCHEDULE));
+let adminEditState = null; // { engineerId, weekday } | null
 
 const root = document.getElementById("assignment-root");
 const isAdminPage = window.location.pathname.includes("/admin");
@@ -176,6 +224,111 @@ function nextShiftInfo() {
     return `In ${hours}h ${String(mins).padStart(2, "0")}m (${shift.start} UTC+8)`;
   }
   return `In ${mins}m (${shift.start} UTC+8)`;
+}
+
+function getEngineerColor(engineerId) {
+  return ENGINEER_COLORS[engineerId] || { bg: "#e4e9ef", fg: "#6e7882", cssVar: "var(--ink-muted)" };
+}
+
+function normalizeAdminSchedule(source) {
+  const schedule = source && typeof source === "object" ? source : {};
+  return DEMO_ENGINEERS.reduce((result, engineer) => {
+    const engineerSchedule = schedule[engineer.id] && typeof schedule[engineer.id] === "object"
+      ? schedule[engineer.id]
+      : {};
+    result[engineer.id] = WEEKDAYS.reduce((days, weekday) => {
+      const fallback = (DEFAULT_ADMIN_SCHEDULE[engineer.id] || {})[weekday] || { start: "", end: "" };
+      const shiftValue = engineerSchedule[weekday] && typeof engineerSchedule[weekday] === "object"
+        ? engineerSchedule[weekday]
+        : fallback;
+      days[weekday] = {
+        start: String(shiftValue.start || ""),
+        end: String(shiftValue.end || ""),
+      };
+      return days;
+    }, {});
+    return result;
+  }, {});
+}
+
+function getPreviousWeekday(weekday) {
+  const index = WEEKDAYS.indexOf(weekday);
+  return WEEKDAYS[(index + WEEKDAYS.length - 1) % WEEKDAYS.length];
+}
+
+function getAdminShift(engineerId, weekday) {
+  return (adminSchedule[engineerId] || {})[weekday] || { start: "", end: "" };
+}
+
+function shiftStartsOnDayAtMinute(daySchedule, minute) {
+  if (!daySchedule || !daySchedule.start || !daySchedule.end) return false;
+  const startMin = minutesFromTime(daySchedule.start);
+  const endMin = minutesFromTime(daySchedule.end);
+  if (startMin === endMin) return false;
+  if (startMin < endMin) {
+    return minute >= startMin && minute < endMin;
+  }
+  return minute >= startMin;
+}
+
+function previousOvernightShiftCoversMinute(daySchedule, minute) {
+  if (!daySchedule || !daySchedule.start || !daySchedule.end) return false;
+  const startMin = minutesFromTime(daySchedule.start);
+  const endMin = minutesFromTime(daySchedule.end);
+  return startMin > endMin && minute < endMin;
+}
+
+function getShiftForScheduleCell(engineerId, weekday, hour) {
+  const hourMin = hour * 60;
+  const currentShift = getAdminShift(engineerId, weekday);
+  if (shiftStartsOnDayAtMinute(currentShift, hourMin)) {
+    return { weekday, shift: currentShift };
+  }
+  const previousWeekday = getPreviousWeekday(weekday);
+  const previousShift = getAdminShift(engineerId, previousWeekday);
+  if (previousOvernightShiftCoversMinute(previousShift, hourMin)) {
+    return { weekday: previousWeekday, shift: previousShift };
+  }
+  return null;
+}
+
+function isEngineerOnShiftAtHour(engineerId, weekday, hour) {
+  return Boolean(getShiftForScheduleCell(engineerId, weekday, hour));
+}
+
+function getEngineerActiveShiftNow(engineerId, now = utc8Now()) {
+  const dayIndex = (now.getUTCDay() + 6) % 7; // Monday=0
+  const weekday = WEEKDAYS[dayIndex];
+  const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const currentShift = getAdminShift(engineerId, weekday);
+  if (shiftStartsOnDayAtMinute(currentShift, currentMinutes)) {
+    return { weekday, shift: currentShift };
+  }
+  const previousWeekday = getPreviousWeekday(weekday);
+  const previousShift = getAdminShift(engineerId, previousWeekday);
+  if (previousOvernightShiftCoversMinute(previousShift, currentMinutes)) {
+    return { weekday: previousWeekday, shift: previousShift };
+  }
+  return null;
+}
+
+function getEngineersOnShiftNow() {
+  const now = utc8Now();
+  return DEMO_ENGINEERS.filter((eng) => Boolean(getEngineerActiveShiftNow(eng.id, now)));
+}
+
+function getShiftSummary(engineerId, weekday) {
+  const daySchedule = getAdminShift(engineerId, weekday);
+  if (!daySchedule || !daySchedule.start || !daySchedule.end) return "\u2014";
+  return `${daySchedule.start}\u2013${daySchedule.end}`;
+}
+
+function saveAdminSchedule() {
+  writeStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, adminSchedule);
+}
+
+function getOnlineCoverage() {
+  return DEMO_ENGINEERS.filter((eng) => ADMIN_PRESENCE_MOCK[eng.id] === "online").length;
 }
 
 function ticketSlaState(ticket = activeTicket) {
@@ -758,17 +911,88 @@ function renderAdmin() {
   }));
 
   const hasActive = Boolean(activeTicket);
-  const inShift = isInShift();
-  const selectedEngineer = getSelectedEngineer();
+  const onShiftNow = getEngineersOnShiftNow();
+  const onlineCount = getOnlineCoverage();
+
+  // Build weekly schedule grid HTML
+  let scheduleGridHtml = "";
+  for (let hour = 0; hour < 24; hour++) {
+    const hourLabel = `${String(hour).padStart(2, "0")}:00`;
+    let cellsHtml = "";
+    for (let d = 0; d < 7; d++) {
+      const weekday = WEEKDAYS[d];
+      const covering = DEMO_ENGINEERS.filter((eng) =>
+        isEngineerOnShiftAtHour(eng.id, weekday, hour)
+      );
+      let cellContent = "";
+      if (covering.length > 0) {
+        cellContent = covering
+          .map((eng) => {
+            const color = getEngineerColor(eng.id);
+            const cellShift = getShiftForScheduleCell(eng.id, weekday, hour);
+            const editWeekday = cellShift ? cellShift.weekday : weekday;
+            return `<span
+              class="schedule-chip"
+              style="background:${color.bg};color:${color.fg}"
+              data-engineer-id="${escapeHtml(eng.id)}"
+              data-weekday="${editWeekday}"
+              title="${escapeHtml(eng.name)}: ${getShiftSummary(eng.id, editWeekday)}"
+            >${escapeHtml(eng.name)}</span>`;
+          })
+          .join("");
+      }
+      cellsHtml += `<div class="schedule-cell ${covering.length === 0 ? "is-empty" : ""}" data-weekday="${weekday}" data-hour="${hour}">${cellContent}</div>`;
+    }
+    scheduleGridHtml += `
+      <div class="schedule-row">
+        <div class="schedule-hour-label">${hourLabel}</div>
+        ${cellsHtml}
+      </div>`;
+  }
+
+  // Build edit panel HTML if editing
+  let editPanelHtml = "";
+  if (adminEditState) {
+    const eng = DEMO_ENGINEERS.find((e) => e.id === adminEditState.engineerId);
+    const currentShift = (adminSchedule[adminEditState.engineerId] || {})[adminEditState.weekday] || { start: "", end: "" };
+    const dayLabel = WEEKDAY_LABELS[WEEKDAYS.indexOf(adminEditState.weekday)];
+    editPanelHtml = `
+      <aside class="admin-edit-panel" aria-label="Edit shift">
+        <div class="admin-edit-panel-head">
+          <div>
+            <p class="eyebrow">Edit shift</p>
+            <h3>${escapeHtml(eng ? eng.name : adminEditState.engineerId)} &middot; ${dayLabel}</h3>
+          </div>
+          <button class="btn btn-ghost admin-edit-close" type="button" data-action="admin-close-panel" aria-label="Close edit panel">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+          </button>
+        </div>
+        <form class="admin-edit-form" data-action="admin-save-shift" data-shift-edit-form>
+          <div class="field">
+            <label class="field-label" for="admin-edit-start">Start (UTC+8)</label>
+            <input id="admin-edit-start" name="start" type="time" value="${escapeHtml(currentShift.start)}" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="admin-edit-end">End (UTC+8)</label>
+            <input id="admin-edit-end" name="end" type="time" value="${escapeHtml(currentShift.end)}" />
+          </div>
+          <p class="admin-edit-hint">Leave both empty to clear this day&rsquo;s shift. Overnight shifts (e.g. 22:00&ndash;06:00) are supported.</p>
+          <div class="admin-edit-actions">
+            <button class="btn btn-ghost" type="button" data-action="admin-cancel-edit">Cancel</button>
+            <button class="btn btn-primary" type="submit">Save shift</button>
+          </div>
+        </form>
+      </aside>`;
+  }
 
   root.innerHTML = `
-    <section class="admin-view">
+    <section class="admin-view ${adminEditState ? "has-edit-panel" : ""}">
       <header class="admin-header">
         <div class="admin-header-top">
           <div class="brand-lockup">
             <span class="brand-icon material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
             <div>
-              <p class="eyebrow">Assignment Admin</p>
+              <p class="eyebrow">Assignment admin</p>
               <strong>SupportPortal</strong>
             </div>
           </div>
@@ -778,12 +1002,23 @@ function renderAdmin() {
           </a>
         </div>
         <div class="admin-header-body">
-          <h1>Queue overview</h1>
-          <p>Read-only view of the mock assignment queue. No manual controls &#8212; this is a demo observation page.</p>
+          <h1>Queue &amp; engineer overview</h1>
+          <p>Read-only observation of the mock assignment queue plus weekly engineer schedule demo. Edit shifts in the side panel. No manual ticket controls.</p>
         </div>
       </header>
 
       <section class="admin-status-strip">
+        <div class="admin-status-card panel-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">Waiting queue</p>
+              <h2>${waitingCases.length} case${waitingCases.length !== 1 ? "s" : ""}</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">inbox</span>
+          </div>
+          <p class="admin-card-detail">${waitingCases.length > 0 ? `Next: ${escapeHtml(waitingCases[0].id)} &middot; ${escapeHtml(waitingCases[0].title)}` : "Queue is empty."}</p>
+        </div>
+
         <div class="admin-status-card panel-card">
           <div class="section-head">
             <div>
@@ -798,27 +1033,97 @@ function renderAdmin() {
         <div class="admin-status-card panel-card">
           <div class="section-head">
             <div>
-              <p class="ticket-kicker">Engineer readiness</p>
-              <h2>${selectedEngineer ? escapeHtml(selectedEngineer.name) : "None selected"}</h2>
+              <p class="ticket-kicker">On shift now</p>
+              <h2>${onShiftNow.length > 0 ? onShiftNow.map((e) => escapeHtml(e.name)).join(", ") : "None"}</h2>
             </div>
-            <span class="material-symbols-outlined" aria-hidden="true">person</span>
+            <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
           </div>
-          <p class="admin-card-detail">
-            ${selectedEngineer
-              ? `${escapeHtml(selectedEngineer.role)} &#183; ${inShift ? "In shift" : "Out of shift"} &#183; ${workspaceActive ? "In workspace" : "At welcome"}`
-              : "No engineer is signed in on the demo."}
-          </p>
+          <p class="admin-card-detail">Current UTC+8 time: ${formatUtc8Time()}</p>
         </div>
 
         <div class="admin-status-card panel-card">
           <div class="section-head">
             <div>
-              <p class="ticket-kicker">Shift window</p>
-              <h2>${escapeHtml(shift.start)} &#8211; ${escapeHtml(shift.end)} UTC+8</h2>
+              <p class="ticket-kicker">Online coverage</p>
+              <h2>${onlineCount} / ${DEMO_ENGINEERS.length} online</h2>
             </div>
-            <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
+            <span class="material-symbols-outlined" aria-hidden="true">wifi</span>
           </div>
-          <p class="admin-card-detail">Current UTC+8 time: ${formatUtc8Time()}</p>
+          <p class="admin-card-detail">
+            ${DEMO_ENGINEERS.map((eng) => {
+              const isOnline = ADMIN_PRESENCE_MOCK[eng.id] === "online";
+              return `<span class="status-pill ${isOnline ? "is-success" : "is-muted"}">${isOnline ? "Online" : "Offline"} &middot; ${escapeHtml(eng.name)}</span>`;
+            }).join(" ")}
+          </p>
+        </div>
+      </section>
+
+      <section class="admin-engineer-overview">
+        <div class="section-head admin-section-head">
+          <div>
+            <p class="ticket-kicker">Engineer overview</p>
+            <h2>Weekly schedule &amp; presence</h2>
+          </div>
+        </div>
+
+        <div class="admin-on-shift-list panel-card">
+          <div class="section-head">
+            <div>
+              <p class="ticket-kicker">On shift now</p>
+              <h2>${onShiftNow.length > 0 ? onShiftNow.map((e) => escapeHtml(e.name)).join(", ") : "No one on shift"}</h2>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
+          </div>
+          <div class="admin-engineer-pills">
+            ${DEMO_ENGINEERS.map((eng) => {
+              const isOnline = ADMIN_PRESENCE_MOCK[eng.id] === "online";
+              const isOnShift = onShiftNow.some((e) => e.id === eng.id);
+              const color = getEngineerColor(eng.id);
+              return `<span class="admin-engineer-pill" style="border-left: 4px solid ${color.cssVar}">
+                <span class="engineer-avatar admin-engineer-avatar" style="background:${color.bg};color:${color.fg}" aria-hidden="true">${escapeHtml(eng.initials)}</span>
+                <span>
+                  <strong>${escapeHtml(eng.name)}</strong>
+                  <span>${escapeHtml(eng.role)}</span>
+                </span>
+                <span class="status-pill ${isOnShift ? "is-success" : "is-muted"}">${isOnShift ? "On shift" : "Off shift"}</span>
+                <span class="status-pill ${isOnline ? "is-success" : "is-muted"}">${isOnline ? "Online" : "Offline"}</span>
+              </span>`;
+            }).join("")}
+          </div>
+        </div>
+
+        <div class="admin-schedule-grid-wrapper panel-card">
+          <div class="section-head admin-schedule-head">
+            <div>
+              <p class="ticket-kicker">Weekly schedule</p>
+              <h2>Click an engineer chip or use the picker to edit</h2>
+            </div>
+            <span class="status-pill is-muted">UTC+8</span>
+          </div>
+          <form class="admin-shift-picker" data-admin-shift-picker>
+            <label class="field">
+              <span class="field-label" id="admin-picker-engineer-label">Engineer</span>
+              <select name="engineerId" aria-labelledby="admin-picker-engineer-label">
+                ${DEMO_ENGINEERS.map((eng) => `<option value="${escapeHtml(eng.id)}">${escapeHtml(eng.name)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label" id="admin-picker-day-label">Day</span>
+              <select name="weekday" aria-labelledby="admin-picker-day-label">
+                ${WEEKDAYS.map((weekday, index) => `<option value="${weekday}">${WEEKDAY_LABELS[index]}</option>`).join("")}
+              </select>
+            </label>
+            <button class="btn btn-ghost" type="submit">Edit selected shift</button>
+          </form>
+          <div class="admin-schedule-grid-scroll">
+            <div class="admin-schedule-grid">
+              <div class="schedule-header-row">
+                <div class="schedule-hour-label"></div>
+                ${WEEKDAY_LABELS.map((label, d) => `<div class="schedule-day-label"><span>${label}</span></div>`).join("")}
+              </div>
+              ${scheduleGridHtml}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -879,6 +1184,8 @@ function renderAdmin() {
           `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
         </div>
       </section>
+
+      ${editPanelHtml}
     </section>
   `;
 }
@@ -981,11 +1288,14 @@ function resetDemo() {
   queue = INITIAL_QUEUE.map((ticket) => ({ ...ticket }));
   events = [];
   workspaceActive = false;
+  adminSchedule = normalizeAdminSchedule(DEFAULT_ADMIN_SCHEDULE);
+  adminEditState = null;
   writeStorage(ASSIGNMENT_SHIFT_KEY, shift);
   writeStorage(ASSIGNMENT_QUEUE_KEY, queue);
   writeStorage(ASSIGNMENT_ACTIVE_TICKET_KEY, activeTicket);
   writeStorage(ASSIGNMENT_EVENTS_KEY, events);
   writeStorage(ASSIGNMENT_WORKSPACE_KEY, workspaceActive);
+  writeStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, adminSchedule);
   renderWelcome();
 }
 
@@ -1029,6 +1339,20 @@ function startSlaCountdown() {
 // =============================================================================
 
 root.addEventListener("click", (event) => {
+  // Admin schedule chip click — opens edit panel
+  if (isAdminPage) {
+    const scheduleChip = event.target.closest(".schedule-chip[data-engineer-id][data-weekday]");
+    if (scheduleChip) {
+      const engineerId = String(scheduleChip.dataset.engineerId || "");
+      const weekday = String(scheduleChip.dataset.weekday || "");
+      if (engineerId && weekday) {
+        adminEditState = { engineerId, weekday };
+        renderAdmin();
+        return;
+      }
+    }
+  }
+
   const engineerButton = event.target.closest("[data-engineer-id]");
   if (engineerButton) {
     selectedEngineerCandidate = String(engineerButton.dataset.engineerId || DEMO_ENGINEERS[0].id);
@@ -1048,12 +1372,46 @@ root.addEventListener("click", (event) => {
   if (action === "simulate-timeout") simulateTimeout();
   if (action === "reset-demo") resetDemo();
   if (action === "toggle-sidebar") toggleSidebar();
+  if (action === "admin-close-panel" || action === "admin-cancel-edit") {
+    adminEditState = null;
+    renderAdmin();
+  }
 });
 
 root.addEventListener("submit", (event) => {
   if (event.target.matches("[data-shift-form]")) {
     event.preventDefault();
     saveShift(event.target);
+  }
+  if (event.target.matches("[data-admin-shift-picker]")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const engineerId = String(formData.get("engineerId") || "");
+    const weekday = String(formData.get("weekday") || "");
+    if (engineerId && WEEKDAYS.includes(weekday)) {
+      adminEditState = { engineerId, weekday };
+      renderAdmin();
+    }
+  }
+  if (event.target.matches("[data-shift-edit-form]")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const start = String(formData.get("start") || "").trim();
+    const end = String(formData.get("end") || "").trim();
+    if (adminEditState) {
+      if (!adminSchedule[adminEditState.engineerId]) {
+        adminSchedule[adminEditState.engineerId] = {};
+      }
+      if (start && end) {
+        adminSchedule[adminEditState.engineerId][adminEditState.weekday] = { start, end };
+      } else {
+        adminSchedule[adminEditState.engineerId][adminEditState.weekday] = { start: "", end: "" };
+      }
+      saveAdminSchedule();
+      addEvent("Admin schedule updated", `${adminEditState.engineerId} ${adminEditState.weekday}: ${start && end ? `${start}-${end}` : "cleared"}`);
+      adminEditState = null;
+      renderAdmin();
+    }
   }
 });
 
