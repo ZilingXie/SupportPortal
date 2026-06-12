@@ -62,11 +62,15 @@ curl http://localhost:11434/api/embed -d '{"model":"bge-m3:latest","input":"测�
 - 端口 11434 对外开放
 - 配置文件中 `embedding.base_url` 指向该 IP
 
-### 2.3 Docker Tesseract（OCR，可选）
+### 2.3 输入准备
 
-```bash
-docker pull tesseractshadow/tesseract4re:latest
-```
+当前产品化入口只接收预先转换好的文本文件：
+
+- `.txt`
+- `.md`
+- `.markdown`
+
+如果源材料是 PDF、Word 或扫描件，请先在外部流程中转换为文本/Markdown，再交给 `graphiti_rag`。
 
 ## 三、安装 Python 环境
 
@@ -98,17 +102,9 @@ uv pip install --python .venv/bin/python3.11 "numpy<2"
 uv sync --extra dev
 ```
 
-### 3.4 安装 PDF 处理依赖
+### 3.4 文本输入约束
 
-```bash
-uv pip install --python .venv/bin/python3.11 pdfplumber pdfminer.six pypdfium2
-```
-
-### 3.5 安装 OCR/文档依赖（可选）
-
-```bash
-uv pip install --python .venv/bin/python3.11 python-docx Pillow
-```
+无需安装 PDF/OCR/Word 解析依赖。当前默认流程只读取 `.txt`、`.md`、`.markdown`。
 
 ## 四、配置文件
 
@@ -130,7 +126,7 @@ embedding:
   base_url: "http://YOUR_HOST:11434/v1/"  # Ollama 地址
 
 schema:
-  path: "schemas/gbt25338.yaml"
+  path: "schemas/your_domain.yaml"  # 或留空并在 CLI 上通过 --schema 指定
   mode: "lenient"
 
 pipeline:
@@ -151,6 +147,7 @@ export GRAPHRAG_NEO4J_PASSWORD=graphiti123
 export GRAPHRAG_NUM_THREADS=1
 export GRAPHRAG_MAX_CONCURRENCY=1
 export GRAPHRAG_SCHEMA_MODE=lenient
+export GRAPHRAG_SCHEMA_PATH=schemas/your_domain.yaml
 ```
 
 ## 五、验证安装
@@ -183,7 +180,9 @@ asyncio.run(t())
 ### 6.1 录入文档
 
 ```bash
-DEEPSEEK_API_KEY=sk-xxx .venv/bin/python3 ingest_gbt.py
+DEEPSEEK_API_KEY=sk-xxx .venv/bin/python3 -m graphiti_rag \
+  --input ./docs \
+  --schema schemas/your_domain.yaml
 ```
 
 ### 6.2 查询知识图谱
@@ -214,6 +213,6 @@ PYTHONPATH=$PWD/server:$PYTHONPATH .venv/bin/uvicorn graph_service.main:app --ho
 | Neo4j 连接失败 | 检查端口 7687 是否开放，密码是否正确 |
 | Ollama OOM | 减少 `max_concurrency=1`，关闭不用的 Neo4j 容器 |
 | numpy 编译失败 (GCC < 9.3) | `uv pip install --python .venv/bin/python3.11 "numpy<2"` |
-| PDF 乱码 | 会自动用 Docker tesseract OCR 回退 |
+| PDF / Word / 扫描件 | 先在外部流程中转换成 `.txt` / `.md` / `.markdown`，再执行导入 |
 | DeepSeek API 空响应 | 重试自动处理，降低 `max_concurrency` 可减少发生概率 |
 | 社区构建超时 | 默认不开启，不影响主流程 |

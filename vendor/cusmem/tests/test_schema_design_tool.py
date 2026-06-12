@@ -290,7 +290,7 @@ def test_cli_pipeline_generates_schema_config(tmp_path: Path) -> None:
     )
     output_dir = tmp_path / 'schema_run'
 
-    assert main(['--input', str(input_dir), '--output', str(output_dir), '--mode', 'auto', '--no-llm', '--no-gates']) == 0
+    assert main(['--input', str(input_dir), '--output', str(output_dir), '--mode', 'auto', '--no-llm', '--no-gates', '--preset', 'full']) == 0
 
     expected = [
         'pages.jsonl',
