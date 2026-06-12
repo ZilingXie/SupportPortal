@@ -86,11 +86,11 @@ class EngineerAiEvolutionPlanContractTests(unittest.TestCase):
 
     def test_engineer_multi_agent_implementation_plan_tracks_step1_backend_skeleton(self) -> None:
         plan_source = Path(
-            "docs/superpowers/plans/2026-06-11-engineer-ai-multi-agent-mainline.md"
+            "docs/superpowers/plans/2026-06-11-engineer-ai-multi-agent-mainline.html"
         ).read_text(encoding="utf-8")
         required_terms = [
-            "Current Next Step",
-            "Task 1: Backend Skeleton And Data Contracts",
+            "当前下一步",
+            "任务 1：后端骨架与数据契约",
             "ENGINEER_MULTI_AGENT_PLAN_VERSION",
             "build_initial_multi_agent_plan",
             "review_multi_agent_plan",

@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engineer AI Multi-Agent 主线实施计划</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #1f2933;
+      --muted: #64748b;
+      --line: #d9e2ec;
+      --accent: #0f766e;
+      --accent-weak: #d9f4ef;
+      --warn: #b45309;
+      --warn-weak: #fff2cc;
+      --code-bg: #0f172a;
+      --code-ink: #e2e8f0;
+      --shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.6;
+    }
+
+    header {
+      background: #12343b;
+      color: #f8fafc;
+      padding: 32px 24px;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    section {
+      margin-bottom: 20px;
+      padding: 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0 0 12px;
+      line-height: 1.25;
+    }
+
+    h1 {
+      font-size: 30px;
+    }
+
+    h2 {
+      font-size: 21px;
+    }
+
+    h3 {
+      font-size: 16px;
+    }
+
+    p {
+      margin: 0 0 10px;
+    }
+
+    .subtitle {
+      max-width: 900px;
+      margin-top: 10px;
+      color: #dbeafe;
+      font-size: 15px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 3px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 999px;
+      color: #eef6ff;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .callout {
+      padding: 14px 16px;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-weak);
+      border-radius: 6px;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: var(--warn-weak);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .tile {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+
+    .tile strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    th,
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    th {
+      background: #eef2f7;
+      color: #243b53;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    code {
+      padding: 1px 4px;
+      border-radius: 4px;
+      background: #eef2f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+    }
+
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Engineer AI Multi-Agent 主线实施计划</h1>
+    <p class="subtitle">把当前仅承担 guardrail 的 Engineer AI，逐步演进为线上多 Agent 调查主链路，同时保留现有 guardrail 作为工程师批准后的最终安全门禁。</p>
+    <div class="meta">
+      <span class="badge">状态：实施计划</span>
+      <span class="badge">日期：2026-06-11</span>
+      <span class="badge">格式：HTML</span>
+      <span class="badge">语言：中文</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="callout">
+        <p><strong>给执行型 agent 的要求：</strong>实现该计划时，必须使用 <code>superpowers:subagent-driven-development</code>（推荐）或 <code>superpowers:executing-plans</code>，并按任务逐项执行与验证。</p>
+      </div>
+      <p><strong>目标：</strong>把当前只承担 guardrail 的 Engineer AI，替换为线上 Engineer Multi-Agent 调查主链路，同时保留 guardrail 作为工程师批准后的最终安全校验。</p>
+      <p><strong>架构：</strong>主链路由 Plan Agent、Memory Review Agent、Implement Agent、Conclude Agent 组成。工程师可以 approve 或 revise；approve 后进入 Engineer Guardrail，revise 后重新进入 Plan Agent，并带上上一轮 plan、evidence 与 revise note。</p>
+      <p><strong>技术栈：</strong><code>backend/services</code> 下的 Python 服务、<code>backend/main.py</code> 中的 FastAPI 路由、<code>backend/repositories/ticket_repository.py</code> 中的存储层、<code>ui/engineer-ui/app.js</code> 中的工程师前端，以及 <code>backend/tests</code> 下的 <code>unittest</code> 合约测试。</p>
+    </section>
+
+    <section>
+      <h2>一、当前下一步</h2>
+      <p><strong>当前下一步</strong> 是先完成 <strong>任务 1：后端骨架与数据契约</strong>。这个任务故意不接入 <code>backend/services/engineer_agent.py</code>，不调用 LLM，不访问 repository，不改 UI，也不改变现在线上工程师工作流。它只负责建立一个可预测、纯 Python 的契约模块，供后续任务继续扩展。</p>
+    </section>
+
+    <section>
+      <h2>二、文件映射</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>路径</th>
+            <th>动作</th>
+            <th>职责</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>backend/services/engineer_agent.py</code></td>
+            <td>修改</td>
+            <td>后续把多 Agent orchestrator 接回现有 engineer turn，且不移除 guardrail 行为。</td>
+          </tr>
+          <tr>
+            <td><code>backend/services/engineer_multi_agent.py</code></td>
+            <td>新建</td>
+            <td>定义 Plan Agent、Memory Review Agent、Implement Agent、Conclude Agent 的骨架与 typed-dict 风格数据结构。</td>
+          </tr>
+          <tr>
+            <td><code>backend/services/prompts/engineer_investigation_reply.py</code></td>
+            <td>修改</td>
+            <td>把 guardrail prompt 职责收窄到已批准客户草稿的安全验证。</td>
+          </tr>
+          <tr>
+            <td><code>backend/services/case_memory_ledger.py</code></td>
+            <td>修改</td>
+            <td>如有必要，只暴露对 Active Retrieval Memory 安全的 projection helper。</td>
+          </tr>
+          <tr>
+            <td><code>backend/repositories/ticket_repository.py</code></td>
+            <td>修改</td>
+            <td>如果现有方法不足，新增 retrieval-enabled active case memory 查询接口。</td>
+          </tr>
+          <tr>
+            <td><code>backend/main.py</code></td>
+            <td>修改</td>
+            <td>把 approve / revise 路由接到 multi-agent 生命周期，并保留审计事件。</td>
+          </tr>
+          <tr>
+            <td><code>ui/engineer-ui/app.js</code></td>
+            <td>修改</td>
+            <td>展示 conclusion、confidence、risk flags，以及 approve / revise 控件。</td>
+          </tr>
+          <tr>
+            <td><code>backend/tests/test_engineer_multi_agent.py</code> 等</td>
+            <td>新增 / 修改</td>
+            <td>覆盖 skeleton 契约、UI 合约与计划文档合约。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>三、任务 1：后端骨架与数据契约</h2>
+      <p><strong>目标：</strong>建立第一个仅后端可见的 multi-agent skeleton，为 plan、reviewed plan、task result、conclusion 定义稳定契约，同时不启用任何线上行为。</p>
+      <p><strong>非目标：</strong>不调用 LLM、不访问 <code>ticket_repository</code>、不查询 Case Memory、不调用 RAG、不修改 <code>engineer_agent.py</code>、不增加 feature flag、也不暴露 API/UI 行为。</p>
+      <p><strong>涉及文件：</strong><code>backend/services/engineer_multi_agent.py</code>、<code>backend/tests/test_engineer_multi_agent.py</code></p>
+
+      <h3>要引入的契约</h3>
+      <ul>
+        <li><code>ENGINEER_MULTI_AGENT_PLAN_VERSION = "engineer-multi-agent-plan-v1"</code></li>
+        <li><code>ENGINEER_MULTI_AGENT_WORKFLOW_VERSION = "engineer-multi-agent-workflow-v1"</code></li>
+        <li><code>build_initial_multi_agent_plan(...) -&gt; dict[str, Any]</code></li>
+        <li><code>review_multi_agent_plan(...) -&gt; dict[str, Any]</code></li>
+        <li><code>record_multi_agent_task_result(...) -&gt; dict[str, Any]</code></li>
+        <li><code>build_multi_agent_conclusion(...) -&gt; dict[str, Any]</code></li>
+      </ul>
+
+      <h3>必备数据形状</h3>
+      <div class="grid">
+        <div class="tile">
+          <strong>plan</strong>
+          <pre><code>plan = {
+    "plan_id": "map_&lt;stable id&gt;",
+    "plan_version": ENGINEER_MULTI_AGENT_PLAN_VERSION,
+    "workflow_version": ENGINEER_MULTI_AGENT_WORKFLOW_VERSION,
+    "objective": "...",
+    "context_summary": "...",
+    "revise_note": None,
+    "tasks": [...],
+    "risk_flags": [],
+    "created_by": "plan_agent",
+}</code></pre>
+        </div>
+        <div class="tile">
+          <strong>reviewed_plan</strong>
+          <pre><code>reviewed_plan = {
+    "plan_id": plan["plan_id"],
+    "review_status": "ready",
+    "parallel_groups": [["task_context_review"]],
+    "blocked_reasons": [],
+    "memory_refs": [],
+    "do_not_do": [],
+    "reviewed_by": "memory_review_agent",
+}</code></pre>
+        </div>
+        <div class="tile">
+          <strong>task_result</strong>
+          <pre><code>task_result = {
+    "task_id": "task_context_review",
+    "status": "succeeded",
+    "summary": "...",
+    "evidence_refs": [],
+    "missing_information": [],
+}</code></pre>
+        </div>
+        <div class="tile">
+          <strong>conclusion</strong>
+          <pre><code>conclusion = {
+    "conclusion_status": "needs_engineer_input",
+    "summary": "...",
+    "confidence": "low",
+    "root_cause_status": "unknown",
+    "evidence_refs": [],
+    "risk_flags": [],
+    "missing_information": [],
+    "customer_safe_draft": "",
+    "next_action": "...",
+    "created_by": "conclude_agent",
+}</code></pre>
+        </div>
+      </div>
+
+      <h3>执行步骤</h3>
+      <ol>
+        <li>先创建失败测试文件 <code>backend/tests/test_engineer_multi_agent.py</code>，其中必须包含 <code>test_first_step_does_not_call_llms_or_repositories</code>，并引用 <code>build_initial_multi_agent_plan</code>、<code>review_multi_agent_plan</code>、<code>record_multi_agent_task_result</code>、<code>build_multi_agent_conclusion</code>。</li>
+        <li>运行 <code>python3 -m unittest backend.tests.test_engineer_multi_agent -v</code>，预期先因模块不存在而失败。</li>
+        <li>创建 <code>backend/services/engineer_multi_agent.py</code>，先实现 <code>_clean_text</code>、<code>_clean_list</code>、<code>_stable_id</code> 与两个版本常量。</li>
+        <li>补上 <code>build_initial_multi_agent_plan</code> 的最小实现：输出 ticket 目标、context summary、revise note、tasks 和 risk flags。</li>
+        <li>补上 <code>review_multi_agent_plan</code> 的最小实现：输出 scheduler shape、parallel_groups、blocked_reasons、memory_refs。</li>
+        <li>补上 <code>record_multi_agent_task_result</code> 的最小实现：规范化 status、evidence_refs、missing_information。</li>
+        <li>补上 <code>build_multi_agent_conclusion</code> 的最小实现：从 task_results 导出 <code>conclusion_status</code>、<code>confidence</code>、<code>root_cause_status</code>、<code>next_action</code>。</li>
+        <li>再次运行 <code>python3 -m unittest backend.tests.test_engineer_multi_agent -v</code>，预期全部通过。</li>
+        <li>运行 <code>python3 -m unittest backend.tests.test_engineer_ai_evolution_plan_contract -v</code>，确认计划文档契约仍然通过。</li>
+        <li>任务 1 到此为止，不继续改 runtime 接入、Memory Review 查询、UI 或 guardrail。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>四、任务 2：实现 Plan Agent</h2>
+      <p>在 <code>backend/services/engineer_multi_agent.py</code> 中把 <code>build_initial_multi_agent_plan</code> 从最小版本扩展成可表达调查目标、假设、任务依赖、blocker 和 skill 驱动 task 展开的版本。先写失败测试，再实现，再跑 <code>python3 -m unittest backend.tests.test_engineer_multi_agent -v</code>。</p>
+    </section>
+
+    <section>
+      <h2>五、任务 3：实现 Memory Review Agent 与调度器</h2>
+      <p>只消费 Active Retrieval Memory，不碰 inactive ledger。为 reviewed plan 增加顺序、并行、blocked 三类调度语义，并在必要时扩展 <code>backend/repositories/ticket_repository.py</code> 的 active memory 查询接口。</p>
+    </section>
+
+    <section>
+      <h2>六、任务 4：实现证据任务执行层</h2>
+      <p>让 Implement Agent 按 reviewed plan 顺序或并行组执行 allowlisted evidence tasks。第一版保持同步和确定性，避免过早引入异步复杂度。</p>
+    </section>
+
+    <section>
+      <h2>七、任务 5：实现 Conclude Agent</h2>
+      <p>Conclude Agent 汇总证据任务结果，输出给工程师看的 conclusion，包括 <code>confidence</code>、<code>root_cause_status</code>、<code>evidence_refs</code>、<code>risk_flags</code>、<code>missing_information</code> 和可选的 <code>customer_safe_draft</code>。</p>
+    </section>
+
+    <section>
+      <h2>八、任务 6：接入 Engineer Runtime</h2>
+      <p>在 <code>backend/services/engineer_agent.py</code> 与 <code>backend/main.py</code> 中加入 feature flag、approve / revise 生命周期与 guardrail 保留路径。approve 后必须仍然经过现有 guardrail。</p>
+    </section>
+
+    <section>
+      <h2>九、任务 7：更新 Engineer UI</h2>
+      <p>在 <code>ui/engineer-ui/app.js</code> 中展示 multi-agent conclusion，把 revise 输入明确为“告诉 Sid 下一步要做什么，或者哪里做错了”。对应更新 <code>backend/tests/test_engineer_ui_contract.py</code>。</p>
+    </section>
+
+    <section>
+      <h2>十、任务 8：回放与 Guardrail 回归测试</h2>
+      <p>新增固定 fixture 的 replay tests，覆盖 plan -&gt; review -&gt; implement -&gt; conclude 的可重复性；同时补 guardrail regression tests，确保已批准草稿在证据不足、内部泄露或错误 root cause 时仍 fail closed。</p>
+    </section>
+
+    <section>
+      <h2>十一、任务 9：文档与日志更新</h2>
+      <p>根据实现范围更新 <code>docs/engineer_ai_evolution_plan.html</code>，必要时补 <code>docs/prompt_change_log.md</code>、<code>docs/rag_change_log.md</code> 和 <code>docs/feature_list.md</code>，并运行对应验证。</p>
+    </section>
+
+    <section>
+      <h2>十二、最终验证</h2>
+      <div class="callout warn">
+        <p><strong>最终验证必须用新鲜输出证明，不允许凭感觉声称完成。</strong></p>
+      </div>
+      <pre><code>python3 -m unittest backend.tests.test_engineer_multi_agent -v
+python3 -m unittest backend.tests.test_engineer_hitl_review -v
+python3 -m unittest backend.tests.test_engineer_ui_contract -v
+python3 -m unittest backend.tests.test_engineer_ai_evolution_plan_contract -v</code></pre>
+      <p class="small">如果是 stack-relevant 改动，合并到 <code>main</code> 后还必须按仓库工作流执行 single-host live verification。</p>
+    </section>
+  </main>
+</body>
+</html>
