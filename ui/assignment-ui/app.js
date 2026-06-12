@@ -93,6 +93,7 @@ let queue = readStorage(ASSIGNMENT_QUEUE_KEY, INITIAL_QUEUE);
 let events = readStorage(ASSIGNMENT_EVENTS_KEY, []);
 let sidebarCollapsed = readStorage(ASSIGNMENT_SIDEBAR_KEY, false);
 let workspaceActive = readStorage(ASSIGNMENT_WORKSPACE_KEY, false);
+let slaCountdownTimer = null;
 
 const root = document.getElementById("assignment-root");
 const isAdminPage = window.location.pathname.includes("/admin");
@@ -199,6 +200,24 @@ function formatDuration(ms) {
   return `${hours}h ${String(minutes).padStart(2, "0")}m`;
 }
 
+function formatCountdown(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getSlaCountdownLabel(sla) {
+  if (!activeTicket || !activeTicket.assignedAt) {
+    return "3h SLA from assign";
+  }
+  if (sla.overdue) {
+    return "SLA overdue";
+  }
+  return formatCountdown(sla.remainingMs);
+}
+
 function canAssign() {
   return Boolean(getSelectedEngineer() && isInShift() && !activeTicket);
 }
@@ -243,6 +262,7 @@ function releaseActiveAssignment(title = "Assignment released", detail = "") {
   const { assignedAt, engineerId, ...ticket } = activeTicket;
   queue = [ticket, ...queue];
   activeTicket = null;
+  stopSlaCountdown();
   saveActiveTicket();
   saveQueue();
   addEvent(title, detail || `${ticket.id} returned to queue.`);
@@ -467,6 +487,7 @@ function renderWelcome() {
 function renderWorkspace() {
   const engineer = getSelectedEngineer();
   if (!engineer) {
+    stopSlaCountdown();
     renderLogin();
     return;
   }
@@ -483,6 +504,7 @@ function renderWorkspace() {
       </main>
     </section>
   `;
+  startSlaCountdown();
 }
 
 function renderSidebarHtml(engineer, inShift, eligible, sla) {
@@ -582,7 +604,7 @@ function renderWorkspaceHeaderHtml(inShift, sla) {
         <p>${activeTicket ? "Work the assigned problem with Engineer AI, then send the customer-facing reply." : "Click I&rsquo;m ready for the next case to claim a waiting ticket from the queue."}</p>
       </div>
       <div class="workspace-header-actions">
-        <span class="current-ticket-sla ${escapeHtml(sla.className)}">${escapeHtml(sla.label)}</span>
+        <span class="current-ticket-sla ${escapeHtml(sla.className)}" data-sla-countdown>${escapeHtml(getSlaCountdownLabel(sla))}</span>
         <button class="btn btn-ghost mobile-sidebar-action" type="button" data-action="toggle-sidebar">
           <span class="material-symbols-outlined" aria-hidden="true">left_panel_open</span>
           Engineer context
@@ -930,6 +952,7 @@ function saveShift(form) {
 }
 
 function signOut() {
+  stopSlaCountdown();
   releaseActiveAssignment();
   selectedEngineerId = "";
   workspaceActive = false;
@@ -941,6 +964,7 @@ function signOut() {
 function resetDemo() {
   shift = { ...DEFAULT_SHIFT };
   activeTicket = null;
+  stopSlaCountdown();
   queue = INITIAL_QUEUE.map((ticket) => ({ ...ticket }));
   events = [];
   workspaceActive = false;
@@ -956,6 +980,35 @@ function toggleSidebar() {
   sidebarCollapsed = !sidebarCollapsed;
   writeStorage(ASSIGNMENT_SIDEBAR_KEY, sidebarCollapsed);
   renderWorkspace();
+}
+
+function stopSlaCountdown() {
+  if (slaCountdownTimer) {
+    clearInterval(slaCountdownTimer);
+    slaCountdownTimer = null;
+  }
+}
+
+function startSlaCountdown() {
+  stopSlaCountdown();
+  if (!activeTicket) return;
+  slaCountdownTimer = setInterval(() => {
+    if (!activeTicket) {
+      stopSlaCountdown();
+      return;
+    }
+    const sla = ticketSlaState();
+    const el = root.querySelector("[data-sla-countdown]");
+    if (!el) {
+      stopSlaCountdown();
+      return;
+    }
+    el.textContent = getSlaCountdownLabel(sla);
+    el.className = `current-ticket-sla ${sla.className}`;
+    if (sla.overdue) {
+      stopSlaCountdown();
+    }
+  }, 1000);
 }
 
 // =============================================================================
