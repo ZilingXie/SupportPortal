@@ -133,3 +133,38 @@ class EngineerMultiAgentContractTests(unittest.TestCase):
         module_source = inspect.getsource(engineer_multi_agent)
         self.assertNotIn("ticket_repository", module_source)
         self.assertNotIn("backend.repositories", module_source)
+
+    def test_initial_plan_includes_new_plan_agent_fields(self) -> None:
+        plan = build_initial_multi_agent_plan(
+            ticket={"ticket_id": "ticket_7", "subject": "Video freeze"},
+            handoff_packet={},
+            engineer_agent_state={},
+            revise_note=None,
+            available_skills=["context_summary", "internal_rag", "official_rag"],
+        )
+
+        self.assertIn("hypotheses", plan)
+        self.assertIn("dependencies", plan)
+        self.assertIn("blockers", plan)
+        self.assertIn("memory_context", plan)
+        self.assertIn("skill_context", plan)
+        self.assertIn("scheduler_hints", plan)
+        self.assertEqual(plan["memory_context"]["mode"], "fallback_unavailable")
+        self.assertIsInstance(plan["dependencies"], list)
+        self.assertIsInstance(plan["blockers"], list)
+
+    def test_initial_plan_tasks_have_skill_and_description_fields(self) -> None:
+        plan = build_initial_multi_agent_plan(
+            ticket={"ticket_id": "ticket_8", "subject": "Audio echo"},
+            handoff_packet={},
+            engineer_agent_state={},
+            revise_note=None,
+            available_skills=["context_summary", "internal_rag"],
+        )
+
+        for task in plan["tasks"]:
+            self.assertIn("skill", task)
+            self.assertIn("description", task)
+            self.assertIn("expected_output", task)
+            self.assertIn("blockers", task)
+            self.assertEqual(task["status"], "planned")

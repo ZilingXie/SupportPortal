@@ -49,6 +49,7 @@
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
 - Engineer Assignment 原型支持工程师选择、welcome readiness 页面、显式领取动作和 read-only admin queue 视图。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
+- Engineer AI 会在调查前生成结构化 Plan Agent 计划。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。

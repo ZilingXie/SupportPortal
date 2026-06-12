@@ -1674,6 +1674,10 @@ def fallback_engineer_agent_state(
         value = _clean_text(packet.get(source_key))
         if value:
             state[state_key] = value
+    for plan_key in ("active_plan", "plan_id", "plan_version", "plan_agent_version"):
+        plan_value = existing.get(plan_key)
+        if plan_value is not None and (isinstance(plan_value, dict) or _clean_text(plan_value)):
+            state[plan_key] = plan_value
     return state
 
 
@@ -1721,6 +1725,14 @@ def normalize_engineer_agent_state(
             "last_refreshed_at": _clean_text(value.get("last_refreshed_at")) or now_value,
         }
     )
+    # Preserve Plan Agent fields from the incoming state so that
+    # investigation refresh does not drop the active_plan.
+    for plan_key in ("active_plan", "plan_id", "plan_version", "plan_agent_version"):
+        plan_value = value.get(plan_key)
+        if plan_value is not None and (isinstance(plan_value, dict) or _clean_text(plan_value)):
+            merged[plan_key] = plan_value
+        elif plan_key not in merged or merged.get(plan_key) is None:
+            merged[plan_key] = fallback.get(plan_key)
     if _should_prefer_intake_issue_understanding(
         current_issue_understanding,
         fallback["issue_understanding"],
