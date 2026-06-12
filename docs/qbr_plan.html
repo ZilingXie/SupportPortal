@@ -231,6 +231,31 @@
       line-height: 1.65;
     }
 
+    .review-list {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      margin: 16px 0 0;
+      padding: 0;
+    }
+
+    .review-list li {
+      display: grid;
+      grid-template-columns: 16px 1fr;
+      gap: 10px;
+      color: #3f4943;
+      line-height: 1.55;
+    }
+
+    .review-list li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-top: 0.7em;
+      border-radius: 50%;
+      background: var(--blueprint);
+    }
+
     .update-list {
       list-style: none;
       display: grid;
@@ -539,6 +564,21 @@
       font-weight: 850;
     }
 
+    .review-block {
+      margin-top: 20px;
+      border-top: 1px dashed var(--line-strong);
+      padding-top: 18px;
+    }
+
+    .review-block h5 {
+      margin: 0 0 12px;
+      color: var(--field);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
     .notes {
       margin-top: 18px;
     }
@@ -673,6 +713,11 @@
       <div class="snapshot-card">
         <h2>当前判断</h2>
         <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已有后端契约骨架和中文主线计划，但真实生命周期仍未接管；RAG/KG 已完成 cusmem 产品化整理，下一步才是 SupportPortal adapter 与评测。</p>
+        <ul class="review-list" aria-label="QBR review notes">
+          <li>QBR 可以把 Billing 作为最强 demo，但必须把 Zendesk、幂等和人工审核标为试运行前置条件。</li>
+          <li>Assignment 和 Multi-Agent 都要避免过度承诺：前者是 localStorage 原型，后者是 skeleton + plan，还不是生产主链路。</li>
+          <li>RAG/KG 适合讲架构方向和边界，不能把 vendored cusmem 等同于已上线的 KG 检索能力。</li>
+        </ul>
       </div>
       <div class="snapshot-card">
         <h2>最近合入</h2>
@@ -733,6 +778,18 @@
 
     const RECENT_UPDATES = [
       {
+        key: "#444",
+        copy: "QBR tracker 成为唯一维护中的计划页，旧的 billing、assignment、engineer-evolution 计划页已从 docs 入口收敛。"
+      },
+      {
+        key: "#443",
+        copy: "QBR tracker 已补齐 snapshot、recent updates 和四条 lane 的当前进展表达。"
+      },
+      {
+        key: "#442",
+        copy: "Billing lane 已同步 canonical TK ticket id、manual/api source 和 Recent tickets 修复后的对外语义。"
+      },
+      {
         key: "#439",
         copy: "Engineer AI multi-agent 主线实施计划已转成中文 HTML，并由 contract test 锁定路径与关键标题。"
       },
@@ -770,6 +827,11 @@
           "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，QBR 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
           "主线计划的当前下一步已明确固定为任务 2：实现真实 Plan Agent；任务 1 只交付 skeleton，不触碰 runtime、UI 或 guardrail。"
         ],
+        review: [
+          "当前证据能证明的是契约和计划已经稳定，不是线上 Engineer AI 已经 multi-agent 化。",
+          "Task 2 应优先补 Plan Agent 的输入/输出契约、失败 fallback 和 replay 测试，再考虑 UI 暴露。",
+          "所有 memory 读取仍必须走 active memory 边界，inactive ledger 不能因为 QBR demo 被绕过。"
+        ],
         next: [
           { id: "ma-plan-agent", status: "todo", label: "当前下一步：实现真实 Plan Agent，从 ticket、handoff、历史消息和 revise note 生成可执行计划。", horizon: "Task 2" },
           { id: "ma-memory-review", status: "todo", label: "实现 Memory Review Agent + Active Retrieval Memory 查询，只消费 active memory，不碰 inactive ledger。", horizon: "Phase 2B" },
@@ -805,6 +867,11 @@
           "SLA 超时/transfer 状态可模拟，契约测试确认 standalone page、solver-focused flow 和不影响现有 engineer UI。",
           "该主线当前适合 QBR demo，不应被描述为已具备生产排班或自动分配能力。"
         ],
+        review: [
+          "当前 demo 的重点应该是“工程师进入 shift 后直接解决问题”，工程师资料只能作为可隐藏上下文。",
+          "生产化最缺的是 server-side queue、assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。",
+          "如果继续推进，下一步应先定真实 Engineer Ticket 与 shift 数据模型，再接现有 Engineer Portal。"
+        ],
         next: [
           { id: "assign-data-model", status: "todo", label: "定义生产 Engineer Ticket 生命周期、状态机和队列持久化模型。", horizon: "Model" },
           { id: "assign-shift-api", status: "todo", label: "实现真实登录/排班 API，shift schedule 持久化并统一 UTC+8。", horizon: "Model" },
@@ -836,6 +903,11 @@
           "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 ticket view-model 已统一：`ticket_id` 指向 support ticket，`source` 统一为 `manual` / `api`，左侧 Recent tickets 列表已修复。",
           "Billing ticket 历史列表和详情 API 已完成；底层 schema、repository contract 和 account intake 测试覆盖了 companion table 存取。",
           "内部邮件已支持 action-specific destination env，2026-06-10 detailed_invoice 真实 SMTP 发送测试已确认 sent。"
+        ],
+        review: [
+          "这是四条主线里最接近小流量试运行的一条，因为 routing、字段收集、ticket view-model 和邮件链路都有测试证据。",
+          "试运行前必须补 Zendesk/external_id 幂等，否则 webhook 重放会带来重复建单或重复发邮件风险。",
+          "白名单不要扩大过快；先用真实 case 回放证明 account_suspension 和 detailed_invoice 的误判率。"
         ],
         next: [
           { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单、缺字段、非白名单、高风险人工。", horizon: "Scope" },
@@ -873,6 +945,11 @@
           "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。",
           "`python3 -m graphiti_rag` CLI、core/validate/full schema-design preset、lazy imports 和 no-Neo4j help path 已有回归测试覆盖。",
           "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。"
+        ],
+        review: [
+          "目前 KG/Case Memory 的可信点是边界清晰、ledger 可审计、cusmem 已产品化整理；还不能说运行时 KG 已参与答复。",
+          "QBR 里应把 RAG 定义为 citation/source-of-truth 层，把 KG/Case Memory 定义为 confirmed-case 经验召回层。",
+          "下一步必须用 RAG-only vs RAG+KG 对照评测证明收益，否则不要把 KG 接到客户可见路径。"
         ],
         next: [
           { id: "kg-active-memory", status: "todo", label: "实现 Active Retrieval Memory 查询接口和 confirmed case 晋升/撤回/降权规则。", horizon: "Case Memory" },
@@ -1009,6 +1086,12 @@
                   ${lane.sources.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}
                 </ul>
               </details>
+              <div class="review-block">
+                <h5>Review 结论</h5>
+                <ul class="review-list">
+                  ${(lane.review || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+                </ul>
+              </div>
               <div class="notes">
                 <label for="note-${lane.id}">QBR 备注</label>
                 <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
