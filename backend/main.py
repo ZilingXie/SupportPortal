@@ -2606,17 +2606,15 @@ def _normalize_account_source(value: str | None) -> str:
 
 
 def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
-    support_ticket_id = (
-        str(ticket.get("support_ticket_id") or "").strip()
-        or str(ticket.get("client_ticket_id") or "").strip()
+    canonical_ticket_id = (
+        str(ticket.get("client_ticket_id") or "").strip()
         or str(ticket.get("ticket_id") or "").strip()
     )
     billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip() or None
     status = str(ticket.get("status") or ticket.get("automation_status") or "").strip() or "not_automated"
     return {
         **ticket,
-        "ticket_id": support_ticket_id,
-        "support_ticket_id": support_ticket_id,
+        "ticket_id": canonical_ticket_id,
         "billing_ticket_id": billing_ticket_id,
         "source": _normalize_account_source(ticket.get("source")),
         "status": status,
@@ -2685,44 +2683,10 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     internal_email_send_reason = ""
 
     if is_billing_route:
-        resolution = resolve_support_message(
-            question,
-            ticket_id=ticket_id,
-            customer_id=customer_id,
-            ticket_subject=title,
-            ticket_context=ticket_context,
-            decision=decision,
-        )
-        evidence_summary = resolution.evidence_summary or {}
-        missing_fields = list(evidence_summary.get("billing_missing_fields") or [])
-        collected_fields = dict(evidence_summary.get("billing_collected_fields") or {})
-        internal_email = evidence_summary.get("billing_internal_email")
-        internal_email_payload = dict(internal_email) if isinstance(internal_email, dict) else None
-        internal_email_send_status = str(evidence_summary.get("billing_internal_email_send_status") or "")
-        internal_email_send_reason = str(evidence_summary.get("billing_internal_email_send_reason") or "")
-        customer_reply = str(resolution.answer or "").strip()
-        response_status = "needs_more_info" if missing_fields else "automated"
-        ticket["status"] = COMMUNICATING_STATUS
-        assistant_message: dict[str, Any] = {
-            "role": "assistant",
-            "content": customer_reply,
-            "created_at": now_iso(),
-            "answer_route": resolution.answer_route,
-            "scope_label": resolution.scope_label,
-            "route_family": resolution.route_family,
-            "execution_action": resolution.execution_action,
-            "tooling_profile": resolution.tooling_profile,
-            "route_reason": resolution.route_reason,
-            "route_confidence": resolution.route_confidence,
-            "search_used": bool(resolution.search_used),
-            "matched_signals": list(resolution.matched_signals),
-            "billing_missing_fields": missing_fields,
-            "billing_collected_fields": collected_fields,
-            "billing_internal_email_send_status": internal_email_send_status,
-            "billing_internal_email_send_reason": internal_email_send_reason,
-            **({"billing_internal_email": internal_email_payload} if internal_email_payload else {}),
-        }
-        ticket["messages"].append(assistant_message)
+        response_status = "automation"
+        # Route is recorded in the companion billing ticket below;
+        # no resolve_support_message(), no customer reply, no field collection,
+        # no internal email for account intake automation marking.
 
     await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
 
@@ -2735,7 +2699,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "created_by": str(request.created_by).strip() or None,
         "title": title,
         "question": question,
-        "route": route if is_billing_route else None,
+        "route": route or None,
         "route_reason": decision.reason,
         "route_confidence": decision.confidence,
         "matched_signals": list(decision.matched_signals),
@@ -2773,9 +2737,8 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
 
     return {
         "status": response_status,
-        "route": route if is_billing_route else None,
+        "route": route or None,
         "ticket_id": ticket_id,
-        "support_ticket_id": ticket_id,
         "billing_ticket_id": billing_ticket_id,
         "customer_reply": customer_reply,
         "missing_fields": missing_fields,
@@ -2803,6 +2766,8 @@ def list_billing_tickets(limit: int = 30) -> dict[str, Any]:
 @app.get("/api/account/billing-tickets/{billing_ticket_id}")
 def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     ticket = ticket_repository.get_billing_ticket(billing_ticket_id)
+    if ticket is None and not str(billing_ticket_id).startswith("BT-"):
+        ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(billing_ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail="ticket not found")
     return {
