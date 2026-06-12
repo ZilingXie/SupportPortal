@@ -10,13 +10,13 @@ The normal Reasonix workflow is:
 
 1. Codex writes a plan when the user asks Codex for a plan.
 2. The user copies that plan to Reasonix.
-3. Reasonix implements the plan in an isolated task worktree.
-4. Reasonix stops before commit and reports the branch/worktree handoff.
+3. Reasonix implements the plan in an isolated project-local task workspace under `.worktrees/<task-slug>`.
+4. Reasonix stops before commit and reports the branch/workspace handoff.
 5. The user gives that handoff to Codex for final review, corrections, commit, PR, merge, post-merge verification, and cleanup.
 
 Spend Reasonix/DeepSeek tokens freely to understand and implement the task. The goal is to reduce Codex implementation-token usage while keeping Codex as the final quality gate.
 
-## Required Branch And Worktree Workflow
+## Required Branch And Task Workspace Workflow
 
 Before editing repo-tracked files:
 
@@ -37,15 +37,17 @@ git fetch origin
 git pull --ff-only origin main
 ```
 
-4. Create one dedicated task branch/worktree from updated `main`:
+4. Create one dedicated task branch and project-local task workspace from updated `main`:
 
 ```bash
 bash scripts/workflow/create_task_worktree.sh <task-slug>
 ```
 
-5. Work only inside the created task worktree. Do not edit the root `main` workspace.
+The script must create the workspace under `/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/<task-slug>`. Do not use `~/.config/superpowers/worktrees/...` or `~/.codex/worktrees/...` as the default SupportPortal workspace location.
 
-If Codex or the user assigns an existing task branch/worktree, use that exact branch/worktree after confirming it is not another thread's worktree and is not detached.
+5. Work only inside the created project-local task workspace under `.worktrees/<task-slug>`. Do not edit the root `main` workspace.
+
+If Codex or the user assigns an existing task branch/workspace, use that exact branch/workspace after confirming it is not another thread's workspace and is not detached.
 
 ## Implementation Rules
 
@@ -54,7 +56,7 @@ If Codex or the user assigns an existing task branch/worktree, use that exact br
 - Prefer narrow code reading and targeted edits over broad rewrites.
 - Run the narrowest task-appropriate verification available.
 - If a verification command cannot run, report the exact command and why it could not run.
-- Do not modify unrelated files or another thread's task worktree.
+- Do not modify unrelated files or another thread's task workspace.
 
 ## Hard Boundaries
 
@@ -66,7 +68,7 @@ Reasonix must not:
 - merge
 - run `scripts/workflow/finalize_task_to_main.sh`
 - run post-merge live stack verification
-- delete task worktrees
+- delete task workspaces or task worktrees
 - delete local branches
 - clean up another agent's files
 
@@ -75,7 +77,7 @@ Reasonix must not:
 When implementation is complete, stop and report only:
 
 - task branch
-- task worktree path
+- task workspace path
 - changed files
 - verification commands and results
 - skipped checks and why
