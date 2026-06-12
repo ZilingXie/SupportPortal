@@ -11,6 +11,28 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-12 - Add official-docs-only KG first-phase scope gate
+
+- Summary:
+  - Added a first-phase KG scope gate for future Client AI RAG auxiliary ingestion.
+  - Only records with `knowledge_type=official` and `source_type=official_markdown_upload` can build a KG ingest plan.
+  - Technical articles, external benchmarks, unknown source types, and records carrying confirmed case / case-memory markers are rejected.
+  - The plan explicitly keeps KG as an auxiliary layer: provenance is required, customer-facing answers still require RAG chunk/citation grounding, and confirmed case memory remains out of first-phase KG scope.
+- Reason:
+  - KG first-phase work must stay limited to official documentation concepts and relationships so it cannot silently ingest case memory, troubleshooting articles, or benchmark placeholders before the adapter and runtime safety boundaries are ready.
+- Affected files/config:
+  - `backend/services/kg_official_docs_scope.py`
+  - `backend/tests/test_kg_official_docs_scope.py`
+  - `docs/qbr_plan.html`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No existing RAG, vector, BM25, or graph data changes.
+  - No graph database writes are introduced; this is a scope/planning guard for future KG adapter ingestion.
+- Verification:
+  - `uv run pytest backend/tests/test_kg_official_docs_scope.py backend/tests/test_qbr_plan_contract.py -q`
+  - `uv run --with ruff ruff check backend/services/kg_official_docs_scope.py backend/tests/test_kg_official_docs_scope.py`
+  - Static marker check confirmed `docs/qbr_plan.html` and this change log contain the new KG scope guard wording.
+
 ## 2026-06-11 - Remove PDF and OCR ingestion support from vendor/cusmem
 
 - Summary:
