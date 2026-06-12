@@ -171,24 +171,18 @@ ensure_branch_owned_by_current_worktree() {
 
 resolve_worktree_base_dir() {
   local root_workspace
-  local line
-  local worktree_path=""
 
   root_workspace="$(root_workspace_path)"
+  printf '%s\n' "$root_workspace/.worktrees"
+}
 
-  while IFS= read -r line; do
-    case "$line" in
-      worktree\ *)
-        worktree_path="${line#worktree }"
-        if [[ "$worktree_path" != "$root_workspace" ]]; then
-          dirname "$worktree_path"
-          return 0
-        fi
-        ;;
-    esac
-  done < <(git worktree list --porcelain)
+ensure_project_worktree_base_ignored() {
+  local root_workspace
 
-  printf '%s\n' "$HOME/.config/superpowers/worktrees/$(basename "$root_workspace")"
+  root_workspace="$(root_workspace_path)"
+  if ! git -C "$root_workspace" check-ignore -q ".worktrees/" 2>/dev/null; then
+    die "Project-local task workspaces require '.worktrees/' to be ignored. Add it to .gitignore before creating task workspaces."
+  fi
 }
 
 slugify_thread_name() {
@@ -287,7 +281,7 @@ is_known_artifact() {
   local path="$1"
 
   case "$path" in
-    .superpowers/*|*/.superpowers/*|.DS_Store|*/.DS_Store)
+    .worktrees/*|*/.worktrees/*|.superpowers/*|*/.superpowers/*|.DS_Store|*/.DS_Store)
       return 0
       ;;
     *)

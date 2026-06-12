@@ -35,6 +35,7 @@ fi
 git switch main
 git fetch origin
 git pull --ff-only origin main
+ensure_project_worktree_base_ignored
 
 worktree_base="$(resolve_worktree_base_dir)"
 worktree_name="$(branch_to_worktree_name "$target_branch")"
@@ -65,4 +66,4 @@ ensure_branch "main"
 ensure_clean_worktree
 
 info "Root workspace is back on clean main."
-info "Task branch $target_branch now lives at $worktree_path"
+info "Task branch $target_branch now lives at project-local workspace $worktree_path"

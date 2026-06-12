@@ -37,7 +37,7 @@ done < <(git status --porcelain=v1 --untracked-files=all)
 
 if (( ${#ambiguous_untracked[@]} > 0 )); then
   {
-    printf 'Ambiguous untracked paths remain in the task worktree.\n'
+    printf 'Ambiguous untracked paths remain in the task workspace.\n'
     printf 'Stage them if they belong to the task, or clean them before finalization:\n'
     printf ' - %s\n' "${ambiguous_untracked[@]}"
   } >&2

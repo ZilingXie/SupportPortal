@@ -10,6 +10,7 @@ thread_name="${1:-}"
 [[ -n "$thread_name" ]] || die "Usage: scripts/workflow/create_task_worktree.sh <thread-name-or-slug>"
 
 ensure_root_workspace_on_main
+ensure_project_worktree_base_ignored
 
 git fetch origin
 git pull --ff-only origin main
@@ -35,5 +36,5 @@ ensure_branch "main"
 ensure_clean_worktree
 
 info "Created task branch $branch."
-info "Worktree path: $worktree_path"
+info "Project-local task workspace path: $worktree_path"
 info "Root workspace remains on main."

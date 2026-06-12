@@ -71,7 +71,14 @@ for line in status:
         continue
     state = line[:2]
     path = line[3:]
-    if path.startswith(".superpowers/") or path.endswith("/.superpowers") or path == ".DS_Store" or path.endswith("/.DS_Store"):
+    if (
+        path.startswith(".worktrees/")
+        or path.endswith("/.worktrees")
+        or path.startswith(".superpowers/")
+        or path.endswith("/.superpowers")
+        or path == ".DS_Store"
+        or path.endswith("/.DS_Store")
+    ):
         continue
     if state == "??":
         continue
@@ -93,7 +100,7 @@ git fetch origin
 
 if ! git merge-base --is-ancestor origin/main HEAD; then
   if ! git merge --no-edit origin/main; then
-    die "Refreshing $expected_branch with origin/main produced conflicts. Resolve them in this task worktree, rerun verification, then finalize again."
+    die "Refreshing $expected_branch with origin/main produced conflicts. Resolve them in this task workspace, rerun verification, then finalize again."
   fi
 fi
 
@@ -217,4 +224,4 @@ fi
 
 info "Merged PR $pr_url into main."
 info "Updated root main at $root_workspace."
-info "Removed task worktree $task_worktree and deleted local branch $expected_branch."
+info "Removed task workspace $task_worktree and deleted local branch $expected_branch."
