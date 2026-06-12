@@ -9,15 +9,22 @@ class QbrPlanContractTests(unittest.TestCase):
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
         required_terms = [
             "Engineer AI multi-agent",
+            "Summary Agent",
+            "summary packet",
             "Plan Agent",
-            "Memory Review Agent",
-            "Implement Agent",
-            "Conclude Agent",
-            "当前下一步：实现真实 Plan Agent",
+            "Execute Agent",
+            "Review Agent",
+            "ready_for_engineer",
+            "replan_required",
+            "unable_to_resolve",
+            "最多 2 次 replan",
+            "Guardrail final approve",
+            "当前下一步：实现 Summary Agent",
         ]
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
+        self.assertNotIn("当前下一步：实现真实 Plan Agent", html_source)
 
     def test_qbr_plan_tracks_assignment_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
