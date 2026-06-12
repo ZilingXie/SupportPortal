@@ -68,6 +68,11 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn("SLA policy", app_source)
         self.assertIn("Signed in as", app_source)
 
+        # Welcome page daily shift card now includes inline editable form
+        self.assertIn("welcome-shift-form", app_source)
+        self.assertIn("welcome-shift-form", css)
+        self.assertIn("Save shift", app_source)
+
         # Sidebar / workspace retained
         self.assertIn("assignment-sidebar", app_source)
         self.assertIn("engineer-rail", app_source)
