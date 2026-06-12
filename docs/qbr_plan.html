@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SupportPortal QBR Plan</title>
+  <style>
+    :root {
+      --paper: #f4efe3;
+      --paper-soft: #fbf7ec;
+      --ink: #1d2522;
+      --muted: #69716a;
+      --line: rgba(29, 37, 34, 0.16);
+      --line-strong: rgba(29, 37, 34, 0.28);
+      --blueprint: #1f4f68;
+      --field: #7f6a40;
+      --signal: #d56a3a;
+      --green: #3f7a57;
+      --amber: #ba7a2a;
+      --red: #a84c3f;
+      --shadow: 0 26px 70px rgba(31, 45, 38, 0.16);
+      --radius: 28px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 14% 18%, rgba(213, 106, 58, 0.18), transparent 28rem),
+        radial-gradient(circle at 84% 10%, rgba(31, 79, 104, 0.16), transparent 24rem),
+        linear-gradient(135deg, #efe3cd 0%, #f8f3e8 48%, #e9f0e8 100%);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.28;
+      background-image:
+        linear-gradient(rgba(29, 37, 34, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(29, 37, 34, 0.07) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, black, transparent 82%);
+    }
+
+    .page {
+      width: min(1440px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .hero {
+      position: relative;
+      min-height: 520px;
+      padding: clamp(28px, 5vw, 70px);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 12px);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      background:
+        linear-gradient(108deg, rgba(251, 247, 236, 0.94) 0%, rgba(251, 247, 236, 0.76) 52%, rgba(31, 79, 104, 0.16) 100%),
+        conic-gradient(from 140deg at 78% 38%, rgba(213, 106, 58, 0.22), rgba(63, 122, 87, 0.22), rgba(31, 79, 104, 0.24), rgba(213, 106, 58, 0.22));
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -120px;
+      top: 58px;
+      width: min(52vw, 680px);
+      height: min(52vw, 680px);
+      border: 1px solid rgba(29, 37, 34, 0.18);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, transparent 0 20%, rgba(31, 79, 104, 0.16) 20% 20.6%, transparent 20.8% 37%, rgba(29, 37, 34, 0.12) 37% 37.5%, transparent 37.8% 54%, rgba(213, 106, 58, 0.18) 54% 54.6%, transparent 55%),
+        linear-gradient(45deg, transparent 49.6%, rgba(29, 37, 34, 0.18) 50%, transparent 50.4%),
+        linear-gradient(-45deg, transparent 49.6%, rgba(29, 37, 34, 0.12) 50%, transparent 50.4%);
+      opacity: 0.72;
+      animation: slow-turn 32s linear infinite;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.78);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--blueprint);
+    }
+
+    .pulse {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0 7px rgba(213, 106, 58, 0.14);
+    }
+
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 820px;
+      margin: 28px 0 18px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(46px, 8.2vw, 116px);
+      line-height: 0.88;
+      letter-spacing: -0.07em;
+    }
+
+    .hero-copy {
+      position: relative;
+      z-index: 1;
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(17px, 2vw, 24px);
+      line-height: 1.62;
+      color: #39413b;
+    }
+
+    .hero-meta {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .meta-pill, .filter button, .select-wrap select {
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.82);
+      color: var(--ink);
+    }
+
+    .meta-pill {
+      padding: 11px 15px;
+      font-weight: 750;
+      color: #26312d;
+    }
+
+    .hero-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      margin-top: 52px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .metric {
+      min-height: 136px;
+      padding: 22px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .metric strong {
+      display: block;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(34px, 5vw, 54px);
+      line-height: 1;
+      letter-spacing: -0.05em;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 12px;
+      z-index: 5;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 22px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(244, 239, 227, 0.78);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 12px 30px rgba(31, 45, 38, 0.1);
+    }
+
+    .filter {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .filter button, .select-wrap select, .search {
+      font: inherit;
+      min-height: 42px;
+      padding: 0 14px;
+    }
+
+    .filter button {
+      cursor: pointer;
+      transition: transform 160ms ease, background 160ms ease, color 160ms ease;
+    }
+
+    .filter button:hover { transform: translateY(-1px); }
+    .filter button.active { background: var(--ink); color: var(--paper-soft); }
+
+    .search {
+      width: min(360px, 100%);
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.92);
+      color: var(--ink);
+      outline: none;
+    }
+
+    .section-title {
+      margin: 48px 0 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: 0.95;
+      letter-spacing: -0.055em;
+    }
+
+    .section-title p {
+      max-width: 520px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .lanes {
+      display: grid;
+      gap: 22px;
+    }
+
+    .lane {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(251, 247, 236, 0.82);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+      animation: enter 600ms ease both;
+    }
+
+    .lane-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) 180px 170px;
+      gap: 22px;
+      padding: 28px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(31, 79, 104, 0.1), transparent 50%),
+        rgba(251, 247, 236, 0.74);
+    }
+
+    .lane-kicker {
+      margin: 0 0 12px;
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .lane h3 {
+      margin: 0;
+      font-size: clamp(26px, 3.4vw, 48px);
+      line-height: 1.04;
+      letter-spacing: -0.045em;
+    }
+
+    .lane-summary {
+      margin: 14px 0 0;
+      color: #434c45;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .status-stamp {
+      justify-self: start;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      font-weight: 850;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.36);
+    }
+
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); }
+    .dot.done { background: var(--green); }
+    .dot.doing { background: var(--amber); }
+    .dot.blocked { background: var(--red); }
+
+    .ring {
+      justify-self: end;
+      width: 138px;
+      height: 138px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: conic-gradient(var(--blueprint) calc(var(--progress) * 1%), rgba(29, 37, 34, 0.1) 0);
+      position: relative;
+    }
+
+    .ring::before {
+      content: "";
+      position: absolute;
+      inset: 12px;
+      border-radius: inherit;
+      background: var(--paper-soft);
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+
+    .ring span {
+      position: relative;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 34px;
+      letter-spacing: -0.05em;
+    }
+
+    .lane-body {
+      display: grid;
+      grid-template-columns: 0.9fr 1.15fr;
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .panel {
+      padding: 26px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .panel h4 {
+      margin: 0 0 16px;
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      color: var(--field);
+      text-transform: uppercase;
+    }
+
+    .evidence-list, .next-list, .source-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 12px;
+    }
+
+    .evidence-list li, .next-list li, .source-list li {
+      position: relative;
+      padding-left: 20px;
+      color: #38413b;
+      line-height: 1.55;
+    }
+
+    .evidence-list li::before, .next-list li::before, .source-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.72em;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal);
+      transform: translateY(-50%);
+    }
+
+    .task-board {
+      display: grid;
+      gap: 12px;
+    }
+
+    .task {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 13px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.34);
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .task:hover {
+      transform: translateY(-2px);
+      border-color: rgba(31, 79, 104, 0.32);
+      background: rgba(255, 255, 255, 0.54);
+    }
+
+    .task input[type="checkbox"] {
+      width: 19px;
+      height: 19px;
+      margin-top: 4px;
+      accent-color: var(--blueprint);
+    }
+
+    .task-title {
+      margin: 0 0 4px;
+      font-weight: 850;
+      line-height: 1.42;
+    }
+
+    .task-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 9px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      background: rgba(244, 239, 227, 0.8);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .tag.done { color: var(--green); border-color: rgba(63, 122, 87, 0.3); }
+    .tag.doing { color: var(--amber); border-color: rgba(186, 122, 42, 0.3); }
+    .tag.todo { color: var(--blueprint); border-color: rgba(31, 79, 104, 0.28); }
+    .tag.blocked { color: var(--red); border-color: rgba(168, 76, 63, 0.3); }
+
+    .task select {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 10px;
+      background: var(--paper-soft);
+      color: var(--ink);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    details.sources {
+      margin-top: 20px;
+      border-top: 1px dashed var(--line-strong);
+      padding-top: 18px;
+    }
+
+    details.sources summary {
+      cursor: pointer;
+      color: var(--blueprint);
+      font-weight: 850;
+    }
+
+    .notes {
+      margin-top: 18px;
+    }
+
+    .notes label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--field);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .notes textarea {
+      width: 100%;
+      min-height: 92px;
+      resize: vertical;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      padding: 13px 14px;
+      background: rgba(251, 247, 236, 0.78);
+      color: var(--ink);
+      font: inherit;
+      line-height: 1.5;
+      outline: none;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--line);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+    }
+
+    .timeline-step {
+      min-height: 220px;
+      padding: 24px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .timeline-step b {
+      display: block;
+      margin-bottom: 12px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+
+    .timeline-step p {
+      margin: 0;
+      color: #424c46;
+      line-height: 1.6;
+    }
+
+    .footer {
+      margin-top: 40px;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .empty {
+      display: none;
+      padding: 28px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 22px;
+      color: var(--muted);
+      text-align: center;
+      background: rgba(251, 247, 236, 0.58);
+    }
+
+    @keyframes slow-turn { to { transform: rotate(360deg); } }
+    @keyframes enter {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid, .lane-head, .lane-body, .timeline { grid-template-columns: 1fr; }
+      .ring { justify-self: start; width: 116px; height: 116px; }
+      .toolbar { position: static; }
+      .section-title { display: block; }
+      .section-title p { margin-top: 10px; }
+      .footer { display: block; }
+    }
+
+    @media (max-width: 640px) {
+      .page { width: min(100% - 20px, 1440px); padding-top: 10px; }
+      .hero, .lane-head, .panel, .timeline-step { padding: 20px; }
+      .hero { min-height: auto; }
+      .hero::after { opacity: 0.28; }
+      .task { grid-template-columns: auto 1fr; }
+      .task select { grid-column: 2; justify-self: start; }
+      .toolbar { border-radius: 18px; }
+      .search { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR Tracker · 2026-06-12</div>
+      <h1>四条优化主线，一张可追踪计划图。</h1>
+      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing ticket routing、RAG vs KG 四个维度的已完成进展、未完成计划和下一步验收点收束到一个单页 HTML。状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
+      <div class="hero-meta">
+        <span class="meta-pill">来源：docs + CodeGraph + tests + changelog</span>
+        <span class="meta-pill">追踪粒度：QBR / milestone</span>
+        <span class="meta-pill">默认不改动线上行为</span>
+      </div>
+      <div class="hero-grid" id="heroMetrics"></div>
+    </header>
+
+    <nav class="toolbar" aria-label="QBR filters">
+      <div class="filter" id="laneFilters"></div>
+      <input id="searchInput" class="search" type="search" placeholder="搜索任务、来源或计划">
+    </nav>
+
+    <section class="section-title">
+      <div>
+        <h2>主线进度</h2>
+      </div>
+      <p>每条主线都按“目前已经能证明什么”和“下一步还要交付什么”拆开，避免把计划文档、原型和可上线能力混在一起。</p>
+    </section>
+
+    <main class="lanes" id="lanes"></main>
+    <div class="empty" id="emptyState">没有匹配的主线或任务。</div>
+
+    <section class="section-title">
+      <div>
+        <h2>建议 QBR 路线</h2>
+      </div>
+      <p>如果要汇报或继续推进，建议按风险递增顺序讲：先 POC/原型，再线上闭环，再知识架构。</p>
+    </section>
+
+    <section class="timeline" aria-label="Suggested QBR route">
+      <div class="timeline-step">
+        <b>1. Billing</b>
+        <p>展示确定性最强的白名单自动化：字段收集、route、ticket 持久化、邮件升级和历史查询已经闭环，下一步是 Zendesk 与试运行质量复盘。</p>
+      </div>
+      <div class="timeline-step">
+        <b>2. Assignment</b>
+        <p>展示工程师排班/单工单/SLA 的体验原型，明确它目前是 demo，不是生产调度器；下一步补数据模型、审计事件和真实队列。</p>
+      </div>
+      <div class="timeline-step">
+        <b>3. Multi-Agent</b>
+        <p>展示 Engineer AI 从 guardrail-only 走向 multi-agent 主链路的骨架和安全边界；下一步把 Plan/Review/Implement/Conclude 接进真实生命周期。</p>
+      </div>
+      <div class="timeline-step">
+        <b>4. RAG vs KG</b>
+        <p>把知识边界讲清楚：文档和 citation 留在 RAG，确认案例和经验进入 Case Memory/KG；下一步才是 Active Retrieval Memory 与 GraphRAG adapter。</p>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>文件：docs/qbr_plan.html</span>
+      <span>本页是追踪页，不作为产品运行时 source of truth；正式功能状态仍以代码、测试、changelog 和 feature_list 为准。</span>
+    </footer>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "supportportal_qbr_plan_v1";
+    const STATUS_LABELS = {
+      done: "已完成",
+      doing: "进行中",
+      todo: "未开始",
+      blocked: "暂停/阻塞"
+    };
+
+    const LANES = [
+      {
+        id: "engineer-multi-agent",
+        short: "Multi-Agent",
+        title: "Engineer AI multi-agent",
+        status: "doing",
+        thesis: "已经完成边界、反馈、ledger 和第一版后端 skeleton；真正的线上 Plan/Review/Implement/Conclude 主链路仍在建设中。",
+        done: [
+          "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
+          "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
+          "Case Memory Ledger 已落地：所有 feedback 入账，默认 retrieval_enabled=false / active_memory_status=inactive，不会自动进入长期记忆。",
+          "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
+          "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。"
+        ],
+        next: [
+          { id: "ma-plan-agent", status: "todo", label: "实现真实 Plan Agent：从 ticket、handoff、历史消息和 revise note 生成可执行计划。", horizon: "Phase 2B" },
+          { id: "ma-memory-review", status: "todo", label: "实现 Memory Review Agent + Active Retrieval Memory 查询，只消费 active memory，不碰 inactive ledger。", horizon: "Phase 2B" },
+          { id: "ma-implement-agent", status: "todo", label: "实现 Implement Agent 调用 internal RAG、official fallback 和 evidence tools，并记录 evidence packet。", horizon: "Phase 2B" },
+          { id: "ma-conclude-agent", status: "todo", label: "实现 Conclude Agent 输出可审查 conclusion、缺失信息、root-cause status 和 customer-safe draft。", horizon: "Phase 2B" },
+          { id: "ma-revise-approve", status: "todo", label: "把 approve/revise 接入 multi-agent 生命周期：approve 仍过 guardrail，revise 回到 Plan Agent。", horizon: "Phase 2B" },
+          { id: "ma-ui-flag", status: "todo", label: "在 Engineer UI 展示 conclusion/revise 输入，并加 feature flag、fallback、版本注册和回滚门禁。", horizon: "Rollout" },
+          { id: "ma-eval", status: "todo", label: "从 feedback、revise notes 和 approved conclusions 生成 replay eval dataset。", horizon: "Phase 4" }
+        ],
+        sources: [
+          "docs/engineer_ai_evolution_plan.html",
+          "docs/superpowers/plans/2026-06-11-engineer-ai-multi-agent-mainline.html",
+          "docs/superpowers/specs/2026-06-10-engineer-ai-evolution-phase0-design.md",
+          "docs/superpowers/specs/2026-06-10-engineer-hitl-feedback-schema-design.md",
+          "docs/superpowers/plans/2026-06-10-engineer-evidence-orchestration.md",
+          "backend/services/engineer_multi_agent.py",
+          "backend/tests/test_engineer_multi_agent.py",
+          "backend/tests/test_case_memory_ledger.py"
+        ]
+      },
+      {
+        id: "assignment-ui",
+        short: "Assignment",
+        title: "Ticket assignment UI demo",
+        status: "doing",
+        thesis: "独立 /assignment 原型已经完成并可演示核心体验；生产级调度、持久化、审计和真实队列接入还未开始。",
+        done: [
+          "`/assignment` 独立静态原型已完成，不改现有 `/engineer`，用于演示工程师选择、排班和单工单处理。",
+          "原型包含 Jack/Maya/Leo 工程师选择器、localStorage 登录状态、UTC+8 每日固定 shift 和 In shift / Out of shift 展示。",
+          "已演示登录且在 shift 内、且没有 active Engineer Ticket 时才 eligible for assignment。",
+          "Mock ticket assign 后开始 3 小时 SLA 倒计时，approve 并发送 Engineer AI draft 后关闭当前工单并允许领取下一个。",
+          "SLA 超时/transfer 状态可模拟，契约测试确认 standalone page、solver-focused flow 和不影响现有 engineer UI。"
+        ],
+        next: [
+          { id: "assign-data-model", status: "todo", label: "定义生产 Engineer Ticket 生命周期、状态机和队列持久化模型。", horizon: "Model" },
+          { id: "assign-shift-api", status: "todo", label: "实现真实登录/排班 API，shift schedule 持久化并统一 UTC+8。", horizon: "Model" },
+          { id: "assign-scheduler", status: "todo", label: "实现单 active case 分配器、first response 优先级、等待时间排序和无可用工程师回队列。", horizon: "Scheduler" },
+          { id: "assign-audit", status: "todo", label: "记录创建、入队、分配、SLA 开始、AI 草稿、批准、超时、转派和关闭事件。", horizon: "Audit" },
+          { id: "assign-real-ui", status: "todo", label: "把 demo 能力迁移到真实 Engineer Portal 工作台和队列运行视图。", horizon: "Portal" },
+          { id: "assign-pilot", status: "todo", label: "小范围试点 Tier One，统计处理量、平均处理时长、超时、转派和有效回复比例。", horizon: "Pilot" }
+        ],
+        sources: [
+          "docs/engineer_portal_assignment_plan.html",
+          "ui/assignment-ui/index.html",
+          "ui/assignment-ui/app.js",
+          "ui/assignment-ui/styles.css",
+          "backend/tests/test_assignment_ui_contract.py",
+          "docs/feature_list.md"
+        ]
+      },
+      {
+        id: "billing-routing",
+        short: "Billing",
+        title: "Billing ticket routing",
+        status: "doing",
+        thesis: "确定性 billing 白名单 POC 已贯通 /account intake、route、ticket、邮件和历史查询；接下来要接真实来源、审核和试运行指标。",
+        done: [
+          "白名单 v1 收窄到 `account_suspension` 和 `detailed_invoice`，金额争议、退款、赔付、裁决类问题默认不自动化。",
+          "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
+          "`POST /account` 已实现创建客户工单 -> route -> follow process；字段缺失时追问，字段齐全时升级内部团队并准备/发送内部邮件。",
+          "`/account` 手动 UI 已复用 client 体验，并展示 route、ticket id、客户回复、缺失字段、邮件状态和 billing ticket id。",
+          "Billing ticket 持久化、历史列表和详情 API 已完成；`support_billing_tickets` schema 与 repository contract 有测试覆盖。",
+          "内部邮件已支持 action-specific destination env，2026-06-10 detailed_invoice 真实 SMTP 发送测试已确认 sent。"
+        ],
+        next: [
+          { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单、缺字段、非白名单、高风险人工。", horizon: "Scope" },
+          { id: "billing-zendesk", status: "todo", label: "接入 Zendesk webhook/API 拉取新工单内容和必要 metadata。", horizon: "Source" },
+          { id: "billing-human-review", status: "todo", label: "建立人工审核模式，审核升级告知和内部邮件，误判回流测试集。", horizon: "Review" },
+          { id: "billing-idempotency", status: "todo", label: "为 external_id 补幂等，避免重复 /account 请求重复建单或重复发邮件。", horizon: "Reliability" },
+          { id: "billing-pilot", status: "todo", label: "启用小流量试运行，统计覆盖率、误判、升级人工原因和客户补充信息质量。", horizon: "Pilot" },
+          { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" }
+        ],
+        sources: [
+          "docs/billing_automation_plan.html",
+          "backend/services/billing_automation.py",
+          "backend/services/support_router.py",
+          "backend/main.py",
+          "backend/tests/test_support_router.py",
+          "backend/tests/test_account_intake.py",
+          "backend/tests/test_account_ui_contract.py",
+          "backend/tests/test_repository_configuration.py",
+          "ui/account-ui/app.js",
+          "docs/feature_list.md"
+        ]
+      },
+      {
+        id: "rag-vs-kg",
+        short: "RAG vs KG",
+        title: "RAG vs KG / Case Memory",
+        status: "doing",
+        thesis: "RAG 主链路继续承载可引用文档证据；KG/Case Memory 方向已经有边界、ledger 和 vendored GraphRAG source，但运行时 KG 检索仍未接入主链路。",
+        done: [
+          "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate。",
+          "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
+          "知识边界已固定：文档型知识、citation、source path 和重复文档治理留在 RAG；confirmed cases、经验、偏好和 selected memory 进入 Case Memory Layer。",
+          "Case Memory Ledger 已实现为完整审计账本，Active Retrieval Memory 作为后续可召回子集，ledger candidate 不会自动变 active。",
+          "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。"
+        ],
+        next: [
+          { id: "kg-active-memory", status: "todo", label: "实现 Active Retrieval Memory 查询接口和 confirmed case 晋升/撤回/降权规则。", horizon: "Case Memory" },
+          { id: "kg-adapter", status: "todo", label: "为 vendored cusmem/GraphRAG 写 SupportPortal adapter，明确输入、输出、脱敏和版本字段。", horizon: "Adapter" },
+          { id: "kg-eval", status: "todo", label: "建立 RAG-only vs RAG+KG 对照评测，比较召回、证据可解释性、幻觉风险和延迟。", horizon: "Evaluation" },
+          { id: "rag-dedupe", status: "todo", label: "推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review。", horizon: "RAG Governance" },
+          { id: "kg-runtime-boundary", status: "todo", label: "定义线上触发顺序：Case Memory、internal RAG、official fallback 是串行、并行还是按 query class 选择。", horizon: "Runtime" },
+          { id: "kg-citations", status: "blocked", label: "KG 不能替代 Postgres source of truth；引用和审计必须回查权威 ticket/feedback 状态后才能展示。", horizon: "Safety" }
+        ],
+        sources: [
+          "docs/rag_retrieval_chain.md",
+          "docs/SUPPORTPORTAL_RAG_REFACTOR_PLAN.md",
+          "docs/engineer_ai_evolution_plan.html",
+          "docs/superpowers/specs/2026-06-09-rag-scope-split-design.md",
+          "docs/rag_change_log.md",
+          "backend/services/case_memory_ledger.py",
+          "backend/tests/test_case_memory_ledger.py",
+          "vendor/cusmem/graphiti_rag/",
+          "vendor/cusmem/tests/"
+        ]
+      }
+    ];
+
+    const state = loadState();
+    let activeLane = "all";
+    let query = "";
+
+    function loadState() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function taskStatus(task) {
+      return state[`task:${task.id}:status`] || task.status;
+    }
+
+    function taskDone(task) {
+      return taskStatus(task) === "done";
+    }
+
+    function laneProgress(lane) {
+      const doneCount = lane.next.filter(taskDone).length + lane.done.length;
+      const total = lane.next.length + lane.done.length;
+      return total ? Math.round((doneCount / total) * 100) : 0;
+    }
+
+    function escapeHtml(value) {
+      return String(value || "").replace(/[&<>'"]/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        '"': "&quot;"
+      }[char]));
+    }
+
+    function renderHeroMetrics() {
+      const totalTasks = LANES.reduce((sum, lane) => sum + lane.next.length, 0);
+      const doneTasks = LANES.reduce((sum, lane) => sum + lane.next.filter(taskDone).length, 0);
+      const blockedTasks = LANES.reduce((sum, lane) => sum + lane.next.filter((task) => taskStatus(task) === "blocked").length, 0);
+      const avgProgress = Math.round(LANES.reduce((sum, lane) => sum + laneProgress(lane), 0) / LANES.length);
+      const metrics = [
+        { value: LANES.length, label: "优化主线" },
+        { value: `${avgProgress}%`, label: "综合追踪完成度（含已完成证据与待办勾选）" },
+        { value: totalTasks - doneTasks, label: "未完成计划项" },
+        { value: blockedTasks, label: "暂停或需要决策项" }
+      ];
+      document.getElementById("heroMetrics").innerHTML = metrics.map((item) => `
+        <div class="metric"><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.label)}</span></div>
+      `).join("");
+    }
+
+    function renderFilters() {
+      const filters = [{ id: "all", label: "全部" }, ...LANES.map((lane) => ({ id: lane.id, label: lane.short }))];
+      document.getElementById("laneFilters").innerHTML = filters.map((item) => `
+        <button type="button" class="${activeLane === item.id ? "active" : ""}" data-lane-filter="${item.id}">${escapeHtml(item.label)}</button>
+      `).join("");
+    }
+
+    function laneMatches(lane) {
+      if (activeLane !== "all" && lane.id !== activeLane) return false;
+      if (!query) return true;
+      const haystack = [
+        lane.title,
+        lane.short,
+        lane.thesis,
+        ...lane.done,
+        ...lane.next.map((task) => `${task.label} ${task.horizon} ${STATUS_LABELS[taskStatus(task)]}`),
+        ...lane.sources
+      ].join(" ").toLowerCase();
+      return haystack.includes(query.toLowerCase());
+    }
+
+    function renderLane(lane, index) {
+      const progress = laneProgress(lane);
+      const note = state[`lane:${lane.id}:note`] || "";
+      return `
+        <article class="lane" style="animation-delay:${index * 70}ms" data-lane="${lane.id}">
+          <header class="lane-head">
+            <div>
+              <p class="lane-kicker">${escapeHtml(lane.short)}</p>
+              <h3>${escapeHtml(lane.title)}</h3>
+              <p class="lane-summary">${escapeHtml(lane.thesis)}</p>
+            </div>
+            <div class="status-stamp"><span class="dot ${lane.status}"></span>${escapeHtml(STATUS_LABELS[lane.status])}</div>
+            <div class="ring" style="--progress:${progress}"><span>${progress}%</span></div>
+          </header>
+          <div class="lane-body">
+            <section class="panel">
+              <h4>已完成进展</h4>
+              <ul class="evidence-list">
+                ${lane.done.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+              </ul>
+              <details class="sources">
+                <summary>证据来源</summary>
+                <ul class="source-list">
+                  ${lane.sources.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}
+                </ul>
+              </details>
+              <div class="notes">
+                <label for="note-${lane.id}">QBR 备注</label>
+                <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
+              </div>
+            </section>
+            <section class="panel">
+              <h4>未完成计划</h4>
+              <div class="task-board">
+                ${lane.next.map(renderTask).join("")}
+              </div>
+            </section>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderTask(task) {
+      const status = taskStatus(task);
+      return `
+        <div class="task" data-task="${task.id}">
+          <input type="checkbox" ${status === "done" ? "checked" : ""} aria-label="mark ${escapeHtml(task.label)} done" data-task-check="${task.id}">
+          <div>
+            <p class="task-title">${escapeHtml(task.label)}</p>
+            <div class="task-meta">
+              <span class="tag ${status}">${escapeHtml(STATUS_LABELS[status])}</span>
+              <span class="tag">${escapeHtml(task.horizon)}</span>
+            </div>
+          </div>
+          <select data-task-status="${task.id}" aria-label="status for ${escapeHtml(task.label)}">
+            ${Object.entries(STATUS_LABELS).map(([key, label]) => `<option value="${key}" ${key === status ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </div>
+      `;
+    }
+
+    function render() {
+      renderHeroMetrics();
+      renderFilters();
+      const lanes = LANES.filter(laneMatches);
+      document.getElementById("lanes").innerHTML = lanes.map(renderLane).join("");
+      document.getElementById("emptyState").style.display = lanes.length ? "none" : "block";
+    }
+
+    document.addEventListener("click", (event) => {
+      const filter = event.target.closest("[data-lane-filter]");
+      if (!filter) return;
+      activeLane = filter.getAttribute("data-lane-filter") || "all";
+      render();
+    });
+
+    document.addEventListener("change", (event) => {
+      const check = event.target.closest("[data-task-check]");
+      if (check) {
+        const taskId = check.getAttribute("data-task-check");
+        state[`task:${taskId}:status`] = check.checked ? "done" : "todo";
+        saveState();
+        render();
+        return;
+      }
+      const select = event.target.closest("[data-task-status]");
+      if (select) {
+        const taskId = select.getAttribute("data-task-status");
+        state[`task:${taskId}:status`] = select.value;
+        saveState();
+        render();
+      }
+    });
+
+    document.addEventListener("input", (event) => {
+      if (event.target.id === "searchInput") {
+        query = event.target.value.trim();
+        render();
+        return;
+      }
+      const note = event.target.closest("[data-note]");
+      if (note) {
+        const laneId = note.getAttribute("data-note");
+        state[`lane:${laneId}:note`] = note.value;
+        saveState();
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
