@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import re
 from pathlib import Path
 
 
@@ -209,6 +210,11 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn(".assignment-sidebar", css)
         self.assertIn(".engineer-rail.assignment-sidebar", css)
         self.assertIn(".rail-brand", css)
+        rail_brand_match = re.search(r"\.rail-brand \{(?P<body>.*?)\n\}", css, re.S)
+        self.assertIsNotNone(rail_brand_match)
+        rail_brand_css = rail_brand_match.group("body") if rail_brand_match else ""
+        self.assertIn("display: flex;", rail_brand_css)
+        self.assertIn("align-items: center;", rail_brand_css)
         self.assertIn(".panel-card", css)
         self.assertIn(".btn-primary", css)
         self.assertIn(".detail-investigation-draft", css)
