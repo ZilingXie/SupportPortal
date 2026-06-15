@@ -776,7 +776,6 @@ function renderWorkspaceHeaderHtml(inShift, sla) {
   const title = activeTicket ? activeTicket.title : inShift ? "No active Engineer Ticket" : "Waiting for your UTC+8 shift";
   const breakButtonHtml = activeTicket ? `
     <button class="btn btn-ghost break-after-case-btn ${breakAfterCase ? "is-active" : ""}" type="button" data-action="toggle-break-after-case" aria-pressed="${breakAfterCase ? "true" : "false"}">
-      <span class="material-symbols-outlined" aria-hidden="true">${breakAfterCase ? "coffee" : "coffee_off"}</span>
       ${breakAfterCase ? "Break queued after this case" : "Break after this case"}
     </button>
   ` : "";
