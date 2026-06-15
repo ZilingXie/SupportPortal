@@ -889,18 +889,19 @@
     <header class="hero">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR 追踪 · 2026-06-12</div>
       <h1>四条优化主线，一张可追踪进度板。</h1>
-      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、RAG vs KG 四个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 Engineer Multi-Agent 生命周期架构优化、multi-agent skeleton 合并、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
+      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、Routing rules、RAG vs KG 五个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 Engineer Multi-Agent 生命周期架构优化、multi-agent skeleton 合并、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
       <section class="hero-judgment" aria-label="Current QBR judgment">
         <h2>当前判断</h2>
-        <p>Billing 是最接近可试运行的确定性闭环；Assignment 仍是独立 demo；Engineer Multi-Agent 已完成生命周期架构优化和后端契约骨架，但 Summary/Plan/Execute/Review 真实链路仍未接管 runtime；RAG/KG 已完成 cusmem 产品化整理，本轮计划收敛为“官网文档 KG 辅助 Client AI RAG”，下一步是 SupportPortal adapter、图数据库选型和运行时降级边界。</p>
+        <p>Billing 是最接近可试运行的确定性闭环；Routing rules 现在独立成 tab，明确 deterministic fast path、LLM classifier、fallback 和 route contract 的真实边界；Assignment 仍是独立 demo；Engineer Multi-Agent 已完成生命周期架构优化和后端契约骨架，但 Summary/Plan/Execute/Review 真实链路仍未接管 runtime；RAG/KG 已完成 cusmem 产品化整理，本轮计划收敛为“官网文档 KG 辅助 Client AI RAG”，下一步是 SupportPortal adapter、图数据库选型和运行时降级边界。</p>
         <ul class="review-list" aria-label="QBR review notes">
           <li>QBR 可以把 Billing 作为最强 demo，但必须明确当前是 route + 记录状态，不是真正执行 automation；Zendesk、幂等和人工审核仍是试运行前置条件。</li>
+          <li>Routing rules 要单独讲清楚：当前先跑 deterministic fast path，再跑 LLM classifier，低置信或无凭据时回落到 conservative_agora_technical_fallback；TK-ACC-68BAC7 暴露出 billing/account-status 文案没有进 billing_automation 白名单。</li>
           <li>Assignment 和 Multi-Agent 都要避免过度承诺：前者是 localStorage 原型，后者是生命周期架构 + skeleton + plan，还不是生产主链路。</li>
           <li>RAG/KG 适合讲架构方向和边界：KG 先只入库官网文档，作为 Client AI RAG 的 query expansion、rerank 和带来源 fact 辅助，不能替代 RAG citation。</li>
         </ul>
       </section>
       <div class="hero-meta">
-        <span class="meta-pill">同步点：main @ 2026-06-12</span>
+        <span class="meta-pill">同步点：main @ 2026-06-15</span>
         <span class="meta-pill">来源：docs + tests + changelog + recent merges</span>
         <span class="meta-pill">追踪粒度：QBR / milestone</span>
         <span class="meta-pill">唯一维护计划页：docs/qbr_plan.html</span>
@@ -993,15 +994,19 @@ flowchart TD
         <p>展示确定性最强的白名单路由闭环：`/account` case 持久化、route、单一 `TK-...` ticket id、automation 状态记录和历史查询已经闭环；当前不执行自动化动作，下一步是 Zendesk、幂等和人工审核试运行。</p>
       </div>
       <div class="timeline-step">
-        <b>2. Assignment</b>
+        <b>2. Routing rules</b>
+        <p>先把路由契约讲清楚：deterministic fast path 只处理高确定性 billing、resolution、短技术排障、API 语义和产品组合；LLM classifier 只负责剩余灰区；低置信时默认进入 `agora_docs_rag`，而不是直接拒绝或自动化。</p>
+      </div>
+      <div class="timeline-step">
+        <b>3. Assignment</b>
         <p>展示工程师排班/单工单/SLA 的体验原型，明确它目前是 demo，不是生产调度器；下一步补数据模型、审计事件和真实队列。</p>
       </div>
       <div class="timeline-step">
-        <b>3. Multi-Agent</b>
+        <b>4. Multi-Agent</b>
         <p>展示 Engineer AI 从 guardrail-only 走向 Summary Agent、Plan Agent、Execute Agent、Review Agent 的调查主链路；Summary Agent 第一版（deterministic summary packet）已完成，Plan Agent 第一版已完成并持久化到 engineer_agent_state.active_plan，Execute Agent 第一版已实现 deterministic scheduler（allowlisted subagents, task results, evidence packet 写入 engineer_agent_state），Review Agent 第一版已实现 deterministic review decision（ready_for_engineer / replan_required / unable_to_resolve，最多 2 次 replan，缺失客户信息作为 review context 保留）；当前下一步是实现 revise/approve 链路。</p>
       </div>
       <div class="timeline-step">
-        <b>4. RAG vs KG</b>
+        <b>5. RAG vs KG</b>
         <p>把知识边界讲清楚：Client AI 的官网文档回答仍以 RAG chunk 和 citation 为 source of truth；KG 先只承接官网文档概念/关系，作为 RAG 辅助信号；图数据库先用 Docker Neo4j 做本地方案评估，再比较 AWS Neptune/Serverless。</p>
       </div>
     </section>
@@ -1022,6 +1027,10 @@ flowchart TD
     };
 
     const RECENT_UPDATES = [
+      {
+        key: "Routing rules",
+        copy: "Routing rules 已独立成 QBR tab：记录 support_router.py 的 deterministic fast path、LLM classifier、route contract、fallback，以及 TK-ACC-68BAC7 没有进入 billing_automation 的原因。"
+      },
       {
         key: "Review Agent",
         copy: "Review Agent 第一版已接入升级链路：deterministic review decision 根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve，限制最多 2 次 replan，保留 missing_information，review 结果持久化到 engineer_agent_state。"
@@ -1213,6 +1222,48 @@ flowchart TD
           "backend/tests/test_repository_configuration.py",
           "ui/account-ui/app.js",
           "docs/feature_list.md"
+        ]
+      },
+      {
+        id: "routing-rules",
+        short: "Routing",
+        title: "Routing rules",
+        status: "doing",
+        thesis: "当前路由是两段式：先跑 deterministic fast path，再跑 LLM classifier；若 LLM 无凭据、失败或低于 INTENT_ROUTER_CONFIDENCE_THRESHOLD，就回落到 conservative_agora_technical_fallback。每个 scope_label 会被 route contract 固定成 route_family、execution_action 和 tooling_profile，避免 UI 或业务方直接解释原始标签。",
+        done: [
+          "入口是 `decide_support_route()`：空消息直接 `non_agora/refuse`；非空消息先进入 `_heuristic_route_decision()`，没有命中才调用 `_llm_route_decision()`。",
+          "deterministic fast path 的顺序固定：billing whitelist -> ticket_resolution -> gratitude/small_talk -> short troubleshooting -> API semantics mismatch -> join channel -> product portfolio。",
+          "billing fast path 只接受 `account_suspension` 和 `detailed_invoice`：命中后输出 `scope_label=billing`、`route_family=billing_automation`、`tooling_profile=deterministic_billing_intake`。",
+          "`detailed_invoice` 只匹配 detailed invoice / invoice details / send invoice，并用 dispute/refund/wrong/overcharged 等词排除金额争议；`account_suspension` 当前只匹配 account suspended、suspended account、account blocked/disabled 这类窄表达。",
+          "ticket resolution 只在客户确认问题解决且没有负向标记时触发，输出 `ticket_resolution/resolve_ticket/deterministic_resolution`；普通 thanks 没有 resolution context 时会走 `small_talk/controlled_response`。",
+          "短排障消息才走 short troubleshooting fast path：不超过 24 words / 180 chars，且包含 black screen、no audio、join failed、disconnect、network quality 等信号；若同时有 printer/outlook/excel/office wifi/blue screen 等 general IT 信号，则转 `non_agora/refuse`。",
+          "API semantics mismatch、join channel 和 Agora product portfolio 有独立 deterministic route；product portfolio 输出 `agora_non_technical/web_company_info/web_search`，技术与排障输出 `agora_technical/agora_docs_rag/rag`。",
+          "LLM classifier 只能返回 ticket_resolution、billing、small_talk、non_agora、agora_non_technical、agora_technical；billing 必须带 `account_suspension` 或 `detailed_invoice` action，否则整条 LLM 决策会被丢弃。",
+          "route contract 固定映射：`agora_technical -> agora_docs_rag/rag/agora_docs_only`，`agora_non_technical -> web_company_info/web_search/official_web_search`，`non_agora -> fallback_or_refuse/refuse/no_agora_docs_refusal`，`small_talk -> general_chat/controlled_response/controlled_acknowledgement`。",
+          "TK-ACC-68BAC7 的实际保存结果是 `route=web_search`、`route_reason=billing_and_account_status`、`matched_signals=[billing, account suspended, restore access, agora]`、`automation_status=not_automated`；原因是当前 billing deterministic pattern 没覆盖 `Account temporarily suspended` 和 `account ... has been suspended`，LLM 又把它归为 `agora_non_technical`。"
+        ],
+        review: [
+          "Routing 不是单一模型判断：deterministic fast path 的优先级会覆盖 LLM，因此优化 billing 命中率应先改 `billing_automation.py` 的安全白名单和回归集。",
+          "`conservative_agora_technical_fallback` 是保守兜底：宁可进入 RAG，也不在低置信时拒绝客户或触发 automation。",
+          "当前最大风险是 billing/account status 语义被 LLM 归到 `web_company_info`，导致 account suspension 类真实 case 不进入 automation；需要用真实 case set 度量误判，而不是一次性扩大所有 billing 类目。"
+        ],
+        next: [
+          { id: "routing-billing-suspension-patterns", status: "todo", label: "扩展 account_suspension deterministic whitelist，覆盖 temporarily suspended、has been suspended、suspended due to insufficient balance、restore access 等真实表达。", horizon: "Billing" },
+          { id: "routing-billing-regression-set", status: "todo", label: "建立 billing routing 回归集，至少包含 account suspension、detailed invoice、billing terms/account status、refund/dispute/overcharged negative cases。", horizon: "Tests" },
+          { id: "routing-not-automated-reasons", status: "todo", label: "在 account billing view-model 中更明确记录 Not automated 原因：heuristic miss、LLM non-billing、billing action unsupported 或 confidence fallback。", horizon: "Observability" },
+          { id: "routing-llm-billing-prompt", status: "todo", label: "补 LLM classifier few-shot：account suspended due to balance / restore access 应归入 billing account_suspension，而 billing terms change 可保留人工审核。", horizon: "Prompt" },
+          { id: "routing-threshold-audit", status: "todo", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。", horizon: "Metrics" },
+          { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 失败原因写入 QBR tab。", horizon: "Docs" }
+        ],
+        sources: [
+          "backend/services/support_router.py",
+          "backend/services/support_router_prompt.py",
+          "backend/services/prompts/router.py",
+          "backend/services/billing_automation.py",
+          "backend/main.py",
+          "backend/tests/test_support_router.py",
+          "backend/tests/test_account_intake.py",
+          "backend/tests/test_qbr_plan_contract.py"
         ]
       },
       {
