@@ -51,6 +51,7 @@
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 - Engineer AI 会在调查前生成结构化 Plan Agent 计划。
 - Engineer AI 会按 Plan Agent 计划执行 allowlisted subagents 并生成 evidence packet。
+- Engineer AI 会根据执行结果生成 Review Agent 决策。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。

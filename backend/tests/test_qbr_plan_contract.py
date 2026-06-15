@@ -53,7 +53,8 @@ class QbrPlanContractTests(unittest.TestCase):
             "max 2 retries",
             "Case Memory candidate",
             "mermaid.min.js",
-            "当前下一步是实现 Review Agent",
+            "当前下一步是实现 revise/approve 链路",
+            "Review Agent 第一版已实现 deterministic review decision",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -62,6 +63,7 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn("当前下一步：实现真实 Plan Agent", html_source)
         self.assertNotIn("当前下一步是实现 Plan Agent", html_source)
         self.assertNotIn("当前下一步是实现 Execute Agent", html_source)
+        self.assertNotIn("当前下一步是实现 Review Agent", html_source)
 
     def test_qbr_plan_tracks_assignment_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
