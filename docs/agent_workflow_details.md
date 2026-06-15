@@ -118,4 +118,3 @@ Reasonix-specific worker rules live in `REASONIX.md`. When the user gives a Code
 6. When one major feature spans multiple categories, record it in every relevant category using the same wording.
 7. When a feature is completed, move it from the relevant `未完成` lists to the matching `已完成` lists in the same task. Do not leave the same feature in both states within one category.
 8. Any task that changes `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` must pass `python3 scripts/verify_feature_list.py`; direct-to-main finalization should run this verification automatically when that file changes.
-
