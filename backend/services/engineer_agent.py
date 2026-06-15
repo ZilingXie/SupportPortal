@@ -1682,6 +1682,10 @@ def fallback_engineer_agent_state(
         exec_value = existing.get(exec_key)
         if exec_value is not None and (isinstance(exec_value, dict) or isinstance(exec_value, list) or _clean_text(exec_value)):
             state[exec_key] = exec_value
+    for review_key in ("active_review", "review_id", "review_version", "review_agent_version", "review_decision", "replan_count"):
+        review_value = existing.get(review_key)
+        if review_value is not None and (isinstance(review_value, dict) or isinstance(review_value, list) or _clean_text(str(review_value))):
+            state[review_key] = review_value
     return state
 
 
@@ -1749,6 +1753,16 @@ def normalize_engineer_agent_state(
             fb_val = fallback.get(exec_key)
             if fb_val is not None and (isinstance(fb_val, dict) or isinstance(fb_val, list) or _clean_text(fb_val)):
                 merged[exec_key] = fb_val
+    # Preserve Review Agent fields from the incoming state so that
+    # investigation refresh does not drop the active_review.
+    for review_key in ("active_review", "review_id", "review_version", "review_agent_version", "review_decision", "replan_count"):
+        review_value = value.get(review_key)
+        if review_value is not None and (isinstance(review_value, dict) or isinstance(review_value, list) or _clean_text(str(review_value))):
+            merged[review_key] = review_value
+        elif review_key not in merged:
+            fb_val = fallback.get(review_key)
+            if fb_val is not None and (isinstance(fb_val, dict) or isinstance(fb_val, list) or _clean_text(str(fb_val))):
+                merged[review_key] = fb_val
     if _should_prefer_intake_issue_understanding(
         current_issue_understanding,
         fallback["issue_understanding"],
