@@ -65,7 +65,22 @@ function routeClass(route) {
   return "route-other";
 }
 
+function safeSourceLink(source) {
+  const link = String(source?.Link || "").trim();
+  if (!link) return "";
+  try {
+    const parsed = new URL(link);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return link;
+    }
+  } catch {}
+  return "";
+}
+
 function normalizeSource(source) {
+  if (source && typeof source === "object" && safeSourceLink(source)) {
+    return "api";
+  }
   const normalized = String(source || "").trim().toLowerCase().replaceAll("_", "-");
   if (normalized === "api" || normalized === "http" || normalized === "account-http" || normalized === "/account-http") {
     return "api";
@@ -81,6 +96,16 @@ function sourceLabel(source) {
 function sourceClass(source) {
   if (normalizeSource(source) === "api") return "source-api";
   return "source-manual";
+}
+
+function renderSourceValue(source) {
+  if (source && typeof source === "object") {
+    const link = safeSourceLink(source);
+    if (link) {
+      return `<a class="source-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Link</a>`;
+    }
+  }
+  return `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabel(source))}</span>`;
 }
 
 function showToast(message) {
@@ -204,7 +229,7 @@ function renderHistorySidebar() {
     <button class="history-item ${isActive ? "history-item--active" : ""}" type="button" data-action="open-ticket" data-id="${escapeHtml(itemId)}">
       <div class="history-item-header">
         <strong>${escapeHtml(item.title || "")}</strong>
-        <span class="source-badge ${sourceClass(itemSource)}">${escapeHtml(sourceLabel(itemSource))}</span>
+        ${renderSourceValue(itemSource)}
       </div>
       <div class="history-item-meta">
         <span class="status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
@@ -287,7 +312,7 @@ function renderDetailView() {
 
         <div class="meta-row">
           <span class="meta-label">Source</span>
-          <span class="meta-value"><span class="source-badge ${sourceClass(itemSource)}">${escapeHtml(sourceLabel(itemSource))}</span></span>
+          <span class="meta-value">${renderSourceValue(itemSource)}</span>
         </div>
         <div class="meta-row">
           <span class="meta-label">Status</span>

@@ -312,7 +312,7 @@ class AccountIntakeRequest(BaseModel):
     question: str = Field(default="", max_length=12000)
     customer_email: str | None = Field(default=None, max_length=320)
     external_id: str | None = Field(default=None, max_length=160)
-    source: str | None = Field(default=None, max_length=80)
+    source: str | dict[str, Any] | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=160)
 
 
@@ -2598,7 +2598,19 @@ def create_client_ack(request: ClientAckRequest) -> dict[str, Any]:
     return _create_client_ack(request.message)
 
 
-def _normalize_account_source(value: str | None) -> str:
+def _clean_account_source_link(value: Any) -> str | None:
+    link = str(value or "").strip()
+    if not link or len(link) > 2000:
+        return None
+    parsed = urllib.parse.urlparse(link)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return link
+
+
+def _normalize_account_source(value: str | dict[str, Any] | None) -> str:
+    if isinstance(value, dict) and _clean_account_source_link(value.get("Link")):
+        return "api"
     normalized = str(value or "").strip().lower().replace("_", "-")
     if normalized in {"manual", "account-manual", "/account-manual"}:
         return "manual"
@@ -2606,7 +2618,20 @@ def _normalize_account_source(value: str | None) -> str:
         return "manual"
     if normalized in {"http", "account-http", "/account-http"}:
         return "api"
-    return "api"
+    if normalized in {"api", "/api"}:
+        return "api"
+    return "manual"
+
+
+def _serialize_billing_ticket_source(
+    raw_source: str | dict[str, Any] | None,
+    normalized: str,
+) -> str:
+    if isinstance(raw_source, dict):
+        link = _clean_account_source_link(raw_source.get("Link"))
+        if link:
+            return json.dumps({"Link": link}, ensure_ascii=False)
+    return normalized
 
 
 def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -2616,11 +2641,27 @@ def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
     )
     billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip() or None
     status = str(ticket.get("status") or ticket.get("automation_status") or "").strip() or "not_automated"
+
+    raw_source = ticket.get("source")
+    source_display: str | dict[str, Any]
+    if isinstance(raw_source, str) and raw_source.strip().startswith("{"):
+        try:
+            parsed = json.loads(raw_source)
+            link = _clean_account_source_link(parsed.get("Link")) if isinstance(parsed, dict) else None
+            if link:
+                source_display = {"Link": link}
+            else:
+                source_display = _normalize_account_source(raw_source)
+        except (json.JSONDecodeError, TypeError):
+            source_display = _normalize_account_source(raw_source)
+    else:
+        source_display = _normalize_account_source(raw_source)
+
     return {
         **ticket,
         "ticket_id": canonical_ticket_id,
         "billing_ticket_id": billing_ticket_id,
-        "source": _normalize_account_source(ticket.get("source")),
+        "source": source_display,
         "status": status,
         "automation_status": status,
     }
@@ -2698,7 +2739,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     billing_ticket: dict[str, Any] = {
         "billing_ticket_id": billing_ticket_id,
         "client_ticket_id": ticket_id,
-        "source": account_source,
+        "source": _serialize_billing_ticket_source(request.source, account_source),
         "external_id": str(request.external_id).strip() or None,
         "created_by": str(request.created_by).strip() or None,
         "title": title,

@@ -50,6 +50,11 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('"api"', app_source)
         self.assertIn("sourceLabel", app_source)
         self.assertIn("sourceClass", app_source)
+        self.assertIn("renderSourceValue", app_source)
+        self.assertIn("safeSourceLink", app_source)
+        self.assertIn('target="_blank"', app_source)
+        self.assertIn('rel="noopener noreferrer"', app_source)
+        self.assertIn('parsed.protocol === "http:"', app_source)
 
     def test_account_app_javascript_syntax(self) -> None:
         result = subprocess.run(
@@ -65,3 +70,4 @@ class AccountUiContractTests(unittest.TestCase):
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertIn(".status-badge--automation", styles)
+        self.assertIn(".source-link", styles)

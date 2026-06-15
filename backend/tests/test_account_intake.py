@@ -359,3 +359,139 @@ class AccountIntakeApiTests(unittest.TestCase):
     def test_billing_tickets_detail_api_404(self) -> None:
         response = self.client.get("/api/account/billing-tickets/BT-nonexistent")
         self.assertEqual(response.status_code, 404)
+
+    def test_account_intake_http_link_source_creates_ticket_with_api_normalization(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "HTTP link test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": {"Link": "https://example.com/case/1"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        ticket_id = payload["ticket_id"]
+
+        ticket = self.repository.get_ticket(ticket_id)
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "api")
+
+        event_payloads = [
+            item["payload"]
+            for item in self.repository.list_ticket_events(ticket_id)
+            if item["event_type"] == "ticket_created"
+        ]
+        self.assertTrue(event_payloads)
+        self.assertEqual(event_payloads[0]["source"], "api")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertIn("Link", bt["source"])
+        self.assertEqual(bt["source"], '{"Link": "https://example.com/case/1"}')
+
+    def test_http_link_source_detail_returns_object(self) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-LINK-001",
+                "client_ticket_id": "TK-LINK-001",
+                "source": '{"Link": "https://example.com/case/1"}',
+                "title": "Link source ticket",
+                "question": "link question",
+                "automation_status": "automation",
+            }
+        )
+
+        detail_response = self.client.get("/api/account/billing-tickets/BT-TK-LINK-001")
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertIsInstance(detail["source"], dict)
+        self.assertEqual(detail["source"]["Link"], "https://example.com/case/1")
+
+        list_response = self.client.get("/api/account/billing-tickets?limit=30")
+        self.assertEqual(list_response.status_code, 200)
+        list_payload = list_response.json()
+        link_items = [t for t in list_payload["tickets"] if t.get("billing_ticket_id") == "BT-TK-LINK-001"]
+        self.assertEqual(len(link_items), 1)
+        self.assertIsInstance(link_items[0]["source"], dict)
+        self.assertEqual(link_items[0]["source"]["Link"], "https://example.com/case/1")
+
+    def test_manual_source_still_returns_manual_string(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Manual test",
+                    "question": "A question",
+                    "source": "manual",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        bt_id = response.json()["billing_ticket_id"]
+        bt = self.repository.get_billing_ticket(bt_id)
+        self.assertEqual(bt["source"], "manual")
+
+        detail = self.client.get(f"/api/account/billing-tickets/{bt_id}").json()
+        self.assertEqual(detail["source"], "manual")
+
+    def test_default_source_returns_manual(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Default source test",
+                    "question": "A question",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        bt_id = response.json()["billing_ticket_id"]
+        bt = self.repository.get_billing_ticket(bt_id)
+        self.assertEqual(bt["source"], "manual")
+
+
+    def test_http_link_source_strips_extra_source_fields_from_view_model(self) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-LINK-EXTRA-001",
+                "client_ticket_id": "TK-LINK-EXTRA-001",
+                "source": '{"Link": "https://example.com/case/1", "token": "secret"}',
+                "title": "Link source ticket",
+                "question": "link question",
+                "automation_status": "automation",
+            }
+        )
+
+        detail_response = self.client.get("/api/account/billing-tickets/BT-TK-LINK-EXTRA-001")
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertEqual(detail["source"], {"Link": "https://example.com/case/1"})
+
+    def test_non_http_link_source_is_not_saved_as_clickable_source(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Unsafe link test",
+                    "question": "A question",
+                    "source": {"Link": "javascript:alert(1)"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "manual")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], "manual")

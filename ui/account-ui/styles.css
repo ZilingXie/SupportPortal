@@ -264,6 +264,26 @@ button:disabled {
   color: var(--success);
 }
 
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+  background: #e0f2f1;
+  color: var(--success);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.source-link:hover {
+  background: #b2dfdb;
+  color: var(--success);
+}
+
 /* --- Status chip (route) --- */
 
 .status-chip {
