@@ -83,6 +83,9 @@ class QbrPlanContractTests(unittest.TestCase):
             "weekly schedule grid",
             "engineer/day picker",
             "overnight shift 跨到次日显示",
+            "hover 展开模式",
+            "Break after this case",
+            "Ready loading transition",
         ]
         for term in required_terms:
             with self.subTest(term=term):

@@ -6,6 +6,7 @@ const ASSIGNMENT_EVENTS_KEY = "supportportal_assignment_events";
 const ASSIGNMENT_SIDEBAR_KEY = "supportportal_assignment_sidebar_collapsed";
 const ASSIGNMENT_WORKSPACE_KEY = "supportportal_assignment_workspace_active";
 const ASSIGNMENT_ADMIN_SCHEDULE_KEY = "supportportal_assignment_admin_schedule";
+const ASSIGNMENT_BREAK_AFTER_CASE_KEY = "supportportal_assignment_break_after_case";
 const SLA_MS = 3 * 60 * 60 * 1000;
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -139,6 +140,9 @@ let queue = readStorage(ASSIGNMENT_QUEUE_KEY, INITIAL_QUEUE);
 let events = readStorage(ASSIGNMENT_EVENTS_KEY, []);
 let sidebarCollapsed = readStorage(ASSIGNMENT_SIDEBAR_KEY, false);
 let workspaceActive = readStorage(ASSIGNMENT_WORKSPACE_KEY, false);
+let readyTransitionActive = false;
+let readyTransitionTimer = null;
+let breakAfterCase = readStorage(ASSIGNMENT_BREAK_AFTER_CASE_KEY, false);
 let slaCountdownTimer = null;
 let adminSchedule = normalizeAdminSchedule(readStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, DEFAULT_ADMIN_SCHEDULE));
 let adminEditState = null; // { engineerId, weekday } | null
@@ -419,6 +423,8 @@ function releaseActiveAssignment(title = "Assignment released", detail = "") {
   saveActiveTicket();
   saveQueue();
   addEvent(title, detail || `${ticket.id} returned to queue.`);
+  breakAfterCase = false;
+  writeStorage(ASSIGNMENT_BREAK_AFTER_CASE_KEY, breakAfterCase);
   return true;
 }
 
@@ -662,7 +668,7 @@ function renderWorkspace() {
   const eligible = canAssign();
   const sla = ticketSlaState();
   root.innerHTML = `
-    <section class="assignment-shell ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}">
+    <section class="assignment-shell">
       ${renderSidebarHtml(engineer, inShift, eligible, sla)}
       <main class="problem-workspace" aria-label="Problem workspace">
         ${renderWorkspaceHeaderHtml(inShift, sla)}
@@ -675,10 +681,7 @@ function renderWorkspace() {
 
 function renderSidebarHtml(engineer, inShift, eligible, sla) {
   return `
-    <aside class="engineer-rail assignment-sidebar" aria-label="Engineer context">
-      <button class="sidebar-toggle" type="button" data-action="toggle-sidebar" aria-label="${sidebarCollapsed ? "Show engineer context" : "Hide engineer context"}">
-        <span class="material-symbols-outlined" aria-hidden="true">${sidebarCollapsed ? "keyboard_double_arrow_right" : "keyboard_double_arrow_left"}</span>
-      </button>
+    <aside class="engineer-rail assignment-sidebar" aria-label="Engineer context" tabindex="0">
       <div class="sidebar-inner">
         <div class="rail-brand">
           <div class="rail-brand-icon">
@@ -688,6 +691,15 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
             <span class="rail-brand-title">Concierge AI</span>
             <span class="rail-brand-subtitle">Assignment Command</span>
           </div>
+        </div>
+        <div class="rail-compact-stack" aria-hidden="true">
+          <span class="engineer-avatar mono rail-compact-avatar">${escapeHtml(engineer.initials)}</span>
+          <span class="rail-compact-status ${inShift ? "is-success" : "is-muted"}">
+            <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
+          </span>
+          <span class="rail-compact-status ${activeTicket ? "is-warning" : "is-success"}">
+            <span class="material-symbols-outlined" aria-hidden="true">${activeTicket ? "confirmation_number" : "task_alt"}</span>
+          </span>
         </div>
         <section class="engineer-context-card panel-card">
           <div class="sidebar-profile">
@@ -762,6 +774,12 @@ function renderSidebarHtml(engineer, inShift, eligible, sla) {
 
 function renderWorkspaceHeaderHtml(inShift, sla) {
   const title = activeTicket ? activeTicket.title : inShift ? "No active Engineer Ticket" : "Waiting for your UTC+8 shift";
+  const breakButtonHtml = activeTicket ? `
+    <button class="btn btn-ghost break-after-case-btn ${breakAfterCase ? "is-active" : ""}" type="button" data-action="toggle-break-after-case" aria-pressed="${breakAfterCase ? "true" : "false"}">
+      <span class="material-symbols-outlined" aria-hidden="true">${breakAfterCase ? "coffee" : "coffee_off"}</span>
+      ${breakAfterCase ? "Break queued after this case" : "Break after this case"}
+    </button>
+  ` : "";
   return `
     <header class="workspace-header">
       <div>
@@ -771,10 +789,7 @@ function renderWorkspaceHeaderHtml(inShift, sla) {
       </div>
       <div class="workspace-header-actions">
         <span class="current-ticket-sla ${escapeHtml(sla.className)}" data-sla-countdown>${escapeHtml(getSlaCountdownLabel(sla))}</span>
-        <button class="btn btn-ghost mobile-sidebar-action" type="button" data-action="toggle-sidebar">
-          <span class="material-symbols-outlined" aria-hidden="true">left_panel_open</span>
-          Engineer context
-        </button>
+        ${breakButtonHtml}
       </div>
     </header>
   `;
@@ -1221,14 +1236,35 @@ function readyToRoll() {
     );
   }
 
-  if (!activeTicket) {
-    assignNextTicket();
-  }
+  cancelReadyTransition();
+  const transitionEngineerId = selectedEngineerId;
+  readyTransitionActive = true;
+  renderReadyLoading();
+  readyTransitionTimer = window.setTimeout(() => {
+    readyTransitionTimer = null;
+    if (!readyTransitionActive || selectedEngineerId !== transitionEngineerId) return;
+    readyTransitionActive = false;
 
-  workspaceActive = true;
-  saveWorkspaceActive();
-  addEvent("Ready to roll", `${selectedEngineerId} entered the problem workspace.`);
-  renderWorkspace();
+    if (!getSelectedEngineer()) {
+      renderLogin();
+      return;
+    }
+    if (!isInShift()) {
+      workspaceActive = false;
+      saveWorkspaceActive();
+      renderWelcome();
+      return;
+    }
+
+    if (!activeTicket) {
+      assignNextTicket();
+    }
+
+    workspaceActive = true;
+    saveWorkspaceActive();
+    addEvent("Ready to roll", `${selectedEngineerId} entered the problem workspace.`);
+    renderWorkspace();
+  }, 900);
 }
 
 function readyForNextCase() {
@@ -1240,12 +1276,50 @@ function readyForNextCase() {
   renderWorkspace();
 }
 
+function renderReadyLoading() {
+  const engineer = getSelectedEngineer();
+  root.innerHTML = `
+    <section class="ready-loading-view">
+      <div class="ready-loading-card">
+        <div class="ready-loading-spinner" aria-label="Preparing your workspace">
+          <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+        </div>
+        <h1>Preparing your workspace</h1>
+        <p>Engineer AI is handing off the assignment queue for ${escapeHtml(engineer ? engineer.name : "you")}.</p>
+        <div class="ready-loading-bar">
+          <span class="ready-loading-bar-fill"></span>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function cancelReadyTransition() {
+  if (readyTransitionTimer) {
+    window.clearTimeout(readyTransitionTimer);
+    readyTransitionTimer = null;
+  }
+  readyTransitionActive = false;
+}
+
 function approveTicket() {
   if (!activeTicket) return;
   addEvent("Customer reply sent", `${activeTicket.id} approved and closed by ${selectedEngineerId}.`);
+
+  const shouldBreak = breakAfterCase;
   activeTicket = null;
   saveActiveTicket();
-  renderWorkspace();
+
+  if (shouldBreak) {
+    breakAfterCase = false;
+    writeStorage(ASSIGNMENT_BREAK_AFTER_CASE_KEY, breakAfterCase);
+    workspaceActive = false;
+    saveWorkspaceActive();
+    stopSlaCountdown();
+    renderWelcome();
+  } else {
+    renderWorkspace();
+  }
 }
 
 function simulateTimeout() {
@@ -1272,22 +1346,27 @@ function saveShift(form) {
 }
 
 function signOut() {
+  cancelReadyTransition();
   stopSlaCountdown();
   releaseActiveAssignment();
   selectedEngineerId = "";
   workspaceActive = false;
+  breakAfterCase = false;
   localStorage.removeItem(ASSIGNMENT_AUTH_KEY);
   localStorage.removeItem(ASSIGNMENT_WORKSPACE_KEY);
+  localStorage.removeItem(ASSIGNMENT_BREAK_AFTER_CASE_KEY);
   renderLogin();
 }
 
 function resetDemo() {
+  cancelReadyTransition();
   shift = { ...DEFAULT_SHIFT };
   activeTicket = null;
   stopSlaCountdown();
   queue = INITIAL_QUEUE.map((ticket) => ({ ...ticket }));
   events = [];
   workspaceActive = false;
+  breakAfterCase = false;
   adminSchedule = normalizeAdminSchedule(DEFAULT_ADMIN_SCHEDULE);
   adminEditState = null;
   writeStorage(ASSIGNMENT_SHIFT_KEY, shift);
@@ -1295,6 +1374,7 @@ function resetDemo() {
   writeStorage(ASSIGNMENT_ACTIVE_TICKET_KEY, activeTicket);
   writeStorage(ASSIGNMENT_EVENTS_KEY, events);
   writeStorage(ASSIGNMENT_WORKSPACE_KEY, workspaceActive);
+  writeStorage(ASSIGNMENT_BREAK_AFTER_CASE_KEY, breakAfterCase);
   writeStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, adminSchedule);
   renderWelcome();
 }
@@ -1302,6 +1382,12 @@ function resetDemo() {
 function toggleSidebar() {
   sidebarCollapsed = !sidebarCollapsed;
   writeStorage(ASSIGNMENT_SIDEBAR_KEY, sidebarCollapsed);
+  renderWorkspace();
+}
+
+function toggleBreakAfterCase() {
+  breakAfterCase = !breakAfterCase;
+  writeStorage(ASSIGNMENT_BREAK_AFTER_CASE_KEY, breakAfterCase);
   renderWorkspace();
 }
 
@@ -1372,6 +1458,7 @@ root.addEventListener("click", (event) => {
   if (action === "simulate-timeout") simulateTimeout();
   if (action === "reset-demo") resetDemo();
   if (action === "toggle-sidebar") toggleSidebar();
+  if (action === "toggle-break-after-case") toggleBreakAfterCase();
   if (action === "admin-close-panel" || action === "admin-cancel-edit") {
     adminEditState = null;
     renderAdmin();
@@ -1416,6 +1503,7 @@ root.addEventListener("submit", (event) => {
 });
 
 window.setInterval(() => {
+  if (readyTransitionActive) return;
   if (isAdminPage) {
     renderAdmin();
     return;
