@@ -51,6 +51,8 @@ If Codex or the user assigns an existing task branch/workspace, use that exact b
 
 Other unrelated `codex/*` branches or `.worktrees/...` task workspaces are not blockers. Do not stop just because they exist, even if they are paused or dirty; continue when the root workspace is clean `main` and your assigned workspace is valid.
 
+Do not perform extra project-level fixed preflight outside repo-edit, handoff, or workspace-safety decisions. Still follow any platform or host skill trigger rules when a task matches them.
+
 ## Implementation Rules
 
 - Follow the Codex-written plan unless the user explicitly changes it.

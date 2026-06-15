@@ -38,7 +38,7 @@ For any task that requires understanding, locating, tracing, or changing code, p
 | "Give me focused context for a task/area" | `codegraph_context` |
 | "See several related symbols' source at once" | `codegraph_explore` |
 | "What files exist under path/" | `codegraph_files` |
-| "Is the index healthy?" | `codegraph_status` |
+| "Diagnose suspected stale/unavailable index" | `codegraph_status` |
 
 ### Rules of thumb
 
@@ -46,7 +46,7 @@ For any task that requires understanding, locating, tracing, or changing code, p
 - Use `codegraph_context` followed by at most one `codegraph_explore` for broad task context.
 - Use `codegraph_trace` for static flow questions.
 - Trust CodeGraph results from the AST index; do not re-check symbol lookups with grep.
-- Fall back only when needed. If CodeGraph is unavailable, uninitialized, or stale, report it explicitly and use the narrowest native search.
+- Fall back only when needed. If CodeGraph is unavailable, uninitialized, or stale, report it explicitly, use `codegraph_status` only for that diagnostic, and then use the narrowest native search.
 - Use native search such as `rg` only for literal text, comments, log messages, config keys, documentation wording, or files already identified by CodeGraph.
 - Remember index lag: file watcher updates may be about 500ms behind writes.
 
@@ -61,6 +61,7 @@ When a task involves modifying code or files, follow this workflow:
 - Do not create task branches manually from the root workspace. Codex should create them with `scripts/workflow/create_task_worktree.sh <thread-name-or-slug>`.
 - If you find the root workspace on a `codex/*` branch, stop and report it instead of continuing.
 - Other unrelated `codex/*` branches or `.worktrees/...` task workspaces are not blockers. Continue when the root workspace is clean `main` and your assigned workspace is the expected branch.
+- Do not perform extra project-level fixed preflight for ordinary chat or planning; follow platform skill triggers, and run Git workspace checks only for assigned repo edits, handoff, or workspace-safety decisions.
 
 ### 1. Confirm assignment
 

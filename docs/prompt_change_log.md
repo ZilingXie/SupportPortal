@@ -12,6 +12,29 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-15 - Agent preflight on-demand rules
+
+- Area or subsystem: Agent collaboration instructions and workflow prompts
+- Prompt or model version: `agent-preflight-on-demand-v1`
+- Summary: Changed project-level agent preflight from fixed startup checks to on-demand triggers for AgentMemory, skill files, CodeGraph status, and Git/worktree state while explicitly preserving platform skill trigger requirements.
+- Reason: The previous hot-path instructions still encouraged repeated preflight reads even after the context split, increasing token usage and risking unnecessary pauses. The new wording keeps safety checks for repo edits/finalization while avoiding default memory, skill, CodeGraph-status, and Git-status reads for ordinary chat or planning.
+- Affected files or config:
+  - `AGENTS.md`
+  - `CLAUDE.md`
+  - `REASONIX.md`
+  - `docs/agent_workflow_details.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Agents no longer treat AgentMemory lookup, `using-superpowers` file reads, `codegraph_status`, or Git/worktree status as fixed project-level startup steps.
+  - Applicable platform or host skill triggers remain mandatory; on-demand preflight must not be interpreted as permission to skip matching skills.
+  - Git/worktree status checks remain required for repo-tracked edits, resume/finalize/cleanup, and workspace-safety decisions.
+- Verification:
+  - `git diff --check`
+  - `rg -n "superpowers|skill|using-superpowers|must use|按需|skip|跳过" AGENTS.md docs/agent_workflow_details.md CLAUDE.md REASONIX.md`
+  - `rg -n "AgentMemory|agentmemory|codegraph_status|git status|git worktree list" AGENTS.md docs/agent_workflow_details.md`
+  - `rg -n "root workspace|\.worktrees|not blockers|finalize_task_to_main|CodeGraph|rtk|PR-only|squash" AGENTS.md docs/agent_workflow_details.md`
+  - Python size/headings check for `AGENTS.md`.
+
 ## 2026-06-15 - Agent instruction context split
 
 - Area or subsystem: Agent collaboration instructions and workflow prompts
