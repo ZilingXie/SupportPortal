@@ -999,208 +999,296 @@ function renderAdmin() {
       </aside>`;
   }
 
+  // Compute derived metrics
+  var assignmentVolume = queue.length + (activeTicket ? 1 : 0) + events.length;
+  var highPriCount = waitingCases.filter(function (t) { return t.priority && t.priority.toLowerCase().indexOf("first") !== -1; }).length;
+
   root.innerHTML = `
-    <section class="admin-view ${adminEditState ? "has-edit-panel" : ""}">
-      <header class="admin-header">
-        <div class="admin-header-top">
-          <div class="brand-lockup">
-            <span class="brand-icon material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
-            <div>
-              <p class="eyebrow">Assignment admin</p>
-              <strong>SupportPortal</strong>
-            </div>
-          </div>
-          <a href="/assignment" class="btn btn-ghost">
+    <div class="admin-shell">
+      <!-- ====== Top Navigation Bar ====== -->
+      <nav class="admin-topbar">
+        <div class="admin-topbar-brand">
+          <span class="material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
+          <span>Nexus Intelligence</span>
+        </div>
+        <div class="admin-topbar-search">
+          <span class="material-symbols-outlined" aria-hidden="true">search</span>
+          <input type="text" placeholder="Search systems, tickets, engineers..." aria-label="Search" />
+        </div>
+        <div class="admin-topbar-actions">
+          <a href="/assignment" class="admin-topbar-btn" title="Back to engineer demo" aria-label="Back to engineer demo">
             <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-            Back to engineer demo
           </a>
+          <button class="admin-topbar-btn" aria-label="Notifications">
+            <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
+          </button>
+          <button class="admin-topbar-btn" aria-label="Settings">
+            <span class="material-symbols-outlined" aria-hidden="true">settings</span>
+          </button>
+          <button class="admin-topbar-btn" aria-label="Help">
+            <span class="material-symbols-outlined" aria-hidden="true">help_outline</span>
+          </button>
+          <div class="admin-topbar-avatar" aria-label="Administrator profile">
+            <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px">person</span>
+          </div>
         </div>
-        <div class="admin-header-body">
-          <h1>Queue &amp; engineer overview</h1>
-          <p>Read-only observation of the mock assignment queue plus weekly engineer schedule demo. Edit shifts in the side panel. No manual ticket controls.</p>
-        </div>
-      </header>
+      </nav>
 
-      <section class="admin-status-strip">
-        <div class="admin-status-card panel-card">
-          <div class="section-head">
-            <div>
-              <p class="ticket-kicker">Waiting queue</p>
-              <h2>${waitingCases.length} case${waitingCases.length !== 1 ? "s" : ""}</h2>
-            </div>
-            <span class="material-symbols-outlined" aria-hidden="true">inbox</span>
-          </div>
-          <p class="admin-card-detail">${waitingCases.length > 0 ? `Next: ${escapeHtml(waitingCases[0].id)} &middot; ${escapeHtml(waitingCases[0].title)}` : "Queue is empty."}</p>
-        </div>
-
-        <div class="admin-status-card panel-card">
-          <div class="section-head">
-            <div>
-              <p class="ticket-kicker">Active assignment</p>
-              <h2>${hasActive ? escapeHtml(activeTicket.id) : "None"}</h2>
-            </div>
-            <span class="material-symbols-outlined" aria-hidden="true">assignment_ind</span>
-          </div>
-          ${hasActive ? `<p class="admin-card-detail">${escapeHtml(activeTicket.title)} &#183; assigned to ${escapeHtml(activeTicket.engineerId || "\u2014")}</p>` : `<p class="admin-card-detail">No engineer is currently working on a ticket.</p>`}
-        </div>
-
-        <div class="admin-status-card panel-card">
-          <div class="section-head">
-            <div>
-              <p class="ticket-kicker">On shift now</p>
-              <h2>${onShiftNow.length > 0 ? onShiftNow.map((e) => escapeHtml(e.name)).join(", ") : "None"}</h2>
-            </div>
-            <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
-          </div>
-          <p class="admin-card-detail">Current UTC+8 time: ${formatUtc8Time()}</p>
-        </div>
-
-        <div class="admin-status-card panel-card">
-          <div class="section-head">
-            <div>
-              <p class="ticket-kicker">Online coverage</p>
-              <h2>${onlineCount} / ${DEMO_ENGINEERS.length} online</h2>
-            </div>
-            <span class="material-symbols-outlined" aria-hidden="true">wifi</span>
-          </div>
-          <p class="admin-card-detail">
-            ${DEMO_ENGINEERS.map((eng) => {
-              const isOnline = ADMIN_PRESENCE_MOCK[eng.id] === "online";
-              return `<span class="status-pill ${isOnline ? "is-success" : "is-muted"}">${isOnline ? "Online" : "Offline"} &middot; ${escapeHtml(eng.name)}</span>`;
-            }).join(" ")}
-          </p>
-        </div>
-      </section>
-
-      <section class="admin-engineer-overview">
-        <div class="section-head admin-section-head">
-          <div>
-            <p class="ticket-kicker">Engineer overview</p>
-            <h2>Weekly schedule &amp; presence</h2>
-          </div>
-        </div>
-
-        <div class="admin-on-shift-list panel-card">
-          <div class="section-head">
-            <div>
-              <p class="ticket-kicker">On shift now</p>
-              <h2>${onShiftNow.length > 0 ? onShiftNow.map((e) => escapeHtml(e.name)).join(", ") : "No one on shift"}</h2>
-            </div>
-            <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
-          </div>
-          <div class="admin-engineer-pills">
-            ${DEMO_ENGINEERS.map((eng) => {
-              const isOnline = ADMIN_PRESENCE_MOCK[eng.id] === "online";
-              const isOnShift = onShiftNow.some((e) => e.id === eng.id);
-              const color = getEngineerColor(eng.id);
-              return `<span class="admin-engineer-pill" style="border-left: 4px solid ${color.cssVar}">
-                <span class="engineer-avatar admin-engineer-avatar" style="background:${color.bg};color:${color.fg}" aria-hidden="true">${escapeHtml(eng.initials)}</span>
-                <span>
-                  <strong>${escapeHtml(eng.name)}</strong>
-                  <span>${escapeHtml(eng.role)}</span>
-                </span>
-                <span class="status-pill ${isOnShift ? "is-success" : "is-muted"}">${isOnShift ? "On shift" : "Off shift"}</span>
-                <span class="status-pill ${isOnline ? "is-success" : "is-muted"}">${isOnline ? "Online" : "Offline"}</span>
-              </span>`;
-            }).join("")}
-          </div>
-        </div>
-
-        <div class="admin-schedule-grid-wrapper panel-card">
-          <div class="section-head admin-schedule-head">
-            <div>
-              <p class="ticket-kicker">Weekly schedule</p>
-              <h2>Click an engineer chip or use the picker to edit</h2>
-            </div>
-            <span class="status-pill is-muted">UTC+8</span>
-          </div>
-          <form class="admin-shift-picker" data-admin-shift-picker>
-            <label class="field">
-              <span class="field-label" id="admin-picker-engineer-label">Engineer</span>
-              <select name="engineerId" aria-labelledby="admin-picker-engineer-label">
-                ${DEMO_ENGINEERS.map((eng) => `<option value="${escapeHtml(eng.id)}">${escapeHtml(eng.name)}</option>`).join("")}
-              </select>
-            </label>
-            <label class="field">
-              <span class="field-label" id="admin-picker-day-label">Day</span>
-              <select name="weekday" aria-labelledby="admin-picker-day-label">
-                ${WEEKDAYS.map((weekday, index) => `<option value="${weekday}">${WEEKDAY_LABELS[index]}</option>`).join("")}
-              </select>
-            </label>
-            <button class="btn btn-ghost" type="submit">Edit selected shift</button>
-          </form>
-          <div class="admin-schedule-grid-scroll">
-            <div class="admin-schedule-grid">
-              <div class="schedule-header-row">
-                <div class="schedule-hour-label"></div>
-                ${WEEKDAY_LABELS.map((label, d) => `<div class="schedule-day-label"><span>${label}</span></div>`).join("")}
+      <!-- ====== Body: Sidebar + Main ====== -->
+      <div class="admin-body">
+        <!-- Sidebar -->
+        <aside class="admin-sidebar">
+          <div class="admin-sidebar-header">
+            <div class="admin-sidebar-identity">
+              <div class="admin-sidebar-icon">
+                <span class="material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
               </div>
-              ${scheduleGridHtml}
+              <div>
+                <h2>System Admin</h2>
+                <p>Global Operations</p>
+              </div>
             </div>
+            <button class="admin-sidebar-ai-btn">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+              AI Insights
+            </button>
           </div>
-        </div>
-      </section>
-
-      <section class="admin-queue-section">
-        <div class="section-head admin-queue-head">
-          <div>
-            <p class="ticket-kicker">Waiting queue</p>
-            <h2>${waitingCases.length} case${waitingCases.length !== 1 ? "s" : ""} waiting</h2>
+          <nav class="admin-sidebar-nav">
+            <ul>
+              <li><a href="#">
+                <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
+                Ticket Pool
+              </a></li>
+              <li><a href="#" class="is-active">
+                <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
+                Engineer Management
+              </a></li>
+              <li><a href="#">
+                <span class="material-symbols-outlined" aria-hidden="true">menu_book</span>
+                Knowledge Base
+              </a></li>
+              <li><a href="#">
+                <span class="material-symbols-outlined" aria-hidden="true">monitoring</span>
+                System Health
+              </a></li>
+            </ul>
+          </nav>
+          <div class="admin-sidebar-footer">
+            <a href="#">
+              <span class="material-symbols-outlined" aria-hidden="true">contact_support</span>
+              Support
+            </a>
+            <a href="#">
+              <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
+              Logs
+            </a>
           </div>
-          <span class="status-pill is-muted">Read-only</span>
-        </div>
+        </aside>
 
-        ${waitingCases.length === 0 ? `
-          <div class="no-ticket-state panel-card" style="min-height:auto; padding:40px 34px;">
-            <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
+        <!-- Main Content Area -->
+        <main class="admin-main ${adminEditState ? "has-edit-panel" : ""}">
+          <!-- Header -->
+          <header class="admin-main-header">
             <div>
-              <p class="ticket-kicker">Queue empty</p>
-              <h2>No waiting cases</h2>
-              <p>The mock queue is currently empty.</p>
+              <h1>Operations Overview</h1>
+              <p>Real-time engineer distribution and queue status.</p>
+            </div>
+          </header>
+
+          <!-- Metric Cards -->
+          <div class="admin-metric-grid">
+            <div class="admin-metric-card">
+              <div class="admin-metric-card-top">
+                <span class="admin-metric-label">Cases in Queue</span>
+                <span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>
+              </div>
+              <div class="admin-metric-value">${waitingCases.length}</div>
+              <div class="admin-metric-sub" style="color: ${waitingCases.length > 0 ? 'var(--danger)' : 'var(--success)'}">
+                ${waitingCases.length > 0
+                  ? '<span class="material-symbols-outlined" aria-hidden="true">trending_up</span> Needs attention'
+                  : '<span class="material-symbols-outlined" aria-hidden="true">check_circle</span> All clear'}
+              </div>
+            </div>
+            <div class="admin-metric-card">
+              <div class="admin-metric-card-top">
+                <span class="admin-metric-label">On Shift Engineers</span>
+                <span class="material-symbols-outlined" aria-hidden="true">group</span>
+              </div>
+              <div class="admin-metric-value is-accent">${onShiftNow.length}</div>
+              <div class="admin-metric-sub" style="color: var(--success)">
+                <span class="material-symbols-outlined" aria-hidden="true" style="font-size:10px">circle</span>
+                ${onlineCount} Online
+              </div>
+            </div>
+            <div class="admin-metric-card">
+              <div class="admin-metric-card-top">
+                <span class="admin-metric-label">Assignment Volume</span>
+                <span class="material-symbols-outlined" aria-hidden="true">stacked_line_chart</span>
+              </div>
+              <div class="admin-metric-value">${assignmentVolume}</div>
+              <div class="admin-metric-sub" style="color: var(--ink-muted)">
+                Queue + active + events
+              </div>
+            </div>
+            <div class="admin-metric-card">
+              <div class="admin-metric-card-top">
+                <span class="admin-metric-label">Online Coverage</span>
+                <span class="material-symbols-outlined" aria-hidden="true">wifi</span>
+              </div>
+              <div class="admin-metric-value is-accent">${onlineCount}/${DEMO_ENGINEERS.length}</div>
+              <div class="admin-metric-sub" style="color: ${onlineCount >= DEMO_ENGINEERS.length ? 'var(--success)' : 'var(--ink-muted)'}">
+                Engineers online
+              </div>
             </div>
           </div>
-        ` : `
-          <div class="admin-queue-list">
-            ${waitingCases.map((ticket) => `
-              <article class="admin-queue-item panel-card">
-                <div class="admin-queue-item-head">
-                  <div class="section-head">
-                    <div>
-                      <p class="ticket-kicker">Position #${ticket.position} &#183; ${escapeHtml(ticket.id)}</p>
-                      <h2>${escapeHtml(ticket.title)}</h2>
+
+          <!-- Shift Schedule -->
+          <section class="admin-main-schedule" id="admin-schedule-section">
+            <div class="panel-card">
+              <div class="admin-schedule-card-header">
+                <h2>
+                  <span class="material-symbols-outlined" aria-hidden="true">calendar_view_week</span>
+                  Shift Schedule
+                </h2>
+                <button class="admin-modify-shifts-btn" type="button" data-action="admin-modify-shifts">
+                  <span class="material-symbols-outlined" aria-hidden="true">edit_calendar</span>
+                  Modify Shifts
+                </button>
+              </div>
+              <div class="admin-schedule-grid-wrapper" style="border:0; box-shadow:none; background:transparent; padding:14px;">
+                <div class="section-head admin-schedule-head" style="display:none"></div>
+                <form class="admin-shift-picker" data-admin-shift-picker>
+                  <label class="field">
+                    <span class="field-label" id="admin-picker-engineer-label">Engineer</span>
+                    <select name="engineerId" aria-labelledby="admin-picker-engineer-label">
+                      ${DEMO_ENGINEERS.map((eng) => `<option value="${escapeHtml(eng.id)}">${escapeHtml(eng.name)}</option>`).join("")}
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label" id="admin-picker-day-label">Day</span>
+                    <select name="weekday" aria-labelledby="admin-picker-day-label">
+                      ${WEEKDAYS.map((weekday, index) => `<option value="${weekday}">${WEEKDAY_LABELS[index]}</option>`).join("")}
+                    </select>
+                  </label>
+                  <button class="btn btn-ghost" type="submit">Edit selected shift</button>
+                </form>
+                <div class="admin-schedule-grid-scroll">
+                  <div class="admin-schedule-grid">
+                    <div class="schedule-header-row">
+                      <div class="schedule-hour-label"></div>
+                      ${WEEKDAY_LABELS.map((label, d) => `<div class="schedule-day-label"><span>${label}</span></div>`).join("")}
                     </div>
-                    <span class="priority-chip">${escapeHtml(ticket.priority)}</span>
-                  </div>
-                  <div class="ticket-meta">
-                    <span>Client Ticket ${escapeHtml(ticket.clientTicket)}</span>
-                    <span>${escapeHtml(ticket.requester)}</span>
-                    <span>SLA: 3h from assignment</span>
+                    ${scheduleGridHtml}
                   </div>
                 </div>
-                <p class="problem-statement">${escapeHtml(ticket.issue)}</p>
-              </article>
-            `).join("")}
+              </div>
+            </div>
+          </section>
+
+          <!-- Bottom Grid: Pending Triage + Active Work Distribution -->
+          <div class="admin-bottom-grid">
+            <!-- Pending Triage -->
+            <section class="admin-bottom-card">
+              <div class="admin-bottom-card-header">
+                <h3>Pending Triage</h3>
+                ${highPriCount > 0 ? `<span class="admin-prio-badge">${highPriCount} High Pri</span>` : ""}
+              </div>
+              <div class="admin-bottom-card-body">
+                ${waitingCases.length === 0 ? `
+                  <div style="padding:24px;text-align:center;color:var(--ink-muted);font-size:13px;">
+                    <span class="material-symbols-outlined" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:8px;">inventory_2</span>
+                    Queue is empty
+                  </div>
+                ` : waitingCases.slice(0, 8).map((ticket) => `
+                  <div class="admin-triage-item">
+                    <div class="admin-triage-item-top">
+                      <span class="admin-triage-id">#${escapeHtml(ticket.id)}</span>
+                      <span class="admin-triage-sla">
+                        <span class="material-symbols-outlined" aria-hidden="true">timer</span>
+                        ${ticket.priority && ticket.priority.toLowerCase().indexOf("first") !== -1 ? "Urgent" : "Standard"}
+                      </span>
+                    </div>
+                    <span class="admin-triage-summary">${escapeHtml(ticket.issue)}</span>
+                  </div>
+                `).join("")}
+              </div>
+            </section>
+
+            <!-- Active Work Distribution -->
+            <section class="admin-bottom-card">
+              <div class="admin-bottom-card-header">
+                <h3>Active Work Distribution</h3>
+              </div>
+              <div class="admin-bottom-card-body">
+                <table class="admin-work-table">
+                  <thead>
+                    <tr>
+                      <th>Engineer</th>
+                      <th>Active Ticket</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${DEMO_ENGINEERS.map((eng) => {
+                      var color = getEngineerColor(eng.id);
+                      var isOnline = ADMIN_PRESENCE_MOCK[eng.id] === "online";
+                      var isOnShift = onShiftNow.some(function (e) { return e.id === eng.id; });
+                      var hasTicket = hasActive && activeTicket.engineerId === eng.id;
+                      var statusHtml = "";
+                      var ticketHtml = '<span style="color:var(--ink-muted)">\u2014</span>';
+
+                      if (hasTicket) {
+                        ticketHtml = '<span class="admin-work-ticket">#' + escapeHtml(activeTicket.id) + '</span>';
+                        statusHtml = '<span class="admin-work-status is-active"><span class="material-symbols-outlined" aria-hidden="true">psychiatry</span>Active</span>';
+                      } else if (isOnShift && isOnline) {
+                        statusHtml = '<span class="admin-work-status is-available"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Available</span>';
+                      } else if (isOnShift && !isOnline) {
+                        statusHtml = '<span class="admin-work-status is-offline"><span class="material-symbols-outlined" aria-hidden="true">wifi_off</span>Offline</span>';
+                      } else if (!isOnShift && isOnline) {
+                        statusHtml = '<span class="admin-work-status"><span class="material-symbols-outlined" aria-hidden="true">bedtime</span>Off shift</span>';
+                      } else {
+                        statusHtml = '<span class="admin-work-status is-offline"><span class="material-symbols-outlined" aria-hidden="true">do_not_disturb</span>Offline</span>';
+                      }
+
+                      return '<tr>' +
+                        '<td>' +
+                          '<div class="admin-work-engineer">' +
+                            '<div class="admin-work-avatar" style="background:' + color.bg + ';color:' + color.fg + '">' + escapeHtml(eng.initials) + '</div>' +
+                            '<span class="admin-work-name">' + escapeHtml(eng.name) + '</span>' +
+                          '</div>' +
+                        '</td>' +
+                        '<td>' + ticketHtml + '</td>' +
+                        '<td>' + statusHtml + '</td>' +
+                      '</tr>';
+                    }).join("")}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
-        `}
-      </section>
 
-      <section class="admin-events-section panel-card">
-        <div class="panel-head">
-          <p class="eyebrow">Audit trail</p>
-          <h3>Mock events</h3>
-        </div>
-        <div class="event-list">
-          ${events.map((event) => `
-            <article class="event-item">
-              <strong>${escapeHtml(event.title)}</strong>
-              <p>${escapeHtml(event.detail)} &#183; ${escapeHtml(event.createdAt)}</p>
-            </article>
-          `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
-        </div>
-      </section>
+          <!-- Audit Trail (collapsed section) -->
+          <section class="admin-events-collapsed">
+            <div class="panel-card">
+              <div class="panel-head">
+                <p class="eyebrow">Audit trail</p>
+                <h3>Mock events</h3>
+              </div>
+              <div class="event-list">
+                ${events.map((event) => `
+                  <article class="event-item">
+                    <strong>${escapeHtml(event.title)}</strong>
+                    <p>${escapeHtml(event.detail)} &#183; ${escapeHtml(event.createdAt)}</p>
+                  </article>
+                `).join("") || '<article class="event-item"><strong>No events yet</strong><p>Assignment actions will appear here.</p></article>'}
+              </div>
+            </div>
+          </section>
 
-      ${editPanelHtml}
-    </section>
+          ${editPanelHtml}
+        </main>
+      </div>
+    </div>
   `;
 }
 
@@ -1461,6 +1549,14 @@ root.addEventListener("click", (event) => {
   if (action === "admin-close-panel" || action === "admin-cancel-edit") {
     adminEditState = null;
     renderAdmin();
+  }
+  if (action === "admin-modify-shifts") {
+    var pickerForm = root.querySelector("[data-admin-shift-picker]");
+    if (pickerForm) {
+      pickerForm.scrollIntoView({ behavior: "smooth", block: "center" });
+      var firstSelect = pickerForm.querySelector("select");
+      if (firstSelect) firstSelect.focus();
+    }
   }
 });
 
