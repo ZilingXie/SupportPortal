@@ -9,6 +9,14 @@ Read it only when the concise hot-path rules in `AGENTS.md` point here.
 
 # Collaboration Rules
 
+## On-Demand Preflight Triggers
+1. Do not add project-level fixed startup checks. The concise `AGENTS.md` hot path intentionally avoids default AgentMemory, `using-superpowers`, `codegraph_status`, and Git/worktree preflights.
+2. AgentMemory is on demand: search or write memory only when the user asks for memory, a durable memory write is needed, or the task clearly depends on historical preferences/global rules that are not already in the prompt.
+3. Skills are trigger-based, not disabled: if the current platform's skill rules require a skill, the user names a skill, or the task semantically matches a skill, use that skill exactly as required. Never interpret on-demand preflight as permission to skip an applicable skill.
+4. CodeGraph status is diagnostic only. Use CodeGraph for code understanding, symbol lookup, call flow, impact analysis, and code-change context, but check `codegraph_status` only when CodeGraph fails, appears unavailable/stale, or the task is to diagnose indexing.
+5. Git/worktree state is safety-gated. Run `git status --short --branch`, `git branch -vv`, and `git worktree list --porcelain` before repo-tracked edits, resuming a paused task, finalization, cleanup, or any workspace-safety decision; do not run them for ordinary chat, pure planning, or read-only documentation inspection.
+6. Native `rg` is preferred for docs, literal text, comments, config keys, logs, and rule-file searches. CodeGraph is not required for those non-structural lookups.
+
 ## Control CC
 For delegated code work, prefer the project-local `control-cc` skill when the user requests Codex planning, Claude Code execution, and Codex review, or when implementation can be safely delegated.
 
@@ -34,7 +42,7 @@ Reasonix-specific worker rules live in `REASONIX.md`. When the user gives a Code
 ## CodeGraph First For Code Context
 1. For any task that requires understanding, locating, tracing, or changing code, prefer the project CodeGraph tools before native file search or broad file reads. Use CodeGraph for structural questions such as where a symbol is defined, who calls it, what it calls, how data flows between symbols, what would be affected by a change, or which files and symbols are relevant to a task.
 2. Use native search such as `rg` primarily for literal text, comments, log messages, configuration keys, documentation wording, or after CodeGraph has already identified the specific files that need direct inspection.
-3. If CodeGraph is unavailable, uninitialized, or stale, report that explicitly and fall back to the narrowest native search needed. Do not run `codegraph init -i` unless the project has not been initialized; for an initialized project, use `codegraph sync` to refresh changed files.
+3. If CodeGraph is unavailable, uninitialized, or stale, report that explicitly and fall back to the narrowest native search needed. Check `codegraph_status` only as a diagnostic when failure/staleness is suspected. Do not run `codegraph init -i` unless the project has not been initialized; for an initialized project, use `codegraph sync` to refresh changed files.
 
 ## Branch Workflow
 1. Keep the root workspace at `/Users/xieziling/Desktop/personal_proj/SupportPortal` on a clean `main` checkout at all times. Use it only for browsing, syncing `main`, creating or inspecting task workspaces, fast-forwarding local `main` after task PRs merge, CodeGraph sync, and post-merge live stack verification.
