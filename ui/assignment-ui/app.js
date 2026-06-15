@@ -146,6 +146,7 @@ let breakAfterCase = readStorage(ASSIGNMENT_BREAK_AFTER_CASE_KEY, false);
 let slaCountdownTimer = null;
 let adminSchedule = normalizeAdminSchedule(readStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, DEFAULT_ADMIN_SCHEDULE));
 let adminEditState = null; // { engineerId, weekday } | null
+let adminSection = "engineer-management";
 
 const root = document.getElementById("assignment-root");
 const isAdminPage = window.location.pathname.includes("/admin");
@@ -923,6 +924,85 @@ function renderNoTicketHtml(inShift, eligible) {
 // =============================================================================
 
 function renderAdmin() {
+  const isTicketPool = adminSection === "ticket-pool";
+  const contentHtml = isTicketPool ? renderAdminTicketPool() : renderAdminEngineerManagement();
+  const mainClass = !isTicketPool && adminEditState ? "admin-main has-edit-panel" : "admin-main";
+  const searchPlaceholder = isTicketPool
+    ? "Search ticket pool, customer, priority..."
+    : "Search systems, tickets, engineers...";
+  root.innerHTML = renderAdminShell(contentHtml, adminSection, mainClass, searchPlaceholder);
+}
+
+function renderAdminShell(contentHtml, activeSection, mainClass, searchPlaceholder) {
+  return `
+    <div class="admin-shell">
+      <!-- ====== Top Navigation Bar ====== -->
+      <nav class="admin-topbar">
+        <div class="admin-topbar-brand">
+          <span class="material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
+          <span>System Admin</span>
+        </div>
+        <div class="admin-topbar-search">
+          <span class="material-symbols-outlined" aria-hidden="true">search</span>
+          <input type="text" placeholder="${escapeHtml(searchPlaceholder)}" aria-label="Search" />
+        </div>
+        <div class="admin-topbar-actions">
+          <a href="/assignment" class="admin-topbar-btn" title="Back to engineer demo" aria-label="Back to engineer demo">
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+          </a>
+          <button class="admin-topbar-btn" aria-label="Notifications">
+            <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
+          </button>
+          <button class="admin-topbar-btn" aria-label="Settings">
+            <span class="material-symbols-outlined" aria-hidden="true">settings</span>
+          </button>
+          <button class="admin-topbar-btn" aria-label="Help">
+            <span class="material-symbols-outlined" aria-hidden="true">help_outline</span>
+          </button>
+          <div class="admin-topbar-avatar" aria-label="Administrator profile">
+            <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px">person</span>
+          </div>
+        </div>
+      </nav>
+
+      <!-- ====== Body: Sidebar + Main ====== -->
+      <div class="admin-body">
+        <!-- Sidebar -->
+        <aside class="admin-sidebar">
+          <nav class="admin-sidebar-nav">
+            <ul>
+              <li><a href="#" data-action="admin-show-ticket-pool" class="${activeSection === "ticket-pool" ? "is-active" : ""}">
+                <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
+                Ticket Pool
+              </a></li>
+              <li><a href="#" data-action="admin-show-engineer-management" class="${activeSection === "engineer-management" ? "is-active" : ""}">
+                <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
+                Engineer Management
+              </a></li>
+            </ul>
+          </nav>
+          <div class="admin-sidebar-footer">
+            <a href="#">
+              <span class="material-symbols-outlined" aria-hidden="true">contact_support</span>
+              Support
+            </a>
+            <a href="#">
+              <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
+              Logs
+            </a>
+          </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="${mainClass}">
+          ${contentHtml}
+        </main>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminEngineerManagement() {
   const waitingCases = queue.map((ticket, index) => ({
     ...ticket,
     position: index + 1,
@@ -1023,67 +1103,7 @@ function renderAdmin() {
   var assignmentVolume = queue.length + (activeTicket ? 1 : 0) + events.length;
   var highPriCount = waitingCases.filter(function (t) { return t.priority && t.priority.toLowerCase().indexOf("first") !== -1; }).length;
 
-  root.innerHTML = `
-    <div class="admin-shell">
-      <!-- ====== Top Navigation Bar ====== -->
-      <nav class="admin-topbar">
-        <div class="admin-topbar-brand">
-          <span class="material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
-          <span>System Admin</span>
-        </div>
-        <div class="admin-topbar-search">
-          <span class="material-symbols-outlined" aria-hidden="true">search</span>
-          <input type="text" placeholder="Search systems, tickets, engineers..." aria-label="Search" />
-        </div>
-        <div class="admin-topbar-actions">
-          <a href="/assignment" class="admin-topbar-btn" title="Back to engineer demo" aria-label="Back to engineer demo">
-            <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-          </a>
-          <button class="admin-topbar-btn" aria-label="Notifications">
-            <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
-          </button>
-          <button class="admin-topbar-btn" aria-label="Settings">
-            <span class="material-symbols-outlined" aria-hidden="true">settings</span>
-          </button>
-          <button class="admin-topbar-btn" aria-label="Help">
-            <span class="material-symbols-outlined" aria-hidden="true">help_outline</span>
-          </button>
-          <div class="admin-topbar-avatar" aria-label="Administrator profile">
-            <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px">person</span>
-          </div>
-        </div>
-      </nav>
-
-      <!-- ====== Body: Sidebar + Main ====== -->
-      <div class="admin-body">
-        <!-- Sidebar -->
-        <aside class="admin-sidebar">
-          <nav class="admin-sidebar-nav">
-            <ul>
-              <li><a href="#">
-                <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
-                Ticket Pool
-              </a></li>
-              <li><a href="#" class="is-active">
-                <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
-                Engineer Management
-              </a></li>
-            </ul>
-          </nav>
-          <div class="admin-sidebar-footer">
-            <a href="#">
-              <span class="material-symbols-outlined" aria-hidden="true">contact_support</span>
-              Support
-            </a>
-            <a href="#">
-              <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
-              Logs
-            </a>
-          </div>
-        </aside>
-
-        <!-- Main Content Area -->
-        <main class="admin-main ${adminEditState ? "has-edit-panel" : ""}">
+  return `
           <!-- Header -->
           <header class="admin-main-header">
             <div>
@@ -1272,9 +1292,189 @@ function renderAdmin() {
           </section>
 
           ${editPanelHtml}
-        </main>
+  `;
+}
+
+function getAdminPoolTickets() {
+  const tickets = [];
+  if (activeTicket) {
+    tickets.push({ ...activeTicket, poolStatus: "Engineer Handling", statusTone: "handling" });
+  }
+  queue.forEach((ticket, index) => {
+    tickets.push({
+      ...ticket,
+      poolStatus: index === 0 ? "Pending Triage" : "Queued Review",
+      statusTone: index === 0 ? "triage" : "queued",
+    });
+  });
+  return tickets;
+}
+
+function renderAdminTicketPool() {
+  const poolTickets = getAdminPoolTickets();
+  const handlingCount = poolTickets.filter((ticket) => ticket.poolStatus === "Engineer Handling").length;
+  const triageCount = poolTickets.filter((ticket) => ticket.poolStatus === "Pending Triage").length;
+
+  return `
+          <header class="admin-main-header">
+            <div>
+              <h1>Ticket Pool</h1>
+              <p>Prioritize open customer issues and monitor engineer handoffs.</p>
+            </div>
+            <button class="admin-main-ai-btn" type="button" data-action="admin-ai-insights" aria-label="AI Insights">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+              AI Insights
+            </button>
+          </header>
+
+          <div class="admin-ticket-pool-layout">
+            <aside class="admin-pool-sidebar" aria-label="Ticket pool controls">
+              <section class="admin-pool-filter-card">
+                <div class="admin-pool-title-row">
+                  <div>
+                    <h2>Active Pool</h2>
+                    <p>Manage and triage customer work entering the queue.</p>
+                  </div>
+                  <span>${poolTickets.length} Total</span>
+                </div>
+                <h3>View Filters</h3>
+                <label class="field">
+                  <span class="field-label">Priority</span>
+                  <select aria-label="Priority filter">
+                    <option>All priorities</option>
+                    <option>P0 Critical</option>
+                    <option>First response</option>
+                    <option>Regular response</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field-label">Status</span>
+                  <select aria-label="Status filter">
+                    <option>All</option>
+                    <option>Needs Triage</option>
+                    <option>Engineer Handling</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field-label">Region</span>
+                  <select aria-label="Region filter">
+                    <option>Global</option>
+                    <option>US-East</option>
+                    <option>EMEA</option>
+                    <option>APAC</option>
+                  </select>
+                </label>
+                <button class="admin-pool-apply-btn" type="button">Apply View</button>
+              </section>
+
+              <section class="admin-pool-metrics-card">
+                <div class="admin-pool-card-head">
+                  <h3>Queue Metrics</h3>
+                  <span class="material-symbols-outlined" aria-hidden="true">bar_chart</span>
+                </div>
+                ${renderAdminPoolMetric("AI Prepared", 68, "primary")}
+                ${renderAdminPoolMetric("Pending Triage", Math.max(18, triageCount * 16), "warning")}
+                ${renderAdminPoolMetric("Engineer Handling", Math.max(22, handlingCount * 22), "success")}
+              </section>
+            </aside>
+
+            <section class="admin-pool-panel" aria-label="Ticket pool list">
+              <div class="admin-pool-stat-grid">
+                <div>
+                  <span>All Open Tickets</span>
+                  <strong>${poolTickets.length}</strong>
+                </div>
+                <div>
+                  <span>Engineer Handling</span>
+                  <strong>${handlingCount}</strong>
+                </div>
+                <div>
+                  <span>Pending Triage</span>
+                  <strong>${triageCount}</strong>
+                </div>
+              </div>
+              <div class="admin-pool-list-head">
+                <div>
+                  <span class="material-symbols-outlined" aria-hidden="true">filter_list</span>
+                  <span>Sorted by Urgency</span>
+                </div>
+                <div class="admin-pool-view-actions" aria-label="View options">
+                  <button type="button" aria-label="List view"><span class="material-symbols-outlined" aria-hidden="true">view_list</span></button>
+                  <button type="button" aria-label="Grid view"><span class="material-symbols-outlined" aria-hidden="true">grid_view</span></button>
+                </div>
+              </div>
+              <div class="admin-ticket-list">
+                ${poolTickets.length === 0 ? renderAdminEmptyPool() : poolTickets.map(renderAdminTicketCard).join("")}
+              </div>
+            </section>
+          </div>
+          <button class="admin-ticket-fab" type="button" aria-label="Create ticket">
+            <span class="material-symbols-outlined" aria-hidden="true">add</span>
+          </button>
+  `;
+}
+
+function renderAdminPoolMetric(label, value, tone) {
+  const boundedValue = Math.max(0, Math.min(100, value));
+  return `
+    <div class="admin-pool-progress is-${tone}">
+      <div>
+        <span>${escapeHtml(label)}</span>
+        <strong>${boundedValue}%</strong>
       </div>
+      <div class="admin-pool-progress-track"><span style="width:${boundedValue}%"></span></div>
     </div>
+  `;
+}
+
+function renderAdminEmptyPool() {
+  return `
+    <article class="admin-ticket-card is-empty">
+      <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
+      <h3>No open tickets</h3>
+      <p>The queue is clear. New customer issues will appear here for triage.</p>
+    </article>
+  `;
+}
+
+function renderAdminTicketCard(ticket, index) {
+  const isUrgent = ticket.priority && ticket.priority.toLowerCase().indexOf("first") !== -1;
+  const region = index === 0 ? "US-East" : index === 1 ? "EMEA" : "APAC";
+  const owner = ticket.engineerId || (index === 0 ? "Unassigned" : DEMO_ENGINEERS[index % DEMO_ENGINEERS.length].name);
+  const insightTitle = index === 1 ? "Handoff Context" : "AI Insight";
+  const insightIcon = index === 1 ? "history" : "lightbulb";
+  const insightCopy = index === 1
+    ? "AI prepared the customer timeline and marked the latest escalation reason for Tier 2 review."
+    : "Similar cases resolved fastest after checking service restart state, telemetry heartbeat, and recent policy changes.";
+  const statusClass = ticket.statusTone === "handling" ? "is-handling" : ticket.statusTone === "triage" ? "is-triage" : "is-queued";
+
+  return `
+    <article class="admin-ticket-card ${isUrgent ? "is-urgent" : ""}">
+      <div class="admin-ticket-card-top">
+        <div>
+          <span class="admin-ticket-id">${escapeHtml(ticket.id)}</span>
+          <h3>${escapeHtml(ticket.title)}</h3>
+        </div>
+        <span class="admin-priority-pill ${isUrgent ? "is-critical" : ""}">${isUrgent ? "P0 Critical" : escapeHtml(ticket.priority || "Standard")}</span>
+      </div>
+      <div class="admin-ticket-meta">
+        <span><span class="material-symbols-outlined" aria-hidden="true">business</span>${escapeHtml(ticket.requester || "Customer")}</span>
+        <span><span class="material-symbols-outlined" aria-hidden="true">public</span>${region}</span>
+        <span><span class="material-symbols-outlined" aria-hidden="true">schedule</span>${index === 0 ? "8m waiting" : `${(index + 1) * 11}m waiting`}</span>
+      </div>
+      <p class="admin-ticket-summary">${escapeHtml(ticket.issue || ticket.draft || "Awaiting issue summary.")}</p>
+      <div class="admin-ticket-state-row">
+        <span class="admin-ticket-status ${statusClass}">${escapeHtml(ticket.poolStatus || "Queued Review")}</span>
+        <span class="admin-ticket-owner">${escapeHtml(owner)}${ticket.engineerId ? " Handling" : ""}</span>
+      </div>
+      <div class="admin-ticket-insight ${insightTitle === "AI Insight" ? "is-ai" : ""}">
+        <span class="material-symbols-outlined" aria-hidden="true">${insightIcon}</span>
+        <div>
+          <h4>${insightTitle}</h4>
+          <p>${escapeHtml(insightCopy)}</p>
+        </div>
+      </div>
+    </article>
   `;
 }
 
@@ -1509,6 +1709,9 @@ root.addEventListener("click", (event) => {
 
   const actionButton = event.target.closest("[data-action]");
   if (!actionButton) return;
+  if (actionButton.matches("a[href]")) {
+    event.preventDefault();
+  }
   const action = String(actionButton.dataset.action || "");
 
   if (action === "enter-welcome") enterWelcome();
@@ -1520,6 +1723,15 @@ root.addEventListener("click", (event) => {
   if (action === "reset-demo") resetDemo();
   if (action === "toggle-sidebar") toggleSidebar();
   if (action === "toggle-break-after-case") toggleBreakAfterCase();
+  if (action === "admin-show-ticket-pool") {
+    adminSection = "ticket-pool";
+    adminEditState = null;
+    renderAdmin();
+  }
+  if (action === "admin-show-engineer-management") {
+    adminSection = "engineer-management";
+    renderAdmin();
+  }
   if (action === "admin-close-panel" || action === "admin-cancel-edit") {
     adminEditState = null;
     renderAdmin();

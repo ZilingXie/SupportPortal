@@ -1952,6 +1952,453 @@ p {
 }
 
 /* ==========================================================================
+   Admin ticket pool
+   ========================================================================== */
+
+.admin-ticket-pool-layout {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.admin-pool-sidebar {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.admin-pool-filter-card,
+.admin-pool-metrics-card,
+.admin-pool-panel {
+  border: 1px solid var(--ghost-border);
+  border-radius: 22px;
+  background: var(--surface-lowest);
+  box-shadow: var(--shadow-soft);
+}
+
+.admin-pool-filter-card {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+}
+
+.admin-pool-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-pool-title-row h2 {
+  margin: 0 0 6px;
+  font-size: clamp(24px, 3vw, 30px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.admin-pool-title-row p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.admin-pool-title-row > span {
+  flex-shrink: 0;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--surface-container-high);
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-pool-filter-card h3,
+.admin-pool-metrics-card h3 {
+  margin: 4px 0 0;
+  color: var(--ink-soft);
+  font-family: "Manrope", sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.admin-pool-filter-card .field {
+  gap: 7px;
+}
+
+.admin-pool-filter-card select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(110, 120, 130, 0.22);
+  border-radius: 12px;
+  background: var(--surface-lowest);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 0 12px;
+}
+
+.admin-pool-apply-btn {
+  min-height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-container));
+  color: #fff;
+  font-family: "Manrope", sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 12px 28px rgba(0, 100, 147, 0.2);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.admin-pool-apply-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(0, 100, 147, 0.26);
+}
+
+.admin-pool-metrics-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  background:
+    linear-gradient(145deg, rgba(202, 230, 255, 0.38), transparent 48%),
+    var(--surface-lowest);
+}
+
+.admin-pool-card-head,
+.admin-pool-progress > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-pool-card-head .material-symbols-outlined {
+  color: var(--primary);
+  font-size: 20px;
+}
+
+.admin-pool-progress {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-pool-progress span {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-pool-progress strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.admin-pool-progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-container-high);
+}
+
+.admin-pool-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-container);
+}
+
+.admin-pool-progress.is-warning .admin-pool-progress-track span {
+  background: var(--warning);
+}
+
+.admin-pool-progress.is-success .admin-pool-progress-track span {
+  background: var(--success);
+}
+
+.admin-pool-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.admin-pool-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid rgba(110, 120, 130, 0.12);
+  background: rgba(239, 244, 251, 0.5);
+}
+
+.admin-pool-stat-grid > div {
+  display: grid;
+  gap: 6px;
+  padding: 18px 22px;
+  border-right: 1px solid rgba(110, 120, 130, 0.1);
+}
+
+.admin-pool-stat-grid > div:last-child {
+  border-right: 0;
+}
+
+.admin-pool-stat-grid span,
+.admin-pool-list-head span {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.admin-pool-stat-grid strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.admin-pool-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.admin-pool-list-head > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-pool-list-head .material-symbols-outlined {
+  color: var(--ink-muted);
+  font-size: 18px;
+}
+
+.admin-pool-view-actions {
+  gap: 6px;
+}
+
+.admin-pool-view-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.admin-pool-view-actions button:hover {
+  background: var(--surface-container-low);
+  color: var(--ink);
+}
+
+.admin-ticket-list {
+  display: grid;
+  gap: 14px;
+  padding: 0 18px 20px;
+}
+
+.admin-ticket-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(110, 120, 130, 0.12);
+  border-radius: 18px;
+  background:
+    linear-gradient(90deg, rgba(0, 176, 255, 0.07), transparent 34%),
+    var(--surface-lowest);
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.admin-ticket-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(0, 100, 147, 0.18);
+  box-shadow: 0 14px 34px rgba(23, 28, 33, 0.08);
+}
+
+.admin-ticket-card.is-urgent {
+  background:
+    linear-gradient(90deg, rgba(186, 26, 26, 0.08), transparent 36%),
+    var(--surface-lowest);
+}
+
+.admin-ticket-card.is-empty {
+  place-items: center;
+  padding: 42px 20px;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.admin-ticket-card-top,
+.admin-ticket-state-row,
+.admin-ticket-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-ticket-id {
+  display: inline-block;
+  margin-bottom: 6px;
+  color: var(--primary);
+  font-family: "SFMono-Regular", "SF Mono", "Roboto Mono", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-ticket-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.admin-priority-pill,
+.admin-ticket-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-priority-pill {
+  background: rgba(76, 86, 175, 0.1);
+  color: var(--secondary);
+}
+
+.admin-priority-pill.is-critical {
+  background: rgba(186, 26, 26, 0.1);
+  color: var(--danger);
+}
+
+.admin-ticket-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.admin-ticket-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.admin-ticket-meta .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.admin-ticket-summary {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.admin-ticket-state-row {
+  align-items: center;
+}
+
+.admin-ticket-status.is-handling {
+  background: rgba(0, 176, 255, 0.1);
+  color: var(--primary);
+}
+
+.admin-ticket-status.is-triage {
+  background: rgba(159, 93, 18, 0.1);
+  color: var(--warning);
+}
+
+.admin-ticket-status.is-queued {
+  background: rgba(110, 120, 130, 0.12);
+  color: var(--ink-soft);
+}
+
+.admin-ticket-owner {
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-ticket-insight {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--surface-container-low);
+}
+
+.admin-ticket-insight.is-ai {
+  background: rgba(202, 230, 255, 0.58);
+}
+
+.admin-ticket-insight > .material-symbols-outlined {
+  color: var(--primary);
+  font-size: 20px;
+}
+
+.admin-ticket-insight h4 {
+  margin: 0 0 4px;
+  color: var(--primary);
+  font-family: "Manrope", sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.admin-ticket-insight p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-ticket-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 20px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-container));
+  color: #fff;
+  box-shadow: 0 18px 38px rgba(0, 100, 147, 0.28);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  z-index: 45;
+}
+
+.admin-ticket-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 46px rgba(0, 100, 147, 0.34);
+}
+
+.admin-ticket-fab .material-symbols-outlined {
+  font-size: 28px;
+}
+
+/* ==========================================================================
    Admin engineer overview — schedule grid & edit panel
    ========================================================================== */
 
@@ -2221,6 +2668,15 @@ p {
     grid-template-columns: 1fr;
   }
 
+  .admin-ticket-pool-layout {
+    grid-template-columns: 260px minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .admin-pool-stat-grid > div {
+    padding: 16px;
+  }
+
   .admin-topbar-search {
     max-width: 240px;
   }
@@ -2316,6 +2772,49 @@ p {
 
   .admin-bottom-card {
     max-height: 320px;
+  }
+
+  .admin-ticket-pool-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-pool-sidebar {
+    gap: 12px;
+  }
+
+  .admin-pool-filter-card,
+  .admin-pool-metrics-card {
+    padding: 16px;
+  }
+
+  .admin-pool-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-pool-stat-grid > div {
+    border-right: 0;
+    border-bottom: 1px solid rgba(110, 120, 130, 0.1);
+  }
+
+  .admin-pool-stat-grid > div:last-child {
+    border-bottom: 0;
+  }
+
+  .admin-ticket-card-top,
+  .admin-ticket-state-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-ticket-list {
+    padding: 0 12px 16px;
+  }
+
+  .admin-ticket-fab {
+    right: 18px;
+    bottom: 18px;
+    width: 52px;
+    height: 52px;
   }
 
   /* Edit panel mobile */
