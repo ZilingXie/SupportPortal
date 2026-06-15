@@ -2824,6 +2824,22 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(agent_state["execute_agent_version"], "engineer-execute-agent-v1")
         self.assertIsInstance(agent_state["task_results"], list)
         self.assertGreaterEqual(len(agent_state["task_results"]), 1)
+        # Review Agent fields
+        self.assertIn("active_review", agent_state)
+        active_review = agent_state["active_review"]
+        self.assertIsInstance(active_review, dict)
+        self.assertEqual(active_review["review_version"], "engineer-review-v1")
+        self.assertEqual(active_review["review_agent_version"], "engineer-review-agent-v1")
+        self.assertEqual(active_review["created_by"], "review_agent")
+        self.assertIn("review_decision", active_review)
+        self.assertIn(active_review["review_decision"], {"ready_for_engineer", "replan_required", "unable_to_resolve"})
+        self.assertIn("replan_count", active_review)
+        self.assertIn("max_replan_count", active_review)
+        self.assertEqual(active_review["max_replan_count"], 2)
+        self.assertEqual(agent_state["review_id"], active_review["review_id"])
+        self.assertEqual(agent_state["review_version"], "engineer-review-v1")
+        self.assertEqual(agent_state["review_agent_version"], "engineer-review-agent-v1")
+        self.assertEqual(agent_state["review_decision"], active_review["review_decision"])
 
     def test_fallback_engineer_agent_state_omits_candidate_answer_from_known_facts(self) -> None:
         state = fallback_engineer_agent_state(

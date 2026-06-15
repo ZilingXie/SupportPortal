@@ -79,6 +79,7 @@ from backend.services.engineer_cases import (
 from backend.services.engineer_summary_agent import build_engineer_summary_packet
 from backend.services.engineer_plan_agent import build_engineer_plan
 from backend.services.engineer_execute_agent import execute_engineer_plan
+from backend.services.engineer_review_agent import review_execution
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     ESCALATED_STATUS,
@@ -3254,7 +3255,7 @@ async def create_or_update_ticket(
                     execution_context=None,
                     now_value=now_iso_value,
                 )
-                engineer_case["engineer_agent_state"] = {
+                merged_agent_state = {
                     **(engineer_case.get("engineer_agent_state") or {}),
                     "summary_packet_id": summary_packet["packet_id"],
                     "summary_agent_version": summary_packet["summary_agent_version"],
@@ -3273,6 +3274,22 @@ async def create_or_update_ticket(
                     "evidence_packet": execution_packet["evidence_packet"],
                     "task_results": execution_packet["task_results"],
                 }
+                review_packet = review_execution(
+                    active_execution=execution_packet,
+                    engineer_agent_state=merged_agent_state,
+                    handoff_packet=summary_packet,
+                    ticket=ticket,
+                    now_value=now_iso_value,
+                )
+                merged_agent_state.update({
+                    "active_review": review_packet,
+                    "review_id": review_packet["review_id"],
+                    "review_version": review_packet["review_version"],
+                    "review_agent_version": review_packet["review_agent_version"],
+                    "review_decision": review_packet["review_decision"],
+                    "replan_count": review_packet["replan_count"],
+                })
+                engineer_case["engineer_agent_state"] = merged_agent_state
                 case_context = build_engineer_case_context(ticket, engineer_case)
                 opening_context = build_investigation_opening_context(
                     case_context,
