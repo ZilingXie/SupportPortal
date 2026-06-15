@@ -2315,6 +2315,13 @@ class PostgresTicketRepository:
                             internal_email_payload JSONB,
                             internal_email_send_status TEXT,
                             internal_email_send_reason TEXT,
+                            semantic_intent TEXT,
+                            automation_eligibility TEXT,
+                            policy_decision TEXT,
+                            not_automated_reason TEXT,
+                            risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            router_source TEXT,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
@@ -2322,6 +2329,41 @@ class PostgresTicketRepository:
                     ).format(
                         self._table("support_billing_tickets"),
                         self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS semantic_intent TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_eligibility TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS policy_decision TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS not_automated_reason TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS router_source TEXT").format(
+                        self._table("support_billing_tickets"),
                     )
                 )
                 cur.execute(
@@ -4283,9 +4325,12 @@ class PostgresTicketRepository:
                                 route_confidence, matched_signals, automation_status,
                                 missing_fields, collected_fields, customer_reply,
                                 internal_email_payload, internal_email_send_status,
-                                internal_email_send_reason, created_at, updated_at
+                                internal_email_send_reason, semantic_intent,
+                                automation_eligibility, policy_decision,
+                                not_automated_reason, risk_flags, evidence_spans,
+                                router_source, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 source = EXCLUDED.source,
@@ -4304,6 +4349,13 @@ class PostgresTicketRepository:
                                 internal_email_payload = EXCLUDED.internal_email_payload,
                                 internal_email_send_status = EXCLUDED.internal_email_send_status,
                                 internal_email_send_reason = EXCLUDED.internal_email_send_reason,
+                                semantic_intent = EXCLUDED.semantic_intent,
+                                automation_eligibility = EXCLUDED.automation_eligibility,
+                                policy_decision = EXCLUDED.policy_decision,
+                                not_automated_reason = EXCLUDED.not_automated_reason,
+                                risk_flags = EXCLUDED.risk_flags,
+                                evidence_spans = EXCLUDED.evidence_spans,
+                                router_source = EXCLUDED.router_source,
                                 updated_at = EXCLUDED.updated_at
                             """
                         ).format(self._table("support_billing_tickets")),
@@ -4326,6 +4378,13 @@ class PostgresTicketRepository:
                             Json(billing_ticket.get("internal_email_payload")) if isinstance(billing_ticket.get("internal_email_payload"), dict) else None,
                             str(billing_ticket.get("internal_email_send_status") or "").strip() or None,
                             str(billing_ticket.get("internal_email_send_reason") or "").strip() or None,
+                            str(billing_ticket.get("semantic_intent") or "").strip() or None,
+                            str(billing_ticket.get("automation_eligibility") or "").strip() or None,
+                            str(billing_ticket.get("policy_decision") or "").strip() or None,
+                            str(billing_ticket.get("not_automated_reason") or "").strip() or None,
+                            Json(billing_ticket.get("risk_flags")) if isinstance(billing_ticket.get("risk_flags"), list) else Json([]),
+                            Json(billing_ticket.get("evidence_spans")) if isinstance(billing_ticket.get("evidence_spans"), list) else Json([]),
+                            str(billing_ticket.get("router_source") or "").strip() or None,
                             created_at,
                             updated_at,
                         ),

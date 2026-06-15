@@ -2713,9 +2713,14 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         ticket_context=ticket_context,
     )
     route = str(decision.execution_action or decision.route or "").strip()
-    is_billing_route = (
-        str(decision.route_family or "").strip() == "billing_automation"
+    route_family = str(decision.route_family or "").strip()
+    is_billing_automation_route = (
+        route_family == "billing_automation"
         and route in {"detailed_invoice", "account_suspension"}
+    )
+    is_billing_route = is_billing_automation_route or (
+        route_family == "billing_review"
+        and route == "human_review_required"
     )
 
     resolution: SupportResolution | None = None
@@ -2727,7 +2732,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     internal_email_send_status = "not_applicable"
     internal_email_send_reason = ""
 
-    if is_billing_route:
+    if is_billing_automation_route:
         response_status = "automation"
         # Route is recorded in the companion billing ticket below;
         # no resolve_support_message(), no customer reply, no field collection,
@@ -2755,6 +2760,14 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "internal_email_payload": internal_email_payload,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
+        # Semantic routing fields.
+        "semantic_intent": decision.semantic_intent or None,
+        "automation_eligibility": decision.automation_eligibility or None,
+        "policy_decision": decision.policy_decision or None,
+        "not_automated_reason": decision.not_automated_reason or None,
+        "risk_flags": list(decision.risk_flags),
+        "evidence_spans": list(decision.evidence_spans),
+        "router_source": decision.router_source,
     }
     await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
 
@@ -2775,6 +2788,11 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "matched_signals": list(decision.matched_signals),
         "account_intake_status": response_status,
         "internal_email_send_status": internal_email_send_status,
+        # Semantic routing fields.
+        "semantic_intent": decision.semantic_intent or None,
+        "policy_decision": decision.policy_decision or None,
+        "not_automated_reason": decision.not_automated_reason or None,
+        "router_source": decision.router_source,
     }
     await async_to_thread(ticket_repository.record_event, ticket_id, event["event"], event)
     await dispatch_event(["engineer", "dashboard"], event)
@@ -2790,6 +2808,15 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "collected_fields": collected_fields,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
+        # Semantic routing fields.
+        "semantic_intent": decision.semantic_intent or None,
+        "route_family": decision.route_family,
+        "automation_eligibility": decision.automation_eligibility or None,
+        "policy_decision": decision.policy_decision or None,
+        "not_automated_reason": decision.not_automated_reason or None,
+        "risk_flags": list(decision.risk_flags),
+        "evidence_spans": list(decision.evidence_spans),
+        "router_source": decision.router_source,
     }
 
 

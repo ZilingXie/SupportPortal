@@ -12,6 +12,39 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-15 - LLM semantic router + policy gate
+
+- Area or subsystem: Intent router prompt and routing architecture
+- Prompt or model version: `semantic-router-intent-taxonomy-v1`
+- Summary: Router prompt changed from scope-only classification to semantic intent + policy-aware structured output. New output schema includes `semantic_intent` (billing.account_suspension / billing.detailed_invoice / billing.refund_or_dispute), `recommended_action`, `automation_eligibility`, `evidence_spans`, and `risk_flags`. Added `_apply_policy_gate()` that splits routing ("what is this?") from automation eligibility ("can this be automated?"). Expanded billing deterministic whitelist to cover `Account temporarily suspended`, `account has been suspended`, `suspended due to insufficient balance`, and other real-world expressions. Added `billing_review` route family for billing cases that need human review.
+- Reason: TK-ACC-68BAC7 (`Account temporarily suspended`) was being routed to `web_search` because the deterministic regex didn't cover "temporarily suspended" variations and the LLM classified it as `agora_non_technical`. The new architecture ensures billing/account-status semantics are correctly classified and separates semantic intent from automation policy.
+- Affected files or config:
+  - `backend/services/support_router.py` — Extended `SupportRouteDecision` with 7 new fields, added `_apply_policy_gate()`, updated `_llm_route_decision` and `_build_route_decision`
+  - `backend/services/support_router_prompt.py` — Added billing few-shot examples for account_suspension, detailed_invoice, refund/dispute
+  - `backend/services/prompts/router.py` — Updated system prompt with Billing Intent Taxonomy, Automation Eligibility rules
+  - `backend/services/billing_automation.py` — Expanded `_ACCOUNT_SUSPENSION_PATTERNS` with 3 new patterns
+  - `backend/main.py` — Added semantic fields to account intake API response, billing ticket, and event
+  - `backend/sql/ticket_storage.sql` — Added semantic routing audit columns to `support_billing_tickets`
+  - `backend/repositories/ticket_repository.py` — Persists semantic routing audit columns for Postgres billing tickets
+  - `backend/tests/test_account_intake.py` — Covers `billing_review` staying `not_automated`
+  - `backend/tests/test_repository_configuration.py` — Covers billing ticket semantic routing storage contract
+  - `backend/tests/test_support_router_semantic_billing.py` — New golden regression test file (12 cases)
+  - `backend/tests/test_qbr_plan_contract.py` — Updated Routing rules contract terms
+  - `docs/qbr_plan.html` — Updated Routing tab with new architecture
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `Account temporarily suspended` and similar account access/balance suspension cases now route to `billing_automation` or `billing_review`, not `web_search`.
+  - LLM `billing.detailed_invoice` responses that use `recommended_action=automation_candidate` are normalized to `billing_automation/detailed_invoice` by the policy gate instead of falling through to `refuse`.
+  - `billing_review/human_review_required` stays `automation_status=not_automated` in account intake.
+  - Billing semantic intent is visible even when automation is blocked (`not_automated_reason` always populated).
+  - LLM output is validated and bounded by a policy gate: refund/dispute/legal cases are never automated.
+  - New optional fields on route decision: `semantic_intent`, `automation_eligibility`, `policy_decision`, `not_automated_reason`, `risk_flags`, `evidence_spans`, `router_source`.
+  - Existing RAG / web_search / refuse routes continue to work unchanged.
+- Verification:
+  - `python3 -m unittest backend.tests.test_support_router` (50 tests)
+  - `python3 -m unittest backend.tests.test_support_router_semantic_billing` (12 tests)
+  - `python3 -m unittest backend.tests.test_qbr_plan_contract` (7 tests)
+
 ## 2026-06-15 - Agent preflight on-demand rules
 
 - Area or subsystem: Agent collaboration instructions and workflow prompts

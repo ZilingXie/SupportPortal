@@ -534,6 +534,47 @@
       line-height: 1.55;
     }
 
+    .lane-architecture {
+      margin-top: 18px;
+      border: 1px solid rgba(31, 79, 104, 0.18);
+      border-radius: 24px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 18% 20%, rgba(212, 109, 74, 0.12), transparent 28%),
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), rgba(255, 255, 255, 0.18));
+    }
+
+    .lane-architecture header {
+      padding: 18px 20px 12px;
+      border-bottom: 1px solid rgba(31, 79, 104, 0.12);
+    }
+
+    .lane-architecture h5 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      letter-spacing: 0.02em;
+    }
+
+    .lane-architecture p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .lane-architecture .mermaid-card {
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .lane-architecture .mermaid-card .mermaid {
+      min-width: 900px;
+      font-size: 12px;
+    }
+
+    .lane-architecture .diagram-note {
+      padding: 0 20px 18px;
+    }
+
     .lanes {
       display: grid;
       gap: 22px;
@@ -1229,41 +1270,89 @@ flowchart TD
         short: "Routing",
         title: "Routing rules",
         status: "doing",
-        thesis: "当前路由是两段式：先跑 deterministic fast path，再跑 LLM classifier；若 LLM 无凭据、失败或低于 INTENT_ROUTER_CONFIDENCE_THRESHOLD，就回落到 conservative_agora_technical_fallback。每个 scope_label 会被 route contract 固定成 route_family、execution_action 和 tooling_profile，避免 UI 或业务方直接解释原始标签。",
+        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构：deterministic fast path 处理高置信 billing 和明显非 Agora 信号；LLM semantic router 输出 structured intent taxonomy（billing.account_suspension、billing.detailed_invoice、billing.refund_or_dispute 等）；policy gate 做安全边界拆分「能不能 automation」；old route contract 保留，避免一次性破坏下游。每个 scope_label 被 route contract 固定成 route_family、execution_action 和 tooling_profile，新增 billing_review route family 用于需人工审核的 billing case。",
         done: [
           "入口是 `decide_support_route()`：空消息直接 `non_agora/refuse`；非空消息先进入 `_heuristic_route_decision()`，没有命中才调用 `_llm_route_decision()`。",
+          "LLM semantic router 已升级为 intent taxonomy 输出：`scope_label`、`semantic_intent`（billing.account_suspension / billing.detailed_invoice / billing.refund_or_dispute）、`recommended_action`、`automation_eligibility`、`confidence`、`evidence_spans`、`risk_flags`。",
+          "Policy gate (`_apply_policy_gate()`) 已实现：拆分「是什么问题」和「能不能 automation」。refund_or_dispute 和 legal/compensation 永不可 automation；account_suspension 默认 human_review_required；detailed_invoice 只在无 dispute 信号时允许 automation。",
+          "`SupportRouteDecision` 新增 7 个 optional 字段：`semantic_intent`、`automation_eligibility`、`policy_decision`、`not_automated_reason`、`risk_flags`、`evidence_spans`、`router_source`，兼容所有现有 route contract。",
+          "新增 `billing_review` route family：billing 需人工审核时输出 `route_family=billing_review`、`execution_action=human_review_required`，与 `billing_automation` 区分。",
           "deterministic fast path 的顺序固定：billing whitelist -> ticket_resolution -> gratitude/small_talk -> short troubleshooting -> API semantics mismatch -> join channel -> product portfolio。",
-          "billing fast path 只接受 `account_suspension` 和 `detailed_invoice`：命中后输出 `scope_label=billing`、`route_family=billing_automation`、`tooling_profile=deterministic_billing_intake`。",
-          "`detailed_invoice` 只匹配 detailed invoice / invoice details / send invoice，并用 dispute/refund/wrong/overcharged 等词排除金额争议；`account_suspension` 当前只匹配 account suspended、suspended account、account blocked/disabled 这类窄表达。",
+          "billing fast path 已扩展 account_suspension 白名单：新增 `account temporarily suspended`、`account has been suspended`、`suspended due to insufficient balance` 等真实表达，覆盖 TK-ACC-68BAC7 类 case。",
+          "billing fast path 命中后输出 `scope_label=billing`、`semantic_intent=billing.{action}`、`route_family=billing_automation`、`tooling_profile=deterministic_billing_intake`、`router_source=deterministic`。",
+          "`detailed_invoice` 只匹配 detailed invoice / invoice details / send invoice，并用 dispute/refund/wrong/overcharged 等词排除金额争议；`account_suspension` 已覆盖 account suspended、suspended account、account blocked/disabled、temporarily suspended、has been suspended、suspended due to balance。",
           "ticket resolution 只在客户确认问题解决且没有负向标记时触发，输出 `ticket_resolution/resolve_ticket/deterministic_resolution`；普通 thanks 没有 resolution context 时会走 `small_talk/controlled_response`。",
           "短排障消息才走 short troubleshooting fast path：不超过 24 words / 180 chars，且包含 black screen、no audio、join failed、disconnect、network quality 等信号；若同时有 printer/outlook/excel/office wifi/blue screen 等 general IT 信号，则转 `non_agora/refuse`。",
           "API semantics mismatch、join channel 和 Agora product portfolio 有独立 deterministic route；product portfolio 输出 `agora_non_technical/web_company_info/web_search`，技术与排障输出 `agora_technical/agora_docs_rag/rag`。",
-          "LLM classifier 只能返回 ticket_resolution、billing、small_talk、non_agora、agora_non_technical、agora_technical；billing 必须带 `account_suspension` 或 `detailed_invoice` action，否则整条 LLM 决策会被丢弃。",
-          "route contract 固定映射：`agora_technical -> agora_docs_rag/rag/agora_docs_only`，`agora_non_technical -> web_company_info/web_search/official_web_search`，`non_agora -> fallback_or_refuse/refuse/no_agora_docs_refusal`，`small_talk -> general_chat/controlled_response/controlled_acknowledgement`。",
-          "TK-ACC-68BAC7 的实际保存结果是 `route=web_search`、`route_reason=billing_and_account_status`、`matched_signals=[billing, account suspended, restore access, agora]`、`automation_status=not_automated`；原因是当前 billing deterministic pattern 没覆盖 `Account temporarily suspended` 和 `account ... has been suspended`，LLM 又把它归为 `agora_non_technical`。"
+          "LLM classifier 已升级输出 schema：返回 `scope_label`、`semantic_intent`、`recommended_action`、`automation_eligibility`、`confidence`、`reason`、`matched_signals`、`evidence_spans`、`risk_flags`。",
+          "LLM billing 分类规则：billing.account_suspension 覆盖所有 account access/balance/suspension 语义；billing.refund_or_dispute 覆盖 refund/dispute/wrong amount/overcharged/legal compensation；billing.detailed_invoice 覆盖详细发票请求。",
+          "route contract 固定映射：`agora_technical -> agora_docs_rag/rag/agora_docs_only`，`agora_non_technical -> web_company_info/web_search/official_web_search`，`non_agora -> fallback_or_refuse/refuse/no_agora_docs_refusal`，`small_talk -> general_chat/controlled_response/controlled_acknowledgement`，`billing -> billing_automation`（可自动化）或 `billing_review`（需人工审核）。",
+          "Account intake 已扩展 view-model：API response、billing ticket 和 event 均包含 `semantic_intent`、`automation_eligibility`、`policy_decision`、`not_automated_reason`、`risk_flags`、`evidence_spans`、`router_source`。",
+          "`support_billing_tickets` schema / Postgres repository 已补 semantic routing 字段，避免只在 InMemory 中可见、生产持久化丢失 route audit metadata。",
+          "Golden billing routing regression set 已建立：`test_support_router_semantic_billing.py` 包含 12 个 case，覆盖 TK-ACC-68BAC7、account suspension variants、detailed invoice、refund/dispute/legal negative cases、non-billing cases。",
+          "Router prompt (`prompts/router.py`) 已更新：新增 Billing Intent Taxonomy、Automation Eligibility 规则、billing few-shot examples。",
+          "TK-ACC-68BAC7 已修复：`Account temporarily suspended` 现被 deterministic 白名单命中，route 为 `billing_automation/account_suspension`，不再误判为 `web_search`。",
         ],
         review: [
-          "Routing 不是单一模型判断：deterministic fast path 的优先级会覆盖 LLM，因此优化 billing 命中率应先改 `billing_automation.py` 的安全白名单和回归集。",
+          "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
+          "Deterministic fast path 保留为 high-precision hint：billing whitelist 命中后仍走 `billing_automation`，但 policy gate 仅应用于 LLM-sourced 决策，避免误杀高置信确定性匹配。",
+          "`billing_review` route family 隔离了需人工审核的 billing case：deterministic 命中直接走 `billing_automation`；LLM 判断的 account_suspension 和 refund_or_dispute 走 `billing_review`。",
           "`conservative_agora_technical_fallback` 是保守兜底：宁可进入 RAG，也不在低置信时拒绝客户或触发 automation。",
-          "当前最大风险是 billing/account status 语义被 LLM 归到 `web_company_info`，导致 account suspension 类真实 case 不进入 automation；需要用真实 case set 度量误判，而不是一次性扩大所有 billing 类目。"
+          "TK-ACC-68BAC7 已修复：扩展后的 deterministic 白名单可命中 `Account temporarily suspended` 和 `account has been suspended due to insufficient balance`，不再误判为 web_search。",
+          "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `agora_non_technical`；需要在 golden set 中持续补充边界 case。",
         ],
         next: [
-          { id: "routing-billing-suspension-patterns", status: "todo", label: "扩展 account_suspension deterministic whitelist，覆盖 temporarily suspended、has been suspended、suspended due to insufficient balance、restore access 等真实表达。", horizon: "Billing" },
-          { id: "routing-billing-regression-set", status: "todo", label: "建立 billing routing 回归集，至少包含 account suspension、detailed invoice、billing terms/account status、refund/dispute/overcharged negative cases。", horizon: "Tests" },
-          { id: "routing-not-automated-reasons", status: "todo", label: "在 account billing view-model 中更明确记录 Not automated 原因：heuristic miss、LLM non-billing、billing action unsupported 或 confidence fallback。", horizon: "Observability" },
-          { id: "routing-llm-billing-prompt", status: "todo", label: "补 LLM classifier few-shot：account suspended due to balance / restore access 应归入 billing account_suspension，而 billing terms change 可保留人工审核。", horizon: "Prompt" },
+          { id: "routing-billing-suspension-patterns", status: "done", label: "扩展 account_suspension deterministic whitelist，覆盖 temporarily suspended、has been suspended、suspended due to insufficient balance、restore access 等真实表达。", horizon: "Billing" },
+          { id: "routing-billing-regression-set", status: "done", label: "建立 billing routing 回归集，至少包含 account suspension、detailed invoice、billing terms/account status、refund/dispute/overcharged negative cases。", horizon: "Tests" },
+          { id: "routing-not-automated-reasons", status: "done", label: "在 account billing view-model 中更明确记录 Not automated 原因：heuristic miss、LLM non-billing、billing action unsupported 或 confidence fallback。", horizon: "Observability" },
+          { id: "routing-llm-billing-prompt", status: "done", label: "补 LLM classifier few-shot：account suspended due to balance / restore access 应归入 billing account_suspension，而 billing terms change 可保留人工审核。", horizon: "Prompt" },
+          { id: "routing-llm-semantic-router", status: "done", label: "LLM semantic router 升级为 intent taxonomy 输出，新增 policy gate 拆分「是什么问题」和「能不能 automation」。", horizon: "Architecture" },
+          { id: "routing-policy-gate", status: "done", label: "Policy gate 已实现：refund/dispute/legal 永不可 automation，account_suspension 默认 human_review_required。", horizon: "Safety" },
+          { id: "routing-semantic-schema", status: "done", label: "SupportRouteDecision 新增 semantic_intent、automation_eligibility、not_automated_reason、risk_flags、evidence_spans、router_source 等字段。", horizon: "Schema" },
+          { id: "routing-billing-review-family", status: "done", label: "新增 billing_review route family 用于需人工审核的 billing case，与 billing_automation 区分。", horizon: "Contract" },
+          { id: "routing-qbr-diagram", status: "done", label: "QBR Routing tab 已更新架构描述、review 结论和 next tasks，反映 LLM semantic router + policy gate 新架构。", horizon: "Docs" },
           { id: "routing-threshold-audit", status: "todo", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。", horizon: "Metrics" },
-          { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 失败原因写入 QBR tab。", horizon: "Docs" }
+          { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 QBR tab。", horizon: "Docs" },
+          { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
+          { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 golden set 覆盖率足够时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
         ],
+        architecture: {
+          title: "Routing Architecture: Semantic Intent -> Policy Gate -> Route Contract",
+          summary: "Route tab 新增这张架构图，用来固定新的扩展点：deterministic fast path 只处理高置信信号；LLM 输出 semantic intent 和证据；policy gate 决定 automation eligibility；route contract 继续保护旧下游。",
+          mermaid: [
+            "flowchart TD",
+            "  I[\"Ticket title + body + context\"] --> H{\"Deterministic fast path?\"}",
+            "  H -->|billing whitelist / resolution / small talk / product signals| D[\"Deterministic route decision\"]",
+            "  H -->|no high-confidence hit| L[\"LLM semantic router\"]",
+            "  L --> S[\"Structured schema: scope_label, semantic_intent, recommended_action, automation_eligibility, evidence_spans, risk_flags\"]",
+            "  S --> P[\"Policy gate: safety boundary\"]",
+            "  P -->|eligible detailed_invoice| BA[\"billing_automation / detailed_invoice\"]",
+            "  P -->|refund, dispute, legal, account_suspension review| BR[\"billing_review / human_review_required\"]",
+            "  D --> C[\"Route contract\"]",
+            "  BA --> C",
+            "  BR --> C",
+            "  C -->|agora_technical| RAG[\"agora_docs_rag / rag / agora_docs_only\"]",
+            "  C -->|agora_non_technical| WEB[\"web_company_info / web_search / official_web_search\"]",
+            "  C -->|non_agora| REF[\"fallback_or_refuse / refuse\"]",
+            "  C -->|billing| ACC[\"/account response + support_billing_tickets audit fields\"]",
+            "  C -->|low confidence| F[\"conservative_agora_technical_fallback\"]"
+          ].join("\n"),
+          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。"
+        },
         sources: [
           "backend/services/support_router.py",
           "backend/services/support_router_prompt.py",
           "backend/services/prompts/router.py",
           "backend/services/billing_automation.py",
           "backend/main.py",
+          "backend/sql/ticket_storage.sql",
+          "backend/repositories/ticket_repository.py",
           "backend/tests/test_support_router.py",
+          "backend/tests/test_support_router_semantic_billing.py",
           "backend/tests/test_account_intake.py",
-          "backend/tests/test_qbr_plan_contract.py"
+          "backend/tests/test_repository_configuration.py",
+          "backend/tests/test_qbr_plan_contract.py",
+          "docs/feature_list.md"
         ]
       },
       {
@@ -1395,10 +1484,30 @@ flowchart TD
         lane.short,
         lane.thesis,
         ...lane.done,
+        lane.architecture?.title || "",
+        lane.architecture?.summary || "",
+        lane.architecture?.mermaid || "",
+        lane.architecture?.note || "",
         ...lane.next.map((task) => `${task.label} ${task.horizon} ${STATUS_LABELS[taskStatus(task)]}`),
         ...lane.sources
       ].join(" ").toLowerCase();
       return haystack.includes(query.toLowerCase());
+    }
+
+    function renderLaneArchitecture(architecture) {
+      if (!architecture) return "";
+      return `
+        <div class="lane-architecture">
+          <header>
+            <h5>${escapeHtml(architecture.title)}</h5>
+            <p>${escapeHtml(architecture.summary)}</p>
+          </header>
+          <div class="mermaid-card">
+            <pre class="mermaid">${escapeHtml(architecture.mermaid)}</pre>
+          </div>
+          <p class="diagram-note">${escapeHtml(architecture.note)}</p>
+        </div>
+      `;
     }
 
     function renderLane(lane, index) {
@@ -1433,6 +1542,7 @@ flowchart TD
                   ${(lane.review || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
                 </ul>
               </div>
+              ${renderLaneArchitecture(lane.architecture)}
               <div class="notes">
                 <label for="note-${lane.id}">QBR 备注</label>
                 <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
