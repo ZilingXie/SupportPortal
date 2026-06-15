@@ -331,6 +331,10 @@ function saveAdminSchedule() {
   writeStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, adminSchedule);
 }
 
+function getDefaultAdminEditState() {
+  return { engineerId: DEMO_ENGINEERS[0].id, weekday: WEEKDAYS[0] };
+}
+
 function getOnlineCoverage() {
   return DEMO_ENGINEERS.filter((eng) => ADMIN_PRESENCE_MOCK[eng.id] === "online").length;
 }
@@ -948,8 +952,6 @@ function renderAdmin() {
             return `<span
               class="schedule-chip"
               style="background:${color.bg};color:${color.fg}"
-              data-engineer-id="${escapeHtml(eng.id)}"
-              data-weekday="${editWeekday}"
               title="${escapeHtml(eng.name)}: ${getShiftSummary(eng.id, editWeekday)}"
             >${escapeHtml(eng.name)}</span>`;
           })
@@ -981,6 +983,24 @@ function renderAdmin() {
             <span class="material-symbols-outlined" aria-hidden="true">close</span>
           </button>
         </div>
+        <form class="admin-edit-target-form" data-admin-edit-target-form>
+          <label class="field">
+            <span class="field-label" id="admin-edit-target-engineer-label">Engineer</span>
+            <select id="admin-edit-target-engineer" name="engineerId" aria-labelledby="admin-edit-target-engineer-label">
+              ${DEMO_ENGINEERS.map((engineer) => `
+                <option value="${escapeHtml(engineer.id)}" ${engineer.id === adminEditState.engineerId ? "selected" : ""}>${escapeHtml(engineer.name)}</option>
+              `).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label" id="admin-edit-target-day-label">Day</span>
+            <select id="admin-edit-target-day" name="weekday" aria-labelledby="admin-edit-target-day-label">
+              ${WEEKDAYS.map((weekday, index) => `
+                <option value="${weekday}" ${weekday === adminEditState.weekday ? "selected" : ""}>${WEEKDAY_LABELS[index]}</option>
+              `).join("")}
+            </select>
+          </label>
+        </form>
         <form class="admin-edit-form" data-action="admin-save-shift" data-shift-edit-form>
           <div class="field">
             <label class="field-label" for="admin-edit-start">Start (UTC+8)</label>
@@ -1157,21 +1177,6 @@ function renderAdmin() {
               </div>
               <div class="admin-schedule-grid-wrapper" style="border:0; box-shadow:none; background:transparent; padding:14px;">
                 <div class="section-head admin-schedule-head" style="display:none"></div>
-                <form class="admin-shift-picker" data-admin-shift-picker>
-                  <label class="field">
-                    <span class="field-label" id="admin-picker-engineer-label">Engineer</span>
-                    <select name="engineerId" aria-labelledby="admin-picker-engineer-label">
-                      ${DEMO_ENGINEERS.map((eng) => `<option value="${escapeHtml(eng.id)}">${escapeHtml(eng.name)}</option>`).join("")}
-                    </select>
-                  </label>
-                  <label class="field">
-                    <span class="field-label" id="admin-picker-day-label">Day</span>
-                    <select name="weekday" aria-labelledby="admin-picker-day-label">
-                      ${WEEKDAYS.map((weekday, index) => `<option value="${weekday}">${WEEKDAY_LABELS[index]}</option>`).join("")}
-                    </select>
-                  </label>
-                  <button class="btn btn-ghost" type="submit">Edit selected shift</button>
-                </form>
                 <div class="admin-schedule-grid-scroll">
                   <div class="admin-schedule-grid">
                     <div class="schedule-header-row">
@@ -1512,25 +1517,13 @@ function startSlaCountdown() {
 // =============================================================================
 
 root.addEventListener("click", (event) => {
-  // Admin schedule chip click — opens edit panel
-  if (isAdminPage) {
-    const scheduleChip = event.target.closest(".schedule-chip[data-engineer-id][data-weekday]");
-    if (scheduleChip) {
-      const engineerId = String(scheduleChip.dataset.engineerId || "");
-      const weekday = String(scheduleChip.dataset.weekday || "");
-      if (engineerId && weekday) {
-        adminEditState = { engineerId, weekday };
-        renderAdmin();
-        return;
-      }
+  if (!isAdminPage) {
+    const engineerButton = event.target.closest("[data-engineer-id]");
+    if (engineerButton) {
+      selectedEngineerCandidate = String(engineerButton.dataset.engineerId || DEMO_ENGINEERS[0].id);
+      renderLogin();
+      return;
     }
-  }
-
-  const engineerButton = event.target.closest("[data-engineer-id]");
-  if (engineerButton) {
-    selectedEngineerCandidate = String(engineerButton.dataset.engineerId || DEMO_ENGINEERS[0].id);
-    renderLogin();
-    return;
   }
 
   const actionButton = event.target.closest("[data-action]");
@@ -1551,12 +1544,12 @@ root.addEventListener("click", (event) => {
     renderAdmin();
   }
   if (action === "admin-modify-shifts") {
-    var pickerForm = root.querySelector("[data-admin-shift-picker]");
-    if (pickerForm) {
-      pickerForm.scrollIntoView({ behavior: "smooth", block: "center" });
-      var firstSelect = pickerForm.querySelector("select");
-      if (firstSelect) firstSelect.focus();
-    }
+    adminEditState = adminEditState || getDefaultAdminEditState();
+    renderAdmin();
+    var editPanel = root.querySelector(".admin-edit-panel");
+    if (editPanel) editPanel.scrollIntoView({ behavior: "smooth", block: "center" });
+    var firstTargetSelect = root.querySelector("[data-admin-edit-target-form] select");
+    if (firstTargetSelect) firstTargetSelect.focus();
   }
 });
 
@@ -1564,16 +1557,6 @@ root.addEventListener("submit", (event) => {
   if (event.target.matches("[data-shift-form]")) {
     event.preventDefault();
     saveShift(event.target);
-  }
-  if (event.target.matches("[data-admin-shift-picker]")) {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const engineerId = String(formData.get("engineerId") || "");
-    const weekday = String(formData.get("weekday") || "");
-    if (engineerId && WEEKDAYS.includes(weekday)) {
-      adminEditState = { engineerId, weekday };
-      renderAdmin();
-    }
   }
   if (event.target.matches("[data-shift-edit-form]")) {
     event.preventDefault();
@@ -1594,6 +1577,18 @@ root.addEventListener("submit", (event) => {
       adminEditState = null;
       renderAdmin();
     }
+  }
+});
+
+root.addEventListener("change", (event) => {
+  const targetForm = event.target.closest("[data-admin-edit-target-form]");
+  if (!targetForm) return;
+  const formData = new FormData(targetForm);
+  const engineerId = String(formData.get("engineerId") || "");
+  const weekday = String(formData.get("weekday") || "");
+  if (engineerId && WEEKDAYS.includes(weekday)) {
+    adminEditState = { engineerId, weekday };
+    renderAdmin();
   }
 });
 
