@@ -354,6 +354,71 @@
       border-top: 1px dashed var(--line-strong);
     }
 
+    .architecture-disclosure {
+      margin: 38px 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), transparent 48%),
+        rgba(251, 247, 236, 0.76);
+      box-shadow: 0 16px 42px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+    }
+
+    .architecture-disclosure summary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .architecture-disclosure summary::-webkit-details-marker { display: none; }
+
+    .architecture-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--blueprint);
+      color: var(--paper-soft);
+      font-weight: 850;
+    }
+
+    .architecture-toggle::before {
+      content: "+";
+      display: inline-grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(251, 247, 236, 0.16);
+      font-weight: 900;
+    }
+
+    .architecture-disclosure[open] .architecture-toggle::before { content: "-"; }
+
+    .architecture-hint {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .architecture-panel {
+      padding: 0 18px 20px;
+      border-top: 1px dashed var(--line-strong);
+    }
+
+    .architecture-title {
+      margin-top: 22px;
+    }
+
     .filter {
       display: flex;
       flex-wrap: wrap;
@@ -859,20 +924,26 @@
       </div>
     </details>
 
-    <section class="section-title">
-      <div>
-        <h2>Engineer AI Agent 架构</h2>
-      </div>
-      <p>这张 Mermaid 图固定当前讨论后的 multi-agent 生命周期：client escalation 先被总结成可审计 packet，再进入 AI 调查循环，最后由工程师和 guardrail 共同完成客户回复。</p>
-    </section>
+    <details class="architecture-disclosure">
+      <summary>
+        <span class="architecture-toggle">查看 Engineer AI Agent 架构</span>
+        <span class="architecture-hint">默认收起，点击后展开 Mermaid 生命周期图。</span>
+      </summary>
+      <div class="architecture-panel">
+        <section class="section-title architecture-title">
+          <div>
+            <h2>Engineer AI Agent 架构</h2>
+          </div>
+          <p>这张 Mermaid 图固定当前讨论后的 multi-agent 生命周期：client escalation 先被总结成可审计 packet，再进入 AI 调查循环，最后由工程师和 guardrail 共同完成客户回复。</p>
+        </section>
 
-    <section class="architecture-diagram" aria-label="Engineer AI multi-agent Mermaid architecture diagram">
-      <header>
-        <h3>Summary → Plan → Execute → Review → Guardrail</h3>
-        <p>Summary Agent 与 Plan Agent 第一版已接入 escalation runtime；Execute/Review 尚未接管，mem0 和 skill list 未完成时 Plan Agent 使用 deterministic fallback。</p>
-      </header>
-      <div class="mermaid-card">
-        <pre class="mermaid">
+        <section class="architecture-diagram" aria-label="Engineer AI multi-agent Mermaid architecture diagram">
+          <header>
+            <h3>Summary → Plan → Execute → Review → Guardrail</h3>
+            <p>Summary Agent 与 Plan Agent 第一版已接入 escalation runtime；Execute/Review 尚未接管，mem0 和 skill list 未完成时 Plan Agent 使用 deterministic fallback。</p>
+          </header>
+          <div class="mermaid-card">
+            <pre class="mermaid">
 flowchart TD
   C["Client AI handle 不了客户问题"] --> E["Escalate to Engineer"]
   E --> S["Summary Agent: 整理上下文、线索、缺失信息和 redaction boundary"]
@@ -892,10 +963,12 @@ flowchart TD
   A --> Y["回复客户"]
   Y --> Z["关闭 Engineer 工单"]
   Z --> M["写 audit event + Case Memory candidate"]
-        </pre>
+            </pre>
+          </div>
+          <p class="diagram-note">Review Agent 的三种决策是 <code>ready_for_engineer</code>、<code>replan_required</code>、<code>unable_to_resolve</code>；关闭工单后只写 Case Memory candidate，不自动晋升 active memory。</p>
+        </section>
       </div>
-      <p class="diagram-note">Review Agent 的三种决策是 <code>ready_for_engineer</code>、<code>replan_required</code>、<code>unable_to_resolve</code>；关闭工单后只写 Case Memory candidate，不自动晋升 active memory。</p>
-    </section>
+    </details>
 
     <section class="section-title">
       <div>

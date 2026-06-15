@@ -65,6 +65,23 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn("当前下一步是实现 Execute Agent", html_source)
         self.assertNotIn("当前下一步是实现 Review Agent", html_source)
 
+    def test_qbr_plan_collapses_engineer_architecture_by_default(self) -> None:
+        html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            'class="architecture-disclosure"',
+            "查看 Engineer AI Agent 架构",
+            "默认收起，点击后展开 Mermaid 生命周期图。",
+            'class="architecture-diagram"',
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
+        self.assertLess(
+            html_source.index('class="architecture-disclosure"'),
+            html_source.index('class="architecture-diagram"'),
+        )
+        self.assertNotIn('<details class="architecture-disclosure" open', html_source)
+
     def test_qbr_plan_tracks_assignment_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
         required_terms = [
