@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-15 - Agent instruction context split
+
+- Area or subsystem: Agent collaboration instructions and workflow prompts
+- Prompt or model version: `agent-workflow-context-split-v1`
+- Summary: Condensed `AGENTS.md` into hot-path rules and moved low-frequency branch, finalization, verification, worker handoff, and logging details into `docs/agent_workflow_details.md`; added Claude Code and Reasonix references to the new details file.
+- Reason: The full workflow instructions were consuming too much context on every agent turn while many details are only needed for specific workflow edge cases.
+- Affected files or config:
+  - `AGENTS.md`
+  - `CLAUDE.md`
+  - `REASONIX.md`
+  - `docs/agent_workflow_details.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Agents load a shorter `AGENTS.md` for common tasks and consult `docs/agent_workflow_details.md` only when triggered by finalization, stack verification, worker handoff, logging, or workflow edge cases.
+  - Existing root-main, `.worktrees`, PR/squash-merge, CodeGraph, logging, and worker-boundary requirements remain unchanged.
+- Verification:
+  - `git diff --check`
+  - `rg -n "docs/agent.md|legacy compatibility" AGENTS.md docs/agent_workflow_details.md`
+  - `rg -n "root workspace|\.worktrees|not a blocker|finalize_task_to_main|rag_change_log|prompt_change_log|feature_list" AGENTS.md docs/agent_workflow_details.md`
+  - Python size/headings check for `AGENTS.md` and migrated detail sections.
+
 ## 2026-06-12 - Account intake routing behaviour change: unified ticket ID, no automation execution
 
 - Area or subsystem: Account-side ticket intake, support routing
