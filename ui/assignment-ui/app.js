@@ -1029,7 +1029,7 @@ function renderAdmin() {
       <nav class="admin-topbar">
         <div class="admin-topbar-brand">
           <span class="material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
-          <span>Nexus Intelligence</span>
+          <span>System Admin</span>
         </div>
         <div class="admin-topbar-search">
           <span class="material-symbols-outlined" aria-hidden="true">search</span>
@@ -1058,21 +1058,6 @@ function renderAdmin() {
       <div class="admin-body">
         <!-- Sidebar -->
         <aside class="admin-sidebar">
-          <div class="admin-sidebar-header">
-            <div class="admin-sidebar-identity">
-              <div class="admin-sidebar-icon">
-                <span class="material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
-              </div>
-              <div>
-                <h2>System Admin</h2>
-                <p>Global Operations</p>
-              </div>
-            </div>
-            <button class="admin-sidebar-ai-btn">
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-              AI Insights
-            </button>
-          </div>
           <nav class="admin-sidebar-nav">
             <ul>
               <li><a href="#">
@@ -1082,14 +1067,6 @@ function renderAdmin() {
               <li><a href="#" class="is-active">
                 <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
                 Engineer Management
-              </a></li>
-              <li><a href="#">
-                <span class="material-symbols-outlined" aria-hidden="true">menu_book</span>
-                Knowledge Base
-              </a></li>
-              <li><a href="#">
-                <span class="material-symbols-outlined" aria-hidden="true">monitoring</span>
-                System Health
               </a></li>
             </ul>
           </nav>
@@ -1113,6 +1090,10 @@ function renderAdmin() {
               <h1>Operations Overview</h1>
               <p>Real-time engineer distribution and queue status.</p>
             </div>
+            <button class="admin-main-ai-btn" type="button" data-action="admin-ai-insights" aria-label="AI Insights">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+              AI Insights
+            </button>
           </header>
 
           <!-- Metric Cards -->
