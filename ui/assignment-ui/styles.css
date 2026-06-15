@@ -430,6 +430,9 @@ p {
 }
 
 .rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   overflow: hidden;
   min-height: 54px;
   margin-bottom: 14px;
