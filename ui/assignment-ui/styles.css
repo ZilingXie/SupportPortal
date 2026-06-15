@@ -432,10 +432,20 @@ p {
 .rail-brand {
   display: flex;
   align-items: center;
-  gap: 16px;
+  justify-content: center;
+  gap: 0;
+  width: 68px;
+  min-width: 0;
   overflow: hidden;
   min-height: 54px;
   margin-bottom: 14px;
+}
+
+.engineer-rail.assignment-sidebar:hover .rail-brand,
+.engineer-rail.assignment-sidebar:focus-within .rail-brand {
+  justify-content: flex-start;
+  gap: 16px;
+  width: 100%;
 }
 
 .rail-brand-copy {
@@ -1019,6 +1029,14 @@ p {
   .engineer-rail.assignment-sidebar:focus-within .rail-brand-copy {
     opacity: 1;
     max-width: 190px;
+  }
+
+  .rail-brand,
+  .engineer-rail.assignment-sidebar:hover .rail-brand,
+  .engineer-rail.assignment-sidebar:focus-within .rail-brand {
+    justify-content: flex-start;
+    gap: 16px;
+    width: 100%;
   }
 
   .assignment-shell.is-sidebar-collapsed .sidebar-inner > :not(.rail-brand) {

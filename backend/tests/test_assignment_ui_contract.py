@@ -32,6 +32,10 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn("Engineer Assignment", html)
         self.assertIn("Choose a demo engineer", html)
         self.assertIn('id="engineer-selector"', html)
+        self.assertIn("./styles.css?v=20260615-assignment-rail-centerline-1", html)
+        self.assertIn("./app.js?v=20260615-assignment-rail-centerline-1", html)
+        self.assertIn("../styles.css?v=20260615-assignment-rail-centerline-1", admin_html)
+        self.assertIn("../app.js?v=20260615-assignment-rail-centerline-1", admin_html)
         self.assertIn("DEMO_ENGINEERS", app_source)
         self.assertIn("Jack", app_source)
         self.assertIn("Maya", app_source)
@@ -215,6 +219,16 @@ class AssignmentUiContractTests(unittest.TestCase):
         rail_brand_css = rail_brand_match.group("body") if rail_brand_match else ""
         self.assertIn("display: flex;", rail_brand_css)
         self.assertIn("align-items: center;", rail_brand_css)
+        self.assertIn("justify-content: center;", rail_brand_css)
+        self.assertIn("gap: 0;", rail_brand_css)
+        self.assertIn("width: 68px;", rail_brand_css)
+        self.assertIn("min-width: 0;", rail_brand_css)
+        self.assertRegex(
+            css,
+            r"\.engineer-rail\.assignment-sidebar:hover \.rail-brand,\s*"
+            r"\.engineer-rail\.assignment-sidebar:focus-within \.rail-brand\s*\{[^}]*"
+            r"justify-content:\s*flex-start;[^}]*gap:\s*16px;[^}]*width:\s*100%;",
+        )
         self.assertIn(".panel-card", css)
         self.assertIn(".btn-primary", css)
         self.assertIn(".detail-investigation-draft", css)
