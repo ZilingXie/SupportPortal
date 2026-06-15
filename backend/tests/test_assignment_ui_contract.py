@@ -176,6 +176,11 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn("adminEditState", app_source)
         self.assertIn("saveAdminSchedule", app_source)
 
+        # Admin page — topbar brand and nav
+        self.assertIn("System Admin", app_source)
+        self.assertNotIn("Nexus Intelligence", app_source)
+        self.assertNotIn("Global Operations", app_source)
+
         # Admin page — render
         self.assertIn("System Admin", admin_html)
         self.assertIn("renderAdmin", app_source)
@@ -210,6 +215,17 @@ class AssignmentUiContractTests(unittest.TestCase):
 
         # Admin schedule uses its own localStorage key, separate from /assignment shift
         self.assertIn("writeStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, adminSchedule)", app_source)
+
+        # Sidebar nav trimmed: only Ticket Pool and Engineer Management remain
+        self.assertIn("Ticket Pool", app_source)
+        self.assertIn("Engineer Management", app_source)
+        self.assertNotIn("Knowledge Base", app_source)
+        self.assertNotIn("System Health", app_source)
+
+        # AI Insights moved from sidebar button to main header button
+        self.assertIn("AI Insights", app_source)
+        self.assertNotIn("admin-sidebar-ai-btn", app_source)
+        self.assertIn("admin-main-ai-btn", app_source)
 
         # CSS
         self.assertIn(".engineer-selector-grid", css)
@@ -273,6 +289,8 @@ class AssignmentUiContractTests(unittest.TestCase):
         self.assertIn(".admin-engineer-pill", css)
         self.assertIn(".schedule-cell", css)
         self.assertIn(".has-edit-panel", css)
+        self.assertIn(".admin-main-ai-btn", css)
+        self.assertNotIn(".admin-sidebar-ai-btn", css)
         self.assertIn("font-size: clamp(24px, 3vw, 30px);", css)
         self.assertIn("font-size: 18px;", css)
         self.assertIn("font-size: 14px;", css)
