@@ -1070,7 +1070,10 @@ flowchart TD
           "Weekly schedule 使用 Monday–Sunday × 00:00–23:00 UTC+8 小时网格，每个 engineer 固定颜色 chip，支持 overnight shift 跨到次日显示。",
           "Admin 页提供 engineer/day picker，可为没有现有 chip 的空白日期新建或调整 shift。",
           "Admin schedule 独立于 `/assignment` 的 ASSIGNMENT_SHIFT_KEY，使用专用 localStorage key，两者互不影响。",
-          "SLA 超时/transfer 状态可模拟，契约测试确认 welcome + ready CTA + admin 入口、显式领取行为和不影响现有 engineer UI。"
+          "SLA 超时/transfer 状态可模拟，契约测试确认 welcome + ready CTA + admin 入口、显式领取行为和不影响现有 engineer UI。",
+          "`/assignment` workspace sidebar 改为 hover 展开模式：桌面默认 96px 窄栏显示品牌 icon 和头像，hover/focus-within 后展开到 320px 显示完整 context card、shift form、audit trail 和操作按钮；移动端保持全宽。",
+          "新增 Ready loading transition：点击 I'm ready to roll 后先展示 900ms loading 动画（assignment/AI handoff 语义），再进入 workspace；非 in-shift / 无 engineer 场景不触发 loading。",
+          "新增 Break after this case 功能：engineer 可在 workspace header 点击激活，approve 当前 case 后自动回到 welcome/readiness 主页面而非留在 workspace；刷新后 localStorage 保持状态不丢。"
         ],
         review: [
           "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",

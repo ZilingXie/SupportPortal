@@ -358,7 +358,7 @@ p {
 
 .assignment-shell {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -368,7 +368,7 @@ p {
   z-index: 30;
   display: flex;
   flex-direction: column;
-  width: 320px;
+  width: 96px;
   min-height: 100vh;
   max-height: 100vh;
   padding: 26px 14px 22px;
@@ -378,6 +378,12 @@ p {
   transition: width 220ms ease;
 }
 
+.engineer-rail.assignment-sidebar:hover,
+.engineer-rail.assignment-sidebar:focus-within {
+  width: 320px;
+}
+
+/* Keep legacy collapsed class for storage key compatibility — not used as primary interaction */
 .assignment-shell.is-sidebar-collapsed {
   grid-template-columns: 96px minmax(0, 1fr);
 }
@@ -386,7 +392,7 @@ p {
   width: 96px;
 }
 
-.assignment-shell.is-sidebar-collapsed .sidebar-inner > :not(.rail-brand),
+.assignment-shell.is-sidebar-collapsed .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack),
 .assignment-shell.is-sidebar-collapsed .rail-brand-copy {
   opacity: 0;
   pointer-events: none;
@@ -426,19 +432,24 @@ p {
   overflow: hidden;
   min-height: 54px;
   margin-bottom: 14px;
-  padding-right: 54px;
 }
 
 .rail-brand-copy {
   display: grid;
   gap: 4px;
   min-width: 0;
-  max-width: 190px;
+  max-width: 0;
   overflow: hidden;
-  opacity: 1;
+  opacity: 0;
   transition:
     opacity 180ms ease,
     max-width 220ms ease;
+}
+
+.engineer-rail.assignment-sidebar:hover .rail-brand-copy,
+.engineer-rail.assignment-sidebar:focus-within .rail-brand-copy {
+  opacity: 1;
+  max-width: 190px;
 }
 
 .rail-brand-title {
@@ -453,6 +464,72 @@ p {
   display: inline-block;
   color: rgba(141, 205, 255, 0.92);
   white-space: nowrap;
+}
+
+/* Hover sidebar: keep compact cues visible, reveal full context on hover/focus */
+.rail-compact-stack {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-top: -2px;
+  margin-bottom: 4px;
+  transition: opacity 160ms ease;
+}
+
+.rail-compact-avatar {
+  width: 46px;
+  height: 46px;
+  color: rgba(255, 255, 255, 0.96);
+  background: linear-gradient(135deg, rgba(202, 230, 255, 0.16), rgba(0, 176, 255, 0.24));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.rail-compact-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rail-compact-status.is-success {
+  color: #8ff3dc;
+  border-color: rgba(143, 243, 220, 0.24);
+}
+
+.rail-compact-status.is-warning {
+  color: #ffd7a1;
+  border-color: rgba(255, 215, 161, 0.24);
+}
+
+.rail-compact-status.is-muted {
+  color: rgba(221, 229, 255, 0.62);
+}
+
+.rail-compact-status .material-symbols-outlined {
+  font-size: 21px;
+}
+
+.engineer-rail.assignment-sidebar:hover .rail-compact-stack,
+.engineer-rail.assignment-sidebar:focus-within .rail-compact-stack {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-inner > :not(.rail-brand):not(.rail-compact-stack) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.engineer-rail.assignment-sidebar:hover .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack),
+.engineer-rail.assignment-sidebar:focus-within .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack) {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .panel-card,
@@ -793,6 +870,99 @@ p {
   font-size: 14px;
 }
 
+/* Ready loading transition */
+.ready-loading-view {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 28px;
+}
+
+.ready-loading-card {
+  display: grid;
+  place-items: center;
+  gap: 18px;
+  max-width: 420px;
+  border: 1px solid var(--ghost-border);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-float);
+  padding: 44px 34px;
+  text-align: center;
+}
+
+.ready-loading-card h1 {
+  font-size: clamp(20px, 2.5vw, 26px);
+  margin: 0;
+}
+
+.ready-loading-card p {
+  color: var(--ink-soft);
+  font-size: 14px;
+  max-width: 36ch;
+  margin: 0;
+}
+
+.ready-loading-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 22px;
+  background: linear-gradient(145deg, var(--primary-container), var(--primary));
+  box-shadow: 0 18px 38px rgba(0, 100, 147, 0.2);
+  animation: ready-loading-pulse 1.4s ease-in-out infinite;
+}
+
+.ready-loading-spinner .material-symbols-outlined {
+  color: var(--surface-lowest);
+  font-size: 32px;
+}
+
+@keyframes ready-loading-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+
+.ready-loading-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-container-high);
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.ready-loading-bar-fill {
+  display: block;
+  height: 100%;
+  width: 30%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-container));
+  animation: ready-loading-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes ready-loading-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(430%); }
+}
+
+/* Break after case button */
+.break-after-case-btn {
+  gap: 6px;
+}
+
+.break-after-case-btn.is-active {
+  background: rgba(0, 183, 204, 0.18);
+  color: var(--success);
+  border-color: rgba(0, 183, 204, 0.3);
+}
+
+.break-after-case-btn .material-symbols-outlined {
+  font-size: 20px;
+}
+
 @media (max-width: 1080px) {
   .assignment-shell,
   .assignment-shell.is-sidebar-collapsed {
@@ -808,6 +978,32 @@ p {
     padding: 18px;
   }
 
+  /* On mobile, always show full sidebar content (no hover) */
+  .engineer-rail.assignment-sidebar:hover,
+  .engineer-rail.assignment-sidebar:focus-within {
+    width: auto;
+  }
+
+  .rail-compact-stack,
+  .engineer-rail.assignment-sidebar:hover .rail-compact-stack,
+  .engineer-rail.assignment-sidebar:focus-within .rail-compact-stack {
+    display: none;
+  }
+
+  .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack),
+  .engineer-rail.assignment-sidebar:hover .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack),
+  .engineer-rail.assignment-sidebar:focus-within .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .rail-brand-copy,
+  .engineer-rail.assignment-sidebar:hover .rail-brand-copy,
+  .engineer-rail.assignment-sidebar:focus-within .rail-brand-copy {
+    opacity: 1;
+    max-width: 190px;
+  }
+
   .assignment-shell.is-sidebar-collapsed .sidebar-inner > :not(.rail-brand) {
     display: none;
   }
@@ -819,10 +1015,6 @@ p {
 
   .sidebar-inner {
     max-height: none;
-  }
-
-  .mobile-sidebar-action {
-    display: inline-flex;
   }
 
   .solver-board {
