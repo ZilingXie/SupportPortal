@@ -2056,18 +2056,14 @@ p {
   padding: 4px 4px 0;
 }
 
-.admin-shift-picker {
+.admin-edit-target-form {
   display: grid;
-  grid-template-columns: minmax(130px, 0.8fr) minmax(130px, 0.8fr) auto;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
   align-items: end;
-  padding: 10px;
+  padding: 12px;
   border-radius: 16px;
   background: rgba(239, 244, 251, 0.62);
-}
-
-.admin-shift-picker .btn {
-  min-height: 42px;
 }
 
 .admin-schedule-grid-scroll {
@@ -2172,13 +2168,7 @@ p {
   font-weight: 700;
   letter-spacing: 0.03em;
   white-space: nowrap;
-  cursor: pointer;
-  transition: transform 100ms ease, box-shadow 100ms ease;
-}
-
-.schedule-chip:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  cursor: default;
 }
 
 /* Admin edit panel (side panel) */
@@ -2387,7 +2377,7 @@ p {
     max-height: 360px;
   }
 
-  .admin-shift-picker {
+  .admin-edit-target-form {
     grid-template-columns: 1fr;
   }
 
