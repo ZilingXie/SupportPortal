@@ -6,7 +6,8 @@
 
 1. `AGENTS.md` is the repository source of truth. Follow it unless a direct user instruction for the current task explicitly says otherwise.
 2. `CLAUDE.md` adds Claude Code-specific operating rules. If `CLAUDE.md` appears less strict than `AGENTS.md`, follow the stricter `AGENTS.md` rule.
-3. For delegated code work, Claude Code is an implementation worker. Codex owns review, acceptance, commits, PR creation, merges, finalization, and cleanup.
+3. Read `docs/agent_workflow_details.md` when `AGENTS.md` points to low-frequency workflow details.
+4. For delegated code work, Claude Code is an implementation worker. Codex owns review, acceptance, commits, PR creation, merges, finalization, and cleanup.
 
 ## Non-Negotiable Boundary
 
