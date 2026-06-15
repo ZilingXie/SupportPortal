@@ -333,6 +333,91 @@ ROUTE_FEW_SHOT_EXAMPLES = (
             "matched_signals": ["blue screen"],
         },
     },
+    {
+        "message": (
+            "Account temporarily suspended. Our account ExampleCo under "
+            "support@example.com has been suspended due to insufficient balance. "
+            "We'd like to restore access to our account as soon as possible."
+        ),
+        "hints": {
+            "agora": ["agora"],
+            "public_info": ["billing", "policy"],
+            "flags": ["has_agora_brand"],
+        },
+        "output": {
+            "scope_label": "billing",
+            "semantic_intent": "billing.account_suspension",
+            "recommended_action": "human_review_required",
+            "automation_eligibility": "not_eligible",
+            "confidence": 0.94,
+            "reason": "Customer reports an Agora account suspension due to insufficient balance and asks to restore access.",
+            "matched_signals": ["account suspended", "insufficient balance", "restore access"],
+            "evidence_spans": [
+                "has been suspended due to insufficient balance",
+                "restore access to our account",
+            ],
+            "risk_flags": ["account_access_restore", "billing_terms_question"],
+        },
+    },
+    {
+        "message": "Please send the detailed invoice. Issue date: 6 May 2026. Transaction ID: 1104245232004173824. Amount: USD 705.97.",
+        "hints": {
+            "agora": [],
+            "public_info": ["billing"],
+            "flags": {},
+        },
+        "output": {
+            "scope_label": "billing",
+            "semantic_intent": "billing.detailed_invoice",
+            "recommended_action": "automation_candidate",
+            "automation_eligibility": "eligible",
+            "confidence": 0.96,
+            "reason": "Customer requests a detailed invoice with complete transaction data.",
+            "matched_signals": ["detailed invoice", "transaction id", "amount"],
+            "evidence_spans": [
+                "detailed invoice. Issue date: 6 May 2026. Transaction ID: 1104245232004173824. Amount: USD 705.97."
+            ],
+            "risk_flags": [],
+        },
+    },
+    {
+        "message": "The invoice amount is wrong. We were overcharged for last month.",
+        "hints": {
+            "agora": [],
+            "public_info": ["billing"],
+            "flags": {},
+        },
+        "output": {
+            "scope_label": "billing",
+            "semantic_intent": "billing.refund_or_dispute",
+            "recommended_action": "human_review_required",
+            "automation_eligibility": "not_eligible",
+            "confidence": 0.88,
+            "reason": "Customer disputes invoice amount and reports overcharge.",
+            "matched_signals": ["invoice", "wrong amount", "overcharged"],
+            "evidence_spans": ["invoice amount is wrong", "overcharged for last month"],
+            "risk_flags": ["amount_dispute", "overcharge"],
+        },
+    },
+    {
+        "message": "Our account has been suspended due to insufficient balance. Please help us restore access.",
+        "hints": {
+            "agora": [],
+            "public_info": ["billing"],
+            "flags": {},
+        },
+        "output": {
+            "scope_label": "billing",
+            "semantic_intent": "billing.account_suspension",
+            "recommended_action": "human_review_required",
+            "automation_eligibility": "not_eligible",
+            "confidence": 0.92,
+            "reason": "Account suspended due to insufficient balance; customer requests access restoration.",
+            "matched_signals": ["account suspended", "insufficient balance", "restore access"],
+            "evidence_spans": ["account has been suspended due to insufficient balance"],
+            "risk_flags": ["account_access_restore"],
+        },
+    },
 )
 
 
