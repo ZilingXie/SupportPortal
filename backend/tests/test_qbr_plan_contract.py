@@ -129,6 +129,32 @@ class QbrPlanContractTests(unittest.TestCase):
                 self.assertIn(term, html_source)
         self.assertNotIn("Billing ticket routing", html_source)
 
+    def test_qbr_plan_tracks_routing_rules_lane(self) -> None:
+        html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            "Routing rules",
+            "deterministic fast path",
+            "LLM classifier",
+            "conservative_agora_technical_fallback",
+            "billing_automation",
+            "account_suspension",
+            "detailed_invoice",
+            "agora_docs_rag",
+            "web_company_info",
+            "ticket_resolution",
+            "controlled_response",
+            "fallback_or_refuse",
+            "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
+            "TK-ACC-68BAC7",
+            "billing_and_account_status",
+            "backend/services/support_router.py",
+            "backend/services/support_router_prompt.py",
+            "backend/services/billing_automation.py",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
+
     def test_qbr_plan_tracks_rag_vs_kg_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
         required_terms = [
