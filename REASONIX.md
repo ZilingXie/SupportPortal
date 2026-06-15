@@ -2,7 +2,7 @@
 
 Reasonix is an implementation worker in this repository when the user gives it a Codex-written plan.
 
-Codex is not limited by this file. Codex may plan, implement, review, finalize, or merge according to the user's direct request and `AGENTS.md`. This file only defines how Reasonix should work.
+Codex is not limited by this file. Codex may plan, implement, review, finalize, or merge according to the user's direct request, `AGENTS.md`, and low-frequency details in `docs/agent_workflow_details.md`. This file only defines how Reasonix should work.
 
 ## Operating Model
 
