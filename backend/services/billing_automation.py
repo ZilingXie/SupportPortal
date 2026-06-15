@@ -77,6 +77,9 @@ _ACCOUNT_SUSPENSION_PATTERNS = (
     (re.compile(r"\baccount\s+(?:was\s+|is\s+|got\s+)?suspended\b", re.IGNORECASE), "account suspended"),
     (re.compile(r"\bsuspended\s+account\b", re.IGNORECASE), "suspended account"),
     (re.compile(r"\baccount\s+(?:was\s+|is\s+)?(?:blocked|disabled)\b", re.IGNORECASE), "account disabled"),
+    (re.compile(r"\baccount\s+temporarily\s+suspended\b", re.IGNORECASE), "account suspended"),
+    (re.compile(r"\baccount\s+has\s+been\s+suspended\b", re.IGNORECASE), "account suspended"),
+    (re.compile(r"\bsuspended\s+due\s+to\s+(?:insufficient\s+)?balance\b", re.IGNORECASE), "account suspended"),
 )
 
 _DETAILED_INVOICE_PATTERNS = (

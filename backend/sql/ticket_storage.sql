@@ -75,6 +75,13 @@ CREATE TABLE IF NOT EXISTS support_billing_tickets (
     internal_email_payload JSONB,
     internal_email_send_status TEXT,
     internal_email_send_reason TEXT,
+    semantic_intent TEXT,
+    automation_eligibility TEXT,
+    policy_decision TEXT,
+    not_automated_reason TEXT,
+    risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb,
+    router_source TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

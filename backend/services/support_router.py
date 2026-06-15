@@ -122,6 +122,14 @@ class SupportRouteDecision:
     route_family: str | None = None
     execution_action: str | None = None
     tooling_profile: str | None = None
+    # ── Semantic routing (LLM-first architecture) ──
+    semantic_intent: str | None = None
+    automation_eligibility: str | None = None
+    policy_decision: str | None = None
+    not_automated_reason: str | None = None
+    risk_flags: list[str] = field(default_factory=list)
+    evidence_spans: list[str] = field(default_factory=list)
+    router_source: str = "deterministic"
 
     def __post_init__(self) -> None:
         route_family, execution_action, tooling_profile = _route_contract_for_scope(
@@ -194,6 +202,8 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
     if clean_scope == BILLING_SCOPE_LABEL:
         if normalized_action in {"account_suspension", "detailed_invoice"}:
             return BILLING_ROUTE_FAMILY, normalized_action, BILLING_TOOLING_PROFILE
+        if normalized_action == "human_review_required":
+            return "billing_review", "human_review_required", BILLING_TOOLING_PROFILE
         return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
     if clean_scope == "agora_technical":
         return "agora_docs_rag", "rag", "agora_docs_only"
@@ -225,6 +235,13 @@ def _build_route_decision(
     reason: str,
     matched_signals: list[str],
     response_language: str,
+    semantic_intent: str | None = None,
+    automation_eligibility: str | None = None,
+    policy_decision: str | None = None,
+    not_automated_reason: str | None = None,
+    risk_flags: list[str] | None = None,
+    evidence_spans: list[str] | None = None,
+    router_source: str = "deterministic",
 ) -> SupportRouteDecision:
     route_family, execution_action, tooling_profile = _route_contract_for_scope(
         scope_label=scope_label,
@@ -241,6 +258,13 @@ def _build_route_decision(
         reason=reason,
         matched_signals=matched_signals,
         response_language=response_language,
+        semantic_intent=semantic_intent,
+        automation_eligibility=automation_eligibility,
+        policy_decision=policy_decision,
+        not_automated_reason=not_automated_reason,
+        risk_flags=risk_flags or [],
+        evidence_spans=evidence_spans or [],
+        router_source=router_source,
     )
 
 
@@ -364,6 +388,8 @@ def _heuristic_route_decision(
             reason=billing_match.reason,
             matched_signals=_sanitize_matched_signals(billing_match.matched_signals),
             response_language=response_language,
+            semantic_intent=f"billing.{billing_match.action}",
+            router_source="deterministic",
         )
 
     if is_customer_resolved_confirmation_candidate(
@@ -575,8 +601,12 @@ def _llm_route_decision(
     except (TypeError, ValueError):
         confidence = 0.0
     matched_signals = _sanitize_matched_signals(payload.get("matched_signals"))
-    action = _normalize_text(payload.get("action") or payload.get("execution_action")).lower()
-    if scope_label == BILLING_SCOPE_LABEL and action not in {"account_suspension", "detailed_invoice"}:
+    action = _normalize_text(
+        payload.get("action")
+        or payload.get("execution_action")
+        or payload.get("recommended_action")
+    ).lower()
+    if scope_label == BILLING_SCOPE_LABEL and action not in {"account_suspension", "detailed_invoice", "human_review_required", "refuse", "automation_candidate"}:
         return None
     return _build_route_decision(
         scope_label=scope_label,
@@ -585,6 +615,147 @@ def _llm_route_decision(
         reason=_normalize_text(payload.get("reason")) or "llm_fallback",
         matched_signals=matched_signals,
         response_language=response_language,
+        semantic_intent=_normalize_text(payload.get("semantic_intent")) or None,
+        automation_eligibility=_normalize_text(payload.get("automation_eligibility")) or None,
+        policy_decision=_normalize_text(payload.get("policy_decision")) or None,
+        not_automated_reason=_normalize_text(payload.get("not_automated_reason")) or None,
+        risk_flags=_sanitize_matched_signals(payload.get("risk_flags")),
+        evidence_spans=_sanitize_matched_signals(payload.get("evidence_spans")),
+        router_source="llm_semantic",
+    )
+
+
+def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
+    """Apply deterministic safety policy over LLM semantic routing.
+
+    The LLM recommends intent and eligibility; the policy gate has final say on:
+    - automation_eligibility (can override LLM from 'eligible' to 'not_eligible')
+    - not_automated_reason (must be set when not_eligible)
+    - route_family/execution_action (maps billing_review for non-automated billing)
+    """
+    intent = (decision.semantic_intent or "").lower()
+    risk_flags_lower = [f.lower() for f in decision.risk_flags]
+
+    # Infer intent from execution_action when semantic_intent is missing (legacy LLM response).
+    if not intent and decision.scope_label == BILLING_SCOPE_LABEL:
+        action = (decision.execution_action or decision.route or "").lower()
+        if action == "account_suspension":
+            intent = "billing.account_suspension"
+        elif action == "detailed_invoice":
+            intent = "billing.detailed_invoice"
+    semantic_intent = decision.semantic_intent or intent or None
+
+    # Non-billing: pass through unchanged.
+    if decision.scope_label != BILLING_SCOPE_LABEL:
+        return decision
+
+    # Billing: refund/dispute -> never automation.
+    if "refund_or_dispute" in intent:
+        return _build_route_decision(
+            scope_label=decision.scope_label,
+            action="human_review_required",
+            confidence=decision.confidence,
+            reason=decision.reason,
+            matched_signals=list(decision.matched_signals),
+            response_language=decision.response_language,
+            semantic_intent=semantic_intent,
+            automation_eligibility="not_eligible",
+            policy_decision="policy_gate",
+            not_automated_reason="human_review_required",
+            risk_flags=list(decision.risk_flags),
+            evidence_spans=list(decision.evidence_spans),
+            router_source=decision.router_source,
+        )
+
+    # Billing: legal/compensation in risk_flags -> never automation.
+    if any(
+        flag in {"legal_threat", "compensation", "legal"} or "legal" in flag or "compensation" in flag
+        for flag in risk_flags_lower
+    ):
+        return _build_route_decision(
+            scope_label=decision.scope_label,
+            action="human_review_required",
+            confidence=decision.confidence,
+            reason=decision.reason,
+            matched_signals=list(decision.matched_signals),
+            response_language=decision.response_language,
+            semantic_intent=semantic_intent,
+            automation_eligibility="not_eligible",
+            policy_decision="policy_gate",
+            not_automated_reason="human_review_required",
+            risk_flags=list(decision.risk_flags),
+            evidence_spans=list(decision.evidence_spans),
+            router_source=decision.router_source,
+        )
+
+    # Billing: account_suspension -> human review by default.
+    if "account_suspension" in intent:
+        return _build_route_decision(
+            scope_label=decision.scope_label,
+            action="human_review_required",
+            confidence=decision.confidence,
+            reason=decision.reason,
+            matched_signals=list(decision.matched_signals),
+            response_language=decision.response_language,
+            semantic_intent=semantic_intent,
+            automation_eligibility="not_eligible",
+            policy_decision="policy_gate",
+            not_automated_reason="human_review_required",
+            risk_flags=list(decision.risk_flags),
+            evidence_spans=list(decision.evidence_spans),
+            router_source=decision.router_source,
+        )
+
+    # Billing: detailed_invoice -> check for dispute signals, then normalize to the automation action.
+    if "detailed_invoice" in intent:
+        dispute_signals = {"amount_dispute", "overcharge", "refund", "dispute", "wrong amount"}
+        if any(sig in risk_flags_lower for sig in dispute_signals):
+            return _build_route_decision(
+                scope_label=decision.scope_label,
+                action="human_review_required",
+                confidence=decision.confidence,
+                reason=decision.reason,
+                matched_signals=list(decision.matched_signals),
+                response_language=decision.response_language,
+                semantic_intent=semantic_intent,
+                automation_eligibility="not_eligible",
+                policy_decision="policy_gate",
+                not_automated_reason="human_review_required",
+                risk_flags=list(decision.risk_flags),
+                evidence_spans=list(decision.evidence_spans),
+                router_source=decision.router_source,
+            )
+        return _build_route_decision(
+            scope_label=decision.scope_label,
+            action="detailed_invoice",
+            confidence=decision.confidence,
+            reason=decision.reason,
+            matched_signals=list(decision.matched_signals),
+            response_language=decision.response_language,
+            semantic_intent=semantic_intent,
+            automation_eligibility=decision.automation_eligibility or "eligible",
+            policy_decision=decision.policy_decision or "policy_gate",
+            not_automated_reason=decision.not_automated_reason,
+            risk_flags=list(decision.risk_flags),
+            evidence_spans=list(decision.evidence_spans),
+            router_source=decision.router_source,
+        )
+
+    # Billing: general or unknown intent -> human review.
+    return _build_route_decision(
+        scope_label=decision.scope_label,
+        action="human_review_required",
+        confidence=decision.confidence,
+        reason=decision.reason,
+        matched_signals=list(decision.matched_signals),
+        response_language=decision.response_language,
+        semantic_intent=semantic_intent,
+        automation_eligibility="not_eligible",
+        policy_decision="policy_gate",
+        not_automated_reason="human_review_required",
+        risk_flags=list(decision.risk_flags),
+        evidence_spans=list(decision.evidence_spans),
+        router_source=decision.router_source,
     )
 
 
@@ -637,7 +808,7 @@ def decide_support_route(
         DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD,
     )
     if llm_decision and llm_decision.confidence >= threshold:
-        return llm_decision
+        return _apply_policy_gate(llm_decision)
 
     return _build_route_decision(
         scope_label="agora_technical",
@@ -883,6 +1054,30 @@ def resolve_support_message(
         current_ticket_status=current_ticket_status,
         has_active_engineer_case=has_active_engineer_case,
     )
+    if decision.route_family == "billing_review":
+        return SupportResolution(
+            answer=build_refusal_answer(decision),
+            confidence=round(decision.confidence, 2),
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="human_review_required",
+            scope_label=decision.scope_label,
+            route_family=decision.route_family,
+            execution_action=decision.execution_action,
+            tooling_profile=decision.tooling_profile,
+            route_reason=decision.reason,
+            route_confidence=decision.confidence,
+            search_used=False,
+            matched_signals=list(decision.matched_signals),
+            evidence_summary={
+                "billing_action": str(decision.execution_action or decision.route),
+                "semantic_intent": decision.semantic_intent or "",
+                "not_automated_reason": decision.not_automated_reason or "",
+                "risk_flags": list(decision.risk_flags),
+                "evidence_spans": list(decision.evidence_spans),
+            },
+        )
     if decision.route_family == BILLING_ROUTE_FAMILY:
         billing_result = build_billing_automation_result(
             action=str(decision.execution_action or decision.route),

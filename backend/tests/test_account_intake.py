@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.support_router import SupportRouteDecision
 
 
 class AccountIntakeApiTests(unittest.TestCase):
@@ -201,6 +202,58 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["route"], "web_search")
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["customer_reply"], None)
+
+    def test_account_intake_billing_review_stays_not_automated(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="human_review_required",
+            confidence=0.91,
+            reason="billing_account_suspension",
+            matched_signals=["account suspended"],
+            response_language="en",
+            semantic_intent="billing.account_suspension",
+            automation_eligibility="not_eligible",
+            policy_decision="policy_gate",
+            not_automated_reason="human_review_required",
+            risk_flags=["account_access_restore"],
+            evidence_spans=["account has been suspended"],
+            router_source="llm_semantic",
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "decide_support_route",
+            return_value=decision,
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "Our account has been suspended due to balance.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "not_automated")
+        self.assertEqual(payload["route"], "human_review_required")
+        self.assertEqual(payload["route_family"], "billing_review")
+        self.assertEqual(payload["automation_eligibility"], "not_eligible")
+        self.assertEqual(payload["policy_decision"], "policy_gate")
+        self.assertEqual(payload["not_automated_reason"], "human_review_required")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["automation_status"], "not_automated")
+        self.assertEqual(bt["route"], "human_review_required")
+        self.assertEqual(bt["semantic_intent"], "billing.account_suspension")
+        self.assertEqual(bt["policy_decision"], "policy_gate")
+
+        events = self.repository.list_ticket_events(payload["ticket_id"])
+        self.assertEqual(events[0]["payload"]["account_intake_status"], "not_automated")
+        self.assertEqual(events[0]["payload"]["execution_action"], "human_review_required")
 
     def test_billing_tickets_list_api(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
