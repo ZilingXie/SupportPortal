@@ -33,6 +33,36 @@ For each new entry, record:
   - `uv run --with ruff ruff check backend/services/kg_official_docs_scope.py backend/tests/test_kg_official_docs_scope.py`
   - Static marker check confirmed `docs/qbr_plan.html` and this change log contain the new KG scope guard wording.
 
+## 2026-06-12 - Add KG contracts, schema v1, and provenance validation (PR1)
+
+- Summary:
+  - Defined the SupportPortal KG contract layer (`KgProvenance`, `OfficialDocKgChunkInput`, `KgExpansion`, `KgRerankSignal`, `KgStructuredFact`, `KgIngestResult`, `KgValidationError`) with mandatory provenance fields (`chunk_id`, `source_url`, `document_id`, `schema_version`).
+  - Added `build_official_doc_kg_chunk_input()` to `kg_official_docs_scope.py`: a chunk-level constructor that extends the existing plan-level scope gate. Missing provenance fields are rejected with `None`, never default-filled.
+  - Added official-docs KG schema v1 (`backend/config/kg/supportportal_official_docs_v1.yaml`) with 9 entity types and 10 edge types, `strict` validation mode, and a stable schema-hash mechanism.
+  - Added `kg_schema.py` with YAML loading, a limited fallback parser for local environments without PyYAML installed, schema hash computation, schema-reference validation, and entity/edge-type strict-mode validation.
+  - Added review fixes so KG output helpers validate nested provenance envelopes directly, official-doc chunk text preserves code/newline structure, schema hash changes when prompt-facing descriptions or edge constraints change, and invalid schema modes or edge references are rejected.
+  - Added comprehensive targeted tests (54 total with the existing scope/QBR checks) covering contract construction, provenance validation, scope gate rejection, schema loading, entity/edge counts, hash stability, schema-reference validation, strict-mode rejections, and QBR plan markers.
+- Reason:
+  - First-phase KG work must pin down the contract, schema, and provenance boundary before any GraphRAG adapter or runtime integration is built. This prevents no-provenance KG outputs from entering runtime context and keeps the scope locked to official docs only.
+- Affected files/config:
+  - `backend/services/kg_supportportal_contracts.py` (new)
+  - `backend/services/kg_official_docs_scope.py` (modified — added chunk-level constructor + `KG_OFFICIAL_DOCS_SCHEMA_VERSION`)
+  - `backend/services/kg_schema.py` (new)
+  - `backend/config/kg/supportportal_official_docs_v1.yaml` (new)
+  - `backend/tests/test_kg_supportportal_contracts.py` (new)
+  - `backend/tests/test_kg_schema.py` (new)
+  - `backend/tests/test_kg_official_docs_scope.py` (unchanged — existing tests still pass)
+  - `requirements.base.txt` (added `PyYAML` for schema loading in deployed environments)
+  - `docs/qbr_plan.html` (updated RAG vs KG lane to show PR1 contracts/schema/provenance status)
+  - `docs/rag_change_log.md` (this entry)
+- Data impact:
+  - No existing RAG, vector, BM25, or graph data changes.
+  - No graph database writes are introduced.
+  - The contract layer and schema are pure definitional artifacts; they do not connect to GraphRAG, Neo4j, or the runtime RAG pipeline.
+- Verification:
+  - `rtk pytest backend/tests/test_kg_official_docs_scope.py backend/tests/test_kg_supportportal_contracts.py backend/tests/test_kg_schema.py backend/tests/test_qbr_plan_contract.py -q` (54 passed)
+  - `rtk uv run --with ruff ruff check backend/services/kg_*.py backend/tests/test_kg_*.py` (All checks passed)
+
 ## 2026-06-11 - Remove PDF and OCR ingestion support from vendor/cusmem
 
 - Summary:

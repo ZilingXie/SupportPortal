@@ -1,0 +1,94 @@
+# SupportPortal Official Docs KG Schema v1
+# ==========================================
+# Pre-defined entity and edge types for the first-phase KG auxiliary layer.
+# This schema is intentionally narrow — it only covers official documentation
+# concepts and relationships.  Case memory, troubleshooting articles, and
+# benchmark data are out of scope.
+
+schema:
+  name: supportportal_official_docs_v1
+  version: "1.0.0"
+  description: >
+    First-phase official documentation knowledge graph schema for
+    SupportPortal Client AI RAG auxiliary layer.  Only official doc
+    entities and relationships are modelled.
+  mode: strict  # unknown entity/edge types are rejected
+
+  entities:
+    - name: Product
+      description: "An Agora product or SDK, e.g. Video Calling, Voice Calling, Chat."
+
+    - name: API
+      description: "A named API method, endpoint, or callback, e.g. joinChannel, createClient."
+
+    - name: Feature
+      description: "A product feature or capability, e.g. screen sharing, virtual background."
+
+    - name: ErrorCode
+      description: "A documented error code with its meaning, e.g. ERR_JOIN_CHANNEL_FAILED."
+
+    - name: Symptom
+      description: "A user-visible problem symptom, e.g. black screen, no audio, connection timeout."
+
+    - name: Solution
+      description: "A documented resolution step or workaround, e.g. check app ID, restart channel."
+
+    - name: Limitation
+      description: "A known platform or version limitation, e.g. max 17 concurrent channels."
+
+    - name: Platform
+      description: "A supported platform or OS, e.g. iOS, Android, Web, Windows, macOS."
+
+    - name: Version
+      description: "An SDK or product version, e.g. v4.5.0, v5.0.0-rc.1."
+
+  edges:
+    - name: PROVIDES_API
+      description: "Product exposes an API."
+      from: Product
+      to: API
+
+    - name: SUPPORTS_PLATFORM
+      description: "Product runs on a platform."
+      from: Product
+      to: Platform
+
+    - name: INTRODUCED_IN_VERSION
+      description: "API or Feature was first available in a version."
+      from: [API, Feature]
+      to: Version
+
+    - name: DEPRECATED_IN_VERSION
+      description: "API or Feature was deprecated in a version."
+      from: [API, Feature]
+      to: Version
+
+    - name: HAS_LIMITATION
+      description: "Product, API, or Feature has a known limitation."
+      from: [Product, API, Feature]
+      to: Limitation
+
+    - name: CAUSES_SYMPTOM
+      description: "An ErrorCode or Limitation can cause a symptom."
+      from: [ErrorCode, Limitation]
+      to: Symptom
+
+    - name: RESOLVES_SYMPTOM
+      description: "A Solution resolves a symptom."
+      from: Solution
+      to: Symptom
+
+    - name: RETURNS_ERROR
+      description: "An API returns an error code under certain conditions."
+      from: API
+      to: ErrorCode
+
+    - name: REQUIRES_FEATURE
+      description: "An API or Solution requires a Feature to be enabled."
+      from: [API, Solution]
+      to: Feature
+
+    - name: RELATED_TO
+      description: "Generic cross-reference between any two entities."
+      from: "*"
+      to: "*"
