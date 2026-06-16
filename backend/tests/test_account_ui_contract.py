@@ -111,3 +111,21 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn(".reply-composer", styles)
         self.assertIn(".reply-textarea", styles)
         self.assertIn(".reply-actions", styles)
+
+    def test_account_app_source_link_contract(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        # safeSourceLink supports Link, link, url field variants.
+        self.assertIn("source.Link", app_source)
+        self.assertIn("source.link", app_source)
+        self.assertIn("source.url", app_source)
+
+        # renderSourceValue has Zendesk label for zendesk.com links.
+        self.assertIn("zendesk.com", app_source)
+        self.assertIn('"Zendesk"', app_source)
+
+        # Keep existing safety markers.
+        self.assertIn('target="_blank"', app_source)
+        self.assertIn('rel="noopener noreferrer"', app_source)
+        self.assertIn('parsed.protocol === "http:"', app_source)
+        self.assertIn('parsed.protocol === "https:"', app_source)

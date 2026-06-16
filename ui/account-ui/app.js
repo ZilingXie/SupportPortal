@@ -70,7 +70,13 @@ function routeClass(route) {
 }
 
 function safeSourceLink(source) {
-  const link = String(source?.Link || "").trim();
+  let link = "";
+  if (source && typeof source === "object") {
+    link = String(source.Link || source.link || source.url || "");
+  } else if (typeof source === "string") {
+    link = source;
+  }
+  link = link.trim();
   if (!link) return "";
   try {
     const parsed = new URL(link);
@@ -82,7 +88,7 @@ function safeSourceLink(source) {
 }
 
 function normalizeSource(source) {
-  if (source && typeof source === "object" && safeSourceLink(source)) {
+  if (safeSourceLink(source)) {
     return "api";
   }
   const normalized = String(source || "").trim().toLowerCase().replaceAll("_", "-");
@@ -103,11 +109,10 @@ function sourceClass(source) {
 }
 
 function renderSourceValue(source) {
-  if (source && typeof source === "object") {
-    const link = safeSourceLink(source);
-    if (link) {
-      return `<a class="source-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Link</a>`;
-    }
+  const link = safeSourceLink(source);
+  if (link) {
+    const label = link.includes("zendesk.com") ? "Zendesk" : "Link";
+    return `<a class="source-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
   }
   return `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabel(source))}</span>`;
 }
