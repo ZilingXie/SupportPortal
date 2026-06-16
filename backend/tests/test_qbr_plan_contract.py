@@ -56,6 +56,9 @@ class QbrPlanContractTests(unittest.TestCase):
             "revise 携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent",
             "revise replan 链路已完成接入",
             "Review Agent 第一版已实现 deterministic review decision",
+            "Guardrail final approve 已通过两段 approve 机制接管 runtime",
+            "第二次 final approve 才发送客户回复并关闭工单",
+            "blocked 时保留 revise 出口",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -68,6 +71,7 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn("当前下一步是实现 revise/approve 链路", html_source)
         self.assertNotIn("Summary/Plan/Execute/Review 真实链路仍未接管 runtime", html_source)
         self.assertNotIn("Execute/Review 尚未接管", html_source)
+        self.assertNotIn("不是 Engineer AI 已经完成 guardrail final approve", html_source)
 
     def test_qbr_plan_collapses_engineer_architecture_by_default(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")

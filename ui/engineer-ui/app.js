@@ -505,6 +505,15 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
         : payload.engineer_agent_state && typeof payload.engineer_agent_state === "object"
         ? payload.engineer_agent_state
         : null;
+    // Merge active_guardrail_final from response into agent state if present
+    if (
+      payload.active_guardrail_final &&
+      typeof payload.active_guardrail_final === "object" &&
+      nextEngineerAgentState &&
+      typeof nextEngineerAgentState === "object"
+    ) {
+      nextEngineerAgentState.active_guardrail_final = payload.active_guardrail_final;
+    }
     selectedTicket = {
       ...selectedTicket,
       status: payload.status ?? selectedTicket.status,
@@ -1529,16 +1538,33 @@ function findLatestEngineerAiMessageIndex(messages) {
 
 function getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, options = {}) {
   if (!activeInvestigation) {
-    return { showApprovalBlock: false, decisionIndex: -1 };
+    return { showApprovalBlock: false, decisionIndex: -1, awaitingFinalApproval: false };
   }
+
+  const investigationState = String(activeInvestigation.state || "").trim().toLowerCase();
+  const awaitingFinalApproval = investigationState === "awaiting_final_approval";
+  const agentState = getEngineerAgentState(ticket);
+  const activeGuardrailFinal =
+    agentState?.active_guardrail_final && typeof agentState.active_guardrail_final === "object"
+      ? agentState.active_guardrail_final
+      : null;
+  const guardrailBlocked = String(activeGuardrailFinal?.decision || "").trim() === "blocked";
 
   const fallbackEngineerAiIndex = findLatestEngineerAiMessageIndex(investigationMessages);
   const suppressApprovalBlock = options?.suppressApprovalBlock === true;
-  const showApprovalBlock = !suppressApprovalBlock && hasValidatedInvestigationApproval(ticket, activeInvestigation);
+
+  // In awaiting_final_approval state, show guardrail final review instead of approve block
+  const showApprovalBlock =
+    !suppressApprovalBlock &&
+    !awaitingFinalApproval &&
+    !guardrailBlocked &&
+    hasValidatedInvestigationApproval(ticket, activeInvestigation);
 
   return {
     showApprovalBlock,
     decisionIndex: showApprovalBlock ? fallbackEngineerAiIndex : -1,
+    awaitingFinalApproval,
+    activeGuardrailFinal,
   };
 }
 
@@ -2546,7 +2572,7 @@ function renderInvestigationDecisionHtml({
         class="btn btn-primary"
         data-detail-action="approve-investigation"
         ${controlsDisabled ? "disabled" : ""}
-      >Approve Reply</button>
+      >Approve for Guardrail</button>
     </div>
   `;
 }
@@ -2572,8 +2598,132 @@ function renderInvestigationClosingStateHtml() {
     >
       <span class="loading-spinner loading-spinner-sm" aria-hidden="true"></span>
       <div class="detail-investigation-closing-copy">
-        <strong>Approving Reply</strong>
-        <p>Sending the approved customer reply and closing this engineer ticket...</p>
+        <strong>Running Guardrail Review</strong>
+        <p>Running final guardrail review before sending to customer...</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderFinalApprovalPendingHtml() {
+  return `
+    <section
+      class="detail-investigation-closing-state"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <span class="loading-spinner loading-spinner-sm" aria-hidden="true"></span>
+      <div class="detail-investigation-closing-copy">
+        <strong>Final Approving</strong>
+        <p>Sending final approved reply and closing this engineer ticket...</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderGuardrailFinalReviewHtml({ guardrailPacket, draftCustomerReply, controlsDisabled }) {
+  if (!guardrailPacket || typeof guardrailPacket !== "object") {
+    return "";
+  }
+  const decision = String(guardrailPacket.decision || "").trim();
+  const checks = guardrailPacket.checks && typeof guardrailPacket.checks === "object" ? guardrailPacket.checks : {};
+  const blockers = Array.isArray(guardrailPacket.blockers) ? guardrailPacket.blockers : [];
+  const guardrailId = String(guardrailPacket.guardrail_id || "unknown");
+  const approved = decision === "approved_for_final_engineer_review";
+  const finalReply = String(guardrailPacket.customer_reply || draftCustomerReply || "").trim();
+
+  const checkItems = Object.keys(checks).length
+    ? Object.entries(checks)
+        .map(
+          ([name, detail]) => {
+            const label = String(name || "").replace(/_/g, " ");
+            const passed = detail && typeof detail === "object" && detail.passed === true;
+            const checkDetail = detail && typeof detail === "object" ? String(detail.detail || "") : "";
+            return `
+              <div class="detail-readiness-check ${passed ? "is-passed" : "is-missing"}">
+                <span class="detail-readiness-check-dot" aria-hidden="true"></span>
+                <span>${escapeHtml(label)}${checkDetail ? ": " + escapeHtml(checkDetail) : ""}</span>
+              </div>
+            `;
+          }
+        )
+        .join("")
+    : '<div class="detail-readiness-check is-missing"><span class="detail-readiness-check-dot" aria-hidden="true"></span><span>No checks recorded</span></div>';
+
+  const blockersHtml = blockers.length
+    ? blockers
+        .map(
+          (blocker) => `
+            <li class="detail-guardrail-blocker-item">${escapeHtml(String(blocker || ""))}</li>
+          `
+        )
+        .join("")
+    : "";
+
+  return `
+    <section class="panel-card detail-guardrail-final-review">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Guardrail Final Review</p>
+          <h3 class="panel-card-title">Final Customer Reply</h3>
+        </div>
+        <span class="detail-readiness-pill ${approved ? "is-ready" : "is-blocked"}">
+          ${approved ? "Approved" : "Blocked"}
+        </span>
+      </div>
+      <div class="detail-guardrail-body">
+        <div class="detail-guardrail-meta">
+          <span class="mono">${escapeHtml(guardrailId)}</span>
+        </div>
+        <div class="detail-readiness-checks" aria-label="Guardrail checks">
+          ${checkItems}
+        </div>
+        ${
+          blockersHtml
+            ? `
+              <div class="detail-guardrail-blockers">
+                <p class="detail-guardrail-blockers-label">Blockers</p>
+                <ul class="detail-guardrail-blockers-list">${blockersHtml}</ul>
+              </div>
+            `
+            : ""
+        }
+        <div class="detail-investigation-draft">
+          <p class="detail-investigation-draft-label">Final Customer Reply</p>
+          <div class="detail-investigation-draft-body">${formatMultiline(
+            finalReply || "Reply is not ready yet."
+          )}</div>
+        </div>
+        ${
+          approved
+            ? `
+              <div class="detail-investigation-inline-actions">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  data-detail-action="final-approve-investigation"
+                  ${controlsDisabled ? "disabled" : ""}
+                >Final Approve &amp; Send</button>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  data-detail-action="revise-investigation"
+                  ${controlsDisabled ? "disabled" : ""}
+                >Ask AI to Revise</button>
+              </div>
+            `
+            : `
+              <div class="detail-investigation-inline-actions">
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  data-detail-action="revise-investigation"
+                  ${controlsDisabled ? "disabled" : ""}
+                >Ask AI to Revise</button>
+              </div>
+            `
+        }
       </div>
     </section>
   `;
@@ -3127,11 +3277,23 @@ function buildTicketDetailViewState() {
   const investigationMessages = mergeInvestigationMessagesWithLocalState(ticketId, durableInvestigationMessages);
   const pendingLocalReply = hasPendingLocalInvestigationReply(ticketId);
   const pendingLocalApproval = hasPendingLocalInvestigationApproval(ticketId);
-  const showApproveInFlightState = pendingLocalApproval;
   const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, {
     suppressApprovalBlock: pendingLocalReply || pendingLocalApproval,
   });
+  const showApproveInFlightState = pendingLocalApproval && !approvalUiState.awaitingFinalApproval;
+  const showFinalApprovalInFlight = pendingLocalApproval && approvalUiState.awaitingFinalApproval;
   const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
+  const guardrailPacket = approvalUiState.activeGuardrailFinal;
+  const guardrailFinalBlocked = String(guardrailPacket?.decision || "").trim() === "blocked";
+  const showGuardrailFinalReview =
+    (approvalUiState.awaitingFinalApproval || guardrailFinalBlocked) && guardrailPacket && !showFinalApprovalInFlight;
+  const guardrailFinalReviewHtml = showGuardrailFinalReview
+    ? renderGuardrailFinalReviewHtml({
+        guardrailPacket,
+        draftCustomerReply,
+        controlsDisabled: tellAiSubmitting,
+      })
+    : "";
   const openingCaseBuddyMessageIndex = findOpeningCaseBuddyMessageIndex(investigationMessages);
   const structuredCaseBuddySections =
     openingCaseBuddyMessageIndex >= 0
@@ -3152,15 +3314,24 @@ function buildTicketDetailViewState() {
     approvalUiState,
     openingCaseBuddyMessageIndex,
     structuredCaseBuddySections,
-    replyReadinessReviewHtml: showApproveInFlightState ? "" : renderReplyReadinessReviewHtml(ticket, activeInvestigation),
+    replyReadinessReviewHtml: showApproveInFlightState || showFinalApprovalInFlight ? "" : renderReplyReadinessReviewHtml(ticket, activeInvestigation),
     showInlineConfirmation: approvalUiState.showApprovalBlock,
     showApproveInFlightState,
-    showInvestigationComposer: Boolean(activeInvestigation) && !showApproveInFlightState,
+    showFinalApprovalInFlight,
+    showGuardrailFinalReview,
+    guardrailFinalBlocked,
+    guardrailFinalReviewHtml,
+    showInvestigationComposer:
+      Boolean(activeInvestigation) &&
+      !showApproveInFlightState &&
+      !showFinalApprovalInFlight &&
+      (!showGuardrailFinalReview || investigationReviseMode || guardrailFinalBlocked),
     showInvestigationDraftPreview:
       Boolean(activeInvestigation) &&
       Boolean(draftCustomerReply) &&
       !approvalUiState.showApprovalBlock &&
-      !showApproveInFlightState,
+      !showApproveInFlightState &&
+      !showGuardrailFinalReview,
     hitlFeedbackPanelHtml: renderHitlFeedbackPanelHtml(ticket),
     draftCustomerReply,
     controlsDisabled: tellAiSubmitting,
@@ -3245,6 +3416,23 @@ function renderTicketDetailConversationBodyHtml(viewState) {
 function renderTicketDetailComposerShellHtml(viewState) {
   if (viewState.showApproveInFlightState) {
     return renderInvestigationClosingStateHtml();
+  }
+  if (viewState.showFinalApprovalInFlight) {
+    return renderFinalApprovalPendingHtml();
+  }
+  if (viewState.showGuardrailFinalReview) {
+    if (!viewState.showInvestigationComposer) {
+      return viewState.guardrailFinalReviewHtml;
+    }
+    return `
+      ${viewState.guardrailFinalReviewHtml}
+      ${renderInvestigationComposerHtml({
+        draft: tellAiDraft,
+        controlsDisabled: viewState.controlsDisabled,
+        reviseMode: true,
+        approvalMode: true,
+      })}
+    `;
   }
   if (!viewState.showInvestigationComposer) {
     return "";
@@ -3874,7 +4062,13 @@ async function handleDetailClick(event) {
       activeInvestigation,
       Array.isArray(activeInvestigation?.messages) ? activeInvestigation.messages : []
     );
-    const isRevisionFlow = Boolean(investigationReviseMode || approvalUiState.showApprovalBlock);
+    const guardrailDecision = String(approvalUiState.activeGuardrailFinal?.decision || "").trim();
+    const isRevisionFlow = Boolean(
+      investigationReviseMode ||
+        approvalUiState.showApprovalBlock ||
+        approvalUiState.awaitingFinalApproval ||
+        guardrailDecision === "blocked"
+    );
     button.disabled = true;
     startLocalInvestigationOptimisticSend(
       requestTicketId,
@@ -3943,16 +4137,60 @@ async function handleDetailClick(event) {
       investigationReviseMode = false;
       setInvestigationComposerDraftFromMarkdown("");
       applyInvestigationResponseToSelectedTicket(selectedTicketId, responsePayload);
+      // Keep in investigating status; guardrail final review will be shown after refresh
+      renderTicketDetail();
+      await loadTickets({ refreshDetail: false });
+      await refreshSelectedTicket({ silent: true });
+    } catch (error) {
+      clearLocalInvestigationPendingApproval(selectedTicketId);
+      window.alert(`Approve for guardrail failed: ${error.message}`);
+      await refreshSelectedTicket({ silent: true });
+    } finally {
+      tellAiSubmitting = false;
+      clearLocalInvestigationPendingApproval(selectedTicketId);
+      renderTicketDetail();
+      button.disabled = false;
+    }
+    return;
+  }
+
+  if (action === "final-approve-investigation") {
+    const activeInvestigation = getActiveInvestigation(selectedTicket);
+    if (!activeInvestigation) {
+      return;
+    }
+    const approvalUiState = getInvestigationApprovalUiState(
+      selectedTicket,
+      activeInvestigation,
+      Array.isArray(activeInvestigation?.messages) ? activeInvestigation.messages : []
+    );
+    if (!approvalUiState.awaitingFinalApproval || !approvalUiState.activeGuardrailFinal) {
+      return;
+    }
+    if (approvalUiState.activeGuardrailFinal.decision !== "approved_for_final_engineer_review") {
+      window.alert("Guardrail final review did not approve the customer reply.");
+      return;
+    }
+    button.disabled = true;
+    tellAiSubmitting = true;
+    startLocalInvestigationPendingApproval(selectedTicketId);
+    renderTicketDetail();
+    try {
+      const responsePayload = await submitInvestigationConfirmation(selectedTicketId, "final_approve");
+      investigationReviseMode = false;
+      setInvestigationComposerDraftFromMarkdown("");
+      applyInvestigationResponseToSelectedTicket(selectedTicketId, responsePayload);
       setSelectedPoolStatus("resolved", { render: false });
       renderTicketDetail();
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
     } catch (error) {
       clearLocalInvestigationPendingApproval(selectedTicketId);
-      window.alert(`Approve reply failed: ${error.message}`);
+      window.alert(`Final approve failed: ${error.message}`);
       await refreshSelectedTicket({ silent: true });
     } finally {
       tellAiSubmitting = false;
+      clearLocalInvestigationPendingApproval(selectedTicketId);
       renderTicketDetail();
       button.disabled = false;
     }
