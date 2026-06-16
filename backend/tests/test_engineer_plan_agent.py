@@ -361,6 +361,7 @@ class EngineerPlanAgentContractTests(unittest.TestCase):
         revise_context = {
             "revise_note": "Focus on SDK initialization order, not permissions.",
             "previous_plan_id": "plan_summary_ec_001_r1",
+            "replan_count": 1,
         }
         plan = build_engineer_plan(
             summary_packet=SAMPLE_SUMMARY_PACKET,
@@ -373,6 +374,79 @@ class EngineerPlanAgentContractTests(unittest.TestCase):
         self.assertIn("revise_context", plan)
         self.assertEqual(plan["revise_context"]["revise_note"], revise_context["revise_note"])
         self.assertIn("r2", plan["plan_id"])
+
+    def test_build_plan_with_revise_context_carries_previous_evidence_and_review(self) -> None:
+        revise_context = {
+            "revise_note": "Check SDK 4.2.1 compatibility with Android 14 specifically.",
+            "previous_plan_id": "plan_summary_ec_001_r1",
+            "previous_execution_id": "exec_plan_summary_ec_001_r1",
+            "previous_review_id": "review_exec_plan_summary_ec_001_r1",
+            "previous_review_decision": "replan_required",
+            "review_problem_statement": "Evidence does not confirm the exact SDK version boundary.",
+            "review_evidence_gaps": ["Exact SDK version not confirmed", "No cross-platform reproduction"],
+            "previous_evidence_packet": {
+                "packet_id": "evidence_exec_plan_summary_ec_001_r1",
+                "packet_version": "engineer-evidence-packet-v1",
+                "customer_safe_summary": "Upgrade to SDK 4.2.2 resolves the issue.",
+                "internal_summary": "SDK 4.2.1 has a known callback bug on Android 14.",
+                "evidence_refs": [
+                    {"task_id": "task_context_review", "summary": "Reviewed ticket context"},
+                    {"kind": "customer_message", "text": "token renew callback never fires"},
+                ],
+                "missing_information": ["Exact SDK version", "Device model"],
+            },
+            "previous_task_results": [
+                {
+                    "task_id": "task_context_review",
+                    "status": "completed",
+                    "summary": "Reviewed ticket context and handoff packet.",
+                },
+            ],
+            "engineer_feedback": {
+                "note": "Check SDK 4.2.1 compatibility with Android 14 specifically.",
+                "engineer_id": "eng_001",
+                "created_at": "2026-06-20T10:05:00Z",
+            },
+            "replan_count": 1,
+        }
+        plan = build_engineer_plan(
+            summary_packet=SAMPLE_SUMMARY_PACKET,
+            mem0_context=None,
+            skill_inventory=None,
+            revise_context=revise_context,
+            now_value="2026-06-20T10:01:00Z",
+        )
+
+        self.assertIn("revise_context", plan)
+        rc = plan["revise_context"]
+        self.assertEqual(rc["revise_note"], revise_context["revise_note"])
+        self.assertEqual(rc["previous_plan_id"], revise_context["previous_plan_id"])
+        # engineer_feedback carried through
+        self.assertIn("engineer_feedback", rc)
+        self.assertEqual(rc["engineer_feedback"]["note"], revise_context["engineer_feedback"]["note"])
+        # previous_evidence_packet carried through
+        self.assertIn("previous_evidence_packet", rc)
+        self.assertEqual(
+            rc["previous_evidence_packet"]["packet_id"],
+            revise_context["previous_evidence_packet"]["packet_id"],
+        )
+        self.assertEqual(
+            rc["previous_evidence_packet"]["evidence_refs"][1]["kind"],
+            "customer_message",
+        )
+        self.assertEqual(
+            rc["previous_evidence_packet"]["evidence_refs"][1]["text"],
+            "token renew callback never fires",
+        )
+        # review_problem_statement carried through
+        self.assertEqual(rc["review_problem_statement"], revise_context["review_problem_statement"])
+        # previous_task_results carried through
+        self.assertIn("previous_task_results", rc)
+        self.assertEqual(len(rc["previous_task_results"]), 1)
+        self.assertEqual(rc["previous_task_results"][0]["task_id"], "task_context_review")
+        # plan_id uses replan_count suffix _r2 (replan_count=1 -> _r{n+1}=_r2)
+        self.assertIn("_r2", plan["plan_id"])
+        self.assertNotIn("_r1", plan["plan_id"])
 
 
 if __name__ == "__main__":
