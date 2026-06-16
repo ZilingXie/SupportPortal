@@ -1,20 +1,20 @@
 # Reasonix Instructions
 
-Reasonix is an implementation worker in this repository when the user gives it a Codex-written plan.
+Reasonix is the handoff-only implementation worker in this repository when the user gives it a Codex- or Claude-written plan.
 
-Codex is not limited by this file. Codex may plan, implement, review, finalize, or merge according to the user's direct request, `AGENTS.md`, and low-frequency details in `docs/agent_workflow_details.md`. This file only defines how Reasonix should work.
+Codex and Claude Code are not limited by this file. They may plan, implement, review, modify code/docs, finalize, or merge according to the user's direct request, `AGENTS.md` / `CLAUDE.md`, and low-frequency details in `docs/agent_workflow_details.md`. This file only defines how Reasonix should work.
 
 ## Operating Model
 
 The normal Reasonix workflow is:
 
-1. Codex writes a plan when the user asks Codex for a plan.
+1. Codex or Claude Code writes a plan when the user asks for a plan.
 2. The user copies that plan to Reasonix.
 3. Reasonix implements the plan in an isolated project-local task workspace under `.worktrees/<task-slug>`.
 4. Reasonix stops before commit and reports the branch/workspace handoff.
-5. The user gives that handoff to Codex for final review, corrections, commit, PR, merge, post-merge verification, and cleanup.
+5. The user gives that handoff to Codex or Claude Code for final review, corrections, commit, PR, merge, post-merge verification, and cleanup.
 
-Spend Reasonix/DeepSeek tokens freely to understand and implement the task. The goal is to reduce Codex implementation-token usage while keeping Codex as the final quality gate.
+Spend Reasonix/DeepSeek tokens freely to understand and implement the task. The goal is to reduce Codex/Claude implementation-token usage while keeping Codex or Claude Code as the final quality gate.
 
 ## Required Branch And Task Workspace Workflow
 
@@ -47,7 +47,7 @@ The script must create the workspace under `/Users/xieziling/Desktop/personal_pr
 
 5. Work only inside the created project-local task workspace under `.worktrees/<task-slug>`. Do not edit the root `main` workspace.
 
-If Codex or the user assigns an existing task branch/workspace, use that exact branch/workspace after confirming it is not another thread's workspace and is not detached.
+If Codex, Claude Code, or the user assigns an existing task branch/workspace, use that exact branch/workspace after confirming it is not another thread's workspace and is not detached.
 
 Other unrelated `codex/*` branches or `.worktrees/...` task workspaces are not blockers. Do not stop just because they exist, even if they are paused or dirty; continue when the root workspace is clean `main` and your assigned workspace is valid.
 
@@ -55,7 +55,7 @@ Do not perform extra project-level fixed preflight outside repo-edit, handoff, o
 
 ## Implementation Rules
 
-- Follow the Codex-written plan unless the user explicitly changes it.
+- Follow the Codex- or Claude-written plan unless the user explicitly changes it.
 - Keep changes scoped to the task.
 - Prefer narrow code reading and targeted edits over broad rewrites.
 - Run the narrowest task-appropriate verification available.
@@ -87,4 +87,4 @@ When implementation is complete, stop and report only:
 - skipped checks and why
 - known risks
 
-Do not describe the task as complete, merged, finalized, or safe to delete. Codex owns final review and finalization.
+Do not describe the task as complete, merged, finalized, or safe to delete. Codex or Claude Code owns final review and finalization.
