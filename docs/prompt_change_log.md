@@ -12,6 +12,24 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-16 - KG official docs schema v1
+
+- Area or subsystem: KG / GraphRAG extraction schema
+- Prompt or model version: `supportportal_official_docs_v1`
+- Summary: Added the first SupportPortal official-docs KG schema with 9 entity types (`Product`, `API`, `Feature`, `ErrorCode`, `Symptom`, `Solution`, `Limitation`, `Platform`, `Version`) and 10 strict edge types for future GraphRAG entity/relationship extraction.
+- Reason: The RAG+KG plan requires schema-flexible extraction to be narrowed before any GraphRAG adapter or runtime KG auxiliary signal is enabled.
+- Affected files or config:
+  - `backend/config/kg/supportportal_official_docs_v1.yaml`
+  - `backend/services/kg_schema.py`
+  - `backend/tests/test_kg_schema.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - No online behavior changes in PR1 because the schema is not yet wired to GraphRAG, Neo4j, or RAG runtime.
+  - Future KG extraction using this schema will be constrained to the documented official-doc entity and edge types instead of open-ended schema-flexible extraction.
+- Verification:
+  - `rtk pytest backend/tests/test_kg_official_docs_scope.py backend/tests/test_kg_supportportal_contracts.py backend/tests/test_kg_schema.py backend/tests/test_qbr_plan_contract.py -q` (54 passed)
+  - `rtk uv run --with ruff ruff check backend/services/kg_*.py backend/tests/test_kg_*.py` (All checks passed)
+
 ## 2026-06-16 - Codex and Claude Code review parity
 
 - Area or subsystem: Agent collaboration instructions and workflow prompts
