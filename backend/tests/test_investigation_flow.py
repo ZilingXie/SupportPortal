@@ -5975,6 +5975,360 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["active_investigation"]["messages"][-2]["role"], "engineer")
         self.assertEqual(payload["active_investigation"]["messages"][-1]["role"], "engineer_ai")
 
+    def _build_seed_multi_agent_state(
+        self,
+        *,
+        replan_count: int = 0,
+        max_replan_count: int = 2,
+        review_decision: str = "replan_required",
+    ) -> dict[str, object]:
+        """Build a minimal multi-agent state for seeding engineer cases."""
+        return {
+            "phase": "gather_missing_inputs",
+            "issue_understanding": "Token renew callback does not fire on Android 14.",
+            "knowledge_summary": "Client AI found generic token-renewal guidance.",
+            "why_not_solved": "Evidence does not confirm the exact SDK version boundary.",
+            "goal": "Confirm SDK version and platform scope.",
+            "known_facts": ["Customer reports Android 14 token renewal failure."],
+            "missing_information": ["Exact SDK version", "Cross-platform reproduction scope"],
+            "next_request_for_engineer": "Please confirm the exact SDK version.",
+            "resolution_hypothesis": "SDK 4.2.1 may have a callback bug on Android 14.",
+            "ready_to_reply": False,
+            "reply_readiness": _reply_readiness(
+                has_proof=False,
+                proof_summary="",
+                proof_anchors=[],
+                blockers=["Exact SDK version is still missing."],
+                ready_for_customer_reply=False,
+            ),
+            "active_plan": {
+                "plan_id": "plan_summary_ec_001_r1",
+                "plan_version": "engineer-plan-v1",
+                "plan_agent_version": "engineer-plan-agent-v1",
+                "objective": "Investigate token renew callback failure.",
+                "hypotheses": [
+                    {
+                        "hypothesis_id": "hyp_summary_ec_001_missing_context",
+                        "statement": "The issue may require additional customer context.",
+                        "confidence": "medium",
+                    }
+                ],
+                "tasks": [
+                    {
+                        "task_id": "task_context_review",
+                        "skill": "context_review",
+                        "status": "planned",
+                    }
+                ],
+            },
+            "active_execution": {
+                "execution_id": "exec_plan_summary_ec_001_r1",
+                "execution_version": "engineer-execution-v1",
+                "plan_id": "plan_summary_ec_001_r1",
+                "status": "completed",
+                "evidence_packet": {
+                    "packet_id": "evidence_exec_plan_summary_ec_001_r1",
+                    "packet_version": "engineer-evidence-packet-v1",
+                    "customer_safe_summary": "Upgrade to SDK 4.2.2 resolves the issue.",
+                    "internal_summary": "SDK 4.2.1 has a known callback bug on Android 14.",
+                    "evidence_refs": [
+                        {"task_id": "task_context_review", "summary": "Reviewed ticket context"}
+                    ],
+                    "missing_information": ["Exact SDK version", "Device model"],
+                },
+                "task_results": [
+                    {
+                        "task_id": "task_context_review",
+                        "status": "completed",
+                        "summary": "Reviewed ticket context and handoff packet.",
+                    }
+                ],
+            },
+            "active_review": {
+                "review_id": "review_exec_plan_summary_ec_001_r1",
+                "review_version": "engineer-review-v1",
+                "review_decision": review_decision,
+                "problem_statement": "Evidence does not confirm the exact SDK version boundary.",
+                "evidence_gaps": ["Exact SDK version not confirmed"],
+                "missing_information": ["Exact SDK version"],
+                "replan_count": replan_count,
+                "max_replan_count": max_replan_count,
+            },
+            "evidence_packet": {
+                "packet_id": "evidence_exec_plan_summary_ec_001_r1",
+                "packet_version": "engineer-evidence-packet-v1",
+                "customer_safe_summary": "Upgrade to SDK 4.2.2 resolves the issue.",
+                "internal_summary": "SDK 4.2.1 has a known callback bug on Android 14.",
+                "evidence_refs": [
+                    {"task_id": "task_context_review", "summary": "Reviewed ticket context"}
+                ],
+                "missing_information": ["Exact SDK version", "Device model"],
+            },
+            "task_results": [
+                {
+                    "task_id": "task_context_review",
+                    "status": "completed",
+                    "summary": "Reviewed ticket context and handoff packet.",
+                }
+            ],
+            "replan_count": replan_count,
+            "max_replan_count": max_replan_count,
+            "review_decision": review_decision,
+        }
+
+    def test_confirmation_revise_runs_plan_execute_review_replan(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-REPLAN-1",
+            status="investigating",
+            active_investigation={
+                "id": "INV-REPLAN-1",
+                "state": "awaiting_confirmation",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "Please upgrade to SDK 4.2.2.",
+                "final_confirmation_requested_at": "2026-03-29T09:03:00+00:00",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-REPLAN-1-m1",
+                        "role": "engineer_ai",
+                        "content": "Draft ready for confirmation.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+            engineer_agent_state=self._build_seed_multi_agent_state(
+                replan_count=0,
+                review_decision="replan_required",
+            ),
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-REPLAN-1-1/investigation/confirmation",
+                json={
+                    "engineer_id": "eng",
+                    "decision": "revise",
+                    "note": "Check SDK 4.2.1 compatibility with Android 14 specifically.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+
+        # Fetch the engineer case to verify multi-agent state was updated
+        detail = self.client.get("/api/engineer/tickets/TK-INV-REPLAN-1-1")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        ticket = detail.json()["ticket"]
+        agent_state = ticket.get("engineer_agent_state") or {}
+
+        # Assert new plan was generated with _r2 suffix (replan_count 0 → new plan _r1, but
+        # _run_engineer_multi_agent_round uses replan_count=1 in revise_context → _r2)
+        new_plan = agent_state.get("active_plan") or {}
+        self.assertIn("_r2", new_plan.get("plan_id", ""))
+        # Assert revise_context carries engineer feedback
+        self.assertIsNotNone(new_plan.get("revise_context"))
+        rc = new_plan.get("revise_context") or {}
+        self.assertIn("engineer_feedback", rc)
+        self.assertEqual(
+            rc["engineer_feedback"]["note"],
+            "Check SDK 4.2.1 compatibility with Android 14 specifically.",
+        )
+        # Assert previous_evidence_packet carried
+        self.assertIn("previous_evidence_packet", rc)
+        self.assertEqual(
+            rc["previous_evidence_packet"]["packet_id"],
+            "evidence_exec_plan_summary_ec_001_r1",
+        )
+        # Assert review_problem_statement from previous review
+        self.assertIn("Evidence does not confirm", rc["review_problem_statement"])
+        # Assert active_execution and active_review refreshed
+        self.assertIn("active_execution", agent_state)
+        self.assertIn("active_review", agent_state)
+        # Assert replan_count incremented to 1
+        self.assertEqual(agent_state.get("replan_count"), 1)
+        self.assertEqual((agent_state.get("active_review") or {}).get("replan_count"), 1)
+        # Assert replan_history has one entry
+        self.assertEqual(len(agent_state.get("replan_history") or []), 1)
+        messages = (ticket.get("active_investigation") or {}).get("messages") or []
+        self.assertTrue(any(m.get("role") == "engineer" and "SDK 4.2.1" in m.get("content", "") for m in messages))
+        self.assertTrue(any(m.get("role") == "engineer_ai" and "Replan complete" in m.get("content", "") for m in messages))
+
+    def test_confirmation_revise_stops_when_replan_limit_reached(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-REPLAN-LIMIT",
+            status="investigating",
+            active_investigation={
+                "id": "INV-REPLAN-LIMIT",
+                "state": "awaiting_confirmation",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "Please upgrade to SDK 4.2.2.",
+                "final_confirmation_requested_at": "2026-03-29T09:03:00+00:00",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-REPLAN-LIMIT-m1",
+                        "role": "engineer_ai",
+                        "content": "Draft ready for confirmation.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+            engineer_agent_state=self._build_seed_multi_agent_state(
+                replan_count=2,
+                max_replan_count=2,
+            ),
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-REPLAN-LIMIT-1/investigation/confirmation",
+                json={
+                    "engineer_id": "eng",
+                    "decision": "revise",
+                    "note": "Try one more time.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+
+        # Fetch the engineer case and verify no new plan was generated
+        detail = self.client.get("/api/engineer/tickets/TK-INV-REPLAN-LIMIT-1")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        ticket = detail.json()["ticket"]
+        agent_state = ticket.get("engineer_agent_state") or {}
+
+        # replan_count should remain 2 (not incremented)
+        self.assertEqual(agent_state.get("replan_count"), 2)
+        # active_plan should still be the original _r1 plan (not refreshed)
+        active_plan = agent_state.get("active_plan") or {}
+        self.assertIn("_r1", active_plan.get("plan_id", ""))
+        self.assertNotIn("_r2", active_plan.get("plan_id", ""))
+
+        # Investigation messages should contain the limit message
+        investigation = ticket.get("active_investigation") or {}
+        messages = investigation.get("messages") or []
+        limit_messages = [m for m in messages if "Replan limit reached" in str(m.get("content", ""))]
+        self.assertEqual(len(limit_messages), 1, f"Expected replan limit message in: {messages}")
+
+    def test_confirmation_approve_does_not_replan(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-APPROVE-NOREPLAN",
+            status="investigating",
+            active_investigation={
+                "id": "INV-APPROVE-NOREPLAN",
+                "state": "awaiting_confirmation",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                "final_confirmation_requested_at": "2026-03-29T09:03:00+00:00",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-APPROVE-NOREPLAN-m1",
+                        "role": "engineer_ai",
+                        "content": "Draft ready for confirmation.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+            engineer_handoff_packet={
+                "source": "support_query",
+                "conversation_summary": "Customer reports token renew callback does not fire.",
+                "latest_customer_message": "token renew callback never fires",
+                "route_summary": {
+                    "answer_route": "rag",
+                    "route_reason": "rag_insufficient_evidence",
+                },
+                "rag_result": {
+                    "candidate_answer": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                    "sources": ["https://docs.agora.io/en/video-calling/token-authentication"],
+                    "citations": [],
+                },
+                "unresolved_reason": "rag_insufficient_evidence",
+                "customer_language_hint": "en",
+                "created_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+            },
+            engineer_agent_state={
+                "phase": "awaiting_confirmation",
+                "issue_understanding": "Token renew callback does not fire.",
+                "knowledge_summary": "Client AI found generic token-renewal guidance.",
+                "why_not_solved": "The engineer had to confirm the SDK-specific fix before replying.",
+                "goal": "Send the approved SDK upgrade guidance to the customer.",
+                "known_facts": ["SDK 4.2.2 is the recommended fix."],
+                "missing_information": [],
+                "next_request_for_engineer": "Approve the prepared customer reply.",
+                "resolution_hypothesis": "Upgrading to SDK 4.2.2 should resolve the callback failure.",
+                "ready_to_reply": True,
+                "reply_readiness": _reply_readiness(),
+                "last_refreshed_at": "2026-03-29T09:03:00+00:00",
+                "replan_count": 0,
+            },
+        )
+
+        auto_feedback = {
+            "feedback_id": "hitl_auto_TK-INV-APPROVE-NOREPLAN-1",
+            "engineer_case_id": "TK-INV-APPROVE-NOREPLAN-1",
+            "client_ticket_id": "TK-INV-APPROVE-NOREPLAN",
+            "run_id": None,
+            "message_id": "INV-APPROVE-NOREPLAN-m1",
+            "evidence_packet_id": None,
+            "feedback_type": "resolve",
+            "diagnosis_correctness": "correct",
+            "root_cause_correctness": "confirmed",
+            "evidence_quality": "sufficient",
+            "citation_quality": "not_applicable",
+            "customer_reply_quality": "sendable",
+            "missing_information": [],
+            "incorrect_claims": [],
+            "corrected_root_cause": "Token renew callback does not fire on the affected SDK.",
+            "corrected_solution": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            "corrected_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            "evidence_refs": [{"source_id": "INV-APPROVE-NOREPLAN-m1"}],
+            "memory_candidate": "needs_review",
+            "memory_safety": "internal_only",
+            "memory_notes": "Auto-reviewed after engineer approval.",
+            "prompt_version": "engineer-hitl-auto-review-test",
+            "workflow_version": "engineer-auto-hitl-review-v1",
+            "tool_policy_version": None,
+            "rag_access_policy_version": None,
+            "evidence_packet_version": None,
+            "created_by": "engineer_ai_auto_review",
+            "created_at": "2026-03-29T09:03:00+00:00",
+        }
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "build_engineer_auto_hitl_feedback",
+            Mock(return_value=auto_feedback),
+        ):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-APPROVE-NOREPLAN-1/investigation/confirmation",
+                json={
+                    "engineer_id": "eng",
+                    "decision": "approve",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "resolved")
+        self.assertIsNone(payload["active_investigation"])
+
+        # Verify approve did NOT create multi-agent state
+        detail = self.client.get("/api/engineer/tickets/TK-INV-APPROVE-NOREPLAN-1")
+        ticket = detail.json()["ticket"]
+        # approve closes the case, active_investigation is None
+        self.assertIsNone(ticket.get("active_investigation"))
+
     def test_storage_contract_defines_dedicated_investigation_tables(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")

@@ -1686,6 +1686,23 @@ def fallback_engineer_agent_state(
         review_value = existing.get(review_key)
         if review_value is not None and (isinstance(review_value, dict) or isinstance(review_value, list) or _clean_text(str(review_value))):
             state[review_key] = review_value
+    for lifecycle_key in ("replan_history", "last_revise_context", "max_replan_count"):
+        lifecycle_value = existing.get(lifecycle_key)
+        if lifecycle_value is not None:
+            if lifecycle_key == "max_replan_count":
+                if isinstance(lifecycle_value, int):
+                    state[lifecycle_key] = lifecycle_value
+                elif isinstance(lifecycle_value, str) and lifecycle_value.isdigit():
+                    state[lifecycle_key] = int(lifecycle_value)
+                else:
+                    state[lifecycle_key] = 2
+            elif isinstance(lifecycle_value, (dict, list)):
+                state[lifecycle_key] = lifecycle_value
+            elif _clean_text(str(lifecycle_value)):
+                state[lifecycle_key] = lifecycle_value
+        else:
+            if lifecycle_key == "max_replan_count":
+                state[lifecycle_key] = 2
     return state
 
 
@@ -1763,6 +1780,21 @@ def normalize_engineer_agent_state(
             fb_val = fallback.get(review_key)
             if fb_val is not None and (isinstance(fb_val, dict) or isinstance(fb_val, list) or _clean_text(str(fb_val))):
                 merged[review_key] = fb_val
+    # Preserve replan lifecycle fields
+    for lifecycle_key in ("replan_history", "last_revise_context", "max_replan_count"):
+        lifecycle_value = value.get(lifecycle_key)
+        if lifecycle_value is not None:
+            if lifecycle_key == "max_replan_count":
+                if isinstance(lifecycle_value, int):
+                    merged[lifecycle_key] = lifecycle_value
+                elif isinstance(lifecycle_value, str) and lifecycle_value.isdigit():
+                    merged[lifecycle_key] = int(lifecycle_value)
+                elif lifecycle_key not in merged:
+                    merged[lifecycle_key] = 2
+            elif isinstance(lifecycle_value, (dict, list)):
+                merged[lifecycle_key] = lifecycle_value
+            elif _clean_text(str(lifecycle_value)):
+                merged[lifecycle_key] = lifecycle_value
     if _should_prefer_intake_issue_understanding(
         current_issue_understanding,
         fallback["issue_understanding"],

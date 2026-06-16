@@ -53,7 +53,8 @@ class QbrPlanContractTests(unittest.TestCase):
             "max 2 retries",
             "Case Memory candidate",
             "mermaid.min.js",
-            "当前下一步是实现 revise/approve 链路",
+            "revise 携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent",
+            "revise replan 链路已完成接入",
             "Review Agent 第一版已实现 deterministic review decision",
         ]
         for term in required_terms:
@@ -64,6 +65,9 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn("当前下一步是实现 Plan Agent", html_source)
         self.assertNotIn("当前下一步是实现 Execute Agent", html_source)
         self.assertNotIn("当前下一步是实现 Review Agent", html_source)
+        self.assertNotIn("当前下一步是实现 revise/approve 链路", html_source)
+        self.assertNotIn("Summary/Plan/Execute/Review 真实链路仍未接管 runtime", html_source)
+        self.assertNotIn("Execute/Review 尚未接管", html_source)
 
     def test_qbr_plan_collapses_engineer_architecture_by_default(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
