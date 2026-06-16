@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from backend.services.kg_supportportal_contracts import (
+    OfficialDocKgChunkInput,
+)
+
 KG_AUXILIARY_MODE = "client_rag_auxiliary"
 KG_OFFICIAL_DOC_KNOWLEDGE_TYPE = "official"
 KG_OFFICIAL_DOC_SOURCE_TYPE = "official_markdown_upload"
+KG_OFFICIAL_DOCS_SCHEMA_VERSION = "supportportal_official_docs_v1"
 
 _CASE_MEMORY_KEYS = {
     "case_memory_ledger_id",
@@ -99,3 +104,81 @@ def _optional_text(value: Any) -> str | None:
 
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def build_official_doc_kg_chunk_input(
+    record: dict[str, Any],
+    chunk: dict[str, Any],
+    *,
+    schema_version: str | None = None,
+) -> OfficialDocKgChunkInput | None:
+    """Build a KG chunk input from a document record and a chunk dict.
+
+    Returns None when the record is out of first-phase KG scope (technical
+    article, confirmed case memory, unknown source type, etc.) or when any
+    required provenance field is missing.
+
+    Required provenance fields (missing → None, never default-filled):
+      - source_url  (from record)
+      - document_id (from record)
+      - chunk_id     (from chunk)
+      - schema_version (from parameter or module default)
+    """
+
+    plan = build_official_doc_kg_ingest_plan(record)
+    if plan is None:
+        return None
+
+    source_url = _optional_text(record.get("source_url"))
+    document_id = _optional_text(record.get("document_id"))
+    chunk_id = _optional_text(chunk.get("chunk_id") if isinstance(chunk, dict) else None)
+
+    version = schema_version or KG_OFFICIAL_DOCS_SCHEMA_VERSION
+
+    missing: list[str] = []
+    if not source_url:
+        missing.append("source_url")
+    if not document_id:
+        missing.append("document_id")
+    if not chunk_id:
+        missing.append("chunk_id")
+
+    if missing:
+        return None
+
+    text = _chunk_text(chunk)
+    title = _optional_text(record.get("title"))
+
+    return OfficialDocKgChunkInput(
+        chunk_id=chunk_id,  # type: ignore[arg-type]
+        document_id=document_id,  # type: ignore[arg-type]
+        source_url=source_url,  # type: ignore[arg-type]
+        schema_version=version,
+        text=text,
+        title=title,
+        metadata=_chunk_metadata(record, chunk),
+    )
+
+
+def _chunk_metadata(record: dict[str, Any], chunk: dict[str, Any]) -> dict[str, Any]:
+    meta: dict[str, Any] = {}
+    if isinstance(record, dict):
+        for key in ("knowledge_type", "source_type", "title", "ingestion_id"):
+            value = _optional_text(record.get(key))
+            if value:
+                meta[key] = value
+    if isinstance(chunk, dict):
+        for key in ("chunk_index", "chunk_strategy"):
+            value = chunk.get(key)
+            if value is not None:
+                meta[key] = value
+    return meta
+
+
+def _chunk_text(chunk: dict[str, Any]) -> str:
+    if not isinstance(chunk, dict):
+        return ""
+    value = chunk.get("text")
+    if value is None:
+        value = chunk.get("content")
+    return str(value or "").replace("\x00", "").strip()
