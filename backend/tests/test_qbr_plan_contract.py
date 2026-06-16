@@ -193,6 +193,34 @@ class QbrPlanContractTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
 
+    def test_qbr_plan_balances_lane_columns_and_removes_suggested_route(self) -> None:
+        html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);",
+            ".panel {",
+            "min-width: 0;",
+            "overflow-wrap: anywhere;",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
+        self.assertNotIn("建议 QBR 路线", html_source)
+        self.assertNotIn('aria-label="Suggested QBR route"', html_source)
+
+    def test_qbr_plan_renders_dynamic_mermaid_diagrams_with_fallback(self) -> None:
+        html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            "renderMermaidDiagrams",
+            "renderStaticMermaidFallback",
+            "window.mermaid.run",
+            'onload="renderMermaidDiagrams()"',
+            'onerror="renderStaticMermaidFallback()"',
+            'class="flow-diagram"',
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
+
 
 if __name__ == "__main__":
     unittest.main()
