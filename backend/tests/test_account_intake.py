@@ -29,7 +29,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_account_intake_creates_ticket_routes_invoice_and_marks_automation(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.services.support_router.send_billing_internal_email",
+            "backend.services.billing_automation.send_billing_internal_email",
             side_effect=AssertionError("account intake automation should not send email"),
         ):
             response = self.client.post(
@@ -51,9 +51,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route"], "detailed_invoice")
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["missing_fields"], [])
-        self.assertEqual(payload["customer_reply"], "")
-        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
-        self.assertEqual(payload["internal_email_send_reason"], "")
+        # Automation tickets now return a customer-facing reply and internal email is not sent.
+        self.assertTrue(payload["customer_reply"])
+        self.assertEqual(payload["internal_email_send_status"], "not_sending")
+        self.assertEqual(payload["internal_email_send_reason"], "demo_mode")
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)
@@ -62,10 +63,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(ticket["requester"], "customer@example.com")
         self.assertEqual(ticket["customer_id"], "customer@example.com")
         self.assertEqual(ticket["source"], "manual")
+        # Should have customer message + assistant reply.
         self.assertEqual(
             [message["role"] for message in ticket["messages"]],
-            ["customer"],
+            ["customer", "assistant"],
         )
+        # Assistant message should contain the escalation reply.
+        assistant_msg = ticket["messages"][1]
+        self.assertIn("escalated", assistant_msg["content"].lower())
+        self.assertEqual(assistant_msg["source"], "billing_automation")
 
         event_payloads = [
             item["payload"]
@@ -79,7 +85,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_account_intake_preserves_non_automated_ticket_without_email(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.services.support_router.send_billing_internal_email",
+            "backend.services.billing_automation.send_billing_internal_email",
             side_effect=AssertionError("non-whitelist route should not send email"),
         ):
             response = self.client.post(
@@ -182,6 +188,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["title"], "Detailed invoice request")
         self.assertIsNotNone(bt["route_reason"])
         self.assertIsNotNone(bt["route_confidence"])
+        self.assertTrue(bt["customer_reply"])
+        self.assertEqual(bt["internal_email_send_status"], "not_sending")
 
     def test_account_intake_saves_non_automated_billing_ticket(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -306,7 +314,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(detail["automation_status"], "automation")
         self.assertEqual(detail["status"], "automation")
         self.assertEqual(detail["route"], "detailed_invoice")
-        self.assertEqual(detail.get("missing_fields") or [], [])
+        # With just "Please send the detailed invoice." and no field values,
+        # the billing automation will report missing fields.
+        self.assertEqual(set(detail.get("missing_fields") or []), {"issue_date", "transaction_id", "amount"})
+        # Detail now includes canonical ticket messages.
+        self.assertIn("messages", detail)
+        self.assertIsInstance(detail["messages"], list)
+        self.assertTrue(len(detail["messages"]) >= 1)
+        self.assertIn("customer_id", detail)
+        self.assertIn("requester", detail)
+        self.assertIn("support_ticket_status", detail)
 
     def test_billing_ticket_view_model_normalizes_legacy_api_source(self) -> None:
         self.repository.save_billing_ticket(
@@ -333,7 +350,6 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn("support_ticket_id", detail)
         self.assertEqual(detail["source"], "api")
 
-
     def test_account_intake_suspension_route_marks_automation(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
@@ -350,8 +366,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "automation")
         self.assertEqual(payload["route"], "account_suspension")
-        self.assertEqual(payload["customer_reply"], "")
-        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertTrue(payload["customer_reply"])
+        self.assertEqual(payload["internal_email_send_status"], "not_sending")
         self.assertNotIn("support_ticket_id", payload)
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
@@ -508,7 +524,6 @@ class AccountIntakeApiTests(unittest.TestCase):
         bt = self.repository.get_billing_ticket(bt_id)
         self.assertEqual(bt["source"], "manual")
 
-
     def test_http_link_source_strips_extra_source_fields_from_view_model(self) -> None:
         self.repository.save_billing_ticket(
             {
@@ -548,3 +563,187 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["source"], "manual")
+
+    # --- New tests for billing automation reply flow ---
+
+    def test_account_intake_automation_returns_customer_reply_and_appends_assistant_message(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": (
+                        "Please send the detailed invoice. Issue date: 6 May 2026. "
+                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                    ),
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "automation")
+        self.assertTrue(payload["customer_reply"])
+        self.assertIn("escalated", payload["customer_reply"].lower())
+
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        messages = ticket["messages"]
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["role"], "customer")
+        self.assertEqual(messages[1]["role"], "assistant")
+        self.assertEqual(messages[1]["source"], "billing_automation")
+
+    def test_account_intake_missing_fields_persisted(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended. I cannot log in.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "automation")
+        # Account suspension with no field info should have missing fields.
+        self.assertTrue(len(payload["missing_fields"]) > 0)
+        self.assertIn("company_name", payload["missing_fields"])
+        self.assertTrue(payload["customer_reply"])
+        self.assertIn("provide the following details", payload["customer_reply"].lower())
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertTrue(len(bt["missing_fields"]) > 0)
+        self.assertTrue(bt["customer_reply"])
+
+    def test_billing_automation_reply_recomputes_fields(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended. I cannot log in.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 200)
+        create_payload = create_response.json()
+        bt_id = create_payload["billing_ticket_id"]
+
+        # Initial state: missing fields exist, customer_reply asks for more info.
+        self.assertTrue(len(create_payload["missing_fields"]) > 0)
+        self.assertIn("provide the following details", create_payload["customer_reply"].lower())
+
+        ticket = self.repository.get_ticket(create_payload["ticket_id"])
+        self.assertEqual(len(ticket["messages"]), 2)
+
+        saved_new_message_counts: list[int] = []
+        original_save_ticket = self.repository.save_ticket
+
+        def save_ticket_spy(ticket_data, new_messages=None):
+            saved_new_message_counts.append(len(new_messages or []))
+            return original_save_ticket(ticket_data, new_messages=new_messages)
+
+        self.repository.save_ticket = save_ticket_spy  # type: ignore[method-assign]
+
+        # Reply with field info.
+        reply_response = self.client.post(
+            f"/api/account/billing-tickets/{bt_id}/reply",
+            json={
+                "message": (
+                    "Company name: Acme Corp. "
+                    "Company location: Singapore. "
+                    "Website: https://acme.example.com. "
+                    "Contact email: acme@example.com. "
+                    "Phone number: +65-12345678. "
+                    "Use case: live streaming."
+                ),
+            },
+        )
+
+        self.assertEqual(reply_response.status_code, 200, reply_response.text)
+        reply_payload = reply_response.json()
+        self.assertEqual(reply_payload["status"], "automation")
+        self.assertEqual(reply_payload["missing_fields"], [])
+        self.assertTrue(reply_payload["customer_reply"])
+        self.assertIn("escalated", reply_payload["customer_reply"].lower())
+
+        # Check that only this reply's customer and assistant messages were persisted as new messages.
+        self.assertEqual(saved_new_message_counts, [2])
+
+        # Check that customer and assistant messages were appended.
+        ticket = self.repository.get_ticket(create_payload["ticket_id"])
+        self.assertEqual(len(ticket["messages"]), 4)
+        self.assertEqual(ticket["messages"][2]["role"], "customer")
+        self.assertEqual(ticket["messages"][3]["role"], "assistant")
+
+        # Check billing ticket was updated.
+        bt = self.repository.get_billing_ticket(bt_id)
+        self.assertEqual(bt["missing_fields"], [])
+        self.assertIn("company_name", bt["collected_fields"])
+
+    def test_billing_automation_reply_404(self) -> None:
+        response = self.client.post(
+            "/api/account/billing-tickets/BT-nonexistent/reply",
+            json={"message": "Hello"},
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_billing_detail_includes_canonical_messages(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Invoice detail test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        bt_id = create_response.json()["billing_ticket_id"]
+        ticket_id = create_response.json()["ticket_id"]
+
+        # Reply via billing automation reply endpoint.
+        self.client.post(
+            f"/api/account/billing-tickets/{bt_id}/reply",
+            json={
+                "message": (
+                    "Issue date: 1 Jan 2026. "
+                    "Transaction ID: TX-001. "
+                    "Amount: USD 100."
+                ),
+            },
+        )
+
+        # Detail should show all messages.
+        detail = self.client.get(f"/api/account/billing-tickets/{bt_id}").json()
+        self.assertIn("messages", detail)
+        self.assertEqual(len(detail["messages"]), 4)  # customer + assistant + customer + assistant
+        self.assertEqual(detail["messages"][0]["role"], "customer")
+        self.assertEqual(detail["messages"][1]["role"], "assistant")
+        self.assertEqual(detail["customer_id"], "customer@example.com")
+        self.assertEqual(detail["requester"], "customer@example.com")
+        self.assertIn("support_ticket_status", detail)
+
+    def test_non_automated_ticket_remains_not_automated(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "General FAQ question",
+                    "question": "What is Agora?",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 200)
+        payload = create_response.json()
+        self.assertEqual(payload["status"], "not_automated")
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["missing_fields"], [])

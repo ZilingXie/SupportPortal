@@ -57,6 +57,7 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
 )
 from backend.services.agora_service_events import get_agora_service_events_payload
+from backend.services.billing_automation import build_billing_automation_result
 from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.emotion_reply import build_initial_ack
 from backend.services.engineer_agent import (
@@ -2734,9 +2735,27 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
 
     if is_billing_automation_route:
         response_status = "automation"
-        # Route is recorded in the companion billing ticket below;
-        # no resolve_support_message(), no customer reply, no field collection,
-        # no internal email for account intake automation marking.
+        billing_result = build_billing_automation_result(
+            action=route,
+            message=question,
+            ticket_id=ticket_id,
+            customer_email=str(request.customer_email or "").strip() or None,
+        )
+        customer_reply = billing_result.customer_reply
+        missing_fields = list(billing_result.missing_fields)
+        collected_fields = dict(billing_result.collected_fields)
+        internal_email_send_status = "not_sending"
+        internal_email_send_reason = "demo_mode"
+        if customer_reply:
+            ticket["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": customer_reply,
+                    "created_at": timestamp,
+                    "content_format": "plaintext",
+                    "source": "billing_automation",
+                }
+            )
 
     await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
 
@@ -2842,9 +2861,125 @@ def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
         ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(billing_ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail="ticket not found")
+    view_model = _build_account_ticket_view_model(ticket)
+    canonical_ticket_id = view_model.get("ticket_id")
+    canonical_ticket = ticket_repository.get_ticket(canonical_ticket_id) if canonical_ticket_id else None
+    if canonical_ticket:
+        view_model["messages"] = canonical_ticket.get("messages", [])
+        view_model["customer_id"] = canonical_ticket.get("customer_id")
+        view_model["requester"] = canonical_ticket.get("requester")
+        view_model["support_ticket_status"] = canonical_ticket.get("status")
+    else:
+        view_model["messages"] = []
+        view_model["customer_id"] = ticket.get("client_ticket_id") or ""
+        view_model["requester"] = ticket.get("client_ticket_id") or ""
+        view_model["support_ticket_status"] = ""
     return {
         **ticket,
-        **_build_account_ticket_view_model(ticket),
+        **view_model,
+    }
+
+
+class BillingReplyRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=12000)
+
+
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply")
+async def reply_to_billing_ticket(
+    billing_ticket_id: str,
+    request: BillingReplyRequest,
+) -> dict[str, Any]:
+    billing_ticket = await async_to_thread(ticket_repository.get_billing_ticket, billing_ticket_id)
+    if billing_ticket is None:
+        raise HTTPException(status_code=404, detail="billing ticket not found")
+
+    client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
+    if not client_ticket_id:
+        raise HTTPException(status_code=400, detail="billing ticket has no linked support ticket")
+
+    canonical_ticket = await async_to_thread(ticket_repository.get_ticket, client_ticket_id)
+    if canonical_ticket is None:
+        raise HTTPException(status_code=404, detail="linked support ticket not found")
+
+    customer_message = str(request.message or "").strip()
+    if not customer_message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    timestamp = now_iso()
+    initial_message_count = len(canonical_ticket.get("messages", [])) if isinstance(canonical_ticket.get("messages"), list) else 0
+
+    # Append customer reply to canonical ticket messages.
+    customer_msg = {
+        "role": "customer",
+        "content": customer_message,
+        "created_at": timestamp,
+        "content_format": "plaintext",
+        "source": "account-ui",
+    }
+    canonical_ticket.setdefault("messages", []).append(customer_msg)
+    canonical_ticket["updated_at"] = timestamp
+
+    automation_status = str(
+        billing_ticket.get("automation_status") or billing_ticket.get("status") or ""
+    ).strip()
+
+    if automation_status in {"automation", "automated"}:
+        route = str(billing_ticket.get("route") or "").strip()
+        # Build conversation text from all messages for field extraction.
+        all_contents = [
+            str(msg.get("content") or "")
+            for msg in canonical_ticket.get("messages", [])
+            if isinstance(msg, dict)
+        ]
+        conversation_text = "\n".join(all_contents)
+
+        billing_result = build_billing_automation_result(
+            action=route,
+            message=conversation_text,
+            ticket_id=client_ticket_id,
+            customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
+        )
+
+        assistant_reply = billing_result.customer_reply
+        missing_fields = list(billing_result.missing_fields)
+        collected_fields = dict(billing_result.collected_fields)
+
+        # Update billing ticket with recomputed fields.
+        billing_ticket["missing_fields"] = missing_fields
+        billing_ticket["collected_fields"] = collected_fields
+        billing_ticket["customer_reply"] = assistant_reply
+        billing_ticket["internal_email_send_status"] = "not_sending"
+        billing_ticket["internal_email_send_reason"] = "demo_mode"
+        billing_ticket["updated_at"] = timestamp
+
+        if assistant_reply:
+            canonical_ticket["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": assistant_reply,
+                    "created_at": timestamp,
+                    "content_format": "plaintext",
+                    "source": "billing_automation",
+                }
+            )
+
+        new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
+        await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
+        await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+    else:
+        # Non-automated: just save the customer message (reply handled by /api/tickets/query on frontend).
+        new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
+        await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
+
+    # Return refreshed detail view.
+    view_model = _build_account_ticket_view_model(billing_ticket)
+    view_model["messages"] = canonical_ticket.get("messages", [])
+    view_model["customer_id"] = canonical_ticket.get("customer_id")
+    view_model["requester"] = canonical_ticket.get("requester")
+    view_model["support_ticket_status"] = canonical_ticket.get("status")
+    return {
+        **billing_ticket,
+        **view_model,
     }
 
 
