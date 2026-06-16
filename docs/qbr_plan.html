@@ -795,6 +795,18 @@
       background: var(--line);
     }
 
+    .lane-followup {
+      padding: 26px;
+      border-top: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.06), transparent 42%),
+        rgba(251, 247, 236, 0.84);
+    }
+
+    .lane-followup .lane-architecture {
+      margin-top: 0;
+    }
+
     .panel {
       min-width: 0;
       padding: 26px;
@@ -1011,7 +1023,7 @@
 
     @media (max-width: 640px) {
       .page { width: min(100% - 20px, 1440px); padding-top: 10px; }
-      .hero, .hero-judgment, .lane-head, .panel { padding: 20px; }
+      .hero, .hero-judgment, .lane-head, .panel, .lane-followup { padding: 20px; }
       .hero { min-height: auto; }
       .hero::after { opacity: 0.28; }
       .task { grid-template-columns: auto 1fr; }
@@ -1704,11 +1716,6 @@ flowchart TD
                   ${(lane.review || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
                 </ul>
               </div>
-              ${renderLaneArchitecture(lane.architecture)}
-              <div class="notes">
-                <label for="note-${lane.id}">QBR 备注</label>
-                <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
-              </div>
             </section>
             <section class="panel">
               <h4>未完成计划</h4>
@@ -1716,6 +1723,13 @@ flowchart TD
                 ${lane.next.map(renderTask).join("")}
               </div>
             </section>
+          </div>
+          <div class="lane-followup">
+            ${renderLaneArchitecture(lane.architecture)}
+            <div class="notes">
+              <label for="note-${lane.id}">QBR 备注</label>
+              <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
+            </div>
           </div>
         </article>
       `;
