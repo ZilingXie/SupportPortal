@@ -56,6 +56,32 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('rel="noopener noreferrer"', app_source)
         self.assertIn('parsed.protocol === "http:"', app_source)
 
+    def test_account_app_contains_filter_state_and_reply_composer(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        # Filter state and options.
+        self.assertIn("statusFilter", app_source)
+        self.assertIn("renderFilterControls", app_source)
+        self.assertIn("all", app_source)
+        self.assertIn("Automation", app_source)
+        self.assertIn("Not automated", app_source)
+        self.assertIn("matchesFilter", app_source)
+        self.assertIn("filter-chip", app_source)
+
+        # Reply composer state and flow.
+        self.assertIn("replyMessage", app_source)
+        self.assertIn("isSubmittingReply", app_source)
+        self.assertIn("replyError", app_source)
+        self.assertIn("renderReplyComposer", app_source)
+        self.assertIn("submitReply", app_source)
+        self.assertIn("renderMessageThread", app_source)
+        self.assertIn("msg-bubble", app_source)
+
+        # Reply endpoint references.
+        self.assertIn("/api/account/billing-tickets/", app_source)
+        self.assertIn("/reply", app_source)
+        self.assertIn("/api/tickets/query", app_source)
+
     def test_account_app_javascript_syntax(self) -> None:
         result = subprocess.run(
             ["node", "--check", "ui/account-ui/app.js"],
@@ -66,8 +92,22 @@ class AccountUiContractTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_account_styles_include_automation_status_badge(self) -> None:
+    def test_account_styles_include_filter_message_reply_classes(self) -> None:
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertIn(".status-badge--automation", styles)
         self.assertIn(".source-link", styles)
+        # Filter chips.
+        self.assertIn(".filter-chips", styles)
+        self.assertIn(".filter-chip", styles)
+        self.assertIn(".filter-chip--active", styles)
+        # Message thread.
+        self.assertIn(".message-thread", styles)
+        self.assertIn(".msg-bubble", styles)
+        self.assertIn(".msg-bubble--customer", styles)
+        self.assertIn(".msg-bubble--assistant", styles)
+        self.assertIn(".msg-row", styles)
+        # Reply composer.
+        self.assertIn(".reply-composer", styles)
+        self.assertIn(".reply-textarea", styles)
+        self.assertIn(".reply-actions", styles)

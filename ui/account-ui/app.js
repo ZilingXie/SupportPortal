@@ -36,6 +36,10 @@ const state = {
   activeItem: null,
   error: "",
   composerToolbarState: buildDefaultComposerToolbarState(),
+  statusFilter: "all",
+  replyMessage: "",
+  isSubmittingReply: false,
+  replyError: "",
 };
 
 let composerRuntime = null;
@@ -145,6 +149,8 @@ async function openTicket(ticketId) {
   }
   state.activeItem = detail;
   state.view = "detail";
+  state.replyMessage = "";
+  state.replyError = "";
   render();
 }
 
@@ -152,6 +158,8 @@ function openCreateView() {
   state.activeItem = null;
   state.view = "create";
   state.error = "";
+  state.replyMessage = "";
+  state.replyError = "";
   render();
 }
 
@@ -204,7 +212,44 @@ async function submitAccountIntake(event) {
   }
 }
 
+function isAutomationStatus(status) {
+  return status === "automation" || status === "automated";
+}
+
+function matchesFilter(item) {
+  const itemStatus = item.status || item.automation_status || "not_automated";
+  if (state.statusFilter === "all") return true;
+  if (state.statusFilter === "automation") return isAutomationStatus(itemStatus);
+  if (state.statusFilter === "not_automated") return !isAutomationStatus(itemStatus);
+  return true;
+}
+
+function renderFilterControls() {
+  const filters = [
+    { value: "all", label: "All" },
+    { value: "automation", label: "Automation" },
+    { value: "not_automated", label: "Not automated" },
+  ];
+  return `
+    <div class="filter-chips">
+      ${filters
+        .map(
+          (f) => `
+        <button
+          class="filter-chip ${state.statusFilter === f.value ? "filter-chip--active" : ""}"
+          type="button"
+          data-action="set-filter"
+          data-value="${escapeHtml(f.value)}"
+        >${escapeHtml(f.label)}</button>
+      `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderHistorySidebar() {
+  const visibleItems = state.history.filter(matchesFilter);
   if (!state.history.length) {
     return `
       <div class="history-empty">
@@ -213,9 +258,19 @@ function renderHistorySidebar() {
       </div>
     `;
   }
+  if (!visibleItems.length) {
+    return `
+      ${renderFilterControls()}
+      <div class="history-empty">
+        <span class="material-symbols-outlined">filter_alt_off</span>
+        <p>No tickets match this filter</p>
+      </div>
+    `;
+  }
   return `
+    ${renderFilterControls()}
     <div class="history-section-title">Recent tickets</div>
-    ${state.history
+    ${visibleItems
       .map(
         (item) => {
           const itemId = item.ticket_id || item.billing_ticket_id || "";
@@ -273,6 +328,68 @@ function renderCreateForm() {
       ${
         state.error
           ? `<div class="error-banner"><span class="material-symbols-outlined">error</span>${escapeHtml(state.error)}</div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderMessageThread() {
+  const item = state.activeItem;
+  if (!item) return "";
+  const messages = Array.isArray(item.messages) ? item.messages : [];
+  if (!messages.length) return "";
+
+  return `
+    <div class="message-thread">
+      <div class="detail-section-title">Conversation</div>
+      ${messages
+        .map((msg) => {
+          const role = String(msg.role || "").toLowerCase();
+          const content = String(msg.content || "");
+          const isCustomer = role === "customer" || role === "user";
+          const bubbleClass = isCustomer ? "msg-bubble--customer" : "msg-bubble--assistant";
+          const label = isCustomer ? "Customer" : "AI";
+          return `
+        <div class="msg-row ${isCustomer ? "msg-row--customer" : "msg-row--assistant"}">
+          <div class="msg-bubble ${bubbleClass}">
+            <div class="msg-label">${escapeHtml(label)}</div>
+            <div class="msg-content">${renderMarkdownMessage(content)}</div>
+          </div>
+        </div>
+      `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderReplyComposer() {
+  const item = state.activeItem;
+  if (!item) return "";
+  return `
+    <div class="reply-composer">
+      <div class="detail-section-title">Reply</div>
+      <textarea
+        class="reply-textarea"
+        placeholder="Type your reply..."
+        data-reply-input
+        ${state.isSubmittingReply ? "disabled" : ""}
+      >${escapeHtml(state.replyMessage)}</textarea>
+      <div class="reply-actions">
+        <button
+          class="primary-button primary-button--small"
+          type="button"
+          data-action="submit-reply"
+          ${state.isSubmittingReply ? "disabled" : ""}
+        >
+          <span class="material-symbols-outlined">send</span>
+          ${state.isSubmittingReply ? "Sending..." : "Send reply"}
+        </button>
+      </div>
+      ${
+        state.replyError
+          ? `<div class="error-banner"><span class="material-symbols-outlined">error</span>${escapeHtml(state.replyError)}</div>`
           : ""
       }
     </div>
@@ -362,8 +479,75 @@ function renderDetailView() {
           ? `<div class="detail-section success"><div class="detail-section-title">Customer reply</div><p class="result-copy">${renderMarkdownMessage(item.customer_reply)}</p></div>`
           : ""
       }
+      ${renderMessageThread()}
+      ${renderReplyComposer()}
     </div>
   `;
+}
+
+async function submitReply() {
+  const item = state.activeItem;
+  if (!item) return;
+
+  const message = state.replyMessage.trim();
+  if (!message) {
+    state.replyError = "Reply cannot be empty.";
+    render();
+    return;
+  }
+
+  state.isSubmittingReply = true;
+  state.replyError = "";
+  render();
+
+  try {
+    const itemStatus = item.status || item.automation_status || "";
+    const isAutomation = isAutomationStatus(itemStatus);
+
+    if (isAutomation) {
+      const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
+      const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || "Reply failed.");
+      }
+      state.activeItem = payload;
+    } else {
+      const canonicalTicketId = item.ticket_id || item.client_ticket_id || "";
+      const response = await fetch("/api/tickets/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticket_id: canonicalTicketId,
+          message: message,
+          customer_id: item.customer_id || item.requester || "account-intake",
+          content_format: "plaintext",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || "Reply failed.");
+      }
+      // Refresh detail after non-automation reply.
+      const refreshed = await fetchTicketDetail(canonicalTicketId);
+      if (refreshed) {
+        state.activeItem = refreshed;
+      }
+    }
+
+    state.replyMessage = "";
+    showToast("Reply sent");
+    await fetchTickets();
+  } catch (err) {
+    state.replyError = err instanceof Error ? err.message : "Reply failed.";
+  } finally {
+    state.isSubmittingReply = false;
+    render();
+  }
 }
 
 function render() {
@@ -414,9 +598,17 @@ function bind() {
   if (historyList) {
     historyList.addEventListener("click", (event) => {
       const button = event.target.closest("[data-action='open-ticket']");
-      if (!button) return;
-      const id = button.dataset.id;
-      if (id) openTicket(id);
+      if (button) {
+        const id = button.dataset.id;
+        if (id) openTicket(id);
+        return;
+      }
+      const filterBtn = event.target.closest("[data-action='set-filter']");
+      if (filterBtn) {
+        state.statusFilter = filterBtn.dataset.value || "all";
+        render();
+        return;
+      }
     });
   }
   document.querySelectorAll("[data-action='new-ticket']").forEach((el) => {
@@ -425,6 +617,15 @@ function bind() {
   document.querySelectorAll("[data-action='back-to-create']").forEach((el) => {
     el.addEventListener("click", openCreateView);
   });
+  document.querySelectorAll("[data-action='submit-reply']").forEach((el) => {
+    el.addEventListener("click", submitReply);
+  });
+  const replyInput = document.querySelector("[data-reply-input]");
+  if (replyInput) {
+    replyInput.addEventListener("input", (event) => {
+      state.replyMessage = event.target.value;
+    });
+  }
   applySharedComposerToolbarStateToButtons(document, state.composerToolbarState);
 }
 
