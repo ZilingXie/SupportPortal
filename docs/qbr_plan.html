@@ -575,6 +575,72 @@
       padding: 0 20px 18px;
     }
 
+    .comparison-block {
+      padding: 0 20px 20px;
+    }
+
+    .comparison-block h6 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      color: var(--field);
+      text-transform: uppercase;
+    }
+
+    .comparison-summary {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .comparison-scroll {
+      overflow-x: auto;
+      border: 1px solid rgba(31, 79, 104, 0.18);
+      border-radius: 18px;
+      background: rgba(251, 247, 236, 0.82);
+    }
+
+    .comparison-table {
+      width: 100%;
+      min-width: 640px;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .comparison-table thead th {
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 850;
+      color: var(--blueprint);
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid rgba(31, 79, 104, 0.18);
+      background: rgba(31, 79, 104, 0.08);
+    }
+
+    .comparison-table tbody th {
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 750;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.32);
+      border-bottom: 1px dashed rgba(29, 37, 34, 0.12);
+      white-space: nowrap;
+    }
+
+    .comparison-table tbody td {
+      padding: 10px 14px;
+      color: #3f4943;
+      vertical-align: top;
+      border-bottom: 1px dashed rgba(29, 37, 34, 0.12);
+    }
+
+    .comparison-table tbody tr:last-child th,
+    .comparison-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
     .lanes {
       display: grid;
       gap: 22px;
@@ -1048,7 +1114,7 @@ flowchart TD
       </div>
       <div class="timeline-step">
         <b>5. RAG vs KG</b>
-        <p>把知识边界讲清楚：Client AI 的官网文档回答仍以 RAG chunk 和 citation 为 source of truth；KG 先只承接官网文档概念/关系，作为 RAG 辅助信号；图数据库先用 Docker Neo4j 做本地方案评估，再比较 AWS Neptune/Serverless。</p>
+        <p>讲清"为什么不能用 KG 替代 RAG，但又必须让 KG 介入"：RAG 留作 source-of-truth + citation；KG 在 query expansion、rerank boost、structured fact lookup 三个钩子位置作为辅助信号，所有 KG fact 必须挂回 chunk_id，任一步超时自动降级到纯 RAG。下一步是 SupportPortal adapter（含 9 类实体 schema）、provenance 强校验、运行时降级边界和 rag_vs_rag_plus_kg 离线基准对照。</p>
       </div>
     </section>
 
@@ -1068,6 +1134,10 @@ flowchart TD
     };
 
     const RECENT_UPDATES = [
+      {
+        key: "RAG vs KG",
+        copy: "RAG vs KG lane 已重写：固化『RAG 主、KG 辅助』结论，新增 RAG+KG 架构图（query expansion / rerank boost / structured fact 三个钩子位置 + 三条不能让步规则）和 RAG/KG 互补价值表；next 增加 SupportPortal adapter（9 类实体 schema）、provenance 强校验、runtime 降级边界、rag_vs_rag_plus_kg 离线基准对照与 Engineer/Client 分级 access policy。"
+      },
       {
         key: "Routing rules",
         copy: "Routing rules 已独立成 QBR tab：记录 support_router.py 的 deterministic fast path、LLM classifier、route contract、fallback，以及 TK-ACC-68BAC7 没有进入 billing_automation 的原因。"
@@ -1360,7 +1430,7 @@ flowchart TD
         short: "RAG vs KG",
         title: "RAG vs KG / Case Memory",
         status: "doing",
-        thesis: "RAG 主链路继续承载可引用官网文档证据；KG 本轮计划收敛为 Client AI RAG 的辅助层，只入库官网文档概念/关系，不替代 citation，也暂不把 confirmed case memory 接入客户可见路径。",
+        thesis: "经独立架构评审结论：KG 不能也不应该完全替代 RAG，两者并存互补是唯一合理路径。RAG 继续承载 source-of-truth 与可引用证据（citation）；KG 在 query expansion、rerank boost、结构化 fact lookup 三个钩子位置作为辅助信号；首期 scope 已限定为官网文档，下一步是 SupportPortal adapter、provenance 校验、运行时降级边界以及 RAG vs RAG+KG 离线基准对照。Case Memory Ledger / Active Retrieval Memory 仍按后续阶段推进。",
         done: [
           "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate；Client AI 仍以官网文档 chunk/citation 生成答案。",
           "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
@@ -1369,25 +1439,77 @@ flowchart TD
           "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。",
           "`python3 -m graphiti_rag` CLI、core/validate/full schema-design preset、lazy imports 和 no-Neo4j help path 已有回归测试覆盖。",
           "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。",
-          "KG 首期 scope gate 已落地：只有 `official` + `official_markdown_upload` 可生成 Client AI RAG auxiliary 入库计划；technical article、external benchmark 和 confirmed case memory 会被拒绝。"
+          "KG 首期 scope gate 已落地：只有 `official` + `official_markdown_upload` 可生成 Client AI RAG auxiliary 入库计划；technical article、external benchmark 和 confirmed case memory 会被拒绝。",
+          "独立架构评审已完成：对比生产 RAG 链路（vector+BM25+FTS / RRF / metadata prune / external rerank / sufficiency gate / citation 合约）和 vendor/cusmem Graphiti（conversation-memory bi-temporal 模型），结论是 KG 不可替代 RAG，方案改为 RAG + KG 互补，并固化三个 KG 钩子位置与三条不能让步规则。"
         ],
         review: [
-          "目前 KG/Case Memory 的可信点是边界清晰、ledger 可审计、cusmem 已产品化整理；本阶段已补官网文档-only scope gate，但还没有接实际 KG adapter、图数据库或运行时检索。",
-          "QBR 里应把 RAG 定义为 citation/source-of-truth 层，把 KG 定义为官网文档概念/关系辅助层；Case Memory 仍是后续 confirmed-case 经验召回方向。",
-          "下一步先完善方案与边界：KG 不直接回答、不替代 RAG citation；在线查询必须可超时降级到 RAG-only；是否做 RAG-only vs RAG+KG 对照评测留到后续阶段。"
+          "Client AI 客户可见答案的 citation 是合同义务。KG 把多段原文压成 entity/edge 时丢失逐字证据；`kg_official_docs_scope.allow_answer_without_rag_citation=False` 已经在代码层承认这点，运行时层还需要 adapter 强制校验。",
+          "LLM 三元组抽取对长尾文档是有损的：版本依赖、参数范围、否定句、错误码语义高度依赖上下文；BM25/向量召回原文不会丢这些条件。KG 适合用作多跳/同义/结构化 fact 的辅助信号，不适合替代召回原文。",
+          "RAG 已经跑在 Postgres（pgvector + BM25 表 + FTS）上，零额外基础设施；把 KG 提到主链路意味着引入 Neo4j/Neptune、重做 ingestion/dedup/telemetry/access policy，并失去现有 rag_benchmark/sufficiency_judge/evidence_verdict 整套评测体系，迁移成本远高于收益。",
+          "vendor/cusmem 的 Graphiti 是 conversation-memory 框架（bi-temporal episode），用作 document-KG 是有适配成本的：schema-flexible 容易让同一实体在不同文档里漂移成多个节点，需要在 adapter 层预定义官网文档 9 类实体收紧抽取。",
+          "QBR 定调：RAG = citation / source-of-truth；KG = 官网文档概念/关系辅助信号；Case Memory = 后续 confirmed-case 经验召回方向。三件事互不替代，时间线和评测口径要分开。",
+          "Engineer AI 与 Client AI 应分级：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径里 KG 可以做主入口（多跳/症状↔产品↔版本↔已知 case），因为 citation 要求弱、多跳价值高。"
         ],
         next: [
           { id: "kg-official-docs-scope", status: "done", label: "已将 KG 首期范围收敛为官网文档概念/关系入库，只服务 Client AI RAG 辅助，不接 confirmed case memory。", horizon: "Scope" },
-          { id: "kg-adapter", status: "todo", label: "为 vendored cusmem/GraphRAG 写 SupportPortal adapter，明确官网文档输入、schema 版本、source_url、document_id 和 chunk_id。", horizon: "Adapter" },
-          { id: "kg-provenance", status: "todo", label: "强制 KG entity/edge 保留 provenance；没有可回查 RAG chunk 的 fact 不允许进入答案上下文。", horizon: "Safety" },
+          { id: "kg-architecture-review", status: "done", label: "独立架构评审：对比 RAG 链路与 vendor/cusmem Graphiti，固化『RAG 主、KG 辅助』结论、三个钩子位置（query expansion / rerank boost / structured fact）与三条不能让步规则。", horizon: "Architecture" },
+          { id: "kg-adapter", status: "todo", label: "为 vendored cusmem/GraphRAG 写 SupportPortal adapter，明确官网文档输入、schema 版本、source_url、document_id、chunk_id，并在 entity_types 预定义官网文档 9 类实体（Product/API/Feature/ErrorCode/Symptom/Solution/Limitation/Platform/Version），收紧 schema-flexible 抽取。", horizon: "Adapter" },
+          { id: "kg-provenance", status: "todo", label: "在 adapter 层强制校验 provenance：每条 KG entity/edge 必须带 chunk_id + source_url，缺失直接拒绝写入，且运行时禁止把无 provenance 的 fact 注入答案上下文。", horizon: "Safety" },
+          { id: "kg-runtime-boundary", status: "todo", label: "实现线上 RAG+KG 调用契约：KG entity link / 同义扩展给 query expansion（硬上限 ~150ms，超时降级）；RAG 现有 vector+BM25+FTS+RRF+rerank 保持不变；KG 提供 rerank boost 与结构化 fact 时必须挂回 chunk_id；生成阶段 citation 池只接受 RAG chunk。", horizon: "Runtime" },
+          { id: "kg-benchmark-ab", status: "todo", label: "扩展 rag_benchmark_runner 增加 rag_vs_rag_plus_kg 评测模式：在 50–100 个真实 query 上离线对比纯 RAG 与 RAG+KG（recall@k / rerank quality / citation faithfulness / latency），没通过基准不进入灰度。", horizon: "Evaluation" },
+          { id: "kg-engineer-vs-client", status: "todo", label: "明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。", horizon: "Access Policy" },
           { id: "kg-graph-db", status: "todo", label: "图数据库先评估 Docker Neo4j 本地方案，再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选。", horizon: "Infrastructure" },
           { id: "kg-model-config", status: "todo", label: "复用项目 .env 的 OpenAI LLM 与 BGE embedding 配置，替换 vendor 默认硬编码 endpoint，并补齐 KG_* 环境变量边界。", horizon: "Config" },
-          { id: "kg-async-ingest", status: "todo", label: "KG 构建走后台异步任务和 chunk hash/upsert，不能阻塞官网文档 RAG 入库或 Client AI 在线回答。", horizon: "Reliability" },
-          { id: "kg-runtime-boundary", status: "todo", label: "定义线上调用顺序：RAG 先检索，KG 只做 query expansion/rerank/带来源 fact 增强；KG 超时或失败降级到 RAG-only。", horizon: "Runtime" },
-          { id: "kg-schema-source", status: "todo", label: "首个领域 schema 先从官网文档高价值实体开始：Product、API、Feature、ErrorCode、Symptom、Solution、Limitation、Platform、Version。", horizon: "Schema" },
+          { id: "kg-async-ingest", status: "todo", label: "KG 构建走后台异步任务和 chunk hash/upsert，不能阻塞官网文档 RAG 入库或 Client AI 在线回答；同时维护 chunk hash → KG node version 的失效路径，避免 KG 比 RAG stale。", horizon: "Reliability" },
+          { id: "kg-schema-source", status: "todo", label: "首个领域 schema 落地为 9 类实体：Product、API、Feature、ErrorCode、Symptom、Solution、Limitation、Platform、Version，作为 adapter entity_types 的初始约束。", horizon: "Schema" },
           { id: "rag-dedupe", status: "todo", label: "推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review，保证 KG 派生来源稳定。", horizon: "RAG Governance" },
           { id: "kg-citations", status: "blocked", label: "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。", horizon: "Safety" }
         ],
+        architecture: {
+          title: "RAG Source-of-Truth + KG Auxiliary Signal",
+          summary: "这张图固定 Client AI 在线路径：RAG 仍是主召回 + citation 来源；KG 在三个钩子位置作为辅助信号——查询前做 entity link / 同义扩展，rerank 阶段做基于实体连通性的加分，生成阶段为结构化 fact 提供带来源的补充事实。KG 任意一步超时或失败，整条路径自动降级到当前纯 RAG 链路。",
+          mermaid: [
+            "flowchart TD",
+            "  Q[\"User query (Client AI)\"] --> KG1[\"KG hook #1: entity link + 同义/别名扩展 (硬上限 ~150ms, 可超时降级)\"]",
+            "  KG1 --> QU[\"Query understanding + expanded terms\"]",
+            "  QU --> PLAN[\"Agentic tool plan\"]",
+            "  PLAN --> VEC[\"pgvector recall (RAG_VECTOR_CANDIDATE_K)\"]",
+            "  PLAN --> BM[\"BM25 recall (Postgres BM25 tables)\"]",
+            "  PLAN --> FTS[\"PostgreSQL FTS supplemental recall\"]",
+            "  VEC --> RRF[\"RRF-style tool fusion\"]",
+            "  BM --> RRF",
+            "  FTS --> RRF",
+            "  RRF --> META[\"Metadata prune / pre-rank\"]",
+            "  META --> KG2[\"KG hook #2: rerank boost — 若候选 chunk 提到的实体与 query 实体在 KG 内 ≤2 跳可达, 加分 (信号, 不截断)\"]",
+            "  KG2 --> RR[\"External rerank (BAAI/bge-reranker-v2-m3)\"]",
+            "  RR --> TOPK[\"Final top_k chunks (default 6)\"]",
+            "  TOPK --> KG3[\"KG hook #3: structured fact lookup — 仅返回带 chunk_id + source_url 的事实, 无 provenance 直接拒绝\"]",
+            "  KG3 --> GEN[\"Grounded generation\"]",
+            "  GEN --> ANS[\"answer + citations[] (citation 池仅限 RAG chunk)\"]",
+            "  KG1 -. timeout/fail .-> QU",
+            "  KG2 -. timeout/fail .-> RR",
+            "  KG3 -. timeout/fail .-> GEN"
+          ].join("\n"),
+          note: "三条不能让步规则：(1) Provenance gate — 任何 KG entity/edge 不带 chunk_id + source_url 不许进入答案上下文（OfficialDocKgIngestPlan.provenance_required 在 adapter 层强制校验）；(2) KG 不能独立回答客户问题，citation 池只来自 RAG chunk；(3) KG 任一步超时或失败自动回退到纯 RAG 链路。Engineer AI 端 KG 可作为主查询入口做多跳调查（access policy=non_official_first），但客户可见答案仍走 Client AI 的 RAG-first 契约。",
+          comparison_table: {
+            title: "RAG 与 KG 的互补价值（独立评审结论）",
+            summary: "为什么不能用 KG 替代 RAG，又为什么必须让 KG 介入：每一行都是一个真实信号，决定了 KG 在三个钩子位置的取舍。",
+            headers: { dimension: "维度", rag: "RAG 强", kg: "KG 强" },
+            rows: [
+              { dimension: "逐字引用 / 客户可见答案", rag: "✅ 直接返回原文 chunk + citation", kg: "❌ 三元组丢失逐字证据" },
+              { dimension: "召回未知段落 / 长尾原文", rag: "✅ vector + BM25 + FTS 三路覆盖", kg: "❌ 未抽取的事实不可达" },
+              { dimension: "单跳事实查找", rag: "✅ 已足够", kg: "⚖️ 平，无显著增益" },
+              { dimension: "多跳推理（A 用 B、B 兼容 C、C 在版本 D 修过）", rag: "❌ 弱，依赖 chunk 同现", kg: "✅ 图遍历天然支持" },
+              { dimension: "同义 / 别名归一化（RTC engine ↔ Agora engine）", rag: "⚖️ 部分靠 rerank", kg: "✅ entity link 直接合并" },
+              { dimension: "Query expansion（实体扩出相关概念再检索）", rag: "❌ 无机制", kg: "✅ 钩子 #1" },
+              { dimension: "结构化事实（参数范围 / 版本兼容 / ErrorCode ↔ Symptom）", rag: "⚖️ 散在多 chunk", kg: "✅ Schema 约束下可精确查询" },
+              { dimension: "Engineer 端调查 / 内部多跳", rag: "⚖️ 需多次 query", kg: "✅ 一次图查询贯通" },
+              { dimension: "时序事实演化（曾经支持 / 现已弃用）", rag: "❌ 难表达", kg: "✅ Graphiti bi-temporal 强项" },
+              { dimension: "基础设施 / 运维代价", rag: "✅ Postgres 已承载", kg: "❌ 需引入 Neo4j 或 Neptune" },
+              { dimension: "现有评测 / 降级 / access policy 复用", rag: "✅ rag_benchmark / sufficiency_judge / evidence_verdict 已完备", kg: "❌ 需重建评测与 ACL" }
+            ]
+          }
+        },
         sources: [
           "docs/rag_retrieval_chain.md",
           "docs/SUPPORTPORTAL_RAG_REFACTOR_PLAN.md",
@@ -1399,6 +1521,7 @@ flowchart TD
           "backend/services/kg_official_docs_scope.py",
           "backend/tests/test_kg_official_docs_scope.py",
           "vendor/cusmem/graphiti_rag/",
+          "vendor/cusmem/GRAPHITI_VS_KAG.md",
           "vendor/cusmem/tests/"
         ]
       }
@@ -1479,6 +1602,9 @@ flowchart TD
     function laneMatches(lane) {
       if (activeLane !== "all" && lane.id !== activeLane) return false;
       if (!query) return true;
+      const comparisonHaystack = (lane.architecture?.comparison_table?.rows || [])
+        .flatMap((row) => [row.dimension, row.rag, row.kg])
+        .join(" ");
       const haystack = [
         lane.title,
         lane.short,
@@ -1488,10 +1614,43 @@ flowchart TD
         lane.architecture?.summary || "",
         lane.architecture?.mermaid || "",
         lane.architecture?.note || "",
+        lane.architecture?.comparison_table?.title || "",
+        lane.architecture?.comparison_table?.summary || "",
+        comparisonHaystack,
         ...lane.next.map((task) => `${task.label} ${task.horizon} ${STATUS_LABELS[taskStatus(task)]}`),
         ...lane.sources
       ].join(" ").toLowerCase();
       return haystack.includes(query.toLowerCase());
+    }
+
+    function renderComparisonTable(table) {
+      if (!table || !Array.isArray(table.rows) || !table.rows.length) return "";
+      const rowsHtml = table.rows.map((row) => `
+        <tr>
+          <th scope="row">${escapeHtml(row.dimension)}</th>
+          <td>${escapeHtml(row.rag)}</td>
+          <td>${escapeHtml(row.kg)}</td>
+        </tr>
+      `).join("");
+      const summaryHtml = table.summary ? `<p class="comparison-summary">${escapeHtml(table.summary)}</p>` : "";
+      return `
+        <div class="comparison-block">
+          <h6>${escapeHtml(table.title)}</h6>
+          ${summaryHtml}
+          <div class="comparison-scroll">
+            <table class="comparison-table">
+              <thead>
+                <tr>
+                  <th scope="col">${escapeHtml(table.headers?.dimension || "维度")}</th>
+                  <th scope="col">${escapeHtml(table.headers?.rag || "RAG 强")}</th>
+                  <th scope="col">${escapeHtml(table.headers?.kg || "KG 强")}</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
     }
 
     function renderLaneArchitecture(architecture) {
@@ -1506,6 +1665,7 @@ flowchart TD
             <pre class="mermaid">${escapeHtml(architecture.mermaid)}</pre>
           </div>
           <p class="diagram-note">${escapeHtml(architecture.note)}</p>
+          ${renderComparisonTable(architecture.comparison_table)}
         </div>
       `;
     }
