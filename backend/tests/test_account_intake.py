@@ -747,3 +747,221 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["status"], "not_automated")
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["missing_fields"], [])
+
+    # --- N8n-style source link tests ---
+
+    def test_n8n_plain_zendesk_url_source_normalizes_and_saves_link(self) -> None:
+        zendesk_url = "https://xxx.zendesk.com/agent/tickets/123"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "N8n plain URL test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": zendesk_url,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        ticket_id = payload["ticket_id"]
+
+        # Canonical ticket source must be "api".
+        ticket = self.repository.get_ticket(ticket_id)
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "api")
+
+        # Event source must be "api".
+        event_payloads = [
+            item["payload"]
+            for item in self.repository.list_ticket_events(ticket_id)
+            if item["event_type"] == "ticket_created"
+        ]
+        self.assertTrue(event_payloads)
+        self.assertEqual(event_payloads[0]["source"], "api")
+
+        # Billing ticket source must be saved as JSON with Link.
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertIn("Link", bt["source"])
+        self.assertIn(zendesk_url, bt["source"])
+
+        # List API returns source as object with Link.
+        list_response = self.client.get("/api/account/billing-tickets?limit=30")
+        self.assertEqual(list_response.status_code, 200)
+        list_data = list_response.json()
+        match = [t for t in list_data["tickets"] if t.get("billing_ticket_id") == payload["billing_ticket_id"]]
+        self.assertEqual(len(match), 1)
+        self.assertIsInstance(match[0]["source"], dict)
+        self.assertEqual(match[0]["source"]["Link"], zendesk_url)
+
+        # Detail API returns source as object with Link.
+        detail_response = self.client.get(f"/api/account/billing-tickets/{payload['billing_ticket_id']}")
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertIsInstance(detail["source"], dict)
+        self.assertEqual(detail["source"]["Link"], zendesk_url)
+
+        # Detail API returns customer_id/requester == customer_email.
+        self.assertEqual(detail["customer_id"], "customer@example.com")
+        self.assertEqual(detail["requester"], "customer@example.com")
+
+    def test_n8n_source_dict_with_link_key_saves_and_returns_link(self) -> None:
+        zendesk_url = "https://xxx.zendesk.com/agent/tickets/456"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "N8n dict link test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": {"link": zendesk_url},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "api")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertIn("Link", bt["source"])
+        self.assertIn(zendesk_url, bt["source"])
+
+        detail = self.client.get(f"/api/account/billing-tickets/{payload['billing_ticket_id']}").json()
+        self.assertIsInstance(detail["source"], dict)
+        self.assertEqual(detail["source"]["Link"], zendesk_url)
+
+    def test_n8n_source_dict_with_url_key_saves_and_returns_link(self) -> None:
+        zendesk_url = "https://xxx.zendesk.com/agent/tickets/789"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "N8n dict url test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": {"url": zendesk_url},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "api")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertIn(zendesk_url, bt["source"])
+
+        detail = self.client.get(f"/api/account/billing-tickets/{payload['billing_ticket_id']}").json()
+        self.assertIsInstance(detail["source"], dict)
+        self.assertEqual(detail["source"]["Link"], zendesk_url)
+
+
+    def test_legacy_raw_url_billing_ticket_source_returns_link_object(self) -> None:
+        zendesk_url = "https://xxx.zendesk.com/agent/tickets/999"
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-RAW-URL-001",
+                "client_ticket_id": "TK-RAW-URL-001",
+                "source": zendesk_url,
+                "title": "Raw URL source ticket",
+                "question": "raw url question",
+                "automation_status": "automation",
+            }
+        )
+
+        detail_response = self.client.get("/api/account/billing-tickets/BT-TK-RAW-URL-001")
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertEqual(detail["source"], {"Link": zendesk_url})
+
+        list_response = self.client.get("/api/account/billing-tickets?limit=30")
+        self.assertEqual(list_response.status_code, 200)
+        list_payload = list_response.json()
+        link_items = [t for t in list_payload["tickets"] if t.get("billing_ticket_id") == "BT-TK-RAW-URL-001"]
+        self.assertEqual(len(link_items), 1)
+        self.assertEqual(link_items[0]["source"], {"Link": zendesk_url})
+
+    def test_n8n_javascript_url_source_is_not_saved_as_clickable(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "N8n unsafe URL test",
+                    "question": "A question",
+                    "source": "javascript:alert(1)",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "manual")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], "manual")
+
+    def test_n8n_empty_string_source_still_manual(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "N8n empty source test",
+                    "question": "A question",
+                    "source": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "manual")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], "manual")
+
+    def test_n8n_overlong_url_source_is_not_saved_as_clickable(self) -> None:
+        long_url = "https://example.com/" + ("x" * 2000)
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "N8n long URL test",
+                    "question": "A question",
+                    "source": long_url,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "manual")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], "manual")
