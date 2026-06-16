@@ -3,7 +3,7 @@
 ## Source Of Truth
 1. `AGENTS.md` is the hot-path instruction file for this repository. It must stay short enough to load frequently.
 2. Read `docs/agent_workflow_details.md` only when a task triggers worker handoff, branch/finalization edge cases, stack-relevant verification, RAG/prompt/model changes, or feature-list maintenance.
-3. `CLAUDE.md` and `REASONIX.md` add worker-specific rules; they must stay stricter than, or consistent with, this file.
+3. `CLAUDE.md` mirrors these hot-path rules for Claude Code. `REASONIX.md` is the worker-specific exception and keeps Reasonix in handoff-before-review mode.
 4. `docs/agent.md` is a legacy compatibility redirect for old UI-spec links. It is not an agent-instruction file and must not be treated as an independent spec.
 5. For UI source of truth, use `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`; `docs/agent.md` only redirects old UI references there.
 
@@ -39,12 +39,12 @@
 7. Only one task may promote to `main` at a time; rely on `scripts/workflow/finalize_task_to_main.sh` for the shared lock.
 8. If `docs/feature_list.md` changes, run `python3 scripts/verify_feature_list.py`; the finalize script also performs this check automatically.
 
-## Worker And Review Boundaries
-1. Claude Code, Reasonix, and other workers are implementation workers only when delegated. They may edit and verify inside assigned workspaces, but must not commit, push, create PRs, merge, finalize, run post-merge verification, or clean workspaces/branches.
-2. Worker implementations must come from an explicit plan and stop with a handoff: plan, changed files, verification evidence, skipped checks, and known risks.
-3. Codex owns review, corrections, commits, PR creation/reuse, squash merge to `main`, CodeGraph sync, required live stack verification, and cleanup.
-4. When the user asks Codex to review a worker handoff, treat it as task ownership transfer unless explicitly review-only. Fix actionable issues directly when safe, then finalize under the normal direct-to-`main` workflow.
-5. Use the project-local `control-cc` skill when the user requests Codex planning + Claude Code execution + Codex review, or when delegated code work can be safely isolated. Candidate worktrees under `/tmp/control-cc-runs/...` are temporary and not authoritative.
+## Review And Worker Boundaries
+1. Codex and Claude Code are peer repository agents. Either may plan, review, modify code/docs, run verification, commit, create/reuse PRs, squash-merge to `main`, run CodeGraph sync, run required live stack verification, and clean the current task workspace/branch when assigned and following this workflow.
+2. Reasonix is the default handoff-only implementation worker. It must stop before commit/PR/merge/finalization/cleanup and wait for Codex or Claude Code review, unless the user explicitly changes `REASONIX.md`.
+3. When Codex or Claude Code reviews a Reasonix handoff, treat it as task ownership transfer unless explicitly review-only. Fix actionable issues directly when safe, then finalize under the normal direct-to-`main` workflow.
+4. Other explicitly delegated workers must follow the boundary stated in their own handoff instructions. If no boundary is given, default to Reasonix-style handoff-before-finalization.
+5. Use the project-local `control-cc` skill when the user requests coordinated Claude Code execution with Codex/Claude review, or when delegated code work can be safely isolated. Candidate worktrees under `/tmp/control-cc-runs/...` are temporary and not authoritative.
 
 ## Required Logs
 | Change type | Required update | Notes |
@@ -57,7 +57,7 @@
 ## When To Read `docs/agent_workflow_details.md`
 - You need the trigger matrix for AgentMemory, skills, CodeGraph status, or Git/worktree state.
 - You are creating, resuming, finalizing, cleaning, or recovering a task branch/workspace.
-- You are reviewing a Claude Code, Reasonix, or other worker handoff.
+- You are reviewing a Reasonix or other handoff-only worker handoff.
 - You are changing stack-relevant runtime code and need post-merge live verification.
 - You are changing RAG, prompts/models, major feature status, UI design source of truth, or local single-host workflow.
 - You hit an edge case: dirty root, detached HEAD, stale/diverged `main`, current branch mismatch, `mac` workflow artifacts, ambiguous task ownership, or failed finalization.

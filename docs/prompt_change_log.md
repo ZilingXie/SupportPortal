@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-16 - Codex and Claude Code review parity
+
+- Area or subsystem: Agent collaboration instructions and workflow prompts
+- Prompt or model version: `agent-review-parity-v1`
+- Summary: Changed the collaboration rules so Codex and Claude Code are peer repository agents that may review, modify code/docs, verify, commit, create or reuse PRs, finalize, and clean up when assigned; Reasonix remains the handoff-only implementation worker that waits for Codex or Claude Code review.
+- Reason: The previous rules treated Claude Code as an implementation worker that had to stop before commit and wait for Codex review. The updated workflow allows both Codex and Claude Code to own review and code changes, while preserving Reasonix as the review-gated worker path.
+- Affected files or config:
+  - `AGENTS.md`
+  - `CLAUDE.md`
+  - `REASONIX.md`
+  - `docs/agent_workflow_details.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Claude Code no longer has a default stop-before-commit or `/codex:review` handoff requirement.
+  - Codex and Claude Code can both review Reasonix handoffs and continue through finalization when assigned.
+  - Reasonix still stops before commit/PR/merge/finalization/cleanup and waits for Codex or Claude Code review.
+- Verification:
+  - `git diff --check`
+  - `rg -n "Claude Code|Reasonix|handoff|review|commit|finalize|peer repository agents|handoff-only" AGENTS.md CLAUDE.md REASONIX.md docs/agent_workflow_details.md`
+  - Python consistency check for Claude/Reasonix boundary wording.
+
 ## 2026-06-15 - LLM semantic router + policy gate
 
 - Area or subsystem: Intent router prompt and routing architecture
