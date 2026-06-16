@@ -4819,8 +4819,13 @@ async def confirm_investigation_reply(
             active_investigation = case_context.get("active_investigation")
             if isinstance(active_investigation, dict):
                 active_investigation.setdefault("messages", []).append(decision_message)
-                active_investigation["state"] = "active"
-                active_investigation["final_confirmation_requested_at"] = None
+                previous_state = str(active_investigation.get("state") or "").strip().lower()
+                if (
+                    previous_state == INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL
+                    or isinstance(new_agent_state.get("active_guardrail_final"), dict)
+                ):
+                    active_investigation["state"] = "active"
+                    active_investigation["final_confirmation_requested_at"] = None
                 active_investigation["updated_at"] = timestamp
             new_internal_messages.append(decision_message)
 

@@ -4779,7 +4779,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (failedHtml.includes("detail-investigation-closing-state")) {
                   throw new Error("Failed approve should remove the temporary closing-state marker.");
                 }
-                if (alertMessage !== "Approve reply failed: Request failed with status 500") {
+                if (alertMessage !== "Approve for guardrail failed: Request failed with status 500") {
                   throw new Error("Failed approve should keep the existing failure alert copy.");
                 }
                 if (tellAiSubmitting) {
