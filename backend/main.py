@@ -88,6 +88,7 @@ from backend.services.investigation_flow import (
     RESOLVED_STATUS,
     append_engineer_investigation_message,
     apply_investigation_confirmation,
+    build_internal_message,
     build_investigation_opening_context,
     default_investigation_prompt as generate_investigation_ai_turn,
     ensure_ticket_investigation_defaults,
@@ -4371,6 +4372,161 @@ async def post_investigation_message(
     }
 
 
+def _build_revise_context_for_engineer_replan(
+    engineer_case: dict[str, Any],
+    *,
+    note: str,
+    engineer_id: str,
+    created_at: str,
+) -> dict[str, Any]:
+    """Collect current multi-agent state for deterministic replan.
+
+    Reads from engineer_agent_state: active_plan, active_execution,
+    active_review, evidence_packet, task_results, and current replan_count.
+    Returns a revise_context dict suitable for build_engineer_plan().
+    """
+    agent_state = (
+        engineer_case.get("engineer_agent_state")
+        if isinstance(engineer_case.get("engineer_agent_state"), dict)
+        else {}
+    )
+
+    active_plan = agent_state.get("active_plan") if isinstance(agent_state.get("active_plan"), dict) else {}
+    active_execution = agent_state.get("active_execution") if isinstance(agent_state.get("active_execution"), dict) else {}
+    active_review = agent_state.get("active_review") if isinstance(agent_state.get("active_review"), dict) else {}
+    evidence_packet = agent_state.get("evidence_packet") if isinstance(agent_state.get("evidence_packet"), dict) else {}
+    task_results = agent_state.get("task_results") if isinstance(agent_state.get("task_results"), list) else []
+
+    current_replan_count = 0
+    rc = agent_state.get("replan_count")
+    if isinstance(rc, int):
+        current_replan_count = rc
+    elif isinstance(rc, str) and rc.isdigit():
+        current_replan_count = int(rc)
+
+    new_replan_count = current_replan_count + 1
+    evidence_gaps = (
+        active_review.get("evidence_gaps")
+        if isinstance(active_review.get("evidence_gaps"), list)
+        else []
+    )
+
+    return {
+        "revise_note": note,
+        "previous_plan_id": str(active_plan.get("plan_id") or "").strip(),
+        "previous_execution_id": str(active_execution.get("execution_id") or "").strip(),
+        "previous_review_id": str(active_review.get("review_id") or "").strip(),
+        "previous_review_decision": str(active_review.get("review_decision") or "").strip(),
+        "review_problem_statement": str(active_review.get("problem_statement") or "").strip(),
+        "review_evidence_gaps": [copy.deepcopy(item) for item in evidence_gaps],
+        "previous_evidence_packet": copy.deepcopy(evidence_packet),
+        "previous_task_results": [copy.deepcopy(item) for item in task_results],
+        "engineer_feedback": {
+            "note": note,
+            "engineer_id": engineer_id,
+            "created_at": created_at,
+        },
+        "replan_count": new_replan_count,
+    }
+
+
+def _run_engineer_multi_agent_round(
+    engineer_case: dict[str, Any],
+    *,
+    revise_context: dict[str, Any] | None,
+    now_value: str,
+) -> dict[str, Any]:
+    """Run one Plan → Execute → Review cycle and merge results into agent state.
+
+    Returns the updated engineer_case dict (mutated in place).
+    Does NOT save to repository.
+    """
+    handoff_packet = (
+        engineer_case.get("engineer_handoff_packet")
+        if isinstance(engineer_case.get("engineer_handoff_packet"), dict)
+        else {}
+    )
+
+    agent_state = (
+        engineer_case.get("engineer_agent_state")
+        if isinstance(engineer_case.get("engineer_agent_state"), dict)
+        else {}
+    )
+
+    # 1. Plan
+    active_plan = build_engineer_plan(
+        summary_packet=handoff_packet,
+        mem0_context=None,
+        skill_inventory=None,
+        revise_context=revise_context,
+        now_value=now_value,
+    )
+
+    # 2. Execute
+    active_execution = execute_engineer_plan(
+        active_plan=active_plan,
+        summary_packet=handoff_packet,
+        engineer_agent_state=agent_state,
+        execution_context=None,
+        now_value=now_value,
+    )
+
+    # 3. Review
+    review_agent_state = dict(agent_state)
+    if isinstance(revise_context, dict) and isinstance(revise_context.get("replan_count"), int):
+        review_agent_state["replan_count"] = revise_context["replan_count"]
+    active_review = review_execution(
+        active_execution=active_execution,
+        engineer_agent_state=review_agent_state,
+        handoff_packet=handoff_packet,
+        ticket=engineer_case,
+        now_value=now_value,
+    )
+
+    # 4. Merge back into agent_state
+    new_replan_count = active_review.get("replan_count", 0)
+    if isinstance(revise_context, dict):
+        rc = revise_context.get("replan_count")
+        if isinstance(rc, int):
+            new_replan_count = rc
+
+    merged_state = dict(agent_state)
+    merged_state.update({
+        "active_plan": active_plan,
+        "plan_id": active_plan.get("plan_id", ""),
+        "plan_version": active_plan.get("plan_version", ""),
+        "plan_agent_version": active_plan.get("plan_agent_version", ""),
+        "active_execution": active_execution,
+        "execution_id": active_execution.get("execution_id", ""),
+        "execution_version": active_execution.get("execution_version", ""),
+        "execute_agent_version": active_execution.get("execute_agent_version", ""),
+        "evidence_packet": active_execution.get("evidence_packet", {}),
+        "task_results": active_execution.get("task_results", []),
+        "active_review": active_review,
+        "review_id": active_review.get("review_id", ""),
+        "review_version": active_review.get("review_version", ""),
+        "review_agent_version": active_review.get("review_agent_version", ""),
+        "review_decision": active_review.get("review_decision", ""),
+        "replan_count": new_replan_count,
+        "last_revise_context": revise_context,
+    })
+
+    # Append to replan_history
+    replan_history = list(agent_state.get("replan_history") or [])
+    replan_history.append({
+        "plan_id": active_plan.get("plan_id"),
+        "execution_id": active_execution.get("execution_id"),
+        "review_id": active_review.get("review_id"),
+        "review_decision": active_review.get("review_decision"),
+        "replan_count": new_replan_count,
+        "created_at": now_value,
+    })
+    merged_state["replan_history"] = replan_history
+
+    engineer_case["engineer_agent_state"] = merged_state
+    return engineer_case
+
+
 @app.post("/api/engineer/tickets/{ticket_id}/investigation/confirmation")
 async def confirm_investigation_reply(
     ticket_id: str,
@@ -4411,20 +4567,124 @@ async def confirm_investigation_reply(
     engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
     case_context = build_engineer_case_context(ticket, engineer_case)
     timestamp = now_iso()
-    result = apply_investigation_confirmation(
-        case_context,
-        decision=request.decision,
-        note=str(request.note or "").strip(),
-        now_value=timestamp,
-        ai_turn_builder=generate_investigation_ai_turn,
-    )
-    engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
-    if request.decision == "approve":
-        engineer_case["status"] = RESOLVED_STATUS
-        ticket["status"] = COMMUNICATING_STATUS
-    else:
+
+    if request.decision == "revise":
+        # ---- Multi-agent replan path ----
+        agent_state = (
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else {}
+        )
+        current_replan_count = 0
+        rc = agent_state.get("replan_count")
+        if isinstance(rc, int):
+            current_replan_count = rc
+        elif isinstance(rc, str) and rc.isdigit():
+            current_replan_count = int(rc)
+        max_replan = 2
+        mrc = agent_state.get("max_replan_count")
+        if isinstance(mrc, int):
+            max_replan = mrc
+        elif isinstance(mrc, str) and mrc.isdigit():
+            max_replan = int(mrc)
+
+        new_internal_messages: list[dict[str, Any]] = []
+
+        # Append engineer revision message to investigation
+        active_investigation = case_context.get("active_investigation")
+        if isinstance(active_investigation, dict):
+            sequence = len(active_investigation.get("messages", [])) + 1
+            revision_message = build_internal_message(
+                str(active_investigation.get("id") or ""),
+                "engineer",
+                str(request.note or "").strip(),
+                timestamp,
+                sequence=sequence,
+            )
+            active_investigation.setdefault("messages", []).append(revision_message)
+            active_investigation["updated_at"] = timestamp
+            new_internal_messages.append(revision_message)
+
+        if current_replan_count >= max_replan:
+            # Replan limit reached — add internal message, keep investigating
+            limit_message = build_internal_message(
+                str((case_context.get("active_investigation") or {}).get("id") or ""),
+                "engineer_ai",
+                (
+                    f"Replan limit reached ({current_replan_count}/{max_replan}). "
+                    "Automatic investigation cannot continue — manual engineer review is required."
+                ),
+                timestamp,
+                sequence=len((case_context.get("active_investigation") or {}).get("messages", [])) + 1,
+            )
+            active_investigation = case_context.get("active_investigation")
+            if isinstance(active_investigation, dict):
+                active_investigation.setdefault("messages", []).append(limit_message)
+                active_investigation["state"] = "active"
+                active_investigation["updated_at"] = timestamp
+            new_internal_messages.append(limit_message)
+        else:
+            # Build revise_context and run multi-agent round
+            revise_context = _build_revise_context_for_engineer_replan(
+                engineer_case,
+                note=str(request.note or "").strip(),
+                engineer_id=request.engineer_id,
+                created_at=timestamp,
+            )
+            engineer_case = _run_engineer_multi_agent_round(
+                engineer_case,
+                revise_context=revise_context,
+                now_value=timestamp,
+            )
+            # Add internal message with new review decision
+            new_agent_state = engineer_case.get("engineer_agent_state") or {}
+            new_review = new_agent_state.get("active_review") or {}
+            review_decision = str(new_review.get("review_decision") or "unknown")
+            decision_message = build_internal_message(
+                str((case_context.get("active_investigation") or {}).get("id") or ""),
+                "engineer_ai",
+                (
+                    f"Replan complete (round {current_replan_count + 1}/{max_replan}). "
+                    f"New review decision: {review_decision}. "
+                    f"Plan ID: {new_agent_state.get('plan_id', 'unknown')}. "
+                    "Please review the updated investigation results."
+                ),
+                timestamp,
+                sequence=len((case_context.get("active_investigation") or {}).get("messages", [])) + 1,
+            )
+            active_investigation = case_context.get("active_investigation")
+            if isinstance(active_investigation, dict):
+                active_investigation.setdefault("messages", []).append(decision_message)
+                active_investigation["updated_at"] = timestamp
+            new_internal_messages.append(decision_message)
+
+        # Sync agent_state back to case_context
+        case_context["engineer_agent_state"] = engineer_case.get("engineer_agent_state")
+        engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
         engineer_case["status"] = INVESTIGATING_STATUS
         ticket["status"] = INVESTIGATING_STATUS
+        result = {
+            "active_investigation": case_context.get("active_investigation"),
+            "closed_investigation": None,
+            "new_internal_messages": new_internal_messages,
+            "customer_reply": "",
+        }
+    else:
+        # ---- Approve path (existing) ----
+        result = apply_investigation_confirmation(
+            case_context,
+            decision=request.decision,
+            note=str(request.note or "").strip(),
+            now_value=timestamp,
+            ai_turn_builder=generate_investigation_ai_turn,
+        )
+        engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+        if request.decision == "approve":
+            engineer_case["status"] = RESOLVED_STATUS
+            ticket["status"] = COMMUNICATING_STATUS
+        else:
+            engineer_case["status"] = INVESTIGATING_STATUS
+            ticket["status"] = INVESTIGATING_STATUS
 
     initial_message_count = len(ticket.get("messages", []))
     customer_reply = str(result.get("customer_reply") or "").strip()

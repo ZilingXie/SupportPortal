@@ -413,6 +413,62 @@ def build_plan_blockers(
     return blockers
 
 
+def _deterministic_truncate(value: Any, max_chars: int = 500) -> str:
+    """Truncate long text fields to avoid stuffing raw traces into the plan."""
+    text = _clean_text(value)
+    if len(text) <= max_chars:
+        return text
+    shortened = text[: max_chars - 3].rstrip(" ,.;:")
+    return f"{shortened}..."
+
+
+def _clean_evidence_refs(refs: Any) -> list[dict[str, Any]]:
+    """Clean and limit evidence refs carried into revise_context."""
+    if not isinstance(refs, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        entry: dict[str, Any] = {}
+        for key in ("kind", "task_id", "chunk_id", "heading", "title", "source_url", "url"):
+            text = _clean_text(ref.get(key))
+            if text:
+                entry[key] = _deterministic_truncate(text, 300)
+        summary = _deterministic_truncate(ref.get("summary") or ref.get("internal_summary") or "", 300)
+        if summary:
+            entry["summary"] = summary
+        text = _deterministic_truncate(ref.get("text") or ref.get("value") or "", 300)
+        if text:
+            entry["text"] = text
+        if entry:
+            cleaned.append(entry)
+    return cleaned[:10]
+
+
+def _clean_task_results(results: Any) -> list[dict[str, Any]]:
+    """Clean and limit task results carried into revise_context."""
+    if not isinstance(results, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        entry: dict[str, Any] = {}
+        task_id = _clean_text(result.get("task_id"))
+        if task_id:
+            entry["task_id"] = task_id
+        status = _clean_text(result.get("status"))
+        if status:
+            entry["status"] = status
+        summary = _deterministic_truncate(result.get("summary"), 300)
+        if summary:
+            entry["summary"] = summary
+        if entry:
+            cleaned.append(entry)
+    return cleaned[:20]
+
+
 def _build_scheduler_hints(
     *,
     tasks: list[dict[str, Any]],
@@ -466,7 +522,13 @@ def build_engineer_plan(
         A dict conforming to the engineer-plan-v1 contract.
     """
     packet_id = _clean_text(summary_packet.get("packet_id"))
-    revision_suffix = "_r2" if isinstance(revise_context, dict) and revise_context else "_r1"
+    # Derive revision suffix from replan_count: _r{n+1}, default _r1
+    replan_count = 0
+    if isinstance(revise_context, dict) and revise_context:
+        rc_count = revise_context.get("replan_count")
+        if isinstance(rc_count, int) and rc_count >= 0:
+            replan_count = rc_count
+    revision_suffix = f"_r{replan_count + 1}"
     plan_id = f"plan_{packet_id}{revision_suffix}"
 
     memory_context = resolve_plan_memory_context(mem0_context=mem0_context)
@@ -512,9 +574,45 @@ def build_engineer_plan(
     }
 
     if isinstance(revise_context, dict) and revise_context:
+        previous_evidence = (
+            revise_context.get("previous_evidence_packet")
+            if isinstance(revise_context.get("previous_evidence_packet"), dict)
+            else {}
+        )
+        engineer_feedback = (
+            revise_context.get("engineer_feedback")
+            if isinstance(revise_context.get("engineer_feedback"), dict)
+            else {}
+        )
         plan["revise_context"] = {
             "revise_note": _clean_text(revise_context.get("revise_note")),
             "previous_plan_id": _clean_text(revise_context.get("previous_plan_id")),
+            "previous_execution_id": _clean_text(revise_context.get("previous_execution_id")),
+            "previous_review_id": _clean_text(revise_context.get("previous_review_id")),
+            "previous_review_decision": _clean_text(revise_context.get("previous_review_decision")),
+            "review_problem_statement": _deterministic_truncate(
+                revise_context.get("review_problem_statement"), 400
+            ),
+            "review_evidence_gaps": _clean_list(revise_context.get("review_evidence_gaps"))[:10],
+            "previous_evidence_packet": {
+                "packet_id": _clean_text(previous_evidence.get("packet_id")),
+                "packet_version": _clean_text(previous_evidence.get("packet_version")),
+                "customer_safe_summary": _deterministic_truncate(
+                    previous_evidence.get("customer_safe_summary"), 300
+                ),
+                "internal_summary": _deterministic_truncate(
+                    previous_evidence.get("internal_summary"), 300
+                ),
+                "evidence_refs": _clean_evidence_refs(previous_evidence.get("evidence_refs")),
+                "missing_information": _clean_list(previous_evidence.get("missing_information"))[:10],
+            },
+            "previous_task_results": _clean_task_results(revise_context.get("previous_task_results")),
+            "engineer_feedback": {
+                "note": _clean_text(engineer_feedback.get("note")),
+                "engineer_id": _clean_text(engineer_feedback.get("engineer_id")),
+                "created_at": _clean_text(engineer_feedback.get("created_at")),
+            },
+            "replan_count": replan_count,
         }
 
     return plan

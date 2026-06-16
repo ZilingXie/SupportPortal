@@ -52,6 +52,7 @@
 - Engineer AI 会在调查前生成结构化 Plan Agent 计划。
 - Engineer AI 会按 Plan Agent 计划执行 allowlisted subagents 并生成 evidence packet。
 - Engineer AI 会根据执行结果生成 Review Agent 决策。
+- Engineer AI 支持工程师 revise 后带证据上下文重新规划调查。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
