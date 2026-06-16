@@ -2610,8 +2610,27 @@ def _clean_account_source_link(value: Any) -> str | None:
     return link
 
 
+def _extract_account_source_link(value: Any) -> str | None:
+    """Extract a safe http/https link from common N8n / Zendesk source shapes.
+
+    Supports:
+    - plain string URL: "https://xxx.zendesk.com/agent/tickets/123"
+    - dict with key Link, link, url, source_url, or source
+    """
+    if isinstance(value, str) and value.strip():
+        return _clean_account_source_link(value)
+    if isinstance(value, dict):
+        for key in ("Link", "link", "url", "source_url", "source"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                link = _clean_account_source_link(candidate)
+                if link:
+                    return link
+    return None
+
+
 def _normalize_account_source(value: str | dict[str, Any] | None) -> str:
-    if isinstance(value, dict) and _clean_account_source_link(value.get("Link")):
+    if _extract_account_source_link(value):
         return "api"
     normalized = str(value or "").strip().lower().replace("_", "-")
     if normalized in {"manual", "account-manual", "/account-manual"}:
@@ -2629,10 +2648,9 @@ def _serialize_billing_ticket_source(
     raw_source: str | dict[str, Any] | None,
     normalized: str,
 ) -> str:
-    if isinstance(raw_source, dict):
-        link = _clean_account_source_link(raw_source.get("Link"))
-        if link:
-            return json.dumps({"Link": link}, ensure_ascii=False)
+    link = _extract_account_source_link(raw_source)
+    if link:
+        return json.dumps({"Link": link}, ensure_ascii=False)
     return normalized
 
 
@@ -2646,10 +2664,13 @@ def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
 
     raw_source = ticket.get("source")
     source_display: str | dict[str, Any]
-    if isinstance(raw_source, str) and raw_source.strip().startswith("{"):
+    direct_link = _extract_account_source_link(raw_source)
+    if direct_link:
+        source_display = {"Link": direct_link}
+    elif isinstance(raw_source, str) and raw_source.strip().startswith("{"):
         try:
             parsed = json.loads(raw_source)
-            link = _clean_account_source_link(parsed.get("Link")) if isinstance(parsed, dict) else None
+            link = _extract_account_source_link(parsed) if isinstance(parsed, dict) else None
             if link:
                 source_display = {"Link": link}
             else:
