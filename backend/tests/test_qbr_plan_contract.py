@@ -221,6 +221,28 @@ class QbrPlanContractTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
 
+    def test_qbr_plan_renders_architecture_full_width_below_lane_columns(self) -> None:
+        html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
+        render_lane_start = html_source.index("function renderLane(lane, index)")
+        render_lane_end = html_source.index("function renderTask(task)", render_lane_start)
+        render_lane_source = html_source[render_lane_start:render_lane_end]
+
+        self.assertIn('class="lane-followup"', render_lane_source)
+        self.assertLess(
+            render_lane_source.index('class="lane-body"'),
+            render_lane_source.index('class="lane-followup"'),
+        )
+
+        first_panel_source = render_lane_source[
+            render_lane_source.index('<section class="panel">') : render_lane_source.index('<section class="panel">', render_lane_source.index('<section class="panel">') + 1)
+        ]
+        self.assertNotIn("renderLaneArchitecture(lane.architecture)", first_panel_source)
+        self.assertIn("renderLaneArchitecture(lane.architecture)", render_lane_source)
+        self.assertLess(
+            render_lane_source.index("renderLaneArchitecture(lane.architecture)"),
+            render_lane_source.index('class="notes"'),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
