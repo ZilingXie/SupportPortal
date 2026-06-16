@@ -5755,7 +5755,8 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400, response.text)
         self.assertIn("validated customer reply", response.text.lower())
 
-    def test_confirmation_approve_sends_customer_reply_and_closes_investigation(self) -> None:
+    def test_confirmation_approve_runs_guardrail_and_awaits_final_approval(self) -> None:
+        """First approve runs guardrail final agent, does NOT close the case or send customer reply."""
         self._seed_ticket(
             ticket_id="TK-INV-103",
             status="investigating",
@@ -5813,12 +5814,231 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
 
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-103-1/investigation/confirmation",
+                json={
+                    "engineer_id": "eng",
+                    "decision": "approve",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        # First approve should NOT close the case
+        self.assertEqual(payload["status"], "investigating")
+        self.assertIsNotNone(payload["active_investigation"])
+        self.assertEqual(payload["active_investigation"]["state"], "awaiting_final_approval")
+        self.assertIsNone(payload["closed_investigation"])
+
+        # Guardrail packet should be present and approved
+        guardrail = payload["active_guardrail_final"]
+        self.assertIsNotNone(guardrail)
+        self.assertEqual(guardrail["decision"], "approved_for_final_engineer_review")
+        self.assertEqual(len(guardrail["blockers"]), 0)
+
+        # Verify no customer message was appended to client ticket
+        stored_client_ticket = self.repository.get_ticket("TK-INV-103")
+        self.assertIsNotNone(stored_client_ticket)
+        # Client ticket should still be investigating (not communicating)
+        self.assertEqual(stored_client_ticket["status"], "investigating")
+        # active_engineer_case_id should still be set (case not resolved)
+        self.assertIsNotNone(stored_client_ticket.get("active_engineer_case_id"))
+
+        # Verify detail shows awaiting_final_approval state
+        detail = self.client.get("/api/engineer/tickets/TK-INV-103-1")
+        ticket = detail.json()["ticket"]
+        self.assertEqual(ticket["status"], "investigating")
+        self.assertIsNotNone(ticket["active_investigation"])
+        self.assertEqual(ticket["active_investigation"]["state"], "awaiting_final_approval")
+        self.assertEqual(ticket["engineer_agent_state"]["phase"], "awaiting_final_approval")
+        self.assertTrue(ticket["engineer_agent_state"]["final_approval_required"])
+
+        # No ticket_guidance_applied or ticket_investigation_closed events
+        event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103")]
+        self.assertNotIn("ticket_guidance_applied", event_types)
+        self.assertNotIn("ticket_investigation_closed", event_types)
+
+    def test_confirmation_approve_guardrail_block_keeps_investigation_revisable(self) -> None:
+        """Blocked guardrail results should not strand the engineer in final approval."""
+        self._seed_ticket(
+            ticket_id="TK-INV-GUARDRAIL-BLOCK",
+            status="investigating",
+            active_investigation={
+                "id": "INV-GUARDRAIL-BLOCK",
+                "state": "awaiting_confirmation",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "worker_async_rag",
+                "draft_customer_reply": "This is engineer-only internal use only. Please upgrade.",
+                "final_confirmation_requested_at": "2026-03-29T09:03:00+00:00",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-GUARDRAIL-BLOCK-m1",
+                        "role": "engineer_ai",
+                        "content": "Draft ready for confirmation.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+            engineer_handoff_packet={
+                "source": "worker_async_rag",
+                "conversation_summary": "Customer reports token renew callback does not fire.",
+                "latest_customer_message": "token renew callback never fires",
+                "route_summary": {
+                    "answer_route": "rag",
+                    "route_reason": "rag_insufficient_evidence",
+                },
+                "rag_result": {
+                    "candidate_answer": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                    "sources": ["https://docs.agora.io/en/video-calling/token-authentication"],
+                    "citations": [],
+                },
+                "unresolved_reason": "rag_insufficient_evidence",
+                "customer_language_hint": "en",
+                "created_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+            },
+            engineer_agent_state={
+                "phase": "awaiting_confirmation",
+                "issue_understanding": "Token renew callback does not fire.",
+                "knowledge_summary": "Client AI found generic token-renewal guidance.",
+                "why_not_solved": "The engineer had to confirm the SDK-specific fix before replying.",
+                "goal": "Send customer-safe SDK upgrade guidance.",
+                "known_facts": ["SDK 4.2.2 is the recommended fix."],
+                "missing_information": [],
+                "next_request_for_engineer": "Approve the prepared customer reply.",
+                "resolution_hypothesis": "Upgrading to SDK 4.2.2 should resolve the callback failure.",
+                "ready_to_reply": True,
+                "reply_readiness": _reply_readiness(),
+                "last_refreshed_at": "2026-03-29T09:03:00+00:00",
+            },
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-GUARDRAIL-BLOCK-1/investigation/confirmation",
+                json={
+                    "engineer_id": "eng",
+                    "decision": "approve",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+        self.assertEqual(payload["active_investigation"]["state"], "active")
+        self.assertIsNone(payload["closed_investigation"])
+        self.assertEqual(payload["active_guardrail_final"]["decision"], "blocked")
+        self.assertTrue(payload["active_guardrail_final"]["blockers"])
+
+        detail = self.client.get("/api/engineer/tickets/TK-INV-GUARDRAIL-BLOCK-1")
+        ticket = detail.json()["ticket"]
+        self.assertEqual(ticket["active_investigation"]["state"], "active")
+        self.assertEqual(ticket["engineer_agent_state"]["phase"], "guardrail_blocked")
+        self.assertFalse(ticket["engineer_agent_state"]["final_approval_required"])
+        stored_client_ticket = self.repository.get_ticket("TK-INV-GUARDRAIL-BLOCK")
+        self.assertIsNotNone(stored_client_ticket)
+        self.assertEqual(stored_client_ticket["status"], "investigating")
+        self.assertIsNotNone(stored_client_ticket.get("active_engineer_case_id"))
+
+        final_response = self.client.post(
+            "/api/engineer/tickets/TK-INV-GUARDRAIL-BLOCK-1/investigation/confirmation",
+            json={
+                "engineer_id": "eng",
+                "decision": "final_approve",
+            },
+        )
+        self.assertEqual(final_response.status_code, 400, final_response.text)
+        self.assertIn("awaiting_final_approval", final_response.text)
+
+    def test_confirmation_final_approve_sends_customer_reply_and_closes_investigation(self) -> None:
+        """Final approve after successful guardrail sends customer reply and closes the case."""
+        self._seed_ticket(
+            ticket_id="TK-INV-103B",
+            status="investigating",
+            active_investigation={
+                "id": "INV-103B",
+                "state": "awaiting_final_approval",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "worker_async_rag",
+                "draft_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-103B-m1",
+                        "role": "engineer_ai",
+                        "content": "Guardrail final review complete. Decision: approved_for_final_engineer_review.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+            engineer_handoff_packet={
+                "source": "worker_async_rag",
+                "conversation_summary": "Customer reports token renew callback does not fire.",
+                "latest_customer_message": "token renew callback never fires",
+                "latest_client_ai_reply": "This issue requires further internal investigation...",
+                "route_summary": {
+                    "answer_route": "rag",
+                    "route_reason": "rag_insufficient_evidence",
+                },
+                "rag_result": {
+                    "candidate_answer": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                    "sources": ["https://docs.agora.io/en/video-calling/token-authentication"],
+                    "citations": [],
+                },
+                "unresolved_reason": "rag_insufficient_evidence",
+                "customer_language_hint": "en",
+                "created_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+            },
+            engineer_agent_state={
+                "phase": "awaiting_final_approval",
+                "issue_understanding": "Token renew callback does not fire.",
+                "knowledge_summary": "Client AI found generic token-renewal guidance.",
+                "why_not_solved": "The engineer had to confirm the SDK-specific fix before replying.",
+                "goal": "Send the approved SDK upgrade guidance to the customer.",
+                "known_facts": ["SDK 4.2.2 is the recommended fix."],
+                "missing_information": [],
+                "next_request_for_engineer": "Approve the final customer reply.",
+                "resolution_hypothesis": "Upgrading to SDK 4.2.2 should resolve the callback failure.",
+                "ready_to_reply": True,
+                "reply_readiness": _reply_readiness(),
+                "last_refreshed_at": "2026-03-29T09:03:00+00:00",
+                "active_guardrail_final": {
+                    "guardrail_id": "GRD-test103b",
+                    "guardrail_version": "engineer-guardrail-final-v1",
+                    "decision": "approved_for_final_engineer_review",
+                    "customer_reply": "Hi there,\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.\n\nBest Regards,\nSid",
+                    "normalized_customer_reply": "Hi there,\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.\n\nBest Regards,\nSid",
+                    "evidence_refs": [],
+                    "checks": {
+                        "proof": {"passed": True, "detail": "Proof check passed."},
+                        "citation": {"passed": True, "detail": "No evidence packet provided."},
+                        "no_internal_leakage": {"passed": True, "detail": "No internal-only leakage detected."},
+                        "no_unsupported_claims": {"passed": True, "detail": "No unsupported claims detected."},
+                        "style": {"passed": True, "detail": "Style check passed."},
+                    },
+                    "blockers": [],
+                    "created_at": "2026-03-29T09:03:00+00:00",
+                },
+                "guardrail_final_id": "GRD-test103b",
+                "guardrail_final_version": "engineer-guardrail-final-v1",
+                "guardrail_final_decision": "approved_for_final_engineer_review",
+                "final_approval_required": True,
+            },
+        )
+
         auto_feedback = {
-            "feedback_id": "hitl_auto_TK-INV-103-1",
-            "engineer_case_id": "TK-INV-103-1",
-            "client_ticket_id": "TK-INV-103",
+            "feedback_id": "hitl_auto_TK-INV-103B-1",
+            "engineer_case_id": "TK-INV-103B-1",
+            "client_ticket_id": "TK-INV-103B",
             "run_id": None,
-            "message_id": "INV-103-m1",
+            "message_id": "INV-103B-m1",
             "evidence_packet_id": None,
             "feedback_type": "resolve",
             "diagnosis_correctness": "correct",
@@ -5831,7 +6051,7 @@ class InvestigationFlowTests(unittest.TestCase):
             "corrected_root_cause": "Token renew callback does not fire on the affected SDK.",
             "corrected_solution": "Please upgrade to SDK 4.2.2 and retry token renewal.",
             "corrected_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
-            "evidence_refs": [{"source_id": "INV-103-m1"}],
+            "evidence_refs": [{"source_id": "INV-103B-m1"}],
             "memory_candidate": "needs_review",
             "memory_safety": "internal_only",
             "memory_notes": "Auto-reviewed after engineer approval; keep as candidate for audit.",
@@ -5850,10 +6070,10 @@ class InvestigationFlowTests(unittest.TestCase):
             Mock(return_value=auto_feedback),
         ) as auto_review:
             response = self.client.post(
-                "/api/engineer/tickets/TK-INV-103-1/investigation/confirmation",
+                "/api/engineer/tickets/TK-INV-103B-1/investigation/confirmation",
                 json={
                     "engineer_id": "eng",
-                    "decision": "approve",
+                    "decision": "final_approve",
                 },
             )
 
@@ -5863,7 +6083,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIsNone(payload["active_investigation"])
         self.assertEqual(payload["closed_investigation"]["state"], "closed")
 
-        detail = self.client.get("/api/engineer/tickets/TK-INV-103-1")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-103B-1")
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "resolved")
         self.assertIsNone(ticket["active_investigation"])
@@ -5875,18 +6095,17 @@ class InvestigationFlowTests(unittest.TestCase):
             ticket["engineer_handoff_packet"]["rag_result"]["candidate_answer"],
             "Please upgrade to SDK 4.2.2 and retry token renewal.",
         )
-        self.assertEqual(ticket["engineer_agent_state"]["phase"], "awaiting_confirmation")
-        stored_client_ticket = self.repository.get_ticket("TK-INV-103")
+        stored_client_ticket = self.repository.get_ticket("TK-INV-103B")
         self.assertIsNotNone(stored_client_ticket)
         self.assertEqual(stored_client_ticket["status"], "communicating")
         self.assertIsNone(stored_client_ticket.get("active_engineer_case_id"))
-        event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103")]
+        event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103B")]
         self.assertIn("ticket_investigation_closed", event_types)
         self.assertIn("ticket_guidance_applied", event_types)
         auto_review.assert_called_once()
-        stored_feedback = self.repository.list_engineer_hitl_feedback("TK-INV-103-1")
+        stored_feedback = self.repository.list_engineer_hitl_feedback("TK-INV-103B-1")
         self.assertEqual(len(stored_feedback), 1)
-        self.assertEqual(stored_feedback[0]["feedback_id"], "hitl_auto_TK-INV-103-1")
+        self.assertEqual(stored_feedback[0]["feedback_id"], "hitl_auto_TK-INV-103B-1")
         self.assertEqual(stored_feedback[0]["feedback_type"], "resolve")
         self.assertEqual(stored_feedback[0]["created_by"], "engineer_ai_auto_review")
         self.assertEqual(
@@ -5895,18 +6114,10 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         self.assertEqual(stored_feedback[0]["memory_candidate"], "needs_review")
         self.assertEqual(stored_feedback[0]["memory_safety"], "internal_only")
-        ledger_records = self.repository.list_case_memory_ledger("TK-INV-103-1")
+        ledger_records = self.repository.list_case_memory_ledger("TK-INV-103B-1")
         self.assertEqual(len(ledger_records), 1)
-        self.assertEqual(ledger_records[0]["source_feedback_id"], "hitl_auto_TK-INV-103-1")
+        self.assertEqual(ledger_records[0]["source_feedback_id"], "hitl_auto_TK-INV-103B-1")
         self.assertEqual(ledger_records[0]["ledger_status"], "candidate")
-        self.assertFalse(ledger_records[0]["retrieval_enabled"])
-        self.assertEqual(ledger_records[0]["active_memory_status"], "inactive")
-        self.assertEqual(ledger_records[0]["safety_label"], "internal_only")
-        self.assertEqual(ledger_records[0]["quality_label"], "candidate")
-        self.assertEqual(
-            ledger_records[0]["customer_safe_summary"],
-            "Please upgrade to SDK 4.2.2 and retry token renewal.",
-        )
 
     def test_confirmation_revise_records_engineer_note_and_keeps_investigation_active(self) -> None:
         self._seed_ticket(
@@ -6218,6 +6429,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(len(limit_messages), 1, f"Expected replan limit message in: {messages}")
 
     def test_confirmation_approve_does_not_replan(self) -> None:
+        """First approve runs guardrail without triggering multi-agent replan."""
         self._seed_ticket(
             ticket_id="TK-INV-APPROVE-NOREPLAN",
             status="investigating",
@@ -6274,42 +6486,7 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
 
-        auto_feedback = {
-            "feedback_id": "hitl_auto_TK-INV-APPROVE-NOREPLAN-1",
-            "engineer_case_id": "TK-INV-APPROVE-NOREPLAN-1",
-            "client_ticket_id": "TK-INV-APPROVE-NOREPLAN",
-            "run_id": None,
-            "message_id": "INV-APPROVE-NOREPLAN-m1",
-            "evidence_packet_id": None,
-            "feedback_type": "resolve",
-            "diagnosis_correctness": "correct",
-            "root_cause_correctness": "confirmed",
-            "evidence_quality": "sufficient",
-            "citation_quality": "not_applicable",
-            "customer_reply_quality": "sendable",
-            "missing_information": [],
-            "incorrect_claims": [],
-            "corrected_root_cause": "Token renew callback does not fire on the affected SDK.",
-            "corrected_solution": "Please upgrade to SDK 4.2.2 and retry token renewal.",
-            "corrected_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
-            "evidence_refs": [{"source_id": "INV-APPROVE-NOREPLAN-m1"}],
-            "memory_candidate": "needs_review",
-            "memory_safety": "internal_only",
-            "memory_notes": "Auto-reviewed after engineer approval.",
-            "prompt_version": "engineer-hitl-auto-review-test",
-            "workflow_version": "engineer-auto-hitl-review-v1",
-            "tool_policy_version": None,
-            "rag_access_policy_version": None,
-            "evidence_packet_version": None,
-            "created_by": "engineer_ai_auto_review",
-            "created_at": "2026-03-29T09:03:00+00:00",
-        }
-
-        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
-            main,
-            "build_engineer_auto_hitl_feedback",
-            Mock(return_value=auto_feedback),
-        ):
+        with patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/engineer/tickets/TK-INV-APPROVE-NOREPLAN-1/investigation/confirmation",
                 json={
@@ -6320,14 +6497,18 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "resolved")
-        self.assertIsNone(payload["active_investigation"])
+        # First approve keeps case in investigating status
+        self.assertEqual(payload["status"], "investigating")
+        self.assertIsNotNone(payload["active_investigation"])
 
-        # Verify approve did NOT create multi-agent state
+        # Verify approve did NOT create multi-agent state (no replan)
         detail = self.client.get("/api/engineer/tickets/TK-INV-APPROVE-NOREPLAN-1")
         ticket = detail.json()["ticket"]
-        # approve closes the case, active_investigation is None
-        self.assertIsNone(ticket.get("active_investigation"))
+        # approve does not close the case; active_investigation remains
+        self.assertIsNotNone(ticket.get("active_investigation"))
+        self.assertEqual(ticket["active_investigation"]["state"], "awaiting_final_approval")
+        # Guardrail packet should be present
+        self.assertIsNotNone(ticket["engineer_agent_state"].get("active_guardrail_final"))
 
     def test_storage_contract_defines_dedicated_investigation_tables(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")

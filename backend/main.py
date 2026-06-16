@@ -58,11 +58,18 @@ from backend.services.embedding_provider import (
 )
 from backend.services.agora_service_events import get_agora_service_events_payload
 from backend.services.billing_automation import build_billing_automation_result
-from backend.services.customer_reply_composer import ensure_customer_reply_email_style
+from backend.services.customer_reply_composer import (
+    detect_customer_reply_language,
+    ensure_customer_reply_email_style,
+)
 from backend.services.emotion_reply import build_initial_ack
 from backend.services.engineer_agent import (
     build_engineer_agent_brief,
     normalize_engineer_agent_state,
+)
+from backend.services.engineer_guardrail_agent import (
+    GUARDRAIL_VERSION,
+    run_engineer_guardrail_final,
 )
 from backend.services.case_memory_ledger import build_case_memory_ledger_record_from_feedback
 from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
@@ -85,6 +92,7 @@ from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     ESCALATED_STATUS,
     INVESTIGATING_STATUS,
+    INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL,
     OPEN_STATUS,
     RESOLVED_STATUS,
     append_engineer_investigation_message,
@@ -383,7 +391,7 @@ class InvestigationMessageRequest(BaseModel):
 
 class InvestigationConfirmationRequest(BaseModel):
     engineer_id: str = Field(default="Jack")
-    decision: str = Field(pattern="^(approve|revise)$")
+    decision: str = Field(pattern="^(approve|revise|final_approve)$")
     note: str | None = Field(default=None, max_length=4000)
 
 
@@ -4700,7 +4708,7 @@ async def confirm_investigation_reply(
     ensure_ticket_defaults(ticket)
     if not isinstance(engineer_case_payload.get("active_investigation"), dict):
         raise HTTPException(status_code=400, detail="No active investigation exists")
-    if request.decision == "approve":
+    if request.decision in ("approve", "final_approve"):
         draft_customer_reply = str(
             (engineer_case_payload.get("active_investigation") or {}).get("draft_customer_reply") or ""
         ).strip()
@@ -4811,10 +4819,31 @@ async def confirm_investigation_reply(
             active_investigation = case_context.get("active_investigation")
             if isinstance(active_investigation, dict):
                 active_investigation.setdefault("messages", []).append(decision_message)
+                previous_state = str(active_investigation.get("state") or "").strip().lower()
+                if (
+                    previous_state == INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL
+                    or isinstance(new_agent_state.get("active_guardrail_final"), dict)
+                ):
+                    active_investigation["state"] = "active"
+                    active_investigation["final_confirmation_requested_at"] = None
                 active_investigation["updated_at"] = timestamp
             new_internal_messages.append(decision_message)
 
         # Sync agent_state back to case_context
+        revised_agent_state = (
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else {}
+        )
+        for guardrail_key in (
+            "active_guardrail_final",
+            "guardrail_final_id",
+            "guardrail_final_version",
+            "guardrail_final_decision",
+            "final_approval_required",
+            "final_approved_at",
+        ):
+            revised_agent_state.pop(guardrail_key, None)
         case_context["engineer_agent_state"] = engineer_case.get("engineer_agent_state")
         engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
         engineer_case["status"] = INVESTIGATING_STATUS
@@ -4825,26 +4854,153 @@ async def confirm_investigation_reply(
             "new_internal_messages": new_internal_messages,
             "customer_reply": "",
         }
-    else:
-        # ---- Approve path (existing) ----
+    elif request.decision == "approve":
+        # ---- Guardrail final review path (first approve) ----
+        active_investigation = case_context.get("active_investigation")
+        if not isinstance(active_investigation, dict):
+            raise HTTPException(status_code=400, detail="No active investigation exists")
+
+        agent_state = (
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else {}
+        )
+        draft_reply = str(active_investigation.get("draft_customer_reply") or "").strip()
+        reply_readiness = agent_state.get("reply_readiness") if isinstance(agent_state.get("reply_readiness"), dict) else None
+        active_review = agent_state.get("active_review") if isinstance(agent_state.get("active_review"), dict) else None
+        evidence_packet = agent_state.get("evidence_packet") if isinstance(agent_state.get("evidence_packet"), dict) else None
+        task_results = agent_state.get("task_results") if isinstance(agent_state.get("task_results"), list) else None
+        handoff_packet = (
+            ticket.get("engineer_handoff_packet")
+            if isinstance(ticket.get("engineer_handoff_packet"), dict)
+            else None
+        )
+
+        # Run deterministic guardrail final agent
+        guardrail_packet = run_engineer_guardrail_final(
+            draft_customer_reply=draft_reply,
+            reply_readiness=reply_readiness,
+            active_review=active_review,
+            evidence_packet=evidence_packet,
+            task_results=task_results,
+            engineer_handoff_packet=handoff_packet,
+            requester=str(ticket.get("requester") or "").strip() or None,
+            customer_id=str(ticket.get("customer_id") or "").strip() or None,
+            language_hint=detect_customer_reply_language(
+                (handoff_packet or {}).get("latest_customer_message", "") if isinstance(handoff_packet, dict) else "",
+                draft_reply,
+            ),
+        )
+        guardrail_packet["created_at"] = timestamp
+
+        # Append internal message about guardrail result
+        sequence = len(active_investigation.get("messages", [])) + 1
+        guardrail_decision = guardrail_packet.get("decision", "blocked")
+        guardrail_summary = (
+            f"Guardrail final review complete. Decision: {guardrail_decision}. "
+            f"Guardrail ID: {guardrail_packet.get('guardrail_id', 'unknown')}. "
+        )
+        if guardrail_decision == "approved_for_final_engineer_review":
+            guardrail_summary += "Customer reply passed all guardrail checks. Awaiting final engineer approval."
+        else:
+            blockers_list = guardrail_packet.get("blockers", [])
+            blockers_text = "; ".join(blockers_list) if blockers_list else "unknown reason"
+            guardrail_summary += f"Customer reply BLOCKED: {blockers_text}"
+        guardrail_message = build_internal_message(
+            str(active_investigation.get("id") or ""),
+            "engineer_ai",
+            guardrail_summary,
+            timestamp,
+            sequence=sequence,
+        )
+        active_investigation.setdefault("messages", []).append(guardrail_message)
+
+        guardrail_approved = guardrail_decision == "approved_for_final_engineer_review"
+        # Blocked guardrail results must leave the investigation editable so the
+        # engineer can revise instead of getting stuck without a final approve.
+        active_investigation["state"] = (
+            INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL if guardrail_approved else "active"
+        )
+        active_investigation["updated_at"] = timestamp
+
+        # Update engineer_agent_state with guardrail final packet
+        agent_state["phase"] = "awaiting_final_approval" if guardrail_approved else "guardrail_blocked"
+        agent_state["active_guardrail_final"] = guardrail_packet
+        agent_state["guardrail_final_id"] = guardrail_packet.get("guardrail_id", "")
+        agent_state["guardrail_final_version"] = guardrail_packet.get("guardrail_version", "")
+        agent_state["guardrail_final_decision"] = guardrail_decision
+        agent_state["final_approval_required"] = guardrail_approved
+        case_context["engineer_agent_state"] = agent_state
+        engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+        engineer_case["status"] = INVESTIGATING_STATUS
+        engineer_case["investigation_state"] = active_investigation["state"]
+        ticket["status"] = INVESTIGATING_STATUS
+        result = {
+            "active_investigation": active_investigation,
+            "closed_investigation": None,
+            "new_internal_messages": [guardrail_message],
+            "customer_reply": "",
+            "active_guardrail_final": guardrail_packet,
+        }
+    elif request.decision == "final_approve":
+        # ---- Final approve path (second approval) ----
+        active_investigation = case_context.get("active_investigation")
+        if not isinstance(active_investigation, dict):
+            raise HTTPException(status_code=400, detail="No active investigation exists")
+
+        agent_state = (
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else {}
+        )
+        active_guardrail_final = agent_state.get("active_guardrail_final") if isinstance(agent_state.get("active_guardrail_final"), dict) else None
+
+        # Validate preconditions for final_approve
+        if str(active_investigation.get("state") or "").strip().lower() != INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL:
+            raise HTTPException(
+                status_code=400,
+                detail="Investigation must be in awaiting_final_approval state before final approval.",
+            )
+        if not isinstance(active_guardrail_final, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Guardrail final review has not been completed. Approve first to run guardrail.",
+            )
+        if active_guardrail_final.get("decision") != "approved_for_final_engineer_review":
+            raise HTTPException(
+                status_code=400,
+                detail="Guardrail final review did not approve the customer reply. Address blockers before final approval.",
+            )
+        guardrail_customer_reply = str(active_guardrail_final.get("customer_reply") or "").strip()
+        if not guardrail_customer_reply:
+            raise HTTPException(
+                status_code=400,
+                detail="Guardrail final packet is missing the customer reply.",
+            )
+
+        # Execute the old close logic (call apply_investigation_confirmation)
+        active_investigation["draft_customer_reply"] = guardrail_customer_reply
         result = apply_investigation_confirmation(
             case_context,
-            decision=request.decision,
+            decision="approve",
             note=str(request.note or "").strip(),
             now_value=timestamp,
             ai_turn_builder=generate_investigation_ai_turn,
         )
         engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
-        if request.decision == "approve":
-            engineer_case["status"] = RESOLVED_STATUS
-            ticket["status"] = COMMUNICATING_STATUS
-        else:
-            engineer_case["status"] = INVESTIGATING_STATUS
-            ticket["status"] = INVESTIGATING_STATUS
+        engineer_case["status"] = RESOLVED_STATUS
+        ticket["status"] = COMMUNICATING_STATUS
+
+        # Stamp final_approved_at in agent state
+        agent_state["final_approved_at"] = timestamp
+        agent_state["phase"] = "closed"
+        case_context["engineer_agent_state"] = agent_state
+        engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+        engineer_case["status"] = RESOLVED_STATUS
 
     initial_message_count = len(ticket.get("messages", []))
     customer_reply = str(result.get("customer_reply") or "").strip()
-    if request.decision == "approve" and customer_reply:
+    if request.decision == "final_approve" and customer_reply:
         ticket["messages"].append(
             {
                 "role": "assistant",
@@ -4865,14 +5021,14 @@ async def confirm_investigation_reply(
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
     ticket["active_engineer_case_id"] = (
-        None if request.decision == "approve" else str(engineer_case.get("engineer_case_id") or "").strip() or None
+        None if request.decision == "final_approve" else str(engineer_case.get("engineer_case_id") or "").strip() or None
     )
     ticket_repository.save_ticket(ticket, new_messages=[])
     ticket_repository.save_engineer_case(
         engineer_case,
         new_messages=result.get("new_internal_messages"),
     )
-    if request.decision == "approve":
+    if request.decision == "final_approve":
         auto_feedback = build_engineer_auto_hitl_feedback(
             client_ticket=ticket,
             engineer_case=engineer_case,
@@ -4904,7 +5060,7 @@ async def confirm_investigation_reply(
         )
     await _record_and_dispatch_investigation_event(ticket, engineer_case)
 
-    if request.decision == "approve" and customer_reply:
+    if request.decision == "final_approve" and customer_reply:
         payload = {
             "event": "ticket_guidance_applied",
             "ticket_id": str(engineer_case.get("engineer_case_id") or ticket_id),
@@ -4932,6 +5088,11 @@ async def confirm_investigation_reply(
         "engineer_agent_state": (
             case_context.get("engineer_agent_state")
             if isinstance(case_context.get("engineer_agent_state"), dict)
+            else None
+        ),
+        "active_guardrail_final": (
+            result.get("active_guardrail_final")
+            if isinstance(result.get("active_guardrail_final"), dict)
             else None
         ),
         "updated_at": ticket["updated_at"],

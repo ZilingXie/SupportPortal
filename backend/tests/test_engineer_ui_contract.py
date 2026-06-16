@@ -165,9 +165,9 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("Sid", app_source)
         self.assertIn("return ENGINEER_DISPLAY_NAME;", app_source)
         self.assertIn("detail-investigation-closing-state", app_source)
-        self.assertIn("Approving Reply", app_source)
+        self.assertIn("Approve for Guardrail", app_source)
         self.assertIn(
-            "Sending the approved customer reply and closing this engineer ticket...",
+            "Running final guardrail review before sending to customer...",
             app_source,
         )
         self.assertNotIn('data-detail-action="refresh-ticket"', app_source)
@@ -1060,7 +1060,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Customer Timeline")) {{
                   throw new Error("Detail workspace should still render the customer timeline in the supporting column.");
                 }}
-                if (!html.includes("Approve Reply")) {{
+                if (!html.includes("Approve for Guardrail")) {{
                   throw new Error("Awaiting-confirmation investigations should expose the approve action.");
                 }}
                 if (!html.includes("detail-investigation-inline-actions")) {{
@@ -1160,7 +1160,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Only the opening Sid request should use the merged structured layout.");
                 }}
                 const draftIndex = engineerThreadSection.indexOf("detail-investigation-draft");
-                const approveIndex = engineerThreadSection.indexOf("Approve Reply");
+                const approveIndex = engineerThreadSection.indexOf("Approve for Guardrail");
                 const composerIndex = engineerThreadSection.indexOf('id="detail-investigation-input"');
                 if (draftIndex === -1) {{
                   throw new Error("Engineer thread should render the customer draft directly below the approval request.");
@@ -1381,7 +1381,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketNextAction = "Approve the prepared reply.";
 
                 const html = renderTicketDetailView();
-                if (!html.includes("Approve Reply")) {{
+                if (!html.includes("Approve for Guardrail")) {{
                   throw new Error("Engineer thread should derive the approval block from backend-validated reply readiness when the investigation state has not caught up yet.");
                 }}
                 if (html.includes("Ask AI to Revise")) {{
@@ -1455,7 +1455,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketNextAction = "Approve the prepared reply if it is safe.";
 
                 const html = renderTicketDetailView();
-                if (html.includes("Approve Reply")) {{
+                if (html.includes("Approve for Guardrail")) {{
                   throw new Error("Engineer thread should not expose approval actions from draft presence alone when reply readiness is incomplete.");
                 }}
                 if (!html.includes("Could you please share the channel name with us for further investigation?")) {{
@@ -2241,7 +2241,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes('id="detail-investigation-input"')) {{
                   throw new Error("Closed investigations should not render an active composer.");
                 }}
-                if (html.includes("Approve Reply") || html.includes("Ask AI to Revise")) {{
+                if (html.includes("Approve for Guardrail") || html.includes("Ask AI to Revise")) {{
                   throw new Error("Closed investigations should not keep rendering confirmation actions.");
                 }}
               """
@@ -2778,7 +2778,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 });
 
                 const pendingRefreshHtml = workspaceRegionEl.innerHTML;
-                if (!pendingRefreshHtml.includes("Approve Reply")) {
+                if (!pendingRefreshHtml.includes("Approve for Guardrail")) {
                   throw new Error("The approve action should appear as soon as the investigation reply payload arrives.");
                 }
                 if (!pendingRefreshHtml.includes("Thanks for waiting. We checked the SDK logs")) {
@@ -4373,6 +4373,140 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_blocked_guardrail_keeps_revision_composer(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-GUARDRAIL-BLOCKED";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-GUARDRAIL-BLOCKED",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-GUARDRAIL-BLOCKED",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "This is engineer-only internal use only. Please upgrade.",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-GUARDRAIL-BLOCKED-m1",
+                        role: "engineer_ai",
+                        content: "Guardrail final review complete. Decision: blocked.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    phase: "guardrail_blocked",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                    active_guardrail_final: {
+                      guardrail_id: "GRD-blocked",
+                      guardrail_version: "engineer-guardrail-final-v1",
+                      decision: "blocked",
+                      customer_reply: "Hi there,\\n\\nThis is engineer-only internal use only. Please upgrade.\\n\\nBest Regards,\\nSid",
+                      normalized_customer_reply: "Hi there,\\n\\nThis is engineer-only internal use only. Please upgrade.\\n\\nBest Regards,\\nSid",
+                      evidence_refs: [],
+                      checks: {
+                        proof: { passed: true, detail: "Proof check passed." },
+                        citation: { passed: true, detail: "No evidence packet provided." },
+                        no_internal_leakage: { passed: false, detail: "Customer reply may contain internal-only content." },
+                        no_unsupported_claims: { passed: true, detail: "No unsupported claims detected." },
+                        style: { passed: true, detail: "Style check passed." },
+                      },
+                      blockers: ["no_internal_leakage: Customer reply may contain internal-only content."],
+                      created_at: "2026-03-24T09:05:00+00:00",
+                    },
+                    final_approval_required: false,
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                const html = renderTicketDetailView();
+                if (!html.includes("Guardrail Final Review")) {
+                  throw new Error("Blocked guardrail should render the guardrail review card.");
+                }
+                if (!html.includes("Blocked")) {
+                  throw new Error("Blocked guardrail should show the blocked decision.");
+                }
+                if (!html.includes("Ask AI to Revise")) {
+                  throw new Error("Blocked guardrail should expose a revision action.");
+                }
+                if (!html.includes('id="detail-investigation-input"')) {
+                  throw new Error("Blocked guardrail should keep the revision composer available.");
+                }
+                if (html.includes("Final Approve &amp; Send")) {
+                  throw new Error("Blocked guardrail must not expose final approval.");
+                }
+                if (html.includes("Approve for Guardrail")) {
+                  throw new Error("Blocked guardrail should not immediately show the first approve button again.");
+                }
+
+                let capturedUrl = null;
+                let capturedOptions = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  capturedOptions = options;
+                  return {
+                    ticket_id: "TK-DETAIL-GUARDRAIL-BLOCKED",
+                    status: "investigating",
+                    active_investigation: selectedTicket.active_investigation,
+                    closed_investigation: null,
+                    updated_at: "2026-03-24T09:11:00+00:00",
+                  };
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                setInvestigationComposerDraftFromMarkdown("Remove the internal-only wording and keep the customer reply safe.");
+                const sendButton = {
+                  dataset: { detailAction: "send-tell-ai" },
+                  disabled: false,
+                };
+                const sendTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return sendButton;
+                    }
+                    return null;
+                  },
+                };
+                await handleDetailClick({ target: sendTarget });
+                if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-GUARDRAIL-BLOCKED/investigation/confirmation") {
+                  throw new Error("Blocked guardrail revision should use the investigation confirmation endpoint.");
+                }
+                const parsedBody = JSON.parse(capturedOptions.body);
+                if (parsedBody.decision !== "revise") {
+                  throw new Error("Blocked guardrail revision should submit decision=revise.");
+                }
+                if (!parsedBody.note.includes("Remove the internal-only wording")) {
+                  throw new Error("Blocked guardrail revision should include engineer feedback.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_approve_action_hides_controls_while_request_is_pending(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
@@ -4428,7 +4562,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
 
                 const initialHtml = renderTicketDetailView();
-                if (!initialHtml.includes("Approve Reply")) {
+                if (!initialHtml.includes("Approve for Guardrail")) {
                   throw new Error("Awaiting-confirmation state should still render the approve button before submission.");
                 }
                 if (!initialHtml.includes('id="detail-investigation-input"')) {
@@ -4467,13 +4601,13 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Approve should call the investigation confirmation endpoint.");
                 }
                 if (capturedOptions?.timeoutMs !== 25000) {
-                  throw new Error("Approve Reply should keep the short timeout budget instead of the 100s AI-turn timeout.");
+                  throw new Error("Approve for Guardrail should keep the short timeout budget instead of the 100s AI-turn timeout.");
                 }
                 const parsedBody = JSON.parse(capturedOptions.body);
                 if (parsedBody.decision !== "approve") {
                   throw new Error("Approve should still submit decision=approve while pending.");
                 }
-                if (pendingHtml.includes("Approve Reply")) {
+                if (pendingHtml.includes("Approve for Guardrail")) {
                   throw new Error("Pending approve should hide the inline approve button immediately.");
                 }
                 if (pendingHtml.includes('id="detail-investigation-input"')) {
@@ -4488,10 +4622,10 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!pendingHtml.includes("detail-investigation-closing-state")) {
                   throw new Error("Pending approve should render the closing-state marker.");
                 }
-                if (!pendingHtml.includes("Approving Reply")) {
+                if (!pendingHtml.includes("Running Guardrail Review")) {
                   throw new Error("Pending approve should show the closing-state title.");
                 }
-                if (!pendingHtml.includes("Sending the approved customer reply and closing this engineer ticket...")) {
+                if (!pendingHtml.includes("Running final guardrail review before sending to customer...")) {
                   throw new Error("Pending approve should show the closing-state explanation.");
                 }
                 if (!tellAiSubmitting) {
@@ -4500,18 +4634,17 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 resolveFetch({
                   ticket_id: "TK-DETAIL-APPROVE-PENDING",
-                  status: "resolved",
-                  active_investigation: null,
-                  closed_investigation: {
+                  status: "investigating",
+                  active_investigation: {
                     id: "INV-DETAIL-APPROVE-PENDING",
-                    state: "closed",
+                    state: "awaiting_final_approval",
                     trigger_reason: "rag_insufficient_evidence",
                     trigger_source: "support_query",
                     draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
                     final_confirmation_requested_at: null,
                     opened_at: "2026-03-24T08:01:00+00:00",
                     updated_at: "2026-03-24T09:11:00+00:00",
-                    closed_at: "2026-03-24T09:11:00+00:00",
+                    closed_at: null,
                     messages: [
                       {
                         id: "INV-DETAIL-APPROVE-PENDING-m1",
@@ -4521,11 +4654,29 @@ class EngineerUiContractTests(unittest.TestCase):
                       },
                       {
                         id: "INV-DETAIL-APPROVE-PENDING-m2",
-                        role: "engineer",
-                        content: "Approved final reply.",
+                        role: "engineer_ai",
+                        content: "Guardrail final review complete. Decision: approved_for_final_engineer_review.",
                         created_at: "2026-03-24T09:11:00+00:00",
                       },
                     ],
+                  },
+                  closed_investigation: null,
+                  active_guardrail_final: {
+                    guardrail_id: "GRD-test123456",
+                    guardrail_version: "engineer-guardrail-final-v1",
+                    decision: "approved_for_final_engineer_review",
+                    customer_reply: "Hi there,\\n\\nPlease upgrade to SDK 4.2.2 and retry token renewal on Android 14.\\n\\nBest Regards,\\nSid",
+                    normalized_customer_reply: "Hi there,\\n\\nPlease upgrade to SDK 4.2.2 and retry token renewal on Android 14.\\n\\nBest Regards,\\nSid",
+                    evidence_refs: [],
+                    checks: {
+                      proof: { passed: true, detail: "Proof check passed." },
+                      citation: { passed: true, detail: "No evidence packet provided." },
+                      no_internal_leakage: { passed: true, detail: "No internal-only leakage detected." },
+                      no_unsupported_claims: { passed: true, detail: "No unsupported claims detected." },
+                      style: { passed: true, detail: "Style check passed." },
+                    },
+                    blockers: [],
+                    created_at: "2026-03-24T09:11:00+00:00",
                   },
                   updated_at: "2026-03-24T09:11:00+00:00",
                 });
@@ -4613,7 +4764,7 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 await handleDetailClick({ target: approveTarget });
                 const failedHtml = workspaceRegionEl.innerHTML;
-                if (!failedHtml.includes("Approve Reply")) {
+                if (!failedHtml.includes("Approve for Guardrail")) {
                   throw new Error("Failed approve should restore the approve button.");
                 }
                 if (!failedHtml.includes('id="detail-investigation-input"')) {
@@ -4628,7 +4779,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (failedHtml.includes("detail-investigation-closing-state")) {
                   throw new Error("Failed approve should remove the temporary closing-state marker.");
                 }
-                if (alertMessage !== "Approve reply failed: Request failed with status 500") {
+                if (alertMessage !== "Approve for guardrail failed: Request failed with status 500") {
                   throw new Error("Failed approve should keep the existing failure alert copy.");
                 }
                 if (tellAiSubmitting) {
@@ -4763,7 +4914,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("State:")) {{
                   throw new Error("Approve flow should no longer render the thread state line after closing the investigation.");
                 }}
-                if (html.includes("Approve Reply")) {{
+                if (html.includes("Approve for Guardrail")) {{
                   throw new Error("Approve flow should remove the approve button after the engineer ticket is closed.");
                 }}
                 if (html.includes('id="detail-investigation-input"')) {{
@@ -4921,7 +5072,7 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 await handleDetailClick({ target: approveTarget });
                 const approvedHtml = workspaceRegionEl.innerHTML;
-                if (approvedHtml.includes("Approve Reply")) {
+                if (approvedHtml.includes("Approve for Guardrail")) {
                   throw new Error("Approve should hide the approve button before any stale refresh arrives.");
                 }
                 if (approvedHtml.includes('id="detail-investigation-input"')) {
@@ -4937,7 +5088,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 await staleRefreshPromise;
 
                 const htmlAfterStaleRefresh = workspaceRegionEl.innerHTML;
-                if (htmlAfterStaleRefresh.includes("Approve Reply")) {
+                if (htmlAfterStaleRefresh.includes("Approve for Guardrail")) {
                   throw new Error("A stale in-flight detail refresh that started before approval must not restore the approve button.");
                 }
                 if (htmlAfterStaleRefresh.includes('id="detail-investigation-input"')) {
@@ -5101,7 +5252,7 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 await handleDetailClick({ target: approveTarget });
                 const approvedHtml = workspaceRegionEl.innerHTML;
-                if (approvedHtml.includes("Approve Reply")) {
+                if (approvedHtml.includes("Approve for Guardrail")) {
                   throw new Error("Approve should hide the approve button before websocket refresh.");
                 }
                 if (!approvedHtml.includes("Approved final reply.")) {
@@ -5121,7 +5272,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
 
                 const htmlAfterSocketRefresh = workspaceRegionEl.innerHTML;
-                if (htmlAfterSocketRefresh.includes("Approve Reply")) {
+                if (htmlAfterSocketRefresh.includes("Approve for Guardrail")) {
                   throw new Error("A stale websocket-triggered detail refresh after approval must not restore the approve button.");
                 }
                 if (htmlAfterSocketRefresh.includes('id="detail-investigation-input"')) {

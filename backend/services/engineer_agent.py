@@ -1703,6 +1703,23 @@ def fallback_engineer_agent_state(
         else:
             if lifecycle_key == "max_replan_count":
                 state[lifecycle_key] = 2
+    # Preserve Guardrail Final fields from the incoming state.
+    for guardrail_key in (
+        "active_guardrail_final",
+        "guardrail_final_id",
+        "guardrail_final_version",
+        "guardrail_final_decision",
+        "final_approval_required",
+        "final_approved_at",
+    ):
+        guardrail_value = existing.get(guardrail_key)
+        if guardrail_value is not None:
+            if isinstance(guardrail_value, dict):
+                state[guardrail_key] = guardrail_value
+            elif isinstance(guardrail_value, bool):
+                state[guardrail_key] = guardrail_value
+            elif _clean_text(str(guardrail_value)):
+                state[guardrail_key] = guardrail_value
     return state
 
 
@@ -1795,6 +1812,33 @@ def normalize_engineer_agent_state(
                 merged[lifecycle_key] = lifecycle_value
             elif _clean_text(str(lifecycle_value)):
                 merged[lifecycle_key] = lifecycle_value
+    # Preserve Guardrail Final fields from the incoming state so that
+    # investigation refresh does not drop the active_guardrail_final.
+    for guardrail_key in (
+        "active_guardrail_final",
+        "guardrail_final_id",
+        "guardrail_final_version",
+        "guardrail_final_decision",
+        "final_approval_required",
+        "final_approved_at",
+    ):
+        guardrail_value = value.get(guardrail_key)
+        if guardrail_value is not None:
+            if isinstance(guardrail_value, dict):
+                merged[guardrail_key] = guardrail_value
+            elif isinstance(guardrail_value, bool):
+                merged[guardrail_key] = guardrail_value
+            elif _clean_text(str(guardrail_value)):
+                merged[guardrail_key] = guardrail_value
+        elif guardrail_key not in merged:
+            fb_val = fallback.get(guardrail_key)
+            if fb_val is not None:
+                if isinstance(fb_val, dict):
+                    merged[guardrail_key] = fb_val
+                elif isinstance(fb_val, bool):
+                    merged[guardrail_key] = fb_val
+                elif _clean_text(str(fb_val)):
+                    merged[guardrail_key] = fb_val
     if _should_prefer_intake_issue_understanding(
         current_issue_understanding,
         fallback["issue_understanding"],

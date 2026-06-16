@@ -25,6 +25,7 @@ INVESTIGATING_STATUS = "investigating"
 RESOLVED_STATUS = "resolved"
 INVESTIGATION_STATE_ACTIVE = "active"
 INVESTIGATION_STATE_AWAITING_CONFIRMATION = "awaiting_confirmation"
+INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL = "awaiting_final_approval"
 INVESTIGATION_STATE_CLOSED = "closed"
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
