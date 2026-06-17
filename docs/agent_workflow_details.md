@@ -31,12 +31,8 @@ For delegated code work, prefer the project-local `control-cc` skill when the us
 ## Reasonix Handoff Boundary
 Reasonix-specific worker rules live in `REASONIX.md`. When the user gives a Codex- or Claude-written plan to Reasonix, Reasonix is an implementation worker and should stop before commit with a branch/worktree handoff for Codex or Claude Code review. This does not change Codex's or Claude Code's role: either may plan, implement, review, finalize, or merge according to the user's direct request and the rest of `AGENTS.md` / `CLAUDE.md`.
 
-## Codex / Claude Code Review Finalization
-1. When the user asks Codex or Claude Code to review an implementation handoff, the reviewing agent must treat the request as ownership transfer for that task unless the user explicitly says review-only.
-2. Review means inspect the diff and verification evidence, make any necessary corrections directly, run the narrowest task-appropriate verification, then continue through commit, PR creation or reuse, squash merge to `main`, CodeGraph sync, required live stack verification, and cleanup under the normal direct-to-`main` workflow.
-3. Codex and Claude Code must not stop after listing findings when the user expects completion. If findings are fixable in the current branch/worktree, fix them; only stop for user input when the issue is ambiguous, unsafe to decide, or blocked by missing external state.
-4. If the handoff worktree contains untracked or unstaged task files, the reviewing agent must stage and include them after review instead of treating the handoff as complete.
-5. Reasonix and any other handoff-only workers still must not commit, push, create PRs, merge, finalize, or clean task worktrees unless the user explicitly changes that boundary.
+## Review Skill Redirect
+The completed-implementation review and finalization process lives in the project-local `review-implemented-plan` skill. Use that skill when the user says things like `实现了计划，你来review一下`, asks for a completed plan or worker handoff review, or gives a similar post-implementation review/finalization request.
 
 ## CodeGraph First For Code Context
 1. For any task that requires understanding, locating, tracing, or changing code, prefer the project CodeGraph tools before native file search or broad file reads. Use CodeGraph for structural questions such as where a symbol is defined, who calls it, what it calls, how data flows between symbols, what would be affected by a change, or which files and symbols are relevant to a task.

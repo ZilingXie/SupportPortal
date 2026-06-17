@@ -12,6 +12,29 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-17 - Review process moved into project skill
+
+- Area or subsystem: Agent collaboration instructions and workflow prompts
+- Prompt or model version: `review-implemented-plan-skill-v1`
+- Summary: Moved the completed-implementation review/finalization process out of `AGENTS.md` and `CLAUDE.md` into the project-local `review-implemented-plan` skill, triggered by phrases such as `实现了计划，你来review一下` or similar post-implementation review requests.
+- Reason: Keep hot-path agent files shorter while preserving the full review ownership, fix, verification, finalization, and cleanup workflow behind an explicit skill trigger.
+- Affected files or config:
+  - `.codex/skills/review-implemented-plan/SKILL.md`
+  - `.codex/skills/review-implemented-plan/agents/openai.yaml`
+  - `AGENTS.md`
+  - `CLAUDE.md`
+  - `docs/agent_workflow_details.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Codex and Claude Code load the review process only when a completed implementation, finished plan, worker handoff, or local diff review request triggers the skill.
+  - `AGENTS.md` and `CLAUDE.md` retain only a short skill pointer and no longer duplicate the review/finalization process.
+  - Reasonix remains handoff-only and waits for Codex or Claude Code review.
+- Verification:
+  - `python3 /Users/xieziling/.codex/skills/.system/skill-creator/scripts/quick_validate.py .codex/skills/review-implemented-plan`
+  - `git diff --check`
+  - `rg -n "实现了计划，你来review一下|review this implementation|review-implemented-plan|completed implementation|worker handoff" .codex/skills/review-implemented-plan AGENTS.md CLAUDE.md docs/agent_workflow_details.md`
+  - Python consistency check that `AGENTS.md` and `CLAUDE.md` no longer contain duplicated review-process ownership steps.
+
 ## 2026-06-16 - KG official docs schema v1
 
 - Area or subsystem: KG / GraphRAG extraction schema

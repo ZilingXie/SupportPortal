@@ -41,12 +41,9 @@ Claude Code follows the same repository authority and workflow as Codex. This fi
 7. Only one task may promote to `main` at a time; rely on `scripts/workflow/finalize_task_to_main.sh` for the shared lock.
 8. If `docs/feature_list.md` changes, run `python3 scripts/verify_feature_list.py`; the finalize script also performs this check automatically.
 
-## Review And Worker Boundaries
-1. Codex and Claude Code are peer repository agents. Either may plan, review, modify code/docs, run verification, commit, create/reuse PRs, squash-merge to `main`, run CodeGraph sync, run required live stack verification, and clean the current task workspace/branch when assigned and following this workflow.
-2. Reasonix is the default handoff-only implementation worker. It must stop before commit/PR/merge/finalization/cleanup and wait for Codex or Claude Code review, unless the user explicitly changes `REASONIX.md`.
-3. When Codex or Claude Code reviews a Reasonix handoff, treat it as task ownership transfer unless explicitly review-only. Fix actionable issues directly when safe, then finalize under the normal direct-to-`main` workflow.
-4. Other explicitly delegated workers must follow the boundary stated in their own handoff instructions. If no boundary is given, default to Reasonix-style handoff-before-finalization.
-5. Use the project-local `control-cc` skill when the user requests coordinated Claude Code execution with Codex/Claude review, or when delegated code work can be safely isolated. Candidate worktrees under `/tmp/control-cc-runs/...` are temporary and not authoritative.
+## Review Skill
+1. For completed implementation, finished plan, worker handoff, or local diff review requests, use the project-local `review-implemented-plan` skill.
+2. Keep `AGENTS.md` and `CLAUDE.md` free of duplicated review-process steps; the skill owns the review/finalization workflow and trigger examples.
 
 ## Required Logs
 | Change type | Required update | Notes |
@@ -59,7 +56,7 @@ Claude Code follows the same repository authority and workflow as Codex. This fi
 ## When To Read `docs/agent_workflow_details.md`
 - You need the trigger matrix for AgentMemory, skills, CodeGraph status, or Git/worktree state.
 - You are creating, resuming, finalizing, cleaning, or recovering a task branch/workspace.
-- You are reviewing a Reasonix or other handoff-only worker handoff.
+- You need low-frequency branch, finalization, or worker-boundary details that the `review-implemented-plan` skill points to.
 - You are changing stack-relevant runtime code and need post-merge live verification.
 - You are changing RAG, prompts/models, major feature status, UI design source of truth, or local single-host workflow.
 - You hit an edge case: dirty root, detached HEAD, stale/diverged `main`, current branch mismatch, `mac` workflow artifacts, ambiguous task ownership, or failed finalization.
