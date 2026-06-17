@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Implemented Plan"
+  short_description: "Review and finalize completed implementation handoffs."
+  default_prompt: "实现了计划，你来review一下"
