@@ -814,6 +814,12 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.route, "rag")
         self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
+        self.assertEqual(decision.router_source, "conservative_fallback")
+        self.assertTrue(decision.intent_router_attempted)
+        self.assertEqual(decision.intent_router_fallback_reason, "below_confidence_threshold")
+        self.assertEqual(decision.intent_router_model_confidence, 0.4)
+        self.assertIsNotNone(decision.intent_router_confidence_threshold)
+        self.assertGreater(decision.intent_router_confidence_threshold, 0.0)
 
     def test_decide_support_route_falls_back_to_agora_technical_on_invalid_json(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
@@ -826,6 +832,11 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertEqual(decision.route_family, "agora_docs_rag")
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
+        self.assertEqual(decision.router_source, "conservative_fallback")
+        self.assertTrue(decision.intent_router_attempted)
+        self.assertEqual(decision.intent_router_fallback_reason, "invalid_json")
+        self.assertEqual(decision.intent_router_failure_type, "invalid_json")
+        self.assertEqual(decision.intent_router_failure_source, "responses_api")
 
     def test_decide_support_route_falls_back_to_agora_technical_on_http_failure(self) -> None:
         def _raise_http_error(*_args, **_kwargs):
@@ -847,6 +858,11 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertEqual(decision.route_family, "agora_docs_rag")
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
+        self.assertEqual(decision.router_source, "conservative_fallback")
+        self.assertTrue(decision.intent_router_attempted)
+        self.assertEqual(decision.intent_router_fallback_reason, "llm_invocation_failed")
+        self.assertEqual(decision.intent_router_failure_type, "llm_invocation_failed")
+        self.assertEqual(decision.intent_router_failure_source, "responses_api")
 
     def test_decide_support_route_uses_conservative_fallback_when_router_unavailable(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
@@ -856,6 +872,11 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertEqual(decision.route_family, "agora_docs_rag")
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
+        self.assertEqual(decision.router_source, "conservative_fallback")
+        self.assertTrue(decision.intent_router_attempted)
+        self.assertEqual(decision.intent_router_fallback_reason, "missing_credentials")
+        self.assertEqual(decision.intent_router_failure_type, "missing_credentials")
+        self.assertEqual(decision.intent_router_failure_source, "profile_check")
 
     def test_llm_route_decision_uses_responses_payload_with_configured_settings(self) -> None:
         captured_request: dict[str, object] = {}
@@ -896,6 +917,12 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertIn("COMMUNICATION", json.dumps(request_body["input"], ensure_ascii=False))
         self.assertIn("parameter mismatch", json.dumps(request_body["input"], ensure_ascii=False))
         self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.router_source, "llm_semantic")
+        self.assertTrue(decision.intent_router_attempted)
+        self.assertEqual(decision.intent_router_model_confidence, 0.94)
+        self.assertIsNotNone(decision.intent_router_confidence_threshold)
+        self.assertIsNone(decision.intent_router_fallback_reason)
+        self.assertIsNone(decision.intent_router_failure_type)
 
     def test_decide_support_route_retries_without_temperature_when_model_rejects_it(self) -> None:
         calls: list[dict[str, object]] = []

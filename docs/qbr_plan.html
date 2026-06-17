@@ -1151,6 +1151,10 @@ flowchart TD
         copy: "Guardrail final approve 已接入升级链路：engineer 第一次 approve 只触发 deterministic guardrail 生成/校验 customer-facing reply，第二次 final approve 才发送客户回复并关闭工单；blocked 时保留 revise 出口。"
       },
       {
+        key: "Close Memory",
+        copy: "close-memory 已完成：final approve 成功后显式关闭 engineer case、写入 engineer_case_closed_after_customer_reply audit event（携带 closure、guardrail、feedback、memory candidate 的关键 ID/状态）、写 Case Memory candidate；candidate 默认 retrieval_enabled=False、active_memory_status=inactive，不自动晋升 active memory。"
+      },
+      {
         key: "KG PR1",
         copy: "KG SupportPortal PR1 已完成：新增 official-doc chunk 输入契约、`KgProvenance` 运行时输出校验、官网文档 9 类实体 / 10 类关系 schema v1、strict schema hash 与 PyYAML 依赖；仍未接入 GraphRAG/Neo4j 或线上 RAG runtime。"
       },
@@ -1226,7 +1230,7 @@ flowchart TD
         short: "Multi-Agent",
         title: "Engineer AI multi-agent",
         status: "doing",
-        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, max 2 replan, missing_information context）和 revise replan 循环；当前下一步是推进 close-memory。",
+        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, max 2 replan, missing_information context）、revise replan 循环和 close-memory（final approve 后显式关闭 engineer case、写 audit event、写 Case Memory candidate，不自动晋升 active memory）；当前下一步是推进 eval/metrics。",
         done: [
           "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
           "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
@@ -1234,7 +1238,7 @@ flowchart TD
           "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
           "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
           "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，QBR 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
-          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket；Summary/Plan/Execute/Review 第一版已全部接入 runtime，revise replan 链路已完成接入，Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），下一步是实现 close-memory。"
+          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket；Summary/Plan/Execute/Review 第一版已全部接入 runtime，revise replan 链路已完成接入，Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 已完成，下一步是推进 eval/metrics。"
         ],
         review: [
           "当前证据能证明的是 Summary/Plan/Execute/Review、revise replan 与 Guardrail final approve 已接入 runtime；它仍不是无需人工介入的自动闭环，因为 final approve 仍必须由工程师确认。",
@@ -1251,7 +1255,7 @@ flowchart TD
           { id: "ma-review-agent", status: "done", label: "Review Agent 第一版已实现 deterministic review decision：根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve，并限制最多 2 次 replan，保留 missing_information，review 结果持久化到 engineer_agent_state。", horizon: "Task 5" },
           { id: "ma-revise-replan", status: "done", label: "revise 携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent，实现 Plan → Execute → Review 循环（最多 2 次 replan）。", horizon: "Runtime" },
           { id: "ma-guardrail-final", status: "done", label: "approve 后通过 guardrail 生成/校验 customer-facing reply，再交给 engineer 做最后 approve，避免直接自动回复客户。", horizon: "Runtime" },
-          { id: "ma-close-memory", status: "todo", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
+          { id: "ma-close-memory", status: "done", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
           { id: "ma-eval", status: "todo", label: "从 summary packet、review decisions、replan notes、engineer revise 和 approved replies 生成 replay eval dataset。", horizon: "Evaluation" }
         ],
         sources: [
@@ -1409,7 +1413,7 @@ flowchart TD
           { id: "routing-semantic-schema", status: "done", label: "SupportRouteDecision 新增 semantic_intent、automation_eligibility、not_automated_reason、risk_flags、evidence_spans、router_source 等字段。", horizon: "Schema" },
           { id: "routing-billing-review-family", status: "done", label: "新增 billing_review route family 用于需人工审核的 billing case，与 billing_automation 区分。", horizon: "Contract" },
           { id: "routing-qbr-diagram", status: "done", label: "QBR Routing tab 已更新架构描述、review 结论和 next tasks，反映 LLM semantic router + policy gate 新架构。", horizon: "Docs" },
-          { id: "routing-threshold-audit", status: "todo", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。", horizon: "Metrics" },
+          { id: "routing-threshold-audit", status: "done", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。router_source=conservative_fallback 区分 below_confidence_threshold / missing_credentials / llm_invocation_failed / invalid_json / invalid_payload / route_fail_open。", horizon: "Metrics" },
           { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 QBR tab。", horizon: "Docs" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
           { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 golden set 覆盖率足够时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
@@ -1440,7 +1444,7 @@ flowchart TD
             "  C -->|billing| ACC[\"/account response + support_billing_tickets audit fields\"]",
             "  C -->|low confidence| F[\"conservative_agora_technical_fallback\"]"
           ].join("\n"),
-          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。/account 使用 semantic-first 模式（LLM 先跑），避免 weak gratitude 等弱信号抢占 billing 长正文。"
+          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。/account 使用 semantic-first 模式（LLM 先跑），避免 weak gratitude 等弱信号抢占 billing 长正文。Router audit 字段（intent_router_attempted / fallback_reason / failure_type / router_source）已在 SupportRouteDecision、SupportResolution、TicketExecutionResult 和 billing event 中透传。fallback rate 的口径：仅 router_source=conservative_fallback 计入 fallback；其下按 fallback_reason 细分：below_confidence_threshold（LLM 返回但低于 threshold）、missing_credentials、llm_invocation_failed、invalid_json、invalid_payload、route_fail_open（runtime 超时/异常）。router_source=llm_semantic 才算模型判断，不等于 fallback。"
         },
         sources: [
           "backend/services/support_router.py",

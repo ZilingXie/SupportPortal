@@ -12,6 +12,28 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-18 - Router threshold audit and fallback observability
+
+- Area or subsystem: Routing / LLM intent router observability
+- Prompt or model version: N/A (behavioral change to routing pipeline, no prompt change)
+- Summary: Added router audit fields to `SupportRouteDecision`, `SupportResolution`, and `TicketExecutionResult` to distinguish fallback reasons: `below_confidence_threshold`, `missing_credentials`, `llm_invocation_failed`, `invalid_json`, `invalid_payload`, `route_fail_open`. `router_source` now uses `"conservative_fallback"` (was implicit `"deterministic"`) for final fallback; only `"llm_semantic"` counts as model decision. Audit fields are propagated through route events, billing API responses, and runtime execution payloads.
+- Reason: Previously `conservative_agora_technical_fallback` could be triggered by LLM confidence below threshold, LLM invocation failure, missing credentials, or invalid responses — all indistinguishable in dashboards/QBR, leading to misreading fallback as model judgment.
+- Affected files or config:
+  - `backend/services/support_router.py` — added `_LlmRouteAttempt`, audit fields on `SupportRouteDecision` and `SupportResolution`, `_llm_route_decision` returns failure metadata, `decide_support_route` populates audit fields
+  - `backend/services/client_ticket_agent_runtime.py` — `_build_default_rag_route_decision` marks `route_fail_open`, `TicketExecutionResult` carries audit fields, route agent events include audit payload
+  - `backend/main.py` — billing/account event and API response include audit fields
+  - `docs/qbr_plan.html` — `routing-threshold-audit` moved to done, Routing tab note updated with fallback rate conventions
+- Expected behavior change:
+  - `router_source` on fallback decisions now reads `"conservative_fallback"` (was `"deterministic"`)
+  - `intent_router_fallback_reason` populated on every fallback; `intent_router_failure_type` and `_failure_source` set on LLM failures
+  - `_build_default_rag_route_decision` (runtime fail-open) now correctly reports `router_source="conservative_fallback"` with `fallback_reason="route_fail_open"`
+  - Dashboard/QBR can now separately count: LLM semantic pass rate, below-threshold fallback rate, LLM failure fallback rate, runtime fail-open rate
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_support_router backend.tests.test_support_router_semantic_billing -v`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_intake backend.tests.test_qbr_plan_contract -v`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime.ClientTicketAgentRuntimeContractTests.test_resolved_confirmation_route_failure_falls_back_to_resolution_for_engineer_guidance_reply -v`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/support_router.py backend/services/client_ticket_agent_runtime.py backend/main.py backend/tests/test_support_router.py backend/tests/test_support_router_semantic_billing.py backend/tests/test_account_intake.py`
+
 ## 2026-06-17 - Review process moved into project skill
 
 - Area or subsystem: Agent collaboration instructions and workflow prompts

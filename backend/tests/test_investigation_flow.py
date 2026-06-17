@@ -5859,6 +5859,15 @@ class InvestigationFlowTests(unittest.TestCase):
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103")]
         self.assertNotIn("ticket_guidance_applied", event_types)
         self.assertNotIn("ticket_investigation_closed", event_types)
+        self.assertNotIn("engineer_case_closed_after_customer_reply", event_types)
+        # No memory ledger should be written on first approve
+        ledger_records = self.repository.list_case_memory_ledger("TK-INV-103-1")
+        self.assertEqual(len(ledger_records), 0)
+        # No engineer case events for closure or memory
+        case_events = self.repository.list_engineer_case_events("TK-INV-103-1")
+        case_event_types = [item["event_type"] for item in case_events]
+        self.assertNotIn("engineer_case_closed_after_customer_reply", case_event_types)
+        self.assertNotIn("case_memory_ledger_recorded", case_event_types)
 
     def test_confirmation_approve_guardrail_block_keeps_investigation_revisable(self) -> None:
         """Blocked guardrail results should not strand the engineer in final approval."""
@@ -5953,6 +5962,87 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         self.assertEqual(final_response.status_code, 400, final_response.text)
         self.assertIn("awaiting_final_approval", final_response.text)
+        # No close audit or memory ledger should be written on this rejected final_approve
+        blocked_events = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-GUARDRAIL-BLOCK")]
+        self.assertNotIn("engineer_case_closed_after_customer_reply", blocked_events)
+        blocked_ledger = self.repository.list_case_memory_ledger("TK-INV-GUARDRAIL-BLOCK-1")
+        self.assertEqual(len(blocked_ledger), 0)
+
+    def test_confirmation_final_approve_rejects_when_not_awaiting_final_approval(self) -> None:
+        """final_approve without prior approve (not in awaiting_final_approval state) returns 400 and writes no side effects."""
+        self._seed_ticket(
+            ticket_id="TK-INV-NO-FINAL",
+            status="investigating",
+            active_investigation={
+                "id": "INV-NO-FINAL",
+                "state": "awaiting_confirmation",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "worker_async_rag",
+                "draft_customer_reply": "Please upgrade to SDK 4.2.2.",
+                "final_confirmation_requested_at": "2026-03-29T09:03:00+00:00",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-NO-FINAL-m1",
+                        "role": "engineer_ai",
+                        "content": "Draft ready for confirmation.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+            engineer_handoff_packet={
+                "source": "worker_async_rag",
+                "conversation_summary": "Customer reports token renew callback does not fire.",
+                "latest_customer_message": "token renew callback never fires",
+                "route_summary": {"answer_route": "rag", "route_reason": "rag_insufficient_evidence"},
+                "rag_result": {
+                    "candidate_answer": "Please upgrade to SDK 4.2.2.",
+                    "sources": ["https://docs.agora.io/en/video-calling/token-authentication"],
+                    "citations": [],
+                },
+                "unresolved_reason": "rag_insufficient_evidence",
+                "customer_language_hint": "en",
+                "created_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+            },
+            engineer_agent_state={
+                "phase": "awaiting_confirmation",
+                "issue_understanding": "Token renew callback does not fire.",
+                "knowledge_summary": "Client AI found generic token-renewal guidance.",
+                "why_not_solved": "Engineer must confirm before replying.",
+                "goal": "Send approved guidance.",
+                "known_facts": ["SDK 4.2.2 fix."],
+                "missing_information": [],
+                "next_request_for_engineer": "Approve the prepared reply.",
+                "resolution_hypothesis": "Upgrade to SDK 4.2.2 resolves callback.",
+                "ready_to_reply": True,
+                "reply_readiness": _reply_readiness(),
+                "last_refreshed_at": "2026-03-29T09:03:00+00:00",
+            },
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-NO-FINAL-1/investigation/confirmation",
+                json={
+                    "engineer_id": "eng",
+                    "decision": "final_approve",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("awaiting_final_approval", response.text)
+
+        # No close audit or memory ledger should be written
+        no_final_events = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-NO-FINAL")]
+        self.assertNotIn("engineer_case_closed_after_customer_reply", no_final_events)
+        self.assertNotIn("ticket_guidance_applied", no_final_events)
+        no_final_ledger = self.repository.list_case_memory_ledger("TK-INV-NO-FINAL-1")
+        self.assertEqual(len(no_final_ledger), 0)
+        case_events = self.repository.list_engineer_case_events("TK-INV-NO-FINAL-1")
+        case_event_types = [item["event_type"] for item in case_events]
+        self.assertNotIn("engineer_case_closed_after_customer_reply", case_event_types)
 
     def test_confirmation_final_approve_sends_customer_reply_and_closes_investigation(self) -> None:
         """Final approve after successful guardrail sends customer reply and closes the case."""
@@ -6118,6 +6208,35 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(len(ledger_records), 1)
         self.assertEqual(ledger_records[0]["source_feedback_id"], "hitl_auto_TK-INV-103B-1")
         self.assertEqual(ledger_records[0]["ledger_status"], "candidate")
+        self.assertFalse(ledger_records[0]["retrieval_enabled"])
+        self.assertEqual(ledger_records[0]["active_memory_status"], "inactive")
+
+        # ---- NEW: engineer_case_closed_after_customer_reply audit event ----
+        self.assertIn("engineer_case_closed_after_customer_reply", event_types)
+
+        case_events = self.repository.list_engineer_case_events("TK-INV-103B-1")
+        case_event_types = [item["event_type"] for item in case_events]
+        self.assertIn("engineer_case_closed_after_customer_reply", case_event_types)
+
+        closure_event = next(
+            (item for item in self.repository.list_ticket_events("TK-INV-103B")
+             if item["event_type"] == "engineer_case_closed_after_customer_reply"),
+            None,
+        )
+        self.assertIsNotNone(closure_event)
+        closure_payload = closure_event["payload"]
+        self.assertEqual(closure_payload["client_ticket_id"], "TK-INV-103B")
+        self.assertEqual(closure_payload["engineer_case_id"], "TK-INV-103B-1")
+        self.assertEqual(closure_payload["guardrail_final_id"], "GRD-test103b")
+        self.assertEqual(closure_payload["guardrail_final_decision"], "approved_for_final_engineer_review")
+        self.assertEqual(closure_payload["feedback_id"], "hitl_auto_TK-INV-103B-1")
+        self.assertIn("cm_hitl_auto_TK-INV-103B-1", closure_payload["memory_record_id"])
+        self.assertEqual(closure_payload["ledger_status"], "candidate")
+        self.assertFalse(closure_payload["retrieval_enabled"])
+        self.assertEqual(closure_payload["active_memory_status"], "inactive")
+        self.assertEqual(closure_payload["engineer_id"], "eng")
+        self.assertEqual(closure_payload["status"], "resolved")
+        self.assertEqual(closure_payload["customer_reply_message_source"], "engineer_guidance")
 
     def test_confirmation_revise_records_engineer_note_and_keeps_investigation_active(self) -> None:
         self._seed_ticket(

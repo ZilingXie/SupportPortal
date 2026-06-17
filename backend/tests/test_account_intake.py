@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
-from backend.services.support_router import SupportRouteDecision
+from backend.services.support_router import SupportRouteDecision, _LlmRouteAttempt
 
 
 class AccountIntakeApiTests(unittest.TestCase):
@@ -22,10 +22,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.original_repository = main.ticket_repository
         main.ticket_repository = self.repository
         self.client = TestClient(main.app)
-        # Patch LLM route decision to return None so semantic_first falls through to deterministic
+        # Patch LLM route decision to return empty attempt so semantic_first falls through to deterministic
         self._llm_patcher = patch(
             "backend.services.support_router._llm_route_decision",
-            return_value=None,
+            return_value=_LlmRouteAttempt(decision=None, attempted=True),
         )
         self._llm_patcher.start()
 
