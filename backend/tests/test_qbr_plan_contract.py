@@ -59,6 +59,9 @@ class QbrPlanContractTests(unittest.TestCase):
             "Guardrail final approve 已通过两段 approve 机制接管 runtime",
             "第二次 final approve 才发送客户回复并关闭工单",
             "blocked 时保留 revise 出口",
+            "close-memory 已完成",
+            "不自动晋升 active memory",
+            "engineer_case_closed_after_customer_reply",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -72,6 +75,9 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn("Summary/Plan/Execute/Review 真实链路仍未接管 runtime", html_source)
         self.assertNotIn("Execute/Review 尚未接管", html_source)
         self.assertNotIn("不是 Engineer AI 已经完成 guardrail final approve", html_source)
+        self.assertNotIn("当前下一步是推进 close-memory", html_source)
+        self.assertNotIn("当前下一步：实现 close-memory", html_source)
+        self.assertNotIn("下一步是实现 close-memory", html_source)
 
     def test_qbr_plan_collapses_engineer_architecture_by_default(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")

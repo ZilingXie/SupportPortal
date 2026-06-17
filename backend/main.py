@@ -4086,6 +4086,37 @@ def _record_case_memory_ledger_from_feedback(feedback: dict[str, Any]) -> dict[s
     return saved_record
 
 
+def _build_engineer_case_closed_after_customer_reply_event(
+    *,
+    ticket: dict[str, Any],
+    engineer_case: dict[str, Any],
+    engineer_id: str,
+    guardrail_final_id: str | None,
+    guardrail_final_decision: str | None,
+    feedback: dict[str, Any],
+    ledger_record: dict[str, Any],
+    created_at: str,
+) -> dict[str, Any]:
+    """Build the audit event payload for engineer case closure after customer reply."""
+    return {
+        "event": "engineer_case_closed_after_customer_reply",
+        "ticket_id": str(engineer_case.get("engineer_case_id") or ""),
+        "client_ticket_id": str(ticket.get("ticket_id") or ""),
+        "engineer_case_id": str(engineer_case.get("engineer_case_id") or ""),
+        "engineer_id": engineer_id,
+        "status": str(engineer_case.get("status") or ""),
+        "customer_reply_message_source": ASSISTANT_MESSAGE_SOURCE_ENGINEER_GUIDANCE,
+        "guardrail_final_id": guardrail_final_id or "",
+        "guardrail_final_decision": guardrail_final_decision or "",
+        "feedback_id": str(feedback.get("feedback_id") or ""),
+        "memory_record_id": str(ledger_record.get("memory_record_id") or ""),
+        "ledger_status": str(ledger_record.get("ledger_status") or ""),
+        "retrieval_enabled": bool(ledger_record.get("retrieval_enabled")),
+        "active_memory_status": str(ledger_record.get("active_memory_status") or ""),
+        "created_at": created_at,
+    }
+
+
 @app.post("/api/engineer/tickets/{ticket_id}/feedback")
 def record_engineer_hitl_feedback(
     ticket_id: str,
@@ -5063,7 +5094,7 @@ async def confirm_investigation_reply(
             created_at=timestamp,
         )
         saved_feedback = ticket_repository.record_engineer_hitl_feedback(auto_feedback)
-        _record_case_memory_ledger_from_feedback(saved_feedback)
+        saved_ledger = _record_case_memory_ledger_from_feedback(saved_feedback)
         ticket_repository.record_engineer_case_event(
             str(saved_feedback.get("engineer_case_id") or ""),
             "engineer_hitl_feedback_auto_reviewed",
@@ -5100,6 +5131,33 @@ async def confirm_investigation_reply(
         )
         await dispatch_event(["engineer", "dashboard"], payload)
         await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
+
+        guardrail_final_id = ""
+        guardrail_final_decision = ""
+        if isinstance(active_guardrail_final, dict):
+            guardrail_final_id = str(active_guardrail_final.get("guardrail_id") or "").strip()
+            guardrail_final_decision = str(active_guardrail_final.get("decision") or "").strip()
+
+        closure_event = _build_engineer_case_closed_after_customer_reply_event(
+            ticket=ticket,
+            engineer_case=engineer_case,
+            engineer_id=request.engineer_id,
+            guardrail_final_id=guardrail_final_id,
+            guardrail_final_decision=guardrail_final_decision,
+            feedback=saved_feedback,
+            ledger_record=saved_ledger,
+            created_at=timestamp,
+        )
+        ticket_repository.record_event(
+            str(ticket.get("ticket_id") or ""),
+            closure_event["event"],
+            closure_event,
+        )
+        ticket_repository.record_engineer_case_event(
+            str(engineer_case.get("engineer_case_id") or ""),
+            closure_event["event"],
+            closure_event,
+        )
 
     return {
         "ticket_id": str(engineer_case.get("engineer_case_id") or ticket_id),
