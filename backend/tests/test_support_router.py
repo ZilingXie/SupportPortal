@@ -495,6 +495,57 @@ The documentation states that time: 0 means the rule is applied permanently. How
         assert result.internal_email is not None
         self.assertEqual(result.internal_email["to"], "billing@example.com")
 
+    def test_account_verification_extracts_ticket_c31612_bullet_sections_cleanly(self) -> None:
+        message = """Dear Agora Support,
+
+Our account (user@example.com) was suspended on May 28, 2026 for "Suspicious Activity".
+
+[Company Information]
+- Company: Wai-up (와이업)
+- Country: Republic of Korea
+- Address: 218, Hyangdong-ro, Deogyang-gu, Goyang-si, Gyeonggi-do, Republic of Korea
+- Service URL: https://factory-chat-youyeon1.vercel.app (https://factory-chat-youyeon1.vercel.app/)
+
+[Contact Information]
+- Name: Kim Donghan
+- Email: user@example.com
+- Phone: +82 10 4227 3302
+
+[Use Case]
+We are building an internal messenger and video meeting tool for our small Korea-China team.
+
+[Payment]
+We are fully willing to register a valid credit card and top-up the wallet immediately upon reactivation.
+
+Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
+"""
+
+        result = build_billing_automation_result(
+            action="account_verification",
+            message=message,
+            ticket_id="TK-ACC-C31612",
+            customer_email="user@example.com",
+        )
+
+        self.assertEqual(result.missing_fields, [])
+        self.assertEqual(result.collected_fields["company_name"], "Wai-up (와이업)")
+        self.assertEqual(
+            result.collected_fields["company_location"],
+            "Republic of Korea; 218, Hyangdong-ro, Deogyang-gu, Goyang-si, Gyeonggi-do, Republic of Korea",
+        )
+        self.assertEqual(
+            result.collected_fields["website"],
+            "https://factory-chat-youyeon1.vercel.app (https://factory-chat-youyeon1.vercel.app/)",
+        )
+        self.assertEqual(result.collected_fields["contact_email"], "user@example.com")
+        self.assertEqual(result.collected_fields["phone_number"], "+82 10 4227 3302")
+        self.assertEqual(
+            result.collected_fields["use_case"],
+            "We are building an internal messenger and video meeting tool for our small Korea-China team.",
+        )
+        self.assertEqual(result.collected_fields["app_id"], "7994d63a6ee94bd8b16a65ea0707faad")
+        self.assertIsNotNone(result.internal_email)
+
     def test_send_billing_internal_email_skips_when_smtp_password_missing(self) -> None:
         email_payload = {
             "to": "xieziling@agora.io",

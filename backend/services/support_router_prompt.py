@@ -418,6 +418,36 @@ ROUTE_FEW_SHOT_EXAMPLES = (
             "risk_flags": ["account_access_restore"],
         },
     },
+    {
+        "message": (
+            "Our Agora account has been flagged for suspicious activity. "
+            "We need to complete company verification to restore access. "
+            "Company: ExampleCorp, Country: Singapore, "
+            "Address: 123 Orchard Road, Service URL: https://example.com, "
+            "Email: admin@example.com, Phone: +65-1234-5678. "
+            "[Use Case]\nWe use Agora for live streaming to 10k concurrent viewers.\n"
+            "Thank you."
+        ),
+        "hints": {
+            "agora": ["agora"],
+            "public_info": ["billing"],
+            "flags": {"has_agora_brand": True},
+        },
+        "output": {
+            "scope_label": "billing",
+            "semantic_intent": "billing.account_verification",
+            "recommended_action": "automation_candidate",
+            "automation_eligibility": "eligible",
+            "confidence": 0.93,
+            "reason": "Customer reports suspicious activity flag and requests company verification to restore account access.",
+            "matched_signals": ["suspicious activity", "company verification", "restore access"],
+            "evidence_spans": [
+                "account has been flagged for suspicious activity",
+                "complete company verification to restore access",
+            ],
+            "risk_flags": ["account_access_restore"],
+        },
+    },
 )
 
 

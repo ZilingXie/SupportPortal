@@ -1318,20 +1318,21 @@ flowchart TD
         short: "Billing",
         title: "Billing intake / ticket routing",
         status: "doing",
-        thesis: "确定性 billing 白名单 POC 已贯通 /account intake、route、ticket 持久化、automation 状态记录和历史查询；对外 ticket id 已统一为单一 `TK-...`，当前不执行 automation，下一步要接真实来源、审核和试运行指标。",
+        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution：`/account` 先跑 LLM semantic router 再 fallback 到 deterministic；新增 `billing.account_verification` 覆盖 suspicious activity / fraud review / company verification / reactivation；字段追问、客户回复和内部邮件已接入真实执行；TK-ACC-C31612 的 weak gratitude 抢占问题已修复。",
         done: [
-          "白名单 v1 收窄到 `account_suspension` 和 `detailed_invoice`，金额争议、退款、赔付、裁决类问题默认不自动化。",
+          "Automation 白名单已扩展到 `account_suspension`、`detailed_invoice` 和 `account_verification`；suspicious activity / fraud / company verification / reactivation 新进入 billing automation intake。",
           "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
-          "`POST /account` 已实现创建客户工单 -> route -> 记录结果；`account_suspension` 和 `detailed_invoice` 只标记 `automation_status = automation`，不调用 follow process、不追问字段、不生成客户回复、不发送内部邮件。",
+          "`POST /account` 已实现创建客户工单 -> semantic-first route -> billing automation 执行 -> 记录结果；白名单 automation 会追问缺失字段、生成客户回复，并在字段完整时尝试内部邮件流转。",
           "`/account` 手动 UI 已复用 client 体验，并展示 route、单一 canonical `TK-...` ticket id、Automation / Not automated 状态和最近 ticket 历史；详情页不再展示第二个 Support ticket ID。",
           "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 view-model 只保留一个 `ticket_id`；`billing_ticket_id` 保持为内部 companion key，`source` 统一为 `manual` / `api`。",
           "Billing ticket 历史列表和详情 API 已完成；详情 API 支持用 canonical `ticket_id` 直接查询，不再依赖 Recent tickets 列表窗口。",
-          "底层 billing automation helper 仍支持 action-specific destination env 和内部邮件，但 `/account` intake 当前只记录路由结果，不触发邮件发送。"
+          "底层 billing automation helper 支持 action-specific destination env 和内部邮件；`/account` intake 字段完整时触发真实邮件发送，SMTP 缺配置时 fail closed 并记录 skipped/failed 原因。"
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，因为 routing、ticket view-model、状态记录、历史查询和 live `/account` smoke 都有测试证据。",
+          "TK-ACC-C31612 修复已验证：semantic-first 路由 + gratitude 降级后，长正文末尾 thank you 不再误判为 small_talk。",
           "试运行前必须补 Zendesk/external_id 幂等，否则 webhook 重放仍会带来重复建单和重复状态记录风险。",
-          "白名单不要扩大过快；先用真实 case 回放证明 account_suspension 和 detailed_invoice 的 route 误判率，再决定是否真正执行 automation。"
+          "白名单不要扩大过快；先用真实 case 回放证明 account_suspension、detailed_invoice 和 account_verification 的 route 误判率，再决定是否进一步扩展。"
         ],
         next: [
           { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单 route、非白名单、Not automated、高风险人工。", horizon: "Scope" },
@@ -1339,7 +1340,8 @@ flowchart TD
           { id: "billing-human-review", status: "todo", label: "建立人工审核模式，先审核 route 与 automation 状态，再决定是否允许生成客户告知或内部邮件。", horizon: "Review" },
           { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单或重复写入 automation 状态。", horizon: "Reliability" },
           { id: "billing-pilot", status: "todo", label: "启用小流量试运行，统计覆盖率、route 误判、Not automated 原因和人工审核结果。", horizon: "Pilot" },
-          { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" }
+          { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" },
+          { id: "billing-account-verification-fields", status: "done", label: "account_verification 已实现字段追问、Use Case section 解析、Country+Address 合并、个人开发者分支、app_id 可选提取和内部邮件真实发送。", horizon: "Billing" }
         ],
         sources: [
           "docs/prompt_change_log.md",
@@ -1360,7 +1362,7 @@ flowchart TD
         short: "Routing",
         title: "Routing rules",
         status: "doing",
-        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构：deterministic fast path 处理高置信 billing 和明显非 Agora 信号；LLM semantic router 输出 structured intent taxonomy（billing.account_suspension、billing.detailed_invoice、billing.refund_or_dispute 等）；policy gate 做安全边界拆分「能不能 automation」；old route contract 保留，避免一次性破坏下游。每个 scope_label 被 route contract 固定成 route_family、execution_action 和 tooling_profile，新增 billing_review route family 用于需人工审核的 billing case。",
+        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构：deterministic fast path 处理高置信 billing 和明显非 Agora 信号；LLM semantic router 输出 structured intent taxonomy（billing.account_suspension、billing.detailed_invoice、billing.account_verification、billing.refund_or_dispute 等）；policy gate 做安全边界拆分「能不能 automation」；old route contract 保留，避免一次性破坏下游。`/account` 使用 semantic-first 模式，LLM 先跑避免 TK-ACC-C31612 类 weak gratitude 抢占；gratitude 降级为仅匹配短纯感谢消息。每个 scope_label 被 route contract 固定成 route_family、execution_action 和 tooling_profile，新增 billing_review route family 用于需人工审核的 billing case。",
         done: [
           "入口是 `decide_support_route()`：空消息直接 `non_agora/refuse`；非空消息先进入 `_heuristic_route_decision()`，没有命中才调用 `_llm_route_decision()`。",
           "LLM semantic router 已升级为 intent taxonomy 输出：`scope_label`、`semantic_intent`（billing.account_suspension / billing.detailed_invoice / billing.refund_or_dispute）、`recommended_action`、`automation_eligibility`、`confidence`、`evidence_spans`、`risk_flags`。",
@@ -1382,6 +1384,11 @@ flowchart TD
           "Golden billing routing regression set 已建立：`test_support_router_semantic_billing.py` 包含 12 个 case，覆盖 TK-ACC-68BAC7、account suspension variants、detailed invoice、refund/dispute/legal negative cases、non-billing cases。",
           "Router prompt (`prompts/router.py`) 已更新：新增 Billing Intent Taxonomy、Automation Eligibility 规则、billing few-shot examples。",
           "TK-ACC-68BAC7 已修复：`Account temporarily suspended` 现被 deterministic 白名单命中，route 为 `billing_automation/account_suspension`，不再误判为 `web_search`。",
+          "`TK-ACC-C31612` 已修复：长正文结尾 `thank you` 不再被 weak gratitude 抢先判为 `small_talk`。`/account` 改用 semantic-first：LLM 先跑识别 full intent，gratitude 仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的消息。",
+          "新增 `billing.account_verification` intent：LLM 将 suspicious activity / fraud review / company verification / reactivation 归入新类；policy gate 在无 refund/dispute/legal 风险时放行为 `billing_automation/account_verification`。",
+          "Policy gate 扩展：`account_verification` 默认 eligible，带 refund/amount_dispute/legal_threat 时回退 `billing_review/human_review_required`；`account_suspension` 保持默认 human_review_required。",
+          "Route contract 新增映射：`account_verification` → `billing_automation/account_verification/deterministic_billing_intake`。",
+          "Router prompt 已补 `billing.account_verification` taxonomy + automation eligibility + few-shot example（suspicious activity company verification with Use Case section）。",
         ],
         review: [
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
@@ -1390,6 +1397,7 @@ flowchart TD
           "`conservative_agora_technical_fallback` 是保守兜底：宁可进入 RAG，也不在低置信时拒绝客户或触发 automation。",
           "TK-ACC-68BAC7 已修复：扩展后的 deterministic 白名单可命中 `Account temporarily suspended` 和 `account has been suspended due to insufficient balance`，不再误判为 web_search。",
           "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `agora_non_technical`；需要在 golden set 中持续补充边界 case。",
+          "TK-ACC-C31612 修复验证：长正文末尾 thank you 不再触发 small_talk，LLM semantic-first 可正确识别 billing intent；短纯感谢仍保持 controlled_response。",
         ],
         next: [
           { id: "routing-billing-suspension-patterns", status: "done", label: "扩展 account_suspension deterministic whitelist，覆盖 temporarily suspended、has been suspended、suspended due to insufficient balance、restore access 等真实表达。", horizon: "Billing" },
@@ -1405,6 +1413,9 @@ flowchart TD
           { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 QBR tab。", horizon: "Docs" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
           { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 golden set 覆盖率足够时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
+          { id: "routing-account-verification-intake", status: "done", label: "新增 billing.account_verification intent + account_verification route：覆盖 suspicious activity / fraud / company verification / reactivation。", horizon: "Billing" },
+          { id: "routing-gratitude-downgrade", status: "done", label: "降级 gratitude 确定性信号：仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的短纯感谢。TK-ACC-C31612 不再被误判。", horizon: "Safety" },
+          { id: "routing-semantic-first-account", status: "done", label: "/account 接入 semantic-first 模式：LLM 先跑路由，避免 weak deterministic 抢占。", horizon: "Architecture" },
         ],
         architecture: {
           title: "Routing Architecture: Semantic Intent -> Policy Gate -> Route Contract",
@@ -1417,9 +1428,11 @@ flowchart TD
             "  L --> S[\"Structured schema: scope_label, semantic_intent, recommended_action, automation_eligibility, evidence_spans, risk_flags\"]",
             "  S --> P[\"Policy gate: safety boundary\"]",
             "  P -->|eligible detailed_invoice| BA[\"billing_automation / detailed_invoice\"]",
+            "  P -->|eligible account_verification| BV[\"billing_automation / account_verification\"]",
             "  P -->|refund, dispute, legal, account_suspension review| BR[\"billing_review / human_review_required\"]",
             "  D --> C[\"Route contract\"]",
             "  BA --> C",
+            "  BV --> C",
             "  BR --> C",
             "  C -->|agora_technical| RAG[\"agora_docs_rag / rag / agora_docs_only\"]",
             "  C -->|agora_non_technical| WEB[\"web_company_info / web_search / official_web_search\"]",
@@ -1427,7 +1440,7 @@ flowchart TD
             "  C -->|billing| ACC[\"/account response + support_billing_tickets audit fields\"]",
             "  C -->|low confidence| F[\"conservative_agora_technical_fallback\"]"
           ].join("\n"),
-          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。"
+          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。/account 使用 semantic-first 模式（LLM 先跑），避免 weak gratitude 等弱信号抢占 billing 长正文。"
         },
         sources: [
           "backend/services/support_router.py",
