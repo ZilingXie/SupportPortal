@@ -62,6 +62,9 @@ class QbrPlanContractTests(unittest.TestCase):
             "close-memory 已完成",
             "不自动晋升 active memory",
             "engineer_case_closed_after_customer_reply",
+            "replay eval dataset",
+            "replay eval dataset 已完成",
+            "replay runner / metrics dashboard / regression gate",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -78,6 +81,7 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn("当前下一步是推进 close-memory", html_source)
         self.assertNotIn("当前下一步：实现 close-memory", html_source)
         self.assertNotIn("下一步是实现 close-memory", html_source)
+        self.assertNotIn("当前下一步是推进 eval/metrics", html_source)
 
     def test_qbr_plan_collapses_engineer_architecture_by_default(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")

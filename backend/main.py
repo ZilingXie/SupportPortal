@@ -28,7 +28,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import psycopg
@@ -88,6 +88,7 @@ from backend.services.engineer_summary_agent import build_engineer_summary_packe
 from backend.services.engineer_plan_agent import build_engineer_plan
 from backend.services.engineer_execute_agent import execute_engineer_plan
 from backend.services.engineer_review_agent import review_execution
+from backend.services.engineer_replay_eval_dataset import build_engineer_replay_eval_item
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     ESCALATED_STATUS,
@@ -4121,6 +4122,43 @@ def _record_case_memory_ledger_from_feedback(feedback: dict[str, Any]) -> dict[s
     return saved_record
 
 
+def _record_engineer_replay_eval_item_from_closed_case(
+    *,
+    ticket: dict[str, Any],
+    engineer_case: dict[str, Any],
+    closed_investigation: dict[str, Any] | None,
+    saved_feedback: dict[str, Any],
+    saved_ledger: dict[str, Any],
+    customer_reply: str,
+    created_at: str,
+) -> dict[str, Any]:
+    """Build and save a replay eval dataset candidate after closure."""
+    item = build_engineer_replay_eval_item(
+        client_ticket=ticket,
+        engineer_case=engineer_case,
+        closed_investigation=closed_investigation,
+        saved_feedback=saved_feedback,
+        saved_ledger=saved_ledger,
+        customer_reply=customer_reply,
+        created_at=created_at,
+    )
+    saved_item = ticket_repository.record_engineer_replay_eval_item(item)
+    ticket_repository.record_engineer_case_event(
+        str(saved_item.get("engineer_case_id") or ""),
+        "engineer_replay_eval_item_recorded",
+        {
+            "event": "engineer_replay_eval_item_recorded",
+            "eval_item_id": str(saved_item.get("eval_item_id") or ""),
+            "engineer_case_id": str(saved_item.get("engineer_case_id") or ""),
+            "client_ticket_id": str(saved_item.get("client_ticket_id") or ""),
+            "dataset_status": str(saved_item.get("dataset_status") or ""),
+            "schema_version": str(saved_item.get("schema_version") or ""),
+            "created_at": created_at,
+        },
+    )
+    return saved_item
+
+
 def _build_engineer_case_closed_after_customer_reply_event(
     *,
     ticket: dict[str, Any],
@@ -5194,6 +5232,20 @@ async def confirm_investigation_reply(
             closure_event,
         )
 
+        _record_engineer_replay_eval_item_from_closed_case(
+            ticket=ticket,
+            engineer_case=engineer_case,
+            closed_investigation=(
+                result.get("closed_investigation")
+                if isinstance(result.get("closed_investigation"), dict)
+                else None
+            ),
+            saved_feedback=saved_feedback,
+            saved_ledger=saved_ledger,
+            customer_reply=customer_reply,
+            created_at=timestamp,
+        )
+
     return {
         "ticket_id": str(engineer_case.get("engineer_case_id") or ticket_id),
         "status": engineer_case["status"],
@@ -5211,6 +5263,38 @@ async def confirm_investigation_reply(
         ),
         "updated_at": ticket["updated_at"],
     }
+
+
+@app.get("/api/engineer/replay-eval-dataset")
+def list_engineer_replay_eval_dataset(
+    limit: int = Query(default=100, ge=1, le=1000),
+    status: str | None = Query(default=None, pattern="^(candidate|active|archived)$"),
+) -> dict[str, Any]:
+    """List engineer replay eval dataset items (internal API)."""
+    items = ticket_repository.list_engineer_replay_eval_items(limit=limit, status=status)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/engineer/replay-eval-dataset/export")
+def export_engineer_replay_eval_dataset(
+    limit: int = Query(default=500, ge=1, le=5000),
+    status: str | None = Query(default=None, pattern="^(candidate|active|archived)$"),
+) -> StreamingResponse:
+    """Export engineer replay eval dataset as JSONL (internal API)."""
+    import io
+
+    items = ticket_repository.list_engineer_replay_eval_items(limit=limit, status=status)
+
+    buffer = io.StringIO()
+    for item in items:
+        buffer.write(json.dumps(item, ensure_ascii=False) + "\n")
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": "attachment; filename=engineer-replay-eval-dataset.jsonl"},
+    )
 
 
 @app.get("/api/dashboard/metrics")
