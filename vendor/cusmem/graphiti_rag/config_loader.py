@@ -84,6 +84,7 @@ def load_config(path: str | None = None) -> Config:
         'second_pass_min_entities': 'GRAPHRAG_SECOND_PASS_MIN_ENTITIES',
         'second_pass_min_edges': 'GRAPHRAG_SECOND_PASS_MIN_EDGES',
         'ingest_mode': 'GRAPHRAG_INGEST_MODE',
+        'ingest_state_dir': 'GRAPHRAG_INGEST_STATE_DIR',
         'build_communities': 'GRAPHRAG_BUILD_COMMUNITIES',
     }
     for key, env_var in env_map.items():

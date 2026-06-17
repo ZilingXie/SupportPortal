@@ -282,6 +282,87 @@ class Pipeline:
 
         return sum(results)
 
+    # ─── Chunk-based ingest (SupportPortal adapter path) ──────────────
+    # Skips Scanner/Reader/Splitter — chunks come pre-built from adapter.
+
+    async def run_chunks(self, chunks: list[Chunk]) -> dict:
+        """Ingest pre-built chunks (SupportPortal official-doc path).
+
+        Skips the normal Scanner → Reader → Splitter pipeline phases.
+        Uses explicit chunk.chunk_id for upsert state when available,
+        falling back to source+index+offsets for file-based chunks.
+        """
+
+        if not chunks:
+            return {'files': 0, 'chunks': 0, 'extracted': 0}
+
+        # ── Upsert: filter unchanged chunks ──
+        skipped = 0
+        if self.cfg.ingest_mode == 'upsert':
+            from .ingest_state import IngestStateStore, hash_content, hash_schema
+
+            store = IngestStateStore(state_dir=getattr(self.cfg, 'ingest_state_dir', '.graphiti_rag'))
+            state = store.load()
+            schema_hash_val = hash_schema(self.cfg)
+            state.schema_hash = schema_hash_val
+
+            new_chunks: list[Chunk] = []
+            for c in chunks:
+                # Use explicit chunk_id if available, else derive from file identity
+                if c.chunk_id:
+                    cid = c.chunk_id
+                else:
+                    from .ingest_state import make_chunk_id
+                    cid = make_chunk_id(c.source, c.index, c.start_char, c.end_char)
+
+                ch = c.content_hash or hash_content(c.text)
+                if state.is_unchanged(cid, ch, schema_hash_val):
+                    skipped += 1
+                else:
+                    new_chunks.append(c)
+            if self.cfg.progress:
+                print(f'  upsert: {skipped} skipped, {len(new_chunks)} to process')
+            chunks = new_chunks
+        else:
+            state = None
+
+        if not chunks:
+            print('  All chunks unchanged — nothing to do.')
+            return {'files': 0, 'chunks': 0, 'extracted': 0}
+
+        # Phase 4: Extract (direct)
+        if self.cfg.progress:
+            print(f'--- Extract ({self.cfg.max_concurrency} concurrent) ---')
+        extracted = await self.extract(chunks)
+
+        # Phase 5: Update state (upsert mode) — only mark SUCCESSFUL chunks
+        if state is not None and self.cfg.ingest_mode == 'upsert':
+            from .ingest_state import IngestStateStore, hash_content, hash_schema
+
+            store = IngestStateStore(state_dir=getattr(self.cfg, 'ingest_state_dir', '.graphiti_rag'))
+            state = store.load()
+            schema_hash_val = hash_schema(self.cfg)
+            state.schema_hash = schema_hash_val
+            for c in chunks:
+                if c.chunk_id:
+                    cid = c.chunk_id
+                else:
+                    from .ingest_state import make_chunk_id
+                    cid = make_chunk_id(c.source, c.index, c.start_char, c.end_char)
+                ch = c.content_hash or hash_content(c.text)
+                if getattr(c, '_extract_error', None) is None:
+                    state.mark_done(cid, ch, schema_hash_val)
+            store.save(state)
+
+        return {
+            'files': 0,
+            'chunks': len(chunks),
+            'extracted': extracted,
+        }
+
+    def run_chunks_sync(self, chunks: list[Chunk]) -> dict:
+        return asyncio.run(self.run_chunks(chunks))
+
     # ─── Full Pipeline ─────────────────────────────────────────────────
     # Displays a multi-stage progress log
 
@@ -319,7 +400,7 @@ class Pipeline:
         if self.cfg.ingest_mode == 'upsert':
             from .ingest_state import IngestStateStore, hash_content, hash_schema, make_chunk_id
 
-            store = IngestStateStore()
+            store = IngestStateStore(state_dir=getattr(self.cfg, 'ingest_state_dir', '.graphiti_rag'))
             state = store.load()
             schema_hash = hash_schema(self.cfg)
             state.schema_hash = schema_hash
@@ -356,7 +437,7 @@ class Pipeline:
         if state is not None and self.cfg.ingest_mode == 'upsert':
             from .ingest_state import hash_content, hash_schema, make_chunk_id
 
-            store = IngestStateStore()
+            store = IngestStateStore(state_dir=getattr(self.cfg, 'ingest_state_dir', '.graphiti_rag'))
             state = store.load()
             schema_hash = hash_schema(self.cfg)
             state.schema_hash = schema_hash

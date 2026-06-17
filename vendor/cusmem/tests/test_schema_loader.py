@@ -1,4 +1,4 @@
-from graphiti_rag.schema_loader import load_graph_schema
+from graphiti_rag.schema_loader import load_graph_schema, load_graph_schema_from_mapping
 
 
 def test_load_graph_schema_builds_models_and_edge_map(tmp_path):
@@ -55,3 +55,32 @@ entity_types:
         assert 'Invalid entity type name' in str(exc)
     else:
         raise AssertionError('expected invalid schema type name to fail')
+
+
+def test_load_graph_schema_from_mapping_produces_same_result(tmp_path):
+    """load_graph_schema_from_mapping should produce identical results to
+    load_graph_schema when given the same raw dict."""
+    schema_file = tmp_path / 'schema.yaml'
+    schema_file.write_text(
+        """
+entity_types:
+  Widget:
+    description: "A widget"
+    properties:
+      color:
+        type: string
+edge_types:
+  CONNECTS:
+    description: "Connects widgets"
+    source_types: ["Widget"]
+    target_types: ["Widget"]
+""",
+        encoding='utf-8',
+    )
+
+    from_file = load_graph_schema(schema_file)
+    from_dict = load_graph_schema_from_mapping(from_file.raw)
+
+    assert list(from_file.entity_types) == list(from_dict.entity_types)
+    assert list(from_file.edge_types) == list(from_dict.edge_types)
+    assert from_file.edge_type_map == from_dict.edge_type_map

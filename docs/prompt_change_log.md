@@ -34,6 +34,31 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime.ClientTicketAgentRuntimeContractTests.test_resolved_confirmation_route_failure_falls_back_to_resolution_for_engineer_guidance_reply -v`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/support_router.py backend/services/client_ticket_agent_runtime.py backend/main.py backend/tests/test_support_router.py backend/tests/test_support_router_semantic_billing.py backend/tests/test_account_intake.py`
 
+## 2026-06-17 - KG schema bridge feeds into Graphiti extraction prompts
+
+- Area or subsystem: KG offline ingest / GraphRAG extraction
+- Prompt or model version: `supportportal_official_docs_v1` schema via `kg_graphrag_adapter.convert_schema_to_cusmem_mapping()`
+- Summary:
+  - The SupportPortal `KgSchema` (9 entities + 10 edges, strict mode) is now converted into vendored cusmem entity_types/edge_types Pydantic models via `convert_schema_to_cusmem_mapping()` and `load_graph_schema_from_mapping()`.
+  - When the adapter builds vendored `Chunk` objects for `GraphRAG.ingest_chunks()`, the cusmem `Extractor` receives these entity/edge types and passes them to `graphiti.add_episode()`, where they enter the Graphiti extraction prompts (entity extraction + edge extraction LLM calls).
+  - Schema mode (strict) is preserved so unknown entity/edge types are rejected by Graphiti's schema validation during extraction.
+- Reason:
+  - PR2 wires the schema bridge so the official-docs KG schema controls what entity types and edge types the LLM can extract, consistent with the v1 strict-mode schema contract.
+- Affected files or config:
+  - `backend/services/kg_graphrag_adapter.py` (new — `convert_schema_to_cusmem_mapping()`)
+  - `vendor/cusmem/graphiti_rag/schema_loader.py` (modified — `load_graph_schema_from_mapping()`)
+  - `vendor/cusmem/graphiti_rag/components.py` (modified — Extractor passes entity_types/edge_types from schema)
+  - `docs/prompt_change_log.md` (this entry)
+- Expected behavior change:
+  - KG extraction prompts now include the official-docs entity types (Product, API, Feature, ErrorCode, Symptom, Solution, Limitation, Platform, Version) and edge types (PROVIDES_API, SUPPORTS_PLATFORM, etc.) with their descriptions.
+  - Schema hash changes (e.g. when prompt-facing descriptions or edge constraints change) are tracked in episode metadata so downstream can detect schema drift.
+  - No change to the customer-facing RAG answer prompts; this only affects the Graphiti extraction prompt path.
+- Verification:
+  - `rtk pytest backend/tests/test_kg_graphrag_adapter.py backend/tests/test_kg_offline_ingest.py backend/tests/test_kg_supportportal_contracts.py backend/tests/test_kg_schema.py backend/tests/test_kg_official_docs_scope.py backend/tests/test_qbr_plan_contract.py -q` (79 passed)
+  - `cd vendor/cusmem && rtk uv run --with pytest --with pyyaml python -m pytest tests/test_supportportal_chunk_ingest.py tests/test_schema_loader.py tests/test_core_pipeline.py -q` (16 passed, 2 pytest config warnings)
+  - `rtk uv run --with ruff ruff check backend/services/kg_*.py backend/tests/test_kg_*.py scripts/kg_ingest_official_doc_chunks.py` (All checks passed)
+  - `cd vendor/cusmem && rtk uv run --with ruff ruff check graphiti_rag/components.py graphiti_rag/pipeline.py graphiti_rag/graph_rag.py graphiti_rag/ingest_state.py graphiti_rag/schema_loader.py graphiti_rag/config.py graphiti_rag/config_loader.py graphiti_core/graphiti.py graphiti_core/nodes.py graphiti_core/models/nodes/node_db_queries.py tests/test_supportportal_chunk_ingest.py tests/test_schema_loader.py` (All checks passed)
+
 ## 2026-06-17 - Review process moved into project skill
 
 - Area or subsystem: Agent collaboration instructions and workflow prompts
