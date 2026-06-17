@@ -54,6 +54,7 @@
 - Engineer AI 会根据执行结果生成 Review Agent 决策。
 - Engineer AI 支持工程师 revise 后带证据上下文重新规划调查。
 - Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。
+- Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。

@@ -734,6 +734,19 @@ class TicketRepository(Protocol):
     ) -> list[dict[str, Any]]:
         ...
 
+    def record_engineer_replay_eval_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def list_engineer_replay_eval_items(
+        self,
+        limit: int = 100,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def get_engineer_replay_eval_item(self, eval_item_id: str) -> dict[str, Any] | None:
+        ...
+
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         ...
 
@@ -810,6 +823,7 @@ class InMemoryTicketRepository:
         self._engineer_case_events: list[dict[str, Any]] = []
         self._engineer_hitl_feedback: list[dict[str, Any]] = []
         self._case_memory_ledger: list[dict[str, Any]] = []
+        self._engineer_replay_eval_items: dict[str, dict[str, Any]] = {}
         self._billing_tickets: dict[str, dict[str, Any]] = {}
 
     def initialize(self) -> None:
@@ -1241,6 +1255,35 @@ class InMemoryTicketRepository:
             if str(item.get("engineer_case_id") or "").strip() == normalized_case_id
         ]
         return [copy.deepcopy(item) for item in rows[:safe_limit]]
+
+    def record_engineer_replay_eval_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(item)
+        saved.setdefault("created_at", _utc_now())
+        saved.setdefault("updated_at", _utc_now())
+        saved["dataset_status"] = str(saved.get("dataset_status") or "candidate").strip().lower()
+        eval_item_id = str(saved.get("eval_item_id") or "").strip()
+        if not eval_item_id:
+            raise ValueError("eval_item_id is required")
+        self._engineer_replay_eval_items[eval_item_id] = saved
+        return copy.deepcopy(saved)
+
+    def list_engineer_replay_eval_items(
+        self,
+        limit: int = 100,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        rows: list[dict[str, Any]] = []
+        for item in self._engineer_replay_eval_items.values():
+            if status is not None and str(item.get("dataset_status") or "").strip().lower() != status.strip().lower():
+                continue
+            rows.append(copy.deepcopy(item))
+        rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return rows[:safe_limit]
+
+    def get_engineer_replay_eval_item(self, eval_item_id: str) -> dict[str, Any] | None:
+        item = self._engineer_replay_eval_items.get(str(eval_item_id).strip())
+        return copy.deepcopy(item) if item is not None else None
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self._investigations.get(ticket_id, [])
@@ -2188,6 +2231,40 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            eval_item_id TEXT PRIMARY KEY,
+                            client_ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                            source_summary_packet_id TEXT NOT NULL DEFAULT '',
+                            source_summary_packet_version TEXT NOT NULL DEFAULT '',
+                            source_plan_id TEXT NOT NULL DEFAULT '',
+                            source_execution_id TEXT NOT NULL DEFAULT '',
+                            source_review_id TEXT NOT NULL DEFAULT '',
+                            review_decision TEXT NOT NULL DEFAULT '',
+                            review_trace JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            replan_notes JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            engineer_revise_feedback JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            approved_reply TEXT NOT NULL DEFAULT '',
+                            guardrail_final JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            expected_outcome TEXT NOT NULL DEFAULT 'resolved_with_customer_reply',
+                            replay_input JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            reference_output JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            dataset_status TEXT NOT NULL DEFAULT 'candidate',
+                            schema_version TEXT NOT NULL DEFAULT '',
+                            data_quality_warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_engineer_replay_eval_items"),
+                        self._table("support_tickets"),
+                        self._table("support_engineer_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
                         INSERT INTO {} (config_key, config_value, updated_at)
                         VALUES (%s, %s, NOW())
                         ON CONFLICT (config_key) DO UPDATE SET
@@ -2291,6 +2368,24 @@ class PostgresTicketRepository:
                     ).format(
                         sql.Identifier("idx_support_case_memory_ledger_retrieval"),
                         self._table("support_case_memory_ledger"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_replay_eval_case_created"),
+                        self._table("support_engineer_replay_eval_items"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (client_ticket_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_replay_eval_ticket_created"),
+                        self._table("support_engineer_replay_eval_items"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (dataset_status, created_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_replay_eval_status_created"),
+                        self._table("support_engineer_replay_eval_items"),
                     )
                 )
                 cur.execute(
@@ -4036,6 +4131,216 @@ class PostgresTicketRepository:
             ]
 
         return self._run_with_connection_retry("list_case_memory_ledger", _operation)
+
+    def record_engineer_replay_eval_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(item)
+        saved.setdefault("created_at", _utc_now())
+        saved.setdefault("updated_at", _utc_now())
+        eval_item_id = str(saved.get("eval_item_id") or "").strip()
+        if not eval_item_id:
+            raise ValueError("eval_item_id is required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {table} (
+                                eval_item_id, client_ticket_id, engineer_case_id,
+                                source_summary_packet_id, source_summary_packet_version,
+                                source_plan_id, source_execution_id, source_review_id,
+                                review_decision, review_trace, replan_notes,
+                                engineer_revise_feedback, approved_reply, guardrail_final,
+                                expected_outcome, replay_input, reference_output,
+                                dataset_status, schema_version, data_quality_warnings,
+                                created_at, updated_at
+                            ) VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            )
+                            ON CONFLICT (eval_item_id) DO UPDATE SET
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                engineer_case_id = EXCLUDED.engineer_case_id,
+                                source_summary_packet_id = EXCLUDED.source_summary_packet_id,
+                                source_summary_packet_version = EXCLUDED.source_summary_packet_version,
+                                source_plan_id = EXCLUDED.source_plan_id,
+                                source_execution_id = EXCLUDED.source_execution_id,
+                                source_review_id = EXCLUDED.source_review_id,
+                                review_decision = EXCLUDED.review_decision,
+                                review_trace = EXCLUDED.review_trace,
+                                replan_notes = EXCLUDED.replan_notes,
+                                engineer_revise_feedback = EXCLUDED.engineer_revise_feedback,
+                                approved_reply = EXCLUDED.approved_reply,
+                                guardrail_final = EXCLUDED.guardrail_final,
+                                expected_outcome = EXCLUDED.expected_outcome,
+                                replay_input = EXCLUDED.replay_input,
+                                reference_output = EXCLUDED.reference_output,
+                                dataset_status = EXCLUDED.dataset_status,
+                                schema_version = EXCLUDED.schema_version,
+                                data_quality_warnings = EXCLUDED.data_quality_warnings,
+                                updated_at = EXCLUDED.updated_at
+                            """
+                        ).format(table=self._table("support_engineer_replay_eval_items")),
+                        (
+                            saved["eval_item_id"],
+                            saved.get("client_ticket_id", ""),
+                            saved.get("engineer_case_id", ""),
+                            saved.get("source_summary_packet_id", ""),
+                            saved.get("source_summary_packet_version", ""),
+                            saved.get("source_plan_id", ""),
+                            saved.get("source_execution_id", ""),
+                            saved.get("source_review_id", ""),
+                            saved.get("review_decision", ""),
+                            Json(saved.get("review_trace") or {}),
+                            Json(saved.get("replan_notes") or []),
+                            Json(saved.get("engineer_revise_feedback") or []),
+                            saved.get("approved_reply", ""),
+                            Json(saved.get("guardrail_final") or {}),
+                            saved.get("expected_outcome", "resolved_with_customer_reply"),
+                            Json(saved.get("replay_input") or {}),
+                            Json(saved.get("reference_output") or {}),
+                            saved.get("dataset_status", "candidate"),
+                            saved.get("schema_version", ""),
+                            Json(saved.get("data_quality_warnings") or []),
+                            saved["created_at"],
+                            saved["updated_at"],
+                        ),
+                    )
+            return copy.deepcopy(saved)
+
+        return self._run_with_connection_retry("record_engineer_replay_eval_item", _operation)
+
+    def list_engineer_replay_eval_items(
+        self,
+        limit: int = 100,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                if status is not None:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT eval_item_id, client_ticket_id, engineer_case_id,
+                                source_summary_packet_id, source_summary_packet_version,
+                                source_plan_id, source_execution_id, source_review_id,
+                                review_decision, review_trace, replan_notes,
+                                engineer_revise_feedback, approved_reply, guardrail_final,
+                                expected_outcome, replay_input, reference_output,
+                                dataset_status, schema_version, data_quality_warnings,
+                                created_at, updated_at
+                            FROM {table}
+                            WHERE dataset_status = %s
+                            ORDER BY created_at DESC
+                            LIMIT %s
+                            """
+                        ).format(table=self._table("support_engineer_replay_eval_items")),
+                        (status, safe_limit),
+                    )
+                else:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT eval_item_id, client_ticket_id, engineer_case_id,
+                                source_summary_packet_id, source_summary_packet_version,
+                                source_plan_id, source_execution_id, source_review_id,
+                                review_decision, review_trace, replan_notes,
+                                engineer_revise_feedback, approved_reply, guardrail_final,
+                                expected_outcome, replay_input, reference_output,
+                                dataset_status, schema_version, data_quality_warnings,
+                                created_at, updated_at
+                            FROM {table}
+                            ORDER BY created_at DESC
+                            LIMIT %s
+                            """
+                        ).format(table=self._table("support_engineer_replay_eval_items")),
+                        (safe_limit,),
+                    )
+                rows = cur.fetchall()
+            return [
+                {
+                    "eval_item_id": str(row[0]),
+                    "client_ticket_id": str(row[1]),
+                    "engineer_case_id": str(row[2]),
+                    "source_summary_packet_id": str(row[3]),
+                    "source_summary_packet_version": str(row[4]),
+                    "source_plan_id": str(row[5]),
+                    "source_execution_id": str(row[6]),
+                    "source_review_id": str(row[7]),
+                    "review_decision": str(row[8]),
+                    "review_trace": row[9] if isinstance(row[9], dict) else {},
+                    "replan_notes": row[10] if isinstance(row[10], list) else [],
+                    "engineer_revise_feedback": row[11] if isinstance(row[11], list) else [],
+                    "approved_reply": str(row[12]),
+                    "guardrail_final": row[13] if isinstance(row[13], dict) else {},
+                    "expected_outcome": str(row[14]),
+                    "replay_input": row[15] if isinstance(row[15], dict) else {},
+                    "reference_output": row[16] if isinstance(row[16], dict) else {},
+                    "dataset_status": str(row[17]),
+                    "schema_version": str(row[18]),
+                    "data_quality_warnings": row[19] if isinstance(row[19], list) else [],
+                    "created_at": _to_iso(row[20]),
+                    "updated_at": _to_iso(row[21]),
+                }
+                for row in rows
+            ]
+
+        return self._run_with_connection_retry("list_engineer_replay_eval_items", _operation)
+
+    def get_engineer_replay_eval_item(self, eval_item_id: str) -> dict[str, Any] | None:
+        normalized_id = str(eval_item_id).strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT eval_item_id, client_ticket_id, engineer_case_id,
+                            source_summary_packet_id, source_summary_packet_version,
+                            source_plan_id, source_execution_id, source_review_id,
+                            review_decision, review_trace, replan_notes,
+                            engineer_revise_feedback, approved_reply, guardrail_final,
+                            expected_outcome, replay_input, reference_output,
+                            dataset_status, schema_version, data_quality_warnings,
+                            created_at, updated_at
+                        FROM {table}
+                        WHERE eval_item_id = %s
+                        """
+                    ).format(table=self._table("support_engineer_replay_eval_items")),
+                    (normalized_id,),
+                )
+                row = cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "eval_item_id": str(row[0]),
+                "client_ticket_id": str(row[1]),
+                "engineer_case_id": str(row[2]),
+                "source_summary_packet_id": str(row[3]),
+                "source_summary_packet_version": str(row[4]),
+                "source_plan_id": str(row[5]),
+                "source_execution_id": str(row[6]),
+                "source_review_id": str(row[7]),
+                "review_decision": str(row[8]),
+                "review_trace": row[9] if isinstance(row[9], dict) else {},
+                "replan_notes": row[10] if isinstance(row[10], list) else [],
+                "engineer_revise_feedback": row[11] if isinstance(row[11], list) else [],
+                "approved_reply": str(row[12]),
+                "guardrail_final": row[13] if isinstance(row[13], dict) else {},
+                "expected_outcome": str(row[14]),
+                "replay_input": row[15] if isinstance(row[15], dict) else {},
+                "reference_output": row[16] if isinstance(row[16], dict) else {},
+                "dataset_status": str(row[17]),
+                "schema_version": str(row[18]),
+                "data_quality_warnings": row[19] if isinstance(row[19], list) else [],
+                "created_at": _to_iso(row[20]),
+                "updated_at": _to_iso(row[21]),
+            }
+
+        return self._run_with_connection_retry("get_engineer_replay_eval_item", _operation)
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self.list_ticket_investigations(ticket_id=ticket_id, include_messages=True)
