@@ -646,6 +646,14 @@ class TicketExecutionResult:
     run_id: str | None = None
     client_agent_runtime_state: dict[str, Any] | None = None
     client_agent_runtime_events: list[dict[str, Any]] = field(default_factory=list)
+    # ── Router audit (observability) ──
+    router_source: str = "deterministic"
+    intent_router_attempted: bool = False
+    intent_router_confidence_threshold: float | None = None
+    intent_router_model_confidence: float | None = None
+    intent_router_fallback_reason: str | None = None
+    intent_router_failure_type: str | None = None
+    intent_router_failure_source: str | None = None
 
     def route_payload(self) -> dict[str, Any]:
         payload = {
@@ -689,6 +697,20 @@ class TicketExecutionResult:
             payload["review_agent_phase"] = str(
                 ((self.client_agent_runtime_state.get("review_agent") or {}) if isinstance(self.client_agent_runtime_state.get("review_agent"), dict) else {}).get("phase") or ""
             ).strip()
+        # Router audit fields
+        payload["router_source"] = self.router_source
+        if self.intent_router_attempted:
+            payload["intent_router_attempted"] = True
+        if self.intent_router_confidence_threshold is not None:
+            payload["intent_router_confidence_threshold"] = self.intent_router_confidence_threshold
+        if self.intent_router_model_confidence is not None:
+            payload["intent_router_model_confidence"] = self.intent_router_model_confidence
+        if self.intent_router_fallback_reason:
+            payload["intent_router_fallback_reason"] = self.intent_router_fallback_reason
+        if self.intent_router_failure_type:
+            payload["intent_router_failure_type"] = self.intent_router_failure_type
+        if self.intent_router_failure_source:
+            payload["intent_router_failure_source"] = self.intent_router_failure_source
         return payload
 
 
@@ -754,6 +776,20 @@ def build_execution_route_payload(execution: Any) -> dict[str, Any]:
         payload["review_agent_phase"] = str(
             ((client_agent_runtime_state.get("review_agent") or {}) if isinstance(client_agent_runtime_state.get("review_agent"), dict) else {}).get("phase") or ""
         ).strip()
+    # Router audit fallback fields (also covered by route_payload() above when available)
+    for audit_field in (
+        "router_source",
+        "intent_router_attempted",
+        "intent_router_confidence_threshold",
+        "intent_router_model_confidence",
+        "intent_router_fallback_reason",
+        "intent_router_failure_type",
+        "intent_router_failure_source",
+    ):
+        if audit_field not in payload:
+            value = getattr(execution, audit_field, None)
+            if value is not None and value != "" and value is not False:
+                payload[audit_field] = value
     retrieval_plan_snapshot = _extract_execution_retrieval_plan_snapshot(execution)
     if retrieval_plan_snapshot is not None:
         payload["retrieval_plan_snapshot"] = retrieval_plan_snapshot
@@ -1093,6 +1129,11 @@ def _build_default_rag_route_decision(message: str) -> SupportRouteDecision:
         route_family="agora_docs_rag",
         execution_action="rag",
         tooling_profile="agora_docs_only",
+        router_source="conservative_fallback",
+        intent_router_attempted=True,
+        intent_router_fallback_reason="route_fail_open",
+        intent_router_failure_type="route_fail_open",
+        intent_router_failure_source="runtime_executor",
     )
 
 
@@ -1118,6 +1159,13 @@ def _rag_resolution_from_detail(
         matched_signals=list(route_decision.matched_signals),
         evidence_summary=dict(rag_detail.evidence_summary or {}) or None,
         packed_evidence=dict(rag_detail.packed_evidence or {}) or None,
+        router_source=route_decision.router_source,
+        intent_router_attempted=route_decision.intent_router_attempted,
+        intent_router_confidence_threshold=route_decision.intent_router_confidence_threshold,
+        intent_router_model_confidence=route_decision.intent_router_model_confidence,
+        intent_router_fallback_reason=route_decision.intent_router_fallback_reason,
+        intent_router_failure_type=route_decision.intent_router_failure_type,
+        intent_router_failure_source=route_decision.intent_router_failure_source,
     )
 
 
@@ -1155,6 +1203,13 @@ def _build_ticket_execution_result(
         investigation_reason=_clean_text(investigation_reason) or None,
         workflow_action=workflow_action,
         client_intake_state=dict(client_intake_state) if isinstance(client_intake_state, dict) else None,
+        router_source=resolution.router_source,
+        intent_router_attempted=resolution.intent_router_attempted,
+        intent_router_confidence_threshold=resolution.intent_router_confidence_threshold,
+        intent_router_model_confidence=resolution.intent_router_model_confidence,
+        intent_router_fallback_reason=resolution.intent_router_fallback_reason,
+        intent_router_failure_type=resolution.intent_router_failure_type,
+        intent_router_failure_source=resolution.intent_router_failure_source,
     )
 
 
@@ -1968,6 +2023,13 @@ def execute_client_ticket_agent_runtime(
                     "decision": route_summary.get("decision"),
                     "reason": route_summary.get("reason"),
                     "scope_label": route_decision.scope_label,
+                    "router_source": route_decision.router_source,
+                    "intent_router_attempted": route_decision.intent_router_attempted,
+                    "intent_router_confidence_threshold": route_decision.intent_router_confidence_threshold,
+                    "intent_router_model_confidence": route_decision.intent_router_model_confidence,
+                    "intent_router_fallback_reason": route_decision.intent_router_fallback_reason,
+                    "intent_router_failure_type": route_decision.intent_router_failure_type,
+                    "intent_router_failure_source": route_decision.intent_router_failure_source,
                 },
             )
         except FutureTimeoutError:
@@ -1982,7 +2044,13 @@ def execute_client_ticket_agent_runtime(
                 agent_name=AGENT_NAME_ROUTE,
                 phase="failed",
                 event_type="timeout",
-                payload={},
+                payload={
+                    "router_source": "conservative_fallback",
+                    "intent_router_attempted": True,
+                    "intent_router_fallback_reason": "route_fail_open",
+                    "intent_router_failure_type": "route_fail_open",
+                    "intent_router_failure_source": "runtime_executor",
+                },
             )
         except Exception as exc:
             route_decision = None
@@ -1996,7 +2064,14 @@ def execute_client_ticket_agent_runtime(
                 agent_name=AGENT_NAME_ROUTE,
                 phase="failed",
                 event_type="error",
-                payload={"error": str(exc)},
+                payload={
+                    "error": str(exc),
+                    "router_source": "conservative_fallback",
+                    "intent_router_attempted": True,
+                    "intent_router_fallback_reason": "route_fail_open",
+                    "intent_router_failure_type": "route_fail_open",
+                    "intent_router_failure_source": "runtime_executor",
+                },
             )
 
         if route_decision is not None and str(route_decision.execution_action or "").strip() != "rag":

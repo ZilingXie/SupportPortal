@@ -2849,6 +2849,13 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "policy_decision": decision.policy_decision or None,
         "not_automated_reason": decision.not_automated_reason or None,
         "router_source": decision.router_source,
+        # Router audit fields
+        "intent_router_attempted": decision.intent_router_attempted,
+        "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
+        "intent_router_model_confidence": decision.intent_router_model_confidence,
+        "intent_router_fallback_reason": decision.intent_router_fallback_reason,
+        "intent_router_failure_type": decision.intent_router_failure_type,
+        "intent_router_failure_source": decision.intent_router_failure_source,
     }
     await async_to_thread(ticket_repository.record_event, ticket_id, event["event"], event)
     await dispatch_event(["engineer", "dashboard"], event)
@@ -2873,6 +2880,13 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "risk_flags": list(decision.risk_flags),
         "evidence_spans": list(decision.evidence_spans),
         "router_source": decision.router_source,
+        # Router audit fields
+        "intent_router_attempted": decision.intent_router_attempted,
+        "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
+        "intent_router_model_confidence": decision.intent_router_model_confidence,
+        "intent_router_fallback_reason": decision.intent_router_fallback_reason,
+        "intent_router_failure_type": decision.intent_router_failure_type,
+        "intent_router_failure_source": decision.intent_router_failure_source,
     }
 
 
