@@ -35,6 +35,39 @@ class GoldenBillingRoutingTests(unittest.TestCase):
 
     # ── TK-ACC-68BAC7 canonical case ──────────────────────────────────
 
+    def test_semantic_first_billing_policy_gate_preserves_router_audit(self) -> None:
+        """LLM-sourced billing decisions keep audit fields after policy gate rewrites."""
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "billing",
+                    "semantic_intent": "billing.account_suspension",
+                    "recommended_action": "human_review_required",
+                    "automation_eligibility": "not_eligible",
+                    "confidence": 0.93,
+                    "reason": "Customer asks for account suspension review.",
+                    "matched_signals": ["account suspension", "review"],
+                    "evidence_spans": ["review our suspended account"],
+                    "risk_flags": ["account_access_restore"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route(
+                "Please review our suspended account.",
+                semantic_first=True,
+            )
+
+        self.assertEqual(decision.router_source, "llm_semantic")
+        self.assertEqual(decision.execution_action, "human_review_required")
+        self.assertTrue(decision.intent_router_attempted)
+        self.assertEqual(decision.intent_router_model_confidence, 0.93)
+        self.assertIsNotNone(decision.intent_router_confidence_threshold)
+        self.assertIsNone(decision.intent_router_fallback_reason)
+
     def test_account_temporarily_suspended_routes_to_billing_not_web_search(self) -> None:
         """TK-ACC-68BAC7: 'Account temporarily suspended' must route to billing,
         not web_search."""

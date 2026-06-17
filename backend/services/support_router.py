@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import urllib.parse
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from backend.services.api_semantics import is_api_semantics_mismatch_message
@@ -137,6 +137,13 @@ class SupportRouteDecision:
     risk_flags: list[str] = field(default_factory=list)
     evidence_spans: list[str] = field(default_factory=list)
     router_source: str = "deterministic"
+    # ── Router audit (observability) ──
+    intent_router_attempted: bool = False
+    intent_router_confidence_threshold: float | None = None
+    intent_router_model_confidence: float | None = None
+    intent_router_fallback_reason: str | None = None
+    intent_router_failure_type: str | None = None
+    intent_router_failure_source: str | None = None
 
     def __post_init__(self) -> None:
         route_family, execution_action, tooling_profile = _route_contract_for_scope(
@@ -175,6 +182,14 @@ class SupportResolution:
     tooling_profile: str | None = None
     evidence_summary: dict[str, Any] | None = None
     packed_evidence: dict[str, Any] | None = None
+    # ── Router audit (observability) ──
+    router_source: str = "deterministic"
+    intent_router_attempted: bool = False
+    intent_router_confidence_threshold: float | None = None
+    intent_router_model_confidence: float | None = None
+    intent_router_fallback_reason: str | None = None
+    intent_router_failure_type: str | None = None
+    intent_router_failure_source: str | None = None
 
     def as_answer_tuple(self) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         return (
@@ -196,6 +211,13 @@ class SupportResolution:
             "route_confidence": round(float(self.route_confidence), 4),
             "search_used": bool(self.search_used),
             "matched_signals": list(self.matched_signals),
+            "router_source": self.router_source,
+            "intent_router_attempted": self.intent_router_attempted,
+            "intent_router_confidence_threshold": self.intent_router_confidence_threshold,
+            "intent_router_model_confidence": self.intent_router_model_confidence,
+            "intent_router_fallback_reason": self.intent_router_fallback_reason,
+            "intent_router_failure_type": self.intent_router_failure_type,
+            "intent_router_failure_source": self.intent_router_failure_source,
         }
 
 
@@ -249,6 +271,13 @@ def _build_route_decision(
     risk_flags: list[str] | None = None,
     evidence_spans: list[str] | None = None,
     router_source: str = "deterministic",
+    # Router audit fields
+    intent_router_attempted: bool = False,
+    intent_router_confidence_threshold: float | None = None,
+    intent_router_model_confidence: float | None = None,
+    intent_router_fallback_reason: str | None = None,
+    intent_router_failure_type: str | None = None,
+    intent_router_failure_source: str | None = None,
 ) -> SupportRouteDecision:
     route_family, execution_action, tooling_profile = _route_contract_for_scope(
         scope_label=scope_label,
@@ -272,6 +301,12 @@ def _build_route_decision(
         risk_flags=risk_flags or [],
         evidence_spans=evidence_spans or [],
         router_source=router_source,
+        intent_router_attempted=intent_router_attempted,
+        intent_router_confidence_threshold=intent_router_confidence_threshold,
+        intent_router_model_confidence=intent_router_model_confidence,
+        intent_router_fallback_reason=intent_router_fallback_reason,
+        intent_router_failure_type=intent_router_failure_type,
+        intent_router_failure_source=intent_router_failure_source,
     )
 
 
@@ -567,6 +602,16 @@ def citations_use_authoritative_source(citations: list[dict[str, str]] | None = 
     return False
 
 
+@dataclass(frozen=True)
+class _LlmRouteAttempt:
+    """Internal result from _llm_route_decision capturing both success and failure metadata."""
+
+    decision: SupportRouteDecision | None
+    attempted: bool = True
+    failure_type: str | None = None
+    failure_source: str | None = None
+
+
 def _llm_route_decision(
     message: str,
     *,
@@ -577,10 +622,15 @@ def _llm_route_decision(
     latest_assistant_message: dict[str, Any] | None = None,
     current_ticket_status: str | None = None,
     has_active_engineer_case: bool = False,
-) -> SupportRouteDecision | None:
+) -> _LlmRouteAttempt:
     profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
     if not profile_has_invocation_credentials(profile):
-        return None
+        return _LlmRouteAttempt(
+            decision=None,
+            attempted=True,
+            failure_type="missing_credentials",
+            failure_source="profile_check",
+        )
     system_prompt = build_route_system_prompt()
     user_prompt = build_route_user_payload(
         message,
@@ -600,12 +650,22 @@ def _llm_route_decision(
         )
     except LlmInvocationError as exc:
         LOGGER.warning("Intent router responses call failed: %s", exc)
-        return None
+        return _LlmRouteAttempt(
+            decision=None,
+            attempted=True,
+            failure_type="llm_invocation_failed",
+            failure_source="responses_api",
+        )
     try:
         payload = json.loads(response.text)
     except json.JSONDecodeError:
         LOGGER.warning("Intent router response did not return valid JSON")
-        return None
+        return _LlmRouteAttempt(
+            decision=None,
+            attempted=True,
+            failure_type="invalid_json",
+            failure_source="responses_api",
+        )
     scope_label = _normalize_text(payload.get("scope_label")).lower()
     if scope_label not in {
         "ticket_resolution",
@@ -615,7 +675,12 @@ def _llm_route_decision(
         "agora_non_technical",
         "agora_technical",
     }:
-        return None
+        return _LlmRouteAttempt(
+            decision=None,
+            attempted=True,
+            failure_type="invalid_payload",
+            failure_source="scope_validation",
+        )
     try:
         confidence = float(payload.get("confidence") or 0.0)
     except (TypeError, ValueError):
@@ -627,21 +692,29 @@ def _llm_route_decision(
         or payload.get("recommended_action")
     ).lower()
     if scope_label == BILLING_SCOPE_LABEL and action not in {"account_suspension", "detailed_invoice", "account_verification", "human_review_required", "refuse", "automation_candidate"}:
-        return None
-    return _build_route_decision(
-        scope_label=scope_label,
-        action=action,
-        confidence=max(0.0, min(1.0, confidence)),
-        reason=_normalize_text(payload.get("reason")) or "llm_fallback",
-        matched_signals=matched_signals,
-        response_language=response_language,
-        semantic_intent=_normalize_text(payload.get("semantic_intent")) or None,
-        automation_eligibility=_normalize_text(payload.get("automation_eligibility")) or None,
-        policy_decision=_normalize_text(payload.get("policy_decision")) or None,
-        not_automated_reason=_normalize_text(payload.get("not_automated_reason")) or None,
-        risk_flags=_sanitize_matched_signals(payload.get("risk_flags")),
-        evidence_spans=_sanitize_matched_signals(payload.get("evidence_spans")),
-        router_source="llm_semantic",
+        return _LlmRouteAttempt(
+            decision=None,
+            attempted=True,
+            failure_type="invalid_payload",
+            failure_source="action_validation",
+        )
+    return _LlmRouteAttempt(
+        decision=_build_route_decision(
+            scope_label=scope_label,
+            action=action,
+            confidence=max(0.0, min(1.0, confidence)),
+            reason=_normalize_text(payload.get("reason")) or "llm_fallback",
+            matched_signals=matched_signals,
+            response_language=response_language,
+            semantic_intent=_normalize_text(payload.get("semantic_intent")) or None,
+            automation_eligibility=_normalize_text(payload.get("automation_eligibility")) or None,
+            policy_decision=_normalize_text(payload.get("policy_decision")) or None,
+            not_automated_reason=_normalize_text(payload.get("not_automated_reason")) or None,
+            risk_flags=_sanitize_matched_signals(payload.get("risk_flags")),
+            evidence_spans=_sanitize_matched_signals(payload.get("evidence_spans")),
+            router_source="llm_semantic",
+        ),
+        attempted=True,
     )
 
 
@@ -653,6 +726,13 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
     - not_automated_reason (must be set when not_eligible)
     - route_family/execution_action (maps billing_review for non-automated billing)
     """
+
+    def _policy_route_decision(**kwargs: Any) -> SupportRouteDecision:
+        return _copy_router_audit(
+            _build_route_decision(**kwargs),
+            source=decision,
+        )
+
     intent = (decision.semantic_intent or "").lower()
     risk_flags_lower = [f.lower() for f in decision.risk_flags]
 
@@ -671,7 +751,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
 
     # Billing: refund/dispute -> never automation.
     if "refund_or_dispute" in intent:
-        return _build_route_decision(
+        return _policy_route_decision(
             scope_label=decision.scope_label,
             action="human_review_required",
             confidence=decision.confidence,
@@ -692,7 +772,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
         flag in {"legal_threat", "compensation", "legal"} or "legal" in flag or "compensation" in flag
         for flag in risk_flags_lower
     ):
-        return _build_route_decision(
+        return _policy_route_decision(
             scope_label=decision.scope_label,
             action="human_review_required",
             confidence=decision.confidence,
@@ -725,7 +805,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
             "wrong_amount",
         }
         if any(sig in risk_flags_lower for sig in verification_risk_signals):
-            return _build_route_decision(
+            return _policy_route_decision(
                 scope_label=decision.scope_label,
                 action="human_review_required",
                 confidence=decision.confidence,
@@ -740,7 +820,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
                 evidence_spans=list(decision.evidence_spans),
                 router_source=decision.router_source,
             )
-        return _build_route_decision(
+        return _policy_route_decision(
             scope_label=decision.scope_label,
             action="account_verification",
             confidence=decision.confidence,
@@ -758,7 +838,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
 
     # Billing: account_suspension -> human review by default.
     if "account_suspension" in intent:
-        return _build_route_decision(
+        return _policy_route_decision(
             scope_label=decision.scope_label,
             action="human_review_required",
             confidence=decision.confidence,
@@ -778,7 +858,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
     if "detailed_invoice" in intent:
         dispute_signals = {"amount_dispute", "overcharge", "refund", "dispute", "wrong amount"}
         if any(sig in risk_flags_lower for sig in dispute_signals):
-            return _build_route_decision(
+            return _policy_route_decision(
                 scope_label=decision.scope_label,
                 action="human_review_required",
                 confidence=decision.confidence,
@@ -793,7 +873,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
                 evidence_spans=list(decision.evidence_spans),
                 router_source=decision.router_source,
             )
-        return _build_route_decision(
+        return _policy_route_decision(
             scope_label=decision.scope_label,
             action="detailed_invoice",
             confidence=decision.confidence,
@@ -810,7 +890,7 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
         )
 
     # Billing: general or unknown intent -> human review.
-    return _build_route_decision(
+    return _policy_route_decision(
         scope_label=decision.scope_label,
         action="human_review_required",
         confidence=decision.confidence,
@@ -825,6 +905,66 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
         evidence_spans=list(decision.evidence_spans),
         router_source=decision.router_source,
     )
+
+
+def _copy_router_audit(
+    decision: SupportRouteDecision,
+    *,
+    source: SupportRouteDecision,
+) -> SupportRouteDecision:
+    return replace(
+        decision,
+        intent_router_attempted=source.intent_router_attempted,
+        intent_router_confidence_threshold=source.intent_router_confidence_threshold,
+        intent_router_model_confidence=source.intent_router_model_confidence,
+        intent_router_fallback_reason=source.intent_router_fallback_reason,
+        intent_router_failure_type=source.intent_router_failure_type,
+        intent_router_failure_source=source.intent_router_failure_source,
+    )
+
+
+def _with_intent_router_success_audit(
+    decision: SupportRouteDecision,
+    *,
+    threshold: float,
+) -> SupportRouteDecision:
+    return replace(
+        decision,
+        intent_router_attempted=True,
+        intent_router_confidence_threshold=threshold,
+        intent_router_model_confidence=decision.confidence,
+        intent_router_fallback_reason=None,
+        intent_router_failure_type=None,
+        intent_router_failure_source=None,
+    )
+
+
+def _build_fallback_audit_kwargs(
+    *,
+    llm_attempt: _LlmRouteAttempt | None,
+    threshold: float,
+) -> dict[str, Any]:
+    """Build audit kwargs for a fallback route decision from an LLM attempt."""
+    kwargs: dict[str, Any] = {
+        "intent_router_attempted": False,
+        "intent_router_confidence_threshold": threshold,
+        "intent_router_model_confidence": None,
+        "intent_router_fallback_reason": None,
+        "intent_router_failure_type": None,
+        "intent_router_failure_source": None,
+    }
+    if llm_attempt is None:
+        return kwargs
+    kwargs["intent_router_attempted"] = llm_attempt.attempted
+    if llm_attempt.decision is not None:
+        kwargs["intent_router_model_confidence"] = llm_attempt.decision.confidence
+        if llm_attempt.decision.confidence < threshold:
+            kwargs["intent_router_fallback_reason"] = "below_confidence_threshold"
+    elif llm_attempt.failure_type:
+        kwargs["intent_router_fallback_reason"] = llm_attempt.failure_type
+        kwargs["intent_router_failure_type"] = llm_attempt.failure_type
+        kwargs["intent_router_failure_source"] = llm_attempt.failure_source
+    return kwargs
 
 
 def decide_support_route(
@@ -852,7 +992,7 @@ def decide_support_route(
 
     # ── Semantic-first mode: run LLM before deterministic fast path ──
     if semantic_first:
-        llm_decision = _llm_route_decision(
+        llm_attempt = _llm_route_decision(
             text,
             ticket_subject=ticket_subject,
             ticket_context=ticket_context,
@@ -866,8 +1006,33 @@ def decide_support_route(
             "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
             DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD,
         )
-        if llm_decision and llm_decision.confidence >= threshold:
-            return _apply_policy_gate(llm_decision)
+        if llm_attempt.decision is not None and llm_attempt.decision.confidence >= threshold:
+            return _apply_policy_gate(
+                _with_intent_router_success_audit(llm_attempt.decision, threshold=threshold)
+            )
+        # Fall through to heuristic + fallback with audit tracking.
+        heuristic_decision = _heuristic_route_decision(
+            text,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            response_language=response_language,
+            latest_assistant_message=latest_assistant_message,
+            current_ticket_status=current_ticket_status,
+            has_active_engineer_case=has_active_engineer_case,
+        )
+        if heuristic_decision is not None:
+            return heuristic_decision
+        audit_kwargs = _build_fallback_audit_kwargs(llm_attempt=llm_attempt, threshold=threshold)
+        return _build_route_decision(
+            scope_label="agora_technical",
+            action="rag",
+            confidence=0.75,
+            reason="conservative_agora_technical_fallback",
+            matched_signals=[],
+            response_language=response_language,
+            router_source="conservative_fallback",
+            **audit_kwargs,
+        )
 
     heuristic_decision = _heuristic_route_decision(
         text,
@@ -881,7 +1046,7 @@ def decide_support_route(
     if heuristic_decision is not None:
         return heuristic_decision
 
-    llm_decision = _llm_route_decision(
+    llm_attempt = _llm_route_decision(
         text,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
@@ -895,9 +1060,12 @@ def decide_support_route(
         "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
         DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD,
     )
-    if llm_decision and llm_decision.confidence >= threshold:
-        return _apply_policy_gate(llm_decision)
+    if llm_attempt.decision is not None and llm_attempt.decision.confidence >= threshold:
+        return _apply_policy_gate(
+            _with_intent_router_success_audit(llm_attempt.decision, threshold=threshold)
+        )
 
+    audit_kwargs = _build_fallback_audit_kwargs(llm_attempt=llm_attempt, threshold=threshold)
     return _build_route_decision(
         scope_label="agora_technical",
         action="rag",
@@ -905,6 +1073,8 @@ def decide_support_route(
         reason="conservative_agora_technical_fallback",
         matched_signals=[],
         response_language=response_language,
+        router_source="conservative_fallback",
+        **audit_kwargs,
     )
 
 
@@ -1119,6 +1289,19 @@ def search_agora_public_info(
     )
 
 
+def _route_audit_kwargs_from_decision(decision: SupportRouteDecision) -> dict[str, Any]:
+    """Extract audit fields from a route decision for propagation into SupportResolution."""
+    return {
+        "router_source": decision.router_source,
+        "intent_router_attempted": decision.intent_router_attempted,
+        "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
+        "intent_router_model_confidence": decision.intent_router_model_confidence,
+        "intent_router_fallback_reason": decision.intent_router_fallback_reason,
+        "intent_router_failure_type": decision.intent_router_failure_type,
+        "intent_router_failure_source": decision.intent_router_failure_source,
+    }
+
+
 def resolve_support_message(
     message: str,
     *,
@@ -1165,6 +1348,7 @@ def resolve_support_message(
                 "risk_flags": list(decision.risk_flags),
                 "evidence_spans": list(decision.evidence_spans),
             },
+            **_route_audit_kwargs_from_decision(decision),
         )
     if decision.route_family == BILLING_ROUTE_FAMILY:
         billing_result = build_billing_automation_result(
@@ -1201,6 +1385,7 @@ def resolve_support_message(
                 "billing_internal_email_send_reason": str(email_send_result.get("reason") or ""),
                 **({"billing_internal_email": dict(billing_result.internal_email)} if billing_result.internal_email else {}),
             },
+            **_route_audit_kwargs_from_decision(decision),
         )
     if decision.execution_action == "resolve_ticket":
         return SupportResolution(
@@ -1218,6 +1403,7 @@ def resolve_support_message(
             route_confidence=decision.confidence,
             search_used=False,
             matched_signals=list(decision.matched_signals),
+            **_route_audit_kwargs_from_decision(decision),
         )
     if decision.execution_action == "refuse":
         answer = build_refusal_answer(decision)
@@ -1236,6 +1422,7 @@ def resolve_support_message(
             route_confidence=decision.confidence,
             search_used=False,
             matched_signals=list(decision.matched_signals),
+            **_route_audit_kwargs_from_decision(decision),
         )
     if decision.execution_action == "controlled_response":
         return SupportResolution(
@@ -1253,6 +1440,7 @@ def resolve_support_message(
             route_confidence=decision.confidence,
             search_used=False,
             matched_signals=list(decision.matched_signals),
+            **_route_audit_kwargs_from_decision(decision),
         )
     if decision.execution_action == "web_search":
         search_result = search_agora_public_info(
@@ -1275,6 +1463,7 @@ def resolve_support_message(
             route_confidence=decision.confidence,
             search_used=search_result.search_used,
             matched_signals=list(decision.matched_signals),
+            **_route_audit_kwargs_from_decision(decision),
         )
     if rag_answerer is None:
         raise ValueError("rag_answerer is required for Agora technical routing")
@@ -1294,4 +1483,5 @@ def resolve_support_message(
         route_confidence=decision.confidence,
         search_used=False,
         matched_signals=list(decision.matched_signals),
+        **_route_audit_kwargs_from_decision(decision),
     )

@@ -96,7 +96,46 @@ class CaseMemoryLedgerTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["memory_record_id"], "cm_hitl_1")
         self.assertFalse(rows[0]["retrieval_enabled"])
+        self.assertEqual(rows[0]["active_memory_status"], "inactive")
         self.assertEqual(rows[0]["metadata"]["memory_candidate"], "needs_review")
+
+    def test_candidate_memory_must_stay_retrieval_disabled_and_inactive(self) -> None:
+        """Candidate ledger records must never auto-enable retrieval or active memory."""
+        feedback = {
+            "feedback_id": "hitl_candidate_safe",
+            "engineer_case_id": "TK-CAND-1-1",
+            "client_ticket_id": "TK-CAND-1",
+            "feedback_type": "resolve",
+            "diagnosis_correctness": "correct",
+            "root_cause_correctness": "confirmed",
+            "evidence_quality": "sufficient",
+            "citation_quality": "correct",
+            "customer_reply_quality": "sendable",
+            "corrected_root_cause": "SDK 4.2.1 regression on Android 14.",
+            "corrected_solution": "Upgrade to SDK 4.2.2.",
+            "corrected_customer_reply": "Please upgrade to SDK 4.2.2.",
+            "missing_information": [],
+            "incorrect_claims": [],
+            "evidence_refs": [{"source_id": "msg-cand"}],
+            "memory_candidate": "yes",
+            "memory_safety": "customer_safe",
+            "memory_notes": "Verified fix for token renew callback.",
+            "prompt_version": "engineer-hitl-auto-review-v1",
+            "workflow_version": "engineer-auto-hitl-review-v1",
+            "tool_policy_version": None,
+            "rag_access_policy_version": None,
+            "evidence_packet_version": None,
+            "created_by": "engineer_ai_auto_review",
+            "created_at": "2026-06-10T10:00:00+00:00",
+        }
+
+        record = build_case_memory_ledger_record_from_feedback(feedback)
+
+        self.assertEqual(record["ledger_status"], "candidate")
+        self.assertFalse(record["retrieval_enabled"])
+        self.assertEqual(record["active_memory_status"], "inactive")
+        self.assertEqual(record["quality_label"], "candidate")
+        self.assertEqual(record["safety_label"], "customer_safe")
 
 
 if __name__ == "__main__":

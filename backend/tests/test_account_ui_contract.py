@@ -120,9 +120,10 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("source.link", app_source)
         self.assertIn("source.url", app_source)
 
-        # renderSourceValue has Zendesk label for zendesk.com links.
+        # renderSourceValue has zen# label for zendesk.com ticket links.
         self.assertIn("zendesk.com", app_source)
-        self.assertIn('"Zendesk"', app_source)
+        self.assertIn("zen#", app_source)
+        self.assertIn("zendeskTicketLabel", app_source)
 
         # Keep existing safety markers.
         self.assertIn('target="_blank"', app_source)

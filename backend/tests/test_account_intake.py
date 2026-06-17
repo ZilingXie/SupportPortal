@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
-from backend.services.support_router import SupportRouteDecision
+from backend.services.support_router import SupportRouteDecision, _LlmRouteAttempt
 
 
 class AccountIntakeApiTests(unittest.TestCase):
@@ -22,10 +22,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.original_repository = main.ticket_repository
         main.ticket_repository = self.repository
         self.client = TestClient(main.app)
-        # Patch LLM route decision to return None so semantic_first falls through to deterministic
+        # Patch LLM route decision to return empty attempt so semantic_first falls through to deterministic
         self._llm_patcher = patch(
             "backend.services.support_router._llm_route_decision",
-            return_value=None,
+            return_value=_LlmRouteAttempt(decision=None, attempted=True),
         )
         self._llm_patcher.start()
 
@@ -1030,3 +1030,147 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["source"], "manual")
+
+    # --- Zendesk API URL normalization tests ---
+
+    def test_zendesk_api_url_normalized_to_agent_url_on_create(self) -> None:
+        """N8n plain source with /api/v2/tickets/{n}.json → persisted as /agent/tickets/{n}."""
+        api_url = "https://agoraio.zendesk.com/api/v2/tickets/11816.json"
+        expected = "https://agoraio.zendesk.com/agent/tickets/11816"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Zendesk API URL test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": api_url,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["source"], "api")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], '{"Link": "https://agoraio.zendesk.com/agent/tickets/11816"}')
+
+        detail = self.client.get(f"/api/account/billing-tickets/{payload['billing_ticket_id']}").json()
+        self.assertIsInstance(detail["source"], dict)
+        self.assertEqual(detail["source"]["Link"], expected)
+
+    def test_zendesk_api_url_dict_source_normalized_to_agent_url(self) -> None:
+        """N8n dict source with /api/v2/tickets/{n}.json → persisted as /agent/tickets/{n}."""
+        api_url = "https://subdomain.zendesk.com/api/v2/tickets/42.json"
+        expected = "https://subdomain.zendesk.com/agent/tickets/42"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Zendesk dict API URL test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": {"link": api_url},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], '{"Link": "https://subdomain.zendesk.com/agent/tickets/42"}')
+
+        # Also test url key variant.
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response2 = self.client.post(
+                "/account",
+                json={
+                    "title": "Zendesk dict url key test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": {"url": api_url},
+                },
+            )
+
+        self.assertEqual(response2.status_code, 200)
+        bt2 = self.repository.get_billing_ticket(response2.json()["billing_ticket_id"])
+        self.assertIsNotNone(bt2)
+        assert bt2 is not None
+        self.assertEqual(bt2["source"], '{"Link": "https://subdomain.zendesk.com/agent/tickets/42"}')
+
+    def test_zendesk_agent_url_preserved_as_is(self) -> None:
+        """Already /agent/tickets/{n} URLs are kept unchanged."""
+        agent_url = "https://agoraio.zendesk.com/agent/tickets/11816"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Zendesk agent URL test",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": agent_url,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], '{"Link": "https://agoraio.zendesk.com/agent/tickets/11816"}')
+
+    def test_legacy_zendesk_api_url_normalized_in_view_model(self) -> None:
+        """Historical billing ticket with raw API URL → list/detail returns agent URL."""
+        api_url = "https://agoraio.zendesk.com/api/v2/tickets/11816.json"
+        expected = "https://agoraio.zendesk.com/agent/tickets/11816"
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-ZEN-LEGACY-001",
+                "client_ticket_id": "TK-ZEN-LEGACY-001",
+                "source": '{"Link": "https://agoraio.zendesk.com/api/v2/tickets/11816.json"}',
+                "title": "Legacy Zendesk API URL ticket",
+                "question": "legacy question",
+                "automation_status": "automation",
+            }
+        )
+
+        list_response = self.client.get("/api/account/billing-tickets?limit=30")
+        self.assertEqual(list_response.status_code, 200)
+        list_payload = list_response.json()
+        match = [t for t in list_payload["tickets"] if t.get("billing_ticket_id") == "BT-TK-ZEN-LEGACY-001"]
+        self.assertEqual(len(match), 1)
+        self.assertEqual(match[0]["source"]["Link"], expected)
+
+        detail = self.client.get("/api/account/billing-tickets/BT-TK-ZEN-LEGACY-001").json()
+        self.assertEqual(detail["source"]["Link"], expected)
+
+    def test_non_zendesk_url_unchanged(self) -> None:
+        """Non-Zendesk safe URLs are returned as-is."""
+        non_zendesk_url = "https://example.com/case/42"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Non-Zendesk URL test",
+                    "question": "A question",
+                    "customer_email": "customer@example.com",
+                    "source": non_zendesk_url,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["source"], '{"Link": "https://example.com/case/42"}')
