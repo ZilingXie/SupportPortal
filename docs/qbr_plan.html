@@ -1409,7 +1409,7 @@ flowchart TD
           { id: "routing-semantic-schema", status: "done", label: "SupportRouteDecision 新增 semantic_intent、automation_eligibility、not_automated_reason、risk_flags、evidence_spans、router_source 等字段。", horizon: "Schema" },
           { id: "routing-billing-review-family", status: "done", label: "新增 billing_review route family 用于需人工审核的 billing case，与 billing_automation 区分。", horizon: "Contract" },
           { id: "routing-qbr-diagram", status: "done", label: "QBR Routing tab 已更新架构描述、review 结论和 next tasks，反映 LLM semantic router + policy gate 新架构。", horizon: "Docs" },
-          { id: "routing-threshold-audit", status: "todo", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。", horizon: "Metrics" },
+          { id: "routing-threshold-audit", status: "done", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。router_source=conservative_fallback 区分 below_confidence_threshold / missing_credentials / llm_invocation_failed / invalid_json / invalid_payload / route_fail_open。", horizon: "Metrics" },
           { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 QBR tab。", horizon: "Docs" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
           { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 golden set 覆盖率足够时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
@@ -1440,7 +1440,7 @@ flowchart TD
             "  C -->|billing| ACC[\"/account response + support_billing_tickets audit fields\"]",
             "  C -->|low confidence| F[\"conservative_agora_technical_fallback\"]"
           ].join("\n"),
-          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。/account 使用 semantic-first 模式（LLM 先跑），避免 weak gratitude 等弱信号抢占 billing 长正文。"
+          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。/account 使用 semantic-first 模式（LLM 先跑），避免 weak gratitude 等弱信号抢占 billing 长正文。Router audit 字段（intent_router_attempted / fallback_reason / failure_type / router_source）已在 SupportRouteDecision、SupportResolution、TicketExecutionResult 和 billing event 中透传。fallback rate 的口径：仅 router_source=conservative_fallback 计入 fallback；其下按 fallback_reason 细分：below_confidence_threshold（LLM 返回但低于 threshold）、missing_credentials、llm_invocation_failed、invalid_json、invalid_payload、route_fail_open（runtime 超时/异常）。router_source=llm_semantic 才算模型判断，不等于 fallback。"
         },
         sources: [
           "backend/services/support_router.py",
