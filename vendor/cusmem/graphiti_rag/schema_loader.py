@@ -39,9 +39,18 @@ _SCALAR_TYPES: dict[str, Any] = {
 
 def load_graph_schema(path: str | Path) -> LoadedSchema:
     """Load a YAML/JSON schema file and convert it to Graphiti's type dictionaries."""
-
     schema_path = Path(path)
     raw = _load_mapping(schema_path)
+    return load_graph_schema_from_mapping(raw)
+
+
+def load_graph_schema_from_mapping(raw: dict[str, Any]) -> LoadedSchema:
+    """Convert an already-loaded schema dict into Graphiti's type dictionaries.
+
+    Callers that construct the mapping in code (e.g. from a SupportPortal
+    KgSchema) use this entry point instead of the file-based loader.
+    """
+
     entity_specs = raw.get('entity_types') or {}
     edge_specs = raw.get('edge_types') or {}
 

@@ -33,7 +33,14 @@ def get_episode_node_save_query(provider: GraphProvider) -> str:
             return """
                 MERGE (n:Episodic {uuid: $uuid})
                 SET n = {uuid: $uuid, name: $name, group_id: $group_id, source_description: $source_description, source: $source, content: $content,
-                entity_edges: join([x IN coalesce($entity_edges, []) | toString(x) ], '|'), created_at: $created_at, valid_at: $valid_at}
+                entity_edges: join([x IN coalesce($entity_edges, []) | toString(x) ], '|'), created_at: $created_at, valid_at: $valid_at,
+                episode_metadata_json: $episode_metadata_json,
+                supportportal_chunk_id: $supportportal_chunk_id,
+                supportportal_document_id: $supportportal_document_id,
+                supportportal_source_url: $supportportal_source_url,
+                supportportal_schema_version: $supportportal_schema_version,
+                supportportal_schema_hash: $supportportal_schema_hash,
+                supportportal_content_hash: $supportportal_content_hash}
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.KUZU:
@@ -47,21 +54,42 @@ def get_episode_node_save_query(provider: GraphProvider) -> str:
                     n.source_description = $source_description,
                     n.content = $content,
                     n.valid_at = $valid_at,
-                    n.entity_edges = $entity_edges
+                    n.entity_edges = $entity_edges,
+                    n.episode_metadata_json = $episode_metadata_json,
+                    n.supportportal_chunk_id = $supportportal_chunk_id,
+                    n.supportportal_document_id = $supportportal_document_id,
+                    n.supportportal_source_url = $supportportal_source_url,
+                    n.supportportal_schema_version = $supportportal_schema_version,
+                    n.supportportal_schema_hash = $supportportal_schema_hash,
+                    n.supportportal_content_hash = $supportportal_content_hash
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.FALKORDB:
             return """
                 MERGE (n:Episodic {uuid: $uuid})
                 SET n = {uuid: $uuid, name: $name, group_id: $group_id, source_description: $source_description, source: $source, content: $content,
-                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at}
+                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at,
+                episode_metadata_json: $episode_metadata_json,
+                supportportal_chunk_id: $supportportal_chunk_id,
+                supportportal_document_id: $supportportal_document_id,
+                supportportal_source_url: $supportportal_source_url,
+                supportportal_schema_version: $supportportal_schema_version,
+                supportportal_schema_hash: $supportportal_schema_hash,
+                supportportal_content_hash: $supportportal_content_hash}
                 RETURN n.uuid AS uuid
             """
         case _:  # Neo4j
             return """
                 MERGE (n:Episodic {uuid: $uuid})
                 SET n = {uuid: $uuid, name: $name, group_id: $group_id, source_description: $source_description, source: $source, content: $content,
-                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at}
+                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at,
+                episode_metadata_json: $episode_metadata_json,
+                supportportal_chunk_id: $supportportal_chunk_id,
+                supportportal_document_id: $supportportal_document_id,
+                supportportal_source_url: $supportportal_source_url,
+                supportportal_schema_version: $supportportal_schema_version,
+                supportportal_schema_hash: $supportportal_schema_hash,
+                supportportal_content_hash: $supportportal_content_hash}
                 RETURN n.uuid AS uuid
             """
 
@@ -74,7 +102,14 @@ def get_episode_node_save_bulk_query(provider: GraphProvider) -> str:
                 MERGE (n:Episodic {uuid: episode.uuid})
                 SET n = {uuid: episode.uuid, name: episode.name, group_id: episode.group_id, source_description: episode.source_description,
                     source: episode.source, content: episode.content,
-                entity_edges: join([x IN coalesce(episode.entity_edges, []) | toString(x) ], '|'), created_at: episode.created_at, valid_at: episode.valid_at}
+                entity_edges: join([x IN coalesce(episode.entity_edges, []) | toString(x) ], '|'), created_at: episode.created_at, valid_at: episode.valid_at,
+                episode_metadata_json: episode.episode_metadata_json,
+                supportportal_chunk_id: episode.supportportal_chunk_id,
+                supportportal_document_id: episode.supportportal_document_id,
+                supportportal_source_url: episode.supportportal_source_url,
+                supportportal_schema_version: episode.supportportal_schema_version,
+                supportportal_schema_hash: episode.supportportal_schema_hash,
+                supportportal_content_hash: episode.supportportal_content_hash}
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.KUZU:
@@ -88,7 +123,14 @@ def get_episode_node_save_bulk_query(provider: GraphProvider) -> str:
                     n.source_description = $source_description,
                     n.content = $content,
                     n.valid_at = $valid_at,
-                    n.entity_edges = $entity_edges
+                    n.entity_edges = $entity_edges,
+                    n.episode_metadata_json = $episode_metadata_json,
+                    n.supportportal_chunk_id = $supportportal_chunk_id,
+                    n.supportportal_document_id = $supportportal_document_id,
+                    n.supportportal_source_url = $supportportal_source_url,
+                    n.supportportal_schema_version = $supportportal_schema_version,
+                    n.supportportal_schema_hash = $supportportal_schema_hash,
+                    n.supportportal_content_hash = $supportportal_content_hash
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.FALKORDB:
@@ -96,7 +138,14 @@ def get_episode_node_save_bulk_query(provider: GraphProvider) -> str:
                 UNWIND $episodes AS episode
                 MERGE (n:Episodic {uuid: episode.uuid})
                 SET n = {uuid: episode.uuid, name: episode.name, group_id: episode.group_id, source_description: episode.source_description, source: episode.source, content: episode.content,
-                entity_edges: episode.entity_edges, created_at: episode.created_at, valid_at: episode.valid_at}
+                entity_edges: episode.entity_edges, created_at: episode.created_at, valid_at: episode.valid_at,
+                episode_metadata_json: episode.episode_metadata_json,
+                supportportal_chunk_id: episode.supportportal_chunk_id,
+                supportportal_document_id: episode.supportportal_document_id,
+                supportportal_source_url: episode.supportportal_source_url,
+                supportportal_schema_version: episode.supportportal_schema_version,
+                supportportal_schema_hash: episode.supportportal_schema_hash,
+                supportportal_content_hash: episode.supportportal_content_hash}
                 RETURN n.uuid AS uuid
             """
         case _:  # Neo4j
@@ -104,7 +153,14 @@ def get_episode_node_save_bulk_query(provider: GraphProvider) -> str:
                 UNWIND $episodes AS episode
                 MERGE (n:Episodic {uuid: episode.uuid})
                 SET n = {uuid: episode.uuid, name: episode.name, group_id: episode.group_id, source_description: episode.source_description, source: episode.source, content: episode.content,
-                entity_edges: episode.entity_edges, created_at: episode.created_at, valid_at: episode.valid_at}
+                entity_edges: episode.entity_edges, created_at: episode.created_at, valid_at: episode.valid_at,
+                episode_metadata_json: episode.episode_metadata_json,
+                supportportal_chunk_id: episode.supportportal_chunk_id,
+                supportportal_document_id: episode.supportportal_document_id,
+                supportportal_source_url: episode.supportportal_source_url,
+                supportportal_schema_version: episode.supportportal_schema_version,
+                supportportal_schema_hash: episode.supportportal_schema_hash,
+                supportportal_content_hash: episode.supportportal_content_hash}
                 RETURN n.uuid AS uuid
             """
 

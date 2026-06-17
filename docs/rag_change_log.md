@@ -11,6 +11,51 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-17 - PR2: Wire official-doc KG chunk contract into vendored GraphRAG offline ingest
+
+- Summary:
+  - Added `kg_graphrag_adapter.py`: the SupportPortal → vendored cusmem adapter layer that converts `OfficialDocKgChunkInput` into GraphRAG episode payloads with full provenance (chunk_id/document_id/source_url/schema_version/schema_hash/content_hash), deterministic episode UUIDs (uuid5-based), SupportPortal `KgSchema` → cusmem schema mapping, and `KgIngestResult` adaptation.
+  - Extended vendored cusmem `Chunk` dataclass with SupportPortal provenance fields; modified `Extractor.extract()` to pass provenance to `graphiti.add_episode()`; added `Pipeline.run_chunks()` (skips Scanner/Reader/Splitter); added `GraphRAG.ingest_chunks()` / `ingest_chunks_sync()`.
+  - Patched Graphiti core for episode metadata persistence: `add_episode()` now accepts `episode_metadata`, `EpisodicNode.save()` writes 7 flat provenance fields + `episode_metadata_json`, all 4 provider save queries (Neo4j/Kuzu/FalkorDB/Neptune) updated.
+  - Extended vendor `schema_loader.py` with `load_graph_schema_from_mapping()` for in-code schema conversion.
+  - Added `kg_offline_ingest.py` (service) and `scripts/kg_ingest_official_doc_chunks.py` (CLI) with `--dry-run` mode that validates contract/schema/provenance without Neo4j/LLM; review fixes ensure the schema bridge is applied to GraphRAG config/extractor, wildcard schema edges expand to concrete entity types, and per-chunk extraction errors become failed `KgIngestResult`s.
+  - Scope gate unchanged: technical articles, case memory, and records missing provenance are still rejected at the `build_official_doc_kg_chunk_input()` layer.
+- Reason:
+  - PR2 completes the offline KG ingest wiring so SupportPortal official-doc chunks can be batch-ingested into the vendored GraphRAG graph. Runtime query/rerank/answer integration is deliberately out of scope.
+- Affected files/config:
+  - `backend/services/kg_graphrag_adapter.py` (new)
+  - `backend/services/kg_offline_ingest.py` (new)
+  - `backend/tests/test_kg_graphrag_adapter.py` (new)
+  - `backend/tests/test_kg_offline_ingest.py` (new)
+  - `scripts/kg_ingest_official_doc_chunks.py` (new)
+  - `vendor/cusmem/graphiti_rag/components.py` (modified — Chunk extended, Extractor passes provenance)
+  - `vendor/cusmem/graphiti_rag/pipeline.py` (modified — added run_chunks)
+  - `vendor/cusmem/graphiti_rag/graph_rag.py` (modified — added ingest_chunks)
+  - `vendor/cusmem/graphiti_rag/config.py` (modified — added `ingest_state_dir`)
+  - `vendor/cusmem/graphiti_rag/config_loader.py` (modified — added `GRAPHRAG_INGEST_STATE_DIR`)
+  - `vendor/cusmem/graphiti_rag/ingest_state.py` (modified — configurable state_dir)
+  - `vendor/cusmem/graphiti_rag/schema_loader.py` (modified — added load_graph_schema_from_mapping)
+  - `vendor/cusmem/graphiti_core/graphiti.py` (modified — add_episode accepts episode_metadata)
+  - `vendor/cusmem/graphiti_core/nodes.py` (modified — EpisodicNode.save writes provenance fields)
+  - `vendor/cusmem/graphiti_core/models/nodes/node_db_queries.py` (modified — all 4 provider save queries updated)
+  - `vendor/cusmem/tests/test_supportportal_chunk_ingest.py` (new)
+  - `vendor/cusmem/tests/test_schema_loader.py` (modified — added mapping test)
+  - `docs/rag_change_log.md` (this entry)
+  - `docs/prompt_change_log.md` (updated — schema now enters Graphiti extraction prompts)
+  - `docs/qbr_plan.html` (updated — RAG/KG lane marks PR2 offline ingest wiring done)
+- Data impact:
+  - New graph data path: offline KG ingest can now create `Episodic` nodes in Neo4j with SupportPortal provenance fields.
+  - No changes to existing RAG vector/FTS/BM25 pipelines.
+  - No runtime query/rerank/answer changes.
+  - Offline ingest is opt-in via explicit CLI invocation; no automatic or background ingestion.
+- Verification:
+  - `rtk pytest backend/tests/test_kg_graphrag_adapter.py backend/tests/test_kg_offline_ingest.py backend/tests/test_kg_supportportal_contracts.py backend/tests/test_kg_schema.py backend/tests/test_kg_official_docs_scope.py backend/tests/test_qbr_plan_contract.py -q` (79 passed)
+  - `cd vendor/cusmem && rtk uv run --with pytest --with pyyaml python -m pytest tests/test_supportportal_chunk_ingest.py tests/test_schema_loader.py tests/test_core_pipeline.py -q` (16 passed, 2 pytest config warnings)
+  - `rtk uv run --with ruff ruff check backend/services/kg_*.py backend/tests/test_kg_*.py scripts/kg_ingest_official_doc_chunks.py` (All checks passed)
+  - `cd vendor/cusmem && rtk uv run --with ruff ruff check graphiti_rag/components.py graphiti_rag/pipeline.py graphiti_rag/graph_rag.py graphiti_rag/ingest_state.py graphiti_rag/schema_loader.py graphiti_rag/config.py graphiti_rag/config_loader.py graphiti_core/graphiti.py graphiti_core/nodes.py graphiti_core/models/nodes/node_db_queries.py tests/test_supportportal_chunk_ingest.py tests/test_schema_loader.py` (All checks passed)
+  - `rtk python scripts/kg_ingest_official_doc_chunks.py --input /tmp/kg_chunks_12625.jsonl --dry-run --no-progress` (1 episode payload constructed)
+  - `rtk python3 -m py_compile backend/services/kg_graphrag_adapter.py backend/services/kg_offline_ingest.py scripts/kg_ingest_official_doc_chunks.py` and vendor `py_compile` for touched GraphRAG/Graphiti modules (passed)
+
 ## 2026-06-12 - Add official-docs-only KG first-phase scope gate
 
 - Summary:

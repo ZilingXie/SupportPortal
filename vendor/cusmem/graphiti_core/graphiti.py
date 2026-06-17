@@ -17,6 +17,7 @@ limitations under the License.
 import logging
 from datetime import datetime
 from time import time
+from typing import Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -873,6 +874,7 @@ class Graphiti:
         group_id: str | None = None,
         uuid: str | None = None,
         update_communities: bool = False,
+        episode_metadata: dict[str, Any] | None = None,
         entity_types: dict[str, type[BaseModel]] | None = None,
         excluded_entity_types: list[str] | None = None,
         previous_episode_uuids: list[str] | None = None,
@@ -1005,6 +1007,7 @@ class Graphiti:
                         source_description=source_description,
                         created_at=now,
                         valid_at=reference_time,
+                        episode_metadata=episode_metadata,
                     )
                 )
 

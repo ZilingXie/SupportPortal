@@ -2,9 +2,15 @@
 
 Pipeline: Scanner → Reader → Splitter → Extractor → Writer
 Concurrency: ThreadPool + Producer-Consumer (KAG pattern)
+
+Offline chunk ingest: GraphRAG.ingest_chunks() / ingest_chunks_sync()
+accepts pre-built Chunk lists (SupportPortal adapter path).
 """
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 
 from graphiti_core import Graphiti
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
@@ -13,6 +19,9 @@ from graphiti_core.llm_client.openai_client import OpenAIClient
 
 from .config import Config
 from .pipeline import Pipeline
+
+if TYPE_CHECKING:
+    from .components import Chunk
 
 
 class GraphRAG:
@@ -52,6 +61,18 @@ class GraphRAG:
     def ingest_sync(self, paths: list[str]) -> dict:
         """Ingest documents (sync)."""
         return asyncio.run(self.ingest(paths))
+
+    async def ingest_chunks(self, chunks: list[Chunk]) -> dict:
+        """Ingest pre-built chunks (SupportPortal adapter path).
+
+        Skips Scanner/Reader/Splitter — chunks go directly to extraction.
+        """
+        await self.initialize()
+        return await self.pipeline.run_chunks(chunks)
+
+    def ingest_chunks_sync(self, chunks: list[Chunk]) -> dict:
+        """Ingest pre-built chunks (sync)."""
+        return asyncio.run(self.ingest_chunks(chunks))
 
     async def search(self, query: str, num_results: int = 10) -> list:
         """Search the knowledge graph."""

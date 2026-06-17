@@ -27,6 +27,18 @@ class Chunk:
     source: str = ''
     start_char: int = 0
     end_char: int = 0
+    # SupportPortal provenance fields (optional — only used by run_chunks)
+    chunk_id: str | None = None
+    document_id: str | None = None
+    source_url: str | None = None
+    schema_version: str | None = None
+    content_hash: str | None = None
+    schema_hash: str | None = None
+    title: str | None = None
+    metadata: dict | None = None
+    episode_uuid: str | None = None
+    group_id: str | None = None
+    reference_time: datetime | None = None
 
 
 @dataclass
@@ -221,12 +233,47 @@ class Extractor:
 
         async with self._semaphore:
             try:
+                # Build name from SupportPortal provenance when available
+                if chunk.chunk_id and chunk.document_id:
+                    name = f'supportportal:{chunk.document_id}:{chunk.chunk_id}'
+                else:
+                    name = f'{chunk.source or "doc"}-{chunk.index}'
+
+                # Build source_description
+                if chunk.source_url:
+                    source_parts = [f'official-doc: {chunk.document_id or "unknown"}']
+                    if chunk.title:
+                        source_parts.append(f'({chunk.title})')
+                    source_parts.append(f'source: {chunk.source_url}')
+                    source_description = ' '.join(source_parts)
+                else:
+                    source_description = f'doc chunk from {chunk.source}'
+
+                # Build episode metadata from SupportPortal provenance
+                episode_metadata = None
+                if chunk.chunk_id:
+                    episode_metadata = {
+                        'supportportal_chunk_id': chunk.chunk_id,
+                    }
+                    if chunk.document_id:
+                        episode_metadata['supportportal_document_id'] = chunk.document_id
+                    if chunk.source_url:
+                        episode_metadata['supportportal_source_url'] = chunk.source_url
+                    if chunk.schema_version:
+                        episode_metadata['supportportal_schema_version'] = chunk.schema_version
+                    if chunk.schema_hash:
+                        episode_metadata['supportportal_schema_hash'] = chunk.schema_hash
+                    if chunk.content_hash:
+                        episode_metadata['supportportal_content_hash'] = chunk.content_hash
+
                 result = await self.graphiti.add_episode(
-                    name=f'{chunk.source or "doc"}-{chunk.index}',
+                    name=name,
                     episode_body=chunk.text,
-                    source_description=f'doc chunk from {chunk.source}',
-                    reference_time=datetime.now(timezone.utc),
+                    source_description=source_description,
+                    reference_time=chunk.reference_time or datetime.now(timezone.utc),
                     source=EpisodeType.text,
+                    uuid=chunk.episode_uuid,
+                    group_id=chunk.group_id,
                     entity_types=self.entity_types,
                     edge_types=self.edge_types,
                     edge_type_map=self.edge_type_map,
@@ -235,6 +282,7 @@ class Extractor:
                     second_pass_mode=self.second_pass_mode,
                     second_pass_min_entities=self.second_pass_min_entities,
                     second_pass_min_edges=self.second_pass_min_edges,
+                    episode_metadata=episode_metadata,
                 )
                 return SubGraph(
                     entities=[

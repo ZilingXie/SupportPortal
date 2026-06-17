@@ -40,6 +40,7 @@ class Config:
 
     # Ingest mode: 'append' (always add) or 'upsert' (skip unchanged chunks)
     ingest_mode: str = 'append'
+    ingest_state_dir: str = '.graphiti_rag'
 
     # Concurrency (mirrors KAG's runner pattern)
     num_chains: int = 2  # Read+Split 并行线程数
