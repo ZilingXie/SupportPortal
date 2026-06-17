@@ -358,6 +358,166 @@ class GoldenBillingRoutingTests(unittest.TestCase):
         self.assertIsNotNone(decision.execution_action)
         self.assertIsNotNone(decision.tooling_profile)
 
+    # ── Account verification routing ───────────────────────────────────
+
+    def test_account_verification_fraud_review_routes_to_billing_automation(self) -> None:
+        """Fraud/suspicious activity verification → billing.account_verification → billing_automation."""
+        message = (
+            "Our Agora account has been flagged for suspicious activity. "
+            "We need to complete company verification to restore access. "
+            "Company: ExampleCorp, Country: Singapore, Address: 123 Orchard Road, "
+            "Service URL: https://example.com, Email: admin@example.com, "
+            "Phone: +65-1234-5678. "
+            "[Use Case]\nWe use Agora for live streaming to 10k concurrent viewers.\n"
+        )
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "billing",
+                    "semantic_intent": "billing.account_verification",
+                    "recommended_action": "automation_candidate",
+                    "automation_eligibility": "eligible",
+                    "confidence": 0.93,
+                    "reason": "Customer reports suspicious activity flag and requests company verification.",
+                    "matched_signals": ["suspicious activity", "company verification", "restore access"],
+                    "evidence_spans": [
+                        "account has been flagged for suspicious activity",
+                        "complete company verification to restore access",
+                    ],
+                    "risk_flags": ["account_access_restore"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route(message)
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertEqual(decision.semantic_intent, "billing.account_verification")
+        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.execution_action, "account_verification")
+        self.assertEqual(decision.automation_eligibility, "eligible")
+
+    def test_account_verification_with_refund_flag_not_automated(self) -> None:
+        """account_verification + refund risk → billing_review, not automation."""
+        message = "My account was flagged for suspicious activity and I want a refund too."
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "billing",
+                    "semantic_intent": "billing.account_verification",
+                    "recommended_action": "human_review_required",
+                    "automation_eligibility": "not_eligible",
+                    "confidence": 0.88,
+                    "reason": "Suspicious activity verification with refund request.",
+                    "matched_signals": ["suspicious activity", "refund"],
+                    "evidence_spans": ["flagged for suspicious activity", "want a refund"],
+                    "risk_flags": ["account_access_restore", "refund_request"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route(message)
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertIn("account_verification", decision.semantic_intent or "")
+        self.assertEqual(decision.route_family, "billing_review")
+        self.assertEqual(decision.execution_action, "human_review_required")
+        self.assertEqual(decision.automation_eligibility, "not_eligible")
+
+    def test_account_verification_with_overcharge_flag_not_automated(self) -> None:
+        """account_verification + billing abnormality risk → billing_review, not automation."""
+        message = "My account was flagged for suspicious activity, and we were overcharged."
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "billing",
+                    "semantic_intent": "billing.account_verification",
+                    "recommended_action": "automation_candidate",
+                    "automation_eligibility": "eligible",
+                    "confidence": 0.89,
+                    "reason": "Suspicious activity verification with overcharge complaint.",
+                    "matched_signals": ["suspicious activity", "overcharged"],
+                    "evidence_spans": ["flagged for suspicious activity", "we were overcharged"],
+                    "risk_flags": ["account_access_restore", "overcharge"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route(message)
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertIn("account_verification", decision.semantic_intent or "")
+        self.assertEqual(decision.route_family, "billing_review")
+        self.assertEqual(decision.execution_action, "human_review_required")
+        self.assertEqual(decision.automation_eligibility, "not_eligible")
+
+    def test_account_verification_company_reactivation_intake(self) -> None:
+        """Company verification / reactivation → billing.account_verification."""
+        message = (
+            "Our account needs company verification review after a fraud alert. "
+            "We need to submit verification materials to reactivate. Company: MyCo, Location: USA."
+        )
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "billing",
+                    "semantic_intent": "billing.account_verification",
+                    "recommended_action": "automation_candidate",
+                    "automation_eligibility": "eligible",
+                    "confidence": 0.91,
+                    "reason": "Customer needs to submit company verification for reactivation.",
+                    "matched_signals": ["account suspended", "company verification", "reactivate"],
+                    "evidence_spans": ["account was suspended", "submit company verification materials to reactivate"],
+                    "risk_flags": ["account_access_restore"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route(message)
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertEqual(decision.semantic_intent, "billing.account_verification")
+        self.assertEqual(decision.route_family, "billing_automation")
+
+    # ── Gratitude downgrade: long messages with "thank you" ────────────
+
+    def test_long_message_ending_thank_you_not_small_talk(self) -> None:
+        """TK-ACC-C31612: long message ending with thank you must not be small_talk."""
+        message = (
+            "Our Agora account has been flagged for suspicious activity. "
+            "We need to complete company verification to restore access. "
+            "Company: ExampleCorp, Country: Singapore, Address: 123 Orchard Road, "
+            "Service URL: https://example.com, Email: admin@example.com, "
+            "Phone: +65-1234-5678. "
+            "[Use Case]\nWe use Agora for live streaming to 10k concurrent viewers.\n"
+            "Thank you."
+        )
+        # No LLM key -> falls back to deterministic
+        with patch.dict(os.environ, {}, clear=True):
+            decision = decide_support_route(message)
+
+        # Must NOT be small_talk (gratitude regex should be blocked by billing keywords)
+        self.assertNotEqual(decision.scope_label, "small_talk")
+        self.assertNotEqual(decision.execution_action, "controlled_response")
+
+    def test_short_pure_thank_you_still_small_talk(self) -> None:
+        """Short pure gratitude still routes to small_talk."""
+        decision = decide_support_route("Thank you!")
+        self.assertEqual(decision.scope_label, "small_talk")
+        self.assertEqual(decision.execution_action, "controlled_response")
+
 
 if __name__ == "__main__":
     unittest.main()

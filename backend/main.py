@@ -57,7 +57,7 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
 )
 from backend.services.agora_service_events import get_agora_service_events_payload
-from backend.services.billing_automation import build_billing_automation_result
+from backend.services.billing_automation import build_billing_automation_result, send_billing_internal_email
 from backend.services.customer_reply_composer import (
     detect_customer_reply_language,
     ensure_customer_reply_email_style,
@@ -2742,12 +2742,13 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         route_input,
         ticket_subject=title,
         ticket_context=ticket_context,
+        semantic_first=True,
     )
     route = str(decision.execution_action or decision.route or "").strip()
     route_family = str(decision.route_family or "").strip()
     is_billing_automation_route = (
         route_family == "billing_automation"
-        and route in {"detailed_invoice", "account_suspension"}
+        and route in {"detailed_invoice", "account_suspension", "account_verification"}
     )
     is_billing_route = is_billing_automation_route or (
         route_family == "billing_review"
@@ -2774,8 +2775,14 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         customer_reply = billing_result.customer_reply
         missing_fields = list(billing_result.missing_fields)
         collected_fields = dict(billing_result.collected_fields)
-        internal_email_send_status = "not_sending"
-        internal_email_send_reason = "demo_mode"
+        if billing_result.internal_email:
+            internal_email_payload = dict(billing_result.internal_email)
+            email_send_result = await async_to_thread(send_billing_internal_email, billing_result.internal_email)
+            internal_email_send_status = str(email_send_result.get("status") or "failed")
+            internal_email_send_reason = str(email_send_result.get("reason") or "")
+        else:
+            internal_email_send_status = "not_ready"
+            internal_email_send_reason = "missing_required_fields"
         if customer_reply:
             ticket["messages"].append(
                 {

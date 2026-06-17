@@ -107,8 +107,15 @@ _FASTPATH_TROUBLESHOOTING_SIGNALS = frozenset(
         "network quality",
     }
 )
+_SHORT_GRATITUDE_MESSAGE_MAX_WORDS = 20
 _SHORT_TROUBLESHOOTING_MESSAGE_MAX_WORDS = 24
 _SHORT_TROUBLESHOOTING_MESSAGE_MAX_CHARS = 180
+_GRATITUDE_BILLING_EXCLUSION_RE = re.compile(
+    r"\b(?:account|billing|invoice|payment|fraud|suspicious|suspended|disabled|blocked|"
+    r"restore|reactivat|verification|verify|refund|dispute|charge|transaction|balance|"
+    r"technical|api|sdk|rtc|channel|token|appid|app\s*id)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -200,7 +207,7 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
     if clean_scope == "ticket_resolution":
         return "ticket_resolution", "resolve_ticket", "deterministic_resolution"
     if clean_scope == BILLING_SCOPE_LABEL:
-        if normalized_action in {"account_suspension", "detailed_invoice"}:
+        if normalized_action in {"account_suspension", "detailed_invoice", "account_verification"}:
             return BILLING_ROUTE_FAMILY, normalized_action, BILLING_TOOLING_PROFILE
         if normalized_action == "human_review_required":
             return "billing_review", "human_review_required", BILLING_TOOLING_PROFILE
@@ -365,6 +372,19 @@ def _is_short_troubleshooting_message(text: str) -> bool:
     return len(normalized.split()) <= _SHORT_TROUBLESHOOTING_MESSAGE_MAX_WORDS
 
 
+def _is_short_gratitude_message(text: str) -> bool:
+    """True when the message is short, pure gratitude without billing/account/fraud/technical signals."""
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    word_count = len(normalized.split())
+    if word_count > _SHORT_GRATITUDE_MESSAGE_MAX_WORDS:
+        return False
+    if _GRATITUDE_BILLING_EXCLUSION_RE.search(normalized):
+        return False
+    return True
+
+
 def _heuristic_route_decision(
     message: str,
     *,
@@ -416,7 +436,7 @@ def _heuristic_route_decision(
         )
 
     gratitude_signals = matched_resolution_markers(text)
-    if gratitude_signals and not has_resolution_negative_marker(text) and not _looks_like_question(text):
+    if gratitude_signals and not has_resolution_negative_marker(text) and not _looks_like_question(text) and _is_short_gratitude_message(text):
         return _build_route_decision(
             scope_label="small_talk",
             action="controlled_response",
@@ -606,7 +626,7 @@ def _llm_route_decision(
         or payload.get("execution_action")
         or payload.get("recommended_action")
     ).lower()
-    if scope_label == BILLING_SCOPE_LABEL and action not in {"account_suspension", "detailed_invoice", "human_review_required", "refuse", "automation_candidate"}:
+    if scope_label == BILLING_SCOPE_LABEL and action not in {"account_suspension", "detailed_invoice", "account_verification", "human_review_required", "refuse", "automation_candidate"}:
         return None
     return _build_route_decision(
         scope_label=scope_label,
@@ -683,6 +703,54 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
             automation_eligibility="not_eligible",
             policy_decision="policy_gate",
             not_automated_reason="human_review_required",
+            risk_flags=list(decision.risk_flags),
+            evidence_spans=list(decision.evidence_spans),
+            router_source=decision.router_source,
+        )
+
+    # Billing: account_verification -> eligible when no refund/dispute/legal risk.
+    if "account_verification" in intent:
+        verification_risk_signals = {
+            "amount_dispute",
+            "billing_error",
+            "billing_logic",
+            "charge_dispute",
+            "dispute",
+            "legal_threat",
+            "metering_issue",
+            "overcharge",
+            "refund",
+            "refund_request",
+            "wrong amount",
+            "wrong_amount",
+        }
+        if any(sig in risk_flags_lower for sig in verification_risk_signals):
+            return _build_route_decision(
+                scope_label=decision.scope_label,
+                action="human_review_required",
+                confidence=decision.confidence,
+                reason=decision.reason,
+                matched_signals=list(decision.matched_signals),
+                response_language=decision.response_language,
+                semantic_intent=semantic_intent,
+                automation_eligibility="not_eligible",
+                policy_decision="policy_gate",
+                not_automated_reason="human_review_required",
+                risk_flags=list(decision.risk_flags),
+                evidence_spans=list(decision.evidence_spans),
+                router_source=decision.router_source,
+            )
+        return _build_route_decision(
+            scope_label=decision.scope_label,
+            action="account_verification",
+            confidence=decision.confidence,
+            reason=decision.reason,
+            matched_signals=list(decision.matched_signals),
+            response_language=decision.response_language,
+            semantic_intent=semantic_intent,
+            automation_eligibility=decision.automation_eligibility or "eligible",
+            policy_decision=decision.policy_decision or "policy_gate",
+            not_automated_reason=decision.not_automated_reason,
             risk_flags=list(decision.risk_flags),
             evidence_spans=list(decision.evidence_spans),
             router_source=decision.router_source,
@@ -768,6 +836,7 @@ def decide_support_route(
     latest_assistant_message: dict[str, Any] | None = None,
     current_ticket_status: str | None = None,
     has_active_engineer_case: bool = False,
+    semantic_first: bool = False,
 ) -> SupportRouteDecision:
     text = _normalize_text(message)
     response_language = _response_language(text)
@@ -780,6 +849,25 @@ def decide_support_route(
             matched_signals=[],
             response_language=response_language,
         )
+
+    # ── Semantic-first mode: run LLM before deterministic fast path ──
+    if semantic_first:
+        llm_decision = _llm_route_decision(
+            text,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            response_language=response_language,
+            product=product,
+            latest_assistant_message=latest_assistant_message,
+            current_ticket_status=current_ticket_status,
+            has_active_engineer_case=has_active_engineer_case,
+        )
+        threshold = _safe_float_env(
+            "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
+            DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD,
+        )
+        if llm_decision and llm_decision.confidence >= threshold:
+            return _apply_policy_gate(llm_decision)
 
     heuristic_decision = _heuristic_route_decision(
         text,

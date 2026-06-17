@@ -124,9 +124,10 @@ class QbrPlanContractTests(unittest.TestCase):
             "Billing intake / ticket routing",
             "canonical `TK-...` ticket id",
             "account-intake-v2",
-            "automation_status = automation",
-            "不调用 follow process",
-            "不发送内部邮件",
+            "semantic-first routing + full automation execution",
+            "字段追问、客户回复和内部邮件",
+            "automation 会追问缺失字段、生成客户回复",
+            "字段完整时尝试内部邮件流转",
             "不再展示第二个 Support ticket ID",
             "`support_billing_tickets` companion table",
             "`source` 统一为 `manual` / `api`",
@@ -179,6 +180,11 @@ class QbrPlanContractTests(unittest.TestCase):
             "backend/sql/ticket_storage.sql",
             "backend/repositories/ticket_repository.py",
             "test_support_router_semantic_billing.py",
+            "TK-ACC-C31612",
+            "billing.account_verification",
+            "account_verification",
+            "semantic-first",
+            "weak gratitude",
         ]
         for term in required_terms:
             with self.subTest(term=term):

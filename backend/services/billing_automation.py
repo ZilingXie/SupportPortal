@@ -16,9 +16,11 @@ BILLING_ROUTE_FAMILY = "billing_automation"
 BILLING_TOOLING_PROFILE = "deterministic_billing_intake"
 BILLING_ACTION_ACCOUNT_SUSPENSION = "account_suspension"
 BILLING_ACTION_DETAILED_INVOICE = "detailed_invoice"
+BILLING_ACTION_ACCOUNT_VERIFICATION = "account_verification"
 BILLING_INTERNAL_EMAIL_ENV = "BILLING_AUTOMATION_INTERNAL_EMAIL"
 BILLING_ACCOUNT_SUSPENSION_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL"
 BILLING_DETAILED_INVOICE_EMAIL_ENV = "BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL"
+BILLING_ACCOUNT_VERIFICATION_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL"
 BILLING_INTERNAL_EMAIL_FROM_ENV = "BILLING_AUTOMATION_EMAIL_FROM"
 BILLING_SMTP_HOST_ENV = "BILLING_AUTOMATION_SMTP_HOST"
 BILLING_SMTP_PORT_ENV = "BILLING_AUTOMATION_SMTP_PORT"
@@ -47,11 +49,19 @@ class BillingRouteMatch:
 
 _FIELD_ALIASES = {
     BILLING_ACTION_ACCOUNT_SUSPENSION: {
-        "company_name": ("company name",),
-        "company_location": ("company location",),
-        "website": ("website",),
-        "contact_email": ("contact email",),
-        "phone_number": ("phone number",),
+        "company_name": ("company name", "company",),
+        "company_location": ("company location", "company address", "address", "location",),
+        "website": ("website", "service url", "app url", "demo url", "product url",),
+        "contact_email": ("contact email", "email",),
+        "phone_number": ("phone number", "phone", "contact phone",),
+        "use_case": ("use case",),
+    },
+    BILLING_ACTION_ACCOUNT_VERIFICATION: {
+        "company_name": ("company name", "company",),
+        "company_location": ("company location", "company address", "address", "location",),
+        "website": ("website", "service url", "app url", "demo url", "product url",),
+        "contact_email": ("contact email", "email",),
+        "phone_number": ("phone number", "phone", "contact phone",),
         "use_case": ("use case",),
     },
     BILLING_ACTION_DETAILED_INVOICE: {
@@ -222,6 +232,8 @@ def _destination_email_for_action(action: str) -> str:
     action_env = (
         BILLING_ACCOUNT_SUSPENSION_EMAIL_ENV
         if action == BILLING_ACTION_ACCOUNT_SUSPENSION
+        else BILLING_ACCOUNT_VERIFICATION_EMAIL_ENV
+        if action == BILLING_ACTION_ACCOUNT_VERIFICATION
         else BILLING_DETAILED_INVOICE_EMAIL_ENV
         if action == BILLING_ACTION_DETAILED_INVOICE
         else ""
@@ -241,20 +253,87 @@ def _matched_signals(text: str, patterns: tuple[tuple[re.Pattern[str], str], ...
     return signals
 
 
+def _field_boundary_aliases(aliases: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    labels = [item for labels_for_field in aliases.values() for item in labels_for_field]
+    labels.extend(["country", "name"])
+    return tuple(sorted({label for label in labels if label}, key=len, reverse=True))
+
+
+def _extract_labeled_value(message: str, label: str, boundary_aliases: tuple[str, ...]) -> str:
+    escaped_label = re.escape(label)
+    line_match = re.search(
+        rf"(?im)^\s*(?:[-*]\s*)?{escaped_label}\s*:\s*(.+?)\s*$",
+        message,
+    )
+    if line_match:
+        return _clean_text(line_match.group(1).strip(" .;"))
+
+    boundary_pattern = "|".join(re.escape(item) for item in boundary_aliases)
+    inline_match = re.search(
+        rf"{escaped_label}\s*:\s*(.+?)(?=(?:\.\s+)?(?:{boundary_pattern})\s*:|\n\s*(?:[-*]\s*)?(?:{boundary_pattern})\s*:|\n\s*\[[^\]]+\]|\Z)",
+        message,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not inline_match:
+        return ""
+    return _clean_text(inline_match.group(1).strip(" .;"))
+
+
 def _extract_fields(message: str, aliases: dict[str, tuple[str, ...]]) -> dict[str, str]:
     extracted: dict[str, str] = {}
+    boundary_aliases = _field_boundary_aliases(aliases)
+
+    # --- Use Case section extraction (reads until next bracket section) ---
+    if "use_case" in aliases:
+        use_case_match = re.search(
+            r"\[Use\s*Case\]\s*\n?(.+?)(?=\n\s*\[[A-Za-z]|\Z)",
+            message,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if use_case_match:
+            value = _clean_text(use_case_match.group(1))
+            if value:
+                extracted["use_case"] = value
+
+    # --- Optional app_id extraction (not a required field, bonus only) ---
+    app_id_match = re.search(
+        r"(?:app[_\s]*id|appid)\s*(?::|is)?\s*([A-Za-z0-9]{32,})",
+        message,
+        re.IGNORECASE,
+    )
+    if app_id_match:
+        extracted["app_id"] = _clean_text(app_id_match.group(1))
+
+    # --- Standard field extraction ---
     for field_name, labels in aliases.items():
+        if field_name in extracted:
+            continue
         for label in labels:
-            match = re.search(
-                rf"{re.escape(label)}\s*:\s*(.+?)(?=(?:\.\s+)?(?:{'|'.join(re.escape(item) for labels_for_field in aliases.values() for item in labels_for_field)})\s*:|$)",
-                message,
-                re.IGNORECASE | re.DOTALL,
-            )
-            if match:
-                value = _clean_text(match.group(1).strip(" .;"))
-                if value:
-                    extracted[field_name] = value
-                    break
+            value = _extract_labeled_value(message, label, boundary_aliases)
+            if value:
+                extracted[field_name] = value
+                break
+
+    # --- Personal developer / no company handling ---
+    if "company_name" in aliases and not extracted.get("company_name"):
+        no_company_match = re.search(
+            r"\b(?:individual\s+developer|no\s+company|personal\s+developer|personal\s+use(?:\s+only)?|individual\s+use)\b",
+            message,
+            re.IGNORECASE,
+        )
+        if no_company_match:
+            extracted["company_name"] = "Personal developer"
+
+    # --- Merge Country + Address for company_location ---
+    if "company_location" in aliases:
+        country_match = re.search(r"Country\s*:\s*(.+?)(?=\n|$)", message, re.IGNORECASE)
+        address_match = re.search(r"Address\s*:\s*(.+?)(?=\n|$)", message, re.IGNORECASE)
+        if country_match and address_match:
+            country_val = _clean_text(country_match.group(1).strip(" .;"))
+            addr_val = _clean_text(address_match.group(1).strip(" .;"))
+            if country_val and addr_val:
+                extracted["company_location"] = f"{country_val}; {addr_val}"
+
     return extracted
 
 
@@ -262,6 +341,11 @@ def _build_missing_fields_reply(action: str, missing_fields: list[str]) -> str:
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
         intro = (
             "Thanks for reaching out. To help our internal team review your account suspension request, "
+            "could you please provide the following details?"
+        )
+    elif action == BILLING_ACTION_ACCOUNT_VERIFICATION:
+        intro = (
+            "Thanks for reaching out. To help our internal team review your account verification request, "
             "could you please provide the following details?"
         )
     else:
@@ -277,6 +361,11 @@ def _build_escalation_reply(action: str) -> str:
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
         return (
             "Thanks for providing the details. We’ve escalated your account suspension request to our "
+            "internal team for review.\n\nThey’ll follow up once they have reviewed the information."
+        )
+    if action == BILLING_ACTION_ACCOUNT_VERIFICATION:
+        return (
+            "Thanks for providing the details. We’ve escalated your account verification request to our "
             "internal team for review.\n\nThey’ll follow up once they have reviewed the information."
         )
     return (
@@ -308,17 +397,29 @@ def _build_internal_email(
             "use_case",
         )
         lead = "A customer has provided the required information for an account suspension review request."
+    elif action == BILLING_ACTION_ACCOUNT_VERIFICATION:
+        subject = f"Account verification request - Ticket {normalized_ticket_id}"
+        field_order = (
+            "company_name",
+            "company_location",
+            "website",
+            "contact_email",
+            "phone_number",
+            "use_case",
+        )
+        lead = "A customer has provided the required information for an account verification request."
     else:
         subject = f"Detailed invoice request - Ticket {normalized_ticket_id}"
         field_order = ("issue_date", "transaction_id", "amount")
         lead = "A customer has provided the required information for a detailed invoice request."
 
     fields = "\n".join(f"{_FIELD_LABELS[field_name]}: {collected_fields[field_name]}" for field_name in field_order)
+    app_id_line = f"\nApp ID: {collected_fields['app_id']}" if collected_fields.get("app_id") else ""
     body = "\n\n".join(
         [
             "Hi team,",
             lead,
-            f"Ticket ID: {normalized_ticket_id}\nCustomer email: {normalized_customer_email}",
+            f"Ticket ID: {normalized_ticket_id}\nCustomer email: {normalized_customer_email}{app_id_line}",
             fields,
             f"Original customer message:\n{_clean_text(customer_message)}",
             "Please review and follow up as appropriate.",
