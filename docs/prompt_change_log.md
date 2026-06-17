@@ -2357,3 +2357,32 @@ For each new entry, record:
   - `rtk python3 scripts/verify_feature_list.py`
   - `rtk python3 -m py_compile backend/services/engineer_summary_agent.py backend/services/engineer_agent.py backend/services/investigation_flow.py backend/main.py backend/tests/test_engineer_summary_agent.py`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow -v`
+
+## 2026-06-17 - Semantic router account verification intake
+
+- Area or subsystem: Support Router / Billing Automation
+- Prompt or model version: `semantic-router-account-verification-v1`
+- Summary: Added `billing.account_verification` intent to the LLM router taxonomy for suspicious activity, fraud/risk review, company verification, and account reactivation verification scenarios. Downgraded weak deterministic gratitude signal to prevent long billing/account messages from being misrouted as `small_talk`. Added semantic-first mode to `decide_support_route()` for `/account` endpoint. Updated billing automation to support `account_verification` action with field extraction and real email sending.
+- Reason: `TK-ACC-C31612` was misrouted as `small_talk` because a long account verification message ending with "thank you" triggered the deterministic gratitude check before LLM classification could run. The `/account` endpoint now uses semantic-first routing to prevent weak deterministic signals from preempting LLM intent classification.
+- Affected files or config:
+  - `backend/services/support_router.py` — added `semantic_first` parameter, downgraded gratitude check, added `billing.account_verification` policy gate rules
+  - `backend/services/billing_automation.py` — added `BILLING_ACTION_ACCOUNT_VERIFICATION`, expanded field aliases, use_case section parsing, optional app_id extraction, account_verification email flow
+  - `backend/main.py` — `create_account_intake()` now uses `semantic_first=True`, supports `account_verification` route, sends real email instead of demo_mode
+  - `backend/services/prompts/router.py` — added `billing.account_verification` to intent taxonomy and automation eligibility rules
+  - `backend/services/support_router_prompt.py` — added few-shot example for account verification
+  - `backend/tests/test_support_router_semantic_billing.py` — added account_verification and gratitude downgrade tests
+  - `backend/tests/test_account_intake.py` — updated demo_mode expectations to real email
+  - `backend/tests/test_qbr_plan_contract.py` — added QBR contract assertions for new terms
+  - `docs/prompt_change_log.md`
+  - `docs/qbr_plan.html`
+- Expected behavior change:
+  - `/account` endpoint now runs LLM semantic routing before deterministic fast path, preventing weak signals like trailing "thank you" from misrouting billing messages
+  - Long messages (>20 words) with billing/account/fraud keywords no longer match the gratitude fast path even when ending with "thank you"
+  - Suspicious activity, fraud review, company verification, and reactivation verification requests are classified as `billing.account_verification` and routed to `billing_automation/account_verification`
+  - `billing.account_verification` is automation-eligible when no refund/dispute/legal risk flags are present
+  - Real email sending replaces demo_mode for billing automation; SMTP missing config results in `skipped_config_missing`
+  - Short pure gratitude messages still route to `small_talk/controlled_response`
+- Verification:
+  - `rtk pytest backend/tests/test_support_router_semantic_billing.py -v` (17 passed)
+  - `rtk pytest backend/tests/test_support_router.py -v` (50 passed)
+  - `rtk python -m py_compile backend/services/support_router.py backend/services/billing_automation.py backend/main.py`

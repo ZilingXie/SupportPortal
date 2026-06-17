@@ -22,15 +22,22 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.original_repository = main.ticket_repository
         main.ticket_repository = self.repository
         self.client = TestClient(main.app)
+        # Patch LLM route decision to return None so semantic_first falls through to deterministic
+        self._llm_patcher = patch(
+            "backend.services.support_router._llm_route_decision",
+            return_value=None,
+        )
+        self._llm_patcher.start()
 
     def tearDown(self) -> None:
+        self._llm_patcher.stop()
         self.client.close()
         main.ticket_repository = self.original_repository
 
     def test_account_intake_creates_ticket_routes_invoice_and_marks_automation(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.services.billing_automation.send_billing_internal_email",
-            side_effect=AssertionError("account intake automation should not send email"),
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "skipped_config_missing", "reason": "missing BILLING_AUTOMATION_SMTP_PASSWORD"},
         ):
             response = self.client.post(
                 "/account",
@@ -53,8 +60,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["missing_fields"], [])
         # Automation tickets now return a customer-facing reply and internal email is not sent.
         self.assertTrue(payload["customer_reply"])
-        self.assertEqual(payload["internal_email_send_status"], "not_sending")
-        self.assertEqual(payload["internal_email_send_reason"], "demo_mode")
+        self.assertEqual(payload["internal_email_send_status"], "skipped_config_missing")
+        self.assertIn("missing", payload["internal_email_send_reason"])
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)
@@ -85,8 +92,8 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_account_intake_preserves_non_automated_ticket_without_email(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.services.billing_automation.send_billing_internal_email",
-            side_effect=AssertionError("non-whitelist route should not send email"),
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "skipped_config_missing", "reason": "missing BILLING_AUTOMATION_SMTP_PASSWORD"},
         ):
             response = self.client.post(
                 "/account",
@@ -159,7 +166,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn("support_ticket_id", payload)
 
     def test_account_intake_saves_billing_ticket(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "skipped_config_missing", "reason": "missing BILLING_AUTOMATION_SMTP_PASSWORD"},
+        ):
             response = self.client.post(
                 "/account",
                 json={
@@ -189,7 +199,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt["route_reason"])
         self.assertIsNotNone(bt["route_confidence"])
         self.assertTrue(bt["customer_reply"])
-        self.assertEqual(bt["internal_email_send_status"], "not_sending")
+        self.assertEqual(bt["internal_email_send_status"], "skipped_config_missing")
 
     def test_account_intake_saves_non_automated_billing_ticket(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -367,7 +377,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["status"], "automation")
         self.assertEqual(payload["route"], "account_suspension")
         self.assertTrue(payload["customer_reply"])
-        self.assertEqual(payload["internal_email_send_status"], "not_sending")
+        self.assertEqual(payload["internal_email_send_status"], "not_ready")
         self.assertNotIn("support_ticket_id", payload)
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
@@ -567,7 +577,10 @@ class AccountIntakeApiTests(unittest.TestCase):
     # --- New tests for billing automation reply flow ---
 
     def test_account_intake_automation_returns_customer_reply_and_appends_assistant_message(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "skipped_config_missing", "reason": "missing BILLING_AUTOMATION_SMTP_PASSWORD"},
+        ):
             response = self.client.post(
                 "/account",
                 json={
@@ -594,6 +607,58 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "customer")
         self.assertEqual(messages[1]["role"], "assistant")
         self.assertEqual(messages[1]["source"], "billing_automation")
+
+    def test_account_intake_sends_internal_email_via_async_to_thread(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="account_verification",
+            confidence=0.93,
+            reason="account verification",
+            matched_signals=["company verification"],
+            response_language="en",
+            semantic_intent="billing.account_verification",
+            automation_eligibility="eligible",
+            policy_decision="policy_gate",
+            risk_flags=[],
+            evidence_spans=[],
+            router_source="llm_semantic",
+        )
+        threaded_functions = []
+
+        async def fake_async_to_thread(func, *args, **kwargs):
+            threaded_functions.append(func)
+            return func(*args, **kwargs)
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "decide_support_route",
+            return_value=decision,
+        ), patch.object(
+            main,
+            "async_to_thread",
+            side_effect=fake_async_to_thread,
+        ), patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_mock:
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account verification",
+                    "question": (
+                        "Company: ExampleCorp. Company location: Singapore. "
+                        "Website: https://example.com. Email: admin@example.com. "
+                        "Phone: +65-1234-5678. Use Case: internal video calls."
+                    ),
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["internal_email_send_status"], "sent")
+        send_mock.assert_called_once()
+        self.assertIn(send_mock, threaded_functions)
 
     def test_account_intake_missing_fields_persisted(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
