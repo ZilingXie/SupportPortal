@@ -348,6 +348,14 @@ class EpisodicNode(Node):
             'created_at': self.created_at,
             'valid_at': self.valid_at,
             'source': self.source.value,
+            'episode_metadata_json': json.dumps(self.episode_metadata, ensure_ascii=False)
+                if self.episode_metadata else None,
+            'supportportal_chunk_id': (self.episode_metadata or {}).get('supportportal_chunk_id'),
+            'supportportal_document_id': (self.episode_metadata or {}).get('supportportal_document_id'),
+            'supportportal_source_url': (self.episode_metadata or {}).get('supportportal_source_url'),
+            'supportportal_schema_version': (self.episode_metadata or {}).get('supportportal_schema_version'),
+            'supportportal_schema_hash': (self.episode_metadata or {}).get('supportportal_schema_hash'),
+            'supportportal_content_hash': (self.episode_metadata or {}).get('supportportal_content_hash'),
         }
 
         result = await driver.execute_query(

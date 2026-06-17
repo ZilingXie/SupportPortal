@@ -41,7 +41,11 @@ class IngestState:
 
 
 class IngestStateStore:
-    """Persist ingest state to local JSON file."""
+    """Persist ingest state to local JSON file.
+
+    state_dir is configurable so the SupportPortal adapter can use a
+    separate state file from the file-based pipeline.
+    """
 
     def __init__(self, state_dir: str = '.graphiti_rag'):
         self.state_dir = Path(state_dir)
