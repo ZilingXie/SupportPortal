@@ -2608,6 +2608,41 @@ def create_client_ack(request: ClientAckRequest) -> dict[str, Any]:
     return _create_client_ack(request.message)
 
 
+_ZENDESK_TICKET_API_RE = re.compile(r"^/api/v2/tickets/(\d+)\.json$")
+_ZENDESK_TICKET_AGENT_RE = re.compile(r"^/agent/tickets/(\d+)$")
+
+
+def _normalize_zendesk_source_link(link: str) -> str:
+    """Normalize Zendesk ticket URLs to the agent-facing entry point.
+
+    Converts /api/v2/tickets/{number}.json → /agent/tickets/{number}
+    and keeps already-normalized /agent/tickets/{number} URLs as-is.
+    Non-Zendesk URLs or Zendesk URLs that don't match a ticket path
+    are returned unchanged.
+    """
+    parsed = urllib.parse.urlparse(link)
+    host = (parsed.hostname or "").lower()
+    if not (host.endswith(".zendesk.com") or host == "zendesk.com"):
+        return link
+
+    path = parsed.path or ""
+    m = _ZENDESK_TICKET_API_RE.match(path)
+    if m:
+        authority = host
+        try:
+            port = parsed.port
+        except ValueError:
+            return link
+        if port is not None:
+            authority = f"{authority}:{port}"
+        return f"{parsed.scheme}://{authority}/agent/tickets/{m.group(1)}"
+
+    if _ZENDESK_TICKET_AGENT_RE.match(path):
+        return link  # already in agent form
+
+    return link
+
+
 def _clean_account_source_link(value: Any) -> str | None:
     link = str(value or "").strip()
     if not link or len(link) > 2000:
@@ -2615,7 +2650,7 @@ def _clean_account_source_link(value: Any) -> str | None:
     parsed = urllib.parse.urlparse(link)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
-    return link
+    return _normalize_zendesk_source_link(link)
 
 
 def _extract_account_source_link(value: Any) -> str | None:

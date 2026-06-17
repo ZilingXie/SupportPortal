@@ -108,10 +108,26 @@ function sourceClass(source) {
   return "source-manual";
 }
 
+function zendeskTicketLabel(link) {
+  try {
+    const parsed = new URL(link);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "zendesk.com" || host.endsWith(".zendesk.com")) {
+      const m = parsed.pathname.match(/^\/(?:agent|api\/v2)\/tickets\/(\d+)(?:\.json)?$/);
+      if (m) {
+        return "zen#" + m[1];
+      }
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 function renderSourceValue(source) {
   const link = safeSourceLink(source);
   if (link) {
-    const label = link.includes("zendesk.com") ? "Zendesk" : "Link";
+    const label = zendeskTicketLabel(link) || "Link";
     return `<a class="source-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
   }
   return `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabel(source))}</span>`;
