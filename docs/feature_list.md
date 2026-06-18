@@ -108,4 +108,4 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 
 ### 未完成
-- 待补充。
+- 线上 RAG+KG 辅助调用契约：KG 在 query expansion、rerank boost、结构化 fact 三个钩子作为辅助信号，超时或失败降级回纯 RAG，citation 池只接受 RAG chunk（默认关闭，待灰度）。
