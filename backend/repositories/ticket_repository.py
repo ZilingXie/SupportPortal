@@ -799,6 +799,9 @@ class TicketRepository(Protocol):
     def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
         ...
 
+    def delete_all_billing_tickets(self) -> int:
+        ...
+
 
 class InMemoryTicketRepository:
     def __init__(self) -> None:
@@ -1428,6 +1431,11 @@ class InMemoryTicketRepository:
             reverse=True,
         )
         return [copy.deepcopy(item) for item in items[:safe_limit]]
+
+    def delete_all_billing_tickets(self) -> int:
+        count = len(self._billing_tickets)
+        self._billing_tickets.clear()
+        return count
 
 
 def _find_trace_customer_message_index(
@@ -4445,6 +4453,18 @@ class PostgresTicketRepository:
                 return [dict(zip(col_names, row)) for row in cur.fetchall()]
 
         return self._run_with_connection_retry("list_billing_tickets", _operation)
+
+    def delete_all_billing_tickets(self) -> int:
+        def _operation(conn: psycopg.Connection[Any]) -> int:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("DELETE FROM {}").format(
+                        self._table("support_billing_tickets")
+                    )
+                )
+                return cur.rowcount
+
+        return self._run_with_connection_retry("delete_all_billing_tickets", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:

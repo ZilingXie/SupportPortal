@@ -82,6 +82,17 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("/reply", app_source)
         self.assertIn("/api/tickets/query", app_source)
 
+    def test_account_app_contains_clear_all_ticket_flow(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("clearAllTickets", app_source)
+        self.assertIn("Delete all account tickets? This cannot be undone.", app_source)
+        self.assertIn('fetch("/api/account/billing-tickets", { method: "DELETE" })', app_source)
+        self.assertIn('data-action="clear-all-tickets"', app_source)
+        self.assertIn("state.history = []", app_source)
+        self.assertIn('state.view = "create"', app_source)
+        self.assertIn("ticket(s) deleted", app_source)
+
     def test_account_app_javascript_syntax(self) -> None:
         result = subprocess.run(
             ["node", "--check", "ui/account-ui/app.js"],

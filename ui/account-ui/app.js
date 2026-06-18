@@ -175,6 +175,25 @@ async function openTicket(ticketId) {
   render();
 }
 
+async function clearAllTickets() {
+  if (!confirm("Delete all account tickets? This cannot be undone.")) return;
+  try {
+    const response = await fetch("/api/account/billing-tickets", { method: "DELETE" });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || "Failed to clear tickets.");
+    }
+    const data = await response.json();
+    showToast(`${data.deleted || 0} ticket(s) deleted`);
+    state.history = [];
+    state.activeItem = null;
+    state.view = "create";
+    render();
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "Failed to clear tickets.");
+  }
+}
+
 function openCreateView() {
   state.activeItem = null;
   state.view = "create";
@@ -587,6 +606,10 @@ function render() {
             <span class="material-symbols-outlined">add</span>
             New ticket
           </button>
+          <button class="ghost-button ghost-button--small" type="button" data-action="clear-all-tickets">
+            <span class="material-symbols-outlined">delete_sweep</span>
+            Clear all
+          </button>
         </div>
         <div class="history-stack" id="history-list">
           ${renderHistorySidebar()}
@@ -634,6 +657,9 @@ function bind() {
   }
   document.querySelectorAll("[data-action='new-ticket']").forEach((el) => {
     el.addEventListener("click", openCreateView);
+  });
+  document.querySelectorAll("[data-action='clear-all-tickets']").forEach((el) => {
+    el.addEventListener("click", clearAllTickets);
   });
   document.querySelectorAll("[data-action='back-to-create']").forEach((el) => {
     el.addEventListener("click", openCreateView);

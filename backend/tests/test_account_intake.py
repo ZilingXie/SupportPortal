@@ -303,6 +303,39 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertIn("automation_status", item)
             self.assertIn("created_at", item)
 
+    def test_delete_all_billing_tickets_clears_account_list(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            for i in range(2):
+                response = self.client.post(
+                    "/account",
+                    json={
+                        "title": f"Ticket {i}",
+                        "question": f"Question {i}",
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+
+        before = self.client.get("/api/account/billing-tickets?limit=30")
+        self.assertEqual(before.status_code, 200)
+        self.assertEqual(before.json()["count"], 2)
+
+        response = self.client.delete("/api/account/billing-tickets")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"deleted": 2})
+
+        after = self.client.get("/api/account/billing-tickets?limit=30")
+        self.assertEqual(after.status_code, 200)
+        after_payload = after.json()
+        self.assertEqual(after_payload["count"], 0)
+        self.assertEqual(after_payload["tickets"], [])
+        self.assertEqual(after_payload["billing_tickets"], [])
+
+    def test_delete_all_billing_tickets_returns_zero_when_empty(self) -> None:
+        response = self.client.delete("/api/account/billing-tickets")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"deleted": 0})
+
     def test_billing_tickets_detail_api(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             create_response = self.client.post(
