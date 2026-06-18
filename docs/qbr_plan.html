@@ -223,6 +223,138 @@
       line-height: 1.45;
     }
 
+    .phase-tracker, .meeting-section {
+      margin: 24px 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), transparent 44%),
+        rgba(251, 247, 236, 0.78);
+      box-shadow: 0 16px 42px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+    }
+
+    .phase-tracker header, .meeting-section header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: end;
+      padding: 24px 26px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .phase-tracker h2, .meeting-section h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(30px, 4.2vw, 54px);
+      line-height: 0.98;
+      letter-spacing: -0.05em;
+    }
+
+    .phase-tracker header p, .meeting-section header p {
+      max-width: 560px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.58;
+    }
+
+    .phase-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .phase-card {
+      min-width: 0;
+      padding: 22px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .phase-card h3 {
+      margin: 14px 0 8px;
+      font-size: clamp(22px, 2.6vw, 34px);
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .phase-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.38);
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .phase-status.doing { color: var(--amber); }
+    .phase-status.todo { color: var(--blueprint); }
+    .phase-status.blocked { color: var(--field); }
+
+    .phase-gate-list, .meeting-list {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      margin: 14px 0 0;
+      padding: 0;
+    }
+
+    .phase-gate-list li, .meeting-list li {
+      position: relative;
+      padding-left: 20px;
+      color: #3f4943;
+      line-height: 1.52;
+    }
+
+    .phase-gate-list li::before, .meeting-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.73em;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal);
+      transform: translateY(-50%);
+    }
+
+    .meeting-section {
+      margin-top: 34px;
+    }
+
+    .meeting-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .meeting-card {
+      min-width: 0;
+      padding: 22px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .meeting-card h3 {
+      margin: 8px 0 10px;
+      font-size: 22px;
+      line-height: 1.12;
+      letter-spacing: -0.025em;
+    }
+
+    .meeting-kicker {
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
     .toolbar {
       position: sticky;
       top: 12px;
@@ -1134,7 +1266,9 @@
     }
 
     @media (max-width: 980px) {
-      .hero-grid, .lane-head, .lane-body { grid-template-columns: 1fr; }
+      .hero-grid, .lane-head, .lane-body, .phase-grid, .meeting-grid { grid-template-columns: 1fr; }
+      .phase-tracker header, .meeting-section header { display: block; }
+      .phase-tracker header p, .meeting-section header p { margin-top: 10px; }
       .ring { justify-self: start; width: 116px; height: 116px; }
       .toolbar { position: static; }
       .section-title { display: block; }
@@ -1145,7 +1279,8 @@
 
     @media (max-width: 640px) {
       .page { width: min(100% - 20px, 1440px); padding-top: 10px; }
-      .hero, .hero-judgment, .lane-head, .panel, .lane-followup { padding: 20px; }
+      .hero, .hero-judgment, .lane-head, .panel, .lane-followup, .phase-card, .meeting-card { padding: 20px; }
+      .phase-tracker header, .meeting-section header { padding: 20px; }
       .hero { min-height: auto; }
       .hero::after { opacity: 0.28; }
       .task { grid-template-columns: auto 1fr; }
@@ -1160,7 +1295,7 @@
     <header class="hero">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal QBR 追踪 · 2026-06-16</div>
       <h1>四条优化主线，一张可追踪进度板。</h1>
-      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、Routing rules、RAG vs KG 五个维度的最新合入进展、剩余计划和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 Engineer Multi-Agent 生命周期架构优化、multi-agent skeleton 合并、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
+      <p class="hero-copy">本页把 Engineer AI multi-agent、Ticket Assignment UI demo、Billing intake / ticket routing、Routing rules、RAG vs KG 五个维度的最新合入进展、剩余计划、会议结论、Phase 1/2/3 总计划追踪和 QBR 汇报顺序收束到一个单页 HTML。当前已同步到 Engineer Multi-Agent 生命周期架构优化、multi-agent skeleton 合并、account-intake-v2 路由状态收口和 cusmem product-form 收口；状态、勾选和备注保存在当前浏览器 localStorage，后续可以直接继续追踪。</p>
       <section class="hero-judgment" aria-label="Current QBR judgment">
         <h2>当前判断</h2>
         <p>Billing 是最接近可试运行的确定性闭环；Routing rules 现在独立成 tab，明确 deterministic fast path、LLM classifier、fallback 和 route contract 的真实边界；Assignment 仍是独立 demo；Engineer Multi-Agent 已完成 Summary/Plan/Execute/Review 第一版 runtime 接入和 revise replan 循环，Guardrail final approve 已通过两段确认机制接管 runtime；RAG/KG 已完成 cusmem 产品化整理、SupportPortal KG contracts、官网文档 9 类实体 schema v1、chunk-level provenance 校验，并已把 official-doc chunk 契约接到 vendored cusmem/GraphRAG episode 构建与离线 ingest；下一步是 runtime 降级边界、RAG+KG 离线基准和 access policy。</p>
@@ -1175,11 +1310,57 @@
         <span class="meta-pill">同步点：main @ 2026-06-16</span>
         <span class="meta-pill">来源：docs + tests + changelog + recent merges</span>
         <span class="meta-pill">追踪粒度：QBR / milestone</span>
+        <span class="meta-pill">会议追踪：2026-06-18 讨论纪要</span>
         <span class="meta-pill">唯一维护计划页：docs/qbr_plan.html</span>
         <span class="meta-pill">页面本身不改动线上行为</span>
       </div>
       <div class="hero-grid" id="heroMetrics"></div>
     </header>
+
+    <section class="phase-tracker" aria-label="Phase gate tracker">
+      <header>
+        <div>
+          <div class="eyebrow"><span class="pulse"></span>总计划追踪</div>
+          <h2>Phase 1 / Phase 2 / Phase 3 阶段门禁</h2>
+        </div>
+        <p>用阶段门禁追踪项目推进：先把 9 月可上线的工单系统雏形做稳，再扩大 AI 主动处理比例，最后进入 agent-to-agent 和企业级自动化。</p>
+      </header>
+      <div class="phase-grid">
+        <article class="phase-card">
+          <span class="phase-status doing">进行中</span>
+          <h3>Phase 1：效率提升 + 工单系统雏形</h3>
+          <ul class="phase-gate-list">
+            <li>Zendesk 转发到内部系统，保留现有客户前端和渐进 AB test 出口。</li>
+            <li>billing 自动化 POC 先跑 invoice、account fraud / deactivate 等确定性 case。</li>
+            <li>AI guardrail 检查真人回复的 conclusion、proof、next step，并支持通过/拒绝。</li>
+            <li>Dashboard 展示 SLA、通过率、case 状态和人工审核结果。</li>
+            <li>准备 1% 小流量切流前的真实 case 回放和幂等验证。</li>
+          </ul>
+        </article>
+        <article class="phase-card">
+          <span class="phase-status todo">下一阶段</span>
+          <h3>Phase 2：AI 主动处理 + 人 approve</h3>
+          <ul class="phase-gate-list">
+            <li>AI 先调查、生成 AI draft，人做 approve / revise / override。</li>
+            <li>客户可见回复必须经过敏感信息 guardrail，内部证据不直接外泄。</li>
+            <li>逐步扩大 billing 之外的可自动化类型，质量低于门禁时回退人工。</li>
+            <li>小流量切流后统计覆盖率、误判率、Not automated 原因和客户反馈。</li>
+            <li>用质量指标决定哪些 case 可以从人工审核降级为抽查。</li>
+          </ul>
+        </article>
+        <article class="phase-card">
+          <span class="phase-status blocked">长期方向</span>
+          <h3>Phase 3：agent-to-agent + 高自动化</h3>
+          <ul class="phase-gate-list">
+            <li>Support agent 接入研发 agent、数据 agent、日志 agent 或专用 skill。</li>
+            <li>探索 hub / forum / A2A 协议，解决 agent 之间没有固定 endpoint 的协作问题。</li>
+            <li>限制 retry、并发和 token 预算，避免 T1 无限追问造成成本失控。</li>
+            <li>企业级合规审计先行：权限、历史记录、敏感信息、source of truth 都要可证明。</li>
+            <li>当 AI 能稳定解决大多数 case 后，人转向例外处理、最终责任和质量抽查。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
 
     <nav class="toolbar" aria-label="QBR filters">
       <div class="filter" id="laneFilters"></div>
@@ -1241,6 +1422,17 @@ flowchart TD
         </section>
       </div>
     </details>
+
+    <section class="meeting-section" aria-label="Project meeting tracker">
+      <header>
+        <div>
+          <div class="eyebrow"><span class="pulse"></span>项目会议追踪</div>
+          <h2>讨论结论卡片</h2>
+        </div>
+        <p>把 2026-06-18 讨论沉淀成高密度模块化卡片：只保留决策、分歧、风险和下一步，不粘贴完整逐字稿。</p>
+      </header>
+      <div class="meeting-grid" id="meetingTracks"></div>
+    </section>
 
     <section class="section-title">
       <div>
@@ -1415,6 +1607,63 @@ flowchart TD
       todo: "未开始",
       blocked: "暂停/阻塞"
     };
+
+    const MEETING_TRACKS = [
+      {
+        kicker: "Positioning",
+        title: "项目定位",
+        points: [
+          "目标不是做 AI support engineer 替代真人，而是做基于 agent 的工单系统。",
+          "短期先减少 copy/paste 到外部 AI 的低效动作，回复仍要像真人 support engineer。",
+          "客户可见输出要有自然语气、开场、签名和必要延迟，避免 AI 直接秒回感。"
+        ]
+      },
+      {
+        kicker: "Consensus",
+        title: "当前共识",
+        points: [
+          "必须保留工单界面，不能只靠群聊或临时 report 支撑审计。",
+          "Zendesk 先渐进转发，不一次性迁移客户入口；billing 先试、AB test 后扩量。",
+          "对外 customer-facing 和对内 internal-facing 隔离，内部证据不能原样给客户。"
+        ]
+      },
+      {
+        kicker: "Debate",
+        title: "核心分歧",
+        points: [
+          "AI review 人适合 Phase 1 做 guardrail：检查 conclusion、proof、next step 是否齐全。",
+          "人 review AI 适合 Phase 2：AI 先调查和起草，人 approve / revise / override。",
+          "保守 workflow 强调可观测和审计，成熟 agent 自主循环强调能力上限和 context 连贯。"
+        ]
+      },
+      {
+        kicker: "Case Types",
+        title: "三类 case",
+        points: [
+          "完全自动化：invoice、文档链接、标准信息收集等，稳定后只抽查。",
+          "AI 做人 approve：AI 调查并生成 draft，人检查正确性、敏感信息和客户表达。",
+          "AI 无能为力转真人：AI 停止乱猜，真人调查后再由 guardrail 做表达和证据检查。"
+        ]
+      },
+      {
+        kicker: "Compliance",
+        title: "合规与审计",
+        points: [
+          "WeCom 不适合作审计 source of truth，离职历史、权限、记录归档都不可控。",
+          "客户误发 app id、certificate 或其他敏感信息时，系统必须能证明不会泄露。",
+          "Dashboard 是服务质量监管入口，审计需要能抽样查看 case、SLA、通过率和操作历史。"
+        ]
+      },
+      {
+        kicker: "POC",
+        title: "近期 POC",
+        points: [
+          "验证 billing route 验证、真实 Zendesk case 分类、Not automated 原因和白名单边界。",
+          "补齐邮件回执机制，确保 agent 发出请求后能收到回复并继续流程。",
+          "演示 engineer reply 通过/拒绝、dashboard 指标、真实 case 模拟和必要延时效果。"
+        ]
+      }
+    ];
 
     const RECENT_UPDATES = [
       {
@@ -1901,9 +2150,9 @@ flowchart TD
       const avgProgress = Math.round(LANES.reduce((sum, lane) => sum + laneProgress(lane), 0) / LANES.length);
       const metrics = [
         { value: LANES.length, label: "优化主线" },
+        { value: 3, label: "3 个阶段门禁" },
         { value: `${avgProgress}%`, label: "综合追踪完成度（含已完成证据与待办勾选）" },
-        { value: totalTasks - doneTasks, label: "未完成计划项" },
-        { value: blockedTasks, label: "暂停或需要决策项" }
+        { value: totalTasks - doneTasks, label: "未完成计划项" }
       ];
       document.getElementById("heroMetrics").innerHTML = metrics.map((item) => `
         <div class="metric"><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.label)}</span></div>
@@ -1923,6 +2172,18 @@ flowchart TD
           <span class="update-key">${escapeHtml(item.key)}</span>
           <span class="update-copy">${escapeHtml(item.copy)}</span>
         </li>
+      `).join("");
+    }
+
+    function renderMeetingTracks() {
+      document.getElementById("meetingTracks").innerHTML = MEETING_TRACKS.map((item) => `
+        <article class="meeting-card">
+          <span class="meeting-kicker">${escapeHtml(item.kicker)}</span>
+          <h3>${escapeHtml(item.title)}</h3>
+          <ul class="meeting-list">
+            ${item.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}
+          </ul>
+        </article>
       `).join("");
     }
 
@@ -2141,6 +2402,7 @@ flowchart TD
       renderHeroMetrics();
       renderFilters();
       renderRecentUpdates();
+      renderMeetingTracks();
       const lanes = LANES.filter(laneMatches);
       document.getElementById("lanes").innerHTML = lanes.map(renderLane).join("");
       document.getElementById("emptyState").style.display = lanes.length ? "none" : "block";
