@@ -72,6 +72,13 @@ from backend.services.query_understanding import (
     downpush_hard_filters,
     understand_rag_query,
 )
+from backend.services.kg_runtime import (
+    format_kg_facts_context_block,
+    kg_auxiliary_enabled,
+    kg_entity_link_expansion,
+    kg_rerank_boost,
+    kg_structured_facts,
+)
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
 from backend.services.support_products import (
     SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING,
@@ -367,6 +374,10 @@ class RagQueryTrace:
     request_body_endpoint_hints: list[str] = field(default_factory=list)
     request_body_missing_evidence: list[str] = field(default_factory=list)
     request_body_evidence_chunk_ids: list[str] = field(default_factory=list)
+    # KG auxiliary telemetry - only populated when RAG_KG_AUXILIARY_ENABLED=true.
+    # Empty dict preserves the default-off trace shape (roadmap rule: RAG chain
+    # unchanged unless the flag is on).
+    kg_auxiliary: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -495,6 +506,11 @@ class AgenticRoundResult:
     rerank_latency_ms: float = 0.0
     used_seed_tools: list[str] = field(default_factory=list)
     shadow_tools_skipped: list[str] = field(default_factory=list)
+    # KG auxiliary rerank-boost telemetry (populated only when RAG_KG_AUXILIARY_ENABLED=true).
+    kg_rerank_signals_count: int = 0
+    kg_rerank_degraded: bool = False
+    kg_rerank_degrade_reason: str | None = None
+    kg_rerank_latency_ms: float = 0.0
 
 
 def _feature_flag_enabled(name: str, default: bool = True) -> bool:
@@ -4497,6 +4513,44 @@ def _execute_agentic_round(
                 pinned_chunks=pinned_chunks,
             )
 
+    # Hook #2: KG rerank boost (signal only). Adds a small provenance-gated
+    # boost to already-reranked RAG candidates and stable-sorts by boosted
+    # score. KG can only boost existing RAG candidates (never add/remove); on
+    # degradation the RAG reranked order is left unchanged (roadmap rule #3).
+    kg_rerank_signals_count = 0
+    kg_rerank_degraded = False
+    kg_rerank_degrade_reason: str | None = None
+    kg_rerank_latency_ms = 0.0
+    if reranked_chunks:
+        candidate_chunk_ids = [chunk.chunk_id for chunk in reranked_chunks if chunk.chunk_id]
+        kg_boost_result = kg_rerank_boost(None, message, candidate_chunk_ids)
+        kg_rerank_signals_count = len(kg_boost_result.signals)
+        kg_rerank_degraded = kg_boost_result.degraded
+        kg_rerank_degrade_reason = kg_boost_result.degrade_reason
+        kg_rerank_latency_ms = kg_boost_result.latency_ms
+        if not kg_boost_result.degraded and kg_boost_result.signals:
+            boost_by_chunk: dict[str, float] = {
+                signal.chunk_id: float(signal.boost) for signal in kg_boost_result.signals
+            }
+            for chunk in reranked_chunks:
+                boost = boost_by_chunk.get(chunk.chunk_id)
+                if boost is None or boost <= 0:
+                    continue
+                base_score = float(chunk.rerank_score) if chunk.rerank_score is not None else 0.0
+                chunk.rerank_score = base_score + boost
+                chunk.candidate_trace["kg_rerank_boost"] = boost
+                rerank_info.setdefault("candidate_reasons", {})
+                rerank_info["candidate_reasons"][chunk.chunk_id] = (
+                    f"kg_boost:+{boost:.4f}"
+                )
+            # Stable re-sort by boosted rerank score (descending), keeping RAG
+            # order for ties so RAG ordering is preserved.
+            reranked_chunks = sorted(
+                reranked_chunks,
+                key=lambda chunk: float(chunk.rerank_score) if chunk.rerank_score is not None else 0.0,
+                reverse=True,
+            )
+
     final_shadow_cap = int(config.get("agent_final_shadow_cap") or 1)
     recovery_shadow_cap = int(config.get("agent_recovery_shadow_cap") or 2)
     final_chunks = _select_agentic_final_chunks(
@@ -4573,6 +4627,10 @@ def _execute_agentic_round(
         rerank_latency_ms=round(rerank_latency_ms, 2),
         used_seed_tools=list(dict.fromkeys(used_seed_tools)),
         shadow_tools_skipped=list(shadow_tools_skipped),
+        kg_rerank_signals_count=kg_rerank_signals_count,
+        kg_rerank_degraded=kg_rerank_degraded,
+        kg_rerank_degrade_reason=kg_rerank_degrade_reason,
+        kg_rerank_latency_ms=round(kg_rerank_latency_ms, 2),
     )
 
 
@@ -7298,8 +7356,14 @@ def _invoke_llm_payload(
     preferred_code_language: str | None = None,
     supported_code_languages: tuple[str, ...] | None = None,
     code_example_evidence_available: bool = False,
+    kg_facts_context_block: str | None = None,
 ) -> dict[str, Any] | None:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
+    # Hook #3: append non-citable KG structured-facts context block. Facts are
+    # provenance-gated to selected RAG chunk_ids and labeled DO NOT CITE; they
+    # never enter the citation pool (roadmap rules #1, #2).
+    if kg_facts_context_block:
+        context_block = f"{context_block}\n\n{kg_facts_context_block}".strip()
     prompt = _build_answer_prompt_for_mode(
         message,
         context_block,
@@ -7335,6 +7399,7 @@ def _invoke_llm_payload_with_trace(
     query_class: str | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    kg_facts_context_block: str | None = None,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
     query_class_label = str(query_class or "").strip() or None
     preferred_code_language: str | None = None
@@ -7353,6 +7418,11 @@ def _invoke_llm_payload_with_trace(
             )
 
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
+    # Hook #3: append non-citable KG structured-facts context block. Facts are
+    # provenance-gated to selected RAG chunk_ids and labeled DO NOT CITE; they
+    # never enter the citation pool (roadmap rules #1, #2).
+    if kg_facts_context_block:
+        context_block = f"{context_block}\n\n{kg_facts_context_block}".strip()
     prompt = _build_answer_prompt_for_mode(
         message,
         context_block,
@@ -8307,6 +8377,15 @@ def _run_rag_query_legacy(
             record_stage=record_cancel_stage,
         )
         generation_started_at = time.perf_counter()
+        # Hook #3: KG structured-fact lookup (legacy path parity). Facts are
+        # provenance-gated to the selected RAG chunk_ids and rendered as a
+        # non-citable context block; they never enter the citation pool.
+        legacy_kg_facts_result = kg_structured_facts(
+            None, effective_question, sorted(allowed_chunk_ids)
+        )
+        legacy_kg_facts_context_block = format_kg_facts_context_block(
+            legacy_kg_facts_result.facts
+        )
         payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
@@ -8316,6 +8395,7 @@ def _run_rag_query_legacy(
             query_class=answer_query_class,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            kg_facts_context_block=legacy_kg_facts_context_block or None,
         )
         retry_required = (
             payload is None
@@ -8333,6 +8413,7 @@ def _run_rag_query_legacy(
                 query_class=answer_query_class,
                 ticket_id=ticket_id,
                 customer_id=customer_id,
+                kg_facts_context_block=legacy_kg_facts_context_block or None,
             )
             prompt_tokens += retry_prompt_tokens
             completion_tokens += retry_completion_tokens
@@ -8557,7 +8638,16 @@ def _run_rag_query_legacy(
                     extractive_fallback_used=False,
                 ),
             )
-        citations = [str(chunk_id) for chunk_id in payload["citations"]]
+        # Citation pool is strictly RAG-only: drop any citation id that is not
+        # one of the selected RAG chunks (defense-in-depth against the model
+        # citing a KG structured-fact id from the non-citable context block).
+        # `_is_valid_response` already rejects payloads with foreign citations;
+        # this filter also covers extractive/fallback paths that bypass it.
+        citations = [
+            str(chunk_id)
+            for chunk_id in payload["citations"]
+            if str(chunk_id) in allowed_chunk_ids
+        ]
         answer_body = _supplement_request_body_json_if_missing(
             str(payload["answer"]),
             final_chunks,
@@ -8797,7 +8887,6 @@ def _run_rag_query_agentic_single(
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
     query_flags = _classify_agentic_query_flags(effective_question)
     api_semantics_query = query_flags.api_semantics_query
-    short_how_to_faq_query = query_flags.short_how_to_faq_query
     simple_lexical_query = query_flags.simple_lexical_query
     vector_setup_skipped = query_flags.vector_setup_skipped
     light_path_used = query_flags.light_path_used
@@ -8856,6 +8945,20 @@ def _run_rag_query_agentic_single(
     effective_rewrites: list[str] = []
     effective_decomposition_subqueries: list[str] = []
     effective_query_understanding: QueryUnderstandingResult | None = None
+    # KG auxiliary telemetry (only populated when RAG_KG_AUXILIARY_ENABLED=true).
+    kg_auxiliary_expansion_terms: list[str] = []
+    kg_auxiliary_expansion_degraded = False
+    kg_auxiliary_expansion_degrade_reason: str | None = None
+    kg_auxiliary_expansion_latency_ms = 0.0
+    kg_auxiliary_rerank_signals_count = 0
+    kg_auxiliary_rerank_degraded = False
+    kg_auxiliary_rerank_degrade_reason: str | None = None
+    kg_auxiliary_rerank_latency_ms = 0.0
+    kg_auxiliary_facts_count = 0
+    kg_auxiliary_facts_degraded = False
+    kg_auxiliary_facts_degrade_reason: str | None = None
+    kg_auxiliary_facts_latency_ms = 0.0
+    kg_auxiliary_facts_context_block = ""
     first_pass_candidate_count = 0
     second_pass_candidate_count = 0
     total_started_at = request_started_at
@@ -8905,6 +9008,33 @@ def _run_rag_query_agentic_single(
     warm_original_vector_latency_ms = 0.0
     warm_original_bm25_latency_ms = 0.0
     lexical_result_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] = {}
+
+    def _kg_auxiliary_trace_values() -> dict[str, Any]:
+        # Only emit a non-empty dict when the KG auxiliary flag is on, so
+        # default-off traces keep KG telemetry empty.
+        if not kg_auxiliary_enabled():
+            return {}
+        return {
+            "expansion": {
+                "terms_count": len(kg_auxiliary_expansion_terms),
+                "terms": list(kg_auxiliary_expansion_terms),
+                "degraded": kg_auxiliary_expansion_degraded,
+                "degrade_reason": kg_auxiliary_expansion_degrade_reason,
+                "latency_ms": round(kg_auxiliary_expansion_latency_ms, 2),
+            },
+            "rerank_boost": {
+                "signals_count": kg_auxiliary_rerank_signals_count,
+                "degraded": kg_auxiliary_rerank_degraded,
+                "degrade_reason": kg_auxiliary_rerank_degrade_reason,
+                "latency_ms": round(kg_auxiliary_rerank_latency_ms, 2),
+            },
+            "structured_facts": {
+                "facts_count": kg_auxiliary_facts_count,
+                "degraded": kg_auxiliary_facts_degraded,
+                "degrade_reason": kg_auxiliary_facts_degrade_reason,
+                "latency_ms": round(kg_auxiliary_facts_latency_ms, 2),
+            },
+        }
 
     def _timed_retrieve(
         retrieval_fn: Any,
@@ -8975,6 +9105,9 @@ def _run_rag_query_agentic_single(
         nonlocal effective_rule_expansions, effective_llm_expansions
         nonlocal effective_rewrites, effective_decomposition_subqueries
         nonlocal effective_plan, effective_query_understanding
+        nonlocal kg_auxiliary_expansion_terms
+        nonlocal kg_auxiliary_expansion_degraded, kg_auxiliary_expansion_degrade_reason
+        nonlocal kg_auxiliary_expansion_latency_ms
 
         query_understanding = source
         effective_hard_filters = dict(source.retrieval_plan.hard_filters)
@@ -8985,6 +9118,19 @@ def _run_rag_query_agentic_single(
             if query_rewrite_enabled
             else []
         )
+        # Hook #1: KG entity link + synonym expansion. Append validated KG
+        # expansion terms to the LLM expansion/rewrite pool. On degradation the
+        # pure-RAG expansions are left untouched (roadmap rule #3).
+        kg_expansion_semantic = source.semantic_query or str(effective_question or "").strip()
+        kg_expansion_result = kg_entity_link_expansion(None, kg_expansion_semantic)
+        kg_auxiliary_expansion_terms = list(kg_expansion_result.terms)
+        kg_auxiliary_expansion_degraded = kg_expansion_result.degraded
+        kg_auxiliary_expansion_degrade_reason = kg_expansion_result.degrade_reason
+        kg_auxiliary_expansion_latency_ms = kg_expansion_result.latency_ms
+        if not kg_expansion_result.degraded:
+            for term in kg_expansion_result.terms:
+                if term and term not in effective_llm_expansions:
+                    effective_llm_expansions.append(term)
         effective_rewrites = list(effective_llm_expansions)
         effective_decomposition_subqueries = (
             list(source.decomposition_subqueries) if query_decomposition_enabled else []
@@ -9179,6 +9325,13 @@ def _run_rag_query_agentic_single(
         retrieval_tool_timings.extend(list(round_result.retrieval_tool_timings))
         shadow_tools_skipped.extend(list(round_result.shadow_tools_skipped))
         rerank_latency_ms += round_result.rerank_latency_ms
+        # Surface KG rerank-boost telemetry from the latest round (only the
+        # final round's signal count / degradation status is meaningful for the
+        # run-level trace because boosts are applied per-round).
+        kg_auxiliary_rerank_signals_count = round_result.kg_rerank_signals_count
+        kg_auxiliary_rerank_degraded = round_result.kg_rerank_degraded
+        kg_auxiliary_rerank_degrade_reason = round_result.kg_rerank_degrade_reason
+        kg_auxiliary_rerank_latency_ms = round_result.kg_rerank_latency_ms
         total_vector_candidates += round_result.vector_candidate_count
         total_bm25_candidates += round_result.bm25_candidate_count
         total_fts_candidates += round_result.fts_candidate_count
@@ -9459,6 +9612,7 @@ def _run_rag_query_agentic_single(
                 else None
             ),
             **_request_body_trace_values(request_body_evidence_result),
+            kg_auxiliary=_kg_auxiliary_trace_values(),
         )
 
     def _deadline_handoff_result(stage: str) -> RagQueryResult:
@@ -9654,6 +9808,16 @@ def _run_rag_query_agentic_single(
         should_cancel=should_cancel,
         record_stage=record_cancel_stage,
     )
+    # Hook #3: KG structured-fact lookup. Facts are provenance-gated to the
+    # selected RAG chunk_ids (final_chunks) and rendered as a non-citable
+    # context block. They never enter the citation pool (roadmap rules #1, #2).
+    # On degradation generation proceeds with pure-RAG context (rule #3).
+    kg_facts_result = kg_structured_facts(None, effective_question, sorted(allowed_chunk_ids))
+    kg_auxiliary_facts_count = len(kg_facts_result.facts)
+    kg_auxiliary_facts_degraded = kg_facts_result.degraded
+    kg_auxiliary_facts_degrade_reason = kg_facts_result.degrade_reason
+    kg_auxiliary_facts_latency_ms = kg_facts_result.latency_ms
+    kg_auxiliary_facts_context_block = format_kg_facts_context_block(kg_facts_result.facts)
     initial_profile = fast_answer_profile or primary_answer_profile
     initial_profile_with_deadline = _profile_with_remaining_budget(initial_profile)
     if initial_profile_with_deadline is None:
@@ -9669,6 +9833,7 @@ def _run_rag_query_agentic_single(
         query_class=plan.query_class,
         ticket_id=ticket_id,
         customer_id=customer_id,
+        kg_facts_context_block=kg_auxiliary_facts_context_block or None,
     )
     answer_profile_used = model_name or initial_profile_with_deadline.model
     retry_required = (
@@ -9697,6 +9862,7 @@ def _run_rag_query_agentic_single(
             query_class=plan.query_class,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            kg_facts_context_block=kg_auxiliary_facts_context_block or None,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -9729,6 +9895,7 @@ def _run_rag_query_agentic_single(
             query_class=plan.query_class,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            kg_facts_context_block=kg_auxiliary_facts_context_block or None,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -9768,6 +9935,7 @@ def _run_rag_query_agentic_single(
             query_class=plan.query_class,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            kg_facts_context_block=kg_auxiliary_facts_context_block or None,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -9827,7 +9995,16 @@ def _run_rag_query_agentic_single(
                     extractive_fallback_used=False,
                 ),
             )
-        citations = [str(chunk_id) for chunk_id in payload["citations"]]
+        # Citation pool is strictly RAG-only: drop any citation id that is not
+        # one of the selected RAG chunks (defense-in-depth against the model
+        # citing a KG structured-fact id from the non-citable context block).
+        # `_is_valid_response` already rejects payloads with foreign citations;
+        # this filter also covers extractive/fallback paths that bypass it.
+        citations = [
+            str(chunk_id)
+            for chunk_id in payload["citations"]
+            if str(chunk_id) in allowed_chunk_ids
+        ]
         answer_body = _supplement_request_body_json_if_missing(
             str(payload["answer"]),
             final_chunks,

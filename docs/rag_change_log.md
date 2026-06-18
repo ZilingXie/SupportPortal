@@ -11,6 +11,38 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-18 - Implement online RAG+KG auxiliary runtime contract (kg-runtime-boundary)
+
+- Summary:
+  - Added `backend/services/kg_runtime.py`: the online RAG+KG auxiliary runtime implementing the three KG hooks fixed by `docs/roadmap.html` (RAG vs KG lane, `kg-runtime-boundary`):
+    - Hook #1 `kg_entity_link_expansion` — KG entity link + synonym expansion appended to query understanding LLM expansions. Hard ~150ms cap (`KG_EXPANSION_TIMEOUT_MS`), timeout/exception/provenance failure → empty degraded result so the pure-RAG expansion path is unchanged.
+    - Hook #2 `kg_rerank_boost` — additive rerank boost over already-reranked RAG candidates. KG can only boost existing RAG candidates (drops signals whose `chunk_id` is not in the candidate set); boost clamped to `[0, KG_RERANK_BOOST_MAX]` (default 0.05); signal-only re-sort, never truncates/adds chunks; runs AFTER external rerank so RAG ordering is preserved. Degrades to no signals on timeout/failure.
+    - Hook #3 `kg_structured_facts` — structured fact lookup for generation context. Each fact must pass the provenance gate AND its `provenance.chunk_id` must be one of the selected RAG `final_chunk_ids` (fact must trace back to a chunk RAG surfaced). Facts rendered as a non-citable context block (`Supplementary structured facts (KG-derived, context-only - DO NOT CITE)`) and NEVER enter the citation pool.
+  - Reuses the existing `KgExpansion` / `KgRerankSignal` / `KgStructuredFact` dataclasses and `has_valid_provenance` from `kg_supportportal_contracts.py` as the single provenance enforcement point (roadmap rule #1).
+  - `KgRuntimeClient` protocol + default `KgRuntimeDisabled` no-op client so default behavior remains on the pure-RAG chain.
+  - Wired the three hooks into `backend/services/rag_qa.py` (agentic + legacy paths), gated by `RAG_KG_AUXILIARY_ENABLED` (default `false`):
+    - Hook #1 in `_apply_query_understanding_result` (appends validated KG expansion terms to `effective_llm_expansions`/`effective_rewrites`).
+    - Hook #2 in `_execute_agentic_round` after `_rerank_chunks` + api-semantics pinning, before `_select_agentic_final_chunks` (adds boost to `rerank_score`, records `kg_rerank_boost` in `candidate_trace`, stable re-sort).
+    - Hook #3 before structured answer generation (`_invoke_llm_payload` / `_invoke_llm_payload_with_trace` gain a `kg_facts_context_block` kwarg appended to the prompt context block).
+  - Citation-pool RAG-only enforcement (roadmap rule #2): the structured-answer citation extraction now explicitly filters citation ids to `allowed_chunk_ids` (the selected RAG chunk set) as defense-in-depth on top of the existing `_is_valid_response` check; KG structured facts never enter `final_chunks`, so `_citation_records_from_ids`/`_citation_records_from_chunks` cannot pick them up by construction.
+  - Added a `kg_auxiliary` telemetry dict to `RagQueryTrace` (non-empty only when the flag is on): `{expansion, rerank_boost, structured_facts}` each with count / degraded / degrade_reason / latency_ms. Default-off keeps KG telemetry empty and the pure-RAG chain behavior unchanged.
+- Reason:
+  - Completes the online RAG+KG call contract so KG can act as an auxiliary signal (query expansion / rerank boost / structured fact) without ever replacing RAG as the citation source of truth. The RAG retrieval chain (vector + BM25 + FTS + RRF + metadata prune + external rerank) is intentionally unchanged; KG only consumes RAG outputs.
+- Affected files/config:
+  - `backend/services/kg_runtime.py` (new)
+  - `backend/services/rag_qa.py` (hook wiring + citation guard + `kg_auxiliary` trace field; default-off)
+  - `backend/tests/test_kg_runtime.py` (new)
+  - New env knobs: `RAG_KG_AUXILIARY_ENABLED` (default false), `KG_EXPANSION_TIMEOUT_MS` / `KG_RERANK_BOOST_TIMEOUT_MS` / `KG_FACT_LOOKUP_TIMEOUT_MS` (default 150), `KG_EXPANSION_MAX_TERMS` (default 8), `KG_RERANK_BOOST_MAX` (default 0.05).
+- Data impact:
+  - None. KG hooks are read-only auxiliary; no ingestion, vector table, BM25/FTS index, or chunking change. No backfill or reset required. With the flag off (default) runtime behavior is identical to the pure-RAG chain.
+- Verification:
+  - `rtk uv run --with redis python -m unittest backend.tests.test_kg_runtime -v` (31 tests covering flag gating, provenance gate, timeout degradation, boost clamping, fact-to-chunk traceability, non-citable context block, citation-pool RAG-only filter). All pass locally.
+  - `rtk uv run --with redis python -m unittest backend.tests.test_rag_qa -v` (103 tests) confirms the existing RAG path and citation behavior still pass with the new hooks imported.
+  - `rtk uv run --with redis --with pytest pytest backend/tests/test_kg_supportportal_contracts.py -q` (19 tests) confirms the reused KG contract/provenance helpers still pass.
+  - `rtk uv run --with ruff ruff check backend/services/kg_runtime.py backend/services/rag_qa.py backend/tests/test_kg_runtime.py` passes.
+  - `rtk python3 scripts/verify_feature_list.py` passes.
+  - `rtk python3 -m py_compile backend/services/kg_runtime.py backend/services/rag_qa.py backend/tests/test_kg_runtime.py` passes.
+
 ## 2026-06-17 - PR2: Wire official-doc KG chunk contract into vendored GraphRAG offline ingest
 
 - Summary:
