@@ -1,0 +1,2517 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SupportPortal Roadmap</title>
+  <style>
+    :root {
+      --paper: #f4efe3;
+      --paper-soft: #fbf7ec;
+      --ink: #1d2522;
+      --muted: #69716a;
+      --line: rgba(29, 37, 34, 0.16);
+      --line-strong: rgba(29, 37, 34, 0.28);
+      --blueprint: #1f4f68;
+      --field: #7f6a40;
+      --signal: #d56a3a;
+      --green: #3f7a57;
+      --amber: #ba7a2a;
+      --red: #a84c3f;
+      --shadow: 0 26px 70px rgba(31, 45, 38, 0.16);
+      --radius: 28px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 14% 18%, rgba(213, 106, 58, 0.18), transparent 28rem),
+        radial-gradient(circle at 84% 10%, rgba(31, 79, 104, 0.16), transparent 24rem),
+        linear-gradient(135deg, #efe3cd 0%, #f8f3e8 48%, #e9f0e8 100%);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.28;
+      background-image:
+        linear-gradient(rgba(29, 37, 34, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(29, 37, 34, 0.07) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, black, transparent 82%);
+    }
+
+    .page {
+      width: min(1440px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .hero {
+      position: relative;
+      min-height: 320px;
+      padding: clamp(20px, 3vw, 40px);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 12px);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      background:
+        linear-gradient(108deg, rgba(251, 247, 236, 0.94) 0%, rgba(251, 247, 236, 0.76) 52%, rgba(31, 79, 104, 0.16) 100%),
+        conic-gradient(from 140deg at 78% 38%, rgba(213, 106, 58, 0.22), rgba(63, 122, 87, 0.22), rgba(31, 79, 104, 0.24), rgba(213, 106, 58, 0.22));
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -120px;
+      top: 58px;
+      width: min(52vw, 680px);
+      height: min(52vw, 680px);
+      border: 1px solid rgba(29, 37, 34, 0.18);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, transparent 0 20%, rgba(31, 79, 104, 0.16) 20% 20.6%, transparent 20.8% 37%, rgba(29, 37, 34, 0.12) 37% 37.5%, transparent 37.8% 54%, rgba(213, 106, 58, 0.18) 54% 54.6%, transparent 55%),
+        linear-gradient(45deg, transparent 49.6%, rgba(29, 37, 34, 0.18) 50%, transparent 50.4%),
+        linear-gradient(-45deg, transparent 49.6%, rgba(29, 37, 34, 0.12) 50%, transparent 50.4%);
+      opacity: 0.72;
+      animation: slow-turn 32s linear infinite;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.78);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--blueprint);
+    }
+
+    .pulse {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0 7px rgba(213, 106, 58, 0.14);
+    }
+
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 1120px;
+      margin: 24px 0 16px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(30px, 4vw, 48px);
+      line-height: 1.02;
+      letter-spacing: -0.045em;
+    }
+
+    .hero-copy {
+      position: relative;
+      z-index: 1;
+      max-width: 820px;
+      margin: 0;
+      font-size: clamp(13px, 1.2vw, 16px);
+      line-height: 1.58;
+      color: #39413b;
+    }
+
+    .hero-bullets {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 18px;
+      max-width: 940px;
+      margin: 16px 0 0;
+      padding: 0;
+      list-style: none;
+      color: #39413b;
+      font-size: clamp(13px, 1.15vw, 15px);
+      line-height: 1.5;
+    }
+
+    .hero-bullets li {
+      position: relative;
+      padding-left: 18px;
+    }
+
+    .hero-bullets li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.72em;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--blueprint);
+      transform: translateY(-50%);
+    }
+
+    .hero-bullets strong { color: var(--ink); }
+
+    .hero-judgment {
+      position: relative;
+      z-index: 1;
+      max-width: 960px;
+      margin-top: 22px;
+      padding: 20px 22px;
+      border: 1px solid rgba(29, 37, 34, 0.14);
+      border-radius: 22px;
+      background: rgba(251, 247, 236, 0.72);
+      box-shadow: 0 12px 34px rgba(31, 45, 38, 0.08);
+    }
+
+    .hero-judgment h2 {
+      margin: 0 0 10px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(20px, 2.4vw, 32px);
+      line-height: 1;
+      letter-spacing: -0.045em;
+    }
+
+    .hero-judgment p {
+      margin: 0;
+      color: #3f4943;
+      line-height: 1.58;
+      font-size: clamp(14px, 1.35vw, 17px);
+    }
+
+    .hero-judgment .review-list {
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .hero-judgment .review-list li {
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .hero-meta {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .meta-pill, .filter button, .select-wrap select {
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.82);
+      color: var(--ink);
+    }
+
+    .meta-pill {
+      padding: 11px 15px;
+      font-weight: 750;
+      color: #26312d;
+    }
+
+    .hero-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      margin-top: 22px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .metric {
+      min-height: 92px;
+      padding: 14px 16px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .metric strong {
+      display: block;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(24px, 3vw, 34px);
+      line-height: 1;
+      letter-spacing: -0.05em;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .phase-tracker, .meeting-section {
+      margin: 24px 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), transparent 44%),
+        rgba(251, 247, 236, 0.78);
+      box-shadow: 0 16px 42px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+    }
+
+    .phase-tracker header, .meeting-section header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: end;
+      padding: 24px 26px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .phase-tracker h2, .meeting-section h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(24px, 3.2vw, 40px);
+      line-height: 0.98;
+      letter-spacing: -0.05em;
+    }
+
+    .phase-tracker header p, .meeting-section header p {
+      max-width: 560px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.58;
+    }
+
+    .phase-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .phase-card {
+      min-width: 0;
+      padding: 18px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .phase-card h3 {
+      margin: 14px 0 8px;
+      font-size: clamp(18px, 2vw, 28px);
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .phase-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.38);
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .phase-status.doing { color: var(--amber); }
+    .phase-status.todo { color: var(--blueprint); }
+    .phase-status.blocked { color: var(--field); }
+
+    .phase-gate-list, .meeting-list {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      margin: 14px 0 0;
+      padding: 0;
+    }
+
+    .phase-gate-list li, .meeting-list li {
+      position: relative;
+      padding-left: 20px;
+      color: #3f4943;
+      line-height: 1.52;
+    }
+
+    .phase-gate-list li::before, .meeting-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.73em;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal);
+      transform: translateY(-50%);
+    }
+
+    .meeting-section {
+      margin-top: 34px;
+    }
+
+    .meeting-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .meeting-card {
+      min-width: 0;
+      padding: 18px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .meeting-card h3 {
+      margin: 8px 0 10px;
+      font-size: 22px;
+      line-height: 1.12;
+      letter-spacing: -0.025em;
+    }
+
+    .meeting-kicker {
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .meeting-minutes-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .meeting-minutes-card {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.34);
+    }
+
+    .meeting-minutes-card h5 {
+      margin: 6px 0 10px;
+      font-size: 17px;
+      line-height: 1.16;
+      letter-spacing: -0.02em;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 12px;
+      z-index: 5;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 22px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(244, 239, 227, 0.78);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 12px 30px rgba(31, 45, 38, 0.1);
+    }
+
+    .review-list {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      margin: 16px 0 0;
+      padding: 0;
+    }
+
+    .review-list li {
+      display: grid;
+      grid-template-columns: 16px 1fr;
+      gap: 10px;
+      color: #3f4943;
+      line-height: 1.55;
+    }
+
+    .review-list li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-top: 0.7em;
+      border-radius: 50%;
+      background: var(--blueprint);
+    }
+
+    .update-list {
+      list-style: none;
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .update-list li {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .update-list li:last-child { border-bottom: 0; }
+
+    .update-key {
+      color: var(--blueprint);
+      font-weight: 850;
+      letter-spacing: 0.04em;
+    }
+
+    .update-copy {
+      color: #3f4943;
+      line-height: 1.55;
+    }
+
+    .recent-updates-disclosure {
+      margin: 18px 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(251, 247, 236, 0.74);
+      box-shadow: 0 12px 34px rgba(31, 45, 38, 0.07);
+      overflow: hidden;
+    }
+
+    .recent-updates-disclosure summary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .recent-updates-disclosure summary::-webkit-details-marker { display: none; }
+
+    .recent-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+      padding: 0 15px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--ink);
+      color: var(--paper-soft);
+      font-weight: 850;
+    }
+
+    .recent-toggle::before {
+      content: "+";
+      display: inline-grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(251, 247, 236, 0.16);
+      font-weight: 900;
+    }
+
+    .recent-updates-disclosure[open] .recent-toggle::before { content: "-"; }
+
+    .recent-hint {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .recent-updates-panel {
+      padding: 0 22px 18px;
+      border-top: 1px dashed var(--line-strong);
+    }
+
+    .architecture-disclosure {
+      margin: 38px 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), transparent 48%),
+        rgba(251, 247, 236, 0.76);
+      box-shadow: 0 16px 42px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+    }
+
+    .architecture-disclosure summary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .architecture-disclosure summary::-webkit-details-marker { display: none; }
+
+    .architecture-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--blueprint);
+      color: var(--paper-soft);
+      font-weight: 850;
+    }
+
+    .architecture-toggle::before {
+      content: "+";
+      display: inline-grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(251, 247, 236, 0.16);
+      font-weight: 900;
+    }
+
+    .architecture-disclosure[open] .architecture-toggle::before { content: "-"; }
+
+    .architecture-hint {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .architecture-panel {
+      padding: 0 18px 20px;
+      border-top: 1px dashed var(--line-strong);
+    }
+
+    .architecture-title {
+      margin-top: 22px;
+    }
+
+    .filter {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .filter button, .select-wrap select, .search {
+      font: inherit;
+      min-height: 42px;
+      padding: 0 14px;
+    }
+
+    .filter button {
+      cursor: pointer;
+      transition: transform 160ms ease, background 160ms ease, color 160ms ease;
+    }
+
+    .filter button:hover { transform: translateY(-1px); }
+    .filter button.active { background: var(--ink); color: var(--paper-soft); }
+
+    .search {
+      width: min(360px, 100%);
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.92);
+      color: var(--ink);
+      outline: none;
+    }
+
+    .section-title {
+      margin: 48px 0 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 0.95;
+      letter-spacing: -0.055em;
+    }
+
+    .section-title p {
+      max-width: 520px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .architecture-diagram {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), transparent 42%),
+        rgba(251, 247, 236, 0.86);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+    }
+
+    .architecture-diagram header {
+      display: grid;
+      gap: 10px;
+      padding: 24px 26px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .architecture-diagram h3 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 0.98;
+      letter-spacing: -0.05em;
+    }
+
+    .architecture-diagram p {
+      max-width: 860px;
+      margin: 0;
+      color: #3f4943;
+      line-height: 1.65;
+    }
+
+    .mermaid-card {
+      margin: 0;
+      padding: 22px;
+      overflow-x: auto;
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    .mermaid-card .mermaid {
+      min-width: 980px;
+      margin: 0 auto;
+      padding: 18px;
+      border: 1px dashed rgba(29, 37, 34, 0.18);
+      border-radius: 22px;
+      background: rgba(251, 247, 236, 0.82);
+      color: var(--ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .mermaid-card svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto;
+    }
+
+    .flow-diagram {
+      min-width: 760px;
+      display: grid;
+      gap: 10px;
+      margin: 0 auto;
+      padding: 18px;
+      border: 1px dashed rgba(31, 79, 104, 0.2);
+      border-radius: 22px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+    }
+
+    .flow-node {
+      min-width: 0;
+      padding: 12px 14px;
+      border: 1px solid rgba(31, 79, 104, 0.24);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.42);
+      color: #26312d;
+      font-weight: 750;
+      line-height: 1.42;
+      overflow-wrap: anywhere;
+    }
+
+    .flow-arrow {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 54px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: rgba(31, 79, 104, 0.1);
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+      text-align: center;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .diagram-note {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0 26px 24px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .lane-architecture {
+      margin-top: 18px;
+      border: 1px solid rgba(31, 79, 104, 0.18);
+      border-radius: 24px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 18% 20%, rgba(212, 109, 74, 0.12), transparent 28%),
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), rgba(255, 255, 255, 0.18));
+    }
+
+    .lane-architecture header {
+      padding: 18px 20px 12px;
+      border-bottom: 1px solid rgba(31, 79, 104, 0.12);
+    }
+
+    .lane-architecture h5 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      letter-spacing: 0.02em;
+    }
+
+    .lane-architecture p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .lane-architecture .mermaid-card {
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .lane-architecture .mermaid-card .mermaid {
+      min-width: 900px;
+      font-size: 12px;
+    }
+
+    .lane-architecture .diagram-note {
+      padding: 0 20px 18px;
+    }
+
+    .comparison-block {
+      padding: 0 20px 20px;
+    }
+
+    .comparison-block h6 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      color: var(--field);
+      text-transform: uppercase;
+    }
+
+    .comparison-summary {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .comparison-scroll {
+      overflow-x: auto;
+      border: 1px solid rgba(31, 79, 104, 0.18);
+      border-radius: 18px;
+      background: rgba(251, 247, 236, 0.82);
+    }
+
+    .comparison-table {
+      width: 100%;
+      min-width: 640px;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .comparison-table thead th {
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 850;
+      color: var(--blueprint);
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid rgba(31, 79, 104, 0.18);
+      background: rgba(31, 79, 104, 0.08);
+    }
+
+    .comparison-table tbody th {
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 750;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.32);
+      border-bottom: 1px dashed rgba(29, 37, 34, 0.12);
+      white-space: nowrap;
+    }
+
+    .comparison-table tbody td {
+      padding: 10px 14px;
+      color: #3f4943;
+      vertical-align: top;
+      border-bottom: 1px dashed rgba(29, 37, 34, 0.12);
+    }
+
+    .comparison-table tbody tr:last-child th,
+    .comparison-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .lanes {
+      display: grid;
+      gap: 22px;
+    }
+
+    .lane {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(251, 247, 236, 0.82);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+      animation: enter 600ms ease both;
+    }
+
+    .lane-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) 180px 170px;
+      gap: 22px;
+      padding: 28px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(31, 79, 104, 0.1), transparent 50%),
+        rgba(251, 247, 236, 0.74);
+    }
+
+    .lane-kicker {
+      margin: 0 0 12px;
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .lane h3 {
+      margin: 0;
+      font-size: clamp(22px, 2.8vw, 38px);
+      line-height: 1.04;
+      letter-spacing: -0.045em;
+    }
+
+    .lane-summary {
+      margin: 14px 0 0;
+      color: #434c45;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .status-stamp {
+      justify-self: start;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      font-weight: 850;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.36);
+    }
+
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); }
+    .dot.done { background: var(--green); }
+    .dot.doing { background: var(--amber); }
+    .dot.blocked { background: var(--red); }
+
+    .ring {
+      justify-self: end;
+      width: 138px;
+      height: 138px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: conic-gradient(var(--blueprint) calc(var(--progress) * 1%), rgba(29, 37, 34, 0.1) 0);
+      position: relative;
+    }
+
+    .ring::before {
+      content: "";
+      position: absolute;
+      inset: 12px;
+      border-radius: inherit;
+      background: var(--paper-soft);
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+
+    .ring span {
+      position: relative;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 34px;
+      letter-spacing: -0.05em;
+    }
+
+    .lane-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .lane-followup {
+      padding: 26px;
+      border-top: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.06), transparent 42%),
+        rgba(251, 247, 236, 0.84);
+    }
+
+    .lane-followup .lane-architecture {
+      margin-top: 0;
+    }
+
+    .panel {
+      min-width: 0;
+      padding: 26px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .panel h4 {
+      margin: 0 0 16px;
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      color: var(--field);
+      text-transform: uppercase;
+    }
+
+    .evidence-list, .next-list, .source-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 12px;
+    }
+
+    .evidence-list li, .next-list li, .source-list li {
+      position: relative;
+      padding-left: 20px;
+      color: #38413b;
+      line-height: 1.55;
+    }
+
+    .evidence-list li::before, .next-list li::before, .source-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.72em;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal);
+      transform: translateY(-50%);
+    }
+
+    .task-board {
+      display: grid;
+      gap: 12px;
+    }
+
+    .task {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 13px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.34);
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .task:hover {
+      transform: translateY(-2px);
+      border-color: rgba(31, 79, 104, 0.32);
+      background: rgba(255, 255, 255, 0.54);
+    }
+
+    .task input[type="checkbox"] {
+      width: 19px;
+      height: 19px;
+      margin-top: 4px;
+      accent-color: var(--blueprint);
+    }
+
+    .task-title {
+      margin: 0 0 4px;
+      font-weight: 850;
+      line-height: 1.42;
+      overflow-wrap: anywhere;
+    }
+
+    .task > div { min-width: 0; }
+
+    .task-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 9px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      background: rgba(244, 239, 227, 0.8);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .tag.done { color: var(--green); border-color: rgba(63, 122, 87, 0.3); }
+    .tag.doing { color: var(--amber); border-color: rgba(186, 122, 42, 0.3); }
+    .tag.todo { color: var(--blueprint); border-color: rgba(31, 79, 104, 0.28); }
+    .tag.blocked { color: var(--red); border-color: rgba(168, 76, 63, 0.3); }
+
+    .task select {
+      max-width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 10px;
+      background: var(--paper-soft);
+      color: var(--ink);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .source-list code { overflow-wrap: anywhere; }
+
+    details.sources {
+      margin-top: 20px;
+      border-top: 1px dashed var(--line-strong);
+      padding-top: 18px;
+    }
+
+    details.sources summary {
+      cursor: pointer;
+      color: var(--blueprint);
+      font-weight: 850;
+    }
+
+    .review-block {
+      margin-top: 20px;
+      border-top: 1px dashed var(--line-strong);
+      padding-top: 18px;
+    }
+
+    .review-block h5 {
+      margin: 0 0 12px;
+      color: var(--field);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .notes {
+      margin-top: 18px;
+    }
+
+    .notes label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--field);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .notes textarea {
+      width: 100%;
+      min-height: 92px;
+      resize: vertical;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      padding: 13px 14px;
+      background: rgba(251, 247, 236, 0.78);
+      color: var(--ink);
+      font: inherit;
+      line-height: 1.5;
+      outline: none;
+    }
+
+    .footer {
+      margin-top: 40px;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .empty {
+      display: none;
+      padding: 28px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 22px;
+      color: var(--muted);
+      text-align: center;
+      background: rgba(251, 247, 236, 0.58);
+    }
+
+    .optimization-plan {
+      display: grid;
+      gap: 22px;
+      margin-top: 18px;
+    }
+
+    .opt-group {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(251, 247, 236, 0.84);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+    }
+
+    .opt-head {
+      display: grid;
+      gap: 10px;
+      padding: 24px 26px 18px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(31, 79, 104, 0.1), transparent 50%),
+        rgba(251, 247, 236, 0.74);
+    }
+
+    .opt-priority {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.36);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      width: fit-content;
+    }
+
+    .opt-priority-high { color: var(--red); border-color: rgba(168, 76, 63, 0.4); }
+    .opt-priority-medium { color: var(--amber); border-color: rgba(186, 122, 42, 0.4); }
+    .opt-priority-low { color: var(--blueprint); border-color: rgba(31, 79, 104, 0.4); }
+
+    .opt-head h3 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(22px, 2.6vw, 32px);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+
+    .opt-head p {
+      margin: 0;
+      color: #434c45;
+      line-height: 1.55;
+    }
+
+    .opt-list {
+      list-style: none;
+      margin: 0;
+      padding: 20px 26px 26px;
+      display: grid;
+      gap: 14px;
+      counter-reset: opt-counter;
+    }
+
+    .opt-item {
+      display: grid;
+      grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+      gap: 18px;
+      padding: 16px 18px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.34);
+      counter-increment: opt-counter;
+      position: relative;
+    }
+
+    .opt-item::before {
+      content: counter(opt-counter, decimal-leading-zero);
+      position: absolute;
+      top: 14px;
+      right: 18px;
+      color: var(--muted);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 14px;
+      letter-spacing: 0.05em;
+    }
+
+    .opt-id {
+      margin: 0;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      font-weight: 850;
+      color: var(--blueprint);
+      overflow-wrap: anywhere;
+      align-self: start;
+    }
+
+    .opt-body {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .opt-label {
+      margin: 0;
+      color: #38413b;
+      line-height: 1.55;
+    }
+
+    .opt-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    @media (max-width: 980px) {
+      .opt-item { grid-template-columns: 1fr; }
+      .opt-item::before { position: static; text-align: right; }
+    }
+
+    @keyframes slow-turn { to { transform: rotate(360deg); } }
+    @keyframes enter {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid, .hero-bullets, .lane-head, .lane-body, .phase-grid, .meeting-grid, .meeting-minutes-grid { grid-template-columns: 1fr; }
+      .phase-tracker header, .meeting-section header { display: block; }
+      .phase-tracker header p, .meeting-section header p { margin-top: 10px; }
+      .ring { justify-self: start; width: 116px; height: 116px; }
+      .toolbar { position: static; }
+      .section-title { display: block; }
+      .section-title p { margin-top: 10px; }
+      .mermaid-card .mermaid { min-width: 760px; }
+      .footer { display: block; }
+    }
+
+    @media (max-width: 640px) {
+      .page { width: min(100% - 20px, 1440px); padding-top: 10px; }
+      .hero, .hero-judgment, .lane-head, .panel, .lane-followup, .phase-card, .meeting-card { padding: 20px; }
+      .phase-tracker header, .meeting-section header { padding: 20px; }
+      .hero { min-height: auto; }
+      .hero::after { opacity: 0.28; }
+      .task { grid-template-columns: auto 1fr; }
+      .task select { grid-column: 2; justify-self: start; }
+      .toolbar { border-radius: 18px; }
+      .search { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="eyebrow"><span class="pulse"></span>SupportPortal Roadmap</div>
+      <h1>整体落地优化计划</h1>
+      <ul class="hero-bullets" aria-label="Roadmap summary">
+        <li><strong>项目定位：</strong>建设基于 agent 的工单系统，不把 AI 包装成完全替代真人的 support engineer。</li>
+        <li><strong>当前阶段：</strong>Billing、Routing、Assignment、Multi-Agent、RAG/KG 都以可审计试运行为优先级。</li>
+        <li><strong>Phase 1/2/3 门禁：</strong>先做工单系统雏形，再扩大 AI 主动处理，最后进入 agent-to-agent 高自动化。</li>
+        <li><strong>近期 POC：</strong>验证 billing route、邮件回执、engineer reply 通过/拒绝、dashboard 指标和真实 case 模拟。</li>
+      </ul>
+      <div class="hero-grid" id="heroMetrics"></div>
+    </header>
+
+    <section class="phase-tracker" aria-label="Phase gate tracker">
+      <header>
+        <div>
+          <div class="eyebrow"><span class="pulse"></span>总计划追踪</div>
+          <h2>Phase 1/2/3 阶段门禁</h2>
+        </div>
+        <p>用三段门禁追踪落地：工单雏形先稳定，AI 主动处理再扩量，agent-to-agent 放到长期。</p>
+      </header>
+      <div class="phase-grid">
+        <article class="phase-card">
+          <span class="phase-status doing">进行中</span>
+          <h3>Phase 1：效率提升 + 工单系统雏形</h3>
+          <ul class="phase-gate-list">
+            <li>Zendesk 转发到内部系统，保留现有客户前端和渐进 AB test 出口。</li>
+            <li>billing 自动化 POC 先跑 invoice、account fraud / deactivate 等确定性 case。</li>
+            <li>AI guardrail 检查真人回复的 conclusion、proof、next step，并支持通过/拒绝。</li>
+            <li>Dashboard 展示 SLA、通过率、case 状态和人工审核结果。</li>
+            <li>准备 1% 小流量切流前的真实 case 回放和幂等验证。</li>
+          </ul>
+        </article>
+        <article class="phase-card">
+          <span class="phase-status todo">下一阶段</span>
+          <h3>Phase 2：AI 主动处理 + 人 approve</h3>
+          <ul class="phase-gate-list">
+            <li>AI 先调查、生成 AI draft，人做 approve / revise / override。</li>
+            <li>客户可见回复必须经过敏感信息 guardrail，内部证据不直接外泄。</li>
+            <li>逐步扩大 billing 之外的可自动化类型，质量低于门禁时回退人工。</li>
+            <li>小流量切流后统计覆盖率、误判率、Not automated 原因和客户反馈。</li>
+            <li>用质量指标决定哪些 case 可以从人工审核降级为抽查。</li>
+          </ul>
+        </article>
+        <article class="phase-card">
+          <span class="phase-status blocked">长期方向</span>
+          <h3>Phase 3：agent-to-agent + 高自动化</h3>
+          <ul class="phase-gate-list">
+            <li>Support agent 接入研发 agent、数据 agent、日志 agent 或专用 skill。</li>
+            <li>探索 hub / forum / A2A 协议，解决 agent 之间没有固定 endpoint 的协作问题。</li>
+            <li>限制 retry、并发和 token 预算，避免 T1 无限追问造成成本失控。</li>
+            <li>企业级合规审计先行：权限、历史记录、敏感信息、source of truth 都要可证明。</li>
+            <li>当 AI 能稳定解决大多数 case 后，人转向例外处理、最终责任和质量抽查。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <nav class="toolbar" aria-label="Roadmap filters">
+      <div class="filter" id="laneFilters"></div>
+      <input id="searchInput" class="search" type="search" placeholder="搜索任务、来源或计划">
+    </nav>
+
+    <details class="recent-updates-disclosure">
+      <summary>
+        <span class="recent-toggle">查看最近合入</span>
+        <span class="recent-hint">默认收起，点击后展开 merge 记录和计划同步点。</span>
+      </summary>
+      <div class="recent-updates-panel">
+        <ul class="update-list" id="recentUpdates"></ul>
+      </div>
+    </details>
+
+    <details class="architecture-disclosure">
+      <summary>
+        <span class="architecture-toggle">查看 Engineer AI Agent 架构</span>
+        <span class="architecture-hint">默认收起，点击后展开 Mermaid 生命周期图。</span>
+      </summary>
+      <div class="architecture-panel">
+        <section class="section-title architecture-title">
+          <div>
+            <h2>Engineer AI Agent 架构</h2>
+          </div>
+          <p>这张 Mermaid 图固定当前讨论后的 multi-agent 生命周期：client escalation 先被总结成可审计 packet，再进入 AI 调查循环，最后由工程师和 guardrail 共同完成客户回复。</p>
+        </section>
+
+        <section class="architecture-diagram" aria-label="Engineer AI multi-agent Mermaid architecture diagram">
+          <header>
+            <h3>Summary → Plan → Execute → Review → Guardrail</h3>
+            <p>Summary/Plan/Execute/Review 第一版已接入 escalation runtime，revise 会携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent；mem0 和 skill list 未完成时 Plan Agent 使用 deterministic fallback。</p>
+          </header>
+          <div class="mermaid-card">
+            <pre class="mermaid">
+flowchart TD
+  C["Client AI handle 不了客户问题"] --> E["Escalate to Engineer"]
+  E --> S["Summary Agent: 整理上下文、线索、缺失信息和 redaction boundary"]
+  S --> T["Create Engineer Ticket with summary packet"]
+  T --> P["Plan Agent: summary packet + mem0 + skill list / fallback"]
+  P --> X["Execute Agent: 调度 allowlisted subagents"]
+  X --> G["Evidence packet + task results"]
+  G --> R["Review Agent: 判断下一步"]
+  R -->|ready_for_engineer| F["告诉工程师发现"]
+  R -->|replan_required, max 2 retries| P
+  R -->|unable_to_resolve| U["告诉工程师目前信息无法回答或解决"]
+  F --> H["Engineer 操作"]
+  U --> H
+  H -->|revise| P
+  H -->|approve| Q["Guardrail: 生成或校验 customer-facing reply"]
+  Q --> A["Engineer final approve"]
+  A --> Y["回复客户"]
+  Y --> Z["关闭 Engineer 工单"]
+  Z --> M["写 audit event + Case Memory candidate"]
+            </pre>
+          </div>
+          <p class="diagram-note">Review Agent 的三种决策是 <code>ready_for_engineer</code>、<code>replan_required</code>、<code>unable_to_resolve</code>；关闭工单后只写 Case Memory candidate，不自动晋升 active memory。</p>
+        </section>
+      </div>
+    </details>
+
+    <section class="section-title">
+      <div>
+        <h2>主线进度</h2>
+      </div>
+      <p>每条主线都按“目前已经能证明什么”和“下一步还要交付什么”拆开，避免把计划文档、原型和可上线能力混在一起。</p>
+    </section>
+
+    <main class="lanes" id="lanes"></main>
+    <div class="empty" id="emptyState">没有匹配的主线或任务。</div>
+
+    <section class="section-title">
+      <div>
+        <h2>Routing 优化计划</h2>
+      </div>
+      <p>承接 Routing rules lane 已识别但未落地的能力升级，按高/中/低优先级排列；每条都对应 backend/services/support_router.py 的具体改造点。</p>
+    </section>
+
+    <section class="optimization-plan" aria-label="Routing optimization plan">
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-high">高优先级</span>
+          <h3>安全与可观测先行</h3>
+          <p>直接影响 billing automation 边界与产线路由的可调诊性；不落地这两条，后续阈值调整与灰度扩面都缺乏反馈信号。</p>
+        </header>
+        <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-deterministic-policy-gate</p>
+            <div class="opt-body">
+              <p class="opt-label">Deterministic billing 决策也走 minimal policy gate：refund / dispute / legal / compensation 关键词 sniff 命中即降级到 billing_review，避免白名单吞掉风险信号（例如「Account suspended, please refund」当前会被 account_suspension 白名单命中，refund 信号被丢失）。</p>
+              <div class="opt-meta">
+                <span class="tag">Safety</span>
+                <span class="tag">_heuristic_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-decision-observability</p>
+            <div class="opt-body">
+              <p class="opt-label">在 decide_support_route 出口加 structured log + metrics（route / scope_label / router_source / fallback_reason / model_confidence），并基于已有 support_billing_tickets 字段在 admin 页跑 daily 聚合，让 fallback rate、误判率、置信度分布有可视化看板。当前 schema 字段齐全，但缺监控管道，没法量化路由质量。</p>
+              <div class="opt-meta">
+                <span class="tag">Observability</span>
+                <span class="tag">decide_support_route</span>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </article>
+
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-medium">中优先级</span>
+          <h3>架构与正确性升级</h3>
+          <p>提升路由判别的颗粒度与一致性；为 phase 2/3 automation 灰度扩面铺路。</p>
+        </header>
+        <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-per-scope-threshold</p>
+            <div class="opt-body">
+              <p class="opt-label">per-scope confidence threshold：billing automation ≥0.85、refuse / web_search 可放宽到 0.6，由 env 覆盖。当前单一 INTENT_ROUTER_CONFIDENCE_THRESHOLD=0.7 对所有 scope 一视同仁，未反映 automation 与 refuse 的风险代价差异。</p>
+              <div class="opt-meta">
+                <span class="tag">Architecture</span>
+                <span class="tag">decide_support_route</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-risk-flag-taxonomy</p>
+            <div class="opt-body">
+              <p class="opt-label">把 LLM 输出的 risk_flags 归一化到固定枚举，policy gate 统一改 exact set match，移除 substring 判断。当前 _apply_policy_gate 同时用 set membership 和「"legal" in flag」substring，规则不一致、容易误中或漏中边界 case。</p>
+              <div class="opt-meta">
+                <span class="tag">Safety</span>
+                <span class="tag">_apply_policy_gate</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-semantic-first-layered</p>
+            <div class="opt-body">
+              <p class="opt-label">semantic-first 模式（/account）下强信号 deterministic（billing 白名单等）优先于 LLM；只把弱信号 deterministic（gratitude / 短 troubleshooting）放到 LLM 之后。当前 TK-ACC-C31612 修复后所有 deterministic 都被让到 LLM 之后，等于让中等置信 LLM 误判覆盖了高精度白名单。</p>
+              <div class="opt-meta">
+                <span class="tag">Architecture</span>
+                <span class="tag">decide_support_route(semantic_first)</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-conversation-aware-heuristic</p>
+            <div class="opt-body">
+              <p class="opt-label">_heuristic_route_decision 引入 latest_assistant_message.source 与历史，在长会话延续场景（如「thanks, but it still happens」）避免短消息独立判断；当存在 engineer_guidance 历史时优先 ticket_resolution 检测，避免误进短 troubleshooting fast path。</p>
+              <div class="opt-meta">
+                <span class="tag">Accuracy</span>
+                <span class="tag">_heuristic_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-pipeline-refactor</p>
+            <div class="opt-body">
+              <p class="opt-label">抽 RouteRequest dataclass + 单一 _route_pipeline(request, llm_first) 主循环，消除 semantic-first 与默认分支的复制实现。当前两条路径共享 LLM 调用、threshold 读取、heuristic fallback、conservative fallback 的所有逻辑，但用复制实现，后续加字段时必须改两处，容易漏。</p>
+              <div class="opt-meta">
+                <span class="tag">Refactor</span>
+                <span class="tag">support_router.py</span>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </article>
+
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-low">低优先级</span>
+          <h3>结构清理与韧性补强</h3>
+          <p>本身不阻塞 phase 2/3，但在加新 fast path 与 prompt 迭代频率上升时积累价值。</p>
+        </header>
+        <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-heuristic-split</p>
+            <div class="opt-body">
+              <p class="opt-label">拆 _heuristic_route_decision 为 ordered chain of sub-matchers（_match_billing_whitelist / _match_resolution / _match_gratitude / _match_short_troubleshooting / _match_api_mismatch / _match_join_channel / _match_product_portfolio）。当新增 fast path 频率上升时（plan_change / pricing_inquiry 等），让分支顺序约束显式化，避免 reviewer 必须重读 ~150 行才能确认插入位置。</p>
+              <div class="opt-meta">
+                <span class="tag">Refactor</span>
+                <span class="tag">_heuristic_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-automation-candidate-cleanup</p>
+            <div class="opt-body">
+              <p class="opt-label">删除 _llm_route_decision 的 billing action set 里 dead value automation_candidate（未在 policy gate 任何分支处理，最终默认落到 human_review_required），或给它明确语义。</p>
+              <div class="opt-meta">
+                <span class="tag">Cleanup</span>
+                <span class="tag">_llm_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-threshold-env-cache</p>
+            <div class="opt-body">
+              <p class="opt-label">INTENT_ROUTER_CONFIDENCE_THRESHOLD 改 module 级 lru_cache + 测试 reset 钩子，避免热路径每请求 parse env；与 per-scope threshold 落地时一并实现。</p>
+              <div class="opt-meta">
+                <span class="tag">Perf</span>
+                <span class="tag">_safe_float_env</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-llm-transient-retry</p>
+            <div class="opt-body">
+              <p class="opt-label">_llm_route_decision 对网络/超时类异常加 1 次指数退避重试（200ms），不重试 invalid_json / invalid_payload。避免瞬态网络抖动让 billing 工单错误进入 conservative_agora_technical_fallback。</p>
+              <div class="opt-meta">
+                <span class="tag">Reliability</span>
+                <span class="tag">_llm_route_decision</span>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>文件：docs/roadmap.html</span>
+      <span>本 Roadmap 是唯一维护中的整体落地优化追踪页，不作为产品运行时 source of truth；正式功能状态仍以代码、测试、changelog 和 feature_list 为准。</span>
+    </footer>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "supportportal_roadmap_v1";
+    const STATUS_LABELS = {
+      done: "已完成",
+      doing: "进行中",
+      todo: "未开始",
+      blocked: "暂停/阻塞"
+    };
+
+    const RECENT_UPDATES = [
+      {
+        key: "Guardrail Final",
+        copy: "Guardrail final approve 已接入升级链路：engineer 第一次 approve 只触发 deterministic guardrail 生成/校验 customer-facing reply，第二次 final approve 才发送客户回复并关闭工单；blocked 时保留 revise 出口。"
+      },
+      {
+        key: "Close Memory",
+        copy: "close-memory 已完成：final approve 成功后显式关闭 engineer case、写入 engineer_case_closed_after_customer_reply audit event（携带 closure、guardrail、feedback、memory candidate 的关键 ID/状态）、写 Case Memory candidate；candidate 默认 retrieval_enabled=False、active_memory_status=inactive，不自动晋升 active memory。"
+      },
+      {
+        key: "KG PR1",
+        copy: "KG SupportPortal PR2 已完成离线 ingest wiring：PR1 的 official-doc chunk 输入契约、`KgProvenance` 校验和 9 类实体 / 10 类关系 schema v1 已接到 vendored cusmem/GraphRAG episode 构建、schema bridge、deterministic episode id 与 dry-run CLI；仍未接线上 RAG runtime。"
+      },
+      {
+        key: "RAG vs KG",
+        copy: "RAG vs KG lane 已重写：固化『RAG 主、KG 辅助』结论，新增 RAG+KG 架构图（query expansion / rerank boost / structured fact 三个钩子位置 + 三条不能让步规则）和 RAG/KG 互补价值表；next 增加 SupportPortal adapter（9 类实体 schema）、provenance 强校验、runtime 降级边界、rag_vs_rag_plus_kg 离线基准对照与 Engineer/Client 分级 access policy。"
+      },
+      {
+        key: "Routing rules",
+        copy: "Routing rules 已独立成 Roadmap tab：记录 support_router.py 的 deterministic fast path、LLM classifier、route contract、fallback，以及 TK-ACC-68BAC7 没有进入 billing_automation 的原因。"
+      },
+      {
+        key: "Review Agent",
+        copy: "Review Agent 第一版已接入升级链路：deterministic review decision 根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve，限制最多 2 次 replan，保留 missing_information，review 结果持久化到 engineer_agent_state。"
+      },
+      {
+        key: "Execute Agent",
+        copy: "Execute Agent 第一版已接入升级链路：deterministic scheduler 会按 Plan Agent 计划调度 allowlisted subagents，记录 task results、dependency blockers 和 evidence packet。"
+      },
+      {
+        key: "KG Scope",
+        copy: "KG 首期 scope gate 已落地：只接受 official + official_markdown_upload 进入 Client AI RAG auxiliary 计划，拒绝 technical、external benchmark 和 confirmed case memory。"
+      },
+      {
+        key: "RAG/KG",
+        copy: "RAG/KG 计划收敛为官网文档 KG 辅助 Client AI RAG：RAG 保持 citation source of truth，KG 先做概念/关系、query expansion、rerank 和可降级增强。"
+      },
+      {
+        key: "#446",
+        copy: "Account intake v2 已合入：/account 统一只暴露一个 ticket_id，billing 白名单只记录 automation 状态，不执行字段收集、客户回复或内部邮件。"
+      },
+      {
+        key: "#444",
+        copy: "Roadmap tracker 成为唯一维护中的计划页，旧的 billing、assignment、engineer-evolution 计划页已从 docs 入口收敛。"
+      },
+      {
+        key: "#443",
+        copy: "Roadmap tracker 已补齐 snapshot、recent updates 和四条 lane 的当前进展表达。"
+      },
+      {
+        key: "#442",
+        copy: "Billing lane 已同步 canonical TK ticket id、manual/api source 和 Recent tickets 修复后的对外语义。"
+      },
+      {
+        key: "#439",
+        copy: "Engineer AI multi-agent 主线实施计划已转成中文 HTML，并由 contract test 锁定路径与关键标题。"
+      },
+      {
+        key: "#441",
+        copy: "新增本 Roadmap tracker 页面，把四条主线放到同一张可筛选、可勾选、可备注的进度板里。"
+      },
+      {
+        key: "#440",
+        copy: "Account/Billing intake 已统一对外 ticket 语义：canonical ticket_id 回到 TK-...，source 统一为 manual/api，Recent tickets 列表同步修复。"
+      },
+      {
+        key: "#438",
+        copy: "vendored cusmem 已从 GB/T 研究包整理成 text-first product-form pipeline，并移除 PDF/OCR 默认入口。"
+      },
+      {
+        key: "#436",
+        copy: "Engineer Multi-Agent 已有后端 skeleton、版本常量和契约测试，但还没有接入线上调查生命周期。"
+      },
+      {
+        key: "Plan",
+        copy: "Engineer Multi-Agent 架构计划已优化为 Summary → Plan → Execute → Review → Engineer approve/revise → Guardrail final approve → close ticket 的生命周期。"
+      }
+    ];
+
+    const LANES = [
+      {
+        id: "meeting-minutes",
+        short: "Meeting",
+        title: "AI Agent 工单系统落地对齐会",
+        status: "done",
+        thesis: "日期：2026-06-18；参会人：derek, zac, alex, emma。会议纪要卡片沉淀本轮 Roadmap 的定位、共识、分歧、三类 case、合规审计和近期 POC。",
+        done: [
+          "会议确认 Roadmap 主方向：先做可审计、可试运行的基于 agent 的工单系统，再逐步提升 AI 自动化比例。",
+          "会议明确短期不追求一次性替代 support engineer，而是把效率、质量、审计和 license 成本作为 Phase 1 目标。"
+        ],
+        review: [
+          "核心节奏已经对齐：Phase 1 可以让 AI review 人做 guardrail，Phase 2 再让人 review AI 的 draft，Phase 3 才进入 agent-to-agent。",
+          "合规和审计是系统边界，不是 UI 偏好；WeCom / 临时 report 不能替代可追踪工单系统。"
+        ],
+        next: [
+          { id: "meeting-billing-route", status: "todo", label: "把 billing route 验证、邮件回执、engineer reply 通过/拒绝、dashboard 指标和真实 case 模拟纳入近期 POC。", horizon: "POC" },
+          { id: "meeting-agent-boundary", status: "todo", label: "继续验证保守 workflow 与成熟 agent 自主循环的边界，避免 context 割裂或权限失控。", horizon: "Architecture" }
+        ],
+        meeting_minutes: [
+          {
+            kicker: "Positioning",
+            title: "项目定位",
+            points: [
+              "不是做 AI support engineer 替代真人，而是做基于 agent 的工单系统。",
+              "短期先减少 copy/paste 到外部 AI 的低效动作，回复仍要像真人 support engineer。",
+              "客户可见输出要有自然语气、开场、签名和必要延迟，避免 AI 直接秒回感。"
+            ]
+          },
+          {
+            kicker: "Consensus",
+            title: "当前共识",
+            points: [
+              "必须保留工单界面，不能只靠群聊或临时 report 支撑审计。",
+              "Zendesk 先渐进转发，不一次性迁移客户入口；billing 先试、AB test 后扩量。",
+              "对外 customer-facing 和对内 internal-facing 隔离，内部证据不能原样给客户。"
+            ]
+          },
+          {
+            kicker: "Debate",
+            title: "核心分歧",
+            points: [
+              "AI review 人适合 Phase 1 做 guardrail：检查 conclusion、proof、next step 是否齐全。",
+              "人 review AI 适合 Phase 2：AI 先调查和起草，人 approve / revise / override。",
+              "保守 workflow 强调可观测和审计，成熟 agent 自主循环强调能力上限和 context 连贯。"
+            ]
+          },
+          {
+            kicker: "Case Types",
+            title: "三类 case",
+            points: [
+              "完全自动化：invoice、文档链接、标准信息收集等，稳定后只抽查。",
+              "AI 做人 approve：AI 调查并生成 draft，人检查正确性、敏感信息和客户表达。",
+              "AI 无能为力转真人：AI 停止乱猜，真人调查后再由 guardrail 做表达和证据检查。"
+            ]
+          },
+          {
+            kicker: "Compliance",
+            title: "合规审计",
+            points: [
+              "WeCom 不适合作审计 source of truth，离职历史、权限、记录归档都不可控。",
+              "客户误发 app id、certificate 或其他敏感信息时，系统必须能证明不会泄露。",
+              "Dashboard 是服务质量监管入口，审计需要能抽样查看 case、SLA、通过率和操作历史。"
+            ]
+          },
+          {
+            kicker: "POC",
+            title: "近期 POC",
+            points: [
+              "验证 billing route 验证、真实 Zendesk case 分类、Not automated 原因和白名单边界。",
+              "补齐邮件回执机制，确保 agent 发出请求后能收到回复并继续流程。",
+              "演示 engineer reply 通过/拒绝、dashboard 指标、真实 case 模拟和必要延时效果。"
+            ]
+          }
+        ],
+        sources: [
+          "2026-06-18 会议讨论：derek, zac, alex, emma"
+        ]
+      },
+      {
+        id: "engineer-multi-agent",
+        short: "Multi-Agent",
+        title: "Engineer AI multi-agent",
+        status: "doing",
+        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, max 2 replan, missing_information context）、revise replan 循环、close-memory（final approve 后显式关闭 engineer case、写 audit event、写 Case Memory candidate，不自动晋升 active memory）和 replay eval dataset（从 summary packet、review decisions、replan notes、engineer revise、approved replies 生成 candidate dataset）；当前下一步是 replay runner / metrics dashboard / regression gate。",
+        done: [
+          "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
+          "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
+          "Case Memory Ledger 已落地：所有 feedback 入账，默认 retrieval_enabled=false / active_memory_status=inactive，不会自动进入长期记忆。",
+          "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
+          "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
+          "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，Roadmap 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
+          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，revise replan 链路已完成接入，Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步是 replay runner / metrics dashboard / regression gate。"
+        ],
+        review: [
+          "当前证据能证明的是 Summary/Plan/Execute/Review、revise replan 与 Guardrail final approve 已接入 runtime；它仍不是无需人工介入的自动闭环，因为 final approve 仍必须由工程师确认。",
+          "Summary Agent 应先输出结构化 summary packet，再创建 Engineer ticket；它要记录客户上下文、已知线索、escalation reason、缺失信息和 redaction boundary。",
+          "Plan Agent 第一版已实现 deterministic fallback：mem0 未接入时用 fallback_unavailable，skill list 未安装时用 allowlist_fallback，只基于 summary packet 产出计划。",
+          "Execute Agent 第一版已实现 deterministic scheduler/orchestrator：只调度 allowlisted subagents，显式记录 dependencies、parallel groups、task results 和 evidence packet，并持久化到 engineer_agent_state。",
+          "Review Agent 是关键门禁，决策固定为 ready_for_engineer、replan_required、unable_to_resolve；replan 最多 2 次且必须记录原因，缺失客户信息不会单独触发 replan。",
+          "Engineer approve 后仍必须走 guardrail 生成/校验 customer-facing reply，并再交给 engineer 最终 approve；关闭工单时只写 Case Memory candidate，不自动变 active memory。"
+        ],
+        next: [
+          { id: "ma-summary-agent", status: "done", label: "Summary Agent 第一版（deterministic summary packet）已完成：builder 输出写入 engineer_handoff_packet（engineer-summary-packet-v1），记录 escalation 上下文、线索、缺失信息和 redaction boundary。", horizon: "Task 2" },
+          { id: "ma-plan-agent", status: "done", label: "Plan Agent 第一版已完成：基于 summary packet、mem0（未接入时 fallback）和 skill list（未安装时用 allowlist fallback）生成 hypotheses、tasks、dependencies 和 blockers，并持久化到 engineer_agent_state.active_plan。", horizon: "Task 3" },
+          { id: "ma-execute-agent", status: "done", label: "实现 Execute Agent：deterministic scheduler 调度 allowlisted subagents，区分 parallel groups 与串行依赖，收集 task results 和 evidence packet 并持久化到 engineer_agent_state。", horizon: "Task 4" },
+          { id: "ma-review-agent", status: "done", label: "Review Agent 第一版已实现 deterministic review decision：根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve，并限制最多 2 次 replan，保留 missing_information，review 结果持久化到 engineer_agent_state。", horizon: "Task 5" },
+          { id: "ma-revise-replan", status: "done", label: "revise 携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent，实现 Plan → Execute → Review 循环（最多 2 次 replan）。", horizon: "Runtime" },
+          { id: "ma-guardrail-final", status: "done", label: "approve 后通过 guardrail 生成/校验 customer-facing reply，再交给 engineer 做最后 approve，避免直接自动回复客户。", horizon: "Runtime" },
+          { id: "ma-close-memory", status: "done", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
+          { id: "ma-eval", status: "done", label: "从 summary packet、review decisions、replan notes、engineer revise 和 approved replies 生成 replay eval dataset。", horizon: "Evaluation" },
+          { id: "ma-replay-runner", status: "todo", label: "replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量。", horizon: "Evaluation" }
+        ],
+        sources: [
+          "docs/superpowers/plans/2026-06-11-engineer-ai-multi-agent-mainline.html",
+          "docs/superpowers/specs/2026-06-10-engineer-ai-evolution-phase0-design.md",
+          "docs/superpowers/specs/2026-06-10-engineer-hitl-feedback-schema-design.md",
+          "docs/superpowers/plans/2026-06-10-engineer-evidence-orchestration.md",
+          "docs/prompt_change_log.md",
+          "backend/services/engineer_multi_agent.py",
+          "backend/tests/test_engineer_multi_agent.py",
+          "backend/tests/test_roadmap_contract.py",
+          "backend/tests/test_case_memory_ledger.py"
+        ]
+      },
+      {
+        id: "assignment-ui",
+        short: "Assignment",
+        title: "Ticket assignment UI demo",
+        status: "doing",
+        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready + read-only admin queue view 三段式 demo；生产级调度、持久化、审计和真实队列接入仍未开始。",
+        done: [
+          "`/assignment` 已从登录自动分配改为三段式 demo：选择 engineer → welcome/readiness 页面 → 点击 I'm ready to roll 后领取 ticket 并进入 workspace。",
+          "原型包含 Jack/Maya/Leo 工程师选择器、localStorage 登录状态、UTC+8 每日固定 shift、welcome readiness overview 和显式领取动作。",
+          "Daily shift 卡片已支持直接修改 Start / End 并保存，复用 Save shift 写入 localStorage 后立即刷新 In shift / Out of shift 与 ready 状态。",
+          "Out of shift 时 I'm ready to roll 按钮 disable，显示原因和下一段 shift 信息；in shift 时点击按钮从 queue 领取下一张 case。",
+          "关闭/approve 当前 ticket 后不自动连续领取下一张，展示 I'm ready for the next case CTA 由工程师再次显式领取。",
+          "`/assignment/admin` 扩展为 Queue & engineer overview 双区域：包含 waiting queue、active assignment、on shift now、online coverage 状态卡。",
+          "新增 Engineer overview section：当前 on-shift 列表、online/offline 固定 mock 状态、weekly schedule 网格和 admin-only shift 侧边编辑面板。",
+          "Weekly schedule 使用 Monday–Sunday × 00:00–23:00 UTC+8 小时网格，每个 engineer 固定颜色 chip，支持 overnight shift 跨到次日显示。",
+          "Admin 页提供 engineer/day picker，可为没有现有 chip 的空白日期新建或调整 shift。",
+          "Admin schedule 独立于 `/assignment` 的 ASSIGNMENT_SHIFT_KEY，使用专用 localStorage key，两者互不影响。",
+          "SLA 超时/transfer 状态可模拟，契约测试确认 welcome + ready CTA + admin 入口、显式领取行为和不影响现有 engineer UI。",
+          "`/assignment` workspace sidebar 改为 hover 展开模式：桌面默认 96px 窄栏显示品牌 icon 和头像，hover/focus-within 后展开到 320px 显示完整 context card、shift form、audit trail 和操作按钮；移动端保持全宽。",
+          "新增 Ready loading transition：点击 I'm ready to roll 后先展示 900ms loading 动画（assignment/AI handoff 语义），再进入 workspace；非 in-shift / 无 engineer 场景不触发 loading。",
+          "新增 Break after this case 功能：engineer 可在 workspace header 点击激活，approve 当前 case 后自动回到 welcome/readiness 主页面而非留在 workspace；刷新后 localStorage 保持状态不丢。"
+        ],
+        review: [
+          "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",
+          "Welcome 页 Daily shift 卡片现在就是排班调整入口，避免为了改 shift 先进入 workspace/sidebar。",
+          "Admin 页新增 Engineer overview、weekly schedule grid 和 engineer/day picker 提供 demo 排班可视化，admin-only shift 编辑不联动 /assignment 个人 shift。",
+          "Online/Offline 状态使用固定 mock 数据展示，不联动 /assignment 登录状态或 workspace 状态。",
+          "生产化最缺的是 server-side queue、assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。"
+        ],
+        next: [
+          { id: "assign-data-model", status: "todo", label: "定义生产 Engineer Ticket 生命周期、状态机和队列持久化模型。", horizon: "Model" },
+          { id: "assign-shift-api", status: "todo", label: "实现真实登录/排班 API，shift schedule 持久化并统一 UTC+8。", horizon: "Model" },
+          { id: "assign-scheduler", status: "todo", label: "实现单 active case 分配器、first response 优先级、等待时间排序和无可用工程师回队列。", horizon: "Scheduler" },
+          { id: "assign-audit", status: "todo", label: "记录创建、入队、分配、SLA 开始、AI 草稿、批准、超时、转派和关闭事件。", horizon: "Audit" },
+          { id: "assign-real-ui", status: "todo", label: "把 demo 能力迁移到真实 Engineer Portal 工作台和队列运行视图。", horizon: "Portal" },
+          { id: "assign-pilot", status: "todo", label: "小范围试点 Tier One，统计处理量、平均处理时长、超时、转派和有效回复比例。", horizon: "Pilot" }
+        ],
+        sources: [
+          "docs/prompt_change_log.md",
+          "ui/assignment-ui/index.html",
+          "ui/assignment-ui/admin/index.html",
+          "ui/assignment-ui/app.js",
+          "ui/assignment-ui/styles.css",
+          "backend/tests/test_assignment_ui_contract.py",
+          "docs/feature_list.md"
+        ]
+      },
+      {
+        id: "billing-routing",
+        short: "Billing",
+        title: "Billing intake / ticket routing",
+        status: "doing",
+        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution：`/account` 先跑 LLM semantic router 再 fallback 到 deterministic；新增 `billing.account_verification` 覆盖 suspicious activity / fraud review / company verification / reactivation；字段追问、客户回复和内部邮件已接入真实执行；TK-ACC-C31612 的 weak gratitude 抢占问题已修复。",
+        done: [
+          "Automation 白名单已扩展到 `account_suspension`、`detailed_invoice` 和 `account_verification`；suspicious activity / fraud / company verification / reactivation 新进入 billing automation intake。",
+          "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
+          "`POST /account` 已实现创建客户工单 -> semantic-first route -> billing automation 执行 -> 记录结果；白名单 automation 会追问缺失字段、生成客户回复，并在字段完整时尝试内部邮件流转。",
+          "`/account` 手动 UI 已复用 client 体验，并展示 route、单一 canonical `TK-...` ticket id、Automation / Not automated 状态和最近 ticket 历史；详情页不再展示第二个 Support ticket ID。",
+          "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 view-model 只保留一个 `ticket_id`；`billing_ticket_id` 保持为内部 companion key，`source` 统一为 `manual` / `api`。",
+          "Billing ticket 历史列表和详情 API 已完成；详情 API 支持用 canonical `ticket_id` 直接查询，不再依赖 Recent tickets 列表窗口。",
+          "底层 billing automation helper 支持 action-specific destination env 和内部邮件；`/account` intake 字段完整时触发真实邮件发送，SMTP 缺配置时 fail closed 并记录 skipped/failed 原因。"
+        ],
+        review: [
+          "这是四条主线里最接近小流量试运行的一条，因为 routing、ticket view-model、状态记录、历史查询和 live `/account` smoke 都有测试证据。",
+          "TK-ACC-C31612 修复已验证：semantic-first 路由 + gratitude 降级后，长正文末尾 thank you 不再误判为 small_talk。",
+          "试运行前必须补 Zendesk/external_id 幂等，否则 webhook 重放仍会带来重复建单和重复状态记录风险。",
+          "白名单不要扩大过快；先用真实 case 回放证明 account_suspension、detailed_invoice 和 account_verification 的 route 误判率，再决定是否进一步扩展。"
+        ],
+        next: [
+          { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单 route、非白名单、Not automated、高风险人工。", horizon: "Scope" },
+          { id: "billing-zendesk", status: "todo", label: "接入 Zendesk webhook/API 拉取新工单内容和必要 metadata。", horizon: "Source" },
+          { id: "billing-human-review", status: "todo", label: "建立人工审核模式，先审核 route 与 automation 状态，再决定是否允许生成客户告知或内部邮件。", horizon: "Review" },
+          { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单或重复写入 automation 状态。", horizon: "Reliability" },
+          { id: "billing-pilot", status: "todo", label: "启用小流量试运行，统计覆盖率、route 误判、Not automated 原因和人工审核结果。", horizon: "Pilot" },
+          { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" },
+          { id: "billing-account-verification-fields", status: "done", label: "account_verification 已实现字段追问、Use Case section 解析、Country+Address 合并、个人开发者分支、app_id 可选提取和内部邮件真实发送。", horizon: "Billing" }
+        ],
+        sources: [
+          "docs/prompt_change_log.md",
+          "backend/services/billing_automation.py",
+          "backend/services/support_router.py",
+          "backend/main.py",
+          "backend/sql/ticket_storage.sql",
+          "backend/tests/test_support_router.py",
+          "backend/tests/test_account_intake.py",
+          "backend/tests/test_account_ui_contract.py",
+          "backend/tests/test_repository_configuration.py",
+          "ui/account-ui/app.js",
+          "docs/feature_list.md"
+        ]
+      },
+      {
+        id: "routing-rules",
+        short: "Routing",
+        title: "Routing rules",
+        status: "doing",
+        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构：deterministic fast path 处理高置信 billing 和明显非 Agora 信号；LLM semantic router 输出 structured intent taxonomy（billing.account_suspension、billing.detailed_invoice、billing.account_verification、billing.refund_or_dispute 等）；policy gate 做安全边界拆分「能不能 automation」；old route contract 保留，避免一次性破坏下游。`/account` 使用 semantic-first 模式，LLM 先跑避免 TK-ACC-C31612 类 weak gratitude 抢占；gratitude 降级为仅匹配短纯感谢消息。每个 scope_label 被 route contract 固定成 route_family、execution_action 和 tooling_profile，新增 billing_review route family 用于需人工审核的 billing case。",
+        done: [
+          "入口是 `decide_support_route()`：空消息直接 `non_agora/refuse`；非空消息先进入 `_heuristic_route_decision()`，没有命中才调用 `_llm_route_decision()`。",
+          "LLM semantic router 已升级为 intent taxonomy 输出：`scope_label`、`semantic_intent`（billing.account_suspension / billing.detailed_invoice / billing.refund_or_dispute）、`recommended_action`、`automation_eligibility`、`confidence`、`evidence_spans`、`risk_flags`。",
+          "Policy gate (`_apply_policy_gate()`) 已实现：拆分「是什么问题」和「能不能 automation」。refund_or_dispute 和 legal/compensation 永不可 automation；account_suspension 默认 human_review_required；detailed_invoice 只在无 dispute 信号时允许 automation。",
+          "`SupportRouteDecision` 新增 7 个 optional 字段：`semantic_intent`、`automation_eligibility`、`policy_decision`、`not_automated_reason`、`risk_flags`、`evidence_spans`、`router_source`，兼容所有现有 route contract。",
+          "新增 `billing_review` route family：billing 需人工审核时输出 `route_family=billing_review`、`execution_action=human_review_required`，与 `billing_automation` 区分。",
+          "deterministic fast path 的顺序固定：billing whitelist -> ticket_resolution -> gratitude/small_talk -> short troubleshooting -> API semantics mismatch -> join channel -> product portfolio。",
+          "billing fast path 已扩展 account_suspension 白名单：新增 `account temporarily suspended`、`account has been suspended`、`suspended due to insufficient balance` 等真实表达，覆盖 TK-ACC-68BAC7 类 case。",
+          "billing fast path 命中后输出 `scope_label=billing`、`semantic_intent=billing.{action}`、`route_family=billing_automation`、`tooling_profile=deterministic_billing_intake`、`router_source=deterministic`。",
+          "`detailed_invoice` 只匹配 detailed invoice / invoice details / send invoice，并用 dispute/refund/wrong/overcharged 等词排除金额争议；`account_suspension` 已覆盖 account suspended、suspended account、account blocked/disabled、temporarily suspended、has been suspended、suspended due to balance。",
+          "ticket resolution 只在客户确认问题解决且没有负向标记时触发，输出 `ticket_resolution/resolve_ticket/deterministic_resolution`；普通 thanks 没有 resolution context 时会走 `small_talk/controlled_response`。",
+          "短排障消息才走 short troubleshooting fast path：不超过 24 words / 180 chars，且包含 black screen、no audio、join failed、disconnect、network quality 等信号；若同时有 printer/outlook/excel/office wifi/blue screen 等 general IT 信号，则转 `non_agora/refuse`。",
+          "API semantics mismatch、join channel 和 Agora product portfolio 有独立 deterministic route；product portfolio 输出 `agora_non_technical/web_company_info/web_search`，技术与排障输出 `agora_technical/agora_docs_rag/rag`。",
+          "LLM classifier 已升级输出 schema：返回 `scope_label`、`semantic_intent`、`recommended_action`、`automation_eligibility`、`confidence`、`reason`、`matched_signals`、`evidence_spans`、`risk_flags`。",
+          "LLM billing 分类规则：billing.account_suspension 覆盖所有 account access/balance/suspension 语义；billing.refund_or_dispute 覆盖 refund/dispute/wrong amount/overcharged/legal compensation；billing.detailed_invoice 覆盖详细发票请求。",
+          "route contract 固定映射：`agora_technical -> agora_docs_rag/rag/agora_docs_only`，`agora_non_technical -> web_company_info/web_search/official_web_search`，`non_agora -> fallback_or_refuse/refuse/no_agora_docs_refusal`，`small_talk -> general_chat/controlled_response/controlled_acknowledgement`，`billing -> billing_automation`（可自动化）或 `billing_review`（需人工审核）。",
+          "Account intake 已扩展 view-model：API response、billing ticket 和 event 均包含 `semantic_intent`、`automation_eligibility`、`policy_decision`、`not_automated_reason`、`risk_flags`、`evidence_spans`、`router_source`。",
+          "`support_billing_tickets` schema / Postgres repository 已补 semantic routing 字段，避免只在 InMemory 中可见、生产持久化丢失 route audit metadata。",
+          "Golden billing routing regression set 已建立：`test_support_router_semantic_billing.py` 包含 12 个 case，覆盖 TK-ACC-68BAC7、account suspension variants、detailed invoice、refund/dispute/legal negative cases、non-billing cases。",
+          "Router prompt (`prompts/router.py`) 已更新：新增 Billing Intent Taxonomy、Automation Eligibility 规则、billing few-shot examples。",
+          "TK-ACC-68BAC7 已修复：`Account temporarily suspended` 现被 deterministic 白名单命中，route 为 `billing_automation/account_suspension`，不再误判为 `web_search`。",
+          "`TK-ACC-C31612` 已修复：长正文结尾 `thank you` 不再被 weak gratitude 抢先判为 `small_talk`。`/account` 改用 semantic-first：LLM 先跑识别 full intent，gratitude 仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的消息。",
+          "新增 `billing.account_verification` intent：LLM 将 suspicious activity / fraud review / company verification / reactivation 归入新类；policy gate 在无 refund/dispute/legal 风险时放行为 `billing_automation/account_verification`。",
+          "Policy gate 扩展：`account_verification` 默认 eligible，带 refund/amount_dispute/legal_threat 时回退 `billing_review/human_review_required`；`account_suspension` 保持默认 human_review_required。",
+          "Route contract 新增映射：`account_verification` → `billing_automation/account_verification/deterministic_billing_intake`。",
+          "Router prompt 已补 `billing.account_verification` taxonomy + automation eligibility + few-shot example（suspicious activity company verification with Use Case section）。",
+        ],
+        review: [
+          "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
+          "Deterministic fast path 保留为 high-precision hint：billing whitelist 命中后仍走 `billing_automation`，但 policy gate 仅应用于 LLM-sourced 决策，避免误杀高置信确定性匹配。",
+          "`billing_review` route family 隔离了需人工审核的 billing case：deterministic 命中直接走 `billing_automation`；LLM 判断的 account_suspension 和 refund_or_dispute 走 `billing_review`。",
+          "`conservative_agora_technical_fallback` 是保守兜底：宁可进入 RAG，也不在低置信时拒绝客户或触发 automation。",
+          "TK-ACC-68BAC7 已修复：扩展后的 deterministic 白名单可命中 `Account temporarily suspended` 和 `account has been suspended due to insufficient balance`，不再误判为 web_search。",
+          "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `agora_non_technical`；需要在 golden set 中持续补充边界 case。",
+          "TK-ACC-C31612 修复验证：长正文末尾 thank you 不再触发 small_talk，LLM semantic-first 可正确识别 billing intent；短纯感谢仍保持 controlled_response。",
+        ],
+        next: [
+          { id: "routing-billing-suspension-patterns", status: "done", label: "扩展 account_suspension deterministic whitelist，覆盖 temporarily suspended、has been suspended、suspended due to insufficient balance、restore access 等真实表达。", horizon: "Billing" },
+          { id: "routing-billing-regression-set", status: "done", label: "建立 billing routing 回归集，至少包含 account suspension、detailed invoice、billing terms/account status、refund/dispute/overcharged negative cases。", horizon: "Tests" },
+          { id: "routing-not-automated-reasons", status: "done", label: "在 account billing view-model 中更明确记录 Not automated 原因：heuristic miss、LLM non-billing、billing action unsupported 或 confidence fallback。", horizon: "Observability" },
+          { id: "routing-llm-billing-prompt", status: "done", label: "补 LLM classifier few-shot：account suspended due to balance / restore access 应归入 billing account_suspension，而 billing terms change 可保留人工审核。", horizon: "Prompt" },
+          { id: "routing-llm-semantic-router", status: "done", label: "LLM semantic router 升级为 intent taxonomy 输出，新增 policy gate 拆分「是什么问题」和「能不能 automation」。", horizon: "Architecture" },
+          { id: "routing-policy-gate", status: "done", label: "Policy gate 已实现：refund/dispute/legal 永不可 automation，account_suspension 默认 human_review_required。", horizon: "Safety" },
+          { id: "routing-semantic-schema", status: "done", label: "SupportRouteDecision 新增 semantic_intent、automation_eligibility、not_automated_reason、risk_flags、evidence_spans、router_source 等字段。", horizon: "Schema" },
+          { id: "routing-billing-review-family", status: "done", label: "新增 billing_review route family 用于需人工审核的 billing case，与 billing_automation 区分。", horizon: "Contract" },
+          { id: "routing-roadmap-diagram", status: "done", label: "Roadmap Routing tab 已更新架构描述、review 结论和 next tasks，反映 LLM semantic router + policy gate 新架构。", horizon: "Docs" },
+          { id: "routing-threshold-audit", status: "done", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。router_source=conservative_fallback 区分 below_confidence_threshold / missing_credentials / llm_invocation_failed / invalid_json / invalid_payload / route_fail_open。", horizon: "Metrics" },
+          { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 Roadmap tab。", horizon: "Docs" },
+          { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
+          { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 golden set 覆盖率足够时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
+          { id: "routing-account-verification-intake", status: "done", label: "新增 billing.account_verification intent + account_verification route：覆盖 suspicious activity / fraud / company verification / reactivation。", horizon: "Billing" },
+          { id: "routing-gratitude-downgrade", status: "done", label: "降级 gratitude 确定性信号：仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的短纯感谢。TK-ACC-C31612 不再被误判。", horizon: "Safety" },
+          { id: "routing-semantic-first-account", status: "done", label: "/account 接入 semantic-first 模式：LLM 先跑路由，避免 weak deterministic 抢占。", horizon: "Architecture" },
+        ],
+        architecture: {
+          title: "Routing Architecture: Semantic Intent -> Policy Gate -> Route Contract",
+          summary: "Route tab 新增这张架构图，用来固定新的扩展点：deterministic fast path 只处理高置信信号；LLM 输出 semantic intent 和证据；policy gate 决定 automation eligibility；route contract 继续保护旧下游。",
+          mermaid: [
+            "flowchart TD",
+            "  I[\"Ticket: message + subject + context\"] --> M{\"semantic_first?\"}",
+            "  M -->|false, Client AI default| H1{\"Deterministic fast path\"}",
+            "  M -->|true, /account| L1[\"LLM semantic router\"]",
+            "  H1 -->|hit| D[\"Deterministic decision (skips policy gate)\"]",
+            "  H1 -->|miss| L2[\"LLM semantic router\"]",
+            "  L1 --> TC{\"confidence >= INTENT_ROUTER_CONFIDENCE_THRESHOLD and payload valid?\"}",
+            "  L2 --> TC",
+            "  TC -->|yes| PG{\"scope_label == billing?\"}",
+            "  TC -->|no in semantic_first| H2{\"Deterministic fast path\"}",
+            "  TC -->|no in default| F[\"conservative_agora_technical_fallback (agora_technical / rag, fallback_reason recorded)\"]",
+            "  H2 -->|hit| D",
+            "  H2 -->|miss| F",
+            "  PG -->|no| BP[\"LLM decision passes through (non-billing scope unchanged)\"]",
+            "  PG -->|yes| BG[\"Billing policy gate (_apply_policy_gate)\"]",
+            "  BG -->|refund_or_dispute or legal/compensation risk| BR[\"billing_review / human_review_required\"]",
+            "  BG -->|billing.account_suspension| BR",
+            "  BG -->|billing.account_verification with no risk| BA1[\"billing_automation / account_verification\"]",
+            "  BG -->|billing.detailed_invoice with no dispute| BA2[\"billing_automation / detailed_invoice\"]",
+            "  BG -->|general or risky| BR",
+            "  D --> C[\"Route contract\"]",
+            "  BP --> C",
+            "  BA1 --> C",
+            "  BA2 --> C",
+            "  BR --> C",
+            "  F --> C",
+            "  C -->|agora_technical| RAG[\"agora_docs_rag / rag / agora_docs_only\"]",
+            "  C -->|agora_non_technical| WEB[\"web_company_info / web_search / official_web_search\"]",
+            "  C -->|non_agora| REF[\"fallback_or_refuse / refuse\"]",
+            "  C -->|small_talk| ST[\"general_chat / controlled_response or refuse\"]",
+            "  C -->|billing| ACC[\"/account view-model + support_billing_tickets audit fields\"]",
+            "  C -->|ticket_resolution| TR[\"ticket_resolution / resolve_ticket / deterministic_resolution\"]"
+          ].join("\n"),
+          note: "图固定两条入口模式：默认（Client AI 主链路）先跑 deterministic fast path，semantic_first（/account）先跑 LLM。Deterministic 命中的决策不进 policy gate（包括 billing 白名单），LLM 命中后只对 billing scope 跑 policy gate，其余 scope 直接落到 route contract。conservative_agora_technical_fallback 是真实分支节点，不是 route contract 输出。新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。Router audit 字段（intent_router_attempted / fallback_reason / failure_type / router_source）已在 SupportRouteDecision、SupportResolution、TicketExecutionResult 和 billing event 中透传。fallback rate 的口径：仅 router_source=conservative_fallback 计入 fallback；其下按 fallback_reason 细分：below_confidence_threshold（LLM 返回但低于 threshold）、missing_credentials、llm_invocation_failed、invalid_json、invalid_payload、route_fail_open（runtime 超时/异常）。router_source=llm_semantic 才算模型判断，不等于 fallback。"
+        },
+        sources: [
+          "backend/services/support_router.py",
+          "backend/services/support_router_prompt.py",
+          "backend/services/prompts/router.py",
+          "backend/services/billing_automation.py",
+          "backend/main.py",
+          "backend/sql/ticket_storage.sql",
+          "backend/repositories/ticket_repository.py",
+          "backend/tests/test_support_router.py",
+          "backend/tests/test_support_router_semantic_billing.py",
+          "backend/tests/test_account_intake.py",
+          "backend/tests/test_repository_configuration.py",
+          "backend/tests/test_roadmap_contract.py",
+          "docs/feature_list.md"
+        ]
+      },
+      {
+        id: "rag-vs-kg",
+        short: "RAG vs KG",
+        title: "RAG vs KG / Case Memory",
+        status: "doing",
+        thesis: "经独立架构评审结论：KG 不能也不应该完全替代 RAG，两者并存互补是唯一合理路径。RAG 继续承载 source-of-truth 与可引用证据（citation）；KG 在 query expansion、rerank boost、结构化 fact lookup 三个钩子位置作为辅助信号；首期 scope 已限定为官网文档，SupportPortal KG contracts、schema v1、chunk-level provenance 校验与 vendored cusmem/GraphRAG 离线 ingest wiring 已落地，下一步是运行时降级边界以及 RAG vs RAG+KG 离线基准对照。Case Memory Ledger / Active Retrieval Memory 仍按后续阶段推进。",
+        done: [
+          "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate；Client AI 仍以官网文档 chunk/citation 生成答案。",
+          "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
+          "知识边界已固定：官网文档型知识、citation、source path 和重复文档治理留在 RAG；本阶段 KG 只从官网文档派生概念图谱，confirmed cases/经验仍留作后续 Case Memory Layer。",
+          "Case Memory Ledger 已实现为完整审计账本，Active Retrieval Memory 作为后续可召回子集，ledger candidate 不会自动变 active。",
+          "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。",
+          "`python3 -m graphiti_rag` CLI、core/validate/full schema-design preset、lazy imports 和 no-Neo4j help path 已有回归测试覆盖。",
+          "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。",
+          "KG 首期 scope gate 已落地：只有 `official` + `official_markdown_upload` 可生成 Client AI RAG auxiliary 入库计划；technical article、external benchmark 和 confirmed case memory 会被拒绝。",
+          "SupportPortal KG PR1 已落地：新增 official-doc chunk 输入契约、`KgProvenance` / KG runtime 输出校验、`supportportal_official_docs_v1` schema（9 类实体 + 10 类关系）和 strict schema hash。",
+          "SupportPortal KG PR2 已落地：`kg_graphrag_adapter.py` / `kg_offline_ingest.py` / `scripts/kg_ingest_official_doc_chunks.py` 把 official-doc chunk contract 转为 vendored cusmem `Chunk` 与 Graphiti episode，并保留 provenance、schema hash、content hash、deterministic episode UUID 和 dry-run 验证路径。",
+          "独立架构评审已完成：对比生产 RAG 链路（vector+BM25+FTS / RRF / metadata prune / external rerank / sufficiency gate / citation 合约）和 vendor/cusmem Graphiti（conversation-memory bi-temporal 模型），结论是 KG 不可替代 RAG，方案改为 RAG + KG 互补，并固化三个 KG 钩子位置与三条不能让步规则。"
+        ],
+        review: [
+          "Client AI 客户可见答案的 citation 是合同义务。KG 把多段原文压成 entity/edge 时丢失逐字证据；`kg_official_docs_scope.allow_answer_without_rag_citation=False` 已经在代码层承认这点，运行时层还需要 adapter 强制校验。",
+          "LLM 三元组抽取对长尾文档是有损的：版本依赖、参数范围、否定句、错误码语义高度依赖上下文；BM25/向量召回原文不会丢这些条件。KG 适合用作多跳/同义/结构化 fact 的辅助信号，不适合替代召回原文。",
+          "RAG 已经跑在 Postgres（pgvector + BM25 表 + FTS）上，零额外基础设施；把 KG 提到主链路意味着引入 Neo4j/Neptune、重做 ingestion/dedup/telemetry/access policy，并失去现有 rag_benchmark/sufficiency_judge/evidence_verdict 整套评测体系，迁移成本远高于收益。",
+          "vendor/cusmem 的 Graphiti 是 conversation-memory 框架（bi-temporal episode），用作 document-KG 是有适配成本的：schema-flexible 容易让同一实体在不同文档里漂移成多个节点，需要在 adapter 层预定义官网文档 9 类实体收紧抽取。",
+          "Roadmap 定调：RAG = citation / source-of-truth；KG = 官网文档概念/关系辅助信号；Case Memory = 后续 confirmed-case 经验召回方向。三件事互不替代，时间线和评测口径要分开。",
+          "Engineer AI 与 Client AI 应分级：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径里 KG 可以做主入口（多跳/症状↔产品↔版本↔已知 case），因为 citation 要求弱、多跳价值高。"
+        ],
+        next: [
+          { id: "kg-official-docs-scope", status: "done", label: "已将 KG 首期范围收敛为官网文档概念/关系入库，只服务 Client AI RAG 辅助，不接 confirmed case memory。", horizon: "Scope" },
+          { id: "kg-architecture-review", status: "done", label: "独立架构评审：对比 RAG 链路与 vendor/cusmem Graphiti，固化『RAG 主、KG 辅助』结论、三个钩子位置（query expansion / rerank boost / structured fact）与三条不能让步规则。", horizon: "Architecture" },
+          { id: "kg-adapter", status: "done", label: "SupportPortal-owned adapter PR2 已完成：official-doc chunk 输入契约已接到 vendored cusmem/GraphRAG episode 构建、schema bridge、deterministic episode id 与离线 ingest/dry-run CLI。", horizon: "Adapter" },
+          { id: "kg-provenance", status: "done", label: "chunk-level provenance 契约已贯穿离线路径：`source_url`、`document_id`、`chunk_id`、`schema_version` 缺失即拒绝构造，GraphRAG episode 写入保留 flat provenance + schema/content hash；runtime fact 注入仍待后续阶段强制校验。", horizon: "Safety" },
+          { id: "kg-runtime-boundary", status: "todo", label: "实现线上 RAG+KG 调用契约：KG entity link / 同义扩展给 query expansion（硬上限 ~150ms，超时降级）；RAG 现有 vector+BM25+FTS+RRF+rerank 保持不变；KG 提供 rerank boost 与结构化 fact 时必须挂回 chunk_id；生成阶段 citation 池只接受 RAG chunk。", horizon: "Runtime" },
+          { id: "kg-benchmark-ab", status: "todo", label: "扩展 rag_benchmark_runner 增加 rag_vs_rag_plus_kg 评测模式：在 50–100 个真实 query 上离线对比纯 RAG 与 RAG+KG（recall@k / rerank quality / citation faithfulness / latency），没通过基准不进入灰度。", horizon: "Evaluation" },
+          { id: "kg-engineer-vs-client", status: "todo", label: "明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。", horizon: "Access Policy" },
+          { id: "kg-graph-db", status: "todo", label: "图数据库先评估 Docker Neo4j 本地方案，再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选。", horizon: "Infrastructure" },
+          { id: "kg-model-config", status: "doing", label: "离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界和 .env 配置复用策略固化。", horizon: "Config" },
+          { id: "kg-async-ingest", status: "doing", label: "离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。", horizon: "Reliability" },
+          { id: "kg-schema-source", status: "done", label: "首个领域 schema 已落地为 `supportportal_official_docs_v1`：9 类实体（Product/API/Feature/ErrorCode/Symptom/Solution/Limitation/Platform/Version）+ 10 类关系，strict mode 与 schema hash 已有单测覆盖。", horizon: "Schema" },
+          { id: "rag-dedupe", status: "todo", label: "推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review，保证 KG 派生来源稳定。", horizon: "RAG Governance" },
+          { id: "kg-citations", status: "blocked", label: "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。", horizon: "Safety" }
+        ],
+        architecture: {
+          title: "RAG Source-of-Truth + KG Auxiliary Signal",
+          summary: "这张图固定 Client AI 在线路径：RAG 仍是主召回 + citation 来源；KG 在三个钩子位置作为辅助信号——查询前做 entity link / 同义扩展，rerank 阶段做基于实体连通性的加分，生成阶段为结构化 fact 提供带来源的补充事实。KG 任意一步超时或失败，整条路径自动降级到当前纯 RAG 链路。",
+          mermaid: [
+            "flowchart TD",
+            "  Q[\"User query (Client AI)\"] --> KG1[\"KG hook #1: entity link + 同义/别名扩展 (硬上限 ~150ms, 可超时降级)\"]",
+            "  KG1 --> QU[\"Query understanding + expanded terms\"]",
+            "  QU --> PLAN[\"Agentic tool plan\"]",
+            "  PLAN --> VEC[\"pgvector recall (RAG_VECTOR_CANDIDATE_K)\"]",
+            "  PLAN --> BM[\"BM25 recall (Postgres BM25 tables)\"]",
+            "  PLAN --> FTS[\"PostgreSQL FTS supplemental recall\"]",
+            "  VEC --> RRF[\"RRF-style tool fusion\"]",
+            "  BM --> RRF",
+            "  FTS --> RRF",
+            "  RRF --> META[\"Metadata prune / pre-rank\"]",
+            "  META --> KG2[\"KG hook #2: rerank boost — 若候选 chunk 提到的实体与 query 实体在 KG 内 ≤2 跳可达, 加分 (信号, 不截断)\"]",
+            "  KG2 --> RR[\"External rerank (BAAI/bge-reranker-v2-m3)\"]",
+            "  RR --> TOPK[\"Final top_k chunks (default 6)\"]",
+            "  TOPK --> KG3[\"KG hook #3: structured fact lookup — 仅返回带 chunk_id + source_url 的事实, 无 provenance 直接拒绝\"]",
+            "  KG3 --> GEN[\"Grounded generation\"]",
+            "  GEN --> ANS[\"answer + citations[] (citation 池仅限 RAG chunk)\"]",
+            "  KG1 -. timeout/fail .-> QU",
+            "  KG2 -. timeout/fail .-> RR",
+            "  KG3 -. timeout/fail .-> GEN"
+          ].join("\n"),
+          note: "三条不能让步规则：(1) Provenance gate — 任何 KG entity/edge 不带 chunk_id + source_url 不许进入答案上下文（OfficialDocKgIngestPlan.provenance_required 在 adapter 层强制校验）；(2) KG 不能独立回答客户问题，citation 池只来自 RAG chunk；(3) KG 任一步超时或失败自动回退到纯 RAG 链路。Engineer AI 端 KG 可作为主查询入口做多跳调查（access policy=non_official_first），但客户可见答案仍走 Client AI 的 RAG-first 契约。",
+          comparison_table: {
+            title: "RAG 与 KG 的互补价值（独立评审结论）",
+            summary: "为什么不能用 KG 替代 RAG，又为什么必须让 KG 介入：每一行都是一个真实信号，决定了 KG 在三个钩子位置的取舍。",
+            headers: { dimension: "维度", rag: "RAG 强", kg: "KG 强" },
+            rows: [
+              { dimension: "逐字引用 / 客户可见答案", rag: "✅ 直接返回原文 chunk + citation", kg: "❌ 三元组丢失逐字证据" },
+              { dimension: "召回未知段落 / 长尾原文", rag: "✅ vector + BM25 + FTS 三路覆盖", kg: "❌ 未抽取的事实不可达" },
+              { dimension: "单跳事实查找", rag: "✅ 已足够", kg: "⚖️ 平，无显著增益" },
+              { dimension: "多跳推理（A 用 B、B 兼容 C、C 在版本 D 修过）", rag: "❌ 弱，依赖 chunk 同现", kg: "✅ 图遍历天然支持" },
+              { dimension: "同义 / 别名归一化（RTC engine ↔ Agora engine）", rag: "⚖️ 部分靠 rerank", kg: "✅ entity link 直接合并" },
+              { dimension: "Query expansion（实体扩出相关概念再检索）", rag: "❌ 无机制", kg: "✅ 钩子 #1" },
+              { dimension: "结构化事实（参数范围 / 版本兼容 / ErrorCode ↔ Symptom）", rag: "⚖️ 散在多 chunk", kg: "✅ Schema 约束下可精确查询" },
+              { dimension: "Engineer 端调查 / 内部多跳", rag: "⚖️ 需多次 query", kg: "✅ 一次图查询贯通" },
+              { dimension: "时序事实演化（曾经支持 / 现已弃用）", rag: "❌ 难表达", kg: "✅ Graphiti bi-temporal 强项" },
+              { dimension: "基础设施 / 运维代价", rag: "✅ Postgres 已承载", kg: "❌ 需引入 Neo4j 或 Neptune" },
+              { dimension: "现有评测 / 降级 / access policy 复用", rag: "✅ rag_benchmark / sufficiency_judge / evidence_verdict 已完备", kg: "❌ 需重建评测与 ACL" }
+            ]
+          }
+        },
+        sources: [
+          "docs/rag_retrieval_chain.md",
+          "docs/SUPPORTPORTAL_RAG_REFACTOR_PLAN.md",
+          "docs/prompt_change_log.md",
+          "docs/superpowers/specs/2026-06-09-rag-scope-split-design.md",
+          "docs/rag_change_log.md",
+          "backend/services/case_memory_ledger.py",
+          "backend/tests/test_case_memory_ledger.py",
+          "backend/services/kg_official_docs_scope.py",
+          "backend/tests/test_kg_official_docs_scope.py",
+          "vendor/cusmem/graphiti_rag/",
+          "vendor/cusmem/GRAPHITI_VS_KAG.md",
+          "vendor/cusmem/tests/"
+        ]
+      }
+    ];
+
+    const state = loadState();
+    let activeLane = "all";
+    let query = "";
+    let mermaidInitialized = false;
+    let mermaidLoadFailed = false;
+
+    function loadState() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function taskStatus(task) {
+      return state[`task:${task.id}:status`] || task.status;
+    }
+
+    function taskDone(task) {
+      return taskStatus(task) === "done";
+    }
+
+    function laneProgress(lane) {
+      const doneCount = lane.next.filter(taskDone).length + lane.done.length;
+      const total = lane.next.length + lane.done.length;
+      return total ? Math.round((doneCount / total) * 100) : 0;
+    }
+
+    function escapeHtml(value) {
+      return String(value || "").replace(/[&<>'"]/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        '"': "&quot;"
+      }[char]));
+    }
+
+    function renderHeroMetrics() {
+      const totalTasks = LANES.reduce((sum, lane) => sum + lane.next.length, 0);
+      const doneTasks = LANES.reduce((sum, lane) => sum + lane.next.filter(taskDone).length, 0);
+      const blockedTasks = LANES.reduce((sum, lane) => sum + lane.next.filter((task) => taskStatus(task) === "blocked").length, 0);
+      const avgProgress = Math.round(LANES.reduce((sum, lane) => sum + laneProgress(lane), 0) / LANES.length);
+      const metrics = [
+        { value: LANES.length, label: "Roadmap tabs" },
+        { value: 3, label: "3 个阶段门禁" },
+        { value: `${avgProgress}%`, label: "综合完成度（含证据与待办勾选）" },
+        { value: totalTasks - doneTasks, label: "未完成计划项" }
+      ];
+      document.getElementById("heroMetrics").innerHTML = metrics.map((item) => `
+        <div class="metric"><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.label)}</span></div>
+      `).join("");
+    }
+
+    function renderFilters() {
+      const filters = [{ id: "all", label: "全部" }, ...LANES.map((lane) => ({ id: lane.id, label: lane.short }))];
+      document.getElementById("laneFilters").innerHTML = filters.map((item) => `
+        <button type="button" class="${activeLane === item.id ? "active" : ""}" data-lane-filter="${item.id}">${escapeHtml(item.label)}</button>
+      `).join("");
+    }
+
+    function renderRecentUpdates() {
+      document.getElementById("recentUpdates").innerHTML = RECENT_UPDATES.map((item) => `
+        <li>
+          <span class="update-key">${escapeHtml(item.key)}</span>
+          <span class="update-copy">${escapeHtml(item.copy)}</span>
+        </li>
+      `).join("");
+    }
+
+    function renderMeetingMinutes(minutes) {
+      if (!Array.isArray(minutes) || !minutes.length) return "";
+      return `
+        <div class="meeting-minutes-grid" aria-label="会议纪要卡片">
+          ${minutes.map((item) => `
+            <article class="meeting-minutes-card">
+              <span class="meeting-kicker">${escapeHtml(item.kicker)}</span>
+              <h5>${escapeHtml(item.title)}</h5>
+              <ul class="meeting-list">
+                ${item.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}
+              </ul>
+            </article>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function laneMatches(lane) {
+      if (activeLane !== "all" && lane.id !== activeLane) return false;
+      if (!query) return true;
+      const comparisonHaystack = (lane.architecture?.comparison_table?.rows || [])
+        .flatMap((row) => [row.dimension, row.rag, row.kg])
+        .join(" ");
+      const meetingHaystack = (lane.meeting_minutes || [])
+        .flatMap((item) => [item.kicker, item.title, ...(item.points || [])])
+        .join(" ");
+      const haystack = [
+        lane.title,
+        lane.short,
+        lane.thesis,
+        ...lane.done,
+        lane.architecture?.title || "",
+        lane.architecture?.summary || "",
+        lane.architecture?.mermaid || "",
+        lane.architecture?.note || "",
+        lane.architecture?.comparison_table?.title || "",
+        lane.architecture?.comparison_table?.summary || "",
+        comparisonHaystack,
+        meetingHaystack,
+        ...lane.next.map((task) => `${task.label} ${task.horizon} ${STATUS_LABELS[taskStatus(task)]}`),
+        ...lane.sources
+      ].join(" ").toLowerCase();
+      return haystack.includes(query.toLowerCase());
+    }
+
+    function renderComparisonTable(table) {
+      if (!table || !Array.isArray(table.rows) || !table.rows.length) return "";
+      const rowsHtml = table.rows.map((row) => `
+        <tr>
+          <th scope="row">${escapeHtml(row.dimension)}</th>
+          <td>${escapeHtml(row.rag)}</td>
+          <td>${escapeHtml(row.kg)}</td>
+        </tr>
+      `).join("");
+      const summaryHtml = table.summary ? `<p class="comparison-summary">${escapeHtml(table.summary)}</p>` : "";
+      return `
+        <div class="comparison-block">
+          <h6>${escapeHtml(table.title)}</h6>
+          ${summaryHtml}
+          <div class="comparison-scroll">
+            <table class="comparison-table">
+              <thead>
+                <tr>
+                  <th scope="col">${escapeHtml(table.headers?.dimension || "维度")}</th>
+                  <th scope="col">${escapeHtml(table.headers?.rag || "RAG 强")}</th>
+                  <th scope="col">${escapeHtml(table.headers?.kg || "KG 强")}</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderLaneArchitecture(architecture) {
+      if (!architecture) return "";
+      return `
+        <div class="lane-architecture">
+          <header>
+            <h5>${escapeHtml(architecture.title)}</h5>
+            <p>${escapeHtml(architecture.summary)}</p>
+          </header>
+          <div class="mermaid-card">
+            <pre class="mermaid">${escapeHtml(architecture.mermaid)}</pre>
+          </div>
+          <p class="diagram-note">${escapeHtml(architecture.note)}</p>
+          ${renderComparisonTable(architecture.comparison_table)}
+        </div>
+      `;
+    }
+
+    function renderLane(lane, index) {
+      const progress = laneProgress(lane);
+      const note = state[`lane:${lane.id}:note`] || "";
+      return `
+        <article class="lane" style="animation-delay:${index * 70}ms" data-lane="${lane.id}">
+          <header class="lane-head">
+            <div>
+              <p class="lane-kicker">${escapeHtml(lane.short)}</p>
+              <h3>${escapeHtml(lane.title)}</h3>
+              <p class="lane-summary">${escapeHtml(lane.thesis)}</p>
+            </div>
+            <div class="status-stamp"><span class="dot ${lane.status}"></span>${escapeHtml(STATUS_LABELS[lane.status])}</div>
+            <div class="ring" style="--progress:${progress}"><span>${progress}%</span></div>
+          </header>
+          <div class="lane-body">
+            <section class="panel">
+              <h4>已完成进展</h4>
+              <ul class="evidence-list">
+                ${lane.done.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+              </ul>
+              ${renderMeetingMinutes(lane.meeting_minutes)}
+              <details class="sources">
+                <summary>证据来源</summary>
+                <ul class="source-list">
+                  ${lane.sources.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}
+                </ul>
+              </details>
+              <div class="review-block">
+                <h5>Review 结论</h5>
+                <ul class="review-list">
+                  ${(lane.review || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+                </ul>
+              </div>
+            </section>
+            <section class="panel">
+              <h4>未完成计划</h4>
+              <div class="task-board">
+                ${lane.next.map(renderTask).join("")}
+              </div>
+            </section>
+          </div>
+          <div class="lane-followup">
+            ${renderLaneArchitecture(lane.architecture)}
+            <div class="notes">
+              <label for="note-${lane.id}">Roadmap 备注</label>
+              <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderTask(task) {
+      const status = taskStatus(task);
+      return `
+        <div class="task" data-task="${task.id}">
+          <input type="checkbox" ${status === "done" ? "checked" : ""} aria-label="mark ${escapeHtml(task.label)} done" data-task-check="${task.id}">
+          <div>
+            <p class="task-title">${escapeHtml(task.label)}</p>
+            <div class="task-meta">
+              <span class="tag ${status}">${escapeHtml(STATUS_LABELS[status])}</span>
+              <span class="tag">${escapeHtml(task.horizon)}</span>
+            </div>
+          </div>
+          <select data-task-status="${task.id}" aria-label="status for ${escapeHtml(task.label)}">
+            ${Object.entries(STATUS_LABELS).map(([key, label]) => `<option value="${key}" ${key === status ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </div>
+      `;
+    }
+
+    function initializeMermaid() {
+      if (mermaidInitialized || !window.mermaid) return;
+      window.mermaid.initialize({
+        startOnLoad: false,
+        theme: "base",
+        themeVariables: {
+          primaryColor: "#fbf7ec",
+          primaryTextColor: "#1d2522",
+          primaryBorderColor: "#1f4f68",
+          lineColor: "#7f6a40",
+          secondaryColor: "#e9f0e8",
+          tertiaryColor: "#f4efe3",
+          fontFamily: "Avenir Next, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif"
+        }
+      });
+      mermaidInitialized = true;
+    }
+
+    function parseMermaidFlow(source) {
+      const labels = {};
+      const edges = [];
+      String(source || "").split("\n").forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("flowchart")) return;
+        for (const match of trimmed.matchAll(/\b([A-Za-z][\w]*)\["([^"]+)"\]/g)) {
+          labels[match[1]] = match[2];
+        }
+        const normalized = trimmed.replace(/\b([A-Za-z][\w]*)\["[^"]+"\]/g, "$1");
+        const edge = normalized.match(/^([A-Za-z][\w]*)\s*(?:--(?:\|([^|]*)\|)?>|-\.\s*([^.]*)\s*\.->)\s*([A-Za-z][\w]*)/);
+        if (edge) {
+          edges.push({
+            from: edge[1],
+            label: (edge[2] || edge[3] || "→").trim(),
+            to: edge[4]
+          });
+        }
+      });
+      return { labels, edges };
+    }
+
+    function renderStaticMermaidFallback() {
+      mermaidLoadFailed = true;
+      document.querySelectorAll("pre.mermaid").forEach((pre) => {
+        const graph = parseMermaidFlow(pre.textContent);
+        const steps = graph.edges.map((edge) => `
+          <div class="flow-step">
+            <div class="flow-node">${escapeHtml(graph.labels[edge.from] || edge.from)}</div>
+            <div class="flow-arrow">${escapeHtml(edge.label || "→")}</div>
+            <div class="flow-node">${escapeHtml(graph.labels[edge.to] || edge.to)}</div>
+          </div>
+        `).join("");
+        pre.insertAdjacentHTML("afterend", `<div class="flow-diagram" role="img" aria-label="Rendered architecture diagram">${steps || `<div class="flow-node">${escapeHtml(pre.textContent)}</div>`}</div>`);
+        pre.remove();
+      });
+    }
+
+    function renderMermaidDiagrams() {
+      if (!document.querySelector(".mermaid")) return;
+      if (!window.mermaid) {
+        if (mermaidLoadFailed) renderStaticMermaidFallback();
+        return;
+      }
+      try {
+        initializeMermaid();
+        window.mermaid.run({ querySelector: ".mermaid" }).catch(renderStaticMermaidFallback);
+      } catch {
+        renderStaticMermaidFallback();
+      }
+    }
+
+    function render() {
+      renderHeroMetrics();
+      renderFilters();
+      renderRecentUpdates();
+      const lanes = LANES.filter(laneMatches);
+      document.getElementById("lanes").innerHTML = lanes.map(renderLane).join("");
+      document.getElementById("emptyState").style.display = lanes.length ? "none" : "block";
+      renderMermaidDiagrams();
+    }
+
+    document.addEventListener("click", (event) => {
+      const filter = event.target.closest("[data-lane-filter]");
+      if (!filter) return;
+      activeLane = filter.getAttribute("data-lane-filter") || "all";
+      render();
+    });
+
+    document.addEventListener("change", (event) => {
+      const check = event.target.closest("[data-task-check]");
+      if (check) {
+        const taskId = check.getAttribute("data-task-check");
+        state[`task:${taskId}:status`] = check.checked ? "done" : "todo";
+        saveState();
+        render();
+        return;
+      }
+      const select = event.target.closest("[data-task-status]");
+      if (select) {
+        const taskId = select.getAttribute("data-task-status");
+        state[`task:${taskId}:status`] = select.value;
+        saveState();
+        render();
+      }
+    });
+
+    document.addEventListener("input", (event) => {
+      if (event.target.id === "searchInput") {
+        query = event.target.value.trim();
+        render();
+        return;
+      }
+      const note = event.target.closest("[data-note]");
+      if (note) {
+        const laneId = note.getAttribute("data-note");
+        state[`lane:${laneId}:note`] = note.value;
+        saveState();
+      }
+    });
+
+    render();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" onload="renderMermaidDiagrams()" onerror="renderStaticMermaidFallback()"></script>
+</body>
+</html>
