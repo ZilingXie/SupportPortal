@@ -121,11 +121,45 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(ticket["source"], "manual")
         self.assertEqual([message["role"] for message in ticket["messages"]], ["customer"])
 
-    def test_account_intake_requires_title_and_question(self) -> None:
+    def test_account_intake_requires_question(self) -> None:
         response = self.client.post("/account", json={"title": "", "question": ""})
 
         self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "question is required")
         self.assertEqual(self.repository.list_tickets(), [])
+
+    def test_account_intake_empty_title_derives_from_question(self) -> None:
+        """N8n sends title: \"\" — backend should derive title from question body."""
+        source_url = "https://agoraio.zendesk.com/api/v2/tickets/11830.json"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "",
+                    "question": "Can someone tell me more about Agora products?",
+                    "customer_email": "n8n@example.com",
+                    "source": source_url,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
+
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        # Title should have been derived from question, not left empty.
+        self.assertTrue(ticket["subject"])
+        self.assertNotEqual(ticket["subject"], "")
+        # The derived title should be a reasonable short phrase, not the full question.
+        self.assertLess(len(ticket["subject"]), len("Can someone tell me more about Agora products?"))
+
+        billing_ticket = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(billing_ticket)
+        assert billing_ticket is not None
+        self.assertEqual(billing_ticket["title"], ticket["subject"])
+        self.assertIn("https://agoraio.zendesk.com/agent/tickets/11830", billing_ticket["source"])
 
     def test_account_get_serves_ui_and_post_serves_json_api(self) -> None:
         page_response = self.client.get("/account/")

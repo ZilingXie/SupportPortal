@@ -2738,8 +2738,10 @@ def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
 async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]:
     title = " ".join(str(request.title or "").split()).strip()
     question = str(request.question or "").strip()
-    if not title or not question:
-        raise HTTPException(status_code=400, detail="title and question are required")
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+    if not title:
+        title = derive_ticket_title(question)
 
     ticket_id = str(request.ticket_id or "").strip() or f"TK-ACC-{uuid4().hex[:6].upper()}"
     existing_ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
