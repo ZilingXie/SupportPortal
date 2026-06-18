@@ -1724,78 +1724,96 @@ flowchart TD
         id: "meeting-minutes",
         short: "Meeting",
         title: "AI Agent 工单系统落地对齐会",
-        status: "done",
-        thesis: "日期：2026-06-18；参会人：derek, zac, alex, emma。会议纪要卡片沉淀本轮 Roadmap 的定位、共识、分歧、三类 case、合规审计和近期 POC。",
-        done: [
-          "会议确认 Roadmap 主方向：先做可审计、可试运行的基于 agent 的工单系统，再逐步提升 AI 自动化比例。",
-          "会议明确短期不追求一次性替代 support engineer，而是把效率、质量、审计和 license 成本作为 Phase 1 目标。"
-        ],
-        review: [
-          "核心节奏已经对齐：Phase 1 可以让 AI review 人做 guardrail，Phase 2 再让人 review AI 的 draft，Phase 3 才进入 agent-to-agent。",
-          "合规和审计是系统边界，不是 UI 偏好；WeCom / 临时 report 不能替代可追踪工单系统。"
-        ],
+        status: "doing",
+        thesis: "日期：2026-06-18；参会人：derek, zac, alex, emma。会议纪要卡片只记录本次 transcript 的关键内容、决策背景和下一步计划，不混入额外进展或 review/source 模块。",
         next: [
-          { id: "meeting-billing-route", status: "todo", label: "把 billing route 验证、邮件回执、engineer reply 通过/拒绝、dashboard 指标和真实 case 模拟纳入近期 POC。", horizon: "POC" },
-          { id: "meeting-agent-boundary", status: "todo", label: "继续验证保守 workflow 与成熟 agent 自主循环的边界，避免 context 割裂或权限失控。", horizon: "Architecture" }
+          { id: "meeting-poc-billing-route", status: "todo", label: "Phase 1 先完成 billing route 验证：invoice / account fraud / deactivate 两类真实 Zendesk case 能被稳定识别、转发、处理和记录。", horizon: "POC" },
+          { id: "meeting-email-callback", status: "todo", label: "补齐邮件回执/邮箱轮询：agent 发给 billing owner/team 的请求必须能关联回 ticket session 并继续流程。", horizon: "Integration" },
+          { id: "meeting-approval-demo", status: "todo", label: "演示 engineer reply 通过/拒绝、revise/override、customer-facing reply 延迟发送和 dashboard 指标。", horizon: "Demo" },
+          { id: "meeting-agent-comparison", status: "todo", label: "用真实 case 对比保守 workflow、成熟 agent 自主循环和 agent-to-agent forum / hub 的边界与成本。", horizon: "Architecture" }
         ],
         meeting_minutes: [
           {
             kicker: "Positioning",
-            title: "项目定位",
+            title: "项目定位与阶段节奏",
             points: [
-              "不是做 AI support engineer 替代真人，而是做基于 agent 的工单系统。",
-              "短期先减少 copy/paste 到外部 AI 的低效动作，回复仍要像真人 support engineer。",
-              "客户可见输出要有自然语气、开场、签名和必要延迟，避免 AI 直接秒回感。"
+              "目标是基于 agent 的工单系统，不是马上用 AI support engineer 全量替代真人。",
+              "Phase 1 先提升效率和质量：减少 copy/paste 到外部 AI，让工单系统有雏形、可追踪、可观测、可解释。",
+              "Phase 2 扩大 AI 主动处理和人 approve；Phase 3 才进入 agent-to-agent 与更高自动化。"
             ]
           },
           {
-            kicker: "Consensus",
-            title: "当前共识",
+            kicker: "Customer Reply",
+            title: "客户可见回复体验",
             points: [
-              "必须保留工单界面，不能只靠群聊或临时 report 支撑审计。",
-              "Zendesk 先渐进转发，不一次性迁移客户入口；billing 先试、AB test 后扩量。",
-              "对外 customer-facing 和对内 internal-facing 隔离，内部证据不能原样给客户。"
+              "回复不能像 AI 秒回，最快不能超过 5 分钟，要有 hi/thanks、自然开场、签名和必要 support package 引导。",
+              "customer-facing 和 internal-facing 必须隔离：内部日志、代码、客户名、app id / certificate 等不能原样暴露给客户。",
+              "AI 可以润色英文和格式，但对外输出必须经过敏感信息和表达边界控制。"
             ]
           },
           {
-            kicker: "Debate",
-            title: "核心分歧",
+            kicker: "Workflow",
+            title: "工单界面与 Zendesk 迁移",
             points: [
-              "AI review 人适合 Phase 1 做 guardrail：检查 conclusion、proof、next step 是否齐全。",
-              "人 review AI 适合 Phase 2：AI 先调查和起草，人 approve / revise / override。",
-              "保守 workflow 强调可观测和审计，成熟 agent 自主循环强调能力上限和 context 连贯。"
+              "必须保留工单界面和 admin dashboard，审计需要系统化抽样查看 case、SLA、通过率和操作历史。",
+              "Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口；客户仍先进 Zendesk，内部通过 Zendesk webhook / N8n 转到 Roadmap 系统验证。",
+              "AB test 先做 shadow mode：真人照常处理，AI 同步模拟；再让 AI account 承接 1% 切流。"
+            ]
+          },
+          {
+            kicker: "Review Debate",
+            title: "AI review 人 vs 人 review AI",
+            points: [
+              "Phase 1 可用 AI review 人做 guardrail；AI 只检查 conclusion / proof / next step 是否齐全，不负责判断真实根因。",
+              "Phase 2 转向人 review AI：AI 先调查、生成 draft，人 approve / revise / override，必要时追问 AI 继续 verify。",
+              "会议结论是节奏问题而非方向冲突：先保守上 guardrail，再逐步让 AI 承担更多调查和起草。"
             ]
           },
           {
             kicker: "Case Types",
-            title: "三类 case",
+            title: "三类 case 边界",
             points: [
-              "完全自动化：invoice、文档链接、标准信息收集等，稳定后只抽查。",
-              "AI 做人 approve：AI 调查并生成 draft，人检查正确性、敏感信息和客户表达。",
-              "AI 无能为力转真人：AI 停止乱猜，真人调查后再由 guardrail 做表达和证据检查。"
+              "fully_automated：完全自动化的 invoice、文档链接、标准字段收集等稳定 case，前期可审核，稳定后抽查。",
+              "ai_draft_human_approve：AI 能调查并生成答复，人负责正确性、敏感信息、客户表达和责任签字。",
+              "unable_to_resolve_handoff：AI 和研发 agent 都无法给出可验证结论时停止乱猜，转真人、CSD 或 SME task。"
+            ]
+          },
+          {
+            kicker: "Billing POC",
+            title: "Billing 与 route 近期 POC",
+            points: [
+              "先做 invoice / account fraud / deactivate / company verification 等 billing 小类，验证 route、字段收集、内部请求和客户回执闭环。",
+              "agent 发邮件或内部请求后，要通过邮件回执/邮箱轮询继续流程；未收到回复时必须有 SLA 提醒和 fallback。",
+              "dashboard 需要展示 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate。"
+            ]
+          },
+          {
+            kicker: "Agent Architecture",
+            title: "Agent 架构分歧",
+            points: [
+              "保守 workflow 方案强调 Summary / Plan / Execute / Review 可观测、可审计、可定位是哪一步出错。",
+              "成熟 agent 自主循环方案强调减少人为拆分，只有需要 context isolation 时才拆 subagent，否则容易割裂上下文。",
+              "下一步用真实 case 对比手搓 harness、成熟 agent 框架和研发 agent 接入方式，重点看效果、token 成本和权限边界。"
             ]
           },
           {
             kicker: "Compliance",
-            title: "合规审计",
+            title: "合规、审计与权限",
             points: [
-              "WeCom 不适合作审计 source of truth，离职历史、权限、记录归档都不可控。",
-              "客户误发 app id、certificate 或其他敏感信息时，系统必须能证明不会泄露。",
-              "Dashboard 是服务质量监管入口，审计需要能抽样查看 case、SLA、通过率和操作历史。"
+              "WeCom 不适合作审计 source of truth，离职历史、权限、记录归档和客户数据治理都不可控。",
+              "工单系统必须能解释客户误发敏感信息时如何防泄露、谁能看、AI 如何使用、历史如何留存。",
+              "权限动作也要有 guardrail，例如支持人员能改配置不代表可以随意改；超过安全阈值要进入审批。"
             ]
           },
           {
-            kicker: "POC",
-            title: "近期 POC",
+            kicker: "Phase 3",
+            title: "agent-to-agent 长期方向",
             points: [
-              "验证 billing route 验证、真实 Zendesk case 分类、Not automated 原因和白名单边界。",
-              "补齐邮件回执机制，确保 agent 发出请求后能收到回复并继续流程。",
-              "演示 engineer reply 通过/拒绝、dashboard 指标、真实 case 模拟和必要延时效果。"
+              "研发 agent 当前能力强但接入还不成熟，Phase 3 再做 CSE agent 与研发 agent 的协作。",
+              "agent-to-agent forum / hub 可作为没有固定 IP 或直接 endpoint 时的 workaround，由各 agent 轮询任务。",
+              "企业级 agent 关键不只是能力，还包括 compliance、security、cost control 和可追溯审计。"
             ]
           }
-        ],
-        sources: [
-          "2026-06-18 会议讨论：derek, zac, alex, emma"
         ]
       },
       {
@@ -1896,7 +1914,7 @@ flowchart TD
         short: "Billing",
         title: "Billing intake / ticket routing",
         status: "doing",
-        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution：`/account` 先跑 LLM semantic router 再 fallback 到 deterministic；新增 `billing.account_verification` 覆盖 suspicious activity / fraud review / company verification / reactivation；字段追问、客户回复和内部邮件已接入真实执行；TK-ACC-C31612 的 weak gratitude 抢占问题已修复。",
+        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，优先验证 invoice request 和 account fraud / deactivate / company verification 两类 case 的 route、邮件回执、人工审核和 dashboard 指标，不直接迁移客户入口。",
         done: [
           "Automation 白名单已扩展到 `account_suspension`、`detailed_invoice` 和 `account_verification`；suspicious activity / fraud / company verification / reactivation 新进入 billing automation intake。",
           "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
@@ -1907,17 +1925,20 @@ flowchart TD
           "底层 billing automation helper 支持 action-specific destination env 和内部邮件；`/account` intake 字段完整时触发真实邮件发送，SMTP 缺配置时 fail closed 并记录 skipped/failed 原因。"
         ],
         review: [
-          "这是四条主线里最接近小流量试运行的一条，因为 routing、ticket view-model、状态记录、历史查询和 live `/account` smoke 都有测试证据。",
+          "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
           "TK-ACC-C31612 修复已验证：semantic-first 路由 + gratitude 降级后，长正文末尾 thank you 不再误判为 small_talk。",
-          "试运行前必须补 Zendesk/external_id 幂等，否则 webhook 重放仍会带来重复建单和重复状态记录风险。",
-          "白名单不要扩大过快；先用真实 case 回放证明 account_suspension、detailed_invoice 和 account_verification 的 route 误判率，再决定是否进一步扩展。"
+          "试运行前必须补 Zendesk/external_id 幂等与邮件回执/邮箱轮询，否则 webhook 重放、内部邮件无回执都会让 agent 无法继续流程。",
+          "白名单不要扩大过快；先用 real Zendesk replay set 证明 invoice、account fraud / deactivate / company verification 的 route_accuracy，再决定是否进一步扩展。"
         ],
         next: [
-          { id: "billing-real-cases", status: "todo", label: "整理真实 billing case 测试集：白名单 route、非白名单、Not automated、高风险人工。", horizon: "Scope" },
-          { id: "billing-zendesk", status: "todo", label: "接入 Zendesk webhook/API 拉取新工单内容和必要 metadata。", horizon: "Source" },
-          { id: "billing-human-review", status: "todo", label: "建立人工审核模式，先审核 route 与 automation 状态，再决定是否允许生成客户告知或内部邮件。", horizon: "Review" },
-          { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单或重复写入 automation 状态。", horizon: "Reliability" },
-          { id: "billing-pilot", status: "todo", label: "启用小流量试运行，统计覆盖率、route 误判、Not automated 原因和人工审核结果。", horizon: "Pilot" },
+          { id: "billing-real-zendesk-replay", status: "todo", label: "建立 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、billing risky negative set 和 Not automated case 都要覆盖。", horizon: "Scope" },
+          { id: "billing-zendesk-forwarding", status: "todo", label: "接入 Zendesk webhook / N8n 中转：拉取新工单内容、external_id、comment 和 metadata；先只内部转发，不改客户入口。", horizon: "Source" },
+          { id: "billing-ai-account", status: "todo", label: "定义 AI account 试运行方式：shadow mode 下只模拟，1% 切流后由 AI account 接收/处理 billing case，并通过 Zendesk API 写 comment。", horizon: "Pilot" },
+          { id: "billing-email-callback", status: "todo", label: "补邮件回执/邮箱轮询：agent 发给 billing owner/team 的 invoice 或 account request 必须能按 ticket/session 关联回复、超时提醒和 fallback。", horizon: "Integration" },
+          { id: "billing-human-review", status: "todo", label: "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。", horizon: "Review" },
+          { id: "billing-dashboard-metrics", status: "todo", label: "Dashboard 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate 和 SLA risk。", horizon: "Metrics" },
+          { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单、重复发邮件或重复写入 automation 状态。", horizon: "Reliability" },
+          { id: "billing-pilot", status: "todo", label: "先做 shadow mode，再做 1% 切流；剩余 99% 保持真人流程，达到 route_accuracy 和安全门禁后再扩量。", horizon: "Pilot" },
           { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" },
           { id: "billing-account-verification-fields", status: "done", label: "account_verification 已实现字段追问、Use Case section 解析、Country+Address 合并、个人开发者分支、app_id 可选提取和内部邮件真实发送。", horizon: "Billing" }
         ],
@@ -1940,7 +1961,7 @@ flowchart TD
         short: "Routing",
         title: "Routing rules",
         status: "doing",
-        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构：deterministic fast path 处理高置信 billing 和明显非 Agora 信号；LLM semantic router 输出 structured intent taxonomy（billing.account_suspension、billing.detailed_invoice、billing.account_verification、billing.refund_or_dispute 等）；policy gate 做安全边界拆分「能不能 automation」；old route contract 保留，避免一次性破坏下游。`/account` 使用 semantic-first 模式，LLM 先跑避免 TK-ACC-C31612 类 weak gratitude 抢占；gratitude 降级为仅匹配短纯感谢消息。每个 scope_label 被 route contract 固定成 route_family、execution_action 和 tooling_profile，新增 billing_review route family 用于需人工审核的 billing case。",
+        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；会议后路由计划补上三类 case 的 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff。Phase 1 重点不是扩大 scope，而是用 real Zendesk replay set 验证 billing route、风险负例、Not automated 原因和 1% 切流门禁。",
         done: [
           "入口是 `decide_support_route()`：空消息直接 `non_agora/refuse`；非空消息先进入 `_heuristic_route_decision()`，没有命中才调用 `_llm_route_decision()`。",
           "LLM semantic router 已升级为 intent taxonomy 输出：`scope_label`、`semantic_intent`（billing.account_suspension / billing.detailed_invoice / billing.refund_or_dispute）、`recommended_action`、`automation_eligibility`、`confidence`、`evidence_spans`、`risk_flags`。",
@@ -1972,6 +1993,7 @@ flowchart TD
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
           "Deterministic fast path 保留为 high-precision hint：billing whitelist 命中后仍走 `billing_automation`，但 policy gate 仅应用于 LLM-sourced 决策，避免误杀高置信确定性匹配。",
           "`billing_review` route family 隔离了需人工审核的 billing case：deterministic 命中直接走 `billing_automation`；LLM 判断的 account_suspension 和 refund_or_dispute 走 `billing_review`。",
+          "会议后新增 route rollout 语义：fully_automated 只给稳定 billing/文档类；ai_draft_human_approve 走人审核；unable_to_resolve_handoff 必须停止 AI 乱猜并转真人/CSD/SME。",
           "`conservative_agora_technical_fallback` 是保守兜底：宁可进入 RAG，也不在低置信时拒绝客户或触发 automation。",
           "TK-ACC-68BAC7 已修复：扩展后的 deterministic 白名单可命中 `Account temporarily suspended` 和 `account has been suspended due to insufficient balance`，不再误判为 web_search。",
           "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `agora_non_technical`；需要在 golden set 中持续补充边界 case。",
@@ -1989,8 +2011,12 @@ flowchart TD
           { id: "routing-roadmap-diagram", status: "done", label: "Roadmap Routing tab 已更新架构描述、review 结论和 next tasks，反映 LLM semantic router + policy gate 新架构。", horizon: "Docs" },
           { id: "routing-threshold-audit", status: "done", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。router_source=conservative_fallback 区分 below_confidence_threshold / missing_credentials / llm_invocation_failed / invalid_json / invalid_payload / route_fail_open。", horizon: "Metrics" },
           { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 Roadmap tab。", horizon: "Docs" },
+          { id: "routing-real-zendesk-replay", status: "todo", label: "扩展 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、technical handoff 与 billing risky negative set。", horizon: "Tests" },
+          { id: "routing-rollout-taxonomy", status: "todo", label: "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。", horizon: "Contract" },
+          { id: "routing-billing-risky-negatives", status: "todo", label: "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。", horizon: "Safety" },
+          { id: "routing-dashboard-metrics", status: "todo", label: "把 route_accuracy、automation_coverage、not_automated_reason、response_latency 接到 dashboard，支持 shadow mode 与 1% 切流判断。", horizon: "Metrics" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
-          { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 golden set 覆盖率足够时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
+          { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
           { id: "routing-account-verification-intake", status: "done", label: "新增 billing.account_verification intent + account_verification route：覆盖 suspicious activity / fraud / company verification / reactivation。", horizon: "Billing" },
           { id: "routing-gratitude-downgrade", status: "done", label: "降级 gratitude 确定性信号：仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的短纯感谢。TK-ACC-C31612 不再被误判。", horizon: "Safety" },
           { id: "routing-semantic-first-account", status: "done", label: "/account 接入 semantic-first 模式：LLM 先跑路由，避免 weak deterministic 抢占。", horizon: "Architecture" },
@@ -2181,8 +2207,9 @@ flowchart TD
     }
 
     function laneProgress(lane) {
-      const doneCount = lane.next.filter(taskDone).length + lane.done.length;
-      const total = lane.next.length + lane.done.length;
+      const doneItems = lane.done || [];
+      const doneCount = lane.next.filter(taskDone).length + doneItems.length;
+      const total = lane.next.length + doneItems.length;
       return total ? Math.round((doneCount / total) * 100) : 0;
     }
 
@@ -2258,7 +2285,7 @@ flowchart TD
         lane.title,
         lane.short,
         lane.thesis,
-        ...lane.done,
+        ...(lane.done || []),
         lane.architecture?.title || "",
         lane.architecture?.summary || "",
         lane.architecture?.mermaid || "",
@@ -2268,7 +2295,7 @@ flowchart TD
         comparisonHaystack,
         meetingHaystack,
         ...lane.next.map((task) => `${task.label} ${task.horizon} ${STATUS_LABELS[taskStatus(task)]}`),
-        ...lane.sources
+        ...(lane.sources || [])
       ].join(" ").toLowerCase();
       return haystack.includes(query.toLowerCase());
     }
@@ -2320,7 +2347,44 @@ flowchart TD
       `;
     }
 
+    function renderMeetingLane(lane, index) {
+      const progress = laneProgress(lane);
+      const note = state[`lane:${lane.id}:note`] || "";
+      return `
+        <article class="lane" style="animation-delay:${index * 70}ms" data-lane="${lane.id}">
+          <header class="lane-head">
+            <div>
+              <p class="lane-kicker">${escapeHtml(lane.short)}</p>
+              <h3>${escapeHtml(lane.title)}</h3>
+              <p class="lane-summary">${escapeHtml(lane.thesis)}</p>
+            </div>
+            <div class="status-stamp"><span class="dot ${lane.status}"></span>${escapeHtml(STATUS_LABELS[lane.status])}</div>
+            <div class="ring" style="--progress:${progress}"><span>${progress}%</span></div>
+          </header>
+          <div class="lane-body meeting-lane-body">
+            <section class="panel meeting-minutes-panel">
+              <h4>会议内容</h4>
+              ${renderMeetingMinutes(lane.meeting_minutes)}
+            </section>
+            <section class="panel">
+              <h4>下一步计划</h4>
+              <div class="task-board">
+                ${lane.next.map(renderTask).join("")}
+              </div>
+            </section>
+          </div>
+          <div class="lane-followup">
+            <div class="notes">
+              <label for="note-${lane.id}">Roadmap 备注</label>
+              <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
     function renderLane(lane, index) {
+      if (lane.id === "meeting-minutes") return renderMeetingLane(lane, index);
       const progress = laneProgress(lane);
       const note = state[`lane:${lane.id}:note`] || "";
       return `

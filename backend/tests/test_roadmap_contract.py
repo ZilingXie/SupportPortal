@@ -68,6 +68,16 @@ class RoadmapContractTests(unittest.TestCase):
             "WeCom 不适合作审计 source of truth",
             "billing route 验证",
             "renderMeetingMinutes",
+            "renderMeetingLane",
+            "下一步计划",
+            "最快不能超过 5 分钟",
+            "AI 只检查 conclusion / proof / next step",
+            "invoice / account fraud / deactivate",
+            "Zendesk webhook / N8n",
+            "shadow mode",
+            "1% 切流",
+            "agent-to-agent forum / hub",
+            "token 成本",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -76,6 +86,35 @@ class RoadmapContractTests(unittest.TestCase):
         self.assertNotIn('class="meeting-section"', html_source)
         self.assertNotIn("const MEETING_TRACKS", html_source)
         self.assertLess(html_source.index('id: "meeting-minutes"'), html_source.index('id: "engineer-multi-agent"'))
+        meeting_lane_source = html_source[
+            html_source.index('id: "meeting-minutes"') : html_source.index('id: "engineer-multi-agent"')
+        ]
+        for removed_term in ["done: [", "review: [", "sources: [", "已完成进展", "未完成计划", "证据来源", "Review 结论"]:
+            with self.subTest(removed_term=removed_term):
+                self.assertNotIn(removed_term, meeting_lane_source)
+
+    def test_billing_and_route_plans_reflect_meeting_next_steps(self) -> None:
+        html_source = ROADMAP_PATH.read_text(encoding="utf-8")
+        required_terms = [
+            "Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口",
+            "AI account",
+            "invoice request",
+            "account fraud / deactivate / company verification",
+            "邮件回执/邮箱轮询",
+            "engineer reply 通过/拒绝",
+            "route_accuracy",
+            "automation_coverage",
+            "not_automated_reason",
+            "response_latency",
+            "real Zendesk replay set",
+            "billing risky negative set",
+            "fully_automated",
+            "ai_draft_human_approve",
+            "unable_to_resolve_handoff",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
 
     def test_existing_product_lanes_and_architecture_still_render(self) -> None:
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")
