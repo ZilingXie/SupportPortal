@@ -1001,6 +1001,128 @@
       background: rgba(251, 247, 236, 0.58);
     }
 
+    .optimization-plan {
+      display: grid;
+      gap: 22px;
+      margin-top: 18px;
+    }
+
+    .opt-group {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(251, 247, 236, 0.84);
+      box-shadow: 0 18px 50px rgba(31, 45, 38, 0.08);
+      overflow: hidden;
+    }
+
+    .opt-head {
+      display: grid;
+      gap: 10px;
+      padding: 24px 26px 18px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(31, 79, 104, 0.1), transparent 50%),
+        rgba(251, 247, 236, 0.74);
+    }
+
+    .opt-priority {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.36);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      width: fit-content;
+    }
+
+    .opt-priority-high { color: var(--red); border-color: rgba(168, 76, 63, 0.4); }
+    .opt-priority-medium { color: var(--amber); border-color: rgba(186, 122, 42, 0.4); }
+    .opt-priority-low { color: var(--blueprint); border-color: rgba(31, 79, 104, 0.4); }
+
+    .opt-head h3 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(22px, 2.6vw, 32px);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+
+    .opt-head p {
+      margin: 0;
+      color: #434c45;
+      line-height: 1.55;
+    }
+
+    .opt-list {
+      list-style: none;
+      margin: 0;
+      padding: 20px 26px 26px;
+      display: grid;
+      gap: 14px;
+      counter-reset: opt-counter;
+    }
+
+    .opt-item {
+      display: grid;
+      grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+      gap: 18px;
+      padding: 16px 18px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.34);
+      counter-increment: opt-counter;
+      position: relative;
+    }
+
+    .opt-item::before {
+      content: counter(opt-counter, decimal-leading-zero);
+      position: absolute;
+      top: 14px;
+      right: 18px;
+      color: var(--muted);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 14px;
+      letter-spacing: 0.05em;
+    }
+
+    .opt-id {
+      margin: 0;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      font-weight: 850;
+      color: var(--blueprint);
+      overflow-wrap: anywhere;
+      align-self: start;
+    }
+
+    .opt-body {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .opt-label {
+      margin: 0;
+      color: #38413b;
+      line-height: 1.55;
+    }
+
+    .opt-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    @media (max-width: 980px) {
+      .opt-item { grid-template-columns: 1fr; }
+      .opt-item::before { position: static; text-align: right; }
+    }
+
     @keyframes slow-turn { to { transform: rotate(360deg); } }
     @keyframes enter {
       from { opacity: 0; transform: translateY(18px); }
@@ -1129,6 +1251,155 @@ flowchart TD
 
     <main class="lanes" id="lanes"></main>
     <div class="empty" id="emptyState">没有匹配的主线或任务。</div>
+
+    <section class="section-title">
+      <div>
+        <h2>Routing 优化计划</h2>
+      </div>
+      <p>承接 Routing rules lane 已识别但未落地的能力升级，按高/中/低优先级排列；每条都对应 backend/services/support_router.py 的具体改造点。</p>
+    </section>
+
+    <section class="optimization-plan" aria-label="Routing optimization plan">
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-high">高优先级</span>
+          <h3>安全与可观测先行</h3>
+          <p>直接影响 billing automation 边界与产线路由的可调诊性；不落地这两条，后续阈值调整与灰度扩面都缺乏反馈信号。</p>
+        </header>
+        <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-deterministic-policy-gate</p>
+            <div class="opt-body">
+              <p class="opt-label">Deterministic billing 决策也走 minimal policy gate：refund / dispute / legal / compensation 关键词 sniff 命中即降级到 billing_review，避免白名单吞掉风险信号（例如「Account suspended, please refund」当前会被 account_suspension 白名单命中，refund 信号被丢失）。</p>
+              <div class="opt-meta">
+                <span class="tag">Safety</span>
+                <span class="tag">_heuristic_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-decision-observability</p>
+            <div class="opt-body">
+              <p class="opt-label">在 decide_support_route 出口加 structured log + metrics（route / scope_label / router_source / fallback_reason / model_confidence），并基于已有 support_billing_tickets 字段在 admin 页跑 daily 聚合，让 fallback rate、误判率、置信度分布有可视化看板。当前 schema 字段齐全，但缺监控管道，没法量化路由质量。</p>
+              <div class="opt-meta">
+                <span class="tag">Observability</span>
+                <span class="tag">decide_support_route</span>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </article>
+
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-medium">中优先级</span>
+          <h3>架构与正确性升级</h3>
+          <p>提升路由判别的颗粒度与一致性；为 phase 2/3 automation 灰度扩面铺路。</p>
+        </header>
+        <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-per-scope-threshold</p>
+            <div class="opt-body">
+              <p class="opt-label">per-scope confidence threshold：billing automation ≥0.85、refuse / web_search 可放宽到 0.6，由 env 覆盖。当前单一 INTENT_ROUTER_CONFIDENCE_THRESHOLD=0.7 对所有 scope 一视同仁，未反映 automation 与 refuse 的风险代价差异。</p>
+              <div class="opt-meta">
+                <span class="tag">Architecture</span>
+                <span class="tag">decide_support_route</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-risk-flag-taxonomy</p>
+            <div class="opt-body">
+              <p class="opt-label">把 LLM 输出的 risk_flags 归一化到固定枚举，policy gate 统一改 exact set match，移除 substring 判断。当前 _apply_policy_gate 同时用 set membership 和「"legal" in flag」substring，规则不一致、容易误中或漏中边界 case。</p>
+              <div class="opt-meta">
+                <span class="tag">Safety</span>
+                <span class="tag">_apply_policy_gate</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-semantic-first-layered</p>
+            <div class="opt-body">
+              <p class="opt-label">semantic-first 模式（/account）下强信号 deterministic（billing 白名单等）优先于 LLM；只把弱信号 deterministic（gratitude / 短 troubleshooting）放到 LLM 之后。当前 TK-ACC-C31612 修复后所有 deterministic 都被让到 LLM 之后，等于让中等置信 LLM 误判覆盖了高精度白名单。</p>
+              <div class="opt-meta">
+                <span class="tag">Architecture</span>
+                <span class="tag">decide_support_route(semantic_first)</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-conversation-aware-heuristic</p>
+            <div class="opt-body">
+              <p class="opt-label">_heuristic_route_decision 引入 latest_assistant_message.source 与历史，在长会话延续场景（如「thanks, but it still happens」）避免短消息独立判断；当存在 engineer_guidance 历史时优先 ticket_resolution 检测，避免误进短 troubleshooting fast path。</p>
+              <div class="opt-meta">
+                <span class="tag">Accuracy</span>
+                <span class="tag">_heuristic_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-pipeline-refactor</p>
+            <div class="opt-body">
+              <p class="opt-label">抽 RouteRequest dataclass + 单一 _route_pipeline(request, llm_first) 主循环，消除 semantic-first 与默认分支的复制实现。当前两条路径共享 LLM 调用、threshold 读取、heuristic fallback、conservative fallback 的所有逻辑，但用复制实现，后续加字段时必须改两处，容易漏。</p>
+              <div class="opt-meta">
+                <span class="tag">Refactor</span>
+                <span class="tag">support_router.py</span>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </article>
+
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-low">低优先级</span>
+          <h3>结构清理与韧性补强</h3>
+          <p>本身不阻塞 phase 2/3，但在加新 fast path 与 prompt 迭代频率上升时积累价值。</p>
+        </header>
+        <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-heuristic-split</p>
+            <div class="opt-body">
+              <p class="opt-label">拆 _heuristic_route_decision 为 ordered chain of sub-matchers（_match_billing_whitelist / _match_resolution / _match_gratitude / _match_short_troubleshooting / _match_api_mismatch / _match_join_channel / _match_product_portfolio）。当新增 fast path 频率上升时（plan_change / pricing_inquiry 等），让分支顺序约束显式化，避免 reviewer 必须重读 ~150 行才能确认插入位置。</p>
+              <div class="opt-meta">
+                <span class="tag">Refactor</span>
+                <span class="tag">_heuristic_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-automation-candidate-cleanup</p>
+            <div class="opt-body">
+              <p class="opt-label">删除 _llm_route_decision 的 billing action set 里 dead value automation_candidate（未在 policy gate 任何分支处理，最终默认落到 human_review_required），或给它明确语义。</p>
+              <div class="opt-meta">
+                <span class="tag">Cleanup</span>
+                <span class="tag">_llm_route_decision</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-threshold-env-cache</p>
+            <div class="opt-body">
+              <p class="opt-label">INTENT_ROUTER_CONFIDENCE_THRESHOLD 改 module 级 lru_cache + 测试 reset 钩子，避免热路径每请求 parse env；与 per-scope threshold 落地时一并实现。</p>
+              <div class="opt-meta">
+                <span class="tag">Perf</span>
+                <span class="tag">_safe_float_env</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-llm-transient-retry</p>
+            <div class="opt-body">
+              <p class="opt-label">_llm_route_decision 对网络/超时类异常加 1 次指数退避重试（200ms），不重试 invalid_json / invalid_payload。避免瞬态网络抖动让 billing 工单错误进入 conservative_agora_technical_fallback。</p>
+              <div class="opt-meta">
+                <span class="tag">Reliability</span>
+                <span class="tag">_llm_route_decision</span>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </article>
+    </section>
 
     <footer class="footer">
       <span>文件：docs/qbr_plan.html</span>
@@ -1427,25 +1698,39 @@ flowchart TD
           summary: "Route tab 新增这张架构图，用来固定新的扩展点：deterministic fast path 只处理高置信信号；LLM 输出 semantic intent 和证据；policy gate 决定 automation eligibility；route contract 继续保护旧下游。",
           mermaid: [
             "flowchart TD",
-            "  I[\"Ticket title + body + context\"] --> H{\"Deterministic fast path?\"}",
-            "  H -->|billing whitelist / resolution / small talk / product signals| D[\"Deterministic route decision\"]",
-            "  H -->|no high-confidence hit| L[\"LLM semantic router\"]",
-            "  L --> S[\"Structured schema: scope_label, semantic_intent, recommended_action, automation_eligibility, evidence_spans, risk_flags\"]",
-            "  S --> P[\"Policy gate: safety boundary\"]",
-            "  P -->|eligible detailed_invoice| BA[\"billing_automation / detailed_invoice\"]",
-            "  P -->|eligible account_verification| BV[\"billing_automation / account_verification\"]",
-            "  P -->|refund, dispute, legal, account_suspension review| BR[\"billing_review / human_review_required\"]",
+            "  I[\"Ticket: message + subject + context\"] --> M{\"semantic_first?\"}",
+            "  M -->|false, Client AI default| H1{\"Deterministic fast path\"}",
+            "  M -->|true, /account| L1[\"LLM semantic router\"]",
+            "  H1 -->|hit| D[\"Deterministic decision (skips policy gate)\"]",
+            "  H1 -->|miss| L2[\"LLM semantic router\"]",
+            "  L1 --> TC{\"confidence >= INTENT_ROUTER_CONFIDENCE_THRESHOLD and payload valid?\"}",
+            "  L2 --> TC",
+            "  TC -->|yes| PG{\"scope_label == billing?\"}",
+            "  TC -->|no in semantic_first| H2{\"Deterministic fast path\"}",
+            "  TC -->|no in default| F[\"conservative_agora_technical_fallback (agora_technical / rag, fallback_reason recorded)\"]",
+            "  H2 -->|hit| D",
+            "  H2 -->|miss| F",
+            "  PG -->|no| BP[\"LLM decision passes through (non-billing scope unchanged)\"]",
+            "  PG -->|yes| BG[\"Billing policy gate (_apply_policy_gate)\"]",
+            "  BG -->|refund_or_dispute or legal/compensation risk| BR[\"billing_review / human_review_required\"]",
+            "  BG -->|billing.account_suspension| BR",
+            "  BG -->|billing.account_verification with no risk| BA1[\"billing_automation / account_verification\"]",
+            "  BG -->|billing.detailed_invoice with no dispute| BA2[\"billing_automation / detailed_invoice\"]",
+            "  BG -->|general or risky| BR",
             "  D --> C[\"Route contract\"]",
-            "  BA --> C",
-            "  BV --> C",
+            "  BP --> C",
+            "  BA1 --> C",
+            "  BA2 --> C",
             "  BR --> C",
+            "  F --> C",
             "  C -->|agora_technical| RAG[\"agora_docs_rag / rag / agora_docs_only\"]",
             "  C -->|agora_non_technical| WEB[\"web_company_info / web_search / official_web_search\"]",
             "  C -->|non_agora| REF[\"fallback_or_refuse / refuse\"]",
-            "  C -->|billing| ACC[\"/account response + support_billing_tickets audit fields\"]",
-            "  C -->|low confidence| F[\"conservative_agora_technical_fallback\"]"
+            "  C -->|small_talk| ST[\"general_chat / controlled_response or refuse\"]",
+            "  C -->|billing| ACC[\"/account view-model + support_billing_tickets audit fields\"]",
+            "  C -->|ticket_resolution| TR[\"ticket_resolution / resolve_ticket / deterministic_resolution\"]"
           ].join("\n"),
-          note: "新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。/account 使用 semantic-first 模式（LLM 先跑），避免 weak gratitude 等弱信号抢占 billing 长正文。Router audit 字段（intent_router_attempted / fallback_reason / failure_type / router_source）已在 SupportRouteDecision、SupportResolution、TicketExecutionResult 和 billing event 中透传。fallback rate 的口径：仅 router_source=conservative_fallback 计入 fallback；其下按 fallback_reason 细分：below_confidence_threshold（LLM 返回但低于 threshold）、missing_credentials、llm_invocation_failed、invalid_json、invalid_payload、route_fail_open（runtime 超时/异常）。router_source=llm_semantic 才算模型判断，不等于 fallback。"
+          note: "图固定两条入口模式：默认（Client AI 主链路）先跑 deterministic fast path，semantic_first（/account）先跑 LLM。Deterministic 命中的决策不进 policy gate（包括 billing 白名单），LLM 命中后只对 billing scope 跑 policy gate，其余 scope 直接落到 route contract。conservative_agora_technical_fallback 是真实分支节点，不是 route contract 输出。新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。Router audit 字段（intent_router_attempted / fallback_reason / failure_type / router_source）已在 SupportRouteDecision、SupportResolution、TicketExecutionResult 和 billing event 中透传。fallback rate 的口径：仅 router_source=conservative_fallback 计入 fallback；其下按 fallback_reason 细分：below_confidence_threshold（LLM 返回但低于 threshold）、missing_credentials、llm_invocation_failed、invalid_json、invalid_payload、route_fail_open（runtime 超时/异常）。router_source=llm_semantic 才算模型判断，不等于 fallback。"
         },
         sources: [
           "backend/services/support_router.py",
