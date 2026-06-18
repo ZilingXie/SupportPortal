@@ -70,6 +70,7 @@ class RoadmapContractTests(unittest.TestCase):
             "renderMeetingMinutes",
             "renderMeetingLane",
             "下一步计划",
+            'title: "下一步计划"',
             "最快不能超过 5 分钟",
             "AI 只检查 conclusion / proof / next step",
             "invoice / account fraud / deactivate",
@@ -89,7 +90,18 @@ class RoadmapContractTests(unittest.TestCase):
         meeting_lane_source = html_source[
             html_source.index('id: "meeting-minutes"') : html_source.index('id: "engineer-multi-agent"')
         ]
-        for removed_term in ["done: [", "review: [", "sources: [", "已完成进展", "未完成计划", "证据来源", "Review 结论"]:
+        for removed_term in [
+            "done: [",
+            "review: [",
+            "sources: [",
+            "next: [",
+            "lane.next.map(renderTask)",
+            "task-board",
+            "已完成进展",
+            "未完成计划",
+            "证据来源",
+            "Review 结论",
+        ]:
             with self.subTest(removed_term=removed_term):
                 self.assertNotIn(removed_term, meeting_lane_source)
 
