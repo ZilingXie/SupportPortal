@@ -26,6 +26,48 @@ class QbrPlanContractTests(unittest.TestCase):
         self.assertNotIn('<section class="snapshot"', html_source)
         self.assertNotIn('<details class="recent-updates-disclosure" open', html_source)
 
+    def test_qbr_plan_tracks_phase_gates_and_project_meeting(self) -> None:
+        html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
+        required_terms = [
+            "总计划追踪",
+            "Phase 1",
+            "Phase 2",
+            "Phase 3",
+            "阶段门禁",
+            "效率提升 + 工单系统雏形",
+            "AI 主动处理 + 人 approve",
+            "agent-to-agent + 高自动化",
+            "项目会议追踪",
+            "MEETING_TRACKS",
+            "renderMeetingTracks",
+            "AI review 人",
+            "人 review AI",
+            "保守 workflow",
+            "成熟 agent 自主循环",
+            "完全自动化",
+            "AI 做人 approve",
+            "AI 无能为力转真人",
+            "WeCom 不适合作审计 source of truth",
+            "billing route 验证",
+            "邮件回执",
+            "engineer reply 通过/拒绝",
+            "真实 case 模拟",
+            "会议追踪：2026-06-18 讨论纪要",
+            "3 个阶段门禁",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
+
+        self.assertLess(
+            html_source.index('class="phase-tracker"'),
+            html_source.index('class="toolbar"'),
+        )
+        self.assertLess(
+            html_source.index('class="meeting-section"'),
+            html_source.index("<h2>主线进度</h2>"),
+        )
+
     def test_qbr_plan_tracks_multi_agent_lane(self) -> None:
         html_source = Path("docs/qbr_plan.html").read_text(encoding="utf-8")
         required_terms = [
