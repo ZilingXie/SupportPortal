@@ -12,6 +12,26 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-18 - Roadmap maintenance rule for major changes
+
+- Area or subsystem: Agent workflow / roadmap maintenance
+- Prompt or model version: `roadmap-maintenance-rule-v1`
+- Summary: Renamed the QBR tracker maintenance surface to `docs/roadmap.html` and updated Codex/Claude/review instructions so `功能类/重大行为变更` must keep the Roadmap overall rollout / `整体落地进度` current when delivery status, phase gates, or tracked capabilities materially change.
+- Reason: Major SupportPortal changes need one landing-oriented Roadmap page in addition to the feature list, so reviewers can catch stale phase status and rollout plans during implementation review.
+- Affected files or config:
+  - `AGENTS.md`
+  - `CLAUDE.md`
+  - `.codex/skills/review-implemented-plan/SKILL.md`
+  - `docs/roadmap.html`
+  - `docs/qbr_plan.html`
+  - `backend/tests/test_roadmap_contract.py`
+- Expected behavior change:
+  - Future major or feature-level changes should update `docs/roadmap.html` when they affect overall delivery progress, phase gates, or tracked capability status.
+  - Review handoffs now include an explicit Roadmap freshness check for `功能类/重大行为变更`.
+- Verification:
+  - `rtk python3 -m unittest backend.tests.test_roadmap_contract -v`
+  - `rtk rg -n "docs/roadmap.html|功能类/重大行为变更|整体落地" AGENTS.md CLAUDE.md .codex/skills/review-implemented-plan/SKILL.md docs/prompt_change_log.md`
+
 ## 2026-06-18 - Router threshold audit and fallback observability
 
 - Area or subsystem: Routing / LLM intent router observability

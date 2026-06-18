@@ -23,6 +23,7 @@ Treat implementation review as task ownership transfer unless the user explicitl
 
 3. **Review like an owner**
    - Look for correctness bugs, behavioral regressions, security risks, broken workflow rules, missing logs, and missing targeted tests.
+   - For `功能类/重大行为变更`, confirm `docs/roadmap.html` 已同步或明确不需要同步 before finalization.
    - If issues are fixable and safe to decide, fix them directly in the task workspace.
    - Stop for user input only when the issue is ambiguous, unsafe to decide, or blocked by missing external state.
 

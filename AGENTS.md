@@ -48,7 +48,7 @@
 |---|---|---|
 | RAG-related retrieval, chunking, ingestion, embedding, eval, vector table, reset, or backfill changes | `docs/rag_change_log.md` | Include date, summary, reason, affected files/config, data impact, verification. |
 | Prompt/model/tooling-mode/domain-filter/provider/temperature/reasoning behavior changes | `docs/prompt_change_log.md` | Include date, subsystem, version, summary, reason, affected files/config, expected behavior change, verification. |
-| Major product capability added, completed, or materially changed | `docs/feature_list.md` | Record only major features; keep required category order and run `python3 scripts/verify_feature_list.py`. |
+| Major product capability added, completed, or materially changed / `功能类/重大行为变更` | `docs/feature_list.md` and `docs/roadmap.html` | Record major features in the feature list; also update Roadmap overall rollout / `整体落地进度` when the change materially affects delivery status, phase gates, or tracked capabilities. |
 | UI design language or component/style source-of-truth changes | `design.md` | New/refactored UI under `ui/` must follow `design.md`; update it before code when new tokens/rules/exceptions are needed. |
 
 ## When To Read `docs/agent_workflow_details.md`
