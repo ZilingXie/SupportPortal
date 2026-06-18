@@ -292,6 +292,26 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def record_case_memory_ledger", repo_source)
         self.assertIn("def list_case_memory_ledger", repo_source)
 
+    def test_ticket_storage_contract_includes_engineer_replay_eval_items_table(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_engineer_replay_eval_items", sql_source)
+        self.assertIn("eval_item_id TEXT PRIMARY KEY", sql_source)
+        self.assertIn("review_trace JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
+        self.assertIn("replan_notes JSONB NOT NULL DEFAULT '[]'::jsonb", sql_source)
+        self.assertIn("engineer_revise_feedback JSONB NOT NULL DEFAULT '[]'::jsonb", sql_source)
+        self.assertIn("replay_input JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
+        self.assertIn("reference_output JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
+        self.assertIn("dataset_status TEXT NOT NULL DEFAULT 'candidate'", sql_source)
+        self.assertIn("idx_support_engineer_replay_eval_case_created", sql_source)
+        self.assertIn("idx_support_engineer_replay_eval_status_created", sql_source)
+        self.assertIn("engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases", sql_source)
+        self.assertIn("support_engineer_replay_eval_items", repo_source)
+        self.assertIn("def record_engineer_replay_eval_item", repo_source)
+        self.assertIn("def list_engineer_replay_eval_items", repo_source)
+        self.assertIn("def get_engineer_replay_eval_item", repo_source)
+
     def test_ticket_storage_contract_includes_billing_ticket_table(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
@@ -329,6 +349,22 @@ class RepositoryConfigurationTests(unittest.TestCase):
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
         self.assertIn("support_case_memory_ledger", executed_sql)
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
+
+    def test_ticket_repository_initialize_creates_engineer_replay_eval_items_table(self) -> None:
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(repository, "_connect", return_value=connection):
+            repository.initialize()
+
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+        self.assertIn("support_engineer_replay_eval_items", executed_sql)
+        self.assertIn("review_trace JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
+        self.assertIn("replan_notes JSONB NOT NULL DEFAULT '[]'::jsonb", repo_source)
+        self.assertIn("engineer_revise_feedback JSONB NOT NULL DEFAULT '[]'::jsonb", repo_source)
+        self.assertNotIn('sql.Identifier(self._table("support_engineer_replay_eval_items"))', repo_source)
 
     def test_ticket_storage_contract_includes_support_ticket_message_meta(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")

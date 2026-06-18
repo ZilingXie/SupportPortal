@@ -5868,6 +5868,10 @@ class InvestigationFlowTests(unittest.TestCase):
         case_event_types = [item["event_type"] for item in case_events]
         self.assertNotIn("engineer_case_closed_after_customer_reply", case_event_types)
         self.assertNotIn("case_memory_ledger_recorded", case_event_types)
+        self.assertNotIn("engineer_replay_eval_item_recorded", case_event_types)
+        # No replay eval item should be generated on first approve
+        replay_eval_items = self.repository.list_engineer_replay_eval_items()
+        self.assertEqual(len(replay_eval_items), 0)
 
     def test_confirmation_approve_guardrail_block_keeps_investigation_revisable(self) -> None:
         """Blocked guardrail results should not strand the engineer in final approval."""
@@ -5967,6 +5971,9 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertNotIn("engineer_case_closed_after_customer_reply", blocked_events)
         blocked_ledger = self.repository.list_case_memory_ledger("TK-INV-GUARDRAIL-BLOCK-1")
         self.assertEqual(len(blocked_ledger), 0)
+        # No replay eval item should be generated when guardrail blocked
+        blocked_replay_eval = self.repository.list_engineer_replay_eval_items()
+        self.assertEqual(len(blocked_replay_eval), 0)
 
     def test_confirmation_final_approve_rejects_when_not_awaiting_final_approval(self) -> None:
         """final_approve without prior approve (not in awaiting_final_approval state) returns 400 and writes no side effects."""
@@ -6043,6 +6050,10 @@ class InvestigationFlowTests(unittest.TestCase):
         case_events = self.repository.list_engineer_case_events("TK-INV-NO-FINAL-1")
         case_event_types = [item["event_type"] for item in case_events]
         self.assertNotIn("engineer_case_closed_after_customer_reply", case_event_types)
+        self.assertNotIn("engineer_replay_eval_item_recorded", case_event_types)
+        # No replay eval item should be generated when final_approve is rejected
+        no_final_replay_eval = self.repository.list_engineer_replay_eval_items()
+        self.assertEqual(len(no_final_replay_eval), 0)
 
     def test_confirmation_final_approve_sends_customer_reply_and_closes_investigation(self) -> None:
         """Final approve after successful guardrail sends customer reply and closes the case."""
@@ -6237,6 +6248,22 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(closure_payload["engineer_id"], "eng")
         self.assertEqual(closure_payload["status"], "resolved")
         self.assertEqual(closure_payload["customer_reply_message_source"], "engineer_guidance")
+
+        # ---- NEW: engineer_replay_eval_item_recorded audit event ----
+        self.assertIn("engineer_replay_eval_item_recorded", case_event_types)
+
+        replay_eval_items = self.repository.list_engineer_replay_eval_items()
+        self.assertEqual(len(replay_eval_items), 1)
+        replay_item = replay_eval_items[0]
+        self.assertEqual(replay_item["eval_item_id"], "ereplay_TK-INV-103B-1")
+        self.assertEqual(replay_item["engineer_case_id"], "TK-INV-103B-1")
+        self.assertEqual(replay_item["client_ticket_id"], "TK-INV-103B")
+        self.assertIn("Please upgrade to SDK 4.2.2", replay_item["reference_output"]["approved_reply"])
+        self.assertIsNotNone(replay_item["replay_input"]["summary_packet_id"])
+        self.assertEqual(replay_item["dataset_status"], "candidate")
+        self.assertIsInstance(replay_item["review_trace"], dict)
+        # agent_state has no active_review in this test; review_decision is empty
+        self.assertEqual(replay_item["review_decision"], "")
 
     def test_confirmation_revise_records_engineer_note_and_keeps_investigation_active(self) -> None:
         self._seed_ticket(

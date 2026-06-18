@@ -232,6 +232,32 @@ CREATE TABLE IF NOT EXISTS support_case_memory_ledger (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Engineer replay eval dataset items, generated on final_approve.
+CREATE TABLE IF NOT EXISTS support_engineer_replay_eval_items (
+    eval_item_id TEXT PRIMARY KEY,
+    client_ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    source_summary_packet_id TEXT NOT NULL DEFAULT '',
+    source_summary_packet_version TEXT NOT NULL DEFAULT '',
+    source_plan_id TEXT NOT NULL DEFAULT '',
+    source_execution_id TEXT NOT NULL DEFAULT '',
+    source_review_id TEXT NOT NULL DEFAULT '',
+    review_decision TEXT NOT NULL DEFAULT '',
+    review_trace JSONB NOT NULL DEFAULT '{}'::jsonb,
+    replan_notes JSONB NOT NULL DEFAULT '[]'::jsonb,
+    engineer_revise_feedback JSONB NOT NULL DEFAULT '[]'::jsonb,
+    approved_reply TEXT NOT NULL DEFAULT '',
+    guardrail_final JSONB NOT NULL DEFAULT '{}'::jsonb,
+    expected_outcome TEXT NOT NULL DEFAULT 'resolved_with_customer_reply',
+    replay_input JSONB NOT NULL DEFAULT '{}'::jsonb,
+    reference_output JSONB NOT NULL DEFAULT '{}'::jsonb,
+    dataset_status TEXT NOT NULL DEFAULT 'candidate',
+    schema_version TEXT NOT NULL DEFAULT '',
+    data_quality_warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
     ON support_tickets (status, updated_at DESC);
 
@@ -285,3 +311,12 @@ CREATE INDEX IF NOT EXISTS idx_support_case_memory_ledger_ticket_created
 
 CREATE INDEX IF NOT EXISTS idx_support_case_memory_ledger_retrieval
     ON support_case_memory_ledger (retrieval_enabled, ledger_status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_replay_eval_case_created
+    ON support_engineer_replay_eval_items (engineer_case_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_replay_eval_ticket_created
+    ON support_engineer_replay_eval_items (client_ticket_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_replay_eval_status_created
+    ON support_engineer_replay_eval_items (dataset_status, created_at DESC);
