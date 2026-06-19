@@ -2022,6 +2022,113 @@ html.material-symbols-pending .material-symbols-outlined {
   line-height: 1.55;
 }
 
+.status-badge-investigating-toggle {
+  border: none;
+  cursor: default;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  transition: box-shadow 120ms ease, outline-color 120ms ease;
+}
+
+.status-badge-investigating-toggle:hover,
+.status-badge-investigating-toggle:focus-visible {
+  outline: 2px solid var(--warning);
+  outline-offset: 2px;
+}
+
+.status-badge-investigating-toggle.is-active {
+  outline: 2px solid var(--warning);
+  outline-offset: 2px;
+}
+
+.detail-multi-agent-panel {
+  gap: 14px;
+}
+
+.detail-multi-agent-body {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+}
+
+.detail-agent-stage {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(244, 247, 252, 0.92);
+}
+
+.detail-agent-stage .panel-card-head {
+  align-items: center;
+}
+
+.detail-agent-stage .panel-card-title {
+  font-size: 15px;
+}
+
+.detail-agent-task-list {
+  margin: 0;
+  padding-left: 0;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+
+.detail-agent-task-list li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.detail-agent-task-id {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.detail-agent-task-skill {
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(202, 230, 255, 0.7);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.detail-agent-task-title {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.detail-agent-task-summary {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.detail-agent-task-hint {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.detail-agent-decision-pill {
+  align-self: start;
+}
+
 .detail-hitl-feedback {
   gap: 14px;
 }
