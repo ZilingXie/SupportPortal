@@ -135,6 +135,30 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         self.assertFalse(payload["notify_customer"])
         self.assertEqual(payload["note"], "Invoice has been sent.")
 
+    def test_validation_rejects_non_bool_notify_customer(self) -> None:
+        with self.assertRaises(BillingResolutionValidationError):
+            validate_billing_resolution_submission(
+                result="completed",
+                notify_customer="false",
+                note="",
+            )
+
+    def test_validation_rejects_non_string_result(self) -> None:
+        with self.assertRaises(BillingResolutionValidationError):
+            validate_billing_resolution_submission(
+                result=None,
+                notify_customer=True,
+                note="",
+            )
+
+    def test_validation_rejects_non_string_note(self) -> None:
+        with self.assertRaises(BillingResolutionValidationError):
+            validate_billing_resolution_submission(
+                result="completed",
+                notify_customer=True,
+                note=123,
+            )
+
     def test_refused_requires_note(self) -> None:
         with self.assertRaises(BillingResolutionValidationError):
             validate_billing_resolution_submission(
@@ -221,3 +245,12 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
             title="Billing request",
         )
         self.assertEqual(text, "We need additional information from you to continue this billing request.")
+
+    def test_followup_rejects_non_string_result(self) -> None:
+        with self.assertRaises(BillingResolutionValidationError):
+            build_customer_followup_from_resolution(
+                result=None,
+                note="",
+                customer_message="Please help.",
+                title="Billing request",
+            )

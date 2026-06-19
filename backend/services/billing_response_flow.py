@@ -33,10 +33,20 @@ def hash_billing_response_token(token: str) -> str:
 
 
 def _normalize_result(result: str) -> str:
+    if not isinstance(result, str):
+        raise BillingResolutionValidationError("Billing resolution result must be a string.")
     normalized = result.strip().lower()
     if normalized not in _VALID_RESULTS:
         raise BillingResolutionValidationError("Unsupported billing resolution result.")
     return normalized
+
+
+def _normalize_note(note: str | None) -> str:
+    if note is None:
+        return ""
+    if not isinstance(note, str):
+        raise BillingResolutionValidationError("Resolution note must be a string.")
+    return note.strip()
 
 
 def validate_billing_resolution_submission(
@@ -46,14 +56,17 @@ def validate_billing_resolution_submission(
     note: str | None,
 ) -> dict[str, Any]:
     normalized_result = _normalize_result(result)
-    normalized_note = (note or "").strip()
+    normalized_note = _normalize_note(note)
+
+    if not isinstance(notify_customer, bool):
+        raise BillingResolutionValidationError("notify_customer must be a boolean.")
 
     if normalized_result != BILLING_RESPONSE_RESULT_COMPLETED and not normalized_note:
         raise BillingResolutionValidationError("Resolution note is required for this result.")
 
     return {
         "result": normalized_result,
-        "notify_customer": bool(notify_customer),
+        "notify_customer": notify_customer,
         "note": normalized_note,
     }
 
@@ -87,12 +100,12 @@ def build_billing_internal_resolution_event(
 def build_customer_followup_from_resolution(
     *,
     result: str,
-    note: str,
+    note: str | None,
     customer_message: str,
     title: str,
 ) -> str:
     normalized_result = _normalize_result(result)
-    normalized_note = note.strip()
+    normalized_note = _normalize_note(note)
     if normalized_note:
         return normalized_note
 
