@@ -375,6 +375,14 @@ class AccountIntakeApiTests(unittest.TestCase):
             event_types,
             ["billing_internal_resolution_submitted", "billing_customer_followup_generated"],
         )
+        followup_events = [
+            item["payload"]
+            for item in self.repository.list_ticket_events(ticket_id)
+            if item["event_type"] == "billing_customer_followup_generated"
+        ]
+        self.assertTrue(followup_events)
+        self.assertEqual(followup_events[-1]["resolution_result"], "completed")
+        self.assertEqual(followup_events[-1]["source"], "billing_response_ai")
         ticket = self.repository.get_ticket(ticket_id)
         self.assertIsNotNone(ticket)
         assert ticket is not None

@@ -3164,11 +3164,11 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
         "event": BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
         "billing_ticket_id": billing_ticket_id,
         "ticket_id": client_ticket_id,
-        "result": submission["result"],
+        "resolution_result": submission["result"],
         "notify_customer": submission["notify_customer"],
         "customer_reply": customer_reply,
         "created_at": now_iso(),
-        "source": "billing_response_link",
+        "source": "billing_response_ai",
     }
     await async_to_thread(
         ticket_repository.record_event,
