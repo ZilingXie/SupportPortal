@@ -54,7 +54,9 @@
 - Engineer AI 会按 Plan Agent 计划执行 allowlisted subagents 并生成 evidence packet。
 - Engineer AI 会根据执行结果生成 Review Agent 决策。
 - 工程师可双击 investigating 状态徽标切换查看当前 ticket 的 Plan/Execute/Review Agent 输出。
-- Engineer AI 支持工程师 revise 后带证据上下文重新规划调查。
+- 每个新建/进入的 Engineer 工单都会生成并持久化一轮初始 multi-agent run，右侧 Multi-Agent Run 面板默认不再为空。
+- 工程师在 multi-agent workspace 下提交消息会携带 multi_agent_enabled，后端先刷新一轮 Plan/Execute/Review 再让 Engineer AI 回复；默认 workspace 仍走 guardrail-only 消息流程。
+- revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。
 - Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。
 - Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。
 

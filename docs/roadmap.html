@@ -1440,7 +1440,7 @@
         <section class="architecture-diagram" aria-label="Engineer AI multi-agent Mermaid architecture diagram">
           <header>
             <h3>Summary → Plan → Execute → Review → Guardrail</h3>
-            <p>Summary/Plan/Execute/Review 第一版已接入 escalation runtime，revise 会携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent；mem0 和 skill list 未完成时 Plan Agent 使用 deterministic fallback。</p>
+            <p>Summary/Plan/Execute/Review 第一版已接入 escalation runtime：每个新建/进入的 Engineer 工单都会生成并持久化一轮初始 multi-agent run，双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true 触发一轮 Plan/Execute/Review 刷新；revise replan 循环与 max 2 retries 当前已暂停（只保留可编辑/重新走 guardrail）；mem0 和 skill list 未完成时 Plan Agent 使用 deterministic fallback。</p>
           </header>
           <div class="mermaid-card">
             <pre class="mermaid">
@@ -1453,11 +1453,12 @@ flowchart TD
   X --> G["Evidence packet + task results"]
   G --> R["Review Agent: 判断下一步"]
   R -->|ready_for_engineer| F["告诉工程师发现"]
-  R -->|replan_required, max 2 retries| P
+  R -->|replan_required 当前暂停自动回路| F
   R -->|unable_to_resolve| U["告诉工程师目前信息无法回答或解决"]
   F --> H["Engineer 操作"]
   U --> H
-  H -->|revise| P
+  H -->|revise| V["编辑备注 + 重新走 guardrail；不自动 replan"]
+  V --> H
   H -->|approve| Q["Guardrail: 生成或校验 customer-facing reply"]
   Q --> A["Engineer final approve"]
   A --> Y["回复客户"]
@@ -1667,7 +1668,7 @@ flowchart TD
       },
       {
         key: "Review Agent",
-        copy: "Review Agent 第一版已接入升级链路：deterministic review decision 根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve，限制最多 2 次 replan，保留 missing_information，review 结果持久化到 engineer_agent_state。"
+        copy: "Review Agent 第一版已接入升级链路：deterministic review decision 根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve；当前 runtime 暂停 replan_required 自动回 Plan 与 max 2 retries，只把 review 结果持久化到 engineer_agent_state。"
       },
       {
         key: "Execute Agent",
@@ -1828,7 +1829,7 @@ flowchart TD
         short: "Multi-Agent",
         title: "Engineer AI multi-agent",
         status: "doing",
-        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, max 2 replan, missing_information context）、revise replan 循环、close-memory（final approve 后显式关闭 engineer case、写 audit event、写 Case Memory candidate，不自动晋升 active memory）和 replay eval dataset（从 summary packet、review decisions、replan notes、engineer revise、approved replies 生成 candidate dataset）；当前下一步是 replay runner / metrics dashboard / regression gate。",
+        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, replan_required 仅作为暂停状态信号, missing_information context）、close-memory（final approve 后显式关闭 engineer case、写 audit event、写 Case Memory candidate，不自动晋升 active memory）和 replay eval dataset（从 summary packet、review decisions、replan notes、engineer revise、approved replies 生成 candidate dataset）；runtime activation 阶段：每个新建/进入的 Engineer 工单都会生成并持久化一轮初始 multi-agent run，双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true 触发一轮 Plan/Execute/Review 刷新，revise replan 循环与 max 2 retries 暂停（只保留可编辑/重新走 guardrail）；当前下一步是 replay runner / metrics dashboard / regression gate。",
         done: [
           "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
           "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
@@ -1836,22 +1837,23 @@ flowchart TD
           "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
           "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
           "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，Roadmap 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
-          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，Client AI handle 不了客户问题后的 Escalate to Engineer 会先生成 Summary Agent packet，并把该 packet 写入 Engineer ticket 的 engineer_handoff_packet；revise replan 链路已完成接入，Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步是 replay runner / metrics dashboard / regression gate。"
+          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，Client AI handle 不了客户问题后的 Escalate to Engineer 会先生成 Summary Agent packet，并把该 packet 写入 Engineer ticket 的 engineer_handoff_packet；Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步是 replay runner / metrics dashboard / regression gate。",
+          "Runtime activation：每个新建/进入的 Engineer 工单（RAG escalation、manual investigate、request-engineer-assistance）都会通过 ensure_engineer_multi_agent_run 生成并持久化一轮初始 Plan/Execute/Review run，右侧 Multi-Agent Run 面板默认不再为空；双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true，后端先刷新一轮再让 Engineer AI 回复，默认 workspace 仍走 guardrail-only 消息流程；revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。"
         ],
         review: [
-          "当前证据能证明的是 Summary/Plan/Execute/Review、revise replan 与 Guardrail final approve 已接入 runtime；它仍不是无需人工介入的自动闭环，因为 final approve 仍必须由工程师确认。",
+          "当前证据能证明的是 Summary/Plan/Execute/Review 初始与 multi-agent workspace 刷新、revise 暂停自动 replan、Guardrail final approve 已接入 runtime；它仍不是无需人工介入的自动闭环，因为 final approve 仍必须由工程师确认。",
           "Summary Agent → Create Engineer Ticket 这段已完成：Client AI 需要升级时，runtime 先输出结构化 summary packet，记录客户上下文、已知线索、escalation reason、缺失信息和 redaction boundary，再把 packet 持久化为 Engineer ticket 的 engineer_handoff_packet。",
           "Plan Agent 第一版已实现 deterministic fallback：mem0 未接入时用 fallback_unavailable，skill list 未安装时用 allowlist_fallback，只基于 summary packet 产出计划。",
           "Execute Agent 第一版已实现 deterministic scheduler/orchestrator：只调度 allowlisted subagents，显式记录 dependencies、parallel groups、task results 和 evidence packet，并持久化到 engineer_agent_state。",
-          "Review Agent 是关键门禁，决策固定为 ready_for_engineer、replan_required、unable_to_resolve；replan 最多 2 次且必须记录原因，缺失客户信息不会单独触发 replan。",
+          "Review Agent 是关键门禁，决策固定为 ready_for_engineer、replan_required、unable_to_resolve；replan_required 当前只作为人工可见信号，不自动回 Plan，也不执行 max 2 retries。",
           "Engineer approve 后仍必须走 guardrail 生成/校验 customer-facing reply，并再交给 engineer 最终 approve；关闭工单时只写 Case Memory candidate，不自动变 active memory。"
         ],
         next: [
           { id: "ma-summary-agent", status: "done", label: "Summary Agent 第一版（deterministic summary packet）已完成：Client AI 升级 Engineer 时，builder 先生成 engineer-summary-packet-v1，再写入 Engineer ticket 的 engineer_handoff_packet，包含 engineer_ticket_input、escalation 上下文、线索、缺失信息和 redaction boundary。", horizon: "Task 2" },
           { id: "ma-plan-agent", status: "done", label: "Plan Agent 第一版已完成：基于 summary packet、mem0（未接入时 fallback）和 skill list（未安装时用 allowlist fallback）生成 hypotheses、tasks、dependencies 和 blockers，并持久化到 engineer_agent_state.active_plan。", horizon: "Task 3" },
           { id: "ma-execute-agent", status: "done", label: "实现 Execute Agent：deterministic scheduler 调度 allowlisted subagents，区分 parallel groups 与串行依赖，收集 task results 和 evidence packet 并持久化到 engineer_agent_state。", horizon: "Task 4" },
-          { id: "ma-review-agent", status: "done", label: "Review Agent 第一版已实现 deterministic review decision：根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve，并限制最多 2 次 replan，保留 missing_information，review 结果持久化到 engineer_agent_state。", horizon: "Task 5" },
-          { id: "ma-revise-replan", status: "done", label: "revise 携带 engineer feedback、上一轮 evidence 和 review problem statement 回到 Plan Agent，实现 Plan → Execute → Review 循环（最多 2 次 replan）。", horizon: "Runtime" },
+          { id: "ma-review-agent", status: "done", label: "Review Agent 第一版已实现 deterministic review decision：根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve；当前暂停自动 replan/max 2 retries，保留 missing_information，review 结果持久化到 engineer_agent_state。", horizon: "Task 5" },
+          { id: "ma-revise-replan", status: "done", label: "revise replan 循环与 max 2 retries 当前已暂停：revise 只追加工程师备注、清空 blocked/final guardrail 状态并把调查置回 active，不再自动跑 Plan/Execute/Review replan；multi-agent workspace 下工程师消息携带 multi_agent_enabled=true 时由 ensure_engineer_multi_agent_run 触发一轮刷新。", horizon: "Runtime" },
           { id: "ma-guardrail-final", status: "done", label: "approve 后通过 guardrail 生成/校验 customer-facing reply，再交给 engineer 做最后 approve，避免直接自动回复客户。", horizon: "Runtime" },
           { id: "ma-close-memory", status: "done", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
           { id: "ma-eval", status: "done", label: "从 summary packet、review decisions、replan notes、engineer revise 和 approved replies 生成 replay eval dataset。", horizon: "Evaluation" },

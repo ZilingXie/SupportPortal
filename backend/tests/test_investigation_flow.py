@@ -6329,8 +6329,21 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "investigating")
         self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
-        self.assertEqual(payload["active_investigation"]["messages"][-2]["role"], "engineer")
-        self.assertEqual(payload["active_investigation"]["messages"][-1]["role"], "engineer_ai")
+        # Revise appends only the engineer note; the replan/replan-limit loop
+        # is paused, so no engineer_ai "Replan complete" / "Replan limit" message
+        # is emitted on revise.
+        self.assertEqual(payload["active_investigation"]["messages"][-1]["role"], "engineer")
+        self.assertEqual(
+            payload["active_investigation"]["messages"][-1]["content"],
+            "Add a cache-clear step before asking the customer to retry.",
+        )
+        revise_messages = payload["active_investigation"]["messages"]
+        self.assertFalse(
+            any("Replan complete" in str(m.get("content", "")) for m in revise_messages)
+        )
+        self.assertFalse(
+            any("Replan limit reached" in str(m.get("content", "")) for m in revise_messages)
+        )
 
     def _build_seed_multi_agent_state(
         self,
@@ -6434,6 +6447,13 @@ class InvestigationFlowTests(unittest.TestCase):
         }
 
     def test_confirmation_revise_runs_plan_execute_review_replan(self) -> None:
+        """Revise no longer runs Plan/Execute/Review replan (loop paused).
+
+        The automatic replan loop and max-2 retry enforcement are paused for
+        this runtime activation. Revise must only append the engineer note,
+        leave the existing active_plan/active_execution/active_review untouched,
+        keep replan_count unchanged, and emit no "Replan complete" message.
+        """
         self._seed_ticket(
             ticket_id="TK-INV-REPLAN-1",
             status="investigating",
@@ -6475,45 +6495,43 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "investigating")
 
-        # Fetch the engineer case to verify multi-agent state was updated
+        # Fetch the engineer case to verify multi-agent state was NOT refreshed
         detail = self.client.get("/api/engineer/tickets/TK-INV-REPLAN-1-1")
         self.assertEqual(detail.status_code, 200, detail.text)
         ticket = detail.json()["ticket"]
         agent_state = ticket.get("engineer_agent_state") or {}
 
-        # Assert new plan was generated with _r2 suffix (replan_count 0 → new plan _r1, but
-        # _run_engineer_multi_agent_round uses replan_count=1 in revise_context → _r2)
-        new_plan = agent_state.get("active_plan") or {}
-        self.assertIn("_r2", new_plan.get("plan_id", ""))
-        # Assert revise_context carries engineer feedback
-        self.assertIsNotNone(new_plan.get("revise_context"))
-        rc = new_plan.get("revise_context") or {}
-        self.assertIn("engineer_feedback", rc)
+        # The existing plan is preserved (still the seeded _r1 plan, no _r2 refresh)
+        active_plan = agent_state.get("active_plan") or {}
+        self.assertIn("_r1", active_plan.get("plan_id", ""))
+        self.assertNotIn("_r2", active_plan.get("plan_id", ""))
+        # replan_count is unchanged (no increment, no max-retry enforcement)
+        self.assertEqual(agent_state.get("replan_count"), 0)
+        # active_execution and active_review remain the seeded values
         self.assertEqual(
-            rc["engineer_feedback"]["note"],
-            "Check SDK 4.2.1 compatibility with Android 14 specifically.",
+            (agent_state.get("active_execution") or {}).get("execution_id"),
+            "exec_plan_summary_ec_001_r1",
         )
-        # Assert previous_evidence_packet carried
-        self.assertIn("previous_evidence_packet", rc)
         self.assertEqual(
-            rc["previous_evidence_packet"]["packet_id"],
-            "evidence_exec_plan_summary_ec_001_r1",
+            (agent_state.get("active_review") or {}).get("review_id"),
+            "review_exec_plan_summary_ec_001_r1",
         )
-        # Assert review_problem_statement from previous review
-        self.assertIn("Evidence does not confirm", rc["review_problem_statement"])
-        # Assert active_execution and active_review refreshed
-        self.assertIn("active_execution", agent_state)
-        self.assertIn("active_review", agent_state)
-        # Assert replan_count incremented to 1
-        self.assertEqual(agent_state.get("replan_count"), 1)
-        self.assertEqual((agent_state.get("active_review") or {}).get("replan_count"), 1)
-        # Assert replan_history has one entry
-        self.assertEqual(len(agent_state.get("replan_history") or []), 1)
+        # No replan_history entries are added by revise
+        self.assertEqual(len(agent_state.get("replan_history") or []), 0)
         messages = (ticket.get("active_investigation") or {}).get("messages") or []
+        # Engineer note is appended
         self.assertTrue(any(m.get("role") == "engineer" and "SDK 4.2.1" in m.get("content", "") for m in messages))
-        self.assertTrue(any(m.get("role") == "engineer_ai" and "Replan complete" in m.get("content", "") for m in messages))
+        # No "Replan complete" or "Replan limit reached" internal messages
+        self.assertFalse(any("Replan complete" in str(m.get("content", "")) for m in messages))
+        self.assertFalse(any("Replan limit reached" in str(m.get("content", "")) for m in messages))
 
-    def test_confirmation_revise_stops_when_replan_limit_reached(self) -> None:
+    def test_confirmation_revise_does_not_enforce_replan_limit(self) -> None:
+        """Revise no longer enforces the max-2 replan limit (loop paused).
+
+        Even when replan_count is already at the previous max, revise must not
+        emit a "Replan limit reached" message and must not block the engineer
+        from continuing. The investigation stays editable.
+        """
         self._seed_ticket(
             ticket_id="TK-INV-REPLAN-LIMIT",
             status="investigating",
@@ -6561,18 +6579,20 @@ class InvestigationFlowTests(unittest.TestCase):
         ticket = detail.json()["ticket"]
         agent_state = ticket.get("engineer_agent_state") or {}
 
-        # replan_count should remain 2 (not incremented)
+        # replan_count should remain 2 (not incremented, no limit enforcement)
         self.assertEqual(agent_state.get("replan_count"), 2)
         # active_plan should still be the original _r1 plan (not refreshed)
         active_plan = agent_state.get("active_plan") or {}
         self.assertIn("_r1", active_plan.get("plan_id", ""))
         self.assertNotIn("_r2", active_plan.get("plan_id", ""))
 
-        # Investigation messages should contain the limit message
+        # No "Replan limit reached" message is emitted; the engineer note is the
+        # only appended message and the investigation stays editable.
         investigation = ticket.get("active_investigation") or {}
         messages = investigation.get("messages") or []
         limit_messages = [m for m in messages if "Replan limit reached" in str(m.get("content", ""))]
-        self.assertEqual(len(limit_messages), 1, f"Expected replan limit message in: {messages}")
+        self.assertEqual(len(limit_messages), 0, f"Unexpected replan limit message in: {messages}")
+        self.assertTrue(any(m.get("role") == "engineer" and "Try one more time." in str(m.get("content", "")) for m in messages))
 
     def test_confirmation_approve_does_not_replan(self) -> None:
         """First approve runs guardrail without triggering multi-agent replan."""
@@ -6738,6 +6758,85 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(detail.json()["ticket"]["status"], "escalated")
         self.assertEqual(detail.json()["ticket"]["engineer_case_id"], "TK-INV-105-1")
         self.assertEqual(detail.json()["ticket"]["title"], "how to join channel")
+        # Every new Engineer case is seeded with an initial multi-agent run.
+        agent_state = detail.json()["ticket"].get("engineer_agent_state") or {}
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertIsInstance(agent_state.get("active_execution"), dict)
+        self.assertIsInstance(agent_state.get("active_review"), dict)
+        self.assertTrue(str(agent_state.get("plan_id") or "").strip())
+        self.assertTrue(str(agent_state.get("execution_id") or "").strip())
+        self.assertTrue(str(agent_state.get("review_id") or "").strip())
+
+    def test_request_engineer_assistance_existing_active_case_hydrates_multi_agent_state(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-105B",
+            subject="token callback issue",
+            status="investigating",
+            active_investigation={
+                "id": "INV-105B",
+                "state": "active",
+                "trigger_reason": "customer_requested_engineer_assistance",
+                "trigger_source": "customer_request",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [],
+            },
+            engineer_agent_state={
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Token callback issue needs engineer review.",
+            },
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/TK-INV-105B/request-engineer-assistance",
+                json={},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["engineer_case_id"], "TK-INV-105B-1")
+        stored_case = self.repository.get_engineer_case("TK-INV-105B-1")
+        self.assertIsNotNone(stored_case)
+        agent_state = (stored_case or {}).get("engineer_agent_state") or {}
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertIsInstance(agent_state.get("active_execution"), dict)
+        self.assertIsInstance(agent_state.get("active_review"), dict)
+        self.assertEqual(
+            str((agent_state.get("multi_agent_last_run") or {}).get("reason") or ""),
+            "initial_case_creation",
+        )
+
+    def test_engineer_ticket_detail_hydrates_existing_active_case_multi_agent_state(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-105C",
+            subject="legacy active case",
+            status="investigating",
+            active_investigation={
+                "id": "INV-105C",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [],
+            },
+        )
+
+        response = self.client.get("/api/engineer/tickets/TK-INV-105C-1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        agent_state = response.json()["ticket"].get("engineer_agent_state") or {}
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertIsInstance(agent_state.get("active_execution"), dict)
+        self.assertIsInstance(agent_state.get("active_review"), dict)
+        stored_case = self.repository.get_engineer_case("TK-INV-105C-1")
+        self.assertIsNotNone(stored_case)
+        stored_state = (stored_case or {}).get("engineer_agent_state") or {}
+        self.assertIsInstance(stored_state.get("active_plan"), dict)
 
     def test_investigate_action_reuses_latest_rag_turn_when_escalated_ticket_enters_investigation(self) -> None:
         self._seed_ticket(
@@ -6798,6 +6897,12 @@ class InvestigationFlowTests(unittest.TestCase):
             opening_message["citations"][0]["source_url"],
             "https://docs.agora.io/en/video-calling/token-authentication",
         )
+        # Manual investigate also seeds an initial multi-agent run.
+        agent_state = ticket.get("engineer_agent_state") or {}
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertIsInstance(agent_state.get("active_execution"), dict)
+        self.assertIsInstance(agent_state.get("active_review"), dict)
+        self.assertTrue(str(agent_state.get("plan_id") or "").strip())
 
     def test_investigate_action_without_latest_rag_turn_falls_back_to_generic_prompt(self) -> None:
         self._seed_ticket(ticket_id="TK-INV-106B", status="escalated")
@@ -6820,6 +6925,297 @@ class InvestigationFlowTests(unittest.TestCase):
             opening_message["content"],
         )
         self.assertNotIn("Engineer Request:", opening_message["content"])
+
+    def test_investigation_message_without_multi_agent_enabled_does_not_hydrate_empty_state(self) -> None:
+        """Default guardrail-only message submission must not run Plan/Execute/Review."""
+        self._seed_ticket(
+            ticket_id="TK-INV-MSG-NO-HYDRATE",
+            status="investigating",
+            active_investigation={
+                "id": "INV-MSG-NO-HYDRATE",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-MSG-NO-HYDRATE-m1",
+                        "role": "engineer_ai",
+                        "content": "Please share the SDK version first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        with patch.object(
+            main,
+            "ensure_engineer_multi_agent_run",
+            side_effect=AssertionError("default message submit must not run multi-agent"),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Thanks, I will validate this with the guardrail-only flow.",
+                "draft_customer_reply": None,
+                "engineer_agent_state": {
+                    "phase": "gather_missing_inputs",
+                    "issue_understanding": "Token renew callback does not fire.",
+                    "knowledge_summary": "",
+                    "why_not_solved": "",
+                    "goal": "Confirm SDK version.",
+                    "known_facts": [],
+                    "missing_information": ["Exact SDK version"],
+                    "next_request_for_engineer": "Please confirm the exact SDK version.",
+                    "resolution_hypothesis": "",
+                    "ready_to_reply": False,
+                    "reply_readiness": _reply_readiness(
+                        has_proof=False,
+                        proof_summary="",
+                        proof_anchors=[],
+                        blockers=["Exact SDK version is still missing."],
+                        ready_for_customer_reply=False,
+                    ),
+                    "last_refreshed_at": "2026-03-29T09:05:00+00:00",
+                },
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-MSG-NO-HYDRATE-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "Reproduces on Android 14 with SDK 4.2.1.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        returned_state = response.json().get("engineer_agent_state") or {}
+        self.assertNotIn("active_plan", returned_state)
+        self.assertNotIn("active_execution", returned_state)
+        self.assertNotIn("active_review", returned_state)
+        stored_case = self.repository.get_engineer_case("TK-INV-MSG-NO-HYDRATE-1")
+        stored_state = (stored_case or {}).get("engineer_agent_state") or {}
+        self.assertNotIn("active_plan", stored_state)
+        self.assertNotIn("active_execution", stored_state)
+        self.assertNotIn("active_review", stored_state)
+
+    def test_investigation_message_without_multi_agent_enabled_does_not_refresh_plan(self) -> None:
+        """Default guardrail-only message submission does not refresh multi-agent state."""
+        self._seed_ticket(
+            ticket_id="TK-INV-MSG-NO-MA",
+            status="investigating",
+            active_investigation={
+                "id": "INV-MSG-NO-MA",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-MSG-NO-MA-m1",
+                        "role": "engineer_ai",
+                        "content": "Please share the SDK version first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+            engineer_agent_state=self._build_seed_multi_agent_state(
+                replan_count=0,
+                review_decision="replan_required",
+            ),
+        )
+        seeded_plan_id = self._build_seed_multi_agent_state()["active_plan"]["plan_id"]
+
+        with patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Thanks for the detail. I will keep investigating.",
+                "draft_customer_reply": None,
+                "engineer_agent_state": {
+                    "phase": "gather_missing_inputs",
+                    "issue_understanding": "Token renew callback does not fire.",
+                    "knowledge_summary": "Client AI found generic token-renewal guidance.",
+                    "why_not_solved": "Still confirming the SDK boundary.",
+                    "goal": "Confirm SDK version.",
+                    "known_facts": ["Customer reports Android 14 token renewal failure."],
+                    "missing_information": ["Exact SDK version"],
+                    "next_request_for_engineer": "Please confirm the exact SDK version.",
+                    "resolution_hypothesis": "SDK 4.2.1 may have a callback bug on Android 14.",
+                    "ready_to_reply": False,
+                    "reply_readiness": _reply_readiness(
+                        has_proof=False,
+                        proof_summary="",
+                        proof_anchors=[],
+                        blockers=["Exact SDK version is still missing."],
+                        ready_for_customer_reply=False,
+                    ),
+                    "last_refreshed_at": "2026-03-29T09:05:00+00:00",
+                },
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-MSG-NO-MA-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "Reproduces on Android 14 with SDK 4.2.1.",
+                    "multi_agent_enabled": False,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        # Default payload (omitting multi_agent_enabled) also stays guardrail-only.
+        with patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Continuing investigation.",
+                "draft_customer_reply": None,
+                "engineer_agent_state": {
+                    "phase": "gather_missing_inputs",
+                    "issue_understanding": "Token renew callback does not fire.",
+                    "knowledge_summary": "",
+                    "why_not_solved": "",
+                    "goal": "Confirm SDK version.",
+                    "known_facts": [],
+                    "missing_information": ["Exact SDK version"],
+                    "next_request_for_engineer": "Please confirm the exact SDK version.",
+                    "resolution_hypothesis": "",
+                    "ready_to_reply": False,
+                    "reply_readiness": _reply_readiness(
+                        has_proof=False,
+                        proof_summary="",
+                        proof_anchors=[],
+                        blockers=["Exact SDK version is still missing."],
+                        ready_for_customer_reply=False,
+                    ),
+                    "last_refreshed_at": "2026-03-29T09:06:00+00:00",
+                },
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            default_response = self.client.post(
+                "/api/engineer/tickets/TK-INV-MSG-NO-MA-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "Still reproducing after cache clear.",
+                },
+            )
+        self.assertEqual(default_response.status_code, 200, default_response.text)
+
+        detail = self.client.get("/api/engineer/tickets/TK-INV-MSG-NO-MA-1")
+        agent_state = detail.json()["ticket"].get("engineer_agent_state") or {}
+        # active_plan is preserved (no refresh) and its plan_id is unchanged.
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertEqual(
+            (agent_state.get("active_plan") or {}).get("plan_id"),
+            seeded_plan_id,
+        )
+        # multi_agent_last_run was not set to an engineer_message refresh.
+        last_run = agent_state.get("multi_agent_last_run") or {}
+        self.assertNotEqual(str(last_run.get("reason") or ""), "engineer_message")
+
+    def test_investigation_message_with_multi_agent_enabled_refreshes_multi_agent_state(self) -> None:
+        """multi_agent_enabled=true refreshes Plan/Execute/Review before the AI reply."""
+        self._seed_ticket(
+            ticket_id="TK-INV-MSG-MA",
+            status="investigating",
+            active_investigation={
+                "id": "INV-MSG-MA",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-MSG-MA-m1",
+                        "role": "engineer_ai",
+                        "content": "Please share the SDK version first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+            engineer_agent_state=self._build_seed_multi_agent_state(
+                replan_count=0,
+                review_decision="replan_required",
+            ),
+        )
+
+        with patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Refreshed multi-agent state. Continuing investigation.",
+                "draft_customer_reply": None,
+                "engineer_agent_state": {
+                    "phase": "gather_missing_inputs",
+                    "issue_understanding": "Token renew callback does not fire.",
+                    "knowledge_summary": "",
+                    "why_not_solved": "",
+                    "goal": "Confirm SDK version.",
+                    "known_facts": [],
+                    "missing_information": ["Exact SDK version"],
+                    "next_request_for_engineer": "Please confirm the exact SDK version.",
+                    "resolution_hypothesis": "",
+                    "ready_to_reply": False,
+                    "reply_readiness": _reply_readiness(
+                        has_proof=False,
+                        proof_summary="",
+                        proof_anchors=[],
+                        blockers=["Exact SDK version is still missing."],
+                        ready_for_customer_reply=False,
+                    ),
+                    "last_refreshed_at": "2026-03-29T09:07:00+00:00",
+                },
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-MSG-MA-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "Reproduces on Android 14 with SDK 4.2.1.",
+                    "multi_agent_enabled": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        # The refreshed multi-agent state is returned on the response.
+        returned_state = payload.get("engineer_agent_state") or {}
+        self.assertIsInstance(returned_state.get("active_plan"), dict)
+        self.assertIsInstance(returned_state.get("active_execution"), dict)
+        self.assertIsInstance(returned_state.get("active_review"), dict)
+        self.assertEqual(
+            str((returned_state.get("multi_agent_last_run") or {}).get("reason") or ""),
+            "engineer_message",
+        )
+
+        detail = self.client.get("/api/engineer/tickets/TK-INV-MSG-MA-1")
+        agent_state = detail.json()["ticket"].get("engineer_agent_state") or {}
+        # The refreshed multi-agent state persisted and carries the engineer note.
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertTrue(str(agent_state.get("plan_id") or "").strip())
+        self.assertEqual(
+            str((agent_state.get("multi_agent_last_run") or {}).get("reason") or ""),
+            "engineer_message",
+        )
+        last_revise = agent_state.get("last_revise_context") or {}
+        self.assertEqual(
+            str(last_revise.get("revise_note") or ""),
+            "Reproduces on Android 14 with SDK 4.2.1.",
+        )
 
     def test_legacy_mode_and_takeover_reply_endpoints_are_unavailable(self) -> None:
         self._seed_ticket(ticket_id="TK-INV-107", status="communicating")

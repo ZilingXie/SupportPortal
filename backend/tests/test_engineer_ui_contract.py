@@ -6007,6 +6007,95 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_default_message_payload_omits_multi_agent_enabled(self) -> None:
+        self.run_engineer_app_script(
+            self._engineer_multi_agent_ticket_fixture()
+            + textwrap.dedent(
+                """
+                selectedPoolStatus = "investigating";
+                selectedTicketId = "TK-MA-1";
+                selectedTicket = tickets[0];
+
+                // Default view: multi-agent workspace is NOT toggled on, so the
+                // message submission payload must send multi_agent_enabled: false.
+                if (isMultiAgentWorkspaceActiveForTicket(selectedTicketId)) {
+                  throw new Error("Default detail view should not have the multi-agent workspace active.");
+                }
+
+                let capturedBody = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedBody = options?.body;
+                  return {
+                    ticket_id: "TK-MA-1",
+                    status: "investigating",
+                    updated_at: "2026-06-01T08:35:00+00:00",
+                    active_investigation: tickets[0].active_investigation,
+                  };
+                };
+
+                await submitInvestigationMessage(selectedTicketId, "Reproduces on Android 14 with SDK 4.2.1.");
+                const parsedBody = JSON.parse(capturedBody);
+                if (parsedBody.message !== "Reproduces on Android 14 with SDK 4.2.1.") {
+                  throw new Error("Default message payload should send the engineer message text.");
+                }
+                if (parsedBody.multi_agent_enabled !== false) {
+                  throw new Error("Default message payload should send multi_agent_enabled: false.");
+                }
+                """
+            )
+        )
+
+    def test_engineer_detail_multi_agent_toggled_message_payload_sends_true(self) -> None:
+        self.run_engineer_app_script(
+            self._engineer_multi_agent_ticket_fixture()
+            + textwrap.dedent(
+                """
+                selectedPoolStatus = "investigating";
+                selectedTicketId = "TK-MA-1";
+                selectedTicket = tickets[0];
+
+                // Toggle the multi-agent workspace on for this ticket.
+                if (!toggleMultiAgentWorkspaceForTicket(selectedTicketId)) {
+                  throw new Error("Toggling the multi-agent workspace should turn it on for the current ticket.");
+                }
+                if (!isMultiAgentWorkspaceActiveForTicket(selectedTicketId)) {
+                  throw new Error("Multi-agent workspace should be active for the current ticket after toggling.");
+                }
+
+                let capturedBody = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedBody = options?.body;
+                  return {
+                    ticket_id: "TK-MA-1",
+                    status: "investigating",
+                    updated_at: "2026-06-01T08:36:00+00:00",
+                    active_investigation: tickets[0].active_investigation,
+                    engineer_agent_state: tickets[0].engineer_agent_state,
+                  };
+                };
+
+                await submitInvestigationMessage(selectedTicketId, "Refreshed the multi-agent run.");
+                const parsedBody = JSON.parse(capturedBody);
+                if (parsedBody.multi_agent_enabled !== true) {
+                  throw new Error("Toggled-on message payload should send multi_agent_enabled: true.");
+                }
+
+                // The Multi-Agent Run panel renders the populated Plan/Execute/Review
+                // fields plus the active-mode status line.
+                const html = renderTicketDetailView();
+                if (!html.includes("detail-multi-agent-panel")) {
+                  throw new Error("Multi-agent workspace view should render the dedicated insight panel.");
+                }
+                if (!html.includes("Multi-agent mode is active for this ticket.")) {
+                  throw new Error("Multi-agent workspace should surface the active-mode status line.");
+                }
+                if (!html.includes("plan_TK-MA-1_r1")) {
+                  throw new Error("Multi-agent workspace should render the populated active plan_id.");
+                }
+                """
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
