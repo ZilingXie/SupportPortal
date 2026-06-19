@@ -1836,18 +1836,18 @@ flowchart TD
           "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
           "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
           "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，Roadmap 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
-          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，revise replan 链路已完成接入，Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步是 replay runner / metrics dashboard / regression gate。"
+          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，Client AI handle 不了客户问题后的 Escalate to Engineer 会先生成 Summary Agent packet，并把该 packet 写入 Engineer ticket 的 engineer_handoff_packet；revise replan 链路已完成接入，Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步是 replay runner / metrics dashboard / regression gate。"
         ],
         review: [
           "当前证据能证明的是 Summary/Plan/Execute/Review、revise replan 与 Guardrail final approve 已接入 runtime；它仍不是无需人工介入的自动闭环，因为 final approve 仍必须由工程师确认。",
-          "Summary Agent 应先输出结构化 summary packet，再创建 Engineer ticket；它要记录客户上下文、已知线索、escalation reason、缺失信息和 redaction boundary。",
+          "Summary Agent → Create Engineer Ticket 这段已完成：Client AI 需要升级时，runtime 先输出结构化 summary packet，记录客户上下文、已知线索、escalation reason、缺失信息和 redaction boundary，再把 packet 持久化为 Engineer ticket 的 engineer_handoff_packet。",
           "Plan Agent 第一版已实现 deterministic fallback：mem0 未接入时用 fallback_unavailable，skill list 未安装时用 allowlist_fallback，只基于 summary packet 产出计划。",
           "Execute Agent 第一版已实现 deterministic scheduler/orchestrator：只调度 allowlisted subagents，显式记录 dependencies、parallel groups、task results 和 evidence packet，并持久化到 engineer_agent_state。",
           "Review Agent 是关键门禁，决策固定为 ready_for_engineer、replan_required、unable_to_resolve；replan 最多 2 次且必须记录原因，缺失客户信息不会单独触发 replan。",
           "Engineer approve 后仍必须走 guardrail 生成/校验 customer-facing reply，并再交给 engineer 最终 approve；关闭工单时只写 Case Memory candidate，不自动变 active memory。"
         ],
         next: [
-          { id: "ma-summary-agent", status: "done", label: "Summary Agent 第一版（deterministic summary packet）已完成：builder 输出写入 engineer_handoff_packet（engineer-summary-packet-v1），记录 escalation 上下文、线索、缺失信息和 redaction boundary。", horizon: "Task 2" },
+          { id: "ma-summary-agent", status: "done", label: "Summary Agent 第一版（deterministic summary packet）已完成：Client AI 升级 Engineer 时，builder 先生成 engineer-summary-packet-v1，再写入 Engineer ticket 的 engineer_handoff_packet，包含 engineer_ticket_input、escalation 上下文、线索、缺失信息和 redaction boundary。", horizon: "Task 2" },
           { id: "ma-plan-agent", status: "done", label: "Plan Agent 第一版已完成：基于 summary packet、mem0（未接入时 fallback）和 skill list（未安装时用 allowlist fallback）生成 hypotheses、tasks、dependencies 和 blockers，并持久化到 engineer_agent_state.active_plan。", horizon: "Task 3" },
           { id: "ma-execute-agent", status: "done", label: "实现 Execute Agent：deterministic scheduler 调度 allowlisted subagents，区分 parallel groups 与串行依赖，收集 task results 和 evidence packet 并持久化到 engineer_agent_state。", horizon: "Task 4" },
           { id: "ma-review-agent", status: "done", label: "Review Agent 第一版已实现 deterministic review decision：根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve，并限制最多 2 次 replan，保留 missing_information，review 结果持久化到 engineer_agent_state。", horizon: "Task 5" },
@@ -1863,7 +1863,11 @@ flowchart TD
           "docs/superpowers/specs/2026-06-10-engineer-hitl-feedback-schema-design.md",
           "docs/superpowers/plans/2026-06-10-engineer-evidence-orchestration.md",
           "docs/prompt_change_log.md",
+          "backend/main.py",
+          "backend/services/engineer_summary_agent.py",
           "backend/services/engineer_multi_agent.py",
+          "backend/tests/test_engineer_summary_agent.py",
+          "backend/tests/test_investigation_flow.py",
           "backend/tests/test_engineer_multi_agent.py",
           "backend/tests/test_roadmap_contract.py",
           "backend/tests/test_case_memory_ledger.py"
