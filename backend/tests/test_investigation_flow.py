@@ -6767,6 +6767,77 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertTrue(str(agent_state.get("execution_id") or "").strip())
         self.assertTrue(str(agent_state.get("review_id") or "").strip())
 
+    def test_request_engineer_assistance_existing_active_case_hydrates_multi_agent_state(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-105B",
+            subject="token callback issue",
+            status="investigating",
+            active_investigation={
+                "id": "INV-105B",
+                "state": "active",
+                "trigger_reason": "customer_requested_engineer_assistance",
+                "trigger_source": "customer_request",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [],
+            },
+            engineer_agent_state={
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Token callback issue needs engineer review.",
+            },
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/TK-INV-105B/request-engineer-assistance",
+                json={},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["engineer_case_id"], "TK-INV-105B-1")
+        stored_case = self.repository.get_engineer_case("TK-INV-105B-1")
+        self.assertIsNotNone(stored_case)
+        agent_state = (stored_case or {}).get("engineer_agent_state") or {}
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertIsInstance(agent_state.get("active_execution"), dict)
+        self.assertIsInstance(agent_state.get("active_review"), dict)
+        self.assertEqual(
+            str((agent_state.get("multi_agent_last_run") or {}).get("reason") or ""),
+            "initial_case_creation",
+        )
+
+    def test_engineer_ticket_detail_hydrates_existing_active_case_multi_agent_state(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-105C",
+            subject="legacy active case",
+            status="investigating",
+            active_investigation={
+                "id": "INV-105C",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [],
+            },
+        )
+
+        response = self.client.get("/api/engineer/tickets/TK-INV-105C-1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        agent_state = response.json()["ticket"].get("engineer_agent_state") or {}
+        self.assertIsInstance(agent_state.get("active_plan"), dict)
+        self.assertIsInstance(agent_state.get("active_execution"), dict)
+        self.assertIsInstance(agent_state.get("active_review"), dict)
+        stored_case = self.repository.get_engineer_case("TK-INV-105C-1")
+        self.assertIsNotNone(stored_case)
+        stored_state = (stored_case or {}).get("engineer_agent_state") or {}
+        self.assertIsInstance(stored_state.get("active_plan"), dict)
+
     def test_investigate_action_reuses_latest_rag_turn_when_escalated_ticket_enters_investigation(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-106",
@@ -6854,6 +6925,83 @@ class InvestigationFlowTests(unittest.TestCase):
             opening_message["content"],
         )
         self.assertNotIn("Engineer Request:", opening_message["content"])
+
+    def test_investigation_message_without_multi_agent_enabled_does_not_hydrate_empty_state(self) -> None:
+        """Default guardrail-only message submission must not run Plan/Execute/Review."""
+        self._seed_ticket(
+            ticket_id="TK-INV-MSG-NO-HYDRATE",
+            status="investigating",
+            active_investigation={
+                "id": "INV-MSG-NO-HYDRATE",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-MSG-NO-HYDRATE-m1",
+                        "role": "engineer_ai",
+                        "content": "Please share the SDK version first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        with patch.object(
+            main,
+            "ensure_engineer_multi_agent_run",
+            side_effect=AssertionError("default message submit must not run multi-agent"),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Thanks, I will validate this with the guardrail-only flow.",
+                "draft_customer_reply": None,
+                "engineer_agent_state": {
+                    "phase": "gather_missing_inputs",
+                    "issue_understanding": "Token renew callback does not fire.",
+                    "knowledge_summary": "",
+                    "why_not_solved": "",
+                    "goal": "Confirm SDK version.",
+                    "known_facts": [],
+                    "missing_information": ["Exact SDK version"],
+                    "next_request_for_engineer": "Please confirm the exact SDK version.",
+                    "resolution_hypothesis": "",
+                    "ready_to_reply": False,
+                    "reply_readiness": _reply_readiness(
+                        has_proof=False,
+                        proof_summary="",
+                        proof_anchors=[],
+                        blockers=["Exact SDK version is still missing."],
+                        ready_for_customer_reply=False,
+                    ),
+                    "last_refreshed_at": "2026-03-29T09:05:00+00:00",
+                },
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-MSG-NO-HYDRATE-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "Reproduces on Android 14 with SDK 4.2.1.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        returned_state = response.json().get("engineer_agent_state") or {}
+        self.assertNotIn("active_plan", returned_state)
+        self.assertNotIn("active_execution", returned_state)
+        self.assertNotIn("active_review", returned_state)
+        stored_case = self.repository.get_engineer_case("TK-INV-MSG-NO-HYDRATE-1")
+        stored_state = (stored_case or {}).get("engineer_agent_state") or {}
+        self.assertNotIn("active_plan", stored_state)
+        self.assertNotIn("active_execution", stored_state)
+        self.assertNotIn("active_review", stored_state)
 
     def test_investigation_message_without_multi_agent_enabled_does_not_refresh_plan(self) -> None:
         """Default guardrail-only message submission does not refresh multi-agent state."""

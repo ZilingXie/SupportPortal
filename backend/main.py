@@ -4015,11 +4015,57 @@ def list_tickets(
     return {"tickets": tickets, "status_filter": normalized_filter}
 
 
+def _engineer_case_has_multi_agent_run(engineer_case: dict[str, Any]) -> bool:
+    agent_state = (
+        engineer_case.get("engineer_agent_state")
+        if isinstance(engineer_case.get("engineer_agent_state"), dict)
+        else {}
+    )
+    return bool(
+        isinstance(agent_state.get("active_plan"), dict)
+        and isinstance(agent_state.get("active_execution"), dict)
+        and isinstance(agent_state.get("active_review"), dict)
+    )
+
+
+def _hydrate_engineer_multi_agent_run_if_missing(
+    engineer_case: dict[str, Any],
+    *,
+    now_value: str,
+    reason: str,
+    persist: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    if _engineer_case_has_multi_agent_run(engineer_case):
+        return engineer_case, False
+    ensure_engineer_multi_agent_run(
+        engineer_case,
+        now_value=now_value,
+        reason=reason,
+    )
+    if persist:
+        ticket_repository.save_engineer_case(engineer_case, new_messages=[])
+    return engineer_case, True
+
+
 @app.get("/api/engineer/tickets/{ticket_id}")
 def get_ticket_detail(ticket_id: str, include_context: bool = Query(default=True)) -> dict[str, Any]:
     engineer_case = _resolve_engineer_case_payload(ticket_id)
     if engineer_case is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    if not _engineer_case_has_multi_agent_run(engineer_case):
+        hydrated_record, hydrated = _hydrate_engineer_multi_agent_run_if_missing(
+            _engineer_case_payload_to_record(engineer_case),
+            now_value=now_iso(),
+            reason="initial_case_creation",
+            persist=True,
+        )
+        if hydrated:
+            refreshed_case = ticket_repository.get_engineer_case(
+                str(hydrated_record.get("engineer_case_id") or ticket_id),
+                include_client_messages=True,
+            )
+            if isinstance(refreshed_case, dict):
+                engineer_case = _normalize_engineer_case_payload_for_read(refreshed_case)
     client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
     client_ticket_id = str(client_ref.get("ticket_id") or "").strip() or None
     token_usage_fallback = {
@@ -4286,6 +4332,13 @@ async def request_engineer_assistance(ticket_id: str) -> dict[str, Any]:
     ensure_ticket_defaults(ticket)
     active_case_payload = _active_engineer_case_payload(ticket)
     if active_case_payload is not None:
+        active_case = _engineer_case_payload_to_record(active_case_payload)
+        _hydrate_engineer_multi_agent_run_if_missing(
+            active_case,
+            now_value=now_iso(),
+            reason="initial_case_creation",
+            persist=True,
+        )
         return {
             "ticket_id": ticket_id,
             "status": ticket["status"],
@@ -4633,13 +4686,10 @@ async def post_investigation_message(
             force=True,
         )
     else:
-        # Guardrail-only mode: opportunistically hydrate an empty multi-agent
-        # state so the panel is not blank, but do NOT refresh on every message.
-        ensure_engineer_multi_agent_run(
-            engineer_case,
-            now_value=timestamp,
-            reason="initial_case_creation",
-        )
+        # Guardrail-only mode intentionally does not run or hydrate the
+        # multi-agent pipeline on message submit. Empty legacy cases are seeded
+        # when the case is entered/read, not when the engineer replies.
+        pass
     # Snapshot the multi-agent state (refreshed or hydrated) so it can be
     # re-applied after the AI turn re-normalizes engineer_agent_state, which
     # otherwise drops active_plan/active_execution/active_review when the AI
