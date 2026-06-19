@@ -113,4 +113,4 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 
 ### 未完成
-- 线上 RAG+KG 辅助调用契约：KG 在 query expansion、rerank boost、结构化 fact 三个钩子作为辅助信号，超时或失败降级回纯 RAG，citation 池只接受 RAG chunk（默认关闭，待灰度）。
+- 线上 RAG+KG 辅助调用契约：KG 在 query expansion、rerank boost、结构化 fact 三个钩子作为辅助信号，超时或失败降级回纯 RAG，citation 池只接受 RAG chunk。真实 `GraphRagKgRuntimeClient` 已接到 vendored GraphRAG 图谱并在 rag_api 启动时按 flag 安装（默认关闭、需 Neo4j 配置，待 rag_vs_rag_plus_kg 基准达标后灰度）。

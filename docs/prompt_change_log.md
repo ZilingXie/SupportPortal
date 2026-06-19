@@ -12,6 +12,24 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-19 - Wire live GraphRAG KG runtime client (tooling-mode/provider)
+
+- Area or subsystem: Client AI RAG retrieval — KG auxiliary runtime backend
+- Prompt or model version: `kg-graphrag-runtime-client-v1`
+- Summary: Added a live `KgRuntimeClient` (`GraphRagKgRuntimeClient` + `GraphitiSearchBackend`) backed by the vendored cusmem GraphRAG graph and installed it best-effort at `rag_api` startup via `maybe_install_default_kg_client()`. The three online KG hooks (query expansion / rerank boost / structured fact) can now consult a real knowledge graph instead of always degrading against the `KgRuntimeDisabled` no-op.
+- Reason: Close the last runtime gap in the RAG+KG plan — the hooks and offline ingest existed but no real backend was ever registered, so KG was a no-op even with the flag on. This wires the graph in while keeping RAG as the citation source of truth and preserving the degrade-to-pure-RAG guarantees.
+- Affected files or config:
+  - `backend/services/kg_graphrag_runtime.py` (new)
+  - `backend/rag_api.py`
+  - `backend/tests/test_kg_graphrag_runtime.py`
+  - Env: `RAG_KG_AUXILIARY_ENABLED` (gate, default off), `KG_NEO4J_URI`/`KG_NEO4J_USER`/`KG_NEO4J_PASSWORD` (fallback `NEO4J_*`), `KG_SEARCH_NUM_RESULTS`, `KG_LLM_*` / `KG_EMBEDDING_*`.
+- Expected behavior change:
+  - With `RAG_KG_AUXILIARY_ENABLED=true` AND a reachable Neo4j-backed KG graph, the Client AI online RAG path consults KG for entity-link expansion, rerank boost (scoped to RAG candidates), and structured facts (scoped to selected RAG chunks, non-citable). Provenance-less hits are dropped.
+  - With the flag off (default) or no graph configured, the no-op client stays installed and behavior is identical to the pure-RAG chain. KG never adds citations or new chunks; any KG step timing out/failing degrades to pure RAG.
+- Verification:
+  - `rtk uv run --with redis python -m unittest backend.tests.test_kg_graphrag_runtime backend.tests.test_kg_runtime`
+  - `rtk uv run --with redis python -m unittest backend.tests.test_roadmap_contract`
+
 ## 2026-06-19 - Billing internal resolution follow-up
 
 - Area or subsystem: Billing automation response follow-up
