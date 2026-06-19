@@ -3107,7 +3107,8 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
         submission["result"],
         submission["notify_customer"],
     )
-    billing_ticket["automation_status"] = automation_status
+    pre_event_status = automation_status if not submission["notify_customer"] else "internal_resolution_submitted"
+    billing_ticket["automation_status"] = pre_event_status
     billing_ticket["updated_at"] = timestamp
     await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
 
@@ -3153,6 +3154,7 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
     canonical_ticket.setdefault("messages", []).append(assistant_message)
     canonical_ticket["updated_at"] = timestamp
     billing_ticket["customer_reply"] = customer_reply
+    billing_ticket["automation_status"] = automation_status
 
     new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
     await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
