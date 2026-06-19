@@ -1855,6 +1855,7 @@ flowchart TD
           { id: "ma-guardrail-final", status: "done", label: "approve 后通过 guardrail 生成/校验 customer-facing reply，再交给 engineer 做最后 approve，避免直接自动回复客户。", horizon: "Runtime" },
           { id: "ma-close-memory", status: "done", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
           { id: "ma-eval", status: "done", label: "从 summary packet、review decisions、replan notes、engineer revise 和 approved replies 生成 replay eval dataset。", horizon: "Evaluation" },
+          { id: "ma-workspace-viewer", status: "done", label: "Engineer ticket workspace 可双击 investigating 状态徽标切换查看当前 ticket 的 Plan/Execute/Review Agent 输出（只读已有 engineer_agent_state，不重跑 agent）。", horizon: "Runtime" },
           { id: "ma-replay-runner", status: "todo", label: "replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量。", horizon: "Evaluation" }
         ],
         sources: [

@@ -153,8 +153,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn('/shared-ui/composer.css?v=20260519-json-codeblock-1', html)
         self.assertIn('/shared-ui/composer.js?v=20260519-json-codeblock-1', html)
-        self.assertIn("./styles.css?v=20260423-shared-composer-toolbar-reset-1", html)
-        self.assertIn('./app.js?v=20260423-shared-composer-toolbar-reset-1', html)
+        self.assertIn("./styles.css?v=20260619-engineer-multi-agent-workspace-1", html)
+        self.assertIn('./app.js?v=20260619-engineer-multi-agent-workspace-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -5513,6 +5513,475 @@ class EngineerUiContractTests(unittest.TestCase):
                 handleTableClick({ target: nestedButtonTarget });
                 if (opened.length !== 3) {
                   throw new Error("Row click handling should ignore nested interactive controls.");
+                }
+                """
+            )
+        )
+
+    def _engineer_multi_agent_ticket_fixture(self) -> str:
+        return textwrap.dedent(
+            """
+            tickets = [
+              {
+                ticket_id: "TK-MA-1",
+                engineer_case_id: "TK-MA-1",
+                title: "multi-agent workspace ticket",
+                subject: "multi-agent workspace ticket",
+                requester: "user-ma",
+                customer_id: "user-ma",
+                status: "investigating",
+                client_ticket_ref: {
+                  ticket_id: "TK-MA",
+                  subject: "parent client ticket",
+                },
+                created_at: "2026-06-01T08:00:00+00:00",
+                updated_at: "2026-06-01T08:30:00+00:00",
+                active_investigation: {
+                  id: "TK-MA-1",
+                  state: "active",
+                  draft_customer_reply: "",
+                  messages: [
+                    {
+                      id: "TK-MA-1-m1",
+                      role: "engineer_ai",
+                      content: "Reviewing the multi-agent run for this ticket.",
+                      created_at: "2026-06-01T08:05:00+00:00",
+                    },
+                  ],
+                },
+                engineer_agent_state: {
+                  phase: "investigating",
+                  issue_understanding: "Token renew callback fails on Android 14.",
+                  knowledge_summary: "Regression reproduces on Android 14 with SDK 4.2.1.",
+                  why_not_solved: "Platform-scoped evidence was not confirmed yet.",
+                  known_facts: ["Customer reported token renew failures on Android 14."],
+                  missing_information: ["Confirm the customer can upgrade to SDK 4.2.2."],
+                  next_request_for_engineer: "Confirm the upgrade path before approving.",
+                  resolution_hypothesis: "Upgrading to SDK 4.2.2 should resolve the regression.",
+                  ready_to_reply: false,
+                  reply_readiness: {
+                    has_conclusion: true,
+                    has_proof: false,
+                    has_solution_or_next_step: false,
+                    conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                    proof_summary: "",
+                    solution_or_next_step: "",
+                    blockers: [],
+                    critique: "",
+                    ready_for_customer_reply: false,
+                  },
+                  active_plan: {
+                    plan_id: "plan_TK-MA-1_r1",
+                    plan_version: "engineer-plan-v1",
+                    plan_agent_version: "engineer-plan-agent-v1",
+                    created_by: "plan_agent",
+                    created_at: "2026-06-01T08:06:00+00:00",
+                    memory_context: {
+                      mode: "mem0",
+                      memory_refs: [{ memory_record_id: "mem-1", summary: "Prior Android token issue." }],
+                      fallback_reason: null,
+                    },
+                    skill_context: {
+                      mode: "installed",
+                      available_skills: ["context_review", "rag_lookup", "synthesis"],
+                      selected_skills: ["context_review", "rag_lookup", "synthesis"],
+                      fallback_reason: null,
+                    },
+                    objective: "Investigate engineer ticket: multi-agent workspace ticket",
+                    hypotheses: [
+                      { hypothesis_id: "h1", summary: "SDK 4.2.1 regression on Android 14." },
+                    ],
+                    tasks: [
+                      {
+                        task_id: "task_context_review",
+                        title: "Review context",
+                        description: "Run the context_review skill.",
+                        skill: "context_review",
+                        depends_on: [],
+                        can_parallelize: false,
+                        expected_output: "Context summary.",
+                        blockers: [],
+                        status: "planned",
+                      },
+                      {
+                        task_id: "task_rag_lookup",
+                        title: "Look up answers",
+                        description: "Run the rag_lookup skill.",
+                        skill: "rag_lookup",
+                        depends_on: ["task_context_review"],
+                        can_parallelize: true,
+                        expected_output: "Candidate answers.",
+                        blockers: [],
+                        status: "planned",
+                      },
+                    ],
+                    dependencies: [
+                      { dependency_id: "dep-1", description: "rag_lookup depends on context_review." },
+                    ],
+                    scheduler_hints: { note: "context_review first, then rag_lookup in parallel." },
+                    redaction_boundary: {},
+                  },
+                  active_execution: {
+                    execution_id: "exec_plan_TK-MA-1_r1_r1",
+                    execution_version: "engineer-execution-v1",
+                    execute_agent_version: "engineer-execute-agent-v1",
+                    created_by: "execute_agent",
+                    created_at: "2026-06-01T08:07:00+00:00",
+                    plan_id: "plan_TK-MA-1_r1",
+                    plan_version: "engineer-plan-v1",
+                    status: "completed",
+                    scheduler: {
+                      mode: "deterministic_allowlist",
+                      parallel_groups: [],
+                      serial_steps: [],
+                      execution_order: [
+                        { stage: 1, task_ids: ["task_context_review"] },
+                        { stage: 2, task_ids: ["task_rag_lookup"] },
+                      ],
+                    },
+                    task_results: [
+                      {
+                        task_id: "task_context_review",
+                        skill: "context_review",
+                        subagent: "execute_subagent_context_review",
+                        status: "completed",
+                        summary: "Confirmed Android 14 reproduction context.",
+                        evidence_refs: [],
+                        missing_information: [],
+                        started_at: "2026-06-01T08:07:00+00:00",
+                        completed_at: "2026-06-01T08:07:30+00:00",
+                      },
+                      {
+                        task_id: "task_rag_lookup",
+                        skill: "rag_lookup",
+                        subagent: "execute_subagent_rag_lookup",
+                        status: "completed",
+                        summary: "Found candidate answer pointing to SDK 4.2.2 upgrade.",
+                        evidence_refs: [],
+                        missing_information: ["Confirm the customer can upgrade to SDK 4.2.2."],
+                        started_at: "2026-06-01T08:07:30+00:00",
+                        completed_at: "2026-06-01T08:08:00+00:00",
+                      },
+                    ],
+                    evidence_packet: {},
+                    blockers: [],
+                  },
+                  active_review: {
+                    review_id: "review_exec_plan_TK-MA-1_r1_r1_r1",
+                    review_version: "engineer-review-v1",
+                    review_agent_version: "engineer-review-agent-v1",
+                    created_by: "review_agent",
+                    created_at: "2026-06-01T08:08:30+00:00",
+                    plan_id: "plan_TK-MA-1_r1",
+                    execution_id: "exec_plan_TK-MA-1_r1_r1",
+                    review_decision: "replan_required",
+                    replan_count: 0,
+                    problem_statement: "Evidence is insufficient to confirm the SDK upgrade path.",
+                    decision_rationale: "Evidence sufficiency: insufficient. Gaps: proof missing. Missing information: Confirm the customer can upgrade to SDK 4.2.2.",
+                    evidence_gaps: ["proof missing"],
+                    missing_information: ["Confirm the customer can upgrade to SDK 4.2.2."],
+                    recommended_action: "Replan to gather SDK upgrade confirmation.",
+                    max_replan_exceeded: false,
+                    max_replan_count: 2,
+                    blockers: [],
+                  },
+                },
+                messages: [
+                  {
+                    id: "TK-MA-c1",
+                    role: "customer",
+                    content: "Token renew callback keeps failing on Android 14.",
+                    created_at: "2026-06-01T08:00:00+00:00",
+                  },
+                ],
+              },
+            ];
+            """
+        )
+
+    def test_engineer_detail_default_view_omits_multi_agent_panel(self) -> None:
+        self.run_engineer_app_script(
+            self._engineer_multi_agent_ticket_fixture()
+            + textwrap.dedent(
+                """
+                selectedPoolStatus = "investigating";
+                selectedTicketId = "TK-MA-1";
+                selectedTicket = tickets[0];
+
+                const html = renderTicketDetailView();
+
+                // Default guardrail-only view must not surface multi-agent outputs.
+                if (html.includes("detail-multi-agent-panel")) {
+                  throw new Error("Default detail view should not render the multi-agent workspace panel.");
+                }
+                if (html.includes("Multi-Agent Run")) {
+                  throw new Error("Default detail view should not surface the Multi-Agent Run heading.");
+                }
+                if (html.includes("Plan Agent")) {
+                  throw new Error("Default detail view should not surface the Plan Agent stage.");
+                }
+                if (html.includes("Execute Agent")) {
+                  throw new Error("Default detail view should not surface the Execute Agent stage.");
+                }
+                if (html.includes("Review Agent")) {
+                  throw new Error("Default detail view should not surface the Review Agent stage.");
+                }
+
+                // The guardrail-only default path still shows Conclusion / Proof / Next step.
+                if (!html.includes("Readiness Review")) {
+                  throw new Error("Default detail view should still render the Readiness Review panel.");
+                }
+                if (!html.includes(">Conclusion<")) {
+                  throw new Error("Default detail view should keep the Conclusion field.");
+                }
+                if (!html.includes(">Proof<")) {
+                  throw new Error("Default detail view should keep the Proof field.");
+                }
+                if (!html.includes(">Next step<")) {
+                  throw new Error("Default detail view should keep the Next step field.");
+                }
+                """
+            )
+        )
+
+    def test_engineer_detail_investigating_badge_is_multi_agent_dblclick_entry(self) -> None:
+        self.run_engineer_app_script(
+            self._engineer_multi_agent_ticket_fixture()
+            + textwrap.dedent(
+                """
+                selectedPoolStatus = "investigating";
+                selectedTicketId = "TK-MA-1";
+                selectedTicket = tickets[0];
+
+                const investigatingHtml = renderTicketDetailView();
+                const primaryStart = investigatingHtml.indexOf('class="workspace-header-line workspace-header-line-primary"');
+                const primaryLine = investigatingHtml.slice(primaryStart, investigatingHtml.indexOf('class="workspace-header-line workspace-header-line-secondary"'));
+
+                if (!primaryLine.includes('data-detail-action="toggle-multi-agent-workspace"')) {
+                  throw new Error("Investigating status badge should carry the multi-agent workspace toggle action.");
+                }
+                if (!primaryLine.includes("status-badge status-badge-compact")) {
+                  throw new Error("Investigating badge should keep the status-badge status-badge-compact styling.");
+                }
+                if (!primaryLine.includes("status-badge-investigating-toggle")) {
+                  throw new Error("Investigating badge should be marked as the multi-agent toggle entry.");
+                }
+                if (!primaryLine.includes('aria-label="Double-click to toggle multi-agent workspace view"')) {
+                  throw new Error("Investigating badge should advertise the double-click affordance.");
+                }
+                if (!primaryLine.includes('data-multi-agent-toggle="TK-MA-1"')) {
+                  throw new Error("Investigating badge should carry the scoped multi-agent toggle target.");
+                }
+
+                // A single click on the toggle badge must stay a no-op.
+                let clickSideEffect = false;
+                const badgeTarget = {
+                  closest(selector) {
+                    if (selector === 'button[data-detail-action="toggle-multi-agent-workspace"]') {
+                      return { dataset: { detailAction: "toggle-multi-agent-workspace" } };
+                    }
+                    return null;
+                  },
+                };
+                window.alert = () => { clickSideEffect = true; };
+                handleDetailClick({ target: badgeTarget }).catch(() => { clickSideEffect = true; });
+                if (clickSideEffect) {
+                  throw new Error("Single click on the multi-agent toggle badge must not perform any action.");
+                }
+
+                // Non-investigating tickets must not expose the toggle entry.
+                tickets[0].status = "resolved";
+                selectedTicket = tickets[0];
+                const resolvedHtml = renderTicketDetailView();
+                if (resolvedHtml.includes('data-detail-action="toggle-multi-agent-workspace"')) {
+                  throw new Error("Non-investigating tickets should not render the multi-agent toggle badge.");
+                }
+                if (!resolvedHtml.includes("status-badge status-badge-compact")) {
+                  throw new Error("Non-investigating tickets should still render the compact status badge.");
+                }
+                """
+            )
+        )
+
+    def test_engineer_detail_multi_agent_workspace_renders_plan_execute_review(self) -> None:
+        self.run_engineer_app_script(
+            self._engineer_multi_agent_ticket_fixture()
+            + textwrap.dedent(
+                """
+                selectedPoolStatus = "investigating";
+                selectedTicketId = "TK-MA-1";
+                selectedTicket = tickets[0];
+
+                // Toggle the multi-agent workspace for this ticket within the session.
+                if (!toggleMultiAgentWorkspaceForTicket(selectedTicketId)) {
+                  throw new Error("Toggling the multi-agent workspace should turn the view on for the current ticket.");
+                }
+                if (!isMultiAgentWorkspaceActiveForTicket(selectedTicketId)) {
+                  throw new Error("Multi-agent workspace should be active for the current ticket after toggling.");
+                }
+
+                const html = renderTicketDetailView();
+
+                if (!html.includes("detail-multi-agent-panel")) {
+                  throw new Error("Multi-agent workspace view should render the dedicated insight panel.");
+                }
+                if (!html.includes("Multi-Agent Run")) {
+                  throw new Error("Multi-agent workspace view should surface the Multi-Agent Run heading.");
+                }
+
+                // Plan Agent stage
+                if (!html.includes("Plan Agent")) {
+                  throw new Error("Multi-agent workspace should render the Plan Agent stage.");
+                }
+                if (!html.includes("plan_TK-MA-1_r1")) {
+                  throw new Error("Multi-agent workspace should render the active plan_id.");
+                }
+                if (!html.includes("mem0 / installed")) {
+                  throw new Error("Multi-agent workspace should render the fallback/memory/skill mode summary.");
+                }
+                if (!html.includes("task_context_review")) {
+                  throw new Error("Multi-agent workspace should render the planned task list.");
+                }
+
+                // Execute Agent stage
+                if (!html.includes("Execute Agent")) {
+                  throw new Error("Multi-agent workspace should render the Execute Agent stage.");
+                }
+                if (!html.includes("exec_plan_TK-MA-1_r1_r1")) {
+                  throw new Error("Multi-agent workspace should render the active execution_id.");
+                }
+                if (!html.includes("Stage 1: task_context_review")) {
+                  throw new Error("Multi-agent workspace should render the scheduler execution_order.");
+                }
+                if (!html.includes("Found candidate answer pointing to SDK 4.2.2 upgrade.")) {
+                  throw new Error("Multi-agent workspace should render the task result summary.");
+                }
+                if (!html.includes("missing: Confirm the customer can upgrade to SDK 4.2.2.")) {
+                  throw new Error("Multi-agent workspace should render the task result missing_information.");
+                }
+
+                // Review Agent stage
+                if (!html.includes("Review Agent")) {
+                  throw new Error("Multi-agent workspace should render the Review Agent stage.");
+                }
+                if (!html.includes("replan_required")) {
+                  throw new Error("Multi-agent workspace should render the review_decision.");
+                }
+                if (!html.includes("Evidence is insufficient to confirm the SDK upgrade path.")) {
+                  throw new Error("Multi-agent workspace should render the review problem_statement.");
+                }
+                if (!html.includes("Replan to gather SDK upgrade confirmation.")) {
+                  throw new Error("Multi-agent workspace should render the recommended_action.");
+                }
+
+                // Toggling off restores the guardrail-only default view.
+                if (toggleMultiAgentWorkspaceForTicket(selectedTicketId)) {
+                  throw new Error("Toggling the multi-agent workspace a second time should turn the view off.");
+                }
+                const offHtml = renderTicketDetailView();
+                if (offHtml.includes("detail-multi-agent-panel")) {
+                  throw new Error("Turning the multi-agent workspace off should remove the insight panel.");
+                }
+                """
+            )
+        )
+
+    def test_engineer_detail_multi_agent_workspace_empty_state_keeps_readiness_review(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                tickets = [
+                  {
+                    ticket_id: "TK-MA-EMPTY-1",
+                    engineer_case_id: "TK-MA-EMPTY-1",
+                    title: "empty multi-agent workspace ticket",
+                    subject: "empty multi-agent workspace ticket",
+                    requester: "user-ma-empty",
+                    customer_id: "user-ma-empty",
+                    status: "investigating",
+                    client_ticket_ref: {
+                      ticket_id: "TK-MA-EMPTY",
+                      subject: "parent client ticket",
+                    },
+                    created_at: "2026-06-02T08:00:00+00:00",
+                    updated_at: "2026-06-02T08:30:00+00:00",
+                    active_investigation: {
+                      id: "TK-MA-EMPTY-1",
+                      state: "active",
+                      draft_customer_reply: "",
+                      messages: [
+                        {
+                          id: "TK-MA-EMPTY-1-m1",
+                          role: "engineer_ai",
+                          content: "No multi-agent run captured yet.",
+                          created_at: "2026-06-02T08:05:00+00:00",
+                        },
+                      ],
+                    },
+                    engineer_agent_state: {
+                      phase: "investigating",
+                      issue_understanding: "Issue understanding not captured yet.",
+                      knowledge_summary: "",
+                      why_not_solved: "",
+                      known_facts: [],
+                      missing_information: [],
+                      next_request_for_engineer: "",
+                      resolution_hypothesis: "",
+                      ready_to_reply: false,
+                      reply_readiness: {
+                        has_conclusion: false,
+                        has_proof: false,
+                        has_solution_or_next_step: false,
+                        conclusion_summary: "",
+                        proof_summary: "",
+                        solution_or_next_step: "",
+                        blockers: [],
+                        critique: "",
+                        ready_for_customer_reply: false,
+                      },
+                    },
+                    messages: [
+                      {
+                        id: "TK-MA-EMPTY-c1",
+                        role: "customer",
+                        content: "Just checking in on the issue.",
+                        created_at: "2026-06-02T08:00:00+00:00",
+                      },
+                    ],
+                  },
+                ];
+
+                selectedPoolStatus = "investigating";
+                selectedTicketId = "TK-MA-EMPTY-1";
+                selectedTicket = tickets[0];
+
+                toggleMultiAgentWorkspaceForTicket(selectedTicketId);
+                const html = renderTicketDetailView();
+
+                if (!html.includes("detail-multi-agent-panel")) {
+                  throw new Error("Multi-agent workspace should still render its panel when agent state is missing.");
+                }
+                if (!html.includes("No multi-agent run captured for this ticket yet.")) {
+                  throw new Error("Multi-agent workspace should show the empty state when no agent state is present.");
+                }
+                if (html.includes("Plan Agent") || html.includes("Execute Agent") || html.includes("Review Agent")) {
+                  throw new Error("Empty multi-agent workspace should not render any agent stage.");
+                }
+
+                // Readiness Review must remain intact alongside the empty multi-agent panel.
+                if (!html.includes("Readiness Review")) {
+                  throw new Error("Empty multi-agent workspace should not break the Readiness Review panel.");
+                }
+                if (!html.includes(">Conclusion<") || !html.includes(">Proof<") || !html.includes(">Next step<")) {
+                  throw new Error("Empty multi-agent workspace should keep the Conclusion / Proof / Next step fields.");
+                }
+
+                // Switching tickets resets the session-only toggle back to the default view.
+                selectedTicketId = null;
+                selectedTicket = null;
+                resetDetailWorkspaceState();
+                if (multiAgentWorkspaceTicketId !== null) {
+                  throw new Error("Resetting the detail workspace should clear the multi-agent workspace toggle.");
                 }
                 """
             )

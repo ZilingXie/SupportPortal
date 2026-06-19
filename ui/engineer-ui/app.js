@@ -73,6 +73,11 @@ let detailLoading = false;
 let tellAiDraft = "";
 let tellAiDraftRichHtml = "";
 let investigationReviseMode = false;
+// Multi-agent workspace is a per-ticket, per-session view toggle. When set to
+// the current ticket id, the engineer detail insight panel renders the Plan /
+// Execute / Review agent outputs captured in engineer_agent_state. It never
+// triggers or reruns any backend agent and resets when the ticket changes.
+let multiAgentWorkspaceTicketId = null;
 let tellAiSubmitting = false;
 let hitlFeedbackLoading = false;
 let hitlFeedbackRequestSeq = 0;
@@ -2491,10 +2496,32 @@ function resetDetailWorkspaceState() {
   tellAiDraft = "";
   tellAiDraftRichHtml = "";
   investigationReviseMode = false;
+  multiAgentWorkspaceTicketId = null;
   tellAiSubmitting = false;
   hitlFeedbackLoading = false;
   hitlFeedbackRequestSeq += 1;
   investigationComposerToolbarState = buildDefaultComposerToolbarState();
+}
+
+function isMultiAgentWorkspaceActiveForTicket(ticketId) {
+  const normalized = normalizeDetailTicketId(ticketId);
+  if (!normalized) {
+    return false;
+  }
+  return normalizeDetailTicketId(multiAgentWorkspaceTicketId) === normalized;
+}
+
+function toggleMultiAgentWorkspaceForTicket(ticketId) {
+  const normalized = normalizeDetailTicketId(ticketId);
+  if (!normalized) {
+    return false;
+  }
+  if (isMultiAgentWorkspaceActiveForTicket(normalized)) {
+    multiAgentWorkspaceTicketId = null;
+    return false;
+  }
+  multiAgentWorkspaceTicketId = normalized;
+  return true;
 }
 
 function setInvestigationComposerDraftFromMarkdown(value) {
@@ -3300,6 +3327,31 @@ function buildTicketDetailViewState() {
       ? buildCaseBuddyOpeningRequestSections(ticket, investigationMessages[openingCaseBuddyMessageIndex]?.content)
       : [];
 
+  const engineerAgentState = getEngineerAgentState(ticket) || {};
+  const activePlan =
+    engineerAgentState.active_plan && typeof engineerAgentState.active_plan === "object"
+      ? engineerAgentState.active_plan
+      : {};
+  const activeExecution =
+    engineerAgentState.active_execution && typeof engineerAgentState.active_execution === "object"
+      ? engineerAgentState.active_execution
+      : {};
+  const activeReview =
+    engineerAgentState.active_review && typeof engineerAgentState.active_review === "object"
+      ? engineerAgentState.active_review
+      : {};
+  const hasMultiAgentState = Boolean(activePlan.plan_id || activeExecution.execution_id || activeReview.review_id);
+  const isMultiAgentWorkspace =
+    isMultiAgentWorkspaceActiveForTicket(ticketId) && status === "investigating";
+  const multiAgentWorkspacePanelHtml = isMultiAgentWorkspace
+    ? renderMultiAgentWorkspacePanelHtml({
+        activePlan,
+        activeExecution,
+        activeReview,
+        hasMultiAgentState,
+      })
+    : "";
+
   return {
     ticket,
     ticketId,
@@ -3336,6 +3388,12 @@ function buildTicketDetailViewState() {
     draftCustomerReply,
     controlsDisabled: tellAiSubmitting,
     messages: Array.isArray(ticket.messages) ? ticket.messages : [],
+    isMultiAgentWorkspace,
+    hasMultiAgentState,
+    activePlan,
+    activeExecution,
+    activeReview,
+    multiAgentWorkspacePanelHtml,
   };
 }
 
@@ -3356,9 +3414,7 @@ function renderTicketDetailHeaderHtml(viewState) {
         <h2 class="workspace-ticket-title">${escapeHtml(
           String(viewState.ticket.title || viewState.ticket.subject || "(No subject)")
         )}</h2>
-        <span class="status-badge status-badge-compact ${statusClass(viewState.status)}">${escapeHtml(
-          statusLabel(viewState.status)
-        )}</span>
+        ${renderTicketDetailStatusBadgeHtml(viewState)}
       </div>
       <div class="workspace-header-line workspace-header-line-secondary">
         ${
@@ -3373,6 +3429,29 @@ function renderTicketDetailHeaderHtml(viewState) {
         <span>Updated ${escapeHtml(formatDateTime(viewState.ticket.updated_at))}</span>
       </div>
     </header>
+  `;
+}
+
+function renderTicketDetailStatusBadgeHtml(viewState) {
+  const label = escapeHtml(statusLabel(viewState.status));
+  const classes = `status-badge status-badge-compact ${statusClass(viewState.status)}`;
+  // Only the investigating badge is a double-click entry into the multi-agent
+  // workspace view. Single click stays a no-op so the badge behaves like the
+  // static status pill it replaces; the toggle lives on dblclick.
+  if (viewState.status !== "investigating") {
+    return `<span class="${classes}">${label}</span>`;
+  }
+  const isActive = Boolean(viewState.isMultiAgentWorkspace);
+  return `
+    <button
+      type="button"
+      class="${classes} status-badge-investigating-toggle${isActive ? " is-active" : ""}"
+      data-detail-action="toggle-multi-agent-workspace"
+      data-multi-agent-toggle="${escapeHtml(viewState.ticketId)}"
+      aria-pressed="${isActive ? "true" : "false"}"
+      aria-label="Double-click to toggle multi-agent workspace view"
+      title="Double-click to toggle multi-agent workspace view"
+    >${label}</button>
   `;
 }
 
@@ -3458,8 +3537,281 @@ function renderTicketDetailInsightPanelHtml(viewState) {
         ${renderConversationHtml(viewState.messages)}
       </div>
     </section>
+    ${viewState.multiAgentWorkspacePanelHtml}
     ${viewState.replyReadinessReviewHtml}
     ${viewState.hitlFeedbackPanelHtml}
+  `;
+}
+
+function renderMultiAgentWorkspacePanelHtml(viewState) {
+  const { activePlan = {}, activeExecution = {}, activeReview = {}, hasMultiAgentState = false } = viewState || {};
+  if (!hasMultiAgentState) {
+    return `
+      <section class="panel-card detail-multi-agent-panel">
+        <div class="panel-card-head">
+          <div>
+            <p class="panel-card-kicker">Multi-Agent Run</p>
+            <h3 class="panel-card-title">Multi-Agent Run</h3>
+          </div>
+        </div>
+        <div class="detail-multi-agent-body">
+          <div class="empty-state">No multi-agent run captured for this ticket yet.</div>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="panel-card detail-multi-agent-panel">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Multi-Agent Run</p>
+          <h3 class="panel-card-title">Multi-Agent Run</h3>
+        </div>
+      </div>
+      <div class="detail-multi-agent-body">
+        ${renderMultiAgentPlanStageHtml(activePlan)}
+        ${renderMultiAgentExecuteStageHtml(activeExecution)}
+        ${renderMultiAgentReviewStageHtml(activeReview)}
+      </div>
+    </section>
+  `;
+}
+
+function renderMultiAgentFieldHtml(label, value, { fallback = "—" } = {}) {
+  const text = String(value ?? "").trim();
+  return `
+    <div class="detail-readiness-field">
+      <p class="detail-readiness-field-label">${escapeHtml(label)}</p>
+      <p class="detail-readiness-field-value">${formatMultiline(text || fallback)}</p>
+    </div>
+  `;
+}
+
+function renderMultiAgentListFieldHtml(label, items) {
+  const list = Array.isArray(items) ? items.filter((item) => String(item ?? "").trim()) : [];
+  return `
+    <div class="detail-readiness-field">
+      <p class="detail-readiness-field-label">${escapeHtml(label)}</p>
+      ${
+        list.length
+          ? `<ul class="detail-readiness-list">${list
+              .map((item) => `<li>${escapeHtml(String(item))}</li>`)
+              .join("")}</ul>`
+          : `<p class="detail-readiness-field-value">—</p>`
+      }
+    </div>
+  `;
+}
+
+function renderMultiAgentDecisionPillHtml(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  const tone = normalized === "ready_for_engineer" ? "is-ready" : "is-blocked";
+  const label = String(value || "Pending").trim() || "Pending";
+  return `<span class="detail-readiness-pill ${tone} detail-agent-decision-pill">${escapeHtml(label)}</span>`;
+}
+
+function renderMultiAgentPlanStageHtml(activePlan) {
+  const planId = String(activePlan.plan_id || "").trim();
+  const planVersion = String(activePlan.plan_version || "").trim();
+  const planAgentVersion = String(activePlan.plan_agent_version || "").trim();
+  const memoryContext =
+    activePlan.memory_context && typeof activePlan.memory_context === "object" ? activePlan.memory_context : {};
+  const skillContext =
+    activePlan.skill_context && typeof activePlan.skill_context === "object" ? activePlan.skill_context : {};
+  const hypotheses = Array.isArray(activePlan.hypotheses) ? activePlan.hypotheses : [];
+  const tasks = Array.isArray(activePlan.tasks) ? activePlan.tasks : [];
+  const dependencies = Array.isArray(activePlan.dependencies) ? activePlan.dependencies : [];
+  const schedulerHints =
+    activePlan.scheduler_hints && typeof activePlan.scheduler_hints === "object" ? activePlan.scheduler_hints : {};
+
+  return `
+    <section class="detail-agent-stage" aria-label="Plan Agent output">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Plan Agent</p>
+          <h3 class="panel-card-title">Plan</h3>
+        </div>
+        <span class="detail-readiness-pill detail-agent-decision-pill">${escapeHtml(
+          String(memoryContext.mode || "fallback") + " / " + String(skillContext.mode || "fallback")
+        )}</span>
+      </div>
+      <div class="detail-readiness-fields">
+        ${renderMultiAgentFieldHtml("Plan ID", planId)}
+        ${renderMultiAgentFieldHtml("Plan version", planVersion)}
+        ${renderMultiAgentFieldHtml("Plan agent version", planAgentVersion)}
+        ${renderMultiAgentFieldHtml("Objective", activePlan.objective)}
+        ${renderMultiAgentListFieldHtml("Hypotheses", hypotheses.map((item) => (item && typeof item === "object" ? item.summary || item.title || JSON.stringify(item) : String(item))))}
+        ${renderMultiAgentPlanTasksHtml(tasks)}
+        ${renderMultiAgentListFieldHtml(
+          "Dependencies",
+          dependencies.map((item) => (item && typeof item === "object" ? item.description || item.dependency_id || JSON.stringify(item) : String(item)))
+        )}
+        ${renderMultiAgentFieldHtml("Scheduler hints", schedulerHints.note || schedulerHints.summary || JSON.stringify(schedulerHints))}
+      </div>
+    </section>
+  `;
+}
+
+function renderMultiAgentPlanTasksHtml(tasks) {
+  const list = tasks.filter((task) => task && typeof task === "object");
+  if (!list.length) {
+    return renderMultiAgentFieldHtml("Tasks", "", { fallback: "No planned tasks." });
+  }
+  return `
+    <div class="detail-readiness-field">
+      <p class="detail-readiness-field-label">Tasks</p>
+      <ul class="detail-agent-task-list">
+        ${list
+          .map((task) => {
+            const taskId = escapeHtml(String(task.task_id || ""));
+            const skill = escapeHtml(String(task.skill || ""));
+            const title = escapeHtml(String(task.title || task.description || ""));
+            const dependsOn = Array.isArray(task.depends_on) ? task.depends_on.filter(Boolean) : [];
+            const canParallelize = task.can_parallelize === true;
+            const hints = [
+              dependsOn.length ? `depends on ${dependsOn.join(", ")}` : "",
+              canParallelize ? "parallelizable" : "serial",
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            return `
+              <li>
+                <span class="detail-agent-task-id">${taskId}</span>
+                <span class="detail-agent-task-skill">${skill}</span>
+                <span class="detail-agent-task-title">${title}</span>
+                ${hints ? `<span class="detail-agent-task-hint">${escapeHtml(hints)}</span>` : ""}
+              </li>
+            `;
+          })
+          .join("")}
+      </ul>
+    </div>
+  `;
+}
+
+function renderMultiAgentExecuteStageHtml(activeExecution) {
+  const executionId = String(activeExecution.execution_id || "").trim();
+  const executionVersion = String(activeExecution.execution_version || "").trim();
+  const executeAgentVersion = String(activeExecution.execute_agent_version || "").trim();
+  const status = String(activeExecution.status || "").trim();
+  const scheduler =
+    activeExecution.scheduler && typeof activeExecution.scheduler === "object" ? activeExecution.scheduler : {};
+  const executionOrder = Array.isArray(scheduler.execution_order) ? scheduler.execution_order : [];
+  const taskResults = Array.isArray(activeExecution.task_results) ? activeExecution.task_results : [];
+
+  return `
+    <section class="detail-agent-stage" aria-label="Execute Agent output">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Execute Agent</p>
+          <h3 class="panel-card-title">Execution</h3>
+        </div>
+        ${renderMultiAgentDecisionPillHtml(status || "pending")}
+      </div>
+      <div class="detail-readiness-fields">
+        ${renderMultiAgentFieldHtml("Execution ID", executionId)}
+        ${renderMultiAgentFieldHtml("Execution version", executionVersion)}
+        ${renderMultiAgentFieldHtml("Execute agent version", executeAgentVersion)}
+        ${renderMultiAgentFieldHtml("Status", status)}
+        ${renderMultiAgentFieldHtml("Scheduler mode", scheduler.mode)}
+        ${renderMultiAgentExecutionOrderHtml(executionOrder)}
+        ${renderMultiAgentTaskResultsHtml(taskResults)}
+      </div>
+    </section>
+  `;
+}
+
+function renderMultiAgentExecutionOrderHtml(executionOrder) {
+  const stages = executionOrder.filter((stage) => stage && typeof stage === "object");
+  if (!stages.length) {
+    return renderMultiAgentFieldHtml("Execution order", "", { fallback: "No execution order captured." });
+  }
+  const text = stages
+    .map((stage, index) => {
+      const taskIds = Array.isArray(stage.task_ids) ? stage.task_ids.filter(Boolean) : [];
+      return `Stage ${index + 1}: ${taskIds.join(", ") || "—"}`;
+    })
+    .join("\n");
+  return `
+    <div class="detail-readiness-field">
+      <p class="detail-readiness-field-label">Execution order</p>
+      <p class="detail-readiness-field-value">${formatMultiline(text)}</p>
+    </div>
+  `;
+}
+
+function renderMultiAgentTaskResultsHtml(taskResults) {
+  const list = taskResults.filter((result) => result && typeof result === "object");
+  if (!list.length) {
+    return renderMultiAgentFieldHtml("Task results", "", { fallback: "No task results captured." });
+  }
+  return `
+    <div class="detail-readiness-field">
+      <p class="detail-readiness-field-label">Task results</p>
+      <ul class="detail-agent-task-list">
+        ${list
+          .map((result) => {
+            const taskId = escapeHtml(String(result.task_id || ""));
+            const skill = escapeHtml(String(result.skill || ""));
+            const taskStatus = escapeHtml(String(result.status || ""));
+            const summary = escapeHtml(String(result.summary || ""));
+            const missing = Array.isArray(result.missing_information)
+              ? result.missing_information.filter(Boolean)
+              : [];
+            return `
+              <li>
+                <span class="detail-agent-task-id">${taskId}</span>
+                <span class="detail-agent-task-skill">${skill}</span>
+                <span class="detail-agent-task-title">${taskStatus}</span>
+                <span class="detail-agent-task-summary">${summary}</span>
+                ${
+                  missing.length
+                    ? `<span class="detail-agent-task-hint">missing: ${escapeHtml(missing.join("; "))}</span>`
+                    : ""
+                }
+              </li>
+            `;
+          })
+          .join("")}
+      </ul>
+    </div>
+  `;
+}
+
+function renderMultiAgentReviewStageHtml(activeReview) {
+  const reviewId = String(activeReview.review_id || "").trim();
+  const reviewVersion = String(activeReview.review_version || "").trim();
+  const reviewAgentVersion = String(activeReview.review_agent_version || "").trim();
+  const reviewDecision = String(activeReview.review_decision || "").trim();
+  const replanCount = activeReview.replan_count;
+  const evidenceGaps = Array.isArray(activeReview.evidence_gaps) ? activeReview.evidence_gaps : [];
+  const missingInformation = Array.isArray(activeReview.missing_information)
+    ? activeReview.missing_information
+    : [];
+
+  return `
+    <section class="detail-agent-stage" aria-label="Review Agent output">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Review Agent</p>
+          <h3 class="panel-card-title">Review</h3>
+        </div>
+        ${renderMultiAgentDecisionPillHtml(reviewDecision || "pending")}
+      </div>
+      <div class="detail-readiness-fields">
+        ${renderMultiAgentFieldHtml("Review ID", reviewId)}
+        ${renderMultiAgentFieldHtml("Review version", reviewVersion)}
+        ${renderMultiAgentFieldHtml("Review agent version", reviewAgentVersion)}
+        ${renderMultiAgentFieldHtml("Review decision", reviewDecision)}
+        ${renderMultiAgentFieldHtml("Replan count", replanCount)}
+        ${renderMultiAgentFieldHtml("Problem statement", activeReview.problem_statement)}
+        ${renderMultiAgentFieldHtml("Decision rationale", activeReview.decision_rationale)}
+        ${renderMultiAgentFieldHtml("Recommended action", activeReview.recommended_action)}
+        ${renderMultiAgentListFieldHtml("Evidence gaps", evidenceGaps)}
+        ${renderMultiAgentListFieldHtml("Missing information", missingInformation)}
+      </div>
+    </section>
   `;
 }
 
@@ -4010,6 +4362,12 @@ async function handleDetailClick(event) {
     return;
   }
 
+  // The investigating status badge carries the toggle action but is driven by
+  // dblclick (handleDetailDblClick), so a single click must stay a no-op.
+  if (action === "toggle-multi-agent-workspace") {
+    return;
+  }
+
   if (action === "back-to-pool") {
     closeTicketDetail();
     return;
@@ -4249,6 +4607,20 @@ function handleDetailSelectionChange(event) {
   if (tellAiInput && isRichTextComposerElement(tellAiInput)) {
     syncInvestigationComposerToolbarStateFromElement(tellAiInput);
   }
+}
+
+function handleDetailDblClick(event) {
+  const badge = event.target.closest('button[data-detail-action="toggle-multi-agent-workspace"]');
+  if (!badge || !selectedTicketId) {
+    return;
+  }
+  // Only the investigating badge is wired to the toggle; non-investigating
+  // tickets never render this action, but guard against stale state anyway.
+  if (normalizeStatusValue(selectedTicket?.status || "open") !== "investigating") {
+    return;
+  }
+  toggleMultiAgentWorkspaceForTicket(selectedTicketId);
+  renderTicketDetail();
 }
 
 function handleDetailKeydown(event) {
@@ -4672,6 +5044,7 @@ workspaceRegionEl?.addEventListener("focusout", handleDetailFocusOut);
 workspaceRegionEl?.addEventListener("paste", handleDetailPaste);
 workspaceRegionEl?.addEventListener("mouseup", handleDetailSelectionChange);
 workspaceRegionEl?.addEventListener("keyup", handleDetailSelectionChange);
+workspaceRegionEl?.addEventListener("dblclick", handleDetailDblClick);
 workspaceRegionEl?.addEventListener("keydown", (event) => {
   handleTableKeydown(event);
   handleDetailKeydown(event);
