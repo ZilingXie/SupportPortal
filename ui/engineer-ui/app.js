@@ -3384,7 +3384,7 @@ function buildTicketDetailViewState() {
       !approvalUiState.showApprovalBlock &&
       !showApproveInFlightState &&
       !showGuardrailFinalReview,
-    hitlFeedbackPanelHtml: renderHitlFeedbackPanelHtml(ticket),
+    hitlFeedbackPanelHtml: isMultiAgentWorkspace ? renderHitlFeedbackPanelHtml(ticket) : "",
     draftCustomerReply,
     controlsDisabled: tellAiSubmitting,
     messages: Array.isArray(ticket.messages) ? ticket.messages : [],

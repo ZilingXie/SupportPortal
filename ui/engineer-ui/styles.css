@@ -2025,9 +2025,6 @@ html.material-symbols-pending .material-symbols-outlined {
 .status-badge-investigating-toggle {
   border: none;
   cursor: default;
-  font: inherit;
-  text-transform: inherit;
-  letter-spacing: inherit;
   transition: box-shadow 120ms ease, outline-color 120ms ease;
 }
 
