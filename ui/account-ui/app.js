@@ -40,9 +40,33 @@ const state = {
   replyMessage: "",
   isSubmittingReply: false,
   replyError: "",
+  correctionScope: "",
+  correctionAction: "",
+  correctionNote: "",
+  isSubmittingCorrection: false,
+  correctionError: "",
+  routeErrorSummary: null,
 };
 
 let composerRuntime = null;
+let isFetchingRouteErrorSummary = false;
+
+const ROUTE_TUPLE_OPTIONS = [
+  { scope: "ticket_resolution", action: "resolve_ticket", label: "Ticket resolution / Resolve ticket" },
+  { scope: "billing", action: "account_suspension", label: "Billing / Account suspension" },
+  { scope: "billing", action: "detailed_invoice", label: "Billing / Detailed invoice" },
+  { scope: "billing", action: "account_verification", label: "Billing / Account verification" },
+  { scope: "billing", action: "human_review_required", label: "Billing / Human review required" },
+  { scope: "billing", action: "refuse", label: "Billing / Refuse" },
+  { scope: "agora_technical", action: "rag", label: "Agora technical / RAG" },
+  { scope: "agora_non_technical", action: "web_search", label: "Agora non-technical / Web search" },
+  { scope: "agora_non_technical", action: "refuse", label: "Agora non-technical / Refuse" },
+  { scope: "small_talk", action: "controlled_response", label: "Small talk / Controlled response" },
+  { scope: "small_talk", action: "refuse", label: "Small talk / Refuse" },
+  { scope: "non_agora", action: "refuse", label: "Non-Agora / Refuse" },
+];
+
+const DEFAULT_ROUTE_TUPLE_SELECT_VALUE = "scope|action";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -176,6 +200,34 @@ async function fetchTicketDetail(ticketId) {
   }
 }
 
+async function fetchRouteErrorSummary() {
+  if (isFetchingRouteErrorSummary) return;
+  isFetchingRouteErrorSummary = true;
+  try {
+    const response = await fetch("/api/account/route-errors/summary?limit=100");
+    if (!response.ok) return;
+    state.routeErrorSummary = await response.json();
+  } catch {
+    state.routeErrorSummary = null;
+  } finally {
+    isFetchingRouteErrorSummary = false;
+    if (state.statusFilter === "route_errors") {
+      render();
+    }
+  }
+}
+
+function resetCorrectionState(item = null) {
+  const selected = ROUTE_TUPLE_OPTIONS.find(
+    (option) => option.scope === item?.scope_label && option.action === (item?.execution_action || item?.route)
+  );
+  state.correctionScope = selected ? selected.scope : "";
+  state.correctionAction = selected ? selected.action : "";
+  state.correctionNote = "";
+  state.isSubmittingCorrection = false;
+  state.correctionError = "";
+}
+
 async function openTicket(ticketId) {
   const detail = await fetchTicketDetail(ticketId);
   if (!detail) {
@@ -186,6 +238,7 @@ async function openTicket(ticketId) {
   state.view = "detail";
   state.replyMessage = "";
   state.replyError = "";
+  resetCorrectionState(detail);
   render();
 }
 
@@ -202,6 +255,7 @@ async function clearAllTickets() {
     state.history = [];
     state.activeItem = null;
     state.view = "create";
+    resetCorrectionState();
     render();
   } catch (err) {
     showToast(err instanceof Error ? err.message : "Failed to clear tickets.");
@@ -214,6 +268,7 @@ function openCreateView() {
   state.error = "";
   state.replyMessage = "";
   state.replyError = "";
+  resetCorrectionState();
   render();
 }
 
@@ -275,6 +330,7 @@ function matchesFilter(item) {
   if (state.statusFilter === "all") return true;
   if (state.statusFilter === "automation") return isAutomationStatus(itemStatus);
   if (state.statusFilter === "not_automated") return !isAutomationStatus(itemStatus);
+  if (state.statusFilter === "route_errors") return Boolean(item.route_error);
   return true;
 }
 
@@ -283,6 +339,7 @@ function renderFilterControls() {
     { value: "all", label: "All" },
     { value: "automation", label: "Automation" },
     { value: "not_automated", label: "Not automated" },
+    { value: "route_errors", label: "Route errors" },
   ];
   return `
     <div class="filter-chips">
@@ -450,6 +507,110 @@ function renderReplyComposer() {
   `;
 }
 
+function routeTupleSelectValue() {
+  if (!state.correctionScope || !state.correctionAction) return DEFAULT_ROUTE_TUPLE_SELECT_VALUE;
+  return `${state.correctionScope}|${state.correctionAction}`;
+}
+
+function renderRouteCorrectionPanel() {
+  const item = state.activeItem;
+  if (!item) return "";
+  const currentCorrection = item.route_correction || {};
+  const selectedValue = routeTupleSelectValue();
+  const hasCorrection = Boolean(item.route_corrected || currentCorrection.corrected_execution_action);
+  return `
+    <div class="route-correction detail-section">
+      <div class="detail-section-title">Route correction</div>
+      ${
+        hasCorrection
+          ? `<div class="route-correction-current">
+              <span class="meta-label">Current correction</span>
+              <span class="meta-value">${escapeHtml(
+                [
+                  currentCorrection.corrected_scope_label || item.scope_label,
+                  currentCorrection.corrected_route_family || item.route_family,
+                  currentCorrection.corrected_execution_action || item.execution_action || item.route,
+                ]
+                  .filter(Boolean)
+                  .join(" / ")
+              )}</span>
+            </div>`
+          : ""
+      }
+      <label class="field">
+        <span class="field-label">Correct route tuple</span>
+        <select class="input" data-correction-select ${state.isSubmittingCorrection ? "disabled" : ""}>
+          <option value="${DEFAULT_ROUTE_TUPLE_SELECT_VALUE}" ${selectedValue === DEFAULT_ROUTE_TUPLE_SELECT_VALUE ? "selected" : ""}>Select scope / action</option>
+          ${ROUTE_TUPLE_OPTIONS.map((option) => {
+            const value = `${option.scope}|${option.action}`;
+            return `<option value="${escapeHtml(value)}" ${selectedValue === value ? "selected" : ""}>${escapeHtml(option.label)}</option>`;
+          }).join("")}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Note</span>
+        <textarea class="textarea route-correction-note" data-correction-note ${state.isSubmittingCorrection ? "disabled" : ""}>${escapeHtml(state.correctionNote)}</textarea>
+      </label>
+      <div class="reply-actions">
+        <button
+          class="primary-button primary-button--small"
+          type="button"
+          data-action="submit-route-correction"
+          ${state.isSubmittingCorrection ? "disabled" : ""}
+        >
+          <span class="material-symbols-outlined">rule_settings</span>
+          ${state.isSubmittingCorrection ? "Saving..." : "Save correction"}
+        </button>
+      </div>
+      ${
+        state.correctionError
+          ? `<div class="error-banner"><span class="material-symbols-outlined">error</span>${escapeHtml(state.correctionError)}</div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderRouteErrorSummaryPanel() {
+  if (state.statusFilter !== "route_errors") return "";
+  const summary = state.routeErrorSummary;
+  if (!summary) {
+    return `
+      <div class="route-summary detail-section">
+        <div class="detail-section-title">Route error summary</div>
+        <p class="result-copy">Loading route error summary...</p>
+      </div>
+    `;
+  }
+  const transitions = summary.transitions || summary.top_transitions || summary.predicted_to_corrected || [];
+  return `
+    <div class="route-summary detail-section">
+      <div class="detail-section-title">Route error summary</div>
+      <div class="route-summary-grid">
+        <div><span class="meta-label">Total</span><strong>${escapeHtml(summary.total_error_cases ?? summary.total ?? 0)}</strong></div>
+        <div><span class="meta-label">Corrected</span><strong>${escapeHtml(summary.corrected_count ?? 0)}</strong></div>
+        <div><span class="meta-label">Low confidence</span><strong>${escapeHtml(summary.low_confidence_count ?? 0)}</strong></div>
+      </div>
+      ${
+        transitions.length
+          ? `<div class="route-transition-list">${transitions
+              .slice(0, 6)
+              .map((entry) => {
+                if (entry.transition) {
+                  return `<div class="route-transition"><span>${escapeHtml(entry.transition)}</span><strong>${escapeHtml(entry.count ?? "")}</strong></div>`;
+                }
+                const from = entry.predicted || entry.original || entry.from || entry.original_execution_action || "Unknown";
+                const to = entry.corrected || entry.to || entry.corrected_execution_action || "Uncorrected";
+                const count = entry.count ?? entry.total ?? "";
+                return `<div class="route-transition"><span>${escapeHtml(from)} -> ${escapeHtml(to)}</span><strong>${escapeHtml(count)}</strong></div>`;
+              })
+              .join("")}</div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 function renderDetailView() {
   const item = state.activeItem;
   if (!item) return "";
@@ -513,6 +674,7 @@ function renderDetailView() {
             : ""
         }
       </div>
+      ${renderRouteCorrectionPanel()}
       ${
         missingFields.length
           ? `<div class="detail-section warning"><div class="detail-section-title">Missing fields</div><ul class="missing-list">${missingFields
@@ -541,6 +703,50 @@ function renderDetailView() {
       ${renderReplyComposer()}
     </div>
   `;
+}
+
+async function submitRouteCorrection() {
+  const item = state.activeItem;
+  if (!item) return;
+  if (!state.correctionScope || !state.correctionAction) {
+    state.correctionError = "Select a route tuple.";
+    render();
+    return;
+  }
+
+  state.isSubmittingCorrection = true;
+  state.correctionError = "";
+  render();
+
+  try {
+    const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
+    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/route-correction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope_label: state.correctionScope,
+        execution_action: state.correctionAction,
+        note: state.correctionNote,
+        corrector: "operator",
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || "Route correction failed.");
+    }
+    state.activeItem = payload;
+    resetCorrectionState(payload);
+    showToast("Route correction saved");
+    await fetchTickets();
+    if (state.statusFilter === "route_errors") {
+      await fetchRouteErrorSummary();
+    }
+  } catch (err) {
+    state.correctionError = err instanceof Error ? err.message : "Route correction failed.";
+  } finally {
+    state.isSubmittingCorrection = false;
+    render();
+  }
 }
 
 async function submitReply() {
@@ -642,6 +848,7 @@ function render() {
           ${state.view === "detail" ? `<button class="ghost-button" type="button" data-action="back-to-create">Back to create</button>` : ""}
         </div>
         <div class="intake-grid">
+          ${renderRouteErrorSummaryPanel()}
           ${state.view === "create" ? renderCreateForm() : ""}
           ${state.view === "detail" ? renderDetailView() : ""}
         </div>
@@ -668,6 +875,10 @@ function bind() {
       const filterBtn = event.target.closest("[data-action='set-filter']");
       if (filterBtn) {
         state.statusFilter = filterBtn.dataset.value || "all";
+        if (state.statusFilter === "route_errors") {
+          state.routeErrorSummary = null;
+          void fetchRouteErrorSummary();
+        }
         render();
         return;
       }
@@ -685,10 +896,28 @@ function bind() {
   document.querySelectorAll("[data-action='submit-reply']").forEach((el) => {
     el.addEventListener("click", submitReply);
   });
+  document.querySelectorAll("[data-action='submit-route-correction']").forEach((el) => {
+    el.addEventListener("click", submitRouteCorrection);
+  });
   const replyInput = document.querySelector("[data-reply-input]");
   if (replyInput) {
     replyInput.addEventListener("input", (event) => {
       state.replyMessage = event.target.value;
+    });
+  }
+  const correctionSelect = document.querySelector("[data-correction-select]");
+  if (correctionSelect) {
+    correctionSelect.addEventListener("change", (event) => {
+      const [scope, action] = String(event.target.value || "").split("|");
+      const selected = ROUTE_TUPLE_OPTIONS.find((option) => option.scope === scope && option.action === action);
+      state.correctionScope = selected ? selected.scope : "";
+      state.correctionAction = selected ? selected.action : "";
+    });
+  }
+  const correctionNote = document.querySelector("[data-correction-note]");
+  if (correctionNote) {
+    correctionNote.addEventListener("input", (event) => {
+      state.correctionNote = event.target.value;
     });
   }
   applySharedComposerToolbarStateToButtons(document, state.composerToolbarState);

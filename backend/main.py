@@ -68,6 +68,10 @@ from backend.services.billing_response_flow import (
     hash_billing_response_token,
     validate_billing_resolution_submission,
 )
+from backend.services.route_correction import (
+    RouteCorrectionValidationError,
+    validate_route_correction,
+)
 from backend.services.customer_reply_composer import (
     detect_customer_reply_language,
     ensure_customer_reply_email_style,
@@ -358,6 +362,13 @@ class BillingResponseSubmitRequest(BaseModel):
     result: str = Field(pattern="^(completed|refused|customer_action_required)$")
     notify_customer: bool
     note: str | None = Field(default=None, max_length=4000)
+
+
+class BillingRouteCorrectionRequest(BaseModel):
+    scope_label: str = Field(min_length=1, max_length=128)
+    execution_action: str = Field(min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=4000)
+    corrector: str | None = Field(default=None, max_length=160)
 
 
 class AssetUploadIntentRequest(BaseModel):
@@ -2734,6 +2745,67 @@ def _serialize_billing_ticket_source(
     return normalized
 
 
+def _intent_router_confidence_threshold() -> float:
+    raw = os.environ.get("INTENT_ROUTER_CONFIDENCE_THRESHOLD", "0.7")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.7
+
+
+def _is_low_route_confidence(ticket: dict[str, Any]) -> bool:
+    try:
+        confidence = float(ticket.get("route_confidence"))
+    except (TypeError, ValueError):
+        return False
+    return confidence < _intent_router_confidence_threshold()
+
+
+def _public_billing_route_correction(correction: dict[str, Any] | None) -> dict[str, Any] | None:
+    if correction is None:
+        return None
+    return {
+        "billing_ticket_id": correction.get("billing_ticket_id"),
+        "client_ticket_id": correction.get("client_ticket_id"),
+        "original_scope_label": correction.get("original_scope_label"),
+        "original_route_family": correction.get("original_route_family"),
+        "original_execution_action": correction.get("original_execution_action"),
+        "original_tooling_profile": correction.get("original_tooling_profile"),
+        "original_route_reason": correction.get("original_route_reason"),
+        "original_route_confidence": correction.get("original_route_confidence"),
+        "corrected_scope_label": correction.get("corrected_scope_label"),
+        "corrected_route_family": correction.get("corrected_route_family"),
+        "corrected_execution_action": correction.get("corrected_execution_action"),
+        "corrected_tooling_profile": correction.get("corrected_tooling_profile"),
+        "first_corrected_scope_label": correction.get("first_corrected_scope_label"),
+        "first_corrected_route_family": correction.get("first_corrected_route_family"),
+        "first_corrected_execution_action": correction.get("first_corrected_execution_action"),
+        "first_corrected_tooling_profile": correction.get("first_corrected_tooling_profile"),
+        "corrector": correction.get("corrector"),
+        "note": correction.get("note") or "",
+        "correction_count": correction.get("correction_count") or 1,
+        "created_at": correction.get("created_at"),
+        "updated_at": correction.get("updated_at"),
+    }
+
+
+def _route_error_fields(ticket: dict[str, Any]) -> dict[str, Any]:
+    billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip()
+    correction = (
+        ticket_repository.get_billing_route_correction(billing_ticket_id)
+        if billing_ticket_id
+        else None
+    )
+    route_corrected = correction is not None
+    low_confidence = _is_low_route_confidence(ticket)
+    return {
+        "route_corrected": route_corrected,
+        "route_low_confidence": low_confidence,
+        "route_error": route_corrected or low_confidence,
+        "route_correction": _public_billing_route_correction(correction),
+    }
+
+
 def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
     canonical_ticket_id = (
         str(ticket.get("client_ticket_id") or "").strip()
@@ -2767,6 +2839,7 @@ def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
         "source": source_display,
         "status": status,
         "automation_status": status,
+        **_route_error_fields(ticket),
     }
 
 
@@ -3239,6 +3312,148 @@ def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     return {
         **ticket,
         **view_model,
+    }
+
+
+async def _load_account_billing_ticket(identifier: str) -> dict[str, Any]:
+    ticket = await async_to_thread(ticket_repository.get_billing_ticket, identifier)
+    if ticket is None and not str(identifier).startswith("BT-"):
+        ticket = await async_to_thread(ticket_repository.get_billing_ticket_by_client_ticket_id, identifier)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="ticket not found")
+    return ticket
+
+
+def _original_route_tuple_from_ticket(ticket: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "original_scope_label": ticket.get("scope_label"),
+        "original_route_family": ticket.get("route_family"),
+        "original_execution_action": ticket.get("execution_action") or ticket.get("route"),
+        "original_tooling_profile": ticket.get("tooling_profile"),
+        "original_route_reason": ticket.get("route_reason"),
+        "original_route_confidence": ticket.get("route_confidence"),
+    }
+
+
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-correction")
+async def correct_billing_ticket_route(
+    billing_ticket_id: str,
+    request: BillingRouteCorrectionRequest,
+) -> dict[str, Any]:
+    try:
+        corrected = validate_route_correction(
+            scope_label=request.scope_label,
+            execution_action=request.execution_action,
+            note=request.note,
+        )
+    except RouteCorrectionValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    billing_ticket = await _load_account_billing_ticket(billing_ticket_id)
+    canonical_billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
+    if not canonical_billing_ticket_id:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    timestamp = now_iso()
+    first_corrected = {
+        "first_corrected_scope_label": corrected["scope_label"],
+        "first_corrected_route_family": corrected["route_family"],
+        "first_corrected_execution_action": corrected["execution_action"],
+        "first_corrected_tooling_profile": corrected["tooling_profile"],
+    }
+    correction = {
+        "billing_ticket_id": canonical_billing_ticket_id,
+        "client_ticket_id": str(billing_ticket.get("client_ticket_id") or "").strip(),
+        **_original_route_tuple_from_ticket(billing_ticket),
+        "corrected_scope_label": corrected["scope_label"],
+        "corrected_route_family": corrected["route_family"],
+        "corrected_execution_action": corrected["execution_action"],
+        "corrected_tooling_profile": corrected["tooling_profile"],
+        **first_corrected,
+        "corrector": " ".join(str(request.corrector or "operator").split()).strip() or "operator",
+        "note": corrected["note"],
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+    active_route = {
+        "route": corrected["execution_action"],
+        "scope_label": corrected["scope_label"],
+        "route_family": corrected["route_family"],
+        "execution_action": corrected["execution_action"],
+        "tooling_profile": corrected["tooling_profile"],
+        "updated_at": timestamp,
+    }
+    try:
+        persisted_correction = await async_to_thread(
+            ticket_repository.apply_billing_route_correction,
+            billing_ticket_id=canonical_billing_ticket_id,
+            active_route=active_route,
+            correction=correction,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="ticket not found") from None
+
+    client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
+    event = {
+        "event": "route_corrected",
+        "billing_ticket_id": canonical_billing_ticket_id,
+        "ticket_id": client_ticket_id,
+        "corrector": persisted_correction.get("corrector") or correction["corrector"],
+        "note": persisted_correction.get("note") or correction["note"],
+        "created_at": timestamp,
+        "original_scope_label": persisted_correction.get("original_scope_label"),
+        "original_route_family": persisted_correction.get("original_route_family"),
+        "original_execution_action": persisted_correction.get("original_execution_action"),
+        "original_tooling_profile": persisted_correction.get("original_tooling_profile"),
+        "corrected_scope_label": persisted_correction.get("corrected_scope_label"),
+        "corrected_route_family": persisted_correction.get("corrected_route_family"),
+        "corrected_execution_action": persisted_correction.get("corrected_execution_action"),
+        "corrected_tooling_profile": persisted_correction.get("corrected_tooling_profile"),
+        "correction_count": persisted_correction.get("correction_count") or 1,
+    }
+    await async_to_thread(ticket_repository.record_event, client_ticket_id, "route_corrected", event)
+    await dispatch_event(["engineer", "dashboard"], event)
+
+    refreshed = await async_to_thread(ticket_repository.get_billing_ticket, canonical_billing_ticket_id)
+    return get_billing_ticket(canonical_billing_ticket_id) if refreshed is not None else {
+        **billing_ticket,
+        **_build_account_ticket_view_model(billing_ticket),
+    }
+
+
+@app.get("/api/account/route-errors/summary")
+def get_account_route_error_summary(limit: int = 100) -> dict[str, Any]:
+    safe_limit = max(1, min(limit, 500))
+    tickets = ticket_repository.list_billing_tickets(limit=safe_limit)
+    total = 0
+    corrected_count = 0
+    low_confidence_count = 0
+    transitions: dict[str, int] = {}
+    for ticket in tickets:
+        billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip()
+        correction = ticket_repository.get_billing_route_correction(billing_ticket_id) if billing_ticket_id else None
+        low_confidence = _is_low_route_confidence(ticket)
+        if correction is None and not low_confidence:
+            continue
+        total += 1
+        if correction is not None:
+            corrected_count += 1
+            original_action = str(correction.get("original_execution_action") or "").strip() or "unknown"
+            corrected_action = str(correction.get("corrected_execution_action") or "").strip() or "unknown"
+            transition = f"{original_action} -> {corrected_action}"
+            transitions[transition] = transitions.get(transition, 0) + 1
+        if low_confidence:
+            low_confidence_count += 1
+    transition_items = [
+        {"transition": key, "count": count}
+        for key, count in sorted(transitions.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return {
+        "total": total,
+        "corrected_count": corrected_count,
+        "low_confidence_count": low_confidence_count,
+        "transitions": transition_items,
     }
 
 

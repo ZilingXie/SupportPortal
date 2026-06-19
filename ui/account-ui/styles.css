@@ -31,6 +31,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -441,6 +442,7 @@ button:disabled {
 }
 
 .input,
+select.input,
 .textarea {
   width: 100%;
   border: 0;
@@ -559,6 +561,66 @@ button:disabled {
 
 .detail-section.warning {
   background: #fff0d8;
+}
+
+.route-correction {
+  display: grid;
+  gap: 14px;
+}
+
+.route-correction-current {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--surface-lowest);
+}
+
+.route-correction-note {
+  min-height: 96px;
+}
+
+.route-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.route-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.route-summary-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface-lowest);
+}
+
+.route-summary-grid strong {
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.route-transition-list {
+  display: grid;
+  gap: 6px;
+}
+
+.route-transition {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--surface-lowest);
+  color: var(--ink-soft);
+}
+
+.route-transition span {
+  overflow-wrap: anywhere;
 }
 
 .detail-section-title {

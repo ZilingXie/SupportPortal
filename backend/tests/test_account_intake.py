@@ -928,6 +928,292 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIn("requester", detail)
         self.assertIn("support_ticket_status", detail)
 
+    def test_route_correction_updates_active_tuple_and_records_event_only(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()) as dispatch_mock, patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as email_mock:
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": (
+                        "Please send the detailed invoice. Issue date: 6 May 2026. "
+                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                    ),
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        billing_ticket_id = create_response.json()["billing_ticket_id"]
+        pre_correction_email_calls = email_mock.call_count
+
+        with patch.object(main, "dispatch_event", AsyncMock()) as correction_dispatch, patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as correction_email:
+            response = self.client.post(
+                f"/api/account/billing-tickets/{billing_ticket_id}/route-correction",
+                json={
+                    "scope_label": "billing",
+                    "execution_action": "human_review_required",
+                    "note": "refund dispute",
+                    "corrector": "operator",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["route_corrected"])
+        self.assertTrue(payload["route_error"])
+        self.assertEqual(payload["route"], "human_review_required")
+        self.assertEqual(payload["scope_label"], "billing")
+        self.assertEqual(payload["route_family"], "billing_review")
+        self.assertEqual(payload["execution_action"], "human_review_required")
+        self.assertEqual(payload["tooling_profile"], "deterministic_billing_intake")
+        self.assertEqual(payload["automation_status"], "automation")
+        self.assertEqual(payload["route_correction"]["original_execution_action"], "detailed_invoice")
+        self.assertEqual(payload["route_correction"]["corrected_execution_action"], "human_review_required")
+        self.assertEqual(payload["route_correction"]["first_corrected_execution_action"], "human_review_required")
+        self.assertEqual(payload["route_correction"]["correction_count"], 1)
+        correction_email.assert_not_called()
+        self.assertGreater(pre_correction_email_calls, 0)
+        events = self.repository.list_ticket_events(payload["ticket_id"])
+        route_events = [item for item in events if item["event_type"] == "route_corrected"]
+        self.assertEqual(len(route_events), 1)
+        event_payload = route_events[0]["payload"]
+        self.assertEqual(event_payload["original_execution_action"], "detailed_invoice")
+        self.assertEqual(event_payload["corrected_execution_action"], "human_review_required")
+        dispatched_events = [call.args[1]["event"] for call in correction_dispatch.await_args_list]
+        self.assertEqual(dispatched_events, ["route_corrected"])
+
+        # Sanity: account creation dispatched through the normal path, while correction did not replay it.
+        self.assertTrue(dispatch_mock.await_args_list)
+
+    def test_route_correction_rejects_invalid_tuple_before_mutating_ticket(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={"title": "Detailed invoice request", "question": "Please send detailed invoice."},
+            )
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        billing_ticket_id = create_response.json()["billing_ticket_id"]
+        before = self.repository.get_billing_ticket(billing_ticket_id)
+        assert before is not None
+
+        with patch.object(main, "dispatch_event", AsyncMock()) as dispatch_mock:
+            response = self.client.post(
+                f"/api/account/billing-tickets/{billing_ticket_id}/route-correction",
+                json={"scope_label": "billing", "execution_action": "rag", "note": "bad tuple"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        after = self.repository.get_billing_ticket(billing_ticket_id)
+        self.assertEqual(after, before)
+        self.assertIsNone(self.repository.get_billing_route_correction(billing_ticket_id))
+        dispatch_mock.assert_not_called()
+
+    def test_route_correction_missing_ticket_returns_404(self) -> None:
+        response = self.client.post(
+            "/api/account/billing-tickets/BT-MISSING/route-correction",
+            json={"scope_label": "billing", "execution_action": "human_review_required"},
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+
+    def test_route_correction_recorrrection_preserves_original_and_first_corrected(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={"title": "Detailed invoice request", "question": "Please send detailed invoice."},
+            )
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        billing_ticket_id = create_response.json()["billing_ticket_id"]
+
+        first_response = self.client.post(
+            f"/api/account/billing-tickets/{billing_ticket_id}/route-correction",
+            json={"scope_label": "billing", "execution_action": "human_review_required"},
+        )
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+        second_response = self.client.post(
+            f"/api/account/billing-tickets/{billing_ticket_id}/route-correction",
+            json={"scope_label": "billing", "execution_action": "refuse", "note": "not enough account detail"},
+        )
+        self.assertEqual(second_response.status_code, 200, second_response.text)
+        correction = second_response.json()["route_correction"]
+        self.assertEqual(correction["original_execution_action"], "detailed_invoice")
+        self.assertEqual(correction["first_corrected_execution_action"], "human_review_required")
+        self.assertEqual(correction["corrected_execution_action"], "refuse")
+        self.assertEqual(correction["correction_count"], 2)
+        saved = self.repository.get_billing_ticket(billing_ticket_id)
+        assert saved is not None
+        self.assertEqual(saved["route"], "refuse")
+        self.assertEqual(saved["route_family"], "fallback_or_refuse")
+
+    def test_route_correction_flags_list_detail_and_summary(self) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-CORRECTED-001",
+                "client_ticket_id": "TK-CORRECTED-001",
+                "source": "manual",
+                "title": "Corrected",
+                "question": "q",
+                "automation_status": "automation",
+                "route": "detailed_invoice",
+                "scope_label": "billing",
+                "route_family": "billing_automation",
+                "execution_action": "detailed_invoice",
+                "tooling_profile": "deterministic_billing_intake",
+                "route_reason": "invoice",
+                "route_confidence": 0.95,
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-LOWCONF-001",
+                "client_ticket_id": "TK-LOWCONF-001",
+                "source": "manual",
+                "title": "Low confidence",
+                "question": "q",
+                "automation_status": "not_automated",
+                "route": "web_search",
+                "scope_label": "agora_non_technical",
+                "route_family": "web_company_info",
+                "execution_action": "web_search",
+                "tooling_profile": "official_web_search",
+                "route_confidence": 0.2,
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-CLEAN-001",
+                "client_ticket_id": "TK-CLEAN-001",
+                "source": "manual",
+                "title": "Clean",
+                "question": "q",
+                "automation_status": "not_automated",
+                "route": "web_search",
+                "scope_label": "agora_non_technical",
+                "route_family": "web_company_info",
+                "execution_action": "web_search",
+                "tooling_profile": "official_web_search",
+                "route_confidence": 0.99,
+            }
+        )
+        correction_response = self.client.post(
+            "/api/account/billing-tickets/BT-TK-CORRECTED-001/route-correction",
+            json={"scope_label": "billing", "execution_action": "human_review_required"},
+        )
+        self.assertEqual(correction_response.status_code, 200, correction_response.text)
+
+        list_payload = self.client.get("/api/account/billing-tickets?limit=10").json()
+        by_id = {item["billing_ticket_id"]: item for item in list_payload["tickets"]}
+        self.assertTrue(by_id["BT-TK-CORRECTED-001"]["route_corrected"])
+        self.assertTrue(by_id["BT-TK-CORRECTED-001"]["route_error"])
+        self.assertFalse(by_id["BT-TK-LOWCONF-001"]["route_corrected"])
+        self.assertTrue(by_id["BT-TK-LOWCONF-001"]["route_error"])
+        self.assertFalse(by_id["BT-TK-CLEAN-001"]["route_corrected"])
+        self.assertFalse(by_id["BT-TK-CLEAN-001"]["route_error"])
+
+        detail = self.client.get("/api/account/billing-tickets/TK-CORRECTED-001").json()
+        self.assertTrue(detail["route_corrected"])
+        self.assertTrue(detail["route_error"])
+        self.assertEqual(detail["route_correction"]["corrected_execution_action"], "human_review_required")
+
+        summary = self.client.get("/api/account/route-errors/summary?limit=10").json()
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["corrected_count"], 1)
+        self.assertEqual(summary["low_confidence_count"], 1)
+        transitions = {item["transition"]: item["count"] for item in summary["transitions"]}
+        self.assertEqual(transitions["detailed_invoice -> human_review_required"], 1)
+
+    def test_route_correction_api_uses_atomic_repository_method_and_persisted_count(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={"title": "Detailed invoice request", "question": "Please send detailed invoice."},
+            )
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        billing_ticket_id = create_response.json()["billing_ticket_id"]
+        original_apply = self.repository.apply_billing_route_correction
+        calls: list[dict[str, object]] = []
+
+        def fake_apply(*, billing_ticket_id: str, active_route: dict[str, object], correction: dict[str, object]):
+            calls.append(
+                {
+                    "billing_ticket_id": billing_ticket_id,
+                    "active_route": dict(active_route),
+                    "correction": dict(correction),
+                }
+            )
+            saved = original_apply(
+                billing_ticket_id=billing_ticket_id,
+                active_route=active_route,
+                correction=correction,
+            )
+            saved["correction_count"] = 7
+            self.repository._billing_route_corrections[billing_ticket_id] = dict(saved)
+            return saved
+
+        with patch.object(self.repository, "apply_billing_route_correction", side_effect=fake_apply), patch.object(
+            self.repository,
+            "save_billing_ticket",
+            side_effect=AssertionError("API must not save active route separately"),
+        ), patch.object(self.repository, "save_billing_route_correction", side_effect=AssertionError("API must use atomic apply")):
+            response = self.client.post(
+                f"/api/account/billing-tickets/{billing_ticket_id}/route-correction",
+                json={"scope_label": "billing", "execution_action": "human_review_required"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(response.json()["route_correction"]["correction_count"], 7)
+
+    def test_route_error_summary_looks_up_correction_for_each_listed_ticket(self) -> None:
+        for i in range(3):
+            billing_ticket_id = f"BT-TK-SUMMARY-{i}"
+            self.repository.save_billing_ticket(
+                {
+                    "billing_ticket_id": billing_ticket_id,
+                    "client_ticket_id": f"TK-SUMMARY-{i}",
+                    "source": "manual",
+                    "title": f"Summary {i}",
+                    "question": "q",
+                    "automation_status": "automation",
+                    "route": "human_review_required",
+                    "scope_label": "billing",
+                    "route_family": "billing_review",
+                    "execution_action": "human_review_required",
+                    "tooling_profile": "deterministic_billing_intake",
+                    "route_confidence": 0.95,
+                    "created_at": f"2026-06-19T00:0{i}:00+00:00",
+                }
+            )
+            self.repository.save_billing_route_correction(
+                {
+                    "billing_ticket_id": billing_ticket_id,
+                    "client_ticket_id": f"TK-SUMMARY-{i}",
+                    "original_execution_action": "detailed_invoice",
+                    "corrected_scope_label": "billing",
+                    "corrected_route_family": "billing_review",
+                    "corrected_execution_action": "human_review_required",
+                    "corrected_tooling_profile": "deterministic_billing_intake",
+                    "first_corrected_scope_label": "billing",
+                    "first_corrected_route_family": "billing_review",
+                    "first_corrected_execution_action": "human_review_required",
+                    "first_corrected_tooling_profile": "deterministic_billing_intake",
+                    "updated_at": f"2026-06-19T00:0{i}:00+00:00",
+                }
+            )
+
+        summary = self.client.get("/api/account/route-errors/summary?limit=2").json()
+
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["corrected_count"], 2)
+        transitions = {item["transition"]: item["count"] for item in summary["transitions"]}
+        self.assertEqual(transitions["detailed_invoice -> human_review_required"], 2)
+
     def test_billing_ticket_view_model_normalizes_legacy_api_source(self) -> None:
         self.repository.save_billing_ticket(
             {

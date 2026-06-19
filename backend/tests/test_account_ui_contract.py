@@ -65,6 +65,9 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("all", app_source)
         self.assertIn("Automation", app_source)
         self.assertIn("Not automated", app_source)
+        self.assertIn("Route errors", app_source)
+        self.assertIn("route_errors", app_source)
+        self.assertIn("item.route_error", app_source)
         self.assertIn("matchesFilter", app_source)
         self.assertIn("filter-chip", app_source)
 
@@ -81,6 +84,35 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("/api/account/billing-tickets/", app_source)
         self.assertIn("/reply", app_source)
         self.assertIn("/api/tickets/query", app_source)
+
+    def test_account_app_contains_route_correction_flow(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("correctionScope", app_source)
+        self.assertIn("correctionAction", app_source)
+        self.assertIn("correctionNote", app_source)
+        self.assertIn("isSubmittingCorrection", app_source)
+        self.assertIn("correctionError", app_source)
+        self.assertIn("routeErrorSummary", app_source)
+        self.assertIn("ROUTE_TUPLE_OPTIONS", app_source)
+        self.assertIn("scope|action", app_source)
+        self.assertIn("renderRouteCorrectionPanel", app_source)
+        self.assertIn("submitRouteCorrection", app_source)
+        self.assertNotIn("correctRoute", app_source)
+        self.assertIn("/route-correction", app_source)
+        self.assertIn("scope_label", app_source)
+        self.assertIn("execution_action", app_source)
+        self.assertIn("corrector", app_source)
+
+    def test_account_app_contains_route_error_summary_flow(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("fetchRouteErrorSummary", app_source)
+        self.assertIn("renderRouteErrorSummaryPanel", app_source)
+        self.assertIn("/api/account/route-errors/summary?limit=100", app_source)
+        self.assertIn("state.routeErrorSummary", app_source)
+        self.assertIn("entry.transition", app_source)
+        self.assertIn("render();", app_source)
 
     def test_account_app_contains_clear_all_ticket_flow(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")

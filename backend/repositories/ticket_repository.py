@@ -824,6 +824,24 @@ class TicketRepository(Protocol):
     def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
         ...
 
+    def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
+        ...
+
+    def get_billing_route_correction(self, billing_ticket_id: str) -> dict[str, Any] | None:
+        ...
+
+    def list_billing_route_corrections(self, limit: int = 100) -> list[dict[str, Any]]:
+        ...
+
+    def apply_billing_route_correction(
+        self,
+        *,
+        billing_ticket_id: str,
+        active_route: dict[str, Any],
+        correction: dict[str, Any],
+    ) -> dict[str, Any]:
+        ...
+
 
 class InMemoryTicketRepository:
     def __init__(self) -> None:
@@ -838,6 +856,7 @@ class InMemoryTicketRepository:
         self._engineer_replay_eval_items: dict[str, dict[str, Any]] = {}
         self._billing_tickets: dict[str, dict[str, Any]] = {}
         self._billing_response_tokens: dict[str, dict[str, Any]] = {}
+        self._billing_route_corrections: dict[str, dict[str, Any]] = {}
 
     def initialize(self) -> None:
         return None
@@ -1489,6 +1508,7 @@ class InMemoryTicketRepository:
         count = len(self._billing_tickets)
         self._billing_tickets.clear()
         self._billing_response_tokens.clear()
+        self._billing_route_corrections.clear()
         return count
 
     def save_billing_response_token(self, token: dict[str, Any]) -> None:
@@ -1512,6 +1532,93 @@ class InMemoryTicketRepository:
             return False
         token["used_at"] = used_at
         return True
+
+    def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
+        billing_ticket_id = str(correction.get("billing_ticket_id") or "").strip()
+        if not billing_ticket_id:
+            raise ValueError("billing_ticket_id is required")
+        saved = copy.deepcopy(correction)
+        existing = self._billing_route_corrections.get(billing_ticket_id)
+        if existing is not None:
+            for key in (
+                "original_scope_label",
+                "original_route_family",
+                "original_execution_action",
+                "original_tooling_profile",
+                "original_route_reason",
+                "original_route_confidence",
+                "first_corrected_scope_label",
+                "first_corrected_route_family",
+                "first_corrected_execution_action",
+                "first_corrected_tooling_profile",
+                "created_at",
+            ):
+                saved[key] = copy.deepcopy(existing.get(key))
+            saved["correction_count"] = int(existing.get("correction_count") or 0) + 1
+        else:
+            saved["correction_count"] = 1
+        saved.setdefault("created_at", _utc_now())
+        saved.setdefault("updated_at", saved["created_at"])
+        self._billing_route_corrections[billing_ticket_id] = saved
+
+    def get_billing_route_correction(self, billing_ticket_id: str) -> dict[str, Any] | None:
+        correction = self._billing_route_corrections.get(str(billing_ticket_id).strip())
+        return copy.deepcopy(correction) if correction is not None else None
+
+    def list_billing_route_corrections(self, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        items = sorted(
+            self._billing_route_corrections.values(),
+            key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+            reverse=True,
+        )
+        return [copy.deepcopy(item) for item in items[:safe_limit]]
+
+    def apply_billing_route_correction(
+        self,
+        *,
+        billing_ticket_id: str,
+        active_route: dict[str, Any],
+        correction: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_id = str(billing_ticket_id or "").strip()
+        if not normalized_id:
+            raise ValueError("billing_ticket_id is required")
+        ticket = self._billing_tickets.get(normalized_id)
+        if ticket is None:
+            raise KeyError(normalized_id)
+        existing = self._billing_route_corrections.get(normalized_id)
+        saved = copy.deepcopy(correction)
+        if existing is not None:
+            for key in (
+                "original_scope_label",
+                "original_route_family",
+                "original_execution_action",
+                "original_tooling_profile",
+                "original_route_reason",
+                "original_route_confidence",
+                "first_corrected_scope_label",
+                "first_corrected_route_family",
+                "first_corrected_execution_action",
+                "first_corrected_tooling_profile",
+                "created_at",
+            ):
+                saved[key] = copy.deepcopy(existing.get(key))
+            saved["correction_count"] = int(existing.get("correction_count") or 0) + 1
+        else:
+            saved["correction_count"] = 1
+            saved.setdefault("created_at", _utc_now())
+        saved.setdefault("updated_at", saved.get("created_at") or _utc_now())
+        saved["billing_ticket_id"] = normalized_id
+        saved.setdefault("client_ticket_id", ticket.get("client_ticket_id"))
+
+        updated_ticket = copy.deepcopy(ticket)
+        for key, value in active_route.items():
+            updated_ticket[key] = copy.deepcopy(value)
+        updated_ticket["billing_ticket_id"] = normalized_id
+        self._billing_tickets[normalized_id] = updated_ticket
+        self._billing_route_corrections[normalized_id] = saved
+        return copy.deepcopy(saved)
 
 
 def _find_trace_customer_message_index(
@@ -2441,6 +2548,10 @@ class PostgresTicketRepository:
                             title TEXT NOT NULL,
                             question TEXT NOT NULL,
                             route TEXT,
+                            scope_label TEXT,
+                            route_family TEXT,
+                            execution_action TEXT,
+                            tooling_profile TEXT,
                             route_reason TEXT,
                             route_confidence REAL,
                             matched_signals JSONB,
@@ -2465,6 +2576,26 @@ class PostgresTicketRepository:
                     ).format(
                         self._table("support_billing_tickets"),
                         self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS scope_label TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_family TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS execution_action TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile TEXT").format(
+                        self._table("support_billing_tickets"),
                     )
                 )
                 cur.execute(
@@ -2500,6 +2631,44 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS router_source TEXT").format(
                         self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            billing_ticket_id TEXT PRIMARY KEY REFERENCES {}(billing_ticket_id) ON DELETE CASCADE,
+                            client_ticket_id TEXT NOT NULL,
+                            original_scope_label TEXT,
+                            original_route_family TEXT,
+                            original_execution_action TEXT,
+                            original_tooling_profile TEXT,
+                            original_route_reason TEXT,
+                            original_route_confidence REAL,
+                            corrected_scope_label TEXT NOT NULL,
+                            corrected_route_family TEXT NOT NULL,
+                            corrected_execution_action TEXT NOT NULL,
+                            corrected_tooling_profile TEXT NOT NULL,
+                            first_corrected_scope_label TEXT NOT NULL,
+                            first_corrected_route_family TEXT NOT NULL,
+                            first_corrected_execution_action TEXT NOT NULL,
+                            first_corrected_tooling_profile TEXT NOT NULL,
+                            corrector TEXT,
+                            note TEXT,
+                            correction_count INTEGER NOT NULL DEFAULT 1,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_billing_route_corrections"),
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (updated_at DESC)").format(
+                        sql.Identifier("idx_support_billing_route_corrections_updated"),
+                        self._table("support_billing_route_corrections"),
                     )
                 )
                 cur.execute(
@@ -4688,16 +4857,17 @@ class PostgresTicketRepository:
                             """
                             INSERT INTO {} (
                                 billing_ticket_id, client_ticket_id, source, external_id,
-                                created_by, title, question, route, route_reason,
-                                route_confidence, matched_signals, automation_status,
-                                missing_fields, collected_fields, customer_reply,
-                                internal_email_payload, internal_email_send_status,
-                                internal_email_send_reason, semantic_intent,
-                                automation_eligibility, policy_decision,
+                                created_by, title, question, route, scope_label,
+                                route_family, execution_action, tooling_profile,
+                                route_reason, route_confidence, matched_signals,
+                                automation_status, missing_fields, collected_fields,
+                                customer_reply, internal_email_payload,
+                                internal_email_send_status, internal_email_send_reason,
+                                semantic_intent, automation_eligibility, policy_decision,
                                 not_automated_reason, risk_flags, evidence_spans,
                                 router_source, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 source = EXCLUDED.source,
@@ -4706,6 +4876,10 @@ class PostgresTicketRepository:
                                 title = EXCLUDED.title,
                                 question = EXCLUDED.question,
                                 route = EXCLUDED.route,
+                                scope_label = EXCLUDED.scope_label,
+                                route_family = EXCLUDED.route_family,
+                                execution_action = EXCLUDED.execution_action,
+                                tooling_profile = EXCLUDED.tooling_profile,
                                 route_reason = EXCLUDED.route_reason,
                                 route_confidence = EXCLUDED.route_confidence,
                                 matched_signals = EXCLUDED.matched_signals,
@@ -4735,6 +4909,10 @@ class PostgresTicketRepository:
                             str(billing_ticket.get("title") or "").strip(),
                             str(billing_ticket.get("question") or "").strip(),
                             str(billing_ticket.get("route") or "").strip() or None,
+                            str(billing_ticket.get("scope_label") or "").strip() or None,
+                            str(billing_ticket.get("route_family") or "").strip() or None,
+                            str(billing_ticket.get("execution_action") or "").strip() or None,
+                            str(billing_ticket.get("tooling_profile") or "").strip() or None,
                             str(billing_ticket.get("route_reason") or "").strip() or None,
                             float(billing_ticket["route_confidence"]) if billing_ticket.get("route_confidence") is not None else None,
                             Json(billing_ticket.get("matched_signals")) if isinstance(billing_ticket.get("matched_signals"), list) else None,
@@ -4885,6 +5063,271 @@ class PostgresTicketRepository:
                     return cur.rowcount == 1
 
         return self._run_with_connection_retry("mark_billing_response_token_used", _operation)
+
+    def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
+        billing_ticket_id = str(correction.get("billing_ticket_id") or "").strip()
+        if not billing_ticket_id:
+            raise ValueError("billing_ticket_id is required")
+        created_at = correction.get("created_at") or _utc_now()
+        updated_at = correction.get("updated_at") or created_at
+
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} AS corrections (
+                                billing_ticket_id, client_ticket_id,
+                                original_scope_label, original_route_family,
+                                original_execution_action, original_tooling_profile,
+                                original_route_reason, original_route_confidence,
+                                corrected_scope_label, corrected_route_family,
+                                corrected_execution_action, corrected_tooling_profile,
+                                first_corrected_scope_label, first_corrected_route_family,
+                                first_corrected_execution_action, first_corrected_tooling_profile,
+                                corrector, note, correction_count, created_at, updated_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (billing_ticket_id) DO UPDATE SET
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                original_scope_label = corrections.original_scope_label,
+                                original_route_family = corrections.original_route_family,
+                                original_execution_action = corrections.original_execution_action,
+                                original_tooling_profile = corrections.original_tooling_profile,
+                                original_route_reason = corrections.original_route_reason,
+                                original_route_confidence = corrections.original_route_confidence,
+                                corrected_scope_label = EXCLUDED.corrected_scope_label,
+                                corrected_route_family = EXCLUDED.corrected_route_family,
+                                corrected_execution_action = EXCLUDED.corrected_execution_action,
+                                corrected_tooling_profile = EXCLUDED.corrected_tooling_profile,
+                                first_corrected_scope_label = corrections.first_corrected_scope_label,
+                                first_corrected_route_family = corrections.first_corrected_route_family,
+                                first_corrected_execution_action = corrections.first_corrected_execution_action,
+                                first_corrected_tooling_profile = corrections.first_corrected_tooling_profile,
+                                corrector = EXCLUDED.corrector,
+                                note = EXCLUDED.note,
+                                correction_count = corrections.correction_count + 1,
+                                created_at = corrections.created_at,
+                                updated_at = EXCLUDED.updated_at
+                            """
+                        ).format(self._table("support_billing_route_corrections")),
+                        (
+                            billing_ticket_id,
+                            str(correction.get("client_ticket_id") or "").strip(),
+                            str(correction.get("original_scope_label") or "").strip() or None,
+                            str(correction.get("original_route_family") or "").strip() or None,
+                            str(correction.get("original_execution_action") or "").strip() or None,
+                            str(correction.get("original_tooling_profile") or "").strip() or None,
+                            str(correction.get("original_route_reason") or "").strip() or None,
+                            float(correction["original_route_confidence"])
+                            if correction.get("original_route_confidence") is not None
+                            else None,
+                            str(correction.get("corrected_scope_label") or "").strip(),
+                            str(correction.get("corrected_route_family") or "").strip(),
+                            str(correction.get("corrected_execution_action") or "").strip(),
+                            str(correction.get("corrected_tooling_profile") or "").strip(),
+                            str(correction.get("first_corrected_scope_label") or "").strip(),
+                            str(correction.get("first_corrected_route_family") or "").strip(),
+                            str(correction.get("first_corrected_execution_action") or "").strip(),
+                            str(correction.get("first_corrected_tooling_profile") or "").strip(),
+                            str(correction.get("corrector") or "").strip() or None,
+                            str(correction.get("note") or "").strip() or None,
+                            int(correction.get("correction_count") or 1),
+                            created_at,
+                            updated_at,
+                        ),
+                    )
+
+        self._run_with_connection_retry("save_billing_route_correction", _operation)
+
+    def get_billing_route_correction(self, billing_ticket_id: str) -> dict[str, Any] | None:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT * FROM {} WHERE billing_ticket_id = %s").format(
+                        self._table("support_billing_route_corrections")
+                    ),
+                    (str(billing_ticket_id).strip(),),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return None
+                col_names = [desc[0] for desc in cur.description]
+                return dict(zip(col_names, rows[0]))
+
+        return self._run_with_connection_retry("get_billing_route_correction", _operation)
+
+    def list_billing_route_corrections(self, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT * FROM {}
+                        ORDER BY updated_at DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_billing_route_corrections")),
+                    (safe_limit,),
+                )
+                col_names = [desc[0] for desc in cur.description]
+                return [dict(zip(col_names, row)) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry("list_billing_route_corrections", _operation)
+
+    def apply_billing_route_correction(
+        self,
+        *,
+        billing_ticket_id: str,
+        active_route: dict[str, Any],
+        correction: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_id = str(billing_ticket_id or "").strip()
+        if not normalized_id:
+            raise ValueError("billing_ticket_id is required")
+        updated_at = active_route.get("updated_at") or correction.get("updated_at") or _utc_now()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL("SELECT * FROM {} WHERE billing_ticket_id = %s FOR UPDATE").format(
+                            self._table("support_billing_tickets")
+                        ),
+                        (normalized_id,),
+                    )
+                    ticket_rows = cur.fetchall()
+                    if not ticket_rows:
+                        raise KeyError(normalized_id)
+                    cur.execute(
+                        sql.SQL("SELECT * FROM {} WHERE billing_ticket_id = %s FOR UPDATE").format(
+                            self._table("support_billing_route_corrections")
+                        ),
+                        (normalized_id,),
+                    )
+                    existing_rows = cur.fetchall()
+                    existing: dict[str, Any] | None = None
+                    if existing_rows:
+                        col_names = [desc[0] for desc in cur.description]
+                        existing = dict(zip(col_names, existing_rows[0]))
+
+                    created_at = correction.get("created_at") or updated_at
+                    if existing is not None:
+                        persisted_count = int(existing.get("correction_count") or 0) + 1
+                        for key in (
+                            "original_scope_label",
+                            "original_route_family",
+                            "original_execution_action",
+                            "original_tooling_profile",
+                            "original_route_reason",
+                            "original_route_confidence",
+                            "first_corrected_scope_label",
+                            "first_corrected_route_family",
+                            "first_corrected_execution_action",
+                            "first_corrected_tooling_profile",
+                        ):
+                            correction[key] = existing.get(key)
+                        created_at = existing.get("created_at") or created_at
+                    else:
+                        persisted_count = 1
+
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET route = %s,
+                                scope_label = %s,
+                                route_family = %s,
+                                execution_action = %s,
+                                tooling_profile = %s,
+                                updated_at = %s
+                            WHERE billing_ticket_id = %s
+                            """
+                        ).format(self._table("support_billing_tickets")),
+                        (
+                            str(active_route.get("route") or "").strip() or None,
+                            str(active_route.get("scope_label") or "").strip() or None,
+                            str(active_route.get("route_family") or "").strip() or None,
+                            str(active_route.get("execution_action") or "").strip() or None,
+                            str(active_route.get("tooling_profile") or "").strip() or None,
+                            updated_at,
+                            normalized_id,
+                        ),
+                    )
+
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} AS corrections (
+                                billing_ticket_id, client_ticket_id,
+                                original_scope_label, original_route_family,
+                                original_execution_action, original_tooling_profile,
+                                original_route_reason, original_route_confidence,
+                                corrected_scope_label, corrected_route_family,
+                                corrected_execution_action, corrected_tooling_profile,
+                                first_corrected_scope_label, first_corrected_route_family,
+                                first_corrected_execution_action, first_corrected_tooling_profile,
+                                corrector, note, correction_count, created_at, updated_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (billing_ticket_id) DO UPDATE SET
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                original_scope_label = corrections.original_scope_label,
+                                original_route_family = corrections.original_route_family,
+                                original_execution_action = corrections.original_execution_action,
+                                original_tooling_profile = corrections.original_tooling_profile,
+                                original_route_reason = corrections.original_route_reason,
+                                original_route_confidence = corrections.original_route_confidence,
+                                corrected_scope_label = EXCLUDED.corrected_scope_label,
+                                corrected_route_family = EXCLUDED.corrected_route_family,
+                                corrected_execution_action = EXCLUDED.corrected_execution_action,
+                                corrected_tooling_profile = EXCLUDED.corrected_tooling_profile,
+                                first_corrected_scope_label = corrections.first_corrected_scope_label,
+                                first_corrected_route_family = corrections.first_corrected_route_family,
+                                first_corrected_execution_action = corrections.first_corrected_execution_action,
+                                first_corrected_tooling_profile = corrections.first_corrected_tooling_profile,
+                                corrector = EXCLUDED.corrector,
+                                note = EXCLUDED.note,
+                                correction_count = EXCLUDED.correction_count,
+                                created_at = corrections.created_at,
+                                updated_at = EXCLUDED.updated_at
+                            RETURNING *
+                            """
+                        ).format(self._table("support_billing_route_corrections")),
+                        (
+                            normalized_id,
+                            str(correction.get("client_ticket_id") or "").strip(),
+                            str(correction.get("original_scope_label") or "").strip() or None,
+                            str(correction.get("original_route_family") or "").strip() or None,
+                            str(correction.get("original_execution_action") or "").strip() or None,
+                            str(correction.get("original_tooling_profile") or "").strip() or None,
+                            str(correction.get("original_route_reason") or "").strip() or None,
+                            float(correction["original_route_confidence"])
+                            if correction.get("original_route_confidence") is not None
+                            else None,
+                            str(correction.get("corrected_scope_label") or "").strip(),
+                            str(correction.get("corrected_route_family") or "").strip(),
+                            str(correction.get("corrected_execution_action") or "").strip(),
+                            str(correction.get("corrected_tooling_profile") or "").strip(),
+                            str(correction.get("first_corrected_scope_label") or "").strip(),
+                            str(correction.get("first_corrected_route_family") or "").strip(),
+                            str(correction.get("first_corrected_execution_action") or "").strip(),
+                            str(correction.get("first_corrected_tooling_profile") or "").strip(),
+                            str(correction.get("corrector") or "").strip() or None,
+                            str(correction.get("note") or "").strip() or None,
+                            persisted_count,
+                            created_at,
+                            updated_at,
+                        ),
+                    )
+                    row = cur.fetchone()
+                    col_names = [desc[0] for desc in cur.description]
+                    return dict(zip(col_names, row)) if row else {}
+
+        return self._run_with_connection_retry("apply_billing_route_correction", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:

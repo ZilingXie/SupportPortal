@@ -4,7 +4,7 @@
 
 **Goal:** Let an operator manually correct a mis-routed `/account` billing ticket's full route tuple, persist the correction as a recordable case, and add a "Route errors" filter (corrected-by-me + low router confidence) plus a summary panel in `/account` for systematic analysis.
 
-**Architecture:** Add a `support_billing_route_corrections` table (in-memory + PostgreSQL) that stores the original AI route tuple, the corrected route tuple, corrector, reason, and timestamp alongside the billing ticket. Add a `POST /api/account/billing-tickets/{id}/route-correction` endpoint that validates the new tuple against the router contract, writes the correction record, and updates the billing ticket's active route fields. Record a `route_corrected` ticket event. Extend the list/detail API to surface correction state and low-confidence flag. Add a "Route errors" filter chip and a summary panel in `ui/account-ui` that aggregates predicted-vs-corrected counts.
+**Architecture:** Add a `support_billing_route_corrections` table (in-memory + PostgreSQL) that stores the original AI route tuple, the corrected route tuple, corrector, reason, and timestamp alongside the billing ticket. Persist the active billing ticket route tuple columns (`scope_label`, `route_family`, `execution_action`, `tooling_profile`) in PostgreSQL so corrections survive reloads. Add a `POST /api/account/billing-tickets/{id}/route-correction` endpoint that validates the new tuple against the router contract, writes the correction record, and updates the billing ticket's active route fields. Record a `route_corrected` ticket event. Extend the list/detail API to surface correction state and low-confidence flag. Add a "Route errors" filter chip and a summary panel in `ui/account-ui` that aggregates predicted-vs-corrected counts.
 
 **Tech Stack:** FastAPI (`backend/main.py`), ticket repository abstraction (`backend/repositories/ticket_repository.py`), `backend/services/support_router.py` route contract (`_route_contract_for_scope`), PostgreSQL schema doc/init SQL, vanilla static UI (`ui/account-ui`), Python `unittest`/FastAPI `TestClient`.
 
@@ -14,7 +14,7 @@
 
 - The correctable field is the **full route tuple**: `scope_label` + `route_family` + `execution_action` + `tooling_profile`. The original AI tuple is preserved verbatim in the correction record for analysis.
 - The corrector picks `scope_label` first; the backend derives `route_family` / `execution_action` / `tooling_profile` from `_route_contract_for_scope` so the corrected tuple is always internally consistent. The corrector also supplies a free-text `execution_action` override (selected from the valid actions for the chosen scope) and an optional `note`.
-- A route may be corrected only once per billing ticket. Re-correcting overwrites the corrected tuple and appends a new event but does not create a second correction row (one row per ticket, updated in place). Keep the *first* corrected tuple as `first_corrected_*` for stability analysis.
+- A route may be corrected only once per billing ticket. Re-correcting overwrites the corrected tuple and appends a new event but does not create a second correction row (one row per ticket, updated in place). Keep the original AI tuple immutable after the first correction, and keep the *first* corrected tuple as `first_corrected_*` for stability analysis.
 - "Route error" = `(has route correction)` **OR** `(router_confidence < INTENT_ROUTER_CONFIDENCE_THRESHOLD)`. The filter is a single chip "Route errors" alongside the existing All / Automation / Not automated chips.
 - The summary panel appears only when the "Route errors" filter is active. It shows: total error cases, corrected count, low-confidence count, and a breakdown of predicted→corrected route transitions (top transitions only).
 - Correction does **not** re-run billing automation or re-send internal email. It only updates the routing classification fields and records the case. The customer reply and automation_status are left as-is (correcting the route is a classification fix, not a re-execution).
@@ -48,10 +48,11 @@ These are the only valid `(scope_label, execution_action)` pairs the corrector m
 - Modify `backend/repositories/ticket_repository.py`
   - Add in-memory `_billing_route_corrections: dict[str, dict[str, Any]]` keyed by `billing_ticket_id`.
   - Add `save_billing_route_correction`, `get_billing_route_correction`, `list_billing_route_corrections`.
+  - Add PostgreSQL persistence for billing ticket active route tuple columns: `scope_label`, `route_family`, `execution_action`, `tooling_profile`.
   - Add PostgreSQL table init (`support_billing_route_corrections`) + CRUD methods.
   - Add to `TicketRepository` Protocol.
 - Modify `backend/sql/ticket_storage.sql`
-  - Document the `support_billing_route_corrections` table schema and index.
+  - Document the billing ticket active route tuple columns and the `support_billing_route_corrections` table schema/index.
 - Modify `backend/main.py`
   - Add `BillingRouteCorrectionRequest` model.
   - Add `POST /api/account/billing-tickets/{billing_ticket_id}/route-correction`.
@@ -70,7 +71,7 @@ These are the only valid `(scope_label, execution_action)` pairs the corrector m
   - Modify `backend/tests/test_repository_configuration.py`.
 - Update docs after implementation:
   - `docs/feature_list.md` (major routing/analysis capability).
-  - `docs/roadmap.html` only if a routing-analysis lane exists (check first; skip if absent).
+  - `docs/roadmap.html` (required for this task; update the relevant route-quality/account-analysis lane or add a concise roadmap marker if no lane exists).
 
 ---
 
@@ -268,6 +269,7 @@ git commit -m "feat: add route correction tuple validation"
 - Modify: `backend/repositories/ticket_repository.py`
 - Modify: `backend/sql/ticket_storage.sql`
 - Test: `backend/tests/test_route_correction.py`
+- Test: `backend/tests/test_repository_configuration.py`
 
 - [ ] **Step 1: Add failing repository tests**
 
@@ -333,6 +335,7 @@ class BillingRouteCorrectionRepositoryTests(unittest.TestCase):
     def test_resave_overwrites_but_preserves_first_corrected(self) -> None:
         self.repository.save_billing_route_correction(self._correction())
         updated = self._correction()
+        updated["original_execution_action"] = "human_review_required"
         updated["corrected_execution_action"] = "refuse"
         updated["corrected_route_family"] = "fallback_or_refuse"
         updated["note"] = "actually non-agora"
@@ -341,6 +344,8 @@ class BillingRouteCorrectionRepositoryTests(unittest.TestCase):
         fetched = self.repository.get_billing_route_correction(self.billing_ticket_id)
         assert fetched is not None
         self.assertEqual(fetched["corrected_execution_action"], "refuse")
+        # original_* is the first AI-predicted tuple and is immutable across resave.
+        self.assertEqual(fetched["original_execution_action"], "detailed_invoice")
         # first_corrected_* preserved across resave.
         self.assertEqual(fetched["first_corrected_execution_action"], "human_review_required")
         self.assertEqual(fetched["correction_count"], 2)
@@ -385,7 +390,16 @@ def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
             "first_corrected_execution_action",
             "first_corrected_tooling_profile",
         ):
-            saved.setdefault(key, existing.get(key))
+            saved[key] = existing.get(key)
+        for key in (
+            "original_scope_label",
+            "original_route_family",
+            "original_execution_action",
+            "original_tooling_profile",
+            "original_route_reason",
+            "original_route_confidence",
+        ):
+            saved[key] = existing.get(key)
         saved["created_at"] = existing.get("created_at") or saved["created_at"]
         saved["correction_count"] = max(
             int(existing.get("correction_count") or 0) + 1,
@@ -426,9 +440,18 @@ def delete_all_billing_tickets(self) -> int:
     return count
 ```
 
-- [ ] **Step 4: Add PostgreSQL schema to SQL doc**
+- [ ] **Step 4: Add PostgreSQL billing-ticket tuple columns and correction schema to SQL doc**
 
-In `backend/sql/ticket_storage.sql`, after the `support_billing_response_tokens` block, add:
+In `backend/sql/ticket_storage.sql`, add the billing-ticket active route tuple columns to `support_billing_tickets`:
+
+```sql
+    scope_label TEXT,
+    route_family TEXT,
+    execution_action TEXT,
+    tooling_profile TEXT,
+```
+
+Then, after the `support_billing_response_tokens` block, add:
 
 ```sql
 CREATE TABLE IF NOT EXISTS support_billing_route_corrections (
@@ -461,7 +484,11 @@ CREATE INDEX IF NOT EXISTS idx_support_billing_route_corrections_updated
 
 - [ ] **Step 5: Add PostgreSQL init + CRUD methods**
 
-In `PostgresTicketRepository.initialize`, after the `support_billing_response_tokens` index creation (around line 2533), add the table creation:
+In `PostgresTicketRepository.initialize`, add `scope_label`, `route_family`, `execution_action`, and `tooling_profile` to the `support_billing_tickets` create table statement. Also add `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements for all four columns so existing databases migrate in place.
+
+Update `PostgresTicketRepository.save_billing_ticket` so the INSERT, VALUES tuple, and ON CONFLICT update persist all four fields.
+
+After the `support_billing_response_tokens` index creation (around line 2533), add the table creation:
 
 ```python
 cur.execute(
@@ -505,7 +532,7 @@ cur.execute(
 )
 ```
 
-Then add PostgreSQL CRUD methods near the other billing methods (after `mark_billing_response_token_used`, ~line 4895). Use an upsert that preserves `first_corrected_*` via `COALESCE(existing, new)`:
+Then add PostgreSQL CRUD methods near the other billing methods (after `mark_billing_response_token_used`, ~line 4895). Use an aliased upsert that preserves the immutable `original_*` tuple and `first_corrected_*` tuple from the existing row:
 
 ```python
 def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
@@ -524,7 +551,7 @@ def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
                 cur.execute(
                     sql.SQL(
                         """
-                        INSERT INTO {} (
+                        INSERT INTO {} AS corrections (
                             billing_ticket_id, client_ticket_id,
                             original_scope_label, original_route_family,
                             original_execution_action, original_tooling_profile,
@@ -543,23 +570,23 @@ def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
                             %s,%s,%s,%s,%s
                         )
                         ON CONFLICT (billing_ticket_id) DO UPDATE SET
-                            original_scope_label = EXCLUDED.original_scope_label,
-                            original_route_family = EXCLUDED.original_route_family,
-                            original_execution_action = EXCLUDED.original_execution_action,
-                            original_tooling_profile = EXCLUDED.original_tooling_profile,
-                            original_route_reason = EXCLUDED.original_route_reason,
-                            original_route_confidence = EXCLUDED.original_route_confidence,
+                            original_scope_label = corrections.original_scope_label,
+                            original_route_family = corrections.original_route_family,
+                            original_execution_action = corrections.original_execution_action,
+                            original_tooling_profile = corrections.original_tooling_profile,
+                            original_route_reason = corrections.original_route_reason,
+                            original_route_confidence = corrections.original_route_confidence,
                             corrected_scope_label = EXCLUDED.corrected_scope_label,
                             corrected_route_family = EXCLUDED.corrected_route_family,
                             corrected_execution_action = EXCLUDED.corrected_execution_action,
                             corrected_tooling_profile = EXCLUDED.corrected_tooling_profile,
-                            first_corrected_scope_label = support_billing_route_corrections.first_corrected_scope_label,
-                            first_corrected_route_family = support_billing_route_corrections.first_corrected_route_family,
-                            first_corrected_execution_action = support_billing_route_corrections.first_corrected_execution_action,
-                            first_corrected_tooling_profile = support_billing_route_corrections.first_corrected_tooling_profile,
+                            first_corrected_scope_label = corrections.first_corrected_scope_label,
+                            first_corrected_route_family = corrections.first_corrected_route_family,
+                            first_corrected_execution_action = corrections.first_corrected_execution_action,
+                            first_corrected_tooling_profile = corrections.first_corrected_tooling_profile,
                             corrector = EXCLUDED.corrector,
                             note = EXCLUDED.note,
-                            correction_count = support_billing_route_corrections.correction_count + 1,
+                            correction_count = corrections.correction_count + 1,
                             updated_at = EXCLUDED.updated_at
                         """
                     ).format(self._table("support_billing_route_corrections")),
@@ -805,12 +832,12 @@ async def correct_billing_route(
     correction_record = {
         "billing_ticket_id": billing_ticket_id,
         "client_ticket_id": client_ticket_id,
-        "original_scope_label": billing_ticket.get("scope_label"),
-        "original_route_family": billing_ticket.get("route_family"),
-        "original_execution_action": billing_ticket.get("route") or billing_ticket.get("execution_action"),
-        "original_tooling_profile": billing_ticket.get("tooling_profile"),
-        "original_route_reason": billing_ticket.get("route_reason"),
-        "original_route_confidence": original_route_confidence,
+        "original_scope_label": (existing or {}).get("original_scope_label") or billing_ticket.get("scope_label"),
+        "original_route_family": (existing or {}).get("original_route_family") or billing_ticket.get("route_family"),
+        "original_execution_action": (existing or {}).get("original_execution_action") or billing_ticket.get("route") or billing_ticket.get("execution_action"),
+        "original_tooling_profile": (existing or {}).get("original_tooling_profile") or billing_ticket.get("tooling_profile"),
+        "original_route_reason": (existing or {}).get("original_route_reason") or billing_ticket.get("route_reason"),
+        "original_route_confidence": (existing or {}).get("original_route_confidence") if existing else original_route_confidence,
         "corrected_scope_label": correction["scope_label"],
         "corrected_route_family": correction["route_family"],
         "corrected_execution_action": correction["execution_action"],
@@ -1168,7 +1195,7 @@ def test_account_ui_has_route_correction_control_and_filter(self) -> None:
         "/route-correction",
         "route-errors",
         "Route errors",
-        "correctRoute",
+        "submitRouteCorrection",
         "scope_label",
         "execution_action",
     ]:
@@ -1410,6 +1437,7 @@ async function fetchRouteErrorSummary() {
   } catch {
     state.routeErrorSummary = null;
   }
+  render();
 }
 ```
 
@@ -1694,6 +1722,7 @@ git commit -m "test: assert billing route corrections schema contract"
 
 **Files:**
 - Modify: `docs/feature_list.md`
+- Modify: `docs/roadmap.html`
 - Test: `scripts/verify_feature_list.py`
 
 - [ ] **Step 1: Update feature list**
@@ -1704,9 +1733,9 @@ Read `docs/feature_list.md` first to match its category order and sentence style
 Account intake supports manual route correction of the full route tuple and a Route errors filter with summary panel for systematic mis-routing analysis.
 ```
 
-- [ ] **Step 2: Check roadmap**
+- [ ] **Step 2: Update roadmap**
 
-Read `docs/roadmap.html` and search for any routing-analysis or route-quality lane. If one exists, mark the relevant task done. If no such lane exists, skip the roadmap edit (YAGNI) and note the skip in the commit message.
+Read `docs/roadmap.html` and update the relevant routing-analysis, route-quality, or account-intake lane. If no exact lane exists, add a concise roadmap marker under the closest account/intake/dashboard section. This task explicitly requires updating `docs/roadmap.html`.
 
 - [ ] **Step 3: Run feature list verification**
 
@@ -1717,8 +1746,7 @@ Expected: PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/feature_list.md
-# Add docs/roadmap.html only if edited.
+git add docs/feature_list.md docs/roadmap.html
 git commit -m "docs: record account route correction feature"
 ```
 
@@ -1807,4 +1835,4 @@ Then verify task-specific live markers:
 - Always look up the correction record by the resolved billing ticket's `billing_ticket_id`, never the raw path param, because `GET /api/account/billing-tickets/{id}` accepts either a `BT-...` id or a `TK-...` client id.
 - Keep the correction select as a single `<select>` of `scope|action` pairs to avoid invalid combinations on the client; the backend still validates.
 - Preserve existing filter behavior; the new `route_errors` chip is additive.
-- If `docs/roadmap.html` has no routing-analysis lane, skip the roadmap edit rather than inventing one.
+- Update `docs/roadmap.html` as part of this task; prefer an existing routing/account analysis lane, otherwise add one concise marker in the closest existing section.
