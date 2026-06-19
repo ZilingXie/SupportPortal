@@ -248,6 +248,50 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn(raw_token, stored_body)
         self.assertIn("token=<redacted>", stored_body)
 
+    def test_billing_response_token_is_invalidated_when_internal_email_fails(self) -> None:
+        captured_payloads: list[dict[str, str]] = []
+
+        def fake_send(payload: dict[str, str]) -> dict[str, str]:
+            captured_payloads.append(payload)
+            return {"status": "failed", "reason": "boom"}
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email", side_effect=fake_send
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": (
+                        "Please send detailed invoice. Issue date: 6 May 2026. "
+                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                    ),
+                    "customer_email": "customer@example.com",
+                    "source": "account-ui",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["internal_email_send_status"], "failed")
+        self.assertEqual(payload["internal_email_send_reason"], "boom")
+        self.assertTrue(captured_payloads)
+        link_prefix = "https://support.stellarix.space/response?token="
+        body = captured_payloads[0]["body"]
+        raw_token = body.split(link_prefix, 1)[1].split()[0]
+        saved_token = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
+        self.assertIsNotNone(saved_token)
+        assert saved_token is not None
+        self.assertEqual(saved_token["billing_ticket_id"], payload["billing_ticket_id"])
+        self.assertIsNotNone(saved_token.get("used_at"))
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        stored_body = bt["internal_email_payload"]["body"]
+        self.assertNotIn(raw_token, stored_body)
+        self.assertIn("token=<redacted>", stored_body)
+
     def test_billing_missing_fields_does_not_create_response_token(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.generate_billing_response_token",

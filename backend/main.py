@@ -2914,6 +2914,12 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         email_send_result = await async_to_thread(send_billing_internal_email, internal_email_to_send)
         internal_email_send_status = str(email_send_result.get("status") or "failed")
         internal_email_send_reason = str(email_send_result.get("reason") or "")
+        if internal_email_send_status != "sent":
+            await async_to_thread(
+                ticket_repository.mark_billing_response_token_used,
+                billing_response_token_record["token_hash"],
+                now_iso(),
+            )
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
         billing_ticket["updated_at"] = now_iso()
