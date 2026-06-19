@@ -353,7 +353,7 @@ class AccountIntakeRequest(BaseModel):
 
 
 class BillingResponseSubmitRequest(BaseModel):
-    token: str = Field(min_length=1, max_length=256)
+    token: str | None = Field(default=None, max_length=256)
     result: str = Field(pattern="^(completed|refused|customer_action_required)$")
     notify_customer: bool
     note: str | None = Field(default=None, max_length=4000)
@@ -3004,7 +3004,9 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     }
 
 
-def _load_billing_response_token(raw_token: str) -> tuple[str, dict[str, Any]]:
+def _load_billing_response_token(raw_token: str | None) -> tuple[str, dict[str, Any]]:
+    if not isinstance(raw_token, str):
+        raise HTTPException(status_code=404, detail="billing response token not found")
     try:
         token_hash = hash_billing_response_token(raw_token)
     except BillingResolutionValidationError:
@@ -3033,7 +3035,7 @@ def _billing_resolution_automation_status(result: str, notify_customer: bool) ->
 
 
 @app.get("/api/billing-response")
-def get_billing_response_context(token: str) -> dict[str, Any]:
+def get_billing_response_context(token: str | None = None) -> dict[str, Any]:
     _, token_record = _load_billing_response_token(token)
     billing_ticket_id = str(token_record.get("billing_ticket_id") or "").strip()
     billing_ticket = ticket_repository.get_billing_ticket(billing_ticket_id)
@@ -3098,6 +3100,14 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
         note=submission["note"],
         created_at=timestamp,
     )
+    automation_status = _billing_resolution_automation_status(
+        submission["result"],
+        submission["notify_customer"],
+    )
+    billing_ticket["automation_status"] = automation_status
+    billing_ticket["updated_at"] = timestamp
+    await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+
     await async_to_thread(
         ticket_repository.record_event,
         client_ticket_id,
@@ -3106,17 +3116,9 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
     )
     await dispatch_event(["engineer", "dashboard"], resolution_event)
 
-    automation_status = _billing_resolution_automation_status(
-        submission["result"],
-        submission["notify_customer"],
-    )
-    billing_ticket["automation_status"] = automation_status
-    billing_ticket["updated_at"] = timestamp
-
     customer_reply = ""
     customer_notified = False
     if not submission["notify_customer"]:
-        await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
         return {
             "submitted": True,
             "billing_ticket_id": billing_ticket_id,

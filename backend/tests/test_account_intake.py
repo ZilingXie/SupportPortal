@@ -522,6 +522,46 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(submit_response.status_code, 404, submit_response.text)
 
+    def test_billing_response_missing_or_blank_token_returns_404(self) -> None:
+        lookup_missing = self.client.get("/api/billing-response")
+        self.assertEqual(lookup_missing.status_code, 404, lookup_missing.text)
+
+        lookup_blank = self.client.get("/api/billing-response?token=")
+        self.assertEqual(lookup_blank.status_code, 404, lookup_blank.text)
+
+        submit_missing = self.client.post(
+            "/api/billing-response/submit",
+            json={"result": "completed", "notify_customer": False, "note": ""},
+        )
+        self.assertEqual(submit_missing.status_code, 404, submit_missing.text)
+
+        submit_blank = self.client.post(
+            "/api/billing-response/submit",
+            json={"token": "", "result": "completed", "notify_customer": False, "note": ""},
+        )
+        self.assertEqual(submit_blank.status_code, 404, submit_blank.text)
+
+    def test_billing_response_submit_persists_status_before_internal_event_dispatch(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        billing_ticket_id = str(create_payload["billing_ticket_id"])
+        status_seen_during_dispatch: list[str | None] = []
+
+        async def capture_dispatch(channels: list[str], payload: dict[str, object]) -> None:
+            if payload.get("event") == "billing_internal_resolution_submitted":
+                billing_ticket = self.repository.get_billing_ticket(billing_ticket_id)
+                status_seen_during_dispatch.append(
+                    str(billing_ticket.get("automation_status") or "") if billing_ticket else None
+                )
+
+        with patch.object(main, "dispatch_event", side_effect=capture_dispatch):
+            response = self.client.post(
+                "/api/billing-response/submit",
+                json={"token": raw_token, "result": "completed", "notify_customer": False, "note": ""},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(status_seen_during_dispatch, ["resolved_without_customer_notification"])
+
     def test_billing_missing_fields_does_not_create_response_token(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.generate_billing_response_token",
