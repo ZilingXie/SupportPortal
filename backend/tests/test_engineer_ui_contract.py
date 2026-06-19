@@ -153,8 +153,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn('/shared-ui/composer.css?v=20260519-json-codeblock-1', html)
         self.assertIn('/shared-ui/composer.js?v=20260519-json-codeblock-1', html)
-        self.assertIn("./styles.css?v=20260619-engineer-multi-agent-workspace-1", html)
-        self.assertIn('./app.js?v=20260619-engineer-multi-agent-workspace-1', html)
+        self.assertIn("./styles.css?v=20260619-engineer-multi-agent-hitl-gate-1", html)
+        self.assertIn('./app.js?v=20260619-engineer-multi-agent-hitl-gate-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1806,8 +1806,19 @@ class EngineerUiContractTests(unittest.TestCase):
                 };
 
                 let html = renderTicketDetailView();
+                // The HITL feedback section is gated behind the multi-agent workspace
+                // toggle; the default guardrail-only view must not surface it.
+                if (html.includes("Feedback for AI Learning")) {
+                  throw new Error("Default detail view should hide the HITL feedback section until the multi-agent workspace is toggled on.");
+                }
+
+                // Toggling the multi-agent workspace for this investigating ticket
+                // surfaces the read-only HITL feedback section alongside the
+                // Plan/Execute/Review agent outputs.
+                toggleMultiAgentWorkspaceForTicket(selectedTicketId);
+                html = renderTicketDetailView();
                 if (!html.includes("Feedback for AI Learning")) {
-                  throw new Error("Engineer detail should render the AI learning review panel.");
+                  throw new Error("Engineer detail should render the AI learning review panel inside the multi-agent workspace.");
                 }
                 if (!html.includes("hitl_existing")) {
                   throw new Error("Auto review panel should render the latest stored feedback id for audit traceability.");
@@ -1833,12 +1844,21 @@ class EngineerUiContractTests(unittest.TestCase):
                   status: "investigating",
                   engineer_hitl_feedback: [],
                 };
+                // The multi-agent workspace toggle is still on for this ticket id,
+                // so the pending-after-close message should render inside the gated view.
                 html = renderTicketDetailView();
                 if (!html.includes("Learning review will run after this engineer case closes.")) {
-                  throw new Error("Active engineer cases should show a pending-after-close learning review message.");
+                  throw new Error("Active engineer cases should show a pending-after-close learning review message inside the multi-agent workspace.");
                 }
                 if (html.includes('data-hitl-feedback-field=') || html.includes('data-detail-action="submit-hitl-feedback"')) {
                   throw new Error("Active engineer cases should not expose manual HITL feedback controls.");
+                }
+
+                // Turning the multi-agent workspace back off must hide the HITL section again.
+                toggleMultiAgentWorkspaceForTicket(selectedTicketId);
+                html = renderTicketDetailView();
+                if (html.includes("Feedback for AI Learning")) {
+                  throw new Error("Turning the multi-agent workspace off should hide the HITL feedback section.");
                 }
               """
             )
