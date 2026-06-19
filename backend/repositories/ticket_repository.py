@@ -815,6 +815,15 @@ class TicketRepository(Protocol):
     def delete_all_billing_tickets(self) -> int:
         ...
 
+    def save_billing_response_token(self, token: dict[str, Any]) -> None:
+        ...
+
+    def get_billing_response_token(self, token_hash: str) -> dict[str, Any] | None:
+        ...
+
+    def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
+        ...
+
 
 class InMemoryTicketRepository:
     def __init__(self) -> None:
@@ -828,6 +837,7 @@ class InMemoryTicketRepository:
         self._case_memory_ledger: list[dict[str, Any]] = []
         self._engineer_replay_eval_items: dict[str, dict[str, Any]] = {}
         self._billing_tickets: dict[str, dict[str, Any]] = {}
+        self._billing_response_tokens: dict[str, dict[str, Any]] = {}
 
     def initialize(self) -> None:
         return None
@@ -1479,6 +1489,26 @@ class InMemoryTicketRepository:
         count = len(self._billing_tickets)
         self._billing_tickets.clear()
         return count
+
+    def save_billing_response_token(self, token: dict[str, Any]) -> None:
+        token_hash = str(token.get("token_hash") or "").strip()
+        if not token_hash:
+            raise ValueError("token_hash is required")
+        billing_ticket_id = str(token.get("billing_ticket_id") or "").strip()
+        if not billing_ticket_id:
+            raise ValueError("billing_ticket_id is required")
+        self._billing_response_tokens[token_hash] = copy.deepcopy(token)
+
+    def get_billing_response_token(self, token_hash: str) -> dict[str, Any] | None:
+        token = self._billing_response_tokens.get(str(token_hash).strip())
+        return copy.deepcopy(token) if token is not None else None
+
+    def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
+        token = self._billing_response_tokens.get(str(token_hash).strip())
+        if token is None or token.get("used_at") is not None:
+            return False
+        token["used_at"] = used_at
+        return True
 
 
 def _find_trace_customer_message_index(
@@ -2475,6 +2505,27 @@ class PostgresTicketRepository:
                     ).format(
                         sql.Identifier("idx_support_billing_tickets_created"),
                         self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            token_hash TEXT PRIMARY KEY,
+                            billing_ticket_id TEXT NOT NULL REFERENCES {}(billing_ticket_id) ON DELETE CASCADE,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            used_at TIMESTAMPTZ
+                        )
+                        """
+                    ).format(
+                        self._table("support_billing_response_tokens"),
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (billing_ticket_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_billing_response_tokens_ticket"),
+                        self._table("support_billing_response_tokens"),
                     )
                 )
                 self._backfill_engineer_cases_from_legacy_storage(cur)
@@ -4770,6 +4821,70 @@ class PostgresTicketRepository:
                 return cur.rowcount
 
         return self._run_with_connection_retry("delete_all_billing_tickets", _operation)
+
+    def save_billing_response_token(self, token: dict[str, Any]) -> None:
+        token_hash = str(token.get("token_hash") or "").strip()
+        if not token_hash:
+            raise ValueError("token_hash is required")
+        billing_ticket_id = str(token.get("billing_ticket_id") or "").strip()
+        if not billing_ticket_id:
+            raise ValueError("billing_ticket_id is required")
+        created_at = token.get("created_at") or _utc_now()
+        used_at = token.get("used_at")
+
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (token_hash, billing_ticket_id, created_at, used_at)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (token_hash) DO UPDATE SET
+                                billing_ticket_id = EXCLUDED.billing_ticket_id,
+                                created_at = EXCLUDED.created_at,
+                                used_at = EXCLUDED.used_at
+                            """
+                        ).format(self._table("support_billing_response_tokens")),
+                        (token_hash, billing_ticket_id, created_at, used_at),
+                    )
+
+        self._run_with_connection_retry("save_billing_response_token", _operation)
+
+    def get_billing_response_token(self, token_hash: str) -> dict[str, Any] | None:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT * FROM {} WHERE token_hash = %s").format(
+                        self._table("support_billing_response_tokens")
+                    ),
+                    (str(token_hash).strip(),),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return None
+                col_names = [desc[0] for desc in cur.description]
+                return dict(zip(col_names, rows[0]))
+
+        return self._run_with_connection_retry("get_billing_response_token", _operation)
+
+    def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET used_at = %s
+                            WHERE token_hash = %s AND used_at IS NULL
+                            """
+                        ).format(self._table("support_billing_response_tokens")),
+                        (used_at, str(token_hash).strip()),
+                    )
+                    return cur.rowcount == 1
+
+        return self._run_with_connection_retry("mark_billing_response_token_used", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:

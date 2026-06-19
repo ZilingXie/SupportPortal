@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS support_billing_tickets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_billing_response_tokens (
+    token_hash TEXT PRIMARY KEY,
+    billing_ticket_id TEXT NOT NULL REFERENCES support_billing_tickets(billing_ticket_id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    used_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS support_assets (
     asset_id TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL,
@@ -272,6 +279,9 @@ CREATE INDEX IF NOT EXISTS idx_support_ticket_agent_events_ticket_created
 
 CREATE INDEX IF NOT EXISTS idx_support_billing_tickets_created
     ON support_billing_tickets (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_billing_response_tokens_ticket
+    ON support_billing_response_tokens (billing_ticket_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_support_assets_ticket_customer
     ON support_assets (ticket_id, customer_id);
