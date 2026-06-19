@@ -141,3 +141,18 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('rel="noopener noreferrer"', app_source)
         self.assertIn('parsed.protocol === "http:"', app_source)
         self.assertIn('parsed.protocol === "https:"', app_source)
+
+    def test_account_app_route_result_label_contract(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        # Route result helper joins scope_label / route_family / route into a readable string.
+        self.assertIn("routeResultLabel", app_source)
+        self.assertIn("item.scope_label", app_source)
+        self.assertIn("item.route_family", app_source)
+        self.assertIn("item.execution_action", app_source)
+
+        # Detail view renders a Route result meta-row.
+        self.assertIn("Route result", app_source)
+
+        # Route reason explanation is still rendered alongside the route result.
+        self.assertIn("Route reason", app_source)

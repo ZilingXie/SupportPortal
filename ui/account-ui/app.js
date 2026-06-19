@@ -69,6 +69,20 @@ function routeClass(route) {
   return "route-other";
 }
 
+// Build the readable "Route result" string: scope_label / route_family / route.
+// Falls back to just `route` for legacy tickets missing the new routing fields,
+// and to "manual review" when nothing is present.
+function routeResultLabel(item) {
+  const parts = [
+    item.scope_label,
+    item.route_family,
+    item.execution_action || item.route,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter((value) => value.length > 0);
+  return parts.length ? parts.join(" / ") : "manual review";
+}
+
 function safeSourceLink(source) {
   let link = "";
   if (source && typeof source === "object") {
@@ -474,6 +488,10 @@ function renderDetailView() {
         <div class="meta-row">
           <span class="meta-label">Status</span>
           <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Route result</span>
+          <span class="meta-value">${escapeHtml(routeResultLabel(item))}</span>
         </div>
         <div class="meta-row">
           <span class="meta-label">Email</span>

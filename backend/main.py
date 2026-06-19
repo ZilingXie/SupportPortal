@@ -2844,6 +2844,10 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "title": title,
         "question": question,
         "route": route or None,
+        # Route result fields: scope_label (大类) / route_family (执行族) / route (最终 action).
+        "scope_label": decision.scope_label,
+        "route_family": decision.route_family,
+        "execution_action": route or None,
         "route_reason": decision.reason,
         "route_confidence": decision.confidence,
         "matched_signals": list(decision.matched_signals),

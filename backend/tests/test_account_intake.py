@@ -307,6 +307,92 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(events[0]["payload"]["account_intake_status"], "not_automated")
         self.assertEqual(events[0]["payload"]["execution_action"], "human_review_required")
 
+    def test_account_intake_persists_route_result_fields_for_automation(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "skipped_config_missing", "reason": "missing BILLING_AUTOMATION_SMTP_PASSWORD"},
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": (
+                        "Please send the detailed invoice. Issue date: 6 May 2026. "
+                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                    ),
+                    "customer_email": "customer@example.com",
+                    "source": "account-ui",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["route"], "detailed_invoice")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["scope_label"], "billing")
+        self.assertEqual(bt["route_family"], "billing_automation")
+        self.assertEqual(bt["execution_action"], "detailed_invoice")
+        self.assertEqual(bt["route"], "detailed_invoice")
+
+        # Detail API surfaces the route result fields.
+        detail = self.client.get(f"/api/account/billing-tickets/{payload['billing_ticket_id']}").json()
+        self.assertEqual(detail["scope_label"], "billing")
+        self.assertEqual(detail["route_family"], "billing_automation")
+        self.assertEqual(detail["execution_action"], "detailed_invoice")
+        self.assertEqual(detail["route"], "detailed_invoice")
+
+    def test_account_intake_persists_route_result_fields_for_non_automated(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "General support question",
+                    "question": "Can someone tell me more about Agora products?",
+                    "source": "manual",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "not_automated")
+        self.assertEqual(payload["route"], "web_search")
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["route"], "web_search")
+        # scope_label/route_family are persisted even for non-automated routes.
+        self.assertTrue(bt["scope_label"])
+        self.assertTrue(bt["route_family"])
+        self.assertEqual(bt["execution_action"], "web_search")
+
+    def test_billing_ticket_detail_returns_route_for_legacy_ticket_without_route_result_fields(self) -> None:
+        # Historical ticket persisted before scope_label/route_family/execution_action existed.
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-TK-LEGACY-ROUTE-001",
+                "client_ticket_id": "TK-LEGACY-ROUTE-001",
+                "source": "manual",
+                "title": "Legacy route ticket",
+                "question": "legacy question",
+                "automation_status": "automation",
+                "route": "detailed_invoice",
+            }
+        )
+
+        detail_response = self.client.get("/api/account/billing-tickets/BT-TK-LEGACY-ROUTE-001")
+        self.assertEqual(detail_response.status_code, 200, detail_response.text)
+        detail = detail_response.json()
+        # Legacy ticket still returns the original route; missing route result fields do not error.
+        self.assertEqual(detail["route"], "detailed_invoice")
+        self.assertIsNone(detail.get("scope_label"))
+        self.assertIsNone(detail.get("route_family"))
+        self.assertIsNone(detail.get("execution_action"))
+
     def test_billing_tickets_list_api(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             for i in range(3):
