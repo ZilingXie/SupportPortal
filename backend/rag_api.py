@@ -1068,6 +1068,22 @@ def startup_event() -> None:
         LOGGER.error("RAG knowledge repository initialization failed: %s", exc)
         raise
     _prewarm_embedding_provider_best_effort()
+    _install_kg_runtime_client_best_effort()
+
+
+def _install_kg_runtime_client_best_effort() -> None:
+    """Install the live RAG+KG runtime client when enabled and configured.
+
+    Best-effort: gated by ``RAG_KG_AUXILIARY_ENABLED`` (default off) and the
+    presence of a KG graph backend. Any failure leaves the default no-op KG
+    client in place so the service stays on the pure-RAG chain.
+    """
+    try:
+        from backend.services.kg_graphrag_runtime import maybe_install_default_kg_client
+
+        maybe_install_default_kg_client()
+    except Exception as exc:
+        LOGGER.warning("KG runtime client install skipped (%s); staying on pure-RAG.", exc)
 
 
 @app.on_event("shutdown")

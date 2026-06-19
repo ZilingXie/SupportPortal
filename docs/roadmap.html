@@ -1647,6 +1647,10 @@ flowchart TD
 
     const RECENT_UPDATES = [
       {
+        key: "KG Runtime",
+        copy: "RAG+KG runtime client 已落地：新增 GraphRagKgRuntimeClient（纯映射层）+ GraphitiSearchBackend（唯一 vendored-graphiti 耦合，search 限定 supportportal_official_docs 分区，按 episode 还原 provenance），并在 rag_api startup 按 RAG_KG_AUXILIARY_ENABLED + Neo4j 配置 best-effort 安装。此前所有 hook 调用点都传 client=None、默认 KgRuntimeDisabled，KG 即使开 flag 也是 no-op；现在真实图谱已接上，仍默认关闭、超时/失败/无 provenance 一律降级回纯 RAG。"
+      },
+      {
         key: "Guardrail Final",
         copy: "Guardrail final approve 已接入升级链路：engineer 第一次 approve 只触发 deterministic guardrail 生成/校验 customer-facing reply，第二次 final approve 才发送客户回复并关闭工单；blocked 时保留 revise 出口。"
       },
@@ -2131,7 +2135,7 @@ flowchart TD
         short: "RAG vs KG",
         title: "RAG vs KG / Case Memory",
         status: "doing",
-        thesis: "经独立架构评审结论：KG 不能也不应该完全替代 RAG，两者并存互补是唯一合理路径。RAG 继续承载 source-of-truth 与可引用证据（citation）；KG 在 query expansion、rerank boost、结构化 fact lookup 三个钩子位置作为辅助信号；首期 scope 已限定为官网文档，SupportPortal KG contracts、schema v1、chunk-level provenance 校验与 vendored cusmem/GraphRAG 离线 ingest wiring 已落地，下一步是运行时降级边界以及 RAG vs RAG+KG 离线基准对照。Case Memory Ledger / Active Retrieval Memory 仍按后续阶段推进。",
+        thesis: "经独立架构评审结论：KG 不能也不应该完全替代 RAG，两者并存互补是唯一合理路径。RAG 继续承载 source-of-truth 与可引用证据（citation）；KG 在 query expansion、rerank boost、结构化 fact lookup 三个钩子位置作为辅助信号；首期 scope 已限定为官网文档，SupportPortal KG contracts、schema v1、chunk-level provenance 校验、vendored cusmem/GraphRAG 离线 ingest wiring 与线上 GraphRagKgRuntimeClient（接 vendored GraphRAG 图谱、rag_api startup 按 flag 安装、默认关闭）均已落地，下一步是 RAG vs RAG+KG 离线基准对照与灰度门禁。Case Memory Ledger / Active Retrieval Memory 仍按后续阶段推进。",
         done: [
           "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate；Client AI 仍以官网文档 chunk/citation 生成答案。",
           "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
@@ -2143,6 +2147,7 @@ flowchart TD
           "KG 首期 scope gate 已落地：只有 `official` + `official_markdown_upload` 可生成 Client AI RAG auxiliary 入库计划；technical article、external benchmark 和 confirmed case memory 会被拒绝。",
           "SupportPortal KG PR1 已落地：新增 official-doc chunk 输入契约、`KgProvenance` / KG runtime 输出校验、`supportportal_official_docs_v1` schema（9 类实体 + 10 类关系）和 strict schema hash。",
           "SupportPortal KG PR2 已落地：`kg_graphrag_adapter.py` / `kg_offline_ingest.py` / `scripts/kg_ingest_official_doc_chunks.py` 把 official-doc chunk contract 转为 vendored cusmem `Chunk` 与 Graphiti episode，并保留 provenance、schema hash、content hash、deterministic episode UUID 和 dry-run 验证路径。",
+          "SupportPortal KG PR3（runtime client）已落地：`kg_graphrag_runtime.py` 新增 `GraphRagKgRuntimeClient`（纯映射层，把 KG 搜索命中映射为 expansion/rerank/fact 并强制 chunk_id 作用域）与 `GraphitiSearchBackend`（唯一 vendored-graphiti 耦合，search 限定 `supportportal_official_docs` 分区，按 episode `supportportal_*` 元数据还原 `KgProvenance`、按 entity 节点取扩展词）；`rag_api` startup 通过 `maybe_install_default_kg_client()` 按 `RAG_KG_AUXILIARY_ENABLED` + Neo4j 配置 best-effort 安装。此前 hook 调用点都传 `client=None`、默认 `KgRuntimeDisabled`，KG 即使开 flag 也恒为 no-op；现在真实图谱已接上。",
           "独立架构评审已完成：对比生产 RAG 链路（vector+BM25+FTS / RRF / metadata prune / external rerank / sufficiency gate / citation 合约）和 vendor/cusmem Graphiti（conversation-memory bi-temporal 模型），结论是 KG 不可替代 RAG，方案改为 RAG + KG 互补，并固化三个 KG 钩子位置与三条不能让步规则。"
         ],
         review: [
@@ -2159,6 +2164,7 @@ flowchart TD
           { id: "kg-adapter", status: "done", label: "SupportPortal-owned adapter PR2 已完成：official-doc chunk 输入契约已接到 vendored cusmem/GraphRAG episode 构建、schema bridge、deterministic episode id 与离线 ingest/dry-run CLI。", horizon: "Adapter" },
           { id: "kg-provenance", status: "done", label: "chunk-level provenance 契约已贯穿离线路径：`source_url`、`document_id`、`chunk_id`、`schema_version` 缺失即拒绝构造，GraphRAG episode 写入保留 flat provenance + schema/content hash；runtime fact 注入仍待后续阶段强制校验。", horizon: "Safety" },
           { id: "kg-runtime-boundary", status: "done", label: "线上 RAG+KG 调用契约已实现：KG entity link / 同义扩展给 query expansion（硬上限 ~150ms，超时降级）；RAG 现有 vector+BM25+FTS+RRF+rerank 保持不变；KG 提供 rerank boost 与结构化 fact 时必须挂回 chunk_id；生成阶段 citation 池只接受 RAG chunk。由 RAG_KG_AUXILIARY_ENABLED 门控，默认关闭，待灰度。", horizon: "Runtime" },
+          { id: "kg-graphrag-runtime-client", status: "done", label: "真实 KgRuntimeClient 已接到 vendored GraphRAG：GraphRagKgRuntimeClient（纯映射 + chunk_id 作用域）+ GraphitiSearchBackend（search 限定 official-docs 分区、按 episode 还原 provenance）+ rag_api startup best-effort 安装；填上了之前 client=None / KgRuntimeDisabled 的 runtime 空缺。默认仍关闭，需 Neo4j 配置，超时/失败/无 provenance 一律降级回纯 RAG。", horizon: "Runtime" },
           { id: "kg-benchmark-ab", status: "todo", label: "扩展 rag_benchmark_runner 增加 rag_vs_rag_plus_kg 评测模式：在 50–100 个真实 query 上离线对比纯 RAG 与 RAG+KG（recall@k / rerank quality / citation faithfulness / latency），没通过基准不进入灰度。", horizon: "Evaluation" },
           { id: "kg-engineer-vs-client", status: "todo", label: "明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。", horizon: "Access Policy" },
           { id: "kg-graph-db", status: "todo", label: "图数据库先评估 Docker Neo4j 本地方案，再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选。", horizon: "Infrastructure" },

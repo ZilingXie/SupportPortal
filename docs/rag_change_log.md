@@ -11,6 +11,29 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-19 - Wire KgRuntimeClient to the vendored GraphRAG knowledge graph
+
+- Summary:
+  - Added `backend/services/kg_graphrag_runtime.py`: the first live `KgRuntimeClient` backed by the vendored cusmem GraphRAG graph (the same graph the offline ingest path writes), replacing the default `KgRuntimeDisabled` no-op when enabled.
+    - `GraphRagKgRuntimeClient` — a PURE mapping from KG search hits (`GraphFactRecord`) to the three hook contract types (`KgExpansion` / `KgRerankSignal` / `KgStructuredFact`). No graph I/O, so it is fully unit-testable. Enforces the chunk-id scoping rules: rerank boosts only chunks already in the RAG candidate set; structured facts only trace back to selected RAG `final_chunk_ids`; query-expansion terms exclude tokens already in the query and de-duplicate.
+    - `GraphitiSearchBackend` — the only vendored-graphiti coupling: runs `graphiti.search(..., group_ids=["supportportal_official_docs"])`, then hydrates each `EntityEdge` with provenance (via `EpisodicNode.get_by_uuids` → `supportportal_*` episode metadata) and entity terms (via `EntityNode.get_by_uuids` → node name, best-effort). Async work is driven with `asyncio.run` inside the hooks' bounded thread-pool worker.
+    - `build_graphrag_kg_runtime_client()` / `maybe_install_default_kg_client()` — construct GraphRAG from env (`KG_NEO4J_URI`/`KG_NEO4J_USER`/`KG_NEO4J_PASSWORD`, falling back to `NEO4J_*`; LLM/embedding knobs fall back to the vendored `Config` defaults). Returns/installs nothing when `RAG_KG_AUXILIARY_ENABLED` is off or no Neo4j backend is configured.
+  - Wired `_install_kg_runtime_client_best_effort()` into the `backend/rag_api.py` `startup_event` (the RAG service hosting `/internal/rag/query`): best-effort install after embedding pre-warm; any failure logs and leaves the pure-RAG no-op client in place.
+  - Provenance round-trips end to end: ingest persists `supportportal_chunk_id` / `_source_url` / `_document_id` / `_schema_version` as first-class `EpisodicNode` properties, and the runtime backend reconstructs `KgProvenance` from them. A search hit whose episode lacks complete provenance is dropped at the backend AND re-validated by the hooks.
+- Reason:
+  - Completes the runtime side of the RAG+KG roadmap (`kg-graphrag-runtime-client`): with the offline ingest (PR2) writing the graph and the online hooks (kg-runtime-boundary) already wired, the only missing piece was a real `KgRuntimeClient`. Until now all hook call sites passed `client=None` and the default client was `KgRuntimeDisabled`, so KG was a guaranteed no-op even with the flag on. This change supplies a real graph backend while keeping RAG the citation source of truth.
+- Affected files/config:
+  - `backend/services/kg_graphrag_runtime.py` (new)
+  - `backend/rag_api.py` (`startup_event` best-effort KG client install)
+  - `backend/tests/test_kg_graphrag_runtime.py` (new)
+  - New env knobs: `KG_NEO4J_URI` / `KG_NEO4J_USER` / `KG_NEO4J_PASSWORD` (fallback `NEO4J_*`), `KG_SEARCH_NUM_RESULTS` (default 10), `KG_LLM_API_KEY` / `KG_LLM_BASE_URL` / `KG_LLM_MODEL` / `KG_EMBEDDING_MODEL` / `KG_EMBEDDING_BASE_URL` / `KG_EMBEDDING_DIM` (fallback to vendored `Config` defaults).
+- Data impact:
+  - None to RAG storage. Read-only over the KG graph; no ingestion, vector table, BM25/FTS index, or chunking change. With `RAG_KG_AUXILIARY_ENABLED` off (default) or no Neo4j configured, runtime behavior is byte-identical to the pure-RAG chain (the no-op client stays installed).
+- Verification:
+  - `rtk uv run --with redis python -m unittest backend.tests.test_kg_graphrag_runtime -v` (mapping, provenance gate, rerank/fact chunk-id scoping, boost clamp, GraphitiSearchBackend edge→record assembly with graphiti stubbed, factory gating off-flag/no-backend, end-to-end through the real hooks).
+  - `rtk uv run --with redis python -m unittest backend.tests.test_kg_runtime -v` confirms the existing hook contract still passes with a real client installable.
+  - `rtk uv run --with ruff ruff check backend/services/kg_graphrag_runtime.py backend/rag_api.py backend/tests/test_kg_graphrag_runtime.py`.
+
 ## 2026-06-18 - Implement online RAG+KG auxiliary runtime contract (kg-runtime-boundary)
 
 - Summary:
