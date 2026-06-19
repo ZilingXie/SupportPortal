@@ -1928,7 +1928,7 @@ flowchart TD
         short: "Billing",
         title: "Billing intake / ticket routing",
         status: "doing",
-        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，优先验证 invoice request 和 account fraud / deactivate / company verification 两类 case 的 route、邮件回执、人工审核和 dashboard 指标，不直接迁移客户入口。",
+        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，Zendesk webhook / N8n 内部转发已完成，下一步优先验证 route 后的内部 response link 回传、AI 客户通知闭环、人工审核和 dashboard 指标，不直接迁移客户入口。",
         done: [
           "Automation 白名单已扩展到 `account_suspension`、`detailed_invoice` 和 `account_verification`；suspicious activity / fraud / company verification / reactivation 新进入 billing automation intake。",
           "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
@@ -1941,14 +1941,16 @@ flowchart TD
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
           "TK-ACC-C31612 修复已验证：semantic-first 路由 + gratitude 降级后，长正文末尾 thank you 不再误判为 small_talk。",
-          "试运行前必须补 Zendesk/external_id 幂等与邮件回执/邮箱轮询，否则 webhook 重放、内部邮件无回执都会让 agent 无法继续流程。",
+          "Zendesk webhook / N8n 中转已完成为内部来源入口；后续重点转为 billing 被 route 后的处理闭环，而不是继续迁移客户入口。",
+          "原会议提到的邮件回执/邮箱轮询收口为一次性 response link：内部邮件带 `support.stellarix.space/response?token=...`，处理人提交结构化结果后触发 AI 读取 internal resolution event。",
           "白名单不要扩大过快；先用 real Zendesk replay set 证明 invoice、account fraud / deactivate / company verification 的 route_accuracy，再决定是否进一步扩展。"
         ],
         next: [
           { id: "billing-real-zendesk-replay", status: "todo", label: "建立 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、billing risky negative set 和 Not automated case 都要覆盖。", horizon: "Scope" },
-          { id: "billing-zendesk-forwarding", status: "todo", label: "接入 Zendesk webhook / N8n 中转：拉取新工单内容、external_id、comment 和 metadata；先只内部转发，不改客户入口。", horizon: "Source" },
+          { id: "billing-zendesk-forwarding", status: "done", label: "接入 Zendesk webhook / N8n 中转已完成：拉取新工单内容、external_id、comment 和 metadata；先只内部转发，不改客户入口。", horizon: "Source" },
           { id: "billing-ai-account", status: "todo", label: "定义 AI account 试运行方式：shadow mode 下只模拟，1% 切流后由 AI account 接收/处理 billing case，并通过 Zendesk API 写 comment。", horizon: "Pilot" },
-          { id: "billing-email-callback", status: "todo", label: "补邮件回执/邮箱轮询：agent 发给 billing owner/team 的 invoice 或 account request 必须能按 ticket/session 关联回复、超时提醒和 fallback。", horizon: "Integration" },
+          { id: "billing-response-link", status: "todo", label: "补内部 response link 闭环：邮件携带 `support.stellarix.space/response?token=...`，页面只使用 billing_ticket_id，一次性提交处理结果、是否通知客户和说明。", horizon: "Integration" },
+          { id: "billing-internal-resolution-event", status: "todo", label: "提交后写入 internal resolution event，再触发 AI 读取 event 决定是否回复客户；已完成可不填说明，拒绝处理/需要客户操作必须填写说明。", horizon: "AI Loop" },
           { id: "billing-human-review", status: "todo", label: "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。", horizon: "Review" },
           { id: "billing-dashboard-metrics", status: "todo", label: "Dashboard 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate 和 SLA risk。", horizon: "Metrics" },
           { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单、重复发邮件或重复写入 automation 状态。", horizon: "Reliability" },
@@ -1956,6 +1958,35 @@ flowchart TD
           { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" },
           { id: "billing-account-verification-fields", status: "done", label: "account_verification 已实现字段追问、Use Case section 解析、Country+Address 合并、个人开发者分支、app_id 可选提取和内部邮件真实发送。", horizon: "Billing" }
         ],
+        architecture: {
+          title: "Billing Flow: Route -> Internal Response -> AI Follow-up",
+          summary: "Billing tab 新增这张架构图，用来固定 billing category 命中后的试运行闭环：Zendesk/N8n 只做内部中转；route 命中 billing 后，由内部邮件里的 response link 收集结构化处理结果，再用 internal resolution event 触发 AI 决定是否通知客户。",
+          mermaid: [
+            "flowchart TD",
+            "  Z[\"Zendesk webhook / N8n internal forward\"] --> I[\"Billing intake: content + external_id + comments + metadata\"]",
+            "  I --> R[\"Support router\"]",
+            "  R -->|scope_label=billing| B{\"billing category?\"}",
+            "  R -->|not billing| NB[\"normal support route / handoff\"]",
+            "  B --> BA[\"Billing automation intake\"]",
+            "  BA --> C{\"required info complete?\"}",
+            "  C -->|no| Q[\"AI asks customer for missing fields\"]",
+            "  C -->|yes| E[\"Internal email to billing owner/team\"]",
+            "  E --> L[\"https://support.stellarix.space/response?token=...\"]",
+            "  L --> U[\"Unified response UI (billing_ticket_id only)\"]",
+            "  U --> F[\"Result: completed / refused / customer action required\"]",
+            "  F --> N{\"Notify customer?\"}",
+            "  N --> S[\"One-time submit\"]",
+            "  S --> V{\"token unused?\"}",
+            "  V -->|no| X[\"show already submitted / invalid link\"]",
+            "  V -->|yes| EV[\"write internal resolution event\"]",
+            "  EV --> A[\"AI reads event\"]",
+            "  A -->|notify=yes| CR[\"Generate customer follow-up\"]",
+            "  A -->|notify=no| IR[\"Internal-only resolved\"]",
+            "  CR -->|completed or refused| CL[\"Customer notified / close or await review\"]",
+            "  CR -->|customer action required| WA[\"Ask customer for action / wait for reply\"]"
+          ].join("\n"),
+          note: "表单字段固定为处理结果（已完成、拒绝处理、需要客户操作）、是否通知客户（是、否）和说明。已完成时说明可空；拒绝处理或需要客户操作时说明必填，避免 AI 在客户回复中编造原因或下一步。response link 当前不校验收件人/处理组、不设置过期时间，但必须一次性提交；提交后只写 internal resolution event，AI 再读取该 event 决定是否给客户回复。"
+        },
         sources: [
           "docs/prompt_change_log.md",
           "backend/services/billing_automation.py",
