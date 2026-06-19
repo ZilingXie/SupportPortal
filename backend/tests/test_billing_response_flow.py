@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import inspect
 import unittest
@@ -105,6 +106,11 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(raw), 32)
         self.assertNotEqual(hash_billing_response_token(raw), raw)
 
+    def test_token_hash_strips_token_and_returns_sha256_hex_digest(self) -> None:
+        expected = hashlib.sha256("billing-token".encode("utf-8")).hexdigest()
+
+        self.assertEqual(hash_billing_response_token("  billing-token  "), expected)
+
     def test_token_hash_blank_input_raises(self) -> None:
         with self.assertRaises(BillingResolutionValidationError):
             hash_billing_response_token("  ")
@@ -118,6 +124,16 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         self.assertEqual(payload["result"], "completed")
         self.assertTrue(payload["notify_customer"])
         self.assertEqual(payload["note"], "")
+
+    def test_validation_normalizes_result_and_note(self) -> None:
+        payload = validate_billing_resolution_submission(
+            result="  COMPLETED  ",
+            notify_customer=False,
+            note="  Invoice has been sent.  ",
+        )
+        self.assertEqual(payload["result"], "completed")
+        self.assertFalse(payload["notify_customer"])
+        self.assertEqual(payload["note"], "Invoice has been sent.")
 
     def test_refused_requires_note(self) -> None:
         with self.assertRaises(BillingResolutionValidationError):
@@ -154,7 +170,12 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         )
         self.assertEqual(event["event"], "billing_internal_resolution_submitted")
         self.assertEqual(event["billing_ticket_id"], "BT-TK-ACC-123456")
+        self.assertEqual(event["ticket_id"], "TK-ACC-123456")
+        self.assertEqual(event["result"], "completed")
         self.assertFalse(event["notify_customer"])
+        self.assertEqual(event["note"], "")
+        self.assertEqual(event["created_at"], "2026-06-19T00:00:00+00:00")
+        self.assertEqual(event["source"], "billing_response_link")
 
     def test_completed_followup_uses_note_when_present(self) -> None:
         text = build_customer_followup_from_resolution(
@@ -173,3 +194,30 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
             title="Billing request",
         )
         self.assertIn("billing account ID", text)
+
+    def test_completed_followup_empty_note_uses_deterministic_fallback(self) -> None:
+        text = build_customer_followup_from_resolution(
+            result="completed",
+            note="",
+            customer_message="Please send invoice.",
+            title="Detailed invoice request",
+        )
+        self.assertEqual(text, "Your billing request has been processed.")
+
+    def test_refused_followup_empty_note_uses_deterministic_fallback(self) -> None:
+        text = build_customer_followup_from_resolution(
+            result="refused",
+            note="",
+            customer_message="Please send invoice.",
+            title="Detailed invoice request",
+        )
+        self.assertEqual(text, "We are unable to process this billing request at this time.")
+
+    def test_customer_action_followup_empty_note_uses_deterministic_fallback(self) -> None:
+        text = build_customer_followup_from_resolution(
+            result="customer_action_required",
+            note="",
+            customer_message="Please help.",
+            title="Billing request",
+        )
+        self.assertEqual(text, "We need additional information from you to continue this billing request.")
