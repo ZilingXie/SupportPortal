@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS support_billing_tickets (
     title TEXT NOT NULL,
     question TEXT NOT NULL,
     route TEXT,
+    scope_label TEXT,
+    route_family TEXT,
+    execution_action TEXT,
+    tooling_profile TEXT,
     route_reason TEXT,
     route_confidence REAL,
     matched_signals JSONB,
@@ -91,6 +95,30 @@ CREATE TABLE IF NOT EXISTS support_billing_response_tokens (
     billing_ticket_id TEXT NOT NULL REFERENCES support_billing_tickets(billing_ticket_id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     used_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS support_billing_route_corrections (
+    billing_ticket_id TEXT PRIMARY KEY REFERENCES support_billing_tickets(billing_ticket_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL,
+    original_scope_label TEXT,
+    original_route_family TEXT,
+    original_execution_action TEXT,
+    original_tooling_profile TEXT,
+    original_route_reason TEXT,
+    original_route_confidence REAL,
+    corrected_scope_label TEXT NOT NULL,
+    corrected_route_family TEXT NOT NULL,
+    corrected_execution_action TEXT NOT NULL,
+    corrected_tooling_profile TEXT NOT NULL,
+    first_corrected_scope_label TEXT NOT NULL,
+    first_corrected_route_family TEXT NOT NULL,
+    first_corrected_execution_action TEXT NOT NULL,
+    first_corrected_tooling_profile TEXT NOT NULL,
+    corrector TEXT,
+    note TEXT,
+    correction_count INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS support_assets (
@@ -282,6 +310,9 @@ CREATE INDEX IF NOT EXISTS idx_support_billing_tickets_created
 
 CREATE INDEX IF NOT EXISTS idx_support_billing_response_tokens_ticket
     ON support_billing_response_tokens (billing_ticket_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_billing_route_corrections_updated
+    ON support_billing_route_corrections (updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_support_assets_ticket_customer
     ON support_assets (ticket_id, customer_id);

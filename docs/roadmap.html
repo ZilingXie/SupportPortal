@@ -1941,7 +1941,8 @@ flowchart TD
           "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 view-model 只保留一个 `ticket_id`；`billing_ticket_id` 保持为内部 companion key，`source` 统一为 `manual` / `api`。",
           "Billing ticket 历史列表和详情 API 已完成；详情 API 支持用 canonical `ticket_id` 直接查询，不再依赖 Recent tickets 列表窗口。",
           "底层 billing automation helper 支持 action-specific destination env 和内部邮件；`/account` intake 字段完整时触发真实邮件发送，SMTP 缺配置时 fail closed 并记录 skipped/failed 原因。",
-          "内部邮件已携带一次性 response link；`/response` 页面只展示 `billing_ticket_id`，提交结构化处理结果后写入 internal resolution event，并按通知选择生成 `billing_response_ai` 客户回复。"
+          "内部邮件已携带一次性 response link；`/response` 页面只展示 `billing_ticket_id`，提交结构化处理结果后写入 internal resolution event，并按通知选择生成 `billing_response_ai` 客户回复。",
+          "`/account` 已支持人工纠正完整 route tuple，并通过 Route errors 过滤和汇总面板分析已纠正与低置信路由案例。"
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
@@ -1956,6 +1957,7 @@ flowchart TD
           { id: "billing-ai-account", status: "todo", label: "定义 AI account 试运行方式：shadow mode 下只模拟，1% 切流后由 AI account 接收/处理 billing case，并通过 Zendesk API 写 comment。", horizon: "Pilot" },
           { id: "billing-response-link", status: "done", label: "内部 response link 闭环已完成：邮件携带 `support.stellarix.space/response?token=...`，页面只使用 billing_ticket_id，一次性提交处理结果、是否通知客户和说明。", horizon: "Integration" },
           { id: "billing-internal-resolution-event", status: "done", label: "提交后写入 internal resolution event，再触发 AI 读取 event 决定是否回复客户；已完成可不填说明，拒绝处理/需要客户操作必须填写说明。", horizon: "AI Loop" },
+          { id: "billing-route-correction", status: "done", label: "Account Route errors 视图已完成：人工可纠正完整 route tuple，系统保留原始 AI tuple、first corrected tuple 和低置信路由汇总。", horizon: "Metrics" },
           { id: "billing-human-review", status: "todo", label: "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。", horizon: "Review" },
           { id: "billing-dashboard-metrics", status: "todo", label: "Dashboard 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate 和 SLA risk。", horizon: "Metrics" },
           { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单、重复发邮件或重复写入 automation 状态。", horizon: "Reliability" },
@@ -2042,6 +2044,7 @@ flowchart TD
           "Policy gate 扩展：`account_verification` 默认 eligible，带 refund/amount_dispute/legal_threat 时回退 `billing_review/human_review_required`；`account_suspension` 保持默认 human_review_required。",
           "Route contract 新增映射：`account_verification` → `billing_automation/account_verification/deterministic_billing_intake`。",
           "Router prompt 已补 `billing.account_verification` taxonomy + automation eligibility + few-shot example（suspicious activity company verification with Use Case section）。",
+          "Account Route errors 已落地：人工纠正会持久化 original / corrected / first corrected route tuple，并把 route correction 与低置信路由纳入同一分析视图。",
         ],
         review: [
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
@@ -2074,6 +2077,7 @@ flowchart TD
           { id: "routing-account-verification-intake", status: "done", label: "新增 billing.account_verification intent + account_verification route：覆盖 suspicious activity / fraud / company verification / reactivation。", horizon: "Billing" },
           { id: "routing-gratitude-downgrade", status: "done", label: "降级 gratitude 确定性信号：仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的短纯感谢。TK-ACC-C31612 不再被误判。", horizon: "Safety" },
           { id: "routing-semantic-first-account", status: "done", label: "/account 接入 semantic-first 模式：LLM 先跑路由，避免 weak deterministic 抢占。", horizon: "Architecture" },
+          { id: "routing-route-error-analysis", status: "done", label: "Route errors 分析已落地：纠正记录保留原始 AI tuple 与 first corrected tuple，并与低置信路由一起汇总 predicted -> corrected 转换。", horizon: "Metrics" },
         ],
         architecture: {
           title: "Routing Architecture: Semantic Intent -> Policy Gate -> Route Contract",

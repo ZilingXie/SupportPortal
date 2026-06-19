@@ -27,6 +27,7 @@
 - Billing 白名单问题会自动收集字段并升级内部团队处理。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口可查看 Billing ticket 历史和详情。
+- Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Billing 自动化支持一次性内部 response link，并根据结构化处理结果触发 AI 客户通知。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
@@ -76,6 +77,7 @@
 - Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
 - 对话支持上传 txt/log/err 日志附件。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
+- Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Billing 自动化支持一次性内部 response link，并根据结构化处理结果触发 AI 客户通知。
 
 ### 未完成
