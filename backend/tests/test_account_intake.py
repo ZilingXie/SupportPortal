@@ -35,6 +35,37 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.client.close()
         main.ticket_repository = self.original_repository
 
+    def _create_invoice_ticket_with_response_token(self) -> tuple[dict[str, object], str]:
+        captured_payloads: list[dict[str, str]] = []
+
+        def fake_send(payload: dict[str, str]) -> dict[str, str]:
+            captured_payloads.append(payload)
+            return {"status": "sent", "reason": ""}
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email", side_effect=fake_send
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": (
+                        "Please send detailed invoice. Issue date: 6 May 2026. "
+                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                    ),
+                    "customer_email": "customer@example.com",
+                    "source": "account-ui",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(captured_payloads)
+        link_prefix = "https://support.stellarix.space/response?token="
+        body = captured_payloads[0]["body"]
+        self.assertIn(link_prefix, body)
+        raw_token = body.split(link_prefix, 1)[1].split()[0]
+        return response.json(), raw_token
+
     def test_account_intake_creates_ticket_routes_invoice_and_marks_automation(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.send_billing_internal_email",
@@ -291,6 +322,205 @@ class AccountIntakeApiTests(unittest.TestCase):
         stored_body = bt["internal_email_payload"]["body"]
         self.assertNotIn(raw_token, stored_body)
         self.assertIn("token=<redacted>", stored_body)
+
+    def test_billing_response_lookup_returns_context_for_valid_token(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+
+        response = self.client.get(f"/api/billing-response?token={raw_token}")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["billing_ticket_id"], create_payload["billing_ticket_id"])
+        self.assertEqual(payload["customer_email"], "customer@example.com")
+        self.assertFalse(payload["submitted"])
+        self.assertEqual(payload["title"], "Detailed invoice request")
+        self.assertIn("detailed invoice", payload["question"].lower())
+        self.assertIsInstance(payload["collected_fields"], dict)
+        self.assertNotIn("ticket_id", payload)
+        self.assertNotIn("client_ticket_id", payload)
+
+    def test_billing_response_lookup_reports_submitted_for_used_token(self) -> None:
+        _, raw_token = self._create_invoice_ticket_with_response_token()
+        token_hash = hash_billing_response_token(raw_token)
+        self.assertTrue(self.repository.mark_billing_response_token_used(token_hash, "2026-06-19T00:00:00+00:00"))
+
+        response = self.client.get(f"/api/billing-response?token={raw_token}")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["submitted"])
+
+    def test_billing_response_submit_records_event_and_customer_reply(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+
+        response = self.client.post(
+            "/api/billing-response/submit",
+            json={"token": raw_token, "result": "completed", "notify_customer": True, "note": ""},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["submitted"])
+        self.assertTrue(payload["customer_notified"])
+        self.assertEqual(payload["billing_ticket_id"], create_payload["billing_ticket_id"])
+        self.assertEqual(payload["automation_status"], "customer_notified")
+
+        ticket_id = str(create_payload["ticket_id"])
+        event_types = [
+            item["event_type"]
+            for item in reversed(self.repository.list_ticket_events(ticket_id))
+            if item["event_type"]
+            in {"billing_internal_resolution_submitted", "billing_customer_followup_generated"}
+        ]
+        self.assertEqual(
+            event_types,
+            ["billing_internal_resolution_submitted", "billing_customer_followup_generated"],
+        )
+        ticket = self.repository.get_ticket(ticket_id)
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        last_message = ticket["messages"][-1]
+        self.assertEqual(last_message["role"], "assistant")
+        self.assertEqual(last_message["source"], "billing_response_ai")
+
+        billing_ticket = self.repository.get_billing_ticket(str(create_payload["billing_ticket_id"]))
+        self.assertIsNotNone(billing_ticket)
+        assert billing_ticket is not None
+        self.assertEqual(billing_ticket["automation_status"], "customer_notified")
+
+    def test_billing_response_submit_no_notify_records_event_without_customer_reply(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        ticket_id = str(create_payload["ticket_id"])
+        before_ticket = self.repository.get_ticket(ticket_id)
+        self.assertIsNotNone(before_ticket)
+        assert before_ticket is not None
+        before_billing_response_messages = [
+            message
+            for message in before_ticket["messages"]
+            if message.get("role") == "assistant" and message.get("source") == "billing_response_ai"
+        ]
+
+        response = self.client.post(
+            "/api/billing-response/submit",
+            json={"token": raw_token, "result": "completed", "notify_customer": False, "note": ""},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["submitted"])
+        self.assertFalse(payload["customer_notified"])
+        self.assertEqual(payload["automation_status"], "resolved_without_customer_notification")
+        event_types = [item["event_type"] for item in self.repository.list_ticket_events(ticket_id)]
+        self.assertIn("billing_internal_resolution_submitted", event_types)
+        self.assertNotIn("billing_customer_followup_generated", event_types)
+
+        ticket = self.repository.get_ticket(ticket_id)
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        after_billing_response_messages = [
+            message
+            for message in ticket["messages"]
+            if message.get("role") == "assistant" and message.get("source") == "billing_response_ai"
+        ]
+        self.assertEqual(after_billing_response_messages, before_billing_response_messages)
+        billing_ticket = self.repository.get_billing_ticket(str(create_payload["billing_ticket_id"]))
+        self.assertIsNotNone(billing_ticket)
+        assert billing_ticket is not None
+        self.assertEqual(
+            billing_ticket["automation_status"],
+            "resolved_without_customer_notification",
+        )
+
+    def test_billing_response_submit_rejects_second_submit(self) -> None:
+        _, raw_token = self._create_invoice_ticket_with_response_token()
+        first_response = self.client.post(
+            "/api/billing-response/submit",
+            json={"token": raw_token, "result": "completed", "notify_customer": False, "note": ""},
+        )
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+
+        second_response = self.client.post(
+            "/api/billing-response/submit",
+            json={"token": raw_token, "result": "completed", "notify_customer": False, "note": ""},
+        )
+
+        self.assertEqual(second_response.status_code, 409, second_response.text)
+
+    def test_billing_response_submit_requires_note_for_refused_and_customer_action(self) -> None:
+        _, refused_token = self._create_invoice_ticket_with_response_token()
+
+        refused_response = self.client.post(
+            "/api/billing-response/submit",
+            json={"token": refused_token, "result": "refused", "notify_customer": False, "note": ""},
+        )
+
+        self.assertEqual(refused_response.status_code, 400, refused_response.text)
+        lookup_response = self.client.get(f"/api/billing-response?token={refused_token}")
+        self.assertEqual(lookup_response.status_code, 200, lookup_response.text)
+        self.assertFalse(lookup_response.json()["submitted"])
+
+        create_payload, customer_action_token = self._create_invoice_ticket_with_response_token()
+        customer_action_response = self.client.post(
+            "/api/billing-response/submit",
+            json={
+                "token": customer_action_token,
+                "result": "customer_action_required",
+                "notify_customer": True,
+                "note": "",
+            },
+        )
+        self.assertEqual(customer_action_response.status_code, 400, customer_action_response.text)
+
+        valid_response = self.client.post(
+            "/api/billing-response/submit",
+            json={
+                "token": customer_action_token,
+                "result": "customer_action_required",
+                "notify_customer": False,
+                "note": "Please ask the customer for their billing address.",
+            },
+        )
+        self.assertEqual(valid_response.status_code, 200, valid_response.text)
+        self.assertEqual(valid_response.json()["billing_ticket_id"], create_payload["billing_ticket_id"])
+
+    def test_billing_response_submit_customer_action_status(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+
+        response = self.client.post(
+            "/api/billing-response/submit",
+            json={
+                "token": raw_token,
+                "result": "customer_action_required",
+                "notify_customer": True,
+                "note": "Please confirm the billing address for this invoice.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["customer_notified"])
+        self.assertEqual(payload["automation_status"], "waiting_customer_action")
+
+        ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        last_message = ticket["messages"][-1]
+        self.assertEqual(last_message["role"], "assistant")
+        self.assertEqual(last_message["source"], "billing_response_ai")
+
+        billing_ticket = self.repository.get_billing_ticket(str(create_payload["billing_ticket_id"]))
+        self.assertIsNotNone(billing_ticket)
+        assert billing_ticket is not None
+        self.assertEqual(billing_ticket["automation_status"], "waiting_customer_action")
+
+    def test_billing_response_invalid_token_returns_404(self) -> None:
+        lookup_response = self.client.get("/api/billing-response?token=not-a-real-token")
+        self.assertEqual(lookup_response.status_code, 404, lookup_response.text)
+
+        submit_response = self.client.post(
+            "/api/billing-response/submit",
+            json={"token": "not-a-real-token", "result": "completed", "notify_customer": False, "note": ""},
+        )
+        self.assertEqual(submit_response.status_code, 404, submit_response.text)
 
     def test_billing_missing_fields_does_not_create_response_token(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
