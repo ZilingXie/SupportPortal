@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.support_router import SupportRouteDecision, _LlmRouteAttempt
 
 
@@ -198,6 +199,54 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertTrue(str(payload["billing_ticket_id"] or "").startswith("BT-TK-ACC-"))
         self.assertNotIn("support_ticket_id", payload)
+
+    def test_billing_internal_email_includes_billing_ticket_id_and_response_link(self) -> None:
+        captured_payloads: list[dict[str, str]] = []
+
+        def fake_send(payload: dict[str, str]) -> dict[str, str]:
+            captured_payloads.append(payload)
+            return {"status": "sent", "reason": ""}
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email", side_effect=fake_send
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": (
+                        "Please send detailed invoice. Issue date: 6 May 2026. "
+                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+                    ),
+                    "customer_email": "customer@example.com",
+                    "source": "account-ui",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(captured_payloads)
+        body = captured_payloads[0]["body"]
+        self.assertIn(f"Billing Ticket ID: {payload['billing_ticket_id']}", body)
+        link_prefix = "https://support.stellarix.space/response?token="
+        self.assertIn(link_prefix, body)
+        self.assertNotIn("Available actions", body)
+
+        raw_token = body.split(link_prefix, 1)[1].split()[0]
+        saved_token = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
+        self.assertIsNotNone(saved_token)
+        assert saved_token is not None
+        self.assertEqual(saved_token["billing_ticket_id"], payload["billing_ticket_id"])
+        self.assertIsNone(saved_token.get("used_at"))
+
+        bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        stored_payload = bt["internal_email_payload"]
+        self.assertIsInstance(stored_payload, dict)
+        stored_body = stored_payload["body"]
+        self.assertNotIn(raw_token, stored_body)
+        self.assertIn("token=<redacted>", stored_body)
 
     def test_account_intake_saves_billing_ticket(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
