@@ -1488,6 +1488,7 @@ class InMemoryTicketRepository:
     def delete_all_billing_tickets(self) -> int:
         count = len(self._billing_tickets)
         self._billing_tickets.clear()
+        self._billing_response_tokens.clear()
         return count
 
     def save_billing_response_token(self, token: dict[str, Any]) -> None:
@@ -1497,6 +1498,8 @@ class InMemoryTicketRepository:
         billing_ticket_id = str(token.get("billing_ticket_id") or "").strip()
         if not billing_ticket_id:
             raise ValueError("billing_ticket_id is required")
+        if token_hash in self._billing_response_tokens:
+            return
         self._billing_response_tokens[token_hash] = copy.deepcopy(token)
 
     def get_billing_response_token(self, token_hash: str) -> dict[str, Any] | None:
@@ -4840,10 +4843,7 @@ class PostgresTicketRepository:
                             """
                             INSERT INTO {} (token_hash, billing_ticket_id, created_at, used_at)
                             VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (token_hash) DO UPDATE SET
-                                billing_ticket_id = EXCLUDED.billing_ticket_id,
-                                created_at = EXCLUDED.created_at,
-                                used_at = EXCLUDED.used_at
+                            ON CONFLICT (token_hash) DO NOTHING
                             """
                         ).format(self._table("support_billing_response_tokens")),
                         (token_hash, billing_ticket_id, created_at, used_at),
