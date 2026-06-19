@@ -2049,6 +2049,17 @@ html.material-symbols-pending .material-symbols-outlined {
   min-height: 0;
 }
 
+.detail-multi-agent-status {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .detail-agent-stage {
   display: grid;
   gap: 12px;

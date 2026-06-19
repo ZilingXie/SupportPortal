@@ -3545,6 +3545,10 @@ function renderTicketDetailInsightPanelHtml(viewState) {
 
 function renderMultiAgentWorkspacePanelHtml(viewState) {
   const { activePlan = {}, activeExecution = {}, activeReview = {}, hasMultiAgentState = false } = viewState || {};
+  // This panel only renders when the multi-agent workspace is toggled on for
+  // the current ticket, so the active-mode status line always applies here.
+  const activeStatusHtml =
+    '<p class="detail-multi-agent-status">Multi-agent mode is active for this ticket.</p>';
   if (!hasMultiAgentState) {
     return `
       <section class="panel-card detail-multi-agent-panel">
@@ -3555,6 +3559,7 @@ function renderMultiAgentWorkspacePanelHtml(viewState) {
           </div>
         </div>
         <div class="detail-multi-agent-body">
+          ${activeStatusHtml}
           <div class="empty-state">No multi-agent run captured for this ticket yet.</div>
         </div>
       </section>
@@ -3570,6 +3575,7 @@ function renderMultiAgentWorkspacePanelHtml(viewState) {
         </div>
       </div>
       <div class="detail-multi-agent-body">
+        ${activeStatusHtml}
         ${renderMultiAgentPlanStageHtml(activePlan)}
         ${renderMultiAgentExecuteStageHtml(activeExecution)}
         ${renderMultiAgentReviewStageHtml(activeReview)}
@@ -4235,10 +4241,18 @@ async function submitInvestigationMessage(ticketId, messageText) {
     window.alert(`Please enter the next technical detail for ${ENGINEER_AI_DISPLAY_NAME}.`);
     return;
   }
+  // multi_agent_enabled is true only when the multi-agent workspace is toggled
+  // on for this ticket. The default guardrail-only workspace sends false so the
+  // backend keeps the existing Plan/Execute/Review state untouched.
+  const multiAgentEnabled = isMultiAgentWorkspaceActiveForTicket(ticketId);
   return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: cleaned, engineer_id: ENGINEER_ID }),
+    body: JSON.stringify({
+      message: cleaned,
+      engineer_id: ENGINEER_ID,
+      multi_agent_enabled: multiAgentEnabled,
+    }),
     timeoutMs: INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS,
   });
 }

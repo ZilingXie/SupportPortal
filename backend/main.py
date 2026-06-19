@@ -388,6 +388,7 @@ class BenchmarkSessionRunRequest(BaseModel):
 class InvestigationMessageRequest(BaseModel):
     engineer_id: str = Field(default="Jack")
     message: str = Field(min_length=1, max_length=4000)
+    multi_agent_enabled: bool = False
 
 
 class InvestigationConfirmationRequest(BaseModel):
@@ -3543,21 +3544,7 @@ async def create_or_update_ticket(
                 )
                 engineer_case["engineer_handoff_packet"] = summary_packet
                 now_iso_value = now_iso()
-                engineer_plan = build_engineer_plan(
-                    summary_packet=summary_packet,
-                    mem0_context=None,
-                    skill_inventory=None,
-                    revise_context=None,
-                    now_value=now_iso_value,
-                )
-                execution_packet = execute_engineer_plan(
-                    active_plan=engineer_plan,
-                    summary_packet=summary_packet,
-                    engineer_agent_state=engineer_case.get("engineer_agent_state"),
-                    execution_context=None,
-                    now_value=now_iso_value,
-                )
-                merged_agent_state = {
+                summary_agent_state = {
                     **(engineer_case.get("engineer_agent_state") or {}),
                     "summary_packet_id": summary_packet["packet_id"],
                     "summary_agent_version": summary_packet["summary_agent_version"],
@@ -3565,33 +3552,13 @@ async def create_or_update_ticket(
                     "issue_understanding": summary_packet["engineer_ticket_input"]["opening_summary"],
                     "missing_information": list(summary_packet.get("missing_information") or []),
                     "next_request_for_engineer": summary_packet["engineer_ticket_input"]["requested_action"],
-                    "active_plan": engineer_plan,
-                    "plan_id": engineer_plan["plan_id"],
-                    "plan_version": engineer_plan["plan_version"],
-                    "plan_agent_version": engineer_plan["plan_agent_version"],
-                    "active_execution": execution_packet,
-                    "execution_id": execution_packet["execution_id"],
-                    "execution_version": execution_packet["execution_version"],
-                    "execute_agent_version": execution_packet["execute_agent_version"],
-                    "evidence_packet": execution_packet["evidence_packet"],
-                    "task_results": execution_packet["task_results"],
                 }
-                review_packet = review_execution(
-                    active_execution=execution_packet,
-                    engineer_agent_state=merged_agent_state,
-                    handoff_packet=summary_packet,
-                    ticket=ticket,
+                engineer_case["engineer_agent_state"] = summary_agent_state
+                engineer_case = ensure_engineer_multi_agent_run(
+                    engineer_case,
                     now_value=now_iso_value,
+                    reason="initial_case_creation",
                 )
-                merged_agent_state.update({
-                    "active_review": review_packet,
-                    "review_id": review_packet["review_id"],
-                    "review_version": review_packet["review_version"],
-                    "review_agent_version": review_packet["review_agent_version"],
-                    "review_decision": review_packet["review_decision"],
-                    "replan_count": review_packet["replan_count"],
-                })
-                engineer_case["engineer_agent_state"] = merged_agent_state
                 case_context = build_engineer_case_context(ticket, engineer_case)
                 opening_context = build_investigation_opening_context(
                     case_context,
@@ -4356,6 +4323,14 @@ async def request_engineer_assistance(ticket_id: str) -> dict[str, Any]:
             handoff_packet=case_context.get("engineer_handoff_packet"),
             engineer_agent_state=case_context.get("engineer_agent_state"),
         )
+    # Seed every new/entered Engineer case with an initial multi-agent run so
+    # the right-hand Multi-Agent Run panel is not empty. Existing cases without
+    # multi-agent state are hydrated opportunistically (idempotent).
+    ensure_engineer_multi_agent_run(
+        engineer_case,
+        now_value=timestamp,
+        reason="initial_case_creation",
+    )
     ticket["status"] = ESCALATED_STATUS
     ticket["updated_at"] = timestamp
     ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
@@ -4459,6 +4434,12 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
                 handoff_packet=case_context.get("engineer_handoff_packet"),
                 engineer_agent_state=case_context.get("engineer_agent_state"),
             )
+        # Seed every new/entered Engineer case with an initial multi-agent run.
+        ensure_engineer_multi_agent_run(
+            engineer_case,
+            now_value=now_iso(),
+            reason="initial_case_creation",
+        )
     elif request.action == "resolved":
         if isinstance(engineer_case, dict):
             case_context = build_engineer_case_context(ticket, engineer_case)
@@ -4639,6 +4620,37 @@ async def post_investigation_message(
     engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
     case_context = build_engineer_case_context(ticket, engineer_case)
     timestamp = now_iso()
+    if request.multi_agent_enabled:
+        # Multi-agent workspace is active for this ticket: refresh the
+        # Plan/Execute/Review state from the engineer note BEFORE the Engineer
+        # AI turn so it reasons over the updated multi-agent state. The refresh
+        # does not enforce replan limits or branch on replan_required.
+        ensure_engineer_multi_agent_run(
+            engineer_case,
+            now_value=timestamp,
+            reason="engineer_message",
+            engineer_note=request.message.strip(),
+            force=True,
+        )
+    else:
+        # Guardrail-only mode: opportunistically hydrate an empty multi-agent
+        # state so the panel is not blank, but do NOT refresh on every message.
+        ensure_engineer_multi_agent_run(
+            engineer_case,
+            now_value=timestamp,
+            reason="initial_case_creation",
+        )
+    # Snapshot the multi-agent state (refreshed or hydrated) so it can be
+    # re-applied after the AI turn re-normalizes engineer_agent_state, which
+    # otherwise drops active_plan/active_execution/active_review when the AI
+    # turn payload does not carry them.
+    preserved_multi_agent_state = copy.deepcopy(
+        engineer_case.get("engineer_agent_state")
+        if isinstance(engineer_case.get("engineer_agent_state"), dict)
+        else {}
+    )
+    if isinstance(preserved_multi_agent_state, dict) and preserved_multi_agent_state:
+        case_context["engineer_agent_state"] = copy.deepcopy(preserved_multi_agent_state)
     result = append_engineer_investigation_message(
         case_context,
         engineer_message=request.message.strip(),
@@ -4646,6 +4658,38 @@ async def post_investigation_message(
         ai_turn_builder=generate_investigation_ai_turn,
     )
     engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+    # Re-apply the preserved multi-agent state so the panel stays populated
+    # regardless of whether the AI turn carried the multi-agent fields.
+    if isinstance(preserved_multi_agent_state, dict) and preserved_multi_agent_state:
+        merged_state = dict(
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else {}
+        )
+        for key in (
+            "active_plan",
+            "plan_id",
+            "plan_version",
+            "plan_agent_version",
+            "active_execution",
+            "execution_id",
+            "execution_version",
+            "execute_agent_version",
+            "evidence_packet",
+            "task_results",
+            "active_review",
+            "review_id",
+            "review_version",
+            "review_agent_version",
+            "review_decision",
+            "replan_count",
+            "last_revise_context",
+            "multi_agent_last_run",
+        ):
+            if key in preserved_multi_agent_state:
+                merged_state[key] = preserved_multi_agent_state[key]
+        engineer_case["engineer_agent_state"] = merged_state
+        case_context["engineer_agent_state"] = copy.deepcopy(merged_state)
     ticket["updated_at"] = timestamp
     ticket["last_engineer_action"] = {
         "action": "investigation_message",
@@ -4673,74 +4717,37 @@ async def post_investigation_message(
     }
 
 
-def _build_revise_context_for_engineer_replan(
+def ensure_engineer_multi_agent_run(
     engineer_case: dict[str, Any],
     *,
-    note: str,
-    engineer_id: str,
-    created_at: str,
-) -> dict[str, Any]:
-    """Collect current multi-agent state for deterministic replan.
-
-    Reads from engineer_agent_state: active_plan, active_execution,
-    active_review, evidence_packet, task_results, and current replan_count.
-    Returns a revise_context dict suitable for build_engineer_plan().
-    """
-    agent_state = (
-        engineer_case.get("engineer_agent_state")
-        if isinstance(engineer_case.get("engineer_agent_state"), dict)
-        else {}
-    )
-
-    active_plan = agent_state.get("active_plan") if isinstance(agent_state.get("active_plan"), dict) else {}
-    active_execution = agent_state.get("active_execution") if isinstance(agent_state.get("active_execution"), dict) else {}
-    active_review = agent_state.get("active_review") if isinstance(agent_state.get("active_review"), dict) else {}
-    evidence_packet = agent_state.get("evidence_packet") if isinstance(agent_state.get("evidence_packet"), dict) else {}
-    task_results = agent_state.get("task_results") if isinstance(agent_state.get("task_results"), list) else []
-
-    current_replan_count = 0
-    rc = agent_state.get("replan_count")
-    if isinstance(rc, int):
-        current_replan_count = rc
-    elif isinstance(rc, str) and rc.isdigit():
-        current_replan_count = int(rc)
-
-    new_replan_count = current_replan_count + 1
-    evidence_gaps = (
-        active_review.get("evidence_gaps")
-        if isinstance(active_review.get("evidence_gaps"), list)
-        else []
-    )
-
-    return {
-        "revise_note": note,
-        "previous_plan_id": str(active_plan.get("plan_id") or "").strip(),
-        "previous_execution_id": str(active_execution.get("execution_id") or "").strip(),
-        "previous_review_id": str(active_review.get("review_id") or "").strip(),
-        "previous_review_decision": str(active_review.get("review_decision") or "").strip(),
-        "review_problem_statement": str(active_review.get("problem_statement") or "").strip(),
-        "review_evidence_gaps": [copy.deepcopy(item) for item in evidence_gaps],
-        "previous_evidence_packet": copy.deepcopy(evidence_packet),
-        "previous_task_results": [copy.deepcopy(item) for item in task_results],
-        "engineer_feedback": {
-            "note": note,
-            "engineer_id": engineer_id,
-            "created_at": created_at,
-        },
-        "replan_count": new_replan_count,
-    }
-
-
-def _run_engineer_multi_agent_round(
-    engineer_case: dict[str, Any],
-    *,
-    revise_context: dict[str, Any] | None,
     now_value: str,
+    reason: str,
+    engineer_note: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
-    """Run one Plan → Execute → Review cycle and merge results into agent state.
+    """Run one Plan → Execute → Review cycle and merge it into agent state.
+
+    Used to seed every new Engineer case with an initial multi-agent run and to
+    refresh the multi-agent state when an engineer message is submitted with
+    ``multi_agent_enabled=true``. It does NOT enforce replan limits or branch on
+    ``replan_required`` — the runtime pauses automatic replan while this
+    activation is in effect.
+
+    Args:
+        engineer_case: The engineer case record. Mutated in place; the
+            ``engineer_agent_state`` is refreshed from the existing handoff
+            packet on the case. Not saved to the repository by this helper.
+        now_value: ISO-8601 timestamp for created_at.
+        reason: Short label describing why the run is happening (e.g.
+            ``"initial_case_creation"`` or ``"engineer_message"``). Recorded in
+            ``multi_agent_last_run`` for observability only.
+        engineer_note: Optional engineer message to carry as revise_context for
+            the refresh round. ``None`` for initial creation runs.
+        force: When ``True``, run the round even if active_plan /
+            active_execution / active_review already exist. Defaults to
+            ``False`` so initial creation is idempotent.
 
     Returns the updated engineer_case dict (mutated in place).
-    Does NOT save to repository.
     """
     handoff_packet = (
         engineer_case.get("engineer_handoff_packet")
@@ -4753,6 +4760,25 @@ def _run_engineer_multi_agent_round(
         if isinstance(engineer_case.get("engineer_agent_state"), dict)
         else {}
     )
+
+    has_existing_run = bool(
+        isinstance(agent_state.get("active_plan"), dict)
+        and isinstance(agent_state.get("active_execution"), dict)
+        and isinstance(agent_state.get("active_review"), dict)
+    )
+    if has_existing_run and not force:
+        return engineer_case
+
+    revise_context: dict[str, Any] | None = None
+    if engineer_note:
+        revise_context = {
+            "revise_note": engineer_note,
+            "engineer_feedback": {
+                "note": engineer_note,
+                "created_at": now_value,
+            },
+            "refresh_reason": reason,
+        }
 
     # 1. Plan
     active_plan = build_engineer_plan(
@@ -4773,24 +4799,17 @@ def _run_engineer_multi_agent_round(
     )
 
     # 3. Review
-    review_agent_state = dict(agent_state)
-    if isinstance(revise_context, dict) and isinstance(revise_context.get("replan_count"), int):
-        review_agent_state["replan_count"] = revise_context["replan_count"]
     active_review = review_execution(
         active_execution=active_execution,
-        engineer_agent_state=review_agent_state,
+        engineer_agent_state=agent_state,
         handoff_packet=handoff_packet,
         ticket=engineer_case,
         now_value=now_value,
     )
 
-    # 4. Merge back into agent_state
-    new_replan_count = active_review.get("replan_count", 0)
-    if isinstance(revise_context, dict):
-        rc = revise_context.get("replan_count")
-        if isinstance(rc, int):
-            new_replan_count = rc
-
+    # 4. Merge into agent_state while preserving reply_readiness, guardrail
+    #    fields, investigation state, and any summary-packet fields the RAG
+    #    escalation path may have already stamped onto the case.
     merged_state = dict(agent_state)
     merged_state.update({
         "active_plan": active_plan,
@@ -4808,24 +4827,48 @@ def _run_engineer_multi_agent_round(
         "review_version": active_review.get("review_version", ""),
         "review_agent_version": active_review.get("review_agent_version", ""),
         "review_decision": active_review.get("review_decision", ""),
-        "replan_count": new_replan_count,
-        "last_revise_context": revise_context,
+        "replan_count": active_review.get("replan_count", 0),
+        "multi_agent_last_run": {
+            "reason": reason,
+            "plan_id": active_plan.get("plan_id", ""),
+            "execution_id": active_execution.get("execution_id", ""),
+            "review_id": active_review.get("review_id", ""),
+            "created_at": now_value,
+        },
     })
-
-    # Append to replan_history
-    replan_history = list(agent_state.get("replan_history") or [])
-    replan_history.append({
-        "plan_id": active_plan.get("plan_id"),
-        "execution_id": active_execution.get("execution_id"),
-        "review_id": active_review.get("review_id"),
-        "review_decision": active_review.get("review_decision"),
-        "replan_count": new_replan_count,
-        "created_at": now_value,
-    })
-    merged_state["replan_history"] = replan_history
+    if revise_context is not None:
+        merged_state["last_revise_context"] = revise_context
 
     engineer_case["engineer_agent_state"] = merged_state
     return engineer_case
+
+
+def _run_engineer_multi_agent_round(
+    engineer_case: dict[str, Any],
+    *,
+    revise_context: dict[str, Any] | None,
+    now_value: str,
+) -> dict[str, Any]:
+    """Deprecated single-round Plan → Execute → Review wrapper.
+
+    The revise/replan loop that used this helper is paused for the current
+    runtime activation (see confirm_investigation_reply). It is kept as a thin
+    delegate over ensure_engineer_multi_agent_run so any remaining internal
+    callers continue to work without implying max-retry replan semantics. New
+    code should call ensure_engineer_multi_agent_run directly.
+
+    Returns the updated engineer_case dict (mutated in place). Does NOT save.
+    """
+    engineer_note = None
+    if isinstance(revise_context, dict):
+        engineer_note = str(revise_context.get("revise_note") or "").strip() or None
+    return ensure_engineer_multi_agent_run(
+        engineer_case,
+        now_value=now_value,
+        reason="legacy_multi_agent_round",
+        engineer_note=engineer_note,
+        force=True,
+    )
 
 
 @app.post("/api/engineer/tickets/{ticket_id}/investigation/confirmation")
@@ -4870,25 +4913,14 @@ async def confirm_investigation_reply(
     timestamp = now_iso()
 
     if request.decision == "revise":
-        # ---- Multi-agent replan path ----
-        agent_state = (
-            engineer_case.get("engineer_agent_state")
-            if isinstance(engineer_case.get("engineer_agent_state"), dict)
-            else {}
-        )
-        current_replan_count = 0
-        rc = agent_state.get("replan_count")
-        if isinstance(rc, int):
-            current_replan_count = rc
-        elif isinstance(rc, str) and rc.isdigit():
-            current_replan_count = int(rc)
-        max_replan = 2
-        mrc = agent_state.get("max_replan_count")
-        if isinstance(mrc, int):
-            max_replan = mrc
-        elif isinstance(mrc, str) and mrc.isdigit():
-            max_replan = int(mrc)
-
+        # ---- Revise path (replan/max-retry paused) ----
+        # The automatic Plan/Execute/Review replan loop and its max-2 retry
+        # enforcement are intentionally paused for this runtime activation.
+        # Revise now only appends the engineer note, clears any blocked/final
+        # guardrail state, sets the investigation back to active, and lets the
+        # next engineer message or guardrail attempt continue. The existing
+        # active_plan/active_execution/active_review are left untouched so the
+        # Multi-Agent Run panel keeps showing the last captured run.
         new_internal_messages: list[dict[str, Any]] = []
 
         # Append engineer revision message to investigation
@@ -4903,70 +4935,15 @@ async def confirm_investigation_reply(
                 sequence=sequence,
             )
             active_investigation.setdefault("messages", []).append(revision_message)
+            previous_state = str(active_investigation.get("state") or "").strip().lower()
+            if previous_state == INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL:
+                active_investigation["state"] = "active"
+                active_investigation["final_confirmation_requested_at"] = None
             active_investigation["updated_at"] = timestamp
             new_internal_messages.append(revision_message)
 
-        if current_replan_count >= max_replan:
-            # Replan limit reached — add internal message, keep investigating
-            limit_message = build_internal_message(
-                str((case_context.get("active_investigation") or {}).get("id") or ""),
-                "engineer_ai",
-                (
-                    f"Replan limit reached ({current_replan_count}/{max_replan}). "
-                    "Automatic investigation cannot continue — manual engineer review is required."
-                ),
-                timestamp,
-                sequence=len((case_context.get("active_investigation") or {}).get("messages", [])) + 1,
-            )
-            active_investigation = case_context.get("active_investigation")
-            if isinstance(active_investigation, dict):
-                active_investigation.setdefault("messages", []).append(limit_message)
-                active_investigation["state"] = "active"
-                active_investigation["updated_at"] = timestamp
-            new_internal_messages.append(limit_message)
-        else:
-            # Build revise_context and run multi-agent round
-            revise_context = _build_revise_context_for_engineer_replan(
-                engineer_case,
-                note=str(request.note or "").strip(),
-                engineer_id=request.engineer_id,
-                created_at=timestamp,
-            )
-            engineer_case = _run_engineer_multi_agent_round(
-                engineer_case,
-                revise_context=revise_context,
-                now_value=timestamp,
-            )
-            # Add internal message with new review decision
-            new_agent_state = engineer_case.get("engineer_agent_state") or {}
-            new_review = new_agent_state.get("active_review") or {}
-            review_decision = str(new_review.get("review_decision") or "unknown")
-            decision_message = build_internal_message(
-                str((case_context.get("active_investigation") or {}).get("id") or ""),
-                "engineer_ai",
-                (
-                    f"Replan complete (round {current_replan_count + 1}/{max_replan}). "
-                    f"New review decision: {review_decision}. "
-                    f"Plan ID: {new_agent_state.get('plan_id', 'unknown')}. "
-                    "Please review the updated investigation results."
-                ),
-                timestamp,
-                sequence=len((case_context.get("active_investigation") or {}).get("messages", [])) + 1,
-            )
-            active_investigation = case_context.get("active_investigation")
-            if isinstance(active_investigation, dict):
-                active_investigation.setdefault("messages", []).append(decision_message)
-                previous_state = str(active_investigation.get("state") or "").strip().lower()
-                if (
-                    previous_state == INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL
-                    or isinstance(new_agent_state.get("active_guardrail_final"), dict)
-                ):
-                    active_investigation["state"] = "active"
-                    active_investigation["final_confirmation_requested_at"] = None
-                active_investigation["updated_at"] = timestamp
-            new_internal_messages.append(decision_message)
-
-        # Sync agent_state back to case_context
+        # Clear any blocked/final guardrail state so the engineer can continue
+        # editing and re-run the guardrail on the next approve.
         revised_agent_state = (
             engineer_case.get("engineer_agent_state")
             if isinstance(engineer_case.get("engineer_agent_state"), dict)
