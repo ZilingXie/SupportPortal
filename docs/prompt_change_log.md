@@ -12,6 +12,24 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-19 - Billing internal resolution follow-up
+
+- Area or subsystem: Billing automation response follow-up
+- Prompt or model version: `billing-internal-resolution-followup-v1`
+- Summary: Added the structured internal resolution loop where a billing handler submits a one-time response-link form, the backend records `billing_internal_resolution_submitted`, and the customer follow-up path records `billing_customer_followup_generated` when customer notification is requested.
+- Reason: Close the billing internal handling loop without parsing free-form email replies, while preserving an auditable event boundary before any customer-facing reply is generated.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/services/billing_response_flow.py`
+  - `backend/services/billing_automation.py`
+  - `ui/billing-response-ui/`
+- Expected behavior change:
+  - Internal emails include a one-time `/response?token=...` link for structured billing handling results.
+  - `completed` allows an empty note; `refused` and `customer_action_required` require a note before token consumption.
+  - `notify_customer=false` writes only the internal resolution event; `notify_customer=true` appends a `billing_response_ai` customer message and writes a follow-up event.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_intake backend.tests.test_billing_response_flow backend.tests.test_billing_response_ui_contract backend.tests.test_roadmap_contract`
+
 ## 2026-06-18 - Roadmap maintenance rule for major changes
 
 - Area or subsystem: Agent workflow / roadmap maintenance
