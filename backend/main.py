@@ -58,6 +58,16 @@ from backend.services.embedding_provider import (
 )
 from backend.services.agora_service_events import get_agora_service_events_payload
 from backend.services.billing_automation import build_billing_automation_result, send_billing_internal_email
+from backend.services.billing_response_flow import (
+    BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+    BILLING_RESPONSE_EVENT,
+    BillingResolutionValidationError,
+    build_billing_internal_resolution_event,
+    build_customer_followup_from_resolution,
+    generate_billing_response_token,
+    hash_billing_response_token,
+    validate_billing_resolution_submission,
+)
 from backend.services.customer_reply_composer import (
     detect_customer_reply_language,
     ensure_customer_reply_email_style,
@@ -163,6 +173,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ACCOUNT_DIR = UI_DIR / "account-ui"
+BILLING_RESPONSE_DIR = UI_DIR / "billing-response-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 ASSIGNMENT_DIR = UI_DIR / "assignment-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
@@ -231,10 +242,25 @@ INPUT_GUARDRAIL_ENABLED = _env_flag("INPUT_GUARDRAIL_ENABLED", default=False)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
 KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
 CLIENT_ACK_MAX_OUTPUT_TOKENS = _safe_int_env("CLIENT_ACK_MAX_OUTPUT_TOKENS", 32)
+BILLING_RESPONSE_PUBLIC_BASE_URL_ENV = "BILLING_RESPONSE_PUBLIC_BASE_URL"
+DEFAULT_BILLING_RESPONSE_PUBLIC_BASE_URL = "https://support.stellarix.space"
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _build_billing_response_link(raw_token: str) -> str:
+    base_url = (
+        os.getenv(BILLING_RESPONSE_PUBLIC_BASE_URL_ENV) or DEFAULT_BILLING_RESPONSE_PUBLIC_BASE_URL
+    ).strip().rstrip("/")
+    return f"{base_url}/response?token={urllib.parse.quote(raw_token, safe='')}"
+
+
+def _redact_billing_response_token(email_payload: dict[str, Any], raw_token: str) -> dict[str, Any]:
+    redacted = dict(email_payload)
+    redacted["body"] = str(redacted.get("body") or "").replace(raw_token, "<redacted>")
+    return redacted
 
 
 def _ticket_db_startup_init_retries() -> int:
@@ -325,6 +351,13 @@ class AccountIntakeRequest(BaseModel):
     external_id: str | None = Field(default=None, max_length=160)
     source: str | dict[str, Any] | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=160)
+
+
+class BillingResponseSubmitRequest(BaseModel):
+    token: str | None = Field(default=None, max_length=256)
+    result: str = Field(pattern="^(completed|refused|customer_action_required)$")
+    notify_customer: bool
+    note: str | None = Field(default=None, max_length=4000)
 
 
 class AssetUploadIntentRequest(BaseModel):
@@ -485,6 +518,8 @@ if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
 if ACCOUNT_DIR.exists():
     app.mount("/account", StaticFiles(directory=ACCOUNT_DIR, html=True), name="account-ui")
+if BILLING_RESPONSE_DIR.exists():
+    app.mount("/response", StaticFiles(directory=BILLING_RESPONSE_DIR, html=True), name="billing-response-ui")
 if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
 if ASSIGNMENT_DIR.exists():
@@ -2745,6 +2780,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         title = derive_ticket_title(question)
 
     ticket_id = str(request.ticket_id or "").strip() or f"TK-ACC-{uuid4().hex[:6].upper()}"
+    billing_ticket_id = f"BT-{ticket_id}"
     existing_ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
     if existing_ticket is not None:
         raise HTTPException(status_code=409, detail="ticket_id already exists")
@@ -2800,6 +2836,8 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     missing_fields: list[str] = []
     collected_fields: dict[str, Any] = {}
     internal_email_payload: dict[str, Any] | None = None
+    internal_email_to_send: dict[str, Any] | None = None
+    billing_response_token_record: dict[str, Any] | None = None
     internal_email_send_status = "not_applicable"
     internal_email_send_reason = ""
 
@@ -2810,15 +2848,37 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
             message=question,
             ticket_id=ticket_id,
             customer_email=str(request.customer_email or "").strip() or None,
+            billing_ticket_id=billing_ticket_id,
         )
         customer_reply = billing_result.customer_reply
         missing_fields = list(billing_result.missing_fields)
         collected_fields = dict(billing_result.collected_fields)
         if billing_result.internal_email:
-            internal_email_payload = dict(billing_result.internal_email)
-            email_send_result = await async_to_thread(send_billing_internal_email, billing_result.internal_email)
-            internal_email_send_status = str(email_send_result.get("status") or "failed")
-            internal_email_send_reason = str(email_send_result.get("reason") or "")
+            billing_response_raw_token = generate_billing_response_token()
+            billing_response_link = _build_billing_response_link(billing_response_raw_token)
+            billing_result = build_billing_automation_result(
+                action=route,
+                message=question,
+                ticket_id=ticket_id,
+                customer_email=str(request.customer_email or "").strip() or None,
+                billing_ticket_id=billing_ticket_id,
+                response_link=billing_response_link,
+            )
+            customer_reply = billing_result.customer_reply
+            missing_fields = list(billing_result.missing_fields)
+            collected_fields = dict(billing_result.collected_fields)
+            internal_email_to_send = dict(billing_result.internal_email)
+            internal_email_payload = _redact_billing_response_token(
+                internal_email_to_send,
+                billing_response_raw_token,
+            )
+            billing_response_token_record = {
+                "token_hash": hash_billing_response_token(billing_response_raw_token),
+                "billing_ticket_id": billing_ticket_id,
+                "created_at": now_iso(),
+                "used_at": None,
+            }
+            internal_email_send_status = "pending"
         else:
             internal_email_send_status = "not_ready"
             internal_email_send_reason = "missing_required_fields"
@@ -2835,7 +2895,6 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
 
     await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
 
-    billing_ticket_id = f"BT-{ticket_id}"
     billing_ticket: dict[str, Any] = {
         "billing_ticket_id": billing_ticket_id,
         "client_ticket_id": ticket_id,
@@ -2869,6 +2928,22 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "router_source": decision.router_source,
     }
     await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+
+    if billing_response_token_record and internal_email_to_send:
+        await async_to_thread(ticket_repository.save_billing_response_token, billing_response_token_record)
+        email_send_result = await async_to_thread(send_billing_internal_email, internal_email_to_send)
+        internal_email_send_status = str(email_send_result.get("status") or "failed")
+        internal_email_send_reason = str(email_send_result.get("reason") or "")
+        if internal_email_send_status != "sent":
+            await async_to_thread(
+                ticket_repository.mark_billing_response_token_used,
+                billing_response_token_record["token_hash"],
+                now_iso(),
+            )
+        billing_ticket["internal_email_send_status"] = internal_email_send_status
+        billing_ticket["internal_email_send_reason"] = internal_email_send_reason
+        billing_ticket["updated_at"] = now_iso()
+        await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
 
     event = {
         "event": "ticket_created",
@@ -2930,6 +3005,193 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "intent_router_fallback_reason": decision.intent_router_fallback_reason,
         "intent_router_failure_type": decision.intent_router_failure_type,
         "intent_router_failure_source": decision.intent_router_failure_source,
+    }
+
+
+def _load_billing_response_token(raw_token: str | None) -> tuple[str, dict[str, Any]]:
+    if not isinstance(raw_token, str):
+        raise HTTPException(status_code=404, detail="billing response token not found")
+    try:
+        token_hash = hash_billing_response_token(raw_token)
+    except BillingResolutionValidationError:
+        raise HTTPException(status_code=404, detail="billing response token not found") from None
+    token_record = ticket_repository.get_billing_response_token(token_hash)
+    if token_record is None:
+        raise HTTPException(status_code=404, detail="billing response token not found")
+    return token_hash, token_record
+
+
+def _billing_customer_email(billing_ticket: dict[str, Any]) -> str:
+    client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
+    canonical_ticket = ticket_repository.get_ticket(client_ticket_id) if client_ticket_id else None
+    if canonical_ticket:
+        for key in ("requester", "customer_id"):
+            value = " ".join(str(canonical_ticket.get(key) or "").split()).strip()
+            if "@" in value:
+                return value
+    return ""
+
+
+def _billing_resolution_automation_status(result: str, notify_customer: bool) -> str:
+    if result == "customer_action_required":
+        return "waiting_customer_action" if notify_customer else "internal_resolution_submitted"
+    return "customer_notified" if notify_customer else "resolved_without_customer_notification"
+
+
+@app.get("/api/billing-response")
+def get_billing_response_context(token: str | None = None) -> dict[str, Any]:
+    _, token_record = _load_billing_response_token(token)
+    billing_ticket_id = str(token_record.get("billing_ticket_id") or "").strip()
+    billing_ticket = ticket_repository.get_billing_ticket(billing_ticket_id)
+    if billing_ticket is None:
+        raise HTTPException(status_code=404, detail="billing ticket not found")
+
+    return {
+        "billing_ticket_id": billing_ticket_id,
+        "submitted": token_record.get("used_at") is not None,
+        "customer_email": _billing_customer_email(billing_ticket),
+        "title": str(billing_ticket.get("title") or "").strip(),
+        "question": str(billing_ticket.get("question") or "").strip(),
+        "collected_fields": (
+            copy.deepcopy(billing_ticket.get("collected_fields"))
+            if isinstance(billing_ticket.get("collected_fields"), dict)
+            else {}
+        ),
+    }
+
+
+@app.post("/api/billing-response/submit")
+async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict[str, Any]:
+    token_hash, token_record = await async_to_thread(_load_billing_response_token, request.token)
+    if token_record.get("used_at") is not None:
+        raise HTTPException(status_code=409, detail="billing response token already submitted")
+
+    billing_ticket_id = str(token_record.get("billing_ticket_id") or "").strip()
+    billing_ticket = await async_to_thread(ticket_repository.get_billing_ticket, billing_ticket_id)
+    if billing_ticket is None:
+        raise HTTPException(status_code=404, detail="billing ticket not found")
+
+    client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
+    if not client_ticket_id:
+        raise HTTPException(status_code=404, detail="linked support ticket not found")
+    canonical_ticket = await async_to_thread(ticket_repository.get_ticket, client_ticket_id)
+    if canonical_ticket is None:
+        raise HTTPException(status_code=404, detail="linked support ticket not found")
+
+    try:
+        submission = validate_billing_resolution_submission(
+            result=request.result,
+            notify_customer=request.notify_customer,
+            note=request.note,
+        )
+    except BillingResolutionValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    timestamp = now_iso()
+    token_marked = await async_to_thread(
+        ticket_repository.mark_billing_response_token_used,
+        token_hash,
+        timestamp,
+    )
+    if not token_marked:
+        raise HTTPException(status_code=409, detail="billing response token already submitted")
+
+    resolution_event = build_billing_internal_resolution_event(
+        billing_ticket_id=billing_ticket_id,
+        client_ticket_id=client_ticket_id,
+        result=submission["result"],
+        notify_customer=submission["notify_customer"],
+        note=submission["note"],
+        created_at=timestamp,
+    )
+    automation_status = _billing_resolution_automation_status(
+        submission["result"],
+        submission["notify_customer"],
+    )
+    pre_event_status = automation_status if not submission["notify_customer"] else "internal_resolution_submitted"
+    billing_ticket["automation_status"] = pre_event_status
+    billing_ticket["updated_at"] = timestamp
+    await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+
+    await async_to_thread(
+        ticket_repository.record_event,
+        client_ticket_id,
+        BILLING_RESPONSE_EVENT,
+        resolution_event,
+    )
+    await dispatch_event(["engineer", "dashboard"], resolution_event)
+
+    customer_reply = ""
+    customer_notified = False
+    if not submission["notify_customer"]:
+        return {
+            "submitted": True,
+            "billing_ticket_id": billing_ticket_id,
+            "result": submission["result"],
+            "notify_customer": submission["notify_customer"],
+            "customer_notified": False,
+            "automation_status": automation_status,
+        }
+
+    customer_message = latest_customer_message(canonical_ticket)
+    customer_reply = build_customer_followup_from_resolution(
+        result=submission["result"],
+        note=submission["note"],
+        customer_message=customer_message,
+        title=str(billing_ticket.get("title") or canonical_ticket.get("subject") or "").strip(),
+    )
+    assistant_message = {
+        "role": "assistant",
+        "content": customer_reply,
+        "created_at": timestamp,
+        "content_format": "plaintext",
+        "source": "billing_response_ai",
+    }
+    initial_message_count = (
+        len(canonical_ticket.get("messages", []))
+        if isinstance(canonical_ticket.get("messages"), list)
+        else 0
+    )
+    canonical_ticket.setdefault("messages", []).append(assistant_message)
+    canonical_ticket["updated_at"] = timestamp
+    billing_ticket["customer_reply"] = customer_reply
+    billing_ticket["automation_status"] = automation_status
+
+    new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
+    await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
+    await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+
+    followup_event = {
+        "event": BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+        "billing_ticket_id": billing_ticket_id,
+        "ticket_id": client_ticket_id,
+        "resolution_result": submission["result"],
+        "notify_customer": submission["notify_customer"],
+        "customer_reply": customer_reply,
+        "created_at": now_iso(),
+        "source": "billing_response_ai",
+    }
+    await async_to_thread(
+        ticket_repository.record_event,
+        client_ticket_id,
+        BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+        followup_event,
+    )
+    await dispatch_event(["engineer", "dashboard"], followup_event)
+    await dispatch_event(
+        ["client"],
+        build_client_sync_event(canonical_ticket, BILLING_RESPONSE_AI_FOLLOWUP_EVENT, customer_reply[:200]),
+    )
+    customer_notified = True
+
+    return {
+        "submitted": True,
+        "billing_ticket_id": billing_ticket_id,
+        "result": submission["result"],
+        "notify_customer": submission["notify_customer"],
+        "customer_notified": customer_notified,
+        "automation_status": automation_status,
+        "customer_reply": customer_reply,
     }
 
 

@@ -134,6 +134,8 @@ def build_billing_automation_result(
     message: str,
     ticket_id: str | None = None,
     customer_email: str | None = None,
+    billing_ticket_id: str | None = None,
+    response_link: str | None = None,
 ) -> BillingAutomationResult:
     normalized_action = _clean_text(action).lower()
     if normalized_action not in _FIELD_ALIASES:
@@ -157,6 +159,8 @@ def build_billing_automation_result(
         ticket_id=ticket_id,
         customer_email=customer_email,
         customer_message=message,
+        billing_ticket_id=billing_ticket_id,
+        response_link=response_link,
     )
     return BillingAutomationResult(
         customer_reply=_build_escalation_reply(normalized_action),
@@ -381,9 +385,17 @@ def _build_internal_email(
     ticket_id: str | None,
     customer_email: str | None,
     customer_message: str,
+    billing_ticket_id: str | None,
+    response_link: str | None,
 ) -> dict[str, str]:
     normalized_ticket_id = _clean_text(ticket_id) or "{{ticket_id}}"
+    normalized_billing_ticket_id = _clean_text(billing_ticket_id)
+    if not normalized_billing_ticket_id:
+        normalized_billing_ticket_id = (
+            f"BT-{normalized_ticket_id}" if normalized_ticket_id != "{{ticket_id}}" else "{{billing_ticket_id}}"
+        )
     normalized_customer_email = _clean_text(customer_email) or "{{customer_email}}"
+    normalized_response_link = _clean_text(response_link)
     to_address = _destination_email_for_action(action)
     from_address = _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_FROM_ENV)) or DEFAULT_BILLING_EMAIL_FROM
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
@@ -419,10 +431,15 @@ def _build_internal_email(
         [
             "Hi team,",
             lead,
-            f"Ticket ID: {normalized_ticket_id}\nCustomer email: {normalized_customer_email}{app_id_line}",
+            f"Billing Ticket ID: {normalized_billing_ticket_id}\nCustomer email: {normalized_customer_email}{app_id_line}",
             fields,
             f"Original customer message:\n{_clean_text(customer_message)}",
-            "Please review and follow up as appropriate.",
+            (
+                "Please review and submit the handling result here:\n"
+                f"{normalized_response_link}"
+                if normalized_response_link
+                else "Please review and follow up as appropriate."
+            ),
         ]
     )
     return {

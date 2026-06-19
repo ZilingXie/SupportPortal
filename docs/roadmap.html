@@ -1928,7 +1928,7 @@ flowchart TD
         short: "Billing",
         title: "Billing intake / ticket routing",
         status: "doing",
-        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，Zendesk webhook / N8n 内部转发已完成，下一步优先验证 route 后的内部 response link 回传、AI 客户通知闭环、人工审核和 dashboard 指标，不直接迁移客户入口。",
+        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，Zendesk webhook / N8n 内部转发和 response link demo 闭环已完成，下一步优先验证真实 Zendesk replay、人工审核和 dashboard 指标，不直接迁移客户入口。",
         done: [
           "Automation 白名单已扩展到 `account_suspension`、`detailed_invoice` 和 `account_verification`；suspicious activity / fraud / company verification / reactivation 新进入 billing automation intake。",
           "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
@@ -1936,21 +1936,22 @@ flowchart TD
           "`/account` 手动 UI 已复用 client 体验，并展示 route、单一 canonical `TK-...` ticket id、Automation / Not automated 状态和最近 ticket 历史；详情页不再展示第二个 Support ticket ID。",
           "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 view-model 只保留一个 `ticket_id`；`billing_ticket_id` 保持为内部 companion key，`source` 统一为 `manual` / `api`。",
           "Billing ticket 历史列表和详情 API 已完成；详情 API 支持用 canonical `ticket_id` 直接查询，不再依赖 Recent tickets 列表窗口。",
-          "底层 billing automation helper 支持 action-specific destination env 和内部邮件；`/account` intake 字段完整时触发真实邮件发送，SMTP 缺配置时 fail closed 并记录 skipped/failed 原因。"
+          "底层 billing automation helper 支持 action-specific destination env 和内部邮件；`/account` intake 字段完整时触发真实邮件发送，SMTP 缺配置时 fail closed 并记录 skipped/failed 原因。",
+          "内部邮件已携带一次性 response link；`/response` 页面只展示 `billing_ticket_id`，提交结构化处理结果后写入 internal resolution event，并按通知选择生成 `billing_response_ai` 客户回复。"
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
           "TK-ACC-C31612 修复已验证：semantic-first 路由 + gratitude 降级后，长正文末尾 thank you 不再误判为 small_talk。",
-          "Zendesk webhook / N8n 中转已完成为内部来源入口；后续重点转为 billing 被 route 后的处理闭环，而不是继续迁移客户入口。",
-          "原会议提到的邮件回执/邮箱轮询收口为一次性 response link：内部邮件带 `support.stellarix.space/response?token=...`，处理人提交结构化结果后触发 AI 读取 internal resolution event。",
+          "Zendesk webhook / N8n 中转已完成为内部来源入口；response link demo 闭环也已落地，后续重点转为真实 case replay、人工审核和指标门禁，而不是继续迁移客户入口。",
+          "原会议提到的邮件回执/邮箱轮询已收口为一次性 response link：内部邮件带 `support.stellarix.space/response?token=...`，处理人提交结构化结果后触发 AI 读取 internal resolution event。",
           "白名单不要扩大过快；先用 real Zendesk replay set 证明 invoice、account fraud / deactivate / company verification 的 route_accuracy，再决定是否进一步扩展。"
         ],
         next: [
           { id: "billing-real-zendesk-replay", status: "todo", label: "建立 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、billing risky negative set 和 Not automated case 都要覆盖。", horizon: "Scope" },
           { id: "billing-zendesk-forwarding", status: "done", label: "接入 Zendesk webhook / N8n 中转已完成：拉取新工单内容、external_id、comment 和 metadata；先只内部转发，不改客户入口。", horizon: "Source" },
           { id: "billing-ai-account", status: "todo", label: "定义 AI account 试运行方式：shadow mode 下只模拟，1% 切流后由 AI account 接收/处理 billing case，并通过 Zendesk API 写 comment。", horizon: "Pilot" },
-          { id: "billing-response-link", status: "todo", label: "补内部 response link 闭环：邮件携带 `support.stellarix.space/response?token=...`，页面只使用 billing_ticket_id，一次性提交处理结果、是否通知客户和说明。", horizon: "Integration" },
-          { id: "billing-internal-resolution-event", status: "todo", label: "提交后写入 internal resolution event，再触发 AI 读取 event 决定是否回复客户；已完成可不填说明，拒绝处理/需要客户操作必须填写说明。", horizon: "AI Loop" },
+          { id: "billing-response-link", status: "done", label: "内部 response link 闭环已完成：邮件携带 `support.stellarix.space/response?token=...`，页面只使用 billing_ticket_id，一次性提交处理结果、是否通知客户和说明。", horizon: "Integration" },
+          { id: "billing-internal-resolution-event", status: "done", label: "提交后写入 internal resolution event，再触发 AI 读取 event 决定是否回复客户；已完成可不填说明，拒绝处理/需要客户操作必须填写说明。", horizon: "AI Loop" },
           { id: "billing-human-review", status: "todo", label: "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。", horizon: "Review" },
           { id: "billing-dashboard-metrics", status: "todo", label: "Dashboard 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate 和 SLA risk。", horizon: "Metrics" },
           { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单、重复发邮件或重复写入 automation 状态。", horizon: "Reliability" },
@@ -1990,6 +1991,10 @@ flowchart TD
         sources: [
           "docs/prompt_change_log.md",
           "backend/services/billing_automation.py",
+          "ui/billing-response-ui/app.js",
+          "backend/tests/test_billing_response_ui_contract.py",
+          "backend/tests/test_billing_response_flow.py",
+          "backend/services/billing_response_flow.py",
           "backend/services/support_router.py",
           "backend/main.py",
           "backend/sql/ticket_storage.sql",
