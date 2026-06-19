@@ -2823,20 +2823,30 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
 
     if is_billing_automation_route:
         response_status = "automation"
-        billing_response_raw_token = generate_billing_response_token()
-        billing_response_link = _build_billing_response_link(billing_response_raw_token)
         billing_result = build_billing_automation_result(
             action=route,
             message=question,
             ticket_id=ticket_id,
             customer_email=str(request.customer_email or "").strip() or None,
             billing_ticket_id=billing_ticket_id,
-            response_link=billing_response_link,
         )
         customer_reply = billing_result.customer_reply
         missing_fields = list(billing_result.missing_fields)
         collected_fields = dict(billing_result.collected_fields)
         if billing_result.internal_email:
+            billing_response_raw_token = generate_billing_response_token()
+            billing_response_link = _build_billing_response_link(billing_response_raw_token)
+            billing_result = build_billing_automation_result(
+                action=route,
+                message=question,
+                ticket_id=ticket_id,
+                customer_email=str(request.customer_email or "").strip() or None,
+                billing_ticket_id=billing_ticket_id,
+                response_link=billing_response_link,
+            )
+            customer_reply = billing_result.customer_reply
+            missing_fields = list(billing_result.missing_fields)
+            collected_fields = dict(billing_result.collected_fields)
             internal_email_to_send = dict(billing_result.internal_email)
             internal_email_payload = _redact_billing_response_token(
                 internal_email_to_send,

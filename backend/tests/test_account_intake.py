@@ -248,6 +248,39 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn(raw_token, stored_body)
         self.assertIn("token=<redacted>", stored_body)
 
+    def test_billing_missing_fields_does_not_create_response_token(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.generate_billing_response_token",
+            return_value="unused-token",
+        ) as generate_mock, patch.object(
+            self.repository,
+            "save_billing_response_token",
+            wraps=self.repository.save_billing_response_token,
+        ) as save_token_mock:
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": "Please send detailed invoice.",
+                    "customer_email": "customer@example.com",
+                    "source": "account-ui",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["route"], "detailed_invoice")
+        self.assertEqual(payload["internal_email_send_status"], "not_ready")
+        self.assertIn("issue_date", payload["missing_fields"])
+        self.assertIn("transaction_id", payload["missing_fields"])
+        self.assertIn("amount", payload["missing_fields"])
+        generate_mock.assert_not_called()
+        save_token_mock.assert_not_called()
+        self.assertIsNone(
+            self.repository.get_billing_response_token(hash_billing_response_token("unused-token"))
+        )
+
     def test_account_intake_saves_billing_ticket(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.send_billing_internal_email",
