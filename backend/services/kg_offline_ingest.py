@@ -27,6 +27,7 @@ from backend.services.kg_schema import (
 from backend.services.kg_supportportal_contracts import (
     KgIngestResult,
     OfficialDocKgChunkInput,
+    validate_provenance,
 )
 
 
@@ -153,6 +154,116 @@ def ingest_chunks_sync(
     import asyncio
 
     return asyncio.run(ingest_chunks_async(chunks, graph_rag=graph_rag, schema=schema))
+
+
+def build_ingest_report(
+    *,
+    raw_item_count: int,
+    chunks: list[OfficialDocKgChunkInput],
+    dry_run_payloads: list[dict[str, Any]] | None = None,
+    ingest_results: list[KgIngestResult] | None = None,
+    smoke_results: list[dict[str, Any]] | None = None,
+    schema: KgSchema | None = None,
+) -> dict[str, Any]:
+    """Build an auditable offline KG ingest report.
+
+    The report is intentionally pure data: callers can use it from dry-run,
+    full ingest, tests, or CLI output without creating a Neo4j dependency.
+    """
+
+    payloads = list(dry_run_payloads or [])
+    results = list(ingest_results or [])
+    smoke = list(smoke_results or [])
+
+    chunk_count_by_document: dict[str, int] = {}
+    for chunk in chunks:
+        document_id = str(chunk.document_id or "").strip()
+        if not document_id:
+            continue
+        chunk_count_by_document[document_id] = chunk_count_by_document.get(document_id, 0) + 1
+
+    failed_chunks = [
+        {"chunk_id": result.chunk_id, "error": result.error or "unknown_error"}
+        for result in results
+        if not result.ok
+    ]
+    succeeded = sum(1 for result in results if result.ok)
+    missing_required_fields = sum(len(validate_provenance(chunk)) for chunk in chunks)
+    dry_run_missing_fields = 0
+    group_ids: set[str] = set()
+    schema_hashes: set[str] = set()
+    content_hashes: set[str] = set()
+    for payload in payloads:
+        group_id = str(payload.get("group_id") or "").strip()
+        if group_id:
+            group_ids.add(group_id)
+        metadata = payload.get("episode_metadata") if isinstance(payload, dict) else None
+        if not isinstance(metadata, dict):
+            dry_run_missing_fields += 1
+            continue
+        for field_name in (
+            "supportportal_chunk_id",
+            "supportportal_document_id",
+            "supportportal_source_url",
+            "supportportal_schema_version",
+        ):
+            if not str(metadata.get(field_name) or "").strip():
+                dry_run_missing_fields += 1
+        schema_hash = str(metadata.get("supportportal_schema_hash") or "").strip()
+        content_hash = str(metadata.get("supportportal_content_hash") or "").strip()
+        if schema_hash:
+            schema_hashes.add(schema_hash)
+        if content_hash:
+            content_hashes.add(content_hash)
+
+    facts_returned = sum(int(item.get("facts_returned") or 0) for item in smoke)
+    valid_provenance_count = sum(int(item.get("valid_provenance_count") or 0) for item in smoke)
+    smoke_degraded_count = sum(1 for item in smoke if bool(item.get("degraded")))
+
+    return {
+        "raw_item_count": int(raw_item_count),
+        "scope": {
+            "passed_chunks": len(chunks),
+            "dropped_records": max(int(raw_item_count) - len(chunks), 0),
+        },
+        "documents": {
+            "document_count": len(chunk_count_by_document),
+            "chunk_count_by_document": dict(sorted(chunk_count_by_document.items())),
+        },
+        "dry_run": {
+            "episode_count": len(payloads),
+            "group_ids": sorted(group_ids),
+            "schema_hash_count": len(schema_hashes),
+            "content_hash_count": len(content_hashes),
+        },
+        "ingest": {
+            "attempted": len(results),
+            "succeeded": succeeded,
+            "failed": len(results) - succeeded,
+            "failed_chunks": failed_chunks,
+        },
+        "provenance": {
+            "missing_required_fields": missing_required_fields + dry_run_missing_fields,
+        },
+        "schema": {
+            "name": schema.name if schema is not None else None,
+            "version": schema.version if schema is not None else None,
+            "mode": schema.mode if schema is not None else None,
+        },
+        "smoke": {
+            "queries_run": len(smoke),
+            "facts_returned": facts_returned,
+            "valid_provenance_count": valid_provenance_count,
+            "degraded_count": smoke_degraded_count,
+        },
+        "ready_for_benchmark": (
+            bool(chunks)
+            and len(payloads) == len(chunks)
+            and (not results or (len(results) == len(chunks) and not failed_chunks))
+            and missing_required_fields + dry_run_missing_fields == 0
+            and (not smoke or (facts_returned > 0 and valid_provenance_count == facts_returned and smoke_degraded_count == 0))
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

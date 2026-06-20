@@ -16,6 +16,7 @@ from typing import Any
 
 from backend.services.kg_offline_ingest import (
     build_chunks_from_records,
+    build_ingest_report,
     dry_run_ingest,
     ingest_chunks_async,
 )
@@ -269,3 +270,51 @@ def test_ingest_chunks_async_reports_per_chunk_failure():
 
     assert [result.ok for result in results] == [True, False]
     assert results[1].error == "Neo4j down"
+
+
+def test_build_ingest_report_summarizes_scope_payloads_results_and_smoke():
+    """Phase 1 needs an auditable report before KG can enter any live path."""
+    raw_items = [
+        {"record": _official_record(document_id="doc-1"), "chunk": _chunk_dict(chunk_id="chunk-1")},
+        {"record": _official_record(document_id="doc-2"), "chunk": _chunk_dict(chunk_id="chunk-2")},
+        {
+            "record": _official_record(knowledge_type="technical", source_type="technical_article_api"),
+            "chunk": _chunk_dict(chunk_id="dropped"),
+        },
+    ]
+    chunks = build_chunks_from_records(raw_items)
+    payloads = dry_run_ingest(chunks, schema=_sample_schema())
+    graph_rag = _FakeGraphRAG(fail_chunk_id="chunk-2")
+    results = asyncio.run(ingest_chunks_async(chunks, graph_rag=graph_rag, schema=_sample_schema()))
+
+    report = build_ingest_report(
+        raw_item_count=len(raw_items),
+        chunks=chunks,
+        dry_run_payloads=payloads,
+        ingest_results=results,
+        smoke_results=[
+            {
+                "query": "token auth",
+                "facts_returned": 1,
+                "valid_provenance_count": 1,
+                "degraded": False,
+            }
+        ],
+        schema=_sample_schema(),
+    )
+
+    assert report["raw_item_count"] == 3
+    assert report["scope"]["passed_chunks"] == 2
+    assert report["scope"]["dropped_records"] == 1
+    assert report["dry_run"]["episode_count"] == 2
+    assert report["dry_run"]["group_ids"] == ["supportportal_official_docs"]
+    assert report["ingest"]["succeeded"] == 1
+    assert report["ingest"]["failed"] == 1
+    assert report["ingest"]["failed_chunks"] == [{"chunk_id": "chunk-2", "error": "Neo4j down"}]
+    assert report["documents"]["document_count"] == 2
+    assert report["documents"]["chunk_count_by_document"] == {"doc-1": 1, "doc-2": 1}
+    assert report["provenance"]["missing_required_fields"] == 0
+    assert report["schema"]["name"] == "supportportal_official_docs_v1"
+    assert report["smoke"]["queries_run"] == 1
+    assert report["smoke"]["valid_provenance_count"] == 1
+    assert report["ready_for_benchmark"] is False

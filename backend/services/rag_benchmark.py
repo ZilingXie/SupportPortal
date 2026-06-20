@@ -1185,7 +1185,83 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
     metrics["benchmark_throughput_cases_per_sec"] = (
         round(len(result_rows) / total_latency_seconds, 4) if total_latency_seconds > 0 else None
     )
+    _add_kg_auxiliary_metrics(metrics, result_rows)
     return metrics
+
+
+def _kg_auxiliary_payload(row: dict[str, Any]) -> dict[str, Any] | None:
+    direct = row.get("kg_auxiliary")
+    if isinstance(direct, dict):
+        return direct
+    trace_payload = row.get("trace_payload")
+    if isinstance(trace_payload, dict) and isinstance(trace_payload.get("kg_auxiliary"), dict):
+        return trace_payload["kg_auxiliary"]
+    return None
+
+
+def _kg_stage_degraded(stage_payload: Any) -> bool:
+    return isinstance(stage_payload, dict) and bool(stage_payload.get("degraded"))
+
+
+def _kg_stage_count(stage_payload: Any, field_name: str) -> int:
+    if not isinstance(stage_payload, dict):
+        return 0
+    try:
+        return max(int(stage_payload.get(field_name) or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _add_kg_auxiliary_metrics(metrics: dict[str, Any], result_rows: list[dict[str, Any]]) -> None:
+    if not result_rows:
+        metrics["kg_auxiliary_enabled_rate"] = None
+        metrics["kg_contribution_rate"] = None
+        metrics["kg_expansion_contribution_rate"] = None
+        metrics["kg_rerank_contribution_rate"] = None
+        metrics["kg_structured_fact_contribution_rate"] = None
+        metrics["kg_degrade_rate"] = None
+        return
+
+    enabled_count = 0
+    contributed_count = 0
+    expansion_count = 0
+    rerank_count = 0
+    structured_fact_count = 0
+    degraded_count = 0
+    for row in result_rows:
+        payload = _kg_auxiliary_payload(row) or {}
+        enabled = bool(payload.get("enabled"))
+        expansion = payload.get("expansion")
+        rerank = payload.get("rerank")
+        structured_facts = payload.get("structured_facts")
+        expansion_contributed = _kg_stage_count(expansion, "terms_count") > 0
+        rerank_contributed = _kg_stage_count(rerank, "signals_count") > 0
+        structured_fact_contributed = _kg_stage_count(structured_facts, "facts_count") > 0
+        degraded = (
+            _kg_stage_degraded(expansion)
+            or _kg_stage_degraded(rerank)
+            or _kg_stage_degraded(structured_facts)
+        )
+        if enabled:
+            enabled_count += 1
+        if expansion_contributed:
+            expansion_count += 1
+        if rerank_contributed:
+            rerank_count += 1
+        if structured_fact_contributed:
+            structured_fact_count += 1
+        if expansion_contributed or rerank_contributed or structured_fact_contributed:
+            contributed_count += 1
+        if degraded:
+            degraded_count += 1
+
+    denominator = len(result_rows)
+    metrics["kg_auxiliary_enabled_rate"] = round(enabled_count / denominator, 4)
+    metrics["kg_contribution_rate"] = round(contributed_count / denominator, 4)
+    metrics["kg_expansion_contribution_rate"] = round(expansion_count / denominator, 4)
+    metrics["kg_rerank_contribution_rate"] = round(rerank_count / denominator, 4)
+    metrics["kg_structured_fact_contribution_rate"] = round(structured_fact_count / denominator, 4)
+    metrics["kg_degrade_rate"] = round(degraded_count / denominator, 4)
 def _ndcg_at_k(relevance_scores: list[int], k: int) -> float:
     sliced = relevance_scores[: max(1, int(k))]
     if not sliced:
