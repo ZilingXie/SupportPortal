@@ -143,6 +143,30 @@ class GoldenBillingRoutingTests(unittest.TestCase):
         self.assertEqual(decision.semantic_intent, "billing.account_suspension")
         self.assertNotEqual(decision.execution_action, "web_search")
 
+    def test_deterministic_account_suspension_with_refund_risk_routes_to_billing_review(self) -> None:
+        """Deterministic billing whitelist must not hide refund/dispute risk."""
+        decision = decide_support_route("Account suspended, please refund my last charge.")
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertEqual(decision.route_family, "billing_review")
+        self.assertEqual(decision.execution_action, "human_review_required")
+        self.assertEqual(decision.automation_eligibility, "not_eligible")
+        self.assertEqual(decision.policy_decision, "policy_gate")
+        self.assertEqual(decision.not_automated_reason, "human_review_required")
+        self.assertEqual(decision.router_source, "deterministic")
+        self.assertIn("refund_request", decision.risk_flags)
+
+    def test_deterministic_account_suspension_with_legal_risk_routes_to_billing_review(self) -> None:
+        """Deterministic billing risk gate also catches legal or compensation pressure."""
+        decision = decide_support_route("Our account is suspended and we need compensation before legal action.")
+
+        self.assertEqual(decision.scope_label, "billing")
+        self.assertEqual(decision.route_family, "billing_review")
+        self.assertEqual(decision.execution_action, "human_review_required")
+        self.assertEqual(decision.policy_decision, "policy_gate")
+        self.assertEqual(decision.router_source, "deterministic")
+        self.assertIn("legal_or_compensation", decision.risk_flags)
+
     def test_account_disabled_due_to_balance_routes_to_billing(self) -> None:
         """Var: 'account disabled due to balance' → billing."""
         message = "My account was disabled due to balance. What do I need to do to restore it?"
