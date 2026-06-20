@@ -12,6 +12,7 @@ Usage:
   python scripts/kg_ingest_official_doc_chunks.py --input chunks.jsonl
   python scripts/kg_ingest_official_doc_chunks.py --input chunks.jsonl --dry-run
   python scripts/kg_ingest_official_doc_chunks.py --input chunks.jsonl --limit 50
+  python scripts/kg_ingest_official_doc_chunks.py --input chunks.jsonl --dry-run --report-output kg_report.json
 """
 
 from __future__ import annotations
@@ -71,6 +72,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Disable progress output",
     )
+    parser.add_argument(
+        "--report-output",
+        default=None,
+        help="Write an auditable KG ingest report JSON to this path",
+    )
     return parser.parse_args(argv)
 
 
@@ -90,6 +96,15 @@ def _load_jsonl(path: str) -> list[dict[str, Any]]:
     return items
 
 
+def _write_report(path: str | None, report: dict[str, Any]) -> None:
+    if not path:
+        return
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"Report written: {output_path}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
@@ -98,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Loaded {len(raw_items)} record/chunk pairs from {args.input}")
 
     # 2. Build chunk inputs with scope gate
-    from backend.services.kg_offline_ingest import build_chunks_from_records
+    from backend.services.kg_offline_ingest import build_chunks_from_records, build_ingest_report
 
     chunks = build_chunks_from_records(raw_items)
     dropped = len(raw_items) - len(chunks)
@@ -126,6 +141,13 @@ def main(argv: list[str] | None = None) -> int:
         from backend.services.kg_offline_ingest import dry_run_ingest
 
         payloads = dry_run_ingest(chunks, schema=schema)
+        report = build_ingest_report(
+            raw_item_count=len(raw_items),
+            chunks=chunks,
+            dry_run_payloads=payloads,
+            ingest_results=[],
+            schema=schema,
+        )
         ok = sum(1 for _ in payloads)
         print(f"Dry-run complete: {ok} episode payload(s) constructed successfully")
         if not args.no_progress and payloads:
@@ -133,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  Example episode name: {first['name']}")
             print(f"  Example episode uuid: {first['uuid']}")
             print(f"  Provenance fields in metadata: {list(first['episode_metadata'].keys())}")
+        _write_report(args.report_output, report)
         return 0
 
     # 5. Full ingest (requires Neo4j + LLM)
@@ -156,12 +179,20 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         results = ingest_chunks_sync(chunks, graph_rag=graph_rag, schema=schema)
+        report = build_ingest_report(
+            raw_item_count=len(raw_items),
+            chunks=chunks,
+            dry_run_payloads=[],
+            ingest_results=results,
+            schema=schema,
+        )
         ok_count = sum(1 for r in results if r.ok)
         fail_count = len(results) - ok_count
         print(f"Ingest complete: {ok_count} succeeded, {fail_count} failed")
         for r in results:
             if not r.ok:
                 print(f"  FAILED: {r.chunk_id} — {r.error}")
+        _write_report(args.report_output, report)
     finally:
         import asyncio
 

@@ -11,6 +11,40 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-20 - Add GraphRAG offline ingest reporting and RAG vs RAG+KG benchmark gates
+
+- Summary:
+  - Added Phase 1 audit reporting for official-doc KG offline ingest: `build_ingest_report()` summarizes scoped/dropped chunks, dry-run episode payloads, ingest successes/failures, provenance gaps, schema metadata, smoke-query results, and whether the graph is ready for benchmark use.
+  - Extended `scripts/kg_ingest_official_doc_chunks.py` with `--report-output` for both dry-run and full-ingest modes so sandbox Neo4j builds can leave a machine-readable readiness report.
+  - Added Phase 2 RAG vs RAG+KG comparison support: `scripts/run_rag_benchmark.py --mode rag_vs_rag_plus_kg --comparison-output ...` runs pure RAG first, then temporarily enables KG for the RAG+KG leg, restores the original environment, and writes a gate report.
+  - Added lightweight comparison gates for citation/faithfulness regressions, p95 latency regression, KG degradation rate, and case-count mismatch. The comparison accepts both `total_latency_ms_p95` and the existing benchmark summary field `benchmark_p95_total_latency_ms`.
+  - Propagated `RagQueryTrace.kg_auxiliary` into benchmark rows and trace payloads, and summarized KG enabled/contribution/degradation rates for the comparison report.
+- Reason:
+  - Phase 1 needs an auditable offline graph-build artifact before any online path can trust a KG graph.
+  - Phase 2 needs repeatable pure-RAG vs RAG+KG benchmark evidence before any shadow or grey rollout flag can be opened.
+- Affected files/config:
+  - `backend/services/kg_offline_ingest.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_kg_benchmark_compare.py` (new)
+  - `scripts/kg_ingest_official_doc_chunks.py`
+  - `scripts/run_rag_benchmark.py`
+  - `backend/tests/test_kg_ingest_cli.py` (new)
+  - `backend/tests/test_kg_offline_ingest.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_kg_benchmark_compare.py` (new)
+  - `backend/tests/test_run_rag_benchmark_cli.py`
+- Data impact:
+  - No online flag, runtime default, vector table, BM25/FTS index, chunking strategy, embedding config, schema migration, reset, or backfill changes.
+  - KG ingest reporting reads existing dry-run/ingest results and writes a JSON report only when requested.
+  - Benchmark mode temporarily sets `RAG_KG_AUXILIARY_ENABLED=false` for the pure-RAG leg and `true` for the RAG+KG leg, then restores the caller's original environment.
+- Verification:
+  - `rtk python -m pytest backend/tests/test_kg_offline_ingest.py::test_build_ingest_report_summarizes_scope_payloads_results_and_smoke -q`
+  - `rtk python -m pytest backend/tests/test_kg_ingest_cli.py::test_dry_run_cli_writes_ingest_report -q`
+  - `rtk python -m pytest backend/tests/test_rag_kg_benchmark_compare.py -q`
+  - `rtk python -m pytest backend/tests/test_run_rag_benchmark_cli.py::RunRagBenchmarkCliTests::test_cli_rag_vs_kg_mode_runs_two_benchmarks_and_writes_comparison -q`
+  - `rtk python -m pytest backend/tests/test_rag_benchmark.py::RagBenchmarkHelperTests::test_summarize_eval_daily_metrics_includes_kg_auxiliary_rates -q`
+
 ## 2026-06-19 - Wire KgRuntimeClient to the vendored GraphRAG knowledge graph
 
 - Summary:

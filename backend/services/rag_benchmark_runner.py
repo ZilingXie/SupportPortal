@@ -706,6 +706,7 @@ def _build_trace_payload(
     trace = result.trace if result is not None else None
     retrieval_candidates = list(trace.retrieval_candidates) if trace is not None else []
     selected_contexts = list(trace.selected_contexts) if trace is not None else []
+    kg_auxiliary = dict(trace.kg_auxiliary) if trace is not None and isinstance(trace.kg_auxiliary, dict) else {}
     missed_expected_docs = (
         _missed_expected_docs(
             case=case,
@@ -779,6 +780,7 @@ def _build_trace_payload(
         "execution_mode": trace.execution_mode if trace is not None else "legacy",
         "agent_fallback_used": bool(trace.agent_fallback_used) if trace is not None else False,
         "agent_fallback_reason": trace.agent_fallback_reason if trace is not None else None,
+        "kg_auxiliary": kg_auxiliary,
         "candidate_funnel": {
             "first_pass_candidate_count": trace.first_pass_candidate_count if trace is not None else None,
             "second_pass_candidate_count": trace.second_pass_candidate_count if trace is not None else None,
@@ -1182,6 +1184,11 @@ def _build_eval_row(
     )
     chunk_strategy = rag_result.trace.primary_chunk_strategy if rag_result is not None else None
     retrieval_strategy = rag_result.trace.retrieval_strategy if rag_result is not None else f"route_{execution_result.actual_route}"
+    kg_auxiliary = (
+        dict(rag_result.trace.kg_auxiliary)
+        if rag_result is not None and isinstance(rag_result.trace.kg_auxiliary, dict)
+        else {}
+    )
     usage_ledger: list[dict[str, Any]] = []
     if rag_result is not None:
         for entry in list(getattr(rag_result.trace, "query_expansion_usage_ledger", []) or []):
@@ -1347,6 +1354,7 @@ def _build_eval_row(
         "answer_key_points": case.answer_key_points,
         "anchor_set_id": case.anchor_set_id,
         "trace_payload": trace_payload,
+        "kg_auxiliary": kg_auxiliary,
         "retrieval_latency_ms": rag_result.trace.retrieval_latency_ms if rag_result is not None else None,
         "generation_latency_ms": rag_result.trace.generation_latency_ms if rag_result is not None else None,
         "total_latency_ms": rag_result.trace.total_latency_ms if rag_result is not None else None,

@@ -554,6 +554,40 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(metrics["answer_accuracy_score"], 0.8)
         self.assertEqual(metrics["response_policy_followed_rate"], 0.5)
 
+    def test_summarize_eval_daily_metrics_includes_kg_auxiliary_rates(self) -> None:
+        metrics = summarize_eval_daily_metrics(
+            [
+                {
+                    "trace_payload": {
+                        "kg_auxiliary": {
+                            "enabled": True,
+                            "expansion": {"terms_count": 2, "degraded": False},
+                            "rerank": {"signals_count": 0, "degraded": False},
+                            "structured_facts": {"facts_count": 1, "degraded": False},
+                        }
+                    }
+                },
+                {
+                    "kg_auxiliary": {
+                        "enabled": True,
+                        "expansion": {"terms_count": 0, "degraded": True},
+                        "rerank": {"signals_count": 3, "degraded": False},
+                        "structured_facts": {"facts_count": 0, "degraded": False},
+                    }
+                },
+                {
+                    "trace_payload": {"kg_auxiliary": {"enabled": False}},
+                },
+            ]
+        )
+
+        self.assertEqual(metrics["kg_auxiliary_enabled_rate"], 0.6667)
+        self.assertEqual(metrics["kg_contribution_rate"], 0.6667)
+        self.assertEqual(metrics["kg_expansion_contribution_rate"], 0.3333)
+        self.assertEqual(metrics["kg_rerank_contribution_rate"], 0.3333)
+        self.assertEqual(metrics["kg_structured_fact_contribution_rate"], 0.3333)
+        self.assertEqual(metrics["kg_degrade_rate"], 0.3333)
+
     def test_aggregate_judge_votes_returns_rubric_scores_divergence_and_confidence(self) -> None:
         result = aggregate_judge_votes(
             [
