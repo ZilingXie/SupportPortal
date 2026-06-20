@@ -116,6 +116,18 @@ _GRATITUDE_BILLING_EXCLUSION_RE = re.compile(
     r"technical|api|sdk|rtc|channel|token|appid|app\s*id)\b",
     re.IGNORECASE,
 )
+_DETERMINISTIC_BILLING_RISK_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:refund|chargeback|return\s+(?:my|our)\s+money)\b", re.IGNORECASE), "refund_request"),
+    (
+        re.compile(
+            r"\b(?:dispute|wrong\s+amount|incorrect\s+amount|overcharged|charged\s+wrong|"
+            r"wrong\s+charge|billing\s+error|why\s+was\s+i\s+charged)\b",
+            re.IGNORECASE,
+        ),
+        "billing_dispute",
+    ),
+    (re.compile(r"\b(?:legal|lawsuit|sue|compensation|damages)\b", re.IGNORECASE), "legal_or_compensation"),
+)
 
 
 @dataclass(frozen=True)
@@ -420,6 +432,14 @@ def _is_short_gratitude_message(text: str) -> bool:
     return True
 
 
+def _match_deterministic_billing_risk_flags(text: str) -> list[str]:
+    flags: list[str] = []
+    for pattern, flag in _DETERMINISTIC_BILLING_RISK_PATTERNS:
+        if pattern.search(text):
+            flags.append(flag)
+    return flags
+
+
 def _heuristic_route_decision(
     message: str,
     *,
@@ -436,6 +456,22 @@ def _heuristic_route_decision(
 
     billing_match = detect_billing_route(text)
     if billing_match is not None:
+        risk_flags = _match_deterministic_billing_risk_flags(text)
+        if risk_flags:
+            return _build_route_decision(
+                scope_label=BILLING_SCOPE_LABEL,
+                action="human_review_required",
+                confidence=0.98,
+                reason=f"{billing_match.reason}_risk_review",
+                matched_signals=_sanitize_matched_signals([*billing_match.matched_signals, *risk_flags]),
+                response_language=response_language,
+                semantic_intent=f"billing.{billing_match.action}",
+                automation_eligibility="not_eligible",
+                policy_decision="policy_gate",
+                not_automated_reason="human_review_required",
+                risk_flags=risk_flags,
+                router_source="deterministic",
+            )
         return _build_route_decision(
             scope_label=BILLING_SCOPE_LABEL,
             action=billing_match.action,
