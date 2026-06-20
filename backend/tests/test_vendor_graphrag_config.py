@@ -92,3 +92,29 @@ def test_graph_rag_passes_configured_embedding_api_key() -> None:
     assert captured["embedder_config"]["embedding_model"] == "BAAI/bge-m3"
     assert captured["embedder_config"]["base_url"] == "https://api.siliconflow.cn/v1"
     assert captured["embedder_config"]["embedding_dim"] == 1024
+
+
+def test_cross_encoder_client_import_does_not_require_sentence_transformers() -> None:
+    _ensure_vendor_path()
+    for name in list(sys.modules):
+        if name == "graphiti_core" or name.startswith("graphiti_core."):
+            sys.modules.pop(name, None)
+    sys.modules.pop("sentence_transformers", None)
+
+    class _BlockSentenceTransformers:
+        def find_spec(self, fullname: str, path: object | None = None, target: object | None = None):
+            if fullname == "sentence_transformers" or fullname.startswith("sentence_transformers."):
+                raise ModuleNotFoundError(fullname)
+            return None
+
+    finder = _BlockSentenceTransformers()
+    sys.meta_path.insert(0, finder)
+    try:
+        fake_parent = types.ModuleType("graphiti_core")
+        fake_parent.__path__ = [str(VENDOR_ROOT / "graphiti_core")]
+        with patch.dict(sys.modules, {"graphiti_core": fake_parent}):
+            module = importlib.import_module("graphiti_core.cross_encoder.client")
+    finally:
+        sys.meta_path.remove(finder)
+
+    assert hasattr(module, "CrossEncoderClient")

@@ -11,6 +11,23 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-20 - Make vendored GraphRAG cross-encoder optional for lightweight runtime
+
+- Summary:
+  - Made `graphiti_core.cross_encoder.BGERerankerClient` a lazy export so importing `graphiti_core.Graphiti` no longer requires `sentence-transformers`.
+  - Added a regression test that blocks `sentence_transformers` and verifies the cross-encoder client import path stays usable without eager-loading BGE.
+- Reason:
+  - Post-merge live stack verification for the local RAG+KG path showed `rag_api` still degraded to pure RAG because `graphiti_core.cross_encoder.__init__` imported `BGERerankerClient` at package import time.
+  - Local lightweight intentionally omits `sentence-transformers`; the vendored Graphiti search defaults to RRF when `cross_encoder=None`, so BGE should remain an optional dependency.
+- Affected files/config:
+  - `vendor/cusmem/graphiti_core/cross_encoder/__init__.py`
+  - `backend/tests/test_vendor_graphrag_config.py`
+- Data impact:
+  - None. This changes import-time dependency behavior only; no vector table, BM25/FTS index, Neo4j graph data, chunking, or embedding output changes.
+- Verification:
+  - `rtk python -m pytest backend/tests/test_vendor_graphrag_config.py -q`
+  - `rtk python -m py_compile vendor/cusmem/graphiti_core/cross_encoder/__init__.py backend/tests/test_vendor_graphrag_config.py`
+
 ## 2026-06-20 - Enable local lightweight RAG+KG online tryout path
 
 - Summary:
