@@ -1485,21 +1485,21 @@ flowchart TD
       <div>
         <h2>Routing 优化计划</h2>
       </div>
-      <p>承接 Routing rules lane 已识别但未落地的能力升级，按高/中/低优先级排列；每条都对应 backend/services/support_router.py 的具体改造点。</p>
+      <p>承接 Routing rules lane 最新审阅结论，按 P0 安全边界、P1 可观测与灰度门禁、P2 架构清理排列；覆盖 router、billing review 体验、replay set 与 dashboard 指标。</p>
     </section>
 
     <section class="optimization-plan" aria-label="Routing optimization plan">
       <article class="opt-group">
         <header class="opt-head">
           <span class="opt-priority opt-priority-high">高优先级</span>
-          <h3>安全与可观测先行</h3>
-          <p>直接影响 billing automation 边界与产线路由的可调诊性；不落地这两条，后续阈值调整与灰度扩面都缺乏反馈信号。</p>
+          <h3>P0：安全边界先补</h3>
+          <p>先封住会触发错误 automation 或把 billing 风险错送 RAG 的入口；这些问题不依赖大重构，应该在继续扩 automation 前完成。</p>
         </header>
         <ol class="opt-list">
           <li class="opt-item">
             <p class="opt-id">routing-deterministic-policy-gate</p>
             <div class="opt-body">
-              <p class="opt-label">Deterministic billing 决策也走 minimal policy gate：refund / dispute / legal / compensation 关键词 sniff 命中即降级到 billing_review，避免白名单吞掉风险信号（例如「Account suspended, please refund」当前会被 account_suspension 白名单命中，refund 信号被丢失）。</p>
+              <p class="opt-label">Deterministic billing 白名单也走 minimal risk gate：refund / dispute / legal / compensation / overcharge 关键词 sniff 命中即降级到 billing_review，避免「Account suspended, please refund」被 account_suspension 白名单直接送进 billing_automation。</p>
               <div class="opt-meta">
                 <span class="tag">Safety</span>
                 <span class="tag">_heuristic_route_decision</span>
@@ -1507,12 +1507,24 @@ flowchart TD
             </div>
           </li>
           <li class="opt-item">
-            <p class="opt-id">routing-decision-observability</p>
+            <p class="opt-id">routing-fallback-billing-risk-sniff</p>
             <div class="opt-body">
-              <p class="opt-label">在 decide_support_route 出口加 structured log + metrics（route / scope_label / router_source / fallback_reason / model_confidence），并基于已有 support_billing_tickets 字段在 admin 页跑 daily 聚合，让 fallback rate、误判率、置信度分布有可视化看板。当前 schema 字段齐全，但缺监控管道，没法量化路由质量。</p>
+              <p class="opt-label">conservative_agora_technical_fallback 前增加 billing-risk sniff：当 LLM missing_credentials / timeout / low confidence 时，如果最新消息含 invoice wrong、refund、dispute、legal、restore access 等风险信号，进入 billing_review，而不是默认 agora_technical / rag。</p>
               <div class="opt-meta">
-                <span class="tag">Observability</span>
+                <span class="tag">Safety</span>
                 <span class="tag">decide_support_route</span>
+                <span class="tag">conservative_fallback</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-billing-review-customer-experience</p>
+            <div class="opt-body">
+              <p class="opt-label">billing_review 的客户可见回复改成「已收到，将由 billing/support team 人工审核」并创建内部待办/queue；不要继续复用 non_agora refusal copy，避免客户看到「不在支持范围内」这类错误语义。</p>
+              <div class="opt-meta">
+                <span class="tag">Customer Experience</span>
+                <span class="tag">resolve_support_message</span>
+                <span class="tag">billing_review</span>
               </div>
             </div>
           </li>
@@ -1522,10 +1534,32 @@ flowchart TD
       <article class="opt-group">
         <header class="opt-head">
           <span class="opt-priority opt-priority-medium">中优先级</span>
-          <h3>架构与正确性升级</h3>
-          <p>提升路由判别的颗粒度与一致性；为 phase 2/3 automation 灰度扩面铺路。</p>
+          <h3>P1：可观测与灰度门禁</h3>
+          <p>P0 安全洞补齐后，先把 route 质量量化，再调阈值或扩大 automation；没有指标就不进入 1% 切流。</p>
         </header>
         <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-decision-observability</p>
+            <div class="opt-body">
+              <p class="opt-label">在 decide_support_route 出口加 structured log + metrics（route / scope_label / router_source / fallback_reason / model_confidence），并基于已有 support_billing_tickets 字段在 admin 页跑 daily 聚合，让 fallback rate、纠正率、置信度分布和 not_automated_reason 有可视化看板。</p>
+              <div class="opt-meta">
+                <span class="tag">Observability</span>
+                <span class="tag">decide_support_route</span>
+                <span class="tag">dashboard</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-real-zendesk-replay</p>
+            <div class="opt-body">
+              <p class="opt-label">扩展真实 Zendesk replay set：invoice request、account fraud/deactivate/company verification、technical handoff、非 billing、mixed-risk billing negative set 都要可离线重放，用 replay 指标决定是否继续扩大 automation。</p>
+              <div class="opt-meta">
+                <span class="tag">Evaluation</span>
+                <span class="tag">Replay</span>
+                <span class="tag">Golden Set</span>
+              </div>
+            </div>
+          </li>
           <li class="opt-item">
             <p class="opt-id">routing-per-scope-threshold</p>
             <div class="opt-body">
@@ -1566,6 +1600,16 @@ flowchart TD
               </div>
             </div>
           </li>
+        </ol>
+      </article>
+
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-low">低优先级</span>
+          <h3>P2：结构清理与韧性补强</h3>
+          <p>不阻塞安全收口和灰度判断，但能降低后续新增 intent、prompt 和 fast path 的维护成本。</p>
+        </header>
+        <ol class="opt-list">
           <li class="opt-item">
             <p class="opt-id">routing-pipeline-refactor</p>
             <div class="opt-body">
@@ -1576,16 +1620,6 @@ flowchart TD
               </div>
             </div>
           </li>
-        </ol>
-      </article>
-
-      <article class="opt-group">
-        <header class="opt-head">
-          <span class="opt-priority opt-priority-low">低优先级</span>
-          <h3>结构清理与韧性补强</h3>
-          <p>本身不阻塞 phase 2/3，但在加新 fast path 与 prompt 迭代频率上升时积累价值。</p>
-        </header>
-        <ol class="opt-list">
           <li class="opt-item">
             <p class="opt-id">routing-heuristic-split</p>
             <div class="opt-body">
@@ -1833,7 +1867,7 @@ flowchart TD
         short: "Multi-Agent",
         title: "Engineer AI multi-agent",
         status: "doing",
-        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, replan_required 仅作为暂停状态信号, missing_information context）、close-memory（final approve 后显式关闭 engineer case、写 audit event、写 Case Memory candidate，不自动晋升 active memory）和 replay eval dataset（从 summary packet、review decisions、replan notes、engineer revise、approved replies 生成 candidate dataset）；runtime activation 阶段：每个新建/进入的 Engineer 工单都会生成并持久化一轮初始 multi-agent run，双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true 触发一轮 Plan/Execute/Review 刷新，revise replan 循环与 max 2 retries 暂停（只保留可编辑/重新走 guardrail）；当前下一步是 replay runner / metrics dashboard / regression gate。",
+        thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, replan_required 仅作为暂停状态信号, missing_information context）、close-memory（final approve 后显式关闭 engineer case、写 audit event、写 Case Memory candidate，不自动晋升 active memory）和 replay eval dataset（从 summary packet、review decisions、replan notes、engineer revise、approved replies 生成 candidate dataset）；runtime activation 阶段：每个新建/进入的 Engineer 工单都会生成并持久化一轮初始 multi-agent run，双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true 触发一轮 Plan/Execute/Review 刷新，revise replan 循环与 max 2 retries 暂停（只保留可编辑/重新走 guardrail）；当前优化优先级是 P0 先让 Execute Agent 接真实 evidence tools 与 replay/metrics gate，P1 恢复受控 targeted replan 并强化 guardrail claim-to-evidence，P2 再推进 UI 行动台、统一 rollout taxonomy 和 agent-to-agent 接入。",
         done: [
           "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
           "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
@@ -1841,7 +1875,7 @@ flowchart TD
           "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
           "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
           "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，Roadmap 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
-          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，Client AI handle 不了客户问题后的 Escalate to Engineer 会先生成 Summary Agent packet，并把该 packet 写入 Engineer ticket 的 engineer_handoff_packet；Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步是 replay runner / metrics dashboard / regression gate。",
+          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，Client AI handle 不了客户问题后的 Escalate to Engineer 会先生成 Summary Agent packet，并把该 packet 写入 Engineer ticket 的 engineer_handoff_packet；Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步从单一 replay runner 扩展为 evidence tools、replay/metrics gate、受控 replan、claim-to-evidence guardrail 和 UI 行动台五条优化主线。",
           "Runtime activation：每个新建/进入的 Engineer 工单（RAG escalation、manual investigate、request-engineer-assistance）都会通过 ensure_engineer_multi_agent_run 生成并持久化一轮初始 Plan/Execute/Review run，右侧 Multi-Agent Run 面板默认不再为空；双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true，后端先刷新一轮再让 Engineer AI 回复，默认 workspace 仍走 guardrail-only 消息流程；revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。"
         ],
         review: [
@@ -1849,8 +1883,10 @@ flowchart TD
           "Summary Agent → Create Engineer Ticket 这段已完成：Client AI 需要升级时，runtime 先输出结构化 summary packet，记录客户上下文、已知线索、escalation reason、缺失信息和 redaction boundary，再把 packet 持久化为 Engineer ticket 的 engineer_handoff_packet。",
           "Plan Agent 第一版已实现 deterministic fallback：mem0 未接入时用 fallback_unavailable，skill list 未安装时用 allowlist_fallback，只基于 summary packet 产出计划。",
           "Execute Agent 第一版已实现 deterministic scheduler/orchestrator：只调度 allowlisted subagents，显式记录 dependencies、parallel groups、task results 和 evidence packet，并持久化到 engineer_agent_state。",
+          "当前 multi-agent 更准确地说是可审计的多阶段调查 workflow：subagent runner 多数是 deterministic function，internal/official search v1 主要复用 summary packet 中已有 RAG/clues/sources，还没有真正重新调用 Case Memory、internal RAG、official RAG、日志或研发 agent。",
           "Review Agent 是关键门禁，决策固定为 ready_for_engineer、replan_required、unable_to_resolve；replan_required 当前只作为人工可见信号，不自动回 Plan，也不执行 max 2 retries。",
-          "Engineer approve 后仍必须走 guardrail 生成/校验 customer-facing reply，并再交给 engineer 最终 approve；关闭工单时只写 Case Memory candidate，不自动变 active memory。"
+          "Engineer approve 后仍必须走 guardrail 生成/校验 customer-facing reply，并再交给 engineer 最终 approve；关闭工单时只写 Case Memory candidate，不自动变 active memory。",
+          "下一阶段优化重点不是继续增加 agent 名字，而是补真实证据获取、受控 replan、claim-level evidence check、replay/metrics 闭环和工程师行动台，让系统从结构化整理升级到可验证调查增量。"
         ],
         next: [
           { id: "ma-summary-agent", status: "done", label: "Summary Agent 第一版（deterministic summary packet）已完成：Client AI 升级 Engineer 时，builder 先生成 engineer-summary-packet-v1，再写入 Engineer ticket 的 engineer_handoff_packet，包含 engineer_ticket_input、escalation 上下文、线索、缺失信息和 redaction boundary。", horizon: "Task 2" },
@@ -1862,7 +1898,13 @@ flowchart TD
           { id: "ma-close-memory", status: "done", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
           { id: "ma-eval", status: "done", label: "从 summary packet、review decisions、replan notes、engineer revise 和 approved replies 生成 replay eval dataset。", horizon: "Evaluation" },
           { id: "ma-workspace-viewer", status: "done", label: "Engineer ticket workspace 可双击 investigating 状态徽标切换查看当前 ticket 的 Plan/Execute/Review Agent 输出（只读已有 engineer_agent_state，不重跑 agent）。", horizon: "Runtime" },
-          { id: "ma-replay-runner", status: "todo", label: "replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量。", horizon: "Evaluation" }
+          { id: "ma-real-evidence-tools", status: "todo", label: "P0：把 Execute Agent 的 allowlisted subagents 接到真实 evidence tools：Case Memory search、internal RAG、official RAG fallback、日志/diagnostic 查询；每个 task result 必须带 provenance、access_mode 和 customer_safe 标记。", horizon: "P0 Evidence" },
+          { id: "ma-replay-runner", status: "todo", label: "P0：replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量，并跟踪 review_decision、guardrail_block_reason、final_approve_latency、reopen/negative feedback。", horizon: "P0 Evaluation" },
+          { id: "ma-controlled-replan", status: "todo", label: "P1：恢复受控 targeted replan：replan_required 只触发缺失证据相关 task，限制 retry / time / token / tool budget，记录每轮 delta，避免整轮盲刷或无限循环。", horizon: "P1 Runtime" },
+          { id: "ma-guardrail-claim-evidence", status: "todo", label: "P1：强化 Guardrail final 为 claim-to-evidence check：客户回复中的关键结论、步骤、限制和版本条件必须映射到 evidence ref；内部来源只能参与推理，不能直接进入 customer-facing reply。", horizon: "P1 Safety" },
+          { id: "ma-workspace-action-console", status: "todo", label: "P2：把 Multi-Agent Run 面板升级为工程师行动台：展示 blocker、缺失信息、证据强度、建议下一问、是否可安全回复，而不仅是只读状态。", horizon: "P2 UI" },
+          { id: "ma-rollout-taxonomy-contract", status: "todo", label: "P2：打通 route taxonomy 与 multi-agent 生命周期，让 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 成为统一 contract 和 dashboard 维度。", horizon: "P2 Contract" },
+          { id: "ma-agent-to-agent-readiness", status: "todo", label: "P3：在真实证据工具、replay gate 和权限审计达标后，再接研发 agent / 数据 agent / 日志 agent；接入前先固定权限、成本、endpoint/forum/hub 协作和审计协议。", horizon: "P3 A2A" }
         ],
         sources: [
           "docs/superpowers/plans/2026-06-11-engineer-ai-multi-agent-mainline.html",
@@ -2048,10 +2090,11 @@ flowchart TD
         ],
         review: [
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
-          "Deterministic fast path 保留为 high-precision hint：billing whitelist 命中后仍走 `billing_automation`，但 policy gate 仅应用于 LLM-sourced 决策，避免误杀高置信确定性匹配。",
+          "Deterministic fast path 保留为 high-precision hint，但当前 billing whitelist 命中后仍会跳过 policy gate；最新审阅结论是先补 minimal risk gate，避免 refund/dispute/legal/compensation 等风险信号被 account_suspension 或 invoice 白名单吞掉。",
           "`billing_review` route family 隔离了需人工审核的 billing case：deterministic 命中直接走 `billing_automation`；LLM 判断的 account_suspension 和 refund_or_dispute 走 `billing_review`。",
           "会议后新增 route rollout 语义：fully_automated 只给稳定 billing/文档类；ai_draft_human_approve 走人审核；unable_to_resolve_handoff 必须停止 AI 乱猜并转真人/CSD/SME。",
-          "`conservative_agora_technical_fallback` 是保守兜底：宁可进入 RAG，也不在低置信时拒绝客户或触发 automation。",
+          "`conservative_agora_technical_fallback` 对技术问题是安全兜底，但 billing 风险场景不能无条件进 RAG；fallback 前应增加 billing-risk sniff，把 refund/dispute/legal/account access restore 等送 billing_review。",
+          "当前 `billing_review` 客户可见体验还不完整：主链路复用 refusal copy，容易让客户误以为 billing 请求不在支持范围内；下一步应改成人工审核确认语，并进入内部待办/queue。",
           "TK-ACC-68BAC7 已修复：扩展后的 deterministic 白名单可命中 `Account temporarily suspended` 和 `account has been suspended due to insufficient balance`，不再误判为 web_search。",
           "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `agora_non_technical`；需要在 golden set 中持续补充边界 case。",
           "TK-ACC-C31612 修复验证：长正文末尾 thank you 不再触发 small_talk，LLM semantic-first 可正确识别 billing intent；短纯感谢仍保持 controlled_response。",
@@ -2069,9 +2112,12 @@ flowchart TD
           { id: "routing-threshold-audit", status: "done", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。router_source=conservative_fallback 区分 below_confidence_threshold / missing_credentials / llm_invocation_failed / invalid_json / invalid_payload / route_fail_open。", horizon: "Metrics" },
           { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 Roadmap tab。", horizon: "Docs" },
           { id: "routing-real-zendesk-replay", status: "todo", label: "扩展 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、technical handoff 与 billing risky negative set。", horizon: "Tests" },
+          { id: "routing-deterministic-policy-gate", status: "todo", label: "P0：Deterministic billing 白名单也走 minimal risk gate；refund/dispute/legal/compensation/overcharge 等信号命中时降级到 billing_review，避免白名单吞掉风险。", horizon: "Safety" },
+          { id: "routing-fallback-billing-risk-sniff", status: "todo", label: "P0：conservative fallback 前增加 billing-risk sniff；LLM 缺凭证、超时或低置信时，invoice wrong/refund/dispute/legal/restore access 不应默认进入 agora_technical/RAG。", horizon: "Safety" },
+          { id: "routing-billing-review-customer-experience", status: "todo", label: "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。", horizon: "Customer Experience" },
           { id: "routing-rollout-taxonomy", status: "todo", label: "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。", horizon: "Contract" },
           { id: "routing-billing-risky-negatives", status: "todo", label: "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。", horizon: "Safety" },
-          { id: "routing-dashboard-metrics", status: "todo", label: "把 route_accuracy、automation_coverage、not_automated_reason、response_latency 接到 dashboard，支持 shadow mode 与 1% 切流判断。", horizon: "Metrics" },
+          { id: "routing-dashboard-metrics", status: "todo", label: "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 shadow mode 与 1% 切流判断。", horizon: "Metrics" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
           { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
           { id: "routing-account-verification-intake", status: "done", label: "新增 billing.account_verification intent + account_verification route：覆盖 suspicious activity / fraud / company verification / reactivation。", horizon: "Billing" },
