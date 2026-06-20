@@ -16,6 +16,7 @@ class Config:
     llm_model: str = 'deepseek-chat'
 
     # Embedding
+    embedding_api_key: str = ''
     embedding_model: str = 'bge-m3:latest'
     embedding_base_url: str = 'http://101.43.92.199:11434/v1/'
     embedding_dim: int = 1024

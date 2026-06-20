@@ -113,6 +113,7 @@
 - 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
+- 本地 lightweight 线上路径已支持 RAG+KG 辅助调用，KG 在 query expansion、rerank boost、结构化 fact 三个钩子作为可降级辅助信号，生产灰度仍由 flag 控制。
 
 ### 未完成
-- 线上 RAG+KG 辅助调用契约：KG 在 query expansion、rerank boost、结构化 fact 三个钩子作为辅助信号，超时或失败降级回纯 RAG，citation 池只接受 RAG chunk。真实 `GraphRagKgRuntimeClient` 已接到 vendored GraphRAG 图谱并在 rag_api 启动时按 flag 安装（默认关闭、需 Neo4j 配置，待 rag_vs_rag_plus_kg 基准达标后灰度）。
+- RAG+KG 生产 shadow/灰度需要补齐真实 query 对照数据、telemetry 审计和一键回滚门禁。

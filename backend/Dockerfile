@@ -47,5 +47,6 @@ COPY benchmarks /app/benchmarks
 COPY docs /app/docs
 COPY dictionary /app/dictionary
 COPY ui /app/ui
+COPY vendor/cusmem /app/vendor/cusmem
 
 EXPOSE 8000

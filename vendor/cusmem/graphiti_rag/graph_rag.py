@@ -40,7 +40,7 @@ class GraphRAG:
             embedding_model=self.cfg.embedding_model,
             base_url=self.cfg.embedding_base_url,
             embedding_dim=self.cfg.embedding_dim,
-            api_key='ollama',
+            api_key=self.cfg.embedding_api_key,
         ))
         self.graphiti = Graphiti(
             uri=self.cfg.neo4j_uri, user=self.cfg.neo4j_user,

@@ -1694,6 +1694,25 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("condition: service_healthy", compose_source)
         self.assertIn("supportportal_local_pgdata:", compose_source)
 
+    def test_local_lightweight_compose_enables_rag_kg_sandbox(self) -> None:
+        compose_source = Path("deployment/docker-compose.single-host.local-lightweight.yml").read_text(encoding="utf-8")
+
+        self.assertIn("local_neo4j:", compose_source)
+        self.assertIn("image: neo4j:5-community", compose_source)
+        self.assertIn("RAG_KG_AUXILIARY_ENABLED: ${RAG_KG_AUXILIARY_ENABLED:-true}", compose_source)
+        self.assertIn("KG_NEO4J_URI: ${KG_NEO4J_URI:-bolt://local_neo4j:7687}", compose_source)
+        self.assertIn("KG_NEO4J_USER: ${KG_NEO4J_USER:-neo4j}", compose_source)
+        self.assertIn("KG_NEO4J_PASSWORD: ${KG_NEO4J_PASSWORD:-supportportal-kg-local}", compose_source)
+        self.assertIn("KG_LLM_API_KEY: ${KG_LLM_API_KEY:-}", compose_source)
+        self.assertIn("KG_LLM_BASE_URL: ${KG_LLM_BASE_URL:-}", compose_source)
+        self.assertIn("KG_LLM_MODEL: ${KG_LLM_MODEL:-}", compose_source)
+        self.assertIn("KG_EMBEDDING_API_KEY: ${KG_EMBEDDING_API_KEY:-}", compose_source)
+        self.assertIn("KG_EMBEDDING_MODEL: ${KG_EMBEDDING_MODEL:-}", compose_source)
+        self.assertIn("KG_EMBEDDING_BASE_URL: ${KG_EMBEDDING_BASE_URL:-}", compose_source)
+        self.assertIn("KG_EMBEDDING_DIM: ${KG_EMBEDDING_DIM:-}", compose_source)
+        self.assertIn("local_neo4j:", compose_source)
+        self.assertIn("condition: service_healthy", compose_source)
+
     def test_local_env_template_keeps_remote_db_default_and_does_not_replace_online_env(self) -> None:
         gitignore_source = Path(".gitignore").read_text(encoding="utf-8")
         local_env_source = Path(".env.local.example").read_text(encoding="utf-8")
@@ -1704,6 +1723,9 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("LOCAL_POSTGRES_USER=supportportal", local_env_source)
         self.assertIn("LOCAL_POSTGRES_HOST_PORT=15432", local_env_source)
         self.assertIn("LOCAL_PGVECTOR_TABLE=docagent_chunks_bge_m3_1024", local_env_source)
+        self.assertIn("KG_NEO4J_URI=bolt://local_neo4j:7687", local_env_source)
+        self.assertIn("KG_EMBEDDING_MODEL=BAAI/bge-m3", local_env_source)
+        self.assertIn("KG_EMBEDDING_DIM=1024", local_env_source)
         self.assertIn("# Use --db local to opt into local Postgres/pgvector.", local_env_source)
         self.assertNotIn("YOUR_AWS_POSTGRES_HOST", local_env_source)
 
