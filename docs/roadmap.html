@@ -1485,21 +1485,21 @@ flowchart TD
       <div>
         <h2>Routing 优化计划</h2>
       </div>
-      <p>承接 Routing rules lane 已识别但未落地的能力升级，按高/中/低优先级排列；每条都对应 backend/services/support_router.py 的具体改造点。</p>
+      <p>承接 Routing rules lane 最新审阅结论，按 P0 安全边界、P1 可观测与灰度门禁、P2 架构清理排列；覆盖 router、billing review 体验、replay set 与 dashboard 指标。</p>
     </section>
 
     <section class="optimization-plan" aria-label="Routing optimization plan">
       <article class="opt-group">
         <header class="opt-head">
           <span class="opt-priority opt-priority-high">高优先级</span>
-          <h3>安全与可观测先行</h3>
-          <p>直接影响 billing automation 边界与产线路由的可调诊性；不落地这两条，后续阈值调整与灰度扩面都缺乏反馈信号。</p>
+          <h3>P0：安全边界先补</h3>
+          <p>先封住会触发错误 automation 或把 billing 风险错送 RAG 的入口；这些问题不依赖大重构，应该在继续扩 automation 前完成。</p>
         </header>
         <ol class="opt-list">
           <li class="opt-item">
             <p class="opt-id">routing-deterministic-policy-gate</p>
             <div class="opt-body">
-              <p class="opt-label">Deterministic billing 决策也走 minimal policy gate：refund / dispute / legal / compensation 关键词 sniff 命中即降级到 billing_review，避免白名单吞掉风险信号（例如「Account suspended, please refund」当前会被 account_suspension 白名单命中，refund 信号被丢失）。</p>
+              <p class="opt-label">Deterministic billing 白名单也走 minimal risk gate：refund / dispute / legal / compensation / overcharge 关键词 sniff 命中即降级到 billing_review，避免「Account suspended, please refund」被 account_suspension 白名单直接送进 billing_automation。</p>
               <div class="opt-meta">
                 <span class="tag">Safety</span>
                 <span class="tag">_heuristic_route_decision</span>
@@ -1507,12 +1507,24 @@ flowchart TD
             </div>
           </li>
           <li class="opt-item">
-            <p class="opt-id">routing-decision-observability</p>
+            <p class="opt-id">routing-fallback-billing-risk-sniff</p>
             <div class="opt-body">
-              <p class="opt-label">在 decide_support_route 出口加 structured log + metrics（route / scope_label / router_source / fallback_reason / model_confidence），并基于已有 support_billing_tickets 字段在 admin 页跑 daily 聚合，让 fallback rate、误判率、置信度分布有可视化看板。当前 schema 字段齐全，但缺监控管道，没法量化路由质量。</p>
+              <p class="opt-label">conservative_agora_technical_fallback 前增加 billing-risk sniff：当 LLM missing_credentials / timeout / low confidence 时，如果最新消息含 invoice wrong、refund、dispute、legal、restore access 等风险信号，进入 billing_review，而不是默认 agora_technical / rag。</p>
               <div class="opt-meta">
-                <span class="tag">Observability</span>
+                <span class="tag">Safety</span>
                 <span class="tag">decide_support_route</span>
+                <span class="tag">conservative_fallback</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-billing-review-customer-experience</p>
+            <div class="opt-body">
+              <p class="opt-label">billing_review 的客户可见回复改成「已收到，将由 billing/support team 人工审核」并创建内部待办/queue；不要继续复用 non_agora refusal copy，避免客户看到「不在支持范围内」这类错误语义。</p>
+              <div class="opt-meta">
+                <span class="tag">Customer Experience</span>
+                <span class="tag">resolve_support_message</span>
+                <span class="tag">billing_review</span>
               </div>
             </div>
           </li>
@@ -1522,10 +1534,32 @@ flowchart TD
       <article class="opt-group">
         <header class="opt-head">
           <span class="opt-priority opt-priority-medium">中优先级</span>
-          <h3>架构与正确性升级</h3>
-          <p>提升路由判别的颗粒度与一致性；为 phase 2/3 automation 灰度扩面铺路。</p>
+          <h3>P1：可观测与灰度门禁</h3>
+          <p>P0 安全洞补齐后，先把 route 质量量化，再调阈值或扩大 automation；没有指标就不进入 1% 切流。</p>
         </header>
         <ol class="opt-list">
+          <li class="opt-item">
+            <p class="opt-id">routing-decision-observability</p>
+            <div class="opt-body">
+              <p class="opt-label">在 decide_support_route 出口加 structured log + metrics（route / scope_label / router_source / fallback_reason / model_confidence），并基于已有 support_billing_tickets 字段在 admin 页跑 daily 聚合，让 fallback rate、纠正率、置信度分布和 not_automated_reason 有可视化看板。</p>
+              <div class="opt-meta">
+                <span class="tag">Observability</span>
+                <span class="tag">decide_support_route</span>
+                <span class="tag">dashboard</span>
+              </div>
+            </div>
+          </li>
+          <li class="opt-item">
+            <p class="opt-id">routing-real-zendesk-replay</p>
+            <div class="opt-body">
+              <p class="opt-label">扩展真实 Zendesk replay set：invoice request、account fraud/deactivate/company verification、technical handoff、非 billing、mixed-risk billing negative set 都要可离线重放，用 replay 指标决定是否继续扩大 automation。</p>
+              <div class="opt-meta">
+                <span class="tag">Evaluation</span>
+                <span class="tag">Replay</span>
+                <span class="tag">Golden Set</span>
+              </div>
+            </div>
+          </li>
           <li class="opt-item">
             <p class="opt-id">routing-per-scope-threshold</p>
             <div class="opt-body">
@@ -1566,6 +1600,16 @@ flowchart TD
               </div>
             </div>
           </li>
+        </ol>
+      </article>
+
+      <article class="opt-group">
+        <header class="opt-head">
+          <span class="opt-priority opt-priority-low">低优先级</span>
+          <h3>P2：结构清理与韧性补强</h3>
+          <p>不阻塞安全收口和灰度判断，但能降低后续新增 intent、prompt 和 fast path 的维护成本。</p>
+        </header>
+        <ol class="opt-list">
           <li class="opt-item">
             <p class="opt-id">routing-pipeline-refactor</p>
             <div class="opt-body">
@@ -1576,16 +1620,6 @@ flowchart TD
               </div>
             </div>
           </li>
-        </ol>
-      </article>
-
-      <article class="opt-group">
-        <header class="opt-head">
-          <span class="opt-priority opt-priority-low">低优先级</span>
-          <h3>结构清理与韧性补强</h3>
-          <p>本身不阻塞 phase 2/3，但在加新 fast path 与 prompt 迭代频率上升时积累价值。</p>
-        </header>
-        <ol class="opt-list">
           <li class="opt-item">
             <p class="opt-id">routing-heuristic-split</p>
             <div class="opt-body">
@@ -2048,10 +2082,11 @@ flowchart TD
         ],
         review: [
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
-          "Deterministic fast path 保留为 high-precision hint：billing whitelist 命中后仍走 `billing_automation`，但 policy gate 仅应用于 LLM-sourced 决策，避免误杀高置信确定性匹配。",
+          "Deterministic fast path 保留为 high-precision hint，但当前 billing whitelist 命中后仍会跳过 policy gate；最新审阅结论是先补 minimal risk gate，避免 refund/dispute/legal/compensation 等风险信号被 account_suspension 或 invoice 白名单吞掉。",
           "`billing_review` route family 隔离了需人工审核的 billing case：deterministic 命中直接走 `billing_automation`；LLM 判断的 account_suspension 和 refund_or_dispute 走 `billing_review`。",
           "会议后新增 route rollout 语义：fully_automated 只给稳定 billing/文档类；ai_draft_human_approve 走人审核；unable_to_resolve_handoff 必须停止 AI 乱猜并转真人/CSD/SME。",
-          "`conservative_agora_technical_fallback` 是保守兜底：宁可进入 RAG，也不在低置信时拒绝客户或触发 automation。",
+          "`conservative_agora_technical_fallback` 对技术问题是安全兜底，但 billing 风险场景不能无条件进 RAG；fallback 前应增加 billing-risk sniff，把 refund/dispute/legal/account access restore 等送 billing_review。",
+          "当前 `billing_review` 客户可见体验还不完整：主链路复用 refusal copy，容易让客户误以为 billing 请求不在支持范围内；下一步应改成人工审核确认语，并进入内部待办/queue。",
           "TK-ACC-68BAC7 已修复：扩展后的 deterministic 白名单可命中 `Account temporarily suspended` 和 `account has been suspended due to insufficient balance`，不再误判为 web_search。",
           "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `agora_non_technical`；需要在 golden set 中持续补充边界 case。",
           "TK-ACC-C31612 修复验证：长正文末尾 thank you 不再触发 small_talk，LLM semantic-first 可正确识别 billing intent；短纯感谢仍保持 controlled_response。",
@@ -2069,9 +2104,12 @@ flowchart TD
           { id: "routing-threshold-audit", status: "done", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。router_source=conservative_fallback 区分 below_confidence_threshold / missing_credentials / llm_invocation_failed / invalid_json / invalid_payload / route_fail_open。", horizon: "Metrics" },
           { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 Roadmap tab。", horizon: "Docs" },
           { id: "routing-real-zendesk-replay", status: "todo", label: "扩展 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、technical handoff 与 billing risky negative set。", horizon: "Tests" },
+          { id: "routing-deterministic-policy-gate", status: "todo", label: "P0：Deterministic billing 白名单也走 minimal risk gate；refund/dispute/legal/compensation/overcharge 等信号命中时降级到 billing_review，避免白名单吞掉风险。", horizon: "Safety" },
+          { id: "routing-fallback-billing-risk-sniff", status: "todo", label: "P0：conservative fallback 前增加 billing-risk sniff；LLM 缺凭证、超时或低置信时，invoice wrong/refund/dispute/legal/restore access 不应默认进入 agora_technical/RAG。", horizon: "Safety" },
+          { id: "routing-billing-review-customer-experience", status: "todo", label: "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。", horizon: "Customer Experience" },
           { id: "routing-rollout-taxonomy", status: "todo", label: "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。", horizon: "Contract" },
           { id: "routing-billing-risky-negatives", status: "todo", label: "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。", horizon: "Safety" },
-          { id: "routing-dashboard-metrics", status: "todo", label: "把 route_accuracy、automation_coverage、not_automated_reason、response_latency 接到 dashboard，支持 shadow mode 与 1% 切流判断。", horizon: "Metrics" },
+          { id: "routing-dashboard-metrics", status: "todo", label: "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 shadow mode 与 1% 切流判断。", horizon: "Metrics" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
           { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
           { id: "routing-account-verification-intake", status: "done", label: "新增 billing.account_verification intent + account_verification route：覆盖 suspicious activity / fraud / company verification / reactivation。", horizon: "Billing" },
