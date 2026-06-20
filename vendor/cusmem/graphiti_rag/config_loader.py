@@ -18,6 +18,8 @@ def load_config(path: str | None = None) -> Config:
     Env var mapping:
         GRAPHRAG_NEO4J_URI, GRAPHRAG_NEO4J_USER, GRAPHRAG_NEO4J_PASSWORD
         GRAPHRAG_LLM_API_KEY, GRAPHRAG_LLM_BASE_URL, GRAPHRAG_LLM_MODEL
+        GRAPHRAG_EMBEDDING_API_KEY, GRAPHRAG_EMBEDDING_MODEL
+        GRAPHRAG_EMBEDDING_BASE_URL, GRAPHRAG_EMBEDDING_DIM
         GRAPHRAG_CHUNK_SIZE, GRAPHRAG_CHUNK_OVERLAP
         GRAPHRAG_NUM_CHAINS, GRAPHRAG_NUM_THREADS, GRAPHRAG_MAX_CONCURRENCY
     """
@@ -72,6 +74,10 @@ def load_config(path: str | None = None) -> Config:
         'llm_api_key': 'GRAPHRAG_LLM_API_KEY',
         'llm_base_url': 'GRAPHRAG_LLM_BASE_URL',
         'llm_model': 'GRAPHRAG_LLM_MODEL',
+        'embedding_api_key': 'GRAPHRAG_EMBEDDING_API_KEY',
+        'embedding_model': 'GRAPHRAG_EMBEDDING_MODEL',
+        'embedding_base_url': 'GRAPHRAG_EMBEDDING_BASE_URL',
+        'embedding_dim': 'GRAPHRAG_EMBEDDING_DIM',
         'chunk_size': 'GRAPHRAG_CHUNK_SIZE',
         'chunk_overlap': 'GRAPHRAG_CHUNK_OVERLAP',
         'num_chains': 'GRAPHRAG_NUM_CHAINS',

@@ -70,6 +70,18 @@ class AppBuildTests(unittest.TestCase):
         self.assertIn("APP_BUILD_REF=${APP_BUILD_REF}", content)
         self.assertIn("APP_BUILD_TIME=${APP_BUILD_TIME}", content)
 
+    def test_dockerfile_includes_vendored_graphrag_runtime(self) -> None:
+        dockerfile = Path(__file__).resolve().parents[2] / "backend" / "Dockerfile"
+        content = dockerfile.read_text(encoding="utf-8")
+
+        self.assertIn("COPY vendor/cusmem /app/vendor/cusmem", content)
+
+    def test_base_requirements_include_vendored_graphrag_runtime_dependencies(self) -> None:
+        requirements = (Path(__file__).resolve().parents[2] / "requirements.base.txt").read_text(encoding="utf-8")
+
+        for package in ["neo4j", "numpy", "openai", "tenacity", "posthog"]:
+            self.assertRegex(requirements, rf"(?m)^{package}[<>=~!]")
+
 
 if __name__ == "__main__":
     unittest.main()

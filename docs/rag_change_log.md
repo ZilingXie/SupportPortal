@@ -11,6 +11,47 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-20 - Enable local lightweight RAG+KG online tryout path
+
+- Summary:
+  - Enabled the local lightweight online RAG+KG tryout path while leaving the production/default flag gated.
+  - The lightweight compose overlay now starts a local Neo4j 5 sandbox, wires `rag_api` and `rag_worker` with `RAG_KG_AUXILIARY_ENABLED=true` and local `KG_NEO4J_*` defaults, and exposes the KG LLM/embedding env knobs for local override.
+  - The runtime image now copies `vendor/cusmem` and installs the vendored GraphRAG runtime dependencies needed by `GraphRagKgRuntimeClient`.
+  - Added `scripts/export_kg_official_doc_chunks.py` to export official-doc chunks from pgvector into the JSONL contract consumed by `scripts/kg_ingest_official_doc_chunks.py`.
+  - Added `KG_EMBEDDING_API_KEY` support end to end: runtime config prefers KG-specific envs, falls back to existing DeepSeek/SiliconFlow envs, and vendored GraphRAG now passes the configured embedding API key instead of hardcoding `ollama`.
+- Reason:
+  - The previous runtime client was connected but the local path still degraded to pure RAG unless a caller manually provided Neo4j, vendored runtime deps, and KG model credentials.
+  - The user wants to try RAG+KG online behavior directly before a formal benchmark data set exists.
+- Affected files/config:
+  - `.env.example`
+  - `.env.local.example`
+  - `backend/Dockerfile`
+  - `backend/services/kg_graphrag_runtime.py`
+  - `deployment/docker-compose.single-host.local-lightweight.yml`
+  - `requirements.base.txt`
+  - `scripts/export_kg_official_doc_chunks.py` (new)
+  - `vendor/cusmem/graphiti_rag/config.py`
+  - `vendor/cusmem/graphiti_rag/config_loader.py`
+  - `vendor/cusmem/graphiti_rag/graph_rag.py`
+  - `backend/tests/test_app_build.py`
+  - `backend/tests/test_export_kg_official_doc_chunks_cli.py` (new)
+  - `backend/tests/test_kg_graphrag_runtime.py`
+  - `backend/tests/test_vendor_graphrag_config.py` (new)
+  - `backend/tests/test_workflow_scripts.py`
+- Data impact:
+  - Adds local Neo4j container volumes (`supportportal_local_neo4j_data`, `supportportal_local_neo4j_logs`) when the lightweight stack is started.
+  - No pgvector/BM25/FTS schema change, no chunking change, and no RAG backfill/reset.
+  - Official-doc KG graph writes occur only when the operator exports chunks and runs the existing KG ingest CLI against Neo4j.
+  - Production/default `.env` keeps `RAG_KG_AUXILIARY_ENABLED=false`; local lightweight defaults it to true for tryout only, with KG failures still degrading to pure RAG.
+- Verification:
+  - `rtk python -m pytest backend/tests/test_vendor_graphrag_config.py backend/tests/test_kg_graphrag_runtime.py::TestFactoryGating::test_graphrag_config_from_env_falls_back_to_existing_model_envs backend/tests/test_kg_graphrag_runtime.py::TestFactoryGating::test_kg_specific_env_overrides_shared_model_envs backend/tests/test_workflow_scripts.py::WorkflowScriptTests::test_local_lightweight_compose_enables_rag_kg_sandbox backend/tests/test_workflow_scripts.py::WorkflowScriptTests::test_local_env_template_keeps_remote_db_default_and_does_not_replace_online_env -q`
+  - `rtk python -m pytest backend/tests/test_export_kg_official_doc_chunks_cli.py backend/tests/test_vendor_graphrag_config.py backend/tests/test_app_build.py::AppBuildTests::test_base_requirements_include_vendored_graphrag_runtime_dependencies backend/tests/test_app_build.py::AppBuildTests::test_dockerfile_includes_vendored_graphrag_runtime backend/tests/test_kg_graphrag_runtime.py::TestFactoryGating::test_graphrag_config_from_env_falls_back_to_existing_model_envs backend/tests/test_kg_graphrag_runtime.py::TestFactoryGating::test_kg_specific_env_overrides_shared_model_envs backend/tests/test_workflow_scripts.py::WorkflowScriptTests::test_local_lightweight_compose_enables_rag_kg_sandbox backend/tests/test_workflow_scripts.py::WorkflowScriptTests::test_local_env_template_keeps_remote_db_default_and_does_not_replace_online_env -q`
+  - `rtk python -m py_compile scripts/export_kg_official_doc_chunks.py scripts/kg_ingest_official_doc_chunks.py backend/services/kg_graphrag_runtime.py vendor/cusmem/graphiti_rag/config.py vendor/cusmem/graphiti_rag/config_loader.py vendor/cusmem/graphiti_rag/graph_rag.py`
+  - `rtk python3 scripts/verify_feature_list.py`
+  - `set -a; source /Users/xieziling/Desktop/personal_proj/SupportPortal/.env; set +a; rtk podman-compose -f deployment/docker-compose.single-host.yml -f deployment/docker-compose.single-host.local-lightweight.yml config >/tmp/supportportal-local-kg-compose.yml && rtk rg -n "local_neo4j|RAG_KG_AUXILIARY_ENABLED|KG_NEO4J_URI|KG_EMBEDDING|KG_LLM|supportportal_local_neo4j" /tmp/supportportal-local-kg-compose.yml`
+  - `set -a; source /Users/xieziling/Desktop/personal_proj/SupportPortal/.env; set +a; rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/export_kg_official_doc_chunks.py --output /tmp/supportportal-kg-official-sample.jsonl --limit 3`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/kg_ingest_official_doc_chunks.py --input /tmp/supportportal-kg-official-sample.jsonl --dry-run --no-progress --report-output /tmp/supportportal-kg-official-sample-report.json`
+
 ## 2026-06-20 - Add GraphRAG offline ingest reporting and RAG vs RAG+KG benchmark gates
 
 - Summary:

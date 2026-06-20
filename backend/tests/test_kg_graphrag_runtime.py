@@ -26,6 +26,7 @@ from backend.services.kg_graphrag_runtime import (
     GraphFactRecord,
     GraphitiSearchBackend,
     GraphRagKgRuntimeClient,
+    _graphrag_config_from_env,
     _provenance_from_episode,
     build_graphrag_kg_runtime_client,
     maybe_install_default_kg_client,
@@ -336,6 +337,24 @@ _NEO4J_ENV_KEYS = (
     "NEO4J_PASSWORD",
 )
 
+_KG_MODEL_ENV_KEYS = (
+    "KG_LLM_API_KEY",
+    "KG_LLM_BASE_URL",
+    "KG_LLM_MODEL",
+    "KG_EMBEDDING_API_KEY",
+    "KG_EMBEDDING_MODEL",
+    "KG_EMBEDDING_BASE_URL",
+    "KG_EMBEDDING_DIM",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_FALLBACK_MODEL",
+    "SILICONFLOW_API_KEY",
+    "SILLICONFLOW_KEY",
+    "SILICONFLOW_BASE_URL",
+    "EMBEDDING_MODEL_ID",
+    "SILICONFLOW_EMBEDDING_DIMENSIONS",
+)
+
 
 class TestFactoryGating(unittest.TestCase):
     def tearDown(self) -> None:
@@ -360,6 +379,62 @@ class TestFactoryGating(unittest.TestCase):
                 os.environ.pop(key, None)
             self.assertFalse(maybe_install_default_kg_client())
             self.assertIsInstance(get_default_kg_client(), KgRuntimeDisabled)
+
+    def test_graphrag_config_from_env_falls_back_to_existing_model_envs(self) -> None:
+        env = {
+            "KG_NEO4J_URI": "bolt://local_neo4j:7687",
+            "KG_NEO4J_USER": "neo4j",
+            "KG_NEO4J_PASSWORD": "supportportal-kg-local",
+            "DEEPSEEK_API_KEY": "deepseek-secret",
+            "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+            "DEEPSEEK_FALLBACK_MODEL": "deepseek-chat",
+            "SILICONFLOW_API_KEY": "siliconflow-secret",
+            "SILICONFLOW_BASE_URL": "https://api.siliconflow.cn/v1",
+            "EMBEDDING_MODEL_ID": "BAAI/bge-m3",
+            "SILICONFLOW_EMBEDDING_DIMENSIONS": "1024",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            for key in _KG_MODEL_ENV_KEYS:
+                if key not in env:
+                    os.environ.pop(key, None)
+
+            config = _graphrag_config_from_env()
+
+        self.assertIsNotNone(config)
+        self.assertEqual(config.llm_api_key, "deepseek-secret")
+        self.assertEqual(config.llm_base_url, "https://api.deepseek.com/v1")
+        self.assertEqual(config.llm_model, "deepseek-chat")
+        self.assertEqual(config.embedding_api_key, "siliconflow-secret")
+        self.assertEqual(config.embedding_model, "BAAI/bge-m3")
+        self.assertEqual(config.embedding_base_url, "https://api.siliconflow.cn/v1")
+        self.assertEqual(config.embedding_dim, 1024)
+
+    def test_kg_specific_env_overrides_shared_model_envs(self) -> None:
+        env = {
+            "KG_NEO4J_URI": "bolt://local_neo4j:7687",
+            "KG_NEO4J_USER": "neo4j",
+            "KG_NEO4J_PASSWORD": "supportportal-kg-local",
+            "KG_LLM_API_KEY": "kg-llm-secret",
+            "KG_LLM_BASE_URL": "https://kg-llm.example/v1",
+            "KG_LLM_MODEL": "kg-chat",
+            "KG_EMBEDDING_API_KEY": "kg-embedding-secret",
+            "KG_EMBEDDING_MODEL": "kg-embedding",
+            "KG_EMBEDDING_BASE_URL": "https://kg-embedding.example/v1",
+            "KG_EMBEDDING_DIM": "768",
+            "DEEPSEEK_API_KEY": "deepseek-secret",
+            "SILICONFLOW_API_KEY": "siliconflow-secret",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            config = _graphrag_config_from_env()
+
+        self.assertIsNotNone(config)
+        self.assertEqual(config.llm_api_key, "kg-llm-secret")
+        self.assertEqual(config.llm_base_url, "https://kg-llm.example/v1")
+        self.assertEqual(config.llm_model, "kg-chat")
+        self.assertEqual(config.embedding_api_key, "kg-embedding-secret")
+        self.assertEqual(config.embedding_model, "kg-embedding")
+        self.assertEqual(config.embedding_base_url, "https://kg-embedding.example/v1")
+        self.assertEqual(config.embedding_dim, 768)
 
 
 class TestEndToEndThroughHooks(unittest.TestCase):

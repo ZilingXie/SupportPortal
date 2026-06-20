@@ -72,6 +72,7 @@ KG_SEARCH_NUM_RESULTS_ENV = "KG_SEARCH_NUM_RESULTS"
 KG_LLM_API_KEY_ENV = "KG_LLM_API_KEY"
 KG_LLM_BASE_URL_ENV = "KG_LLM_BASE_URL"
 KG_LLM_MODEL_ENV = "KG_LLM_MODEL"
+KG_EMBEDDING_API_KEY_ENV = "KG_EMBEDDING_API_KEY"
 KG_EMBEDDING_MODEL_ENV = "KG_EMBEDDING_MODEL"
 KG_EMBEDDING_BASE_URL_ENV = "KG_EMBEDDING_BASE_URL"
 KG_EMBEDDING_DIM_ENV = "KG_EMBEDDING_DIM"
@@ -389,21 +390,47 @@ def _graphrag_config_from_env() -> Any | None:
     _ensure_vendor_cusmem_path()
     from graphiti_rag.config import Config
 
+    def _first_env(*names: str) -> str | None:
+        for name in names:
+            value = os.getenv(name)
+            if value:
+                return value
+        return None
+
+    def _llm_base_url_from_env() -> str | None:
+        explicit = os.getenv(KG_LLM_BASE_URL_ENV) or os.getenv("OPENAI_BASE_URL")
+        if explicit:
+            return explicit
+        deepseek_base = (os.getenv("DEEPSEEK_BASE_URL") or "").rstrip("/")
+        if deepseek_base:
+            return deepseek_base if deepseek_base.endswith("/v1") else f"{deepseek_base}/v1"
+        return None
+
     overrides: dict[str, Any] = {
         "neo4j_uri": uri,
         "neo4j_user": user,
         "neo4j_password": password,
     }
     optional = {
-        "llm_api_key": os.getenv(KG_LLM_API_KEY_ENV),
-        "llm_base_url": os.getenv(KG_LLM_BASE_URL_ENV),
-        "llm_model": os.getenv(KG_LLM_MODEL_ENV),
-        "embedding_model": os.getenv(KG_EMBEDDING_MODEL_ENV),
-        "embedding_base_url": os.getenv(KG_EMBEDDING_BASE_URL_ENV),
+        "llm_api_key": _first_env(KG_LLM_API_KEY_ENV, "DEEPSEEK_API_KEY", "OPENAI_API_KEY"),
+        "llm_base_url": _llm_base_url_from_env(),
+        "llm_model": _first_env(KG_LLM_MODEL_ENV, "DEEPSEEK_FALLBACK_MODEL", "OPENAI_CHAT_MODEL"),
+        "embedding_api_key": _first_env(
+            KG_EMBEDDING_API_KEY_ENV,
+            "SILICONFLOW_API_KEY",
+            "SILLICONFLOW_KEY",
+            "OPENAI_API_KEY",
+        ),
+        "embedding_model": _first_env(KG_EMBEDDING_MODEL_ENV, "EMBEDDING_MODEL_ID"),
+        "embedding_base_url": _first_env(KG_EMBEDDING_BASE_URL_ENV, "SILICONFLOW_BASE_URL"),
     }
     overrides.update({key: value for key, value in optional.items() if value})
 
-    dim_raw = (os.getenv(KG_EMBEDDING_DIM_ENV) or "").strip()
+    dim_raw = (
+        os.getenv(KG_EMBEDDING_DIM_ENV)
+        or os.getenv("SILICONFLOW_EMBEDDING_DIMENSIONS")
+        or ""
+    ).strip()
     if dim_raw:
         try:
             overrides["embedding_dim"] = int(dim_raw)

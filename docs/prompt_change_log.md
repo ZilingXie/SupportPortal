@@ -12,6 +12,29 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-20 - Enable local GraphRAG KG model-provider config
+
+- Area or subsystem: Client AI RAG retrieval — KG auxiliary GraphRAG provider config
+- Prompt or model version: `kg-graphrag-local-provider-config-v1`
+- Summary: Added end-to-end KG LLM/embedding provider configuration for the local GraphRAG runtime. `KG_LLM_*` and `KG_EMBEDDING_*` envs now override the runtime explicitly; when unset, the runtime falls back to the existing DeepSeek chat and SiliconFlow embedding envs. Vendored GraphRAG now accepts `embedding_api_key` and passes it to `OpenAIEmbedderConfig` instead of hardcoding `ollama`.
+- Reason: The local online RAG+KG path needs to use the same configured OpenAI-compatible providers as the rest of SupportPortal, otherwise enabling the KG flag can silently construct a graph runtime with an unusable embedding credential.
+- Affected files or config:
+  - `.env.example`
+  - `.env.local.example`
+  - `backend/services/kg_graphrag_runtime.py`
+  - `deployment/docker-compose.single-host.local-lightweight.yml`
+  - `vendor/cusmem/graphiti_rag/config.py`
+  - `vendor/cusmem/graphiti_rag/config_loader.py`
+  - `vendor/cusmem/graphiti_rag/graph_rag.py`
+  - Env: `KG_LLM_API_KEY` / `KG_LLM_BASE_URL` / `KG_LLM_MODEL`, `KG_EMBEDDING_API_KEY` / `KG_EMBEDDING_MODEL` / `KG_EMBEDDING_BASE_URL` / `KG_EMBEDDING_DIM`.
+- Expected behavior change:
+  - Local lightweight RAG+KG can construct the vendored GraphRAG runtime using configured LLM and embedding providers when `RAG_KG_AUXILIARY_ENABLED=true`.
+  - KG-specific envs take precedence; existing DeepSeek/SiliconFlow envs are reused when KG-specific envs are blank.
+  - Production/default `.env` remains gated with `RAG_KG_AUXILIARY_ENABLED=false`.
+- Verification:
+  - `rtk python -m pytest backend/tests/test_vendor_graphrag_config.py backend/tests/test_kg_graphrag_runtime.py::TestFactoryGating::test_graphrag_config_from_env_falls_back_to_existing_model_envs backend/tests/test_kg_graphrag_runtime.py::TestFactoryGating::test_kg_specific_env_overrides_shared_model_envs -q`
+  - `rtk python -m py_compile backend/services/kg_graphrag_runtime.py vendor/cusmem/graphiti_rag/config.py vendor/cusmem/graphiti_rag/config_loader.py vendor/cusmem/graphiti_rag/graph_rag.py`
+
 ## 2026-06-19 - Wire live GraphRAG KG runtime client (tooling-mode/provider)
 
 - Area or subsystem: Client AI RAG retrieval — KG auxiliary runtime backend
