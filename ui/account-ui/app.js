@@ -42,10 +42,10 @@ const state = {
   replyError: "",
   correctionScope: "",
   correctionAction: "",
-  correctionNote: "",
   isSubmittingCorrection: false,
   correctionError: "",
   routeErrorSummary: null,
+  routeCorrectionExpanded: false,
 };
 
 let composerRuntime = null;
@@ -223,9 +223,9 @@ function resetCorrectionState(item = null) {
   );
   state.correctionScope = selected ? selected.scope : "";
   state.correctionAction = selected ? selected.action : "";
-  state.correctionNote = "";
   state.isSubmittingCorrection = false;
   state.correctionError = "";
+  state.routeCorrectionExpanded = false;
 }
 
 async function openTicket(ticketId) {
@@ -518,8 +518,12 @@ function renderRouteCorrectionPanel() {
   const currentCorrection = item.route_correction || {};
   const selectedValue = routeTupleSelectValue();
   const hasCorrection = Boolean(item.route_corrected || currentCorrection.corrected_execution_action);
+  const originalAction =
+    currentCorrection.original_execution_action || item.execution_action || item.route || "";
+  const correctedAction = currentCorrection.corrected_execution_action || "";
+  const showChangeRecord = Boolean(originalAction && correctedAction && originalAction !== correctedAction);
   return `
-    <div class="route-correction detail-section">
+    <div class="route-correction detail-section" ${state.routeCorrectionExpanded ? "" : "hidden"}>
       <div class="detail-section-title">Route correction</div>
       ${
         hasCorrection
@@ -537,6 +541,11 @@ function renderRouteCorrectionPanel() {
             </div>`
           : ""
       }
+      ${
+        showChangeRecord
+          ? `<div class="route-change-record">route changed from ${escapeHtml(originalAction)} to ${escapeHtml(correctedAction)}</div>`
+          : ""
+      }
       <label class="field">
         <span class="field-label">Correct route tuple</span>
         <select class="input" data-correction-select ${state.isSubmittingCorrection ? "disabled" : ""}>
@@ -546,10 +555,6 @@ function renderRouteCorrectionPanel() {
             return `<option value="${escapeHtml(value)}" ${selectedValue === value ? "selected" : ""}>${escapeHtml(option.label)}</option>`;
           }).join("")}
         </select>
-      </label>
-      <label class="field">
-        <span class="field-label">Note</span>
-        <textarea class="textarea route-correction-note" data-correction-note ${state.isSubmittingCorrection ? "disabled" : ""}>${escapeHtml(state.correctionNote)}</textarea>
       </label>
       <div class="reply-actions">
         <button
@@ -650,9 +655,17 @@ function renderDetailView() {
           <span class="meta-label">Status</span>
           <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         </div>
-        <div class="meta-row">
+        <div class="meta-row meta-row--inline">
           <span class="meta-label">Route result</span>
           <span class="meta-value">${escapeHtml(routeResultLabel(item))}</span>
+          <button
+            class="filter-chip correct-route-toggle"
+            type="button"
+            data-action="toggle-route-correction"
+            aria-expanded="${state.routeCorrectionExpanded ? "true" : "false"}"
+          >
+            correct route
+          </button>
         </div>
         <div class="meta-row">
           <span class="meta-label">Email</span>
@@ -690,11 +703,6 @@ function renderDetailView() {
           : ""
       }
       ${
-        item.question
-          ? `<div class="detail-section"><div class="detail-section-title">Customer question</div><p class="result-copy">${escapeHtml(item.question)}</p></div>`
-          : ""
-      }
-      ${
         item.customer_reply
           ? `<div class="detail-section success"><div class="detail-section-title">Customer reply</div><p class="result-copy">${renderMarkdownMessage(item.customer_reply)}</p></div>`
           : ""
@@ -726,7 +734,6 @@ async function submitRouteCorrection() {
       body: JSON.stringify({
         scope_label: state.correctionScope,
         execution_action: state.correctionAction,
-        note: state.correctionNote,
         corrector: "operator",
       }),
     });
@@ -899,6 +906,12 @@ function bind() {
   document.querySelectorAll("[data-action='submit-route-correction']").forEach((el) => {
     el.addEventListener("click", submitRouteCorrection);
   });
+  document.querySelectorAll("[data-action='toggle-route-correction']").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.routeCorrectionExpanded = !state.routeCorrectionExpanded;
+      render();
+    });
+  });
   const replyInput = document.querySelector("[data-reply-input]");
   if (replyInput) {
     replyInput.addEventListener("input", (event) => {
@@ -912,12 +925,6 @@ function bind() {
       const selected = ROUTE_TUPLE_OPTIONS.find((option) => option.scope === scope && option.action === action);
       state.correctionScope = selected ? selected.scope : "";
       state.correctionAction = selected ? selected.action : "";
-    });
-  }
-  const correctionNote = document.querySelector("[data-correction-note]");
-  if (correctionNote) {
-    correctionNote.addEventListener("input", (event) => {
-      state.correctionNote = event.target.value;
     });
   }
   applySharedComposerToolbarStateToButtons(document, state.composerToolbarState);

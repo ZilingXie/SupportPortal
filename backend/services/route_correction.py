@@ -91,7 +91,6 @@ def validate_route_correction(
     *,
     scope_label: str,
     execution_action: str,
-    note: str | None = None,
 ) -> dict[str, Any]:
     normalized_scope = _normalize(scope_label)
     normalized_action = _normalize(execution_action)
@@ -107,7 +106,6 @@ def validate_route_correction(
         "execution_action": match["execution_action"],
         "route_family": match["route_family"],
         "tooling_profile": match["tooling_profile"],
-        "note": " ".join(str(note or "").split()).strip(),
     }
 
 

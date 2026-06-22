@@ -2654,7 +2654,6 @@ class PostgresTicketRepository:
                             first_corrected_execution_action TEXT NOT NULL,
                             first_corrected_tooling_profile TEXT NOT NULL,
                             corrector TEXT,
-                            note TEXT,
                             correction_count INTEGER NOT NULL DEFAULT 1,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -2668,6 +2667,11 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (updated_at DESC)").format(
                         sql.Identifier("idx_support_billing_route_corrections_updated"),
+                        self._table("support_billing_route_corrections"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} DROP COLUMN IF EXISTS note").format(
                         self._table("support_billing_route_corrections"),
                     )
                 )
@@ -5086,9 +5090,9 @@ class PostgresTicketRepository:
                                 corrected_execution_action, corrected_tooling_profile,
                                 first_corrected_scope_label, first_corrected_route_family,
                                 first_corrected_execution_action, first_corrected_tooling_profile,
-                                corrector, note, correction_count, created_at, updated_at
+                                corrector, correction_count, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 original_scope_label = corrections.original_scope_label,
@@ -5106,7 +5110,6 @@ class PostgresTicketRepository:
                                 first_corrected_execution_action = corrections.first_corrected_execution_action,
                                 first_corrected_tooling_profile = corrections.first_corrected_tooling_profile,
                                 corrector = EXCLUDED.corrector,
-                                note = EXCLUDED.note,
                                 correction_count = corrections.correction_count + 1,
                                 created_at = corrections.created_at,
                                 updated_at = EXCLUDED.updated_at
@@ -5132,7 +5135,6 @@ class PostgresTicketRepository:
                             str(correction.get("first_corrected_execution_action") or "").strip(),
                             str(correction.get("first_corrected_tooling_profile") or "").strip(),
                             str(correction.get("corrector") or "").strip() or None,
-                            str(correction.get("note") or "").strip() or None,
                             int(correction.get("correction_count") or 1),
                             created_at,
                             updated_at,
@@ -5270,9 +5272,9 @@ class PostgresTicketRepository:
                                 corrected_execution_action, corrected_tooling_profile,
                                 first_corrected_scope_label, first_corrected_route_family,
                                 first_corrected_execution_action, first_corrected_tooling_profile,
-                                corrector, note, correction_count, created_at, updated_at
+                                corrector, correction_count, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 original_scope_label = corrections.original_scope_label,
@@ -5290,7 +5292,6 @@ class PostgresTicketRepository:
                                 first_corrected_execution_action = corrections.first_corrected_execution_action,
                                 first_corrected_tooling_profile = corrections.first_corrected_tooling_profile,
                                 corrector = EXCLUDED.corrector,
-                                note = EXCLUDED.note,
                                 correction_count = EXCLUDED.correction_count,
                                 created_at = corrections.created_at,
                                 updated_at = EXCLUDED.updated_at
@@ -5317,7 +5318,6 @@ class PostgresTicketRepository:
                             str(correction.get("first_corrected_execution_action") or "").strip(),
                             str(correction.get("first_corrected_tooling_profile") or "").strip(),
                             str(correction.get("corrector") or "").strip() or None,
-                            str(correction.get("note") or "").strip() or None,
                             persisted_count,
                             created_at,
                             updated_at,
