@@ -862,6 +862,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertIn("route", item)
             self.assertIn("automation_status", item)
             self.assertIn("created_at", item)
+            self.assertIn("route_review_status", item)
+            self.assertEqual(item["route_review_status"], "pending")
 
     def test_delete_all_billing_tickets_clears_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -1212,6 +1214,85 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(summary["corrected_count"], 2)
         transitions = {item["transition"]: item["count"] for item in summary["transitions"]}
         self.assertEqual(transitions["detailed_invoice -> human_review_required"], 2)
+
+    def test_route_review_marks_ticket_and_filters_list(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            for i in range(3):
+                response = self.client.post(
+                    "/account",
+                    json={"title": f"Review ticket {i}", "question": f"Question {i}"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+        billing_ticket_id = None
+        list_response = self.client.get("/api/account/billing-tickets?limit=30")
+        for item in list_response.json()["tickets"]:
+            self.assertEqual(item["route_review_status"], "pending")
+            if billing_ticket_id is None:
+                billing_ticket_id = item["billing_ticket_id"]
+
+        with patch.object(main, "dispatch_event", AsyncMock()) as review_dispatch:
+            review_response = self.client.post(
+                f"/api/account/billing-tickets/{billing_ticket_id}/route-review",
+                json={"review_status": "reviewed", "reviewer": "operator"},
+            )
+        self.assertEqual(review_response.status_code, 200, review_response.text)
+        reviewed_payload = review_response.json()
+        self.assertEqual(reviewed_payload["route_review_status"], "reviewed")
+
+        events = self.repository.list_ticket_events(reviewed_payload["ticket_id"])
+        review_events = [item for item in events if item["event_type"] == "route_reviewed"]
+        self.assertEqual(len(review_events), 1)
+        self.assertEqual(review_events[0]["payload"]["review_status"], "reviewed")
+        dispatched_events = [call.args[1]["event"] for call in review_dispatch.await_args_list]
+        self.assertIn("route_reviewed", dispatched_events)
+
+        unreviewed_response = self.client.get(
+            "/api/account/billing-tickets?limit=30&review_status=pending"
+        )
+        self.assertEqual(unreviewed_response.status_code, 200)
+        unreviewed_items = unreviewed_response.json()["tickets"]
+        self.assertEqual(len(unreviewed_items), 2)
+        for item in unreviewed_items:
+            self.assertEqual(item["route_review_status"], "pending")
+
+        reviewed_response = self.client.get(
+            "/api/account/billing-tickets?limit=30&review_status=reviewed"
+        )
+        self.assertEqual(reviewed_response.status_code, 200)
+        reviewed_items = reviewed_response.json()["tickets"]
+        self.assertEqual(len(reviewed_items), 1)
+        self.assertEqual(reviewed_items[0]["billing_ticket_id"], billing_ticket_id)
+        self.assertEqual(reviewed_items[0]["route_review_status"], "reviewed")
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            unreview_revert = self.client.post(
+                f"/api/account/billing-tickets/{billing_ticket_id}/route-review",
+                json={"review_status": "pending", "reviewer": "operator"},
+            )
+        self.assertEqual(unreview_revert.status_code, 200)
+        self.assertEqual(unreview_revert.json()["route_review_status"], "pending")
+
+    def test_route_review_rejects_invalid_status(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={"title": "Bad review", "question": "Question"},
+            )
+        self.assertEqual(create_response.status_code, 200)
+        billing_ticket_id = create_response.json()["billing_ticket_id"]
+
+        response = self.client.post(
+            f"/api/account/billing-tickets/{billing_ticket_id}/route-review",
+            json={"review_status": "invalid_status"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_route_review_missing_ticket_returns_404(self) -> None:
+        response = self.client.post(
+            "/api/account/billing-tickets/BT-MISSING/route-review",
+            json={"review_status": "reviewed"},
+        )
+        self.assertEqual(response.status_code, 404)
 
     def test_billing_ticket_view_model_normalizes_legacy_api_source(self) -> None:
         self.repository.save_billing_ticket(

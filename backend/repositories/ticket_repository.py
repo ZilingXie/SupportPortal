@@ -809,7 +809,9 @@ class TicketRepository(Protocol):
     def get_billing_ticket_by_client_ticket_id(self, client_ticket_id: str) -> dict[str, Any] | None:
         ...
 
-    def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
+    def list_billing_tickets(
+        self, limit: int = 30, review_status: str | None = None
+    ) -> list[dict[str, Any]]:
         ...
 
     def delete_all_billing_tickets(self) -> int:
@@ -844,6 +846,14 @@ class TicketRepository(Protocol):
         billing_ticket_id: str,
         active_route: dict[str, Any],
         correction: dict[str, Any],
+    ) -> dict[str, Any]:
+        ...
+
+    def mark_billing_route_reviewed(
+        self,
+        *,
+        billing_ticket_id: str,
+        review_status: str,
     ) -> dict[str, Any]:
         ...
 
@@ -1500,13 +1510,21 @@ class InMemoryTicketRepository:
                 return copy.deepcopy(ticket)
         return None
 
-    def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
+    def list_billing_tickets(
+        self, limit: int = 30, review_status: str | None = None
+    ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
         items = sorted(
             self._billing_tickets.values(),
             key=lambda item: str(item.get("created_at") or ""),
             reverse=True,
         )
+        if review_status:
+            items = [
+                item
+                for item in items
+                if str(item.get("route_review_status") or "pending") == review_status
+            ]
         return [copy.deepcopy(item) for item in items[:safe_limit]]
 
     def delete_all_billing_tickets(self) -> int:
@@ -1637,6 +1655,22 @@ class InMemoryTicketRepository:
         self._billing_tickets[normalized_id] = updated_ticket
         self._billing_route_corrections[normalized_id] = saved
         return copy.deepcopy(saved)
+
+    def mark_billing_route_reviewed(
+        self,
+        *,
+        billing_ticket_id: str,
+        review_status: str,
+    ) -> dict[str, Any]:
+        normalized_id = str(billing_ticket_id or "").strip()
+        if not normalized_id:
+            raise ValueError("billing_ticket_id is required")
+        ticket = self._billing_tickets.get(normalized_id)
+        if ticket is None:
+            raise KeyError(normalized_id)
+        ticket["route_review_status"] = str(review_status or "pending").strip() or "pending"
+        ticket["updated_at"] = _utc_now()
+        return copy.deepcopy(ticket)
 
 
 def _find_trace_customer_message_index(
@@ -2587,6 +2621,7 @@ class PostgresTicketRepository:
                             risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
                             evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb,
                             router_source TEXT,
+                            route_review_status TEXT NOT NULL DEFAULT 'pending',
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
@@ -2648,6 +2683,13 @@ class PostgresTicketRepository:
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS router_source TEXT").format(
+                        self._table("support_billing_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_review_status TEXT NOT NULL DEFAULT 'pending'"
+                    ).format(
                         self._table("support_billing_tickets"),
                     )
                 )
@@ -4993,21 +5035,37 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("get_billing_ticket_by_client_ticket_id", _operation)
 
-    def list_billing_tickets(self, limit: int = 30) -> list[dict[str, Any]]:
+    def list_billing_tickets(
+        self, limit: int = 30, review_status: str | None = None
+    ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
+        normalized_review_status = str(review_status).strip() if review_status else None
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL(
-                        """
-                        SELECT * FROM {}
-                        ORDER BY created_at DESC
-                        LIMIT %s
-                        """
-                    ).format(self._table("support_billing_tickets")),
-                    (safe_limit,),
-                )
+                if normalized_review_status:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT * FROM {}
+                            WHERE route_review_status = %s
+                            ORDER BY created_at DESC
+                            LIMIT %s
+                            """
+                        ).format(self._table("support_billing_tickets")),
+                        (normalized_review_status, safe_limit),
+                    )
+                else:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT * FROM {}
+                            ORDER BY created_at DESC
+                            LIMIT %s
+                            """
+                        ).format(self._table("support_billing_tickets")),
+                        (safe_limit,),
+                    )
                 col_names = [desc[0] for desc in cur.description]
                 return [dict(zip(col_names, row)) for row in cur.fetchall()]
 
@@ -5379,6 +5437,41 @@ class PostgresTicketRepository:
                     return dict(zip(col_names, row)) if row else {}
 
         return self._run_with_connection_retry("apply_billing_route_correction", _operation)
+
+    def mark_billing_route_reviewed(
+        self,
+        *,
+        billing_ticket_id: str,
+        review_status: str,
+    ) -> dict[str, Any]:
+        normalized_id = str(billing_ticket_id or "").strip()
+        if not normalized_id:
+            raise ValueError("billing_ticket_id is required")
+        normalized_status = str(review_status or "pending").strip() or "pending"
+        updated_at = _utc_now()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET route_review_status = %s,
+                                updated_at = %s
+                            WHERE billing_ticket_id = %s
+                            RETURNING *
+                            """
+                        ).format(self._table("support_billing_tickets")),
+                        (normalized_status, updated_at, normalized_id),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise KeyError(normalized_id)
+                    col_names = [desc[0] for desc in cur.description]
+                    return dict(zip(col_names, row))
+
+        return self._run_with_connection_retry("mark_billing_route_reviewed", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:
