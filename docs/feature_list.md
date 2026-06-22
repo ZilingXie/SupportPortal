@@ -28,6 +28,7 @@
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口可查看 Billing ticket 历史和详情。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
+- Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Billing 自动化支持一次性内部 response link，并根据结构化处理结果触发 AI 客户通知。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
@@ -78,6 +79,7 @@
 - 对话支持上传 txt/log/err 日志附件。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
+- Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Billing 自动化支持一次性内部 response link，并根据结构化处理结果触发 AI 客户通知。
 
 ### 未完成

@@ -70,6 +70,16 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("item.route_error", app_source)
         self.assertIn("matchesFilter", app_source)
         self.assertIn("filter-chip", app_source)
+        self.assertIn("Unreviewed", app_source)
+        self.assertIn("Reviewed", app_source)
+        self.assertIn("unreviewed", app_source)
+        self.assertIn("reviewed", app_source)
+        self.assertIn("route_review_status", app_source)
+        self.assertIn("pass-route", app_source)
+        self.assertIn("unreview-route", app_source)
+        self.assertIn("submitRouteReview", app_source)
+        self.assertIn("Unreviewed tickets", app_source)
+        self.assertIn("Reviewed tickets", app_source)
 
         # Reply composer state and flow.
         self.assertIn("replyMessage", app_source)

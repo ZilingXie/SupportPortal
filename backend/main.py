@@ -370,6 +370,11 @@ class BillingRouteCorrectionRequest(BaseModel):
     corrector: str | None = Field(default=None, max_length=160)
 
 
+class BillingRouteReviewRequest(BaseModel):
+    review_status: str = Field(min_length=1, max_length=64)
+    reviewer: str | None = Field(default=None, max_length=160)
+
+
 class AssetUploadIntentRequest(BaseModel):
     ticket_id: str = Field(min_length=1, max_length=128)
     customer_id: str = Field(min_length=1, max_length=128)
@@ -2847,6 +2852,8 @@ def _build_account_ticket_view_model(
         "source": source_display,
         "status": status,
         "automation_status": status,
+        "route_review_status": str(ticket.get("route_review_status") or "pending").strip()
+        or "pending",
         **_route_error_fields(ticket, correction),
     }
 
@@ -3277,9 +3284,16 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
 
 
 @app.get("/api/account/billing-tickets")
-def list_billing_tickets(limit: int = 30) -> dict[str, Any]:
+def list_billing_tickets(
+    limit: int = 30,
+    review_status: str | None = None,
+) -> dict[str, Any]:
     safe_limit = max(1, min(limit, 100))
-    tickets = ticket_repository.list_billing_tickets(limit=safe_limit)
+    normalized_review_status = str(review_status).strip() if review_status else None
+    tickets = ticket_repository.list_billing_tickets(
+        limit=safe_limit,
+        review_status=normalized_review_status,
+    )
     billing_ticket_ids = [
         str(item.get("billing_ticket_id") or "").strip()
         for item in tickets
@@ -3437,6 +3451,58 @@ async def correct_billing_ticket_route(
     return get_billing_ticket(canonical_billing_ticket_id) if refreshed is not None else {
         **billing_ticket,
         **_build_account_ticket_view_model(billing_ticket),
+    }
+
+
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-review")
+async def review_billing_ticket_route(
+    billing_ticket_id: str,
+    request: BillingRouteReviewRequest,
+) -> dict[str, Any]:
+    normalized_status = str(request.review_status or "").strip()
+    if normalized_status not in {"pending", "reviewed"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid review_status: {request.review_status!r} (expected 'pending' or 'reviewed')",
+        )
+
+    billing_ticket = await _load_account_billing_ticket(billing_ticket_id)
+    canonical_billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
+    if not canonical_billing_ticket_id:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    reviewer = " ".join(str(request.reviewer or "operator").split()).strip() or "operator"
+    timestamp = now_iso()
+
+    try:
+        updated_ticket = await async_to_thread(
+            ticket_repository.mark_billing_route_reviewed,
+            billing_ticket_id=canonical_billing_ticket_id,
+            review_status=normalized_status,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="ticket not found") from None
+
+    client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
+    event = {
+        "event": "route_reviewed",
+        "billing_ticket_id": canonical_billing_ticket_id,
+        "ticket_id": client_ticket_id,
+        "reviewer": reviewer,
+        "review_status": normalized_status,
+        "created_at": timestamp,
+        "route": updated_ticket.get("route"),
+        "scope_label": updated_ticket.get("scope_label"),
+        "execution_action": updated_ticket.get("execution_action"),
+        "route_family": updated_ticket.get("route_family"),
+    }
+    await async_to_thread(ticket_repository.record_event, client_ticket_id, "route_reviewed", event)
+    await dispatch_event(["engineer", "dashboard"], event)
+
+    refreshed = await async_to_thread(ticket_repository.get_billing_ticket, canonical_billing_ticket_id)
+    return get_billing_ticket(canonical_billing_ticket_id) if refreshed is not None else {
+        **billing_ticket,
+        **_build_account_ticket_view_model(updated_ticket),
     }
 
 

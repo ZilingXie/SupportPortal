@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS support_billing_tickets (
     risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
     evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb,
     router_source TEXT,
+    route_review_status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

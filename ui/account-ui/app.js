@@ -36,7 +36,7 @@ const state = {
   activeItem: null,
   error: "",
   composerToolbarState: buildDefaultComposerToolbarState(),
-  statusFilter: "all",
+  statusFilter: "unreviewed",
   replyMessage: "",
   isSubmittingReply: false,
   replyError: "",
@@ -46,6 +46,8 @@ const state = {
   correctionError: "",
   routeErrorSummary: null,
   routeCorrectionExpanded: false,
+  isSubmittingReview: false,
+  reviewError: "",
 };
 
 let composerRuntime = null;
@@ -181,7 +183,11 @@ function showToast(message) {
 
 async function fetchTickets() {
   try {
-    const response = await fetch("/api/account/billing-tickets?limit=30");
+    const params = new URLSearchParams({ limit: "30" });
+    if (state.statusFilter === "unreviewed" || state.statusFilter === "reviewed") {
+      params.set("review_status", state.statusFilter);
+    }
+    const response = await fetch(`/api/account/billing-tickets?${params.toString()}`);
     if (!response.ok) return;
     const data = await response.json();
     state.history = data.tickets || data.billing_tickets || [];
@@ -226,6 +232,8 @@ function resetCorrectionState(item = null) {
   state.isSubmittingCorrection = false;
   state.correctionError = "";
   state.routeCorrectionExpanded = false;
+  state.isSubmittingReview = false;
+  state.reviewError = "";
 }
 
 async function openTicket(ticketId) {
@@ -327,7 +335,10 @@ function isAutomationStatus(status) {
 
 function matchesFilter(item) {
   const itemStatus = item.status || item.automation_status || "not_automated";
+  const reviewStatus = item.route_review_status || "pending";
   if (state.statusFilter === "all") return true;
+  if (state.statusFilter === "unreviewed") return reviewStatus !== "reviewed";
+  if (state.statusFilter === "reviewed") return reviewStatus === "reviewed";
   if (state.statusFilter === "automation") return isAutomationStatus(itemStatus);
   if (state.statusFilter === "not_automated") return !isAutomationStatus(itemStatus);
   if (state.statusFilter === "route_errors") return Boolean(item.route_error);
@@ -336,6 +347,8 @@ function matchesFilter(item) {
 
 function renderFilterControls() {
   const filters = [
+    { value: "unreviewed", label: "Unreviewed" },
+    { value: "reviewed", label: "Reviewed" },
     { value: "all", label: "All" },
     { value: "automation", label: "Automation" },
     { value: "not_automated", label: "Not automated" },
@@ -380,7 +393,13 @@ function renderHistorySidebar() {
   }
   return `
     ${renderFilterControls()}
-    <div class="history-section-title">Recent tickets</div>
+    <div class="history-section-title">${
+      state.statusFilter === "reviewed"
+        ? "Reviewed tickets"
+        : state.statusFilter === "unreviewed"
+          ? "Unreviewed tickets"
+          : "Recent tickets"
+    }</div>
     ${visibleItems
       .map(
         (item) => {
@@ -655,17 +674,35 @@ function renderDetailView() {
           <span class="meta-label">Status</span>
           <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         </div>
-        <div class="meta-row meta-row--inline">
+        <div class="meta-row meta-row--route-result">
           <span class="meta-label">Route result</span>
-          <span class="meta-value">${escapeHtml(routeResultLabel(item))}</span>
-          <button
-            class="filter-chip correct-route-toggle"
-            type="button"
-            data-action="toggle-route-correction"
-            aria-expanded="${state.routeCorrectionExpanded ? "true" : "false"}"
-          >
-            correct route
-          </button>
+          <div class="meta-row--route-result-value">
+            <span class="meta-value">${escapeHtml(routeResultLabel(item))}</span>
+            <button
+              class="filter-chip correct-route-toggle"
+              type="button"
+              data-action="toggle-route-correction"
+              aria-expanded="${state.routeCorrectionExpanded ? "true" : "false"}"
+              ${state.isSubmittingReview ? "disabled" : ""}
+            >
+              correct route
+            </button>
+            ${
+              item.route_review_status === "reviewed"
+                ? `<button
+                    class="filter-chip unreview-toggle"
+                    type="button"
+                    data-action="unreview-route"
+                    ${state.isSubmittingReview ? "disabled" : ""}
+                  >unreview</button>`
+                : `<button
+                    class="filter-chip pass-route-toggle"
+                    type="button"
+                    data-action="pass-route"
+                    ${state.isSubmittingReview ? "disabled" : ""}
+                  >pass</button>`
+            }
+          </div>
         </div>
         <div class="meta-row">
           <span class="meta-label">Email</span>
@@ -752,6 +789,39 @@ async function submitRouteCorrection() {
     state.correctionError = err instanceof Error ? err.message : "Route correction failed.";
   } finally {
     state.isSubmittingCorrection = false;
+    render();
+  }
+}
+
+async function submitRouteReview(reviewStatus) {
+  const item = state.activeItem;
+  if (!item) return;
+
+  state.isSubmittingReview = true;
+  state.reviewError = "";
+  render();
+
+  try {
+    const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
+    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/route-review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        review_status: reviewStatus,
+        reviewer: "operator",
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || "Route review failed.");
+    }
+    state.activeItem = payload;
+    showToast(reviewStatus === "reviewed" ? "Route marked as reviewed" : "Route moved back to unreviewed");
+    await fetchTickets();
+  } catch (err) {
+    state.reviewError = err instanceof Error ? err.message : "Route review failed.";
+  } finally {
+    state.isSubmittingReview = false;
     render();
   }
 }
@@ -881,12 +951,12 @@ function bind() {
       }
       const filterBtn = event.target.closest("[data-action='set-filter']");
       if (filterBtn) {
-        state.statusFilter = filterBtn.dataset.value || "all";
+        state.statusFilter = filterBtn.dataset.value || "unreviewed";
         if (state.statusFilter === "route_errors") {
           state.routeErrorSummary = null;
           void fetchRouteErrorSummary();
         }
-        render();
+        void fetchTickets().then(() => render());
         return;
       }
     });
@@ -911,6 +981,12 @@ function bind() {
       state.routeCorrectionExpanded = !state.routeCorrectionExpanded;
       render();
     });
+  });
+  document.querySelectorAll("[data-action='pass-route']").forEach((el) => {
+    el.addEventListener("click", () => void submitRouteReview("reviewed"));
+  });
+  document.querySelectorAll("[data-action='unreview-route']").forEach((el) => {
+    el.addEventListener("click", () => void submitRouteReview("pending"));
   });
   const replyInput = document.querySelector("[data-reply-input]");
   if (replyInput) {

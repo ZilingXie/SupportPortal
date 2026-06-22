@@ -629,6 +629,38 @@ select.input,
   margin-left: auto;
 }
 
+.pass-route-toggle {
+  flex: 0 0 auto;
+}
+
+.unreview-toggle {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.meta-row--route-result {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.meta-row--route-result-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.meta-row--route-result-value .meta-value {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.meta-row--route-result-value .filter-chip {
+  flex: 0 0 auto;
+}
+
 .detail-section {
   border-radius: 18px;
   padding: 16px;

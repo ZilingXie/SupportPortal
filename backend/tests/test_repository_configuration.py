@@ -363,6 +363,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("corrections.first_corrected_execution_action", repo_source)
         self.assertIn("corrections.original_execution_action", repo_source)
         self.assertIn("FOR UPDATE", repo_source)
+        self.assertIn("route_review_status TEXT NOT NULL DEFAULT 'pending'", sql_source)
+        self.assertIn("def mark_billing_route_reviewed", repo_source)
 
     def test_ticket_repository_initialize_escapes_case_memory_ledger_jsonb_default_for_sql_formatting(self) -> None:
         cursor = _ReusableCursor()
