@@ -830,6 +830,11 @@ class TicketRepository(Protocol):
     def get_billing_route_correction(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ...
 
+    def get_billing_route_corrections_for_tickets(
+        self, billing_ticket_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        ...
+
     def list_billing_route_corrections(self, limit: int = 100) -> list[dict[str, Any]]:
         ...
 
@@ -1564,6 +1569,19 @@ class InMemoryTicketRepository:
     def get_billing_route_correction(self, billing_ticket_id: str) -> dict[str, Any] | None:
         correction = self._billing_route_corrections.get(str(billing_ticket_id).strip())
         return copy.deepcopy(correction) if correction is not None else None
+
+    def get_billing_route_corrections_for_tickets(
+        self, billing_ticket_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for raw_id in billing_ticket_ids:
+            normalized_id = str(raw_id or "").strip()
+            if not normalized_id:
+                continue
+            correction = self._billing_route_corrections.get(normalized_id)
+            if correction is not None:
+                result[normalized_id] = copy.deepcopy(correction)
+        return result
 
     def list_billing_route_corrections(self, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 100)
@@ -5159,6 +5177,39 @@ class PostgresTicketRepository:
                 return dict(zip(col_names, rows[0]))
 
         return self._run_with_connection_retry("get_billing_route_correction", _operation)
+
+    def get_billing_route_corrections_for_tickets(
+        self, billing_ticket_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        normalized_ids = [
+            str(raw_id or "").strip() for raw_id in billing_ticket_ids if str(raw_id or "").strip()
+        ]
+        if not normalized_ids:
+            return {}
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT * FROM {} WHERE billing_ticket_id = ANY(%s)").format(
+                        self._table("support_billing_route_corrections")
+                    ),
+                    (normalized_ids,),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return {}
+                col_names = [desc[0] for desc in cur.description]
+                result: dict[str, dict[str, Any]] = {}
+                for row in rows:
+                    record = dict(zip(col_names, row))
+                    billing_ticket_id = str(record.get("billing_ticket_id") or "").strip()
+                    if billing_ticket_id:
+                        result[billing_ticket_id] = record
+                return result
+
+        return self._run_with_connection_retry(
+            "get_billing_route_corrections_for_tickets", _operation
+        )
 
     def list_billing_route_corrections(self, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 100)

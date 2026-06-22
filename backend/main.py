@@ -2787,13 +2787,20 @@ def _public_billing_route_correction(correction: dict[str, Any] | None) -> dict[
     }
 
 
-def _route_error_fields(ticket: dict[str, Any]) -> dict[str, Any]:
+_MISSING = object()
+
+
+def _route_error_fields(
+    ticket: dict[str, Any],
+    correction: dict[str, Any] | None | object = _MISSING,
+) -> dict[str, Any]:
     billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip()
-    correction = (
-        ticket_repository.get_billing_route_correction(billing_ticket_id)
-        if billing_ticket_id
-        else None
-    )
+    if correction is _MISSING:
+        correction = (
+            ticket_repository.get_billing_route_correction(billing_ticket_id)
+            if billing_ticket_id
+            else None
+        )
     route_corrected = correction is not None
     low_confidence = _is_low_route_confidence(ticket)
     return {
@@ -2804,7 +2811,10 @@ def _route_error_fields(ticket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
+def _build_account_ticket_view_model(
+    ticket: dict[str, Any],
+    correction: dict[str, Any] | None | object = _MISSING,
+) -> dict[str, Any]:
     canonical_ticket_id = (
         str(ticket.get("client_ticket_id") or "").strip()
         or str(ticket.get("ticket_id") or "").strip()
@@ -2837,7 +2847,7 @@ def _build_account_ticket_view_model(ticket: dict[str, Any]) -> dict[str, Any]:
         "source": source_display,
         "status": status,
         "automation_status": status,
-        **_route_error_fields(ticket),
+        **_route_error_fields(ticket, correction),
     }
 
 
@@ -3270,9 +3280,22 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
 def list_billing_tickets(limit: int = 30) -> dict[str, Any]:
     safe_limit = max(1, min(limit, 100))
     tickets = ticket_repository.list_billing_tickets(limit=safe_limit)
+    billing_ticket_ids = [
+        str(item.get("billing_ticket_id") or "").strip()
+        for item in tickets
+        if item.get("billing_ticket_id")
+    ]
+    corrections = (
+        ticket_repository.get_billing_route_corrections_for_tickets(billing_ticket_ids)
+        if billing_ticket_ids
+        else {}
+    )
     items = [
         {
-            **_build_account_ticket_view_model(item),
+            **_build_account_ticket_view_model(
+                item,
+                correction=corrections.get(str(item.get("billing_ticket_id") or "").strip()),
+            ),
             "billing_ticket_id": item.get("billing_ticket_id"),
             "client_ticket_id": item.get("client_ticket_id"),
         }
