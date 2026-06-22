@@ -23,6 +23,18 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Global text overflow safety net: all text-bearing elements can break. */
+h1, h2, h3, h4, h5, h6, p, span, strong, em, li, label, button, .meta-value, .msg-content, .route-change-record, .result-copy, .side-copy, .form-desc, .eyebrow, .field-label, .meta-label {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -64,6 +76,8 @@ button:disabled {
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   gap: 24px;
   padding: 24px;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .side-panel,
@@ -71,6 +85,7 @@ button:disabled {
   border-radius: 24px;
   background: rgba(239, 244, 251, 0.82);
   box-shadow: 0 24px 70px rgba(35, 54, 80, 0.12);
+  min-width: 0;
 }
 
 .side-panel {
@@ -85,6 +100,11 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+.brand > div {
+  min-width: 0;
 }
 
 .brand-mark {
@@ -96,6 +116,7 @@ button:disabled {
   color: white;
   background: linear-gradient(135deg, var(--primary), var(--secondary));
   box-shadow: 0 16px 32px rgba(0, 100, 147, 0.22);
+  flex: 0 0 auto;
 }
 
 .eyebrow,
@@ -135,6 +156,7 @@ button:disabled {
 .side-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .primary-button--small {
@@ -230,6 +252,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .history-item:hover {
@@ -253,10 +277,12 @@ button:disabled {
   justify-content: space-between;
   align-items: flex-start;
   gap: 6px;
+  min-width: 0;
 }
 
 .history-item-header strong {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -270,6 +296,7 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .history-time {
@@ -288,6 +315,8 @@ button:disabled {
   font-weight: 700;
   white-space: nowrap;
   letter-spacing: 0.03em;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .source-manual {
@@ -332,6 +361,8 @@ button:disabled {
   white-space: nowrap;
   background: rgba(0, 0, 0, 0.08);
   color: var(--ink-soft);
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .route-invoice {
@@ -356,6 +387,8 @@ button:disabled {
   padding: 3px 10px;
   font-size: 11px;
   font-weight: 700;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .status-badge--automation,
@@ -376,6 +409,7 @@ button:disabled {
 
 .workbench {
   min-width: 0;
+  max-width: 100%;
   padding: 28px;
 }
 
@@ -385,12 +419,20 @@ button:disabled {
   gap: 20px;
   align-items: flex-start;
   margin-bottom: 24px;
+  min-width: 0;
+}
+
+.workbench-header > div {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .workbench h2 {
   font-size: clamp(28px, 4vw, 44px);
-  line-height: 1;
+  line-height: 1.1;
   margin-top: 8px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pill {
@@ -415,6 +457,8 @@ button:disabled {
   border-radius: 20px;
   padding: 20px;
   background: var(--surface-lowest);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .form-stack {
@@ -445,6 +489,7 @@ button:disabled {
 select.input,
 .textarea {
   width: 100%;
+  max-width: 100%;
   border: 0;
   border-radius: 16px;
   color: var(--ink);
@@ -480,6 +525,8 @@ select.input,
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .primary-button {
@@ -514,11 +561,15 @@ select.input,
   color: var(--danger);
   background: #ffdad6;
   font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .detail-stack {
   display: grid;
   gap: 20px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .detail-header {
@@ -526,12 +577,18 @@ select.input,
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+  min-width: 0;
 }
 
 .detail-header h3 {
   margin: 0;
   font-family: Manrope, Inter, sans-serif;
   font-size: 22px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
 }
 
 .meta-grid {
@@ -542,17 +599,42 @@ select.input,
 .meta-row {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .meta-value {
   color: var(--ink);
   overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.meta-row--inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.meta-row--inline .meta-label {
+  flex: 0 0 auto;
+}
+
+.meta-row--inline .meta-value {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.correct-route-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .detail-section {
   border-radius: 18px;
   padding: 16px;
   background: var(--surface-container-low);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .detail-section.success {
@@ -566,6 +648,12 @@ select.input,
 .route-correction {
   display: grid;
   gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.route-correction[hidden] {
+  display: none;
 }
 
 .route-correction-current {
@@ -576,13 +664,19 @@ select.input,
   background: var(--surface-lowest);
 }
 
-.route-correction-note {
-  min-height: 96px;
+.route-change-record {
+  font-size: 13px;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+  padding: 6px 12px;
+  line-height: 1.5;
 }
 
 .route-summary {
   display: grid;
   gap: 14px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .route-summary-grid {
@@ -617,10 +711,17 @@ select.input,
   border-radius: 12px;
   background: var(--surface-lowest);
   color: var(--ink-soft);
+  min-width: 0;
 }
 
 .route-transition span {
   overflow-wrap: anywhere;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.route-transition strong {
+  flex: 0 0 auto;
 }
 
 .detail-section-title {
@@ -657,11 +758,13 @@ select.input,
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 
 .msg-row {
   display: flex;
   max-width: 100%;
+  min-width: 0;
 }
 
 .msg-row--customer {
@@ -676,6 +779,7 @@ select.input,
   max-width: 80%;
   border-radius: 16px;
   padding: 10px 14px;
+  min-width: 0;
 }
 
 .msg-bubble--customer {
@@ -730,6 +834,8 @@ select.input,
   background: var(--surface-container-low);
   display: grid;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .reply-textarea {
@@ -759,6 +865,7 @@ select.input,
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  max-width: 100%;
 }
 
 .toast {

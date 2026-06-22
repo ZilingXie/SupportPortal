@@ -115,7 +115,6 @@ CREATE TABLE IF NOT EXISTS support_billing_route_corrections (
     first_corrected_execution_action TEXT NOT NULL,
     first_corrected_tooling_profile TEXT NOT NULL,
     corrector TEXT,
-    note TEXT,
     correction_count INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

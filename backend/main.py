@@ -367,7 +367,6 @@ class BillingResponseSubmitRequest(BaseModel):
 class BillingRouteCorrectionRequest(BaseModel):
     scope_label: str = Field(min_length=1, max_length=128)
     execution_action: str = Field(min_length=1, max_length=128)
-    note: str | None = Field(default=None, max_length=4000)
     corrector: str | None = Field(default=None, max_length=160)
 
 
@@ -2782,7 +2781,6 @@ def _public_billing_route_correction(correction: dict[str, Any] | None) -> dict[
         "first_corrected_execution_action": correction.get("first_corrected_execution_action"),
         "first_corrected_tooling_profile": correction.get("first_corrected_tooling_profile"),
         "corrector": correction.get("corrector"),
-        "note": correction.get("note") or "",
         "correction_count": correction.get("correction_count") or 1,
         "created_at": correction.get("created_at"),
         "updated_at": correction.get("updated_at"),
@@ -3344,7 +3342,6 @@ async def correct_billing_ticket_route(
         corrected = validate_route_correction(
             scope_label=request.scope_label,
             execution_action=request.execution_action,
-            note=request.note,
         )
     except RouteCorrectionValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -3371,7 +3368,6 @@ async def correct_billing_ticket_route(
         "corrected_tooling_profile": corrected["tooling_profile"],
         **first_corrected,
         "corrector": " ".join(str(request.corrector or "operator").split()).strip() or "operator",
-        "note": corrected["note"],
         "created_at": timestamp,
         "updated_at": timestamp,
     }
@@ -3400,7 +3396,6 @@ async def correct_billing_ticket_route(
         "billing_ticket_id": canonical_billing_ticket_id,
         "ticket_id": client_ticket_id,
         "corrector": persisted_correction.get("corrector") or correction["corrector"],
-        "note": persisted_correction.get("note") or correction["note"],
         "created_at": timestamp,
         "original_scope_label": persisted_correction.get("original_scope_label"),
         "original_route_family": persisted_correction.get("original_route_family"),

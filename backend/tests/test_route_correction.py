@@ -41,19 +41,6 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         self.assertEqual(result["scope_label"], "billing")
         self.assertEqual(result["execution_action"], "detailed_invoice")
 
-    def test_note_normalized_and_optional(self) -> None:
-        result = validate_route_correction(
-            scope_label="billing",
-            execution_action="human_review_required",
-            note="  refund dispute  ",
-        )
-        self.assertEqual(result["note"], "refund dispute")
-        empty = validate_route_correction(
-            scope_label="billing",
-            execution_action="human_review_required",
-        )
-        self.assertEqual(empty["note"], "")
-
     def test_valid_tuple_dictionary_matches_contract(self) -> None:
         expected_pairs = {
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
@@ -123,7 +110,6 @@ class BillingRouteCorrectionRepositoryTests(unittest.TestCase):
             "first_corrected_execution_action": "human_review_required",
             "first_corrected_tooling_profile": "deterministic_billing_intake",
             "corrector": "operator",
-            "note": "refund dispute",
             "created_at": "2026-06-19T00:00:00+00:00",
             "updated_at": "2026-06-19T00:00:00+00:00",
             "correction_count": 1,
@@ -148,7 +134,6 @@ class BillingRouteCorrectionRepositoryTests(unittest.TestCase):
         updated["corrected_scope_label"] = "billing"
         updated["corrected_tooling_profile"] = "no_agora_docs_refusal"
         updated["first_corrected_execution_action"] = "refuse"
-        updated["note"] = "actually refuse"
         updated["correction_count"] = 99
         self.repository.save_billing_route_correction(updated)
         fetched = self.repository.get_billing_route_correction(self.billing_ticket_id)

@@ -958,7 +958,6 @@ class AccountIntakeApiTests(unittest.TestCase):
                 json={
                     "scope_label": "billing",
                     "execution_action": "human_review_required",
-                    "note": "refund dispute",
                     "corrector": "operator",
                 },
             )
@@ -1005,7 +1004,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         with patch.object(main, "dispatch_event", AsyncMock()) as dispatch_mock:
             response = self.client.post(
                 f"/api/account/billing-tickets/{billing_ticket_id}/route-correction",
-                json={"scope_label": "billing", "execution_action": "rag", "note": "bad tuple"},
+                json={"scope_label": "billing", "execution_action": "rag"},
             )
 
         self.assertEqual(response.status_code, 400, response.text)
@@ -1038,7 +1037,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(first_response.status_code, 200, first_response.text)
         second_response = self.client.post(
             f"/api/account/billing-tickets/{billing_ticket_id}/route-correction",
-            json={"scope_label": "billing", "execution_action": "refuse", "note": "not enough account detail"},
+            json={"scope_label": "billing", "execution_action": "refuse"},
         )
         self.assertEqual(second_response.status_code, 200, second_response.text)
         correction = second_response.json()["route_correction"]
