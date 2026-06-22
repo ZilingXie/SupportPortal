@@ -184,8 +184,10 @@ function showToast(message) {
 async function fetchTickets() {
   try {
     const params = new URLSearchParams({ limit: "30" });
-    if (state.statusFilter === "unreviewed" || state.statusFilter === "reviewed") {
-      params.set("review_status", state.statusFilter);
+    if (state.statusFilter === "unreviewed") {
+      params.set("review_status", "pending");
+    } else if (state.statusFilter === "reviewed") {
+      params.set("review_status", "reviewed");
     }
     const response = await fetch(`/api/account/billing-tickets?${params.toString()}`);
     if (!response.ok) return;
