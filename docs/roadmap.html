@@ -1906,7 +1906,16 @@ flowchart TD
           { summary: "第一版 Engineer multi-agent skeleton 已建立，覆盖 plan、review、task result、conclusion 的契约基础。", prs: [436] },
           { summary: "Summary / Plan / Execute / Review Agent 第一版已接入：升级工单会生成 summary packet、active plan、task results、evidence packet 和 review decision。", prs: [458, 460, 463, 464] },
           { summary: "Guardrail final approve、close-memory 和 replay eval dataset 已完成：客户回复前保留最终人工确认，关闭后写 audit、memory candidate 和 replay 样本。", prs: [487, 490, 494] },
-          { summary: "Runtime activation 已完成：新建或进入 Engineer 工单会持久化初始 multi-agent run，workspace 可查看/刷新 Plan-Execute-Review，revise 自动 replan 与 max retries 已暂停。", prs: [479, 507, 508, 511] }
+          { summary: "Runtime activation 已完成：新建或进入 Engineer 工单会持久化初始 multi-agent run，workspace 可查看/刷新 Plan-Execute-Review，revise 自动 replan 与 max retries 已暂停。", prs: [479, 507, 508, 511] },
+          { summary: "Summary Agent 第一版已完成：Client AI 升级 Engineer 时会生成 deterministic summary packet，并写入 `engineer_handoff_packet`。", prs: [458, 505, 511] },
+          { summary: "Plan Agent 第一版已完成：基于 summary packet、memory fallback 和 skill allowlist fallback 生成 hypotheses、tasks、dependencies、blockers，并写入 `active_plan`。", prs: [460, 511] },
+          { summary: "Execute Agent 第一版已完成：deterministic scheduler 调度 allowlisted subagents，记录 task results、dependency blockers 和 evidence packet。", prs: [463, 511] },
+          { summary: "Review Agent 第一版已完成：根据 execution evidence 输出 `ready_for_engineer`、`replan_required` 或 `unable_to_resolve`，并把 review decision 持久化到 agent state。", prs: [464, 511] },
+          { summary: "Revise replan 行为已收敛：revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries；multi-agent workspace 消息才触发刷新。", prs: [479, 511] },
+          { summary: "Guardrail final approve 已接入：engineer approve 先生成/校验 customer-facing reply，第二次 final approve 才发送给客户。", prs: [487] },
+          { summary: "Close-memory 已完成：final approve 后关闭 engineer case、写 closure audit event，并生成 Case Memory candidate；candidate 不自动 active。", prs: [490] },
+          { summary: "Replay eval dataset candidate 已完成：从 summary packet、review decision、replan/revise 轨迹和 approved reply 生成评测样本。", prs: [494] },
+          { summary: "Multi-Agent workspace viewer 已完成：双击 investigating 状态可查看当前 ticket 的 Plan/Execute/Review 输出，并保持默认 workspace guardrail-only。", prs: [507, 508, 511] }
         ],
         review: [
           "当前证据能证明的是 Summary/Plan/Execute/Review 初始与 multi-agent workspace 刷新、revise 暂停自动 replan、Guardrail final approve 已接入 runtime；它仍不是无需人工介入的自动闭环，因为 final approve 仍必须由工程师确认。",
@@ -1919,15 +1928,6 @@ flowchart TD
           "下一阶段优化重点不是继续增加 agent 名字，而是补真实证据获取、受控 replan、claim-level evidence check、replay/metrics 闭环和工程师行动台，让系统从结构化整理升级到可验证调查增量。"
         ],
         next: [
-          { id: "ma-summary-agent", status: "done", label: "Summary Agent 第一版（deterministic summary packet）已完成：Client AI 升级 Engineer 时，builder 先生成 engineer-summary-packet-v1，再写入 Engineer ticket 的 engineer_handoff_packet，包含 engineer_ticket_input、escalation 上下文、线索、缺失信息和 redaction boundary。", horizon: "Task 2" },
-          { id: "ma-plan-agent", status: "done", label: "Plan Agent 第一版已完成：基于 summary packet、mem0（未接入时 fallback）和 skill list（未安装时用 allowlist fallback）生成 hypotheses、tasks、dependencies 和 blockers，并持久化到 engineer_agent_state.active_plan。", horizon: "Task 3" },
-          { id: "ma-execute-agent", status: "done", label: "实现 Execute Agent：deterministic scheduler 调度 allowlisted subagents，区分 parallel groups 与串行依赖，收集 task results 和 evidence packet 并持久化到 engineer_agent_state。", horizon: "Task 4" },
-          { id: "ma-review-agent", status: "done", label: "Review Agent 第一版已实现 deterministic review decision：根据 evidence_packet、task_results 和 blockers 输出 ready_for_engineer、replan_required 或 unable_to_resolve；当前暂停自动 replan/max 2 retries，保留 missing_information，review 结果持久化到 engineer_agent_state。", horizon: "Task 5" },
-          { id: "ma-revise-replan", status: "done", label: "revise replan 循环与 max 2 retries 当前已暂停：revise 只追加工程师备注、清空 blocked/final guardrail 状态并把调查置回 active，不再自动跑 Plan/Execute/Review replan；multi-agent workspace 下工程师消息携带 multi_agent_enabled=true 时由 ensure_engineer_multi_agent_run 触发一轮刷新。", horizon: "Runtime" },
-          { id: "ma-guardrail-final", status: "done", label: "approve 后通过 guardrail 生成/校验 customer-facing reply，再交给 engineer 做最后 approve，避免直接自动回复客户。", horizon: "Runtime" },
-          { id: "ma-close-memory", status: "done", label: "客户回复后关闭 engineer 工单，写 audit event，并把处理结果作为 Case Memory candidate；不自动晋升 active memory。", horizon: "Memory" },
-          { id: "ma-eval", status: "done", label: "从 summary packet、review decisions、replan notes、engineer revise 和 approved replies 生成 replay eval dataset。", horizon: "Evaluation" },
-          { id: "ma-workspace-viewer", status: "done", label: "Engineer ticket workspace 可双击 investigating 状态徽标切换查看当前 ticket 的 Plan/Execute/Review Agent 输出（只读已有 engineer_agent_state，不重跑 agent）。", horizon: "Runtime" },
           { id: "ma-real-evidence-tools", status: "todo", label: "P0：把 Execute Agent 的 allowlisted subagents 接到真实 evidence tools：Case Memory search、internal RAG、official RAG fallback、日志/diagnostic 查询；每个 task result 必须带 provenance、access_mode 和 customer_safe 标记。", horizon: "P0 Evidence" },
           { id: "ma-replay-runner", status: "todo", label: "P0：replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量，并跟踪 review_decision、guardrail_block_reason、final_approve_latency、reopen/negative feedback。", horizon: "P0 Evaluation" },
           { id: "ma-controlled-replan", status: "todo", label: "P1：恢复受控 targeted replan：replan_required 只触发缺失证据相关 task，限制 retry / time / token / tool budget，记录每轮 delta，避免整轮盲刷或无限循环。", horizon: "P1 Runtime" },
@@ -2003,7 +2003,11 @@ flowchart TD
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
           { summary: "一次性 response link 闭环已完成：内部处理人提交结构化结果后写 internal resolution event，再由 AI 决定是否通知客户。", prs: [509, 510, 512] },
-          { summary: "`/account` 已支持人工纠正完整 route tuple，并通过 Route errors、低置信汇总和 review/pass 视图分析误路由案例。", prs: [513, 515, 524, 526, 527] }
+          { summary: "`/account` 已支持人工纠正完整 route tuple，并通过 Route errors、低置信汇总和 review/pass 视图分析误路由案例。", prs: [513, 515, 524, 526, 527] },
+          { summary: "Billing response link 闭环已确认完成：内部邮件携带一次性 `/response?token=...` 链接，页面只使用 billing_ticket_id 收集结构化处理结果。", prs: [509, 510, 512] },
+          { summary: "Billing internal resolution event 已确认完成：提交后写 `billing_internal_resolution_submitted`，notify customer 时生成 `billing_response_ai` 客户跟进。", prs: [509, 512] },
+          { summary: "Account Route errors 能力已确认完成：人工纠正保留 original / first corrected route tuple，并与低置信路由、review/pass 状态一起分析。", prs: [513, 515, 524, 526, 527] },
+          { summary: "Account verification 字段收集已确认完成：Use Case section、Country+Address、个人开发者分支、可选 app_id 和内部邮件发送都已覆盖。", prs: [488] }
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
@@ -2014,17 +2018,13 @@ flowchart TD
         ],
         next: [
           { id: "billing-real-zendesk-replay", status: "todo", label: "建立 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、billing risky negative set 和 Not automated case 都要覆盖。", horizon: "Scope" },
-          { id: "billing-zendesk-forwarding", status: "done", label: "接入 Zendesk webhook / N8n 中转已完成：拉取新工单内容、external_id、comment 和 metadata；先只内部转发，不改客户入口。", horizon: "Source" },
+          { id: "billing-zendesk-forwarding", status: "todo", label: "补齐并验证真实 Zendesk webhook / N8n 中转：当前已确认 `/account` 支持 N8n/Zendesk source、external_id 和链接归一化，但还未看到真实 webhook 拉取 comment / metadata 的实现证据。", horizon: "Source" },
           { id: "billing-ai-account", status: "todo", label: "定义 AI account 试运行方式：shadow mode 下只模拟，1% 切流后由 AI account 接收/处理 billing case，并通过 Zendesk API 写 comment。", horizon: "Pilot" },
-          { id: "billing-response-link", status: "done", label: "内部 response link 闭环已完成：邮件携带 `support.stellarix.space/response?token=...`，页面只使用 billing_ticket_id，一次性提交处理结果、是否通知客户和说明。", horizon: "Integration" },
-          { id: "billing-internal-resolution-event", status: "done", label: "提交后写入 internal resolution event，再触发 AI 读取 event 决定是否回复客户；已完成可不填说明，拒绝处理/需要客户操作必须填写说明。", horizon: "AI Loop" },
-          { id: "billing-route-correction", status: "done", label: "Account Route errors 视图已完成：人工可纠正完整 route tuple，系统保留原始 AI tuple、first corrected tuple 和低置信路由汇总。", horizon: "Metrics" },
           { id: "billing-human-review", status: "todo", label: "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。", horizon: "Review" },
           { id: "billing-dashboard-metrics", status: "todo", label: "Dashboard 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate 和 SLA risk。", horizon: "Metrics" },
           { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单、重复发邮件或重复写入 automation 状态。", horizon: "Reliability" },
           { id: "billing-pilot", status: "todo", label: "先做 shadow mode，再做 1% 切流；剩余 99% 保持真人流程，达到 route_accuracy 和安全门禁后再扩量。", horizon: "Pilot" },
-          { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" },
-          { id: "billing-account-verification-fields", status: "done", label: "account_verification 已实现字段追问、Use Case section 解析、Country+Address 合并、个人开发者分支、app_id 可选提取和内部邮件真实发送。", horizon: "Billing" }
+          { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" }
         ],
         architecture: {
           title: "Billing Flow: Route -> Internal Response -> AI Follow-up",
@@ -2090,6 +2090,15 @@ flowchart TD
           { summary: "TK-ACC-C31612 已修复：长正文末尾 thank you 不再触发 weak gratitude，`/account` 改为 semantic-first 路由。", prs: [488, 515] },
           { summary: "`billing.account_verification` intent 与 route contract 已完成，覆盖 suspicious activity、fraud review、company verification 和 reactivation。", prs: [488] },
           { summary: "Account Route errors 与 route review 已落地：人工纠正、原始/首次纠正 tuple、低置信汇总和 pass/unreview 过滤都可追踪。", prs: [515, 526, 527] },
+          { summary: "Account suspension deterministic whitelist 已确认扩展，覆盖 temporarily suspended、has been suspended、insufficient balance、restore access 等真实表达。", prs: [477, 491] },
+          { summary: "Billing routing 回归集已确认建立，覆盖 account suspension、detailed invoice、refund/dispute/legal negative 和非 billing case。", prs: [477, 491] },
+          { summary: "Not automated 原因与 router_source audit 已确认落地，可区分 heuristic miss、LLM non-billing、unsupported action、confidence fallback 等路径。", prs: [477, 491] },
+          { summary: "LLM billing prompt few-shot 与 taxonomy 已确认补齐，account suspension、refund/dispute、detailed invoice、account verification 都有明确分类规则。", prs: [477, 488] },
+          { summary: "Semantic router + policy gate + billing_review contract 已确认实现，SupportRouteDecision 保持兼容并新增 semantic/audit 字段。", prs: [477, 520] },
+          { summary: "Roadmap Routing tab 已确认更新，用架构图和 contract 文案固定 semantic router、policy gate、fallback 与 TK-ACC-68BAC7 修复结果。", prs: [474, 496, 518] },
+          { summary: "Deterministic billing risk gate 已确认实现：refund/dispute/legal/compensation/overcharge 等信号命中时降级到 `billing_review`。", prs: [520] },
+          { summary: "Account verification intent 与 route 已确认完成，覆盖 suspicious activity、fraud、company verification、reactivation，并支持无风险时 automation。", prs: [488] },
+          { summary: "Gratitude 降级与 `/account` semantic-first 已确认完成，长 billing/account 正文末尾 thank you 不再抢占为 small_talk。", prs: [488, 515] }
         ],
         review: [
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
@@ -2103,19 +2112,7 @@ flowchart TD
           "TK-ACC-C31612 修复验证：长正文末尾 thank you 不再触发 small_talk，LLM semantic-first 可正确识别 billing intent；短纯感谢仍保持 controlled_response。",
         ],
         next: [
-          { id: "routing-billing-suspension-patterns", status: "done", label: "扩展 account_suspension deterministic whitelist，覆盖 temporarily suspended、has been suspended、suspended due to insufficient balance、restore access 等真实表达。", horizon: "Billing" },
-          { id: "routing-billing-regression-set", status: "done", label: "建立 billing routing 回归集，至少包含 account suspension、detailed invoice、billing terms/account status、refund/dispute/overcharged negative cases。", horizon: "Tests" },
-          { id: "routing-not-automated-reasons", status: "done", label: "在 account billing view-model 中更明确记录 Not automated 原因：heuristic miss、LLM non-billing、billing action unsupported 或 confidence fallback。", horizon: "Observability" },
-          { id: "routing-llm-billing-prompt", status: "done", label: "补 LLM classifier few-shot：account suspended due to balance / restore access 应归入 billing account_suspension，而 billing terms change 可保留人工审核。", horizon: "Prompt" },
-          { id: "routing-llm-semantic-router", status: "done", label: "LLM semantic router 升级为 intent taxonomy 输出，新增 policy gate 拆分「是什么问题」和「能不能 automation」。", horizon: "Architecture" },
-          { id: "routing-policy-gate", status: "done", label: "Policy gate 已实现：refund/dispute/legal 永不可 automation，account_suspension 默认 human_review_required。", horizon: "Safety" },
-          { id: "routing-semantic-schema", status: "done", label: "SupportRouteDecision 新增 semantic_intent、automation_eligibility、not_automated_reason、risk_flags、evidence_spans、router_source 等字段。", horizon: "Schema" },
-          { id: "routing-billing-review-family", status: "done", label: "新增 billing_review route family 用于需人工审核的 billing case，与 billing_automation 区分。", horizon: "Contract" },
-          { id: "routing-roadmap-diagram", status: "done", label: "Roadmap Routing tab 已更新架构描述、review 结论和 next tasks，反映 LLM semantic router + policy gate 新架构。", horizon: "Docs" },
-          { id: "routing-threshold-audit", status: "done", label: "记录 INTENT_ROUTER_CONFIDENCE_THRESHOLD 与 LLM failure fallback 的实际触发率，避免误把 fallback 当成模型判断。router_source=conservative_fallback 区分 below_confidence_threshold / missing_credentials / llm_invocation_failed / invalid_json / invalid_payload / route_fail_open。", horizon: "Metrics" },
-          { id: "routing-contract-doc", status: "done", label: "把当前 routing 分类、route contract、fallback 与 TK-ACC-68BAC7 修复结果写入 Roadmap tab。", horizon: "Docs" },
           { id: "routing-real-zendesk-replay", status: "todo", label: "扩展 real Zendesk replay set：invoice request、account fraud / deactivate / company verification、非 billing、technical handoff 与 billing risky negative set。", horizon: "Tests" },
-          { id: "routing-deterministic-policy-gate", status: "done", label: "P0：Deterministic billing 白名单已接入 minimal risk gate；refund/dispute/legal/compensation/overcharge 等信号命中时降级到 billing_review，避免白名单吞掉风险。", horizon: "Safety" },
           { id: "routing-fallback-billing-risk-sniff", status: "todo", label: "P0：conservative fallback 前增加 billing-risk sniff；LLM 缺凭证、超时或低置信时，invoice wrong/refund/dispute/legal/restore access 不应默认进入 agora_technical/RAG。", horizon: "Safety" },
           { id: "routing-billing-review-customer-experience", status: "todo", label: "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。", horizon: "Customer Experience" },
           { id: "routing-rollout-taxonomy", status: "todo", label: "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。", horizon: "Contract" },
@@ -2123,10 +2120,6 @@ flowchart TD
           { id: "routing-dashboard-metrics", status: "todo", label: "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 shadow mode 与 1% 切流判断。", horizon: "Metrics" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
           { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
-          { id: "routing-account-verification-intake", status: "done", label: "新增 billing.account_verification intent + account_verification route：覆盖 suspicious activity / fraud / company verification / reactivation。", horizon: "Billing" },
-          { id: "routing-gratitude-downgrade", status: "done", label: "降级 gratitude 确定性信号：仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的短纯感谢。TK-ACC-C31612 不再被误判。", horizon: "Safety" },
-          { id: "routing-semantic-first-account", status: "done", label: "/account 接入 semantic-first 模式：LLM 先跑路由，避免 weak deterministic 抢占。", horizon: "Architecture" },
-          { id: "routing-route-error-analysis", status: "done", label: "Route errors 分析已落地：纠正记录保留原始 AI tuple 与 first corrected tuple，并与低置信路由一起汇总 predicted -> corrected 转换。", horizon: "Metrics" },
         ],
         architecture: {
           title: "Routing Architecture: Semantic Intent -> Policy Gate -> Route Contract",
@@ -2200,7 +2193,15 @@ flowchart TD
           { summary: "RAG+KG runtime hooks 与真实 GraphRAG client 已接上：query expansion、rerank boost、structured fact 都通过可降级 KG client 辅助纯 RAG。", prs: [504, 514] },
           { summary: "Local lightweight RAG+KG 线上试用路径已完成：本地 Neo4j sandbox、runtime image deps、KG env 和默认 local flag 都已接通，生产仍由 flag 控制。", prs: [521, 522] },
           { summary: "GraphRAG Phase 1/2 工具链已补齐：official-doc chunk export、offline readiness report、rag_vs_rag_plus_kg benchmark 和 gate report 已可运行。", prs: [519, 521, 525] },
-          { summary: "独立架构评审已完成并写回 Roadmap：RAG 保持 citation source of truth，KG 仅作为 query expansion、rerank boost 和 structured fact 辅助信号。", prs: [454, 482, 516] }
+          { summary: "独立架构评审已完成并写回 Roadmap：RAG 保持 citation source of truth，KG 仅作为 query expansion、rerank boost 和 structured fact 辅助信号。", prs: [454, 482, 516] },
+          { summary: "KG official-docs scope 已确认完成：首期只接官网文档概念/关系入库，不接 technical articles、external benchmarks 或 confirmed case memory。", prs: [457] },
+          { summary: "SupportPortal adapter 已确认完成：official-doc chunk 输入可构造成 vendored cusmem / GraphRAG episode，具备 schema bridge、deterministic episode id 和 dry-run CLI。", prs: [493] },
+          { summary: "KG provenance 离线路径已确认完成：缺少 source_url、document_id、chunk_id 或 schema_version 的 chunk 会被拒绝，GraphRAG episode 保留 flat provenance 与 hash。", prs: [486, 493] },
+          { summary: "线上 RAG+KG runtime boundary 已确认完成：KG hooks 只做 expansion、rerank boost、structured fact 辅助，citation pool 仍只接受 RAG chunks，并由 flag 门控降级。", prs: [504, 514] },
+          { summary: "GraphRAG runtime client 已确认完成：GraphRagKgRuntimeClient + GraphitiSearchBackend 接到 vendored GraphRAG，并在 rag_api startup best-effort 安装。", prs: [514] },
+          { summary: "Local online RAG+KG 试用路径已确认完成：local lightweight compose 启动 Neo4j sandbox、设置 KG env、安装 runtime deps，生产默认仍关闭。", prs: [521, 522] },
+          { summary: "本地 Neo4j sandbox 与最小 KG_* 环境变量模板已确认落地，用于离线建图、本地线上试用和 benchmark。", prs: [521] },
+          { summary: "SupportPortal official docs KG schema 已确认完成：`supportportal_official_docs_v1` 包含 9 类实体、10 类关系、strict mode 与 schema hash 单测。", prs: [486] }
         ],
         review: [
           "Client AI 客户可见答案的 citation 是合同义务。KG 把多段原文压成 entity/edge 时丢失逐字证据；`kg_official_docs_scope.allow_answer_without_rag_citation=False` 已经在代码层承认这点，运行时层还需要 adapter 强制校验。",
@@ -2213,14 +2214,6 @@ flowchart TD
           "100 chunks 足够做 GraphRAG ingest 模型初筛：它可以暴露 JSON/schema 失败、provenance 丢失、实体漂移、关系幻觉和 token/latency 量级；但它不足以证明线上 RAG+KG 效果，后续仍需要真实 query shadow 或 benchmark。"
         ],
         next: [
-          { id: "kg-official-docs-scope", status: "done", label: "已将 KG 首期范围收敛为官网文档概念/关系入库，只服务 Client AI RAG 辅助，不接 confirmed case memory。", horizon: "Scope" },
-          { id: "kg-architecture-review", status: "done", label: "独立架构评审：对比 RAG 链路与 vendor/cusmem Graphiti，固化『RAG 主、KG 辅助』结论、三个钩子位置（query expansion / rerank boost / structured fact）与三条不能让步规则。", horizon: "Architecture" },
-          { id: "kg-adapter", status: "done", label: "SupportPortal adapter PR2 已完成：official-doc chunk 输入契约已接到 vendored cusmem/GraphRAG episode 构建、schema bridge、deterministic episode id 与离线 ingest/dry-run CLI。", horizon: "Adapter" },
-          { id: "kg-provenance", status: "done", label: "chunk-level provenance 契约已贯穿离线路径：`source_url`、`document_id`、`chunk_id`、`schema_version` 缺失即拒绝构造，GraphRAG episode 写入保留 flat provenance + schema/content hash；runtime fact 注入仍待后续阶段强制校验。", horizon: "Safety" },
-          { id: "kg-runtime-boundary", status: "done", label: "线上 RAG+KG 调用契约已实现：KG entity link / 同义扩展给 query expansion（硬上限 ~150ms，超时降级）；RAG 现有 vector+BM25+FTS+RRF+rerank 保持不变；KG 提供 rerank boost 与结构化 fact 时必须挂回 chunk_id；生成阶段 citation 池只接受 RAG chunk。由 RAG_KG_AUXILIARY_ENABLED 门控；local lightweight 默认开启试用，生产/default .env 仍关闭。", horizon: "Runtime" },
-          { id: "kg-graphrag-runtime-client", status: "done", label: "真实 KgRuntimeClient 已接到 vendored GraphRAG：GraphRagKgRuntimeClient（纯映射 + chunk_id 作用域）+ GraphitiSearchBackend（search 限定 official-docs 分区、按 episode 还原 provenance）+ rag_api startup best-effort 安装；填上了之前 client=None / KgRuntimeDisabled 的 runtime 空缺。无 Neo4j 或 KG 故障时一律降级回纯 RAG。", horizon: "Runtime" },
-          { id: "kg-local-online-path", status: "done", label: "P0：local lightweight 已把 RAG+KG 接入可试用线上路径：本地 Neo4j sandbox、runtime image vendored GraphRAG、KG_* 模型配置、official-doc chunk export CLI 与 local flag 默认开启均已落地。", horizon: "Rollout" },
-          { id: "kg-neo4j-sandbox", status: "done", label: "P0：本地 Docker Neo4j sandbox 与最小 KG_* 环境变量模板已落地；用于离线建图、本地线上试用和后续 benchmark，不改变生产默认关闭策略。", horizon: "Infrastructure" },
           { id: "kg-ingest-model-bakeoff", status: "doing", label: "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。", horizon: "Model Eval" },
           { id: "kg-offline-graph-build", status: "doing", label: "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。", horizon: "Ingest" },
           { id: "kg-benchmark-ab", status: "doing", label: "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。", horizon: "Evaluation" },
@@ -2229,7 +2222,6 @@ flowchart TD
           { id: "kg-graph-db", status: "todo", label: "P1：基于 sandbox 结果再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选，不阻塞本地 benchmark。", horizon: "Infrastructure" },
           { id: "kg-model-config", status: "doing", label: "P1：离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界、secret 管理和 .env 复用策略固化。", horizon: "Config" },
           { id: "kg-async-ingest", status: "doing", label: "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。", horizon: "Reliability" },
-          { id: "kg-schema-source", status: "done", label: "首个领域 schema 已落地为 `supportportal_official_docs_v1`：9 类实体（Product/API/Feature/ErrorCode/Symptom/Solution/Limitation/Platform/Version）+ 10 类关系，strict mode 与 schema hash 已有单测覆盖。", horizon: "Schema" },
           { id: "rag-dedupe", status: "todo", label: "P1：推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review，保证 KG 派生来源稳定。", horizon: "RAG Governance" },
           { id: "kg-citations", status: "blocked", label: "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。", horizon: "Safety" }
         ],
