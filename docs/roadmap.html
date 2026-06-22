@@ -1699,7 +1699,7 @@ flowchart TD
       },
       {
         key: "RAG vs KG",
-        copy: "RAG vs KG lane 已更新为下一阶段上线生效计划：runtime 接入能力已完成但默认关闭；下一步按 Neo4j sandbox、official-doc 离线 ingest 建图、rag_vs_rag_plus_kg 基准对照、shadow/灰度开 flag 与回滚门禁推进，未达标前 Client AI 仍保持纯 RAG 主链路。"
+        copy: "RAG vs KG lane 已更新为 GraphRAG 建图模型选择计划：先用 100 个分层 official-doc chunks 对比 gpt-5.5、gpt-5.4-mini、gpt-5.4-nano、deepseek-v4-pro、deepseek-v4-flash 的抽取质量、JSON/schema 稳定性、provenance、延迟和实际 token 成本；100 chunks 只用于选型，不作为上线效果统计结论。"
       },
       {
         key: "Routing rules",
@@ -2186,7 +2186,7 @@ flowchart TD
         short: "RAG vs KG",
         title: "RAG vs KG / Case Memory",
         status: "doing",
-        thesis: "经独立架构评审结论：KG 不能也不应该完全替代 RAG，两者并存互补是唯一合理路径。RAG 继续承载 source-of-truth 与可引用证据（citation）；KG 只在 query expansion、rerank boost、结构化 fact lookup 三个钩子位置作为辅助信号。当前已完成的是 local lightweight 线上试用路径与 Phase 1/2 执行工具链：official-doc scope、SupportPortal KG contracts、schema v1、chunk-level provenance 校验、vendored cusmem/GraphRAG 离线 ingest wiring、GraphRagKgRuntimeClient + GraphitiSearchBackend、rag_api 按 flag best-effort 安装、local Neo4j sandbox、runtime image vendored deps、official-doc chunk export CLI、离线 ingest readiness report、rag_vs_rag_plus_kg benchmark mode 与灰度前 gate report。本地 lightweight 默认开启 RAG+KG 供试用，生产/default .env 仍关闭；下一步是用真实 official-doc chunks 建图后直接观察效果，并在有数据后再决定 shadow/灰度门禁。Case Memory Ledger / Active Retrieval Memory 仍按后续阶段推进。",
+        thesis: "经独立架构评审结论：KG 不能也不应该完全替代 RAG，两者并存互补是唯一合理路径。RAG 继续承载 source-of-truth 与可引用证据（citation）；KG 只在 query expansion、rerank boost、结构化 fact lookup 三个钩子位置作为辅助信号。当前已完成的是 local lightweight 线上试用路径与 Phase 1/2 执行工具链：official-doc scope、SupportPortal KG contracts、schema v1、chunk-level provenance 校验、vendored cusmem/GraphRAG 离线 ingest wiring、GraphRagKgRuntimeClient + GraphitiSearchBackend、rag_api 按 flag best-effort 安装、local Neo4j sandbox、runtime image vendored deps、official-doc chunk export CLI、离线 ingest readiness report、rag_vs_rag_plus_kg benchmark mode 与灰度前 gate report。本地 lightweight 默认开启 RAG+KG 供试用，生产/default .env 仍关闭；下一步先做 100 个分层 official-doc chunks 的 GraphRAG 建图模型 bake-off，对比 gpt-5.5、gpt-5.4-mini、gpt-5.4-nano、deepseek-v4-pro、deepseek-v4-flash 的质量/成本/延迟，再选择全量 ingest 模型。Case Memory Ledger / Active Retrieval Memory 仍按后续阶段推进。",
         done: [
           "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate；Client AI 仍以官网文档 chunk/citation 生成答案。",
           "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
@@ -2212,7 +2212,8 @@ flowchart TD
           "vendor/cusmem 的 Graphiti 是 conversation-memory 框架（bi-temporal episode），用作 document-KG 是有适配成本的：schema-flexible 容易让同一实体在不同文档里漂移成多个节点，需要在 adapter 层预定义官网文档 9 类实体收紧抽取。",
           "Roadmap 定调：RAG = citation / source-of-truth；KG = 官网文档概念/关系辅助信号；Case Memory = 后续 confirmed-case 经验召回方向。三件事互不替代，时间线和评测口径要分开。",
           "Engineer AI 与 Client AI 应分级：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径里 KG 可以做主入口（多跳/症状↔产品↔版本↔已知 case），因为 citation 要求弱、多跳价值高。",
-          "下一阶段不是继续证明 runtime 是否能接上，而是证明接上后是否值得启用：必须有可重复建图、可解释 benchmark 增益、citation faithfulness 不回退、延迟预算可控、flag 可回滚和 telemetry 可审计。"
+          "下一阶段不是继续证明 runtime 是否能接上，而是证明接上后是否值得启用：必须有可重复建图、可解释 benchmark 增益、citation faithfulness 不回退、延迟预算可控、flag 可回滚和 telemetry 可审计。",
+          "100 chunks 足够做 GraphRAG ingest 模型初筛：它可以暴露 JSON/schema 失败、provenance 丢失、实体漂移、关系幻觉和 token/latency 量级；但它不足以证明线上 RAG+KG 效果，后续仍需要真实 query shadow 或 benchmark。"
         ],
         next: [
           { id: "kg-official-docs-scope", status: "done", label: "已将 KG 首期范围收敛为官网文档概念/关系入库，只服务 Client AI RAG 辅助，不接 confirmed case memory。", horizon: "Scope" },
@@ -2223,8 +2224,9 @@ flowchart TD
           { id: "kg-graphrag-runtime-client", status: "done", label: "真实 KgRuntimeClient 已接到 vendored GraphRAG：GraphRagKgRuntimeClient（纯映射 + chunk_id 作用域）+ GraphitiSearchBackend（search 限定 official-docs 分区、按 episode 还原 provenance）+ rag_api startup best-effort 安装；填上了之前 client=None / KgRuntimeDisabled 的 runtime 空缺。无 Neo4j 或 KG 故障时一律降级回纯 RAG。", horizon: "Runtime" },
           { id: "kg-local-online-path", status: "done", label: "P0：local lightweight 已把 RAG+KG 接入可试用线上路径：本地 Neo4j sandbox、runtime image vendored GraphRAG、KG_* 模型配置、official-doc chunk export CLI 与 local flag 默认开启均已落地。", horizon: "Rollout" },
           { id: "kg-neo4j-sandbox", status: "done", label: "P0：本地 Docker Neo4j sandbox 与最小 KG_* 环境变量模板已落地；用于离线建图、本地线上试用和后续 benchmark，不改变生产默认关闭策略。", horizon: "Infrastructure" },
-          { id: "kg-offline-graph-build", status: "doing", label: "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；下一步在本地 Neo4j 用真实 official-doc chunks 建图并观察 RAG+KG 在线效果。", horizon: "Ingest" },
-          { id: "kg-benchmark-ab", status: "doing", label: "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；当前可先跳过对照数据门槛进入本地试用，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。", horizon: "Evaluation" },
+          { id: "kg-ingest-model-bakeoff", status: "doing", label: "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。", horizon: "Model Eval" },
+          { id: "kg-offline-graph-build", status: "doing", label: "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。", horizon: "Ingest" },
+          { id: "kg-benchmark-ab", status: "doing", label: "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。", horizon: "Evaluation" },
           { id: "kg-grey-gate", status: "todo", label: "P0：生产 flag 暂不开；本地试用效果可先人工观察，进入 shadow/小流量前仍需 telemetry 审计、回滚开关和基准数据。", horizon: "Rollout" },
           { id: "kg-engineer-vs-client", status: "todo", label: "P1：明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。", horizon: "Access Policy" },
           { id: "kg-graph-db", status: "todo", label: "P1：基于 sandbox 结果再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选，不阻塞本地 benchmark。", horizon: "Infrastructure" },
@@ -2279,7 +2281,65 @@ flowchart TD
               { dimension: "基础设施 / 运维代价", rag: "✅ Postgres 已承载", kg: "❌ 需引入 Neo4j 或 Neptune" },
               { dimension: "现有评测 / 降级 / access policy 复用", rag: "✅ rag_benchmark / sufficiency_judge / evidence_verdict 已完备", kg: "❌ 需重建评测与 ACL" }
             ]
-          }
+          },
+          extra_tables: [
+            {
+              title: "RAG 入库 vs GraphRAG 入库",
+              summary: "两者都从 official docs 来，但入库产物和成本结构不同：RAG 保存可引用原文，GraphRAG 从同一批 chunk 派生可遍历概念图谱。",
+              headers: [
+                { key: "step", label: "环节" },
+                { key: "rag", label: "RAG 入库" },
+                { key: "graphrag", label: "GraphRAG 入库" }
+              ],
+              rows: [
+                { step: "输入", rag: "原始 Markdown/HTML 文档或已切好的 chunk", graphrag: "优先复用 RAG 已入库 chunk，保留 chunk_id、document_id、source_url" },
+                { step: "切片", rag: "需要制定切片规则，控制 chunk size、overlap、metadata", graphrag: "本阶段不重新切片，直接读取现有 official-doc chunks" },
+                { step: "模型调用", rag: "主要调用 embedding 模型；可选 reranker/LLM eval", graphrag: "调用 LLM 对 chunk 抽取实体、关系、事实；还可能对图节点/摘要调用 embedding" },
+                { step: "存储", rag: "Postgres/pgvector + BM25/FTS 表，保存原文、向量、metadata", graphrag: "Neo4j 保存 entity/edge/episode/fact，并把每个图谱事实挂回 chunk provenance" },
+                { step: "查询", rag: "向量/BM25/FTS 召回原文 chunk，生成答案与 citation", graphrag: "做 entity link、同义扩展、rerank boost、structured fact lookup；citation 仍回到 RAG chunk" },
+                { step: "失败降级", rag: "召回不足时走 sufficiency/fallback", graphrag: "KG 超时、Neo4j 不可用、无 provenance 时直接降级纯 RAG" }
+              ]
+            },
+            {
+              title: "GraphRAG 成本结构",
+              summary: "GraphRAG 的主要 token 花费在离线建图阶段；线上查询阶段只有启用 KG hook 且需要 entity/fact lookup 时才产生少量额外 LLM 或 embedding 成本。",
+              headers: [
+                { key: "phase", label: "阶段" },
+                { key: "operation", label: "操作" },
+                { key: "token_cost", label: "是否花 token" },
+                { key: "notes", label: "说明" }
+              ],
+              rows: [
+                { phase: "建图", operation: "读取 RAG chunk / 校验 provenance / 写 Neo4j", token_cost: "否", notes: "数据库 IO 与 Neo4j 写入成本，不调用模型" },
+                { phase: "建图", operation: "实体/关系/事实抽取", token_cost: "是，LLM input + output", notes: "最大成本项；input 包含抽取 prompt、schema、chunk 文本，output 是结构化 JSON/事实" },
+                { phase: "建图", operation: "节点、事实或摘要 embedding", token_cost: "是，embedding tokens", notes: "取决于 GraphRAG 配置；用于后续图谱搜索或 entity match" },
+                { phase: "建图", operation: "失败重试 / schema 修复", token_cost: "是", notes: "JSON 解析失败、schema 不合格、provider 超时会放大成本" },
+                { phase: "查询", operation: "RAG 原有 query embedding / rerank / answer generation", token_cost: "是", notes: "这是纯 RAG 本来就有的成本，不因 KG 才新增" },
+                { phase: "查询", operation: "KG entity link / query expansion", token_cost: "可能", notes: "若用图谱 embedding/Neo4j 查询可不走 LLM；若用 LLM 做 query entity extraction 则会新增少量 token" },
+                { phase: "查询", operation: "KG rerank boost / fact lookup", token_cost: "通常否", notes: "主要是 Neo4j 遍历和 provenance 过滤；如果 fact summarization 交给生成模型，成本并入最终 answer generation" },
+                { phase: "查询", operation: "最终回答", token_cost: "是", notes: "LLM 生成成本仍存在；KG 只能加入带 chunk provenance 的辅助事实，不能替代 RAG citation" }
+              ]
+            },
+            {
+              title: "100 Chunk GraphRAG 建图模型 Bake-off",
+              summary: "价格按 2026-06-22 官方页估算；100 chunks 按每 100 个 chunk 约 0.26M-0.44M LLM input tokens、0.02M-0.07M output tokens 估算，最终以 provider usage report 为准。",
+              headers: [
+                { key: "model", label: "模型" },
+                { key: "price", label: "价格（$/1M tokens）" },
+                { key: "cost100", label: "100 chunks 估算" },
+                { key: "fullCost", label: "全量 68,694 chunks 估算" },
+                { key: "quality", label: "预期质量/风险" },
+                { key: "decision", label: "实验判定口径" }
+              ],
+              rows: [
+                { model: "gpt-5.5", price: "Input $5.00 / Output $30.00", cost100: "$2.0-$4.4", fullCost: "$1,350-$3,000", quality: "最强基线；适合做 gold/reference，但全量建图成本最高", decision: "若明显领先才考虑全量，否则只用于抽样审计或失败兜底" },
+                { model: "gpt-5.4-mini", price: "Input $0.75 / Output $4.50", cost100: "$0.30-$0.66", fullCost: "$203-$450", quality: "质量/价格折中；预期适合作为 OpenAI 主候选", decision: "若质量接近 gpt-5.5 且失败率低，可作为稳妥全量模型" },
+                { model: "gpt-5.4-nano", price: "Input $0.20 / Output $1.25", cost100: "$0.08-$0.18", fullCost: "$55-$123", quality: "官方定位覆盖 extraction/ranking，但复杂关系、否定句、版本条件风险更高", decision: "若 schema pass 和 unsupported fact 表现过关，是最低成本 OpenAI 候选" },
+                { model: "deepseek-v4-pro", price: "Input $0.435 / Output $0.87", cost100: "$0.13-$0.25", fullCost: "$91-$174", quality: "1M context + JSON/tool 支持，成本接近 nano，复杂抽取预期强于 flash", decision: "若实体/关系质量接近 mini，优先作为成本型全量模型" },
+                { model: "deepseek-v4-flash", price: "Input $0.14 / Output $0.28", cost100: "$0.04-$0.08", fullCost: "$29-$56", quality: "最便宜且吞吐高；复杂 schema、关系精度和实体归一化需重点观察", decision: "若只小幅落后且 schema 稳定，可作为批量建图首选；失败 chunk 再升级模型" }
+              ]
+            }
+          ]
         },
         sources: [
           "docs/rag_retrieval_chain.md",
@@ -2397,6 +2457,14 @@ flowchart TD
       const comparisonHaystack = (lane.architecture?.comparison_table?.rows || [])
         .flatMap((row) => [row.dimension, row.rag, row.kg])
         .join(" ");
+      const extraTableHaystack = (lane.architecture?.extra_tables || [])
+        .flatMap((table) => [
+          table.title,
+          table.summary,
+          ...(table.headers || []).map((header) => header.label),
+          ...(table.rows || []).flatMap((row) => Object.values(row))
+        ])
+        .join(" ");
       const meetingHaystack = (lane.meeting_minutes || [])
         .flatMap((item) => [item.kicker, item.title, ...(item.points || [])])
         .join(" ");
@@ -2412,6 +2480,7 @@ flowchart TD
         lane.architecture?.comparison_table?.title || "",
         lane.architecture?.comparison_table?.summary || "",
         comparisonHaystack,
+        extraTableHaystack,
         meetingHaystack,
         ...(lane.next || []).map((task) => `${task.label} ${task.horizon} ${STATUS_LABELS[taskStatus(task)]}`),
         ...(lane.sources || [])
@@ -2421,11 +2490,21 @@ flowchart TD
 
     function renderComparisonTable(table) {
       if (!table || !Array.isArray(table.rows) || !table.rows.length) return "";
+      const headers = Array.isArray(table.headers)
+        ? table.headers
+        : [
+            { key: "dimension", label: table.headers?.dimension || "维度", scope: "row" },
+            { key: "rag", label: table.headers?.rag || "RAG 强" },
+            { key: "kg", label: table.headers?.kg || "KG 强" }
+          ];
       const rowsHtml = table.rows.map((row) => `
         <tr>
-          <th scope="row">${escapeHtml(row.dimension)}</th>
-          <td>${escapeHtml(row.rag)}</td>
-          <td>${escapeHtml(row.kg)}</td>
+          ${headers.map((header, index) => {
+            const value = row[header.key] ?? "";
+            const tag = index === 0 || header.scope === "row" ? "th" : "td";
+            const scope = tag === "th" ? ' scope="row"' : "";
+            return `<${tag}${scope}>${escapeHtml(value)}</${tag}>`;
+          }).join("")}
         </tr>
       `).join("");
       const summaryHtml = table.summary ? `<p class="comparison-summary">${escapeHtml(table.summary)}</p>` : "";
@@ -2437,9 +2516,7 @@ flowchart TD
             <table class="comparison-table">
               <thead>
                 <tr>
-                  <th scope="col">${escapeHtml(table.headers?.dimension || "维度")}</th>
-                  <th scope="col">${escapeHtml(table.headers?.rag || "RAG 强")}</th>
-                  <th scope="col">${escapeHtml(table.headers?.kg || "KG 强")}</th>
+                  ${headers.map((header) => `<th scope="col">${escapeHtml(header.label)}</th>`).join("")}
                 </tr>
               </thead>
               <tbody>${rowsHtml}</tbody>
@@ -2462,6 +2539,7 @@ flowchart TD
           </div>
           <p class="diagram-note">${escapeHtml(architecture.note)}</p>
           ${renderComparisonTable(architecture.comparison_table)}
+          ${(architecture.extra_tables || []).map((table) => renderComparisonTable(table)).join("")}
         </div>
       `;
     }

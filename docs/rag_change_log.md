@@ -11,6 +11,22 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-06-22 - Record GraphRAG ingest model bake-off plan
+
+- Summary:
+  - Updated the roadmap RAG vs KG lane with a 100-chunk GraphRAG ingest model bake-off plan covering `gpt-5.5`, `gpt-5.4-mini`, `gpt-5.4-nano`, `deepseek-v4-pro`, and `deepseek-v4-flash`.
+  - Added roadmap tables documenting RAG vs GraphRAG ingestion differences, GraphRAG build/query cost structure, and the price/quality decision criteria for the model comparison.
+- Reason:
+  - Before full official-doc KG ingest into local Neo4j, the build model should be selected from measured extraction quality, schema/provenance stability, latency, and actual provider token usage instead of only list pricing.
+- Affected files/config:
+  - `docs/roadmap.html`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Documentation-only. No chunks, embeddings, pgvector/BM25/FTS rows, Neo4j graph data, or runtime model configuration changed.
+- Verification:
+  - Extracted the inline script block from `docs/roadmap.html` into `/tmp/roadmap-inline-script.js`, then ran `rtk node --check /tmp/roadmap-inline-script.js`.
+  - `rtk rg -n "100 Chunk GraphRAG|RAG 入库 vs GraphRAG 入库|GraphRAG 成本结构|kg-ingest-model-bakeoff" docs/roadmap.html`
+
 ## 2026-06-20 - Make vendored GraphRAG cross-encoder optional for lightweight runtime
 
 - Summary:
