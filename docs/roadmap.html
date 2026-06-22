@@ -1118,6 +1118,35 @@
 
     .source-list code { overflow-wrap: anywhere; }
 
+    .pr-links {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-left: 8px;
+      vertical-align: baseline;
+    }
+
+    .pr-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border: 1px solid rgba(31, 79, 104, 0.24);
+      border-radius: 999px;
+      background: rgba(31, 79, 104, 0.08);
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .pr-link:hover {
+      border-color: rgba(31, 79, 104, 0.46);
+      background: rgba(31, 79, 104, 0.14);
+    }
+
     details.sources {
       margin-top: 20px;
       border-top: 1px dashed var(--line-strong);
@@ -1870,14 +1899,14 @@ flowchart TD
         status: "doing",
         thesis: "已完成边界、反馈、ledger、第一版后端 skeleton、新版生命周期架构、Summary Agent、Plan Agent（active_plan 写入 engineer_agent_state）、Execute Agent（deterministic scheduler, allowlisted subagents, evidence packet）、Review Agent（deterministic review decision, replan_required 仅作为暂停状态信号, missing_information context）、close-memory（final approve 后显式关闭 engineer case、写 audit event、写 Case Memory candidate，不自动晋升 active memory）和 replay eval dataset（从 summary packet、review decisions、replan notes、engineer revise、approved replies 生成 candidate dataset）；runtime activation 阶段：每个新建/进入的 Engineer 工单都会生成并持久化一轮初始 multi-agent run，双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true 触发一轮 Plan/Execute/Review 刷新，revise replan 循环与 max 2 retries 暂停（只保留可编辑/重新走 guardrail）；当前优化优先级是 P0 先让 Execute Agent 接真实 evidence tools 与 replay/metrics gate，P1 恢复受控 targeted replan 并强化 guardrail claim-to-evidence，P2 再推进 UI 行动台、统一 rollout taxonomy 和 agent-to-agent 接入。",
         done: [
-          "阶段 0 设计已固化：Engineer AI only、client AI 不进入自进化范围，RAG 与 Case Memory Layer 的职责边界已写入设计文档。",
-          "结构化 HITL feedback 已完成 schema、API/Postgres 表和关闭后自动复盘 UI；approve 不等于 confirmed case 的规则已固定。",
-          "Case Memory Ledger 已落地：所有 feedback 入账，默认 retrieval_enabled=false / active_memory_status=inactive，不会自动进入长期记忆。",
-          "Engineer evidence orchestration 已把 internal-first evidence summary 注入 investigation opening，同时保留 official fallback 与内部来源不外泄规则。",
-          "第一版 `backend/services/engineer_multi_agent.py` 已提供 plan/review/task result/conclusion skeleton，并有契约测试覆盖。",
-          "Engineer AI mainline plan 已从 markdown 计划转成中文 HTML，Roadmap 可以直接展示阶段边界、风险门禁和 rollout 顺序。",
-          "主线架构已优化为 Summary Agent → Plan Agent → Execute Agent → Review Agent → Engineer approve/revise → Guardrail final approve → close ticket → replay eval dataset；Summary/Plan/Execute/Review 第一版已全部接入 runtime，Client AI handle 不了客户问题后的 Escalate to Engineer 会先生成 Summary Agent packet，并把该 packet 写入 Engineer ticket 的 engineer_handoff_packet；Guardrail final approve 已通过两段 approve 机制接管 runtime（engineer approve → guardrail → final approve），close-memory 和 replay eval dataset 已完成，下一步从单一 replay runner 扩展为 evidence tools、replay/metrics gate、受控 replan、claim-to-evidence guardrail 和 UI 行动台五条优化主线。",
-          "Runtime activation：每个新建/进入的 Engineer 工单（RAG escalation、manual investigate、request-engineer-assistance）都会通过 ensure_engineer_multi_agent_run 生成并持久化一轮初始 Plan/Execute/Review run，右侧 Multi-Agent Run 面板默认不再为空；双击 investigating 打开 multi-agent workspace 后工程师消息携带 multi_agent_enabled=true，后端先刷新一轮再让 Engineer AI 回复，默认 workspace 仍走 guardrail-only 消息流程；revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。"
+          { summary: "阶段 0 与主线架构已固化：Engineer AI 自进化边界、RAG / Case Memory 职责、Summary → Plan → Execute → Review → approve / close 的生命周期都已进入 Roadmap 表达。", prs: [407, 431, 435, 439] },
+          { summary: "结构化 HITL feedback 已落地：schema、API、Postgres 表、关闭后复盘 UI 和「approve 不等于 confirmed case」规则都已固定。", prs: [410, 411, 420] },
+          { summary: "Case Memory Ledger 已落地为审计账本：feedback 与 close-memory candidate 默认不可检索、不自动晋升 active memory。", prs: [428, 429, 490] },
+          { summary: "Engineer evidence orchestration 已把 internal-first evidence summary 注入调查开场，并保留 official fallback 与内部来源不外泄规则。", prs: [417] },
+          { summary: "第一版 Engineer multi-agent skeleton 已建立，覆盖 plan、review、task result、conclusion 的契约基础。", prs: [436] },
+          { summary: "Summary / Plan / Execute / Review Agent 第一版已接入：升级工单会生成 summary packet、active plan、task results、evidence packet 和 review decision。", prs: [458, 460, 463, 464] },
+          { summary: "Guardrail final approve、close-memory 和 replay eval dataset 已完成：客户回复前保留最终人工确认，关闭后写 audit、memory candidate 和 replay 样本。", prs: [487, 490, 494] },
+          { summary: "Runtime activation 已完成：新建或进入 Engineer 工单会持久化初始 multi-agent run，workspace 可查看/刷新 Plan-Execute-Review，revise 自动 replan 与 max retries 已暂停。", prs: [479, 507, 508, 511] }
         ],
         review: [
           "当前证据能证明的是 Summary/Plan/Execute/Review 初始与 multi-agent workspace 刷新、revise 暂停自动 replan、Guardrail final approve 已接入 runtime；它仍不是无需人工介入的自动闭环，因为 final approve 仍必须由工程师确认。",
@@ -1930,20 +1959,12 @@ flowchart TD
         status: "doing",
         thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready + read-only admin queue view 三段式 demo；生产级调度、持久化、审计和真实队列接入仍未开始。",
         done: [
-          "`/assignment` 已从登录自动分配改为三段式 demo：选择 engineer → welcome/readiness 页面 → 点击 I'm ready to roll 后领取 ticket 并进入 workspace。",
-          "原型包含 Jack/Maya/Leo 工程师选择器、localStorage 登录状态、UTC+8 每日固定 shift、welcome readiness overview 和显式领取动作。",
-          "Daily shift 卡片已支持直接修改 Start / End 并保存，复用 Save shift 写入 localStorage 后立即刷新 In shift / Out of shift 与 ready 状态。",
-          "Out of shift 时 I'm ready to roll 按钮 disable，显示原因和下一段 shift 信息；in shift 时点击按钮从 queue 领取下一张 case。",
-          "关闭/approve 当前 ticket 后不自动连续领取下一张，展示 I'm ready for the next case CTA 由工程师再次显式领取。",
-          "`/assignment/admin` 扩展为 Queue & engineer overview 双区域：包含 waiting queue、active assignment、on shift now、online coverage 状态卡。",
-          "新增 Engineer overview section：当前 on-shift 列表、online/offline 固定 mock 状态、weekly schedule 网格和 admin-only shift 侧边编辑面板。",
-          "Weekly schedule 使用 Monday–Sunday × 00:00–23:00 UTC+8 小时网格，每个 engineer 固定颜色 chip，支持 overnight shift 跨到次日显示。",
-          "Admin 页提供 engineer/day picker，可为没有现有 chip 的空白日期新建或调整 shift。",
-          "Admin schedule 独立于 `/assignment` 的 ASSIGNMENT_SHIFT_KEY，使用专用 localStorage key，两者互不影响。",
-          "SLA 超时/transfer 状态可模拟，契约测试确认 welcome + ready CTA + admin 入口、显式领取行为和不影响现有 engineer UI。",
-          "`/assignment` workspace sidebar 改为 hover 展开模式：桌面默认 96px 窄栏显示品牌 icon 和头像，hover/focus-within 后展开到 320px 显示完整 context card、shift form、audit trail 和操作按钮；移动端保持全宽。",
-          "新增 Ready loading transition：点击 I'm ready to roll 后先展示 900ms loading 动画（assignment/AI handoff 语义），再进入 workspace；非 in-shift / 无 engineer 场景不触发 loading。",
-          "新增 Break after this case 功能：engineer 可在 workspace header 点击激活，approve 当前 case 后自动回到 welcome/readiness 主页面而非留在 workspace；刷新后 localStorage 保持状态不丢。"
+          { summary: "`/assignment` 已形成选择工程师、welcome readiness、显式领取 ticket、进入 workspace 的三段式原型。", prs: [413, 418, 448] },
+          { summary: "工程师 shift 编辑已前置到 welcome / Daily shift 卡片，in-shift、out-of-shift、下一段 shift 与显式领取状态会同步刷新。", prs: [459, 475] },
+          { summary: "关闭或 approve 当前 ticket 后不会自动连续领取，工程师需要再次通过 ready CTA 明确接下一单。", prs: [448] },
+          { summary: "`/assignment/admin` 已有 queue、active assignment、on-shift coverage、Engineer overview 与 weekly schedule demo。", prs: [461, 473, 476, 478] },
+          { summary: "Admin schedule 支持 engineer/day picker、空白日期新建或调整 shift，并与个人 assignment shift localStorage 隔离。", prs: [461, 473, 475] },
+          { summary: "Assignment UI 已完成多轮 polish：SLA 秒级展示、hover sidebar、brand/icon 对齐、shift form 防重叠和移动端布局。", prs: [451, 462, 465, 466, 467, 471] }
         ],
         review: [
           "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",
@@ -1977,15 +1998,12 @@ flowchart TD
         status: "doing",
         thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，Zendesk webhook / N8n 内部转发和 response link demo 闭环已完成，下一步优先验证真实 Zendesk replay、人工审核和 dashboard 指标，不直接迁移客户入口。",
         done: [
-          "Automation 白名单已扩展到 `account_suspension`、`detailed_invoice` 和 `account_verification`；suspicious activity / fraud / company verification / reactivation 新进入 billing automation intake。",
-          "`detect_billing_route` 与 support router 已能输出 billing scope、`billing_automation` family 和 `deterministic_billing_intake` tooling profile。",
-          "`POST /account` 已实现创建客户工单 -> semantic-first route -> billing automation 执行 -> 记录结果；白名单 automation 会追问缺失字段、生成客户回复，并在字段完整时尝试内部邮件流转。",
-          "`/account` 手动 UI 已复用 client 体验，并展示 route、单一 canonical `TK-...` ticket id、Automation / Not automated 状态和最近 ticket 历史；详情页不再展示第二个 Support ticket ID。",
-          "底层仍使用 `support_billing_tickets` companion table 持久化，但对外 view-model 只保留一个 `ticket_id`；`billing_ticket_id` 保持为内部 companion key，`source` 统一为 `manual` / `api`。",
-          "Billing ticket 历史列表和详情 API 已完成；详情 API 支持用 canonical `ticket_id` 直接查询，不再依赖 Recent tickets 列表窗口。",
-          "底层 billing automation helper 支持 action-specific destination env 和内部邮件；`/account` intake 字段完整时触发真实邮件发送，SMTP 缺配置时 fail closed 并记录 skipped/failed 原因。",
-          "内部邮件已携带一次性 response link；`/response` 页面只展示 `billing_ticket_id`，提交结构化处理结果后写入 internal resolution event，并按通知选择生成 `billing_response_ai` 客户回复。",
-          "`/account` 已支持人工纠正完整 route tuple，并通过 Route errors 过滤和汇总面板分析已纠正与低置信路由案例。"
+          { summary: "Billing automation intake 已覆盖 `account_suspension`、`detailed_invoice` 和 `account_verification`，并能追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
+          { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
+          { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
+          { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
+          { summary: "一次性 response link 闭环已完成：内部处理人提交结构化结果后写 internal resolution event，再由 AI 决定是否通知客户。", prs: [509, 510, 512] },
+          { summary: "`/account` 已支持人工纠正完整 route tuple，并通过 Route errors、低置信汇总和 review/pass 视图分析误路由案例。", prs: [513, 515, 524, 526, 527] }
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
@@ -2062,32 +2080,16 @@ flowchart TD
         status: "doing",
         thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；会议后路由计划补上三类 case 的 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff。Phase 1 重点不是扩大 scope，而是用 real Zendesk replay set 验证 billing route、风险负例、Not automated 原因和 1% 切流门禁。",
         done: [
-          "入口是 `decide_support_route()`：空消息直接 `non_agora/refuse`；非空消息先进入 `_heuristic_route_decision()`，没有命中才调用 `_llm_route_decision()`。",
-          "LLM semantic router 已升级为 intent taxonomy 输出：`scope_label`、`semantic_intent`（billing.account_suspension / billing.detailed_invoice / billing.refund_or_dispute）、`recommended_action`、`automation_eligibility`、`confidence`、`evidence_spans`、`risk_flags`。",
-          "Policy gate (`_apply_policy_gate()`) 已实现：拆分「是什么问题」和「能不能 automation」。refund_or_dispute 和 legal/compensation 永不可 automation；account_suspension 默认 human_review_required；detailed_invoice 只在无 dispute 信号时允许 automation。",
-          "`SupportRouteDecision` 新增 7 个 optional 字段：`semantic_intent`、`automation_eligibility`、`policy_decision`、`not_automated_reason`、`risk_flags`、`evidence_spans`、`router_source`，兼容所有现有 route contract。",
-          "新增 `billing_review` route family：billing 需人工审核时输出 `route_family=billing_review`、`execution_action=human_review_required`，与 `billing_automation` 区分。",
-          "deterministic fast path 的顺序固定：billing whitelist -> ticket_resolution -> gratitude/small_talk -> short troubleshooting -> API semantics mismatch -> join channel -> product portfolio。",
-          "billing fast path 已扩展 account_suspension 白名单：新增 `account temporarily suspended`、`account has been suspended`、`suspended due to insufficient balance` 等真实表达，覆盖 TK-ACC-68BAC7 类 case。",
-          "billing fast path 命中后输出 `scope_label=billing`、`semantic_intent=billing.{action}`、`route_family=billing_automation`、`tooling_profile=deterministic_billing_intake`、`router_source=deterministic`。",
-          "`detailed_invoice` 只匹配 detailed invoice / invoice details / send invoice，并用 dispute/refund/wrong/overcharged 等词排除金额争议；`account_suspension` 已覆盖 account suspended、suspended account、account blocked/disabled、temporarily suspended、has been suspended、suspended due to balance。",
-          "ticket resolution 只在客户确认问题解决且没有负向标记时触发，输出 `ticket_resolution/resolve_ticket/deterministic_resolution`；普通 thanks 没有 resolution context 时会走 `small_talk/controlled_response`。",
-          "短排障消息才走 short troubleshooting fast path：不超过 24 words / 180 chars，且包含 black screen、no audio、join failed、disconnect、network quality 等信号；若同时有 printer/outlook/excel/office wifi/blue screen 等 general IT 信号，则转 `non_agora/refuse`。",
-          "API semantics mismatch、join channel 和 Agora product portfolio 有独立 deterministic route；product portfolio 输出 `agora_non_technical/web_company_info/web_search`，技术与排障输出 `agora_technical/agora_docs_rag/rag`。",
-          "LLM classifier 已升级输出 schema：返回 `scope_label`、`semantic_intent`、`recommended_action`、`automation_eligibility`、`confidence`、`reason`、`matched_signals`、`evidence_spans`、`risk_flags`。",
-          "LLM billing 分类规则：billing.account_suspension 覆盖所有 account access/balance/suspension 语义；billing.refund_or_dispute 覆盖 refund/dispute/wrong amount/overcharged/legal compensation；billing.detailed_invoice 覆盖详细发票请求。",
-          "route contract 固定映射：`agora_technical -> agora_docs_rag/rag/agora_docs_only`，`agora_non_technical -> web_company_info/web_search/official_web_search`，`non_agora -> fallback_or_refuse/refuse/no_agora_docs_refusal`，`small_talk -> general_chat/controlled_response/controlled_acknowledgement`，`billing -> billing_automation`（可自动化）或 `billing_review`（需人工审核）。",
-          "Account intake 已扩展 view-model：API response、billing ticket 和 event 均包含 `semantic_intent`、`automation_eligibility`、`policy_decision`、`not_automated_reason`、`risk_flags`、`evidence_spans`、`router_source`。",
-          "`support_billing_tickets` schema / Postgres repository 已补 semantic routing 字段，避免只在 InMemory 中可见、生产持久化丢失 route audit metadata。",
-          "Golden billing routing regression set 已建立：`test_support_router_semantic_billing.py` 包含 12 个 case，覆盖 TK-ACC-68BAC7、account suspension variants、detailed invoice、refund/dispute/legal negative cases、non-billing cases。",
-          "Router prompt (`prompts/router.py`) 已更新：新增 Billing Intent Taxonomy、Automation Eligibility 规则、billing few-shot examples。",
-          "TK-ACC-68BAC7 已修复：`Account temporarily suspended` 现被 deterministic 白名单命中，route 为 `billing_automation/account_suspension`，不再误判为 `web_search`。",
-          "`TK-ACC-C31612` 已修复：长正文结尾 `thank you` 不再被 weak gratitude 抢先判为 `small_talk`。`/account` 改用 semantic-first：LLM 先跑识别 full intent，gratitude 仅匹配 ≤20 words 且不含 billing/account/fraud/technical 关键词的消息。",
-          "新增 `billing.account_verification` intent：LLM 将 suspicious activity / fraud review / company verification / reactivation 归入新类；policy gate 在无 refund/dispute/legal 风险时放行为 `billing_automation/account_verification`。",
-          "Policy gate 扩展：`account_verification` 默认 eligible，带 refund/amount_dispute/legal_threat 时回退 `billing_review/human_review_required`；`account_suspension` 保持默认 human_review_required。",
-          "Route contract 新增映射：`account_verification` → `billing_automation/account_verification/deterministic_billing_intake`。",
-          "Router prompt 已补 `billing.account_verification` taxonomy + automation eligibility + few-shot example（suspicious activity company verification with Use Case section）。",
-          "Account Route errors 已落地：人工纠正会持久化 original / corrected / first corrected route tuple，并把 route correction 与低置信路由纳入同一分析视图。",
+          { summary: "Routing tab 和架构图已独立维护，固定 deterministic fast path、LLM semantic router、policy gate、fallback 和 route contract 的边界。", prs: [474, 496, 518] },
+          { summary: "LLM router 已升级为 semantic intent taxonomy 输出，并把 billing intent、evidence spans、risk flags 和 automation eligibility 纳入 route decision。", prs: [477] },
+          { summary: "Policy gate 已拆分「是什么问题」和「能不能 automation」：refund/dispute/legal 不自动化，account_suspension 默认人工审核，detailed_invoice 仅无争议时可自动化。", prs: [477, 520] },
+          { summary: "`SupportRouteDecision`、billing ticket、event 和 account view-model 已透传 semantic routing audit 字段，生产持久化不再丢 route metadata。", prs: [477, 491] },
+          { summary: "`billing_review` route family 已建立，用于隔离需人工审核的 billing case，避免与 `billing_automation` 混在一起。", prs: [477, 520] },
+          { summary: "Billing deterministic fast path 已扩展 account_suspension、detailed_invoice 和 minimal risk gate，TK-ACC-68BAC7 类 case 不再误判为 web search。", prs: [477, 491, 520] },
+          { summary: "Golden billing routing regression set 和 router prompt few-shot 已覆盖 account suspension、detailed invoice、refund/dispute/legal negative 与非 billing case。", prs: [477, 491] },
+          { summary: "TK-ACC-C31612 已修复：长正文末尾 thank you 不再触发 weak gratitude，`/account` 改为 semantic-first 路由。", prs: [488, 515] },
+          { summary: "`billing.account_verification` intent 与 route contract 已完成，覆盖 suspicious activity、fraud review、company verification 和 reactivation。", prs: [488] },
+          { summary: "Account Route errors 与 route review 已落地：人工纠正、原始/首次纠正 tuple、低置信汇总和 pass/unreview 过滤都可追踪。", prs: [515, 526, 527] },
         ],
         review: [
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
@@ -2188,22 +2190,17 @@ flowchart TD
         status: "doing",
         thesis: "经独立架构评审结论：KG 不能也不应该完全替代 RAG，两者并存互补是唯一合理路径。RAG 继续承载 source-of-truth 与可引用证据（citation）；KG 只在 query expansion、rerank boost、结构化 fact lookup 三个钩子位置作为辅助信号。当前已完成的是 local lightweight 线上试用路径与 Phase 1/2 执行工具链：official-doc scope、SupportPortal KG contracts、schema v1、chunk-level provenance 校验、vendored cusmem/GraphRAG 离线 ingest wiring、GraphRagKgRuntimeClient + GraphitiSearchBackend、rag_api 按 flag best-effort 安装、local Neo4j sandbox、runtime image vendored deps、official-doc chunk export CLI、离线 ingest readiness report、rag_vs_rag_plus_kg benchmark mode 与灰度前 gate report。本地 lightweight 默认开启 RAG+KG 供试用，生产/default .env 仍关闭；下一步先做 100 个分层 official-doc chunks 的 GraphRAG 建图模型 bake-off，对比 gpt-5.5、gpt-5.4-mini、gpt-5.4-nano、deepseek-v4-pro、deepseek-v4-flash 的质量/成本/延迟，再选择全量 ingest 模型。Case Memory Ledger / Active Retrieval Memory 仍按后续阶段推进。",
         done: [
-          "RAG 主链路已稳定为 agentic/hybrid retrieval：vector、BM25、PostgreSQL FTS、metadata prune、external rerank 和 sufficiency gate；Client AI 仍以官网文档 chunk/citation 生成答案。",
-          "Access-aware routing 已明确：Client AI 只用 `official_only`，Engineer AI 优先 `non_official_only`，必要时回查 official docs。",
-          "知识边界已固定：官网文档型知识、citation、source path 和重复文档治理留在 RAG；本阶段 KG 只从官网文档派生概念图谱，confirmed cases/经验仍留作后续 Case Memory Layer。",
-          "Case Memory Ledger 已实现为完整审计账本，Active Retrieval Memory 作为后续可召回子集，ledger candidate 不会自动变 active。",
-          "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline；PDF/OCR ingestion 已移除。",
-          "`python3 -m graphiti_rag` CLI、core/validate/full schema-design preset、lazy imports 和 no-Neo4j help path 已有回归测试覆盖。",
-          "默认 `graphrag_config.yaml` 不再绑定 GB/T schema，改为显式提供领域 schema，减少误把研究样例当产品默认路径的风险。",
-          "KG 首期 scope gate 已落地：只有 `official` + `official_markdown_upload` 可生成 Client AI RAG auxiliary 入库计划；technical article、external benchmark 和 confirmed case memory 会被拒绝。",
-          "SupportPortal KG PR1 已落地：新增 official-doc chunk 输入契约、`KgProvenance` / KG runtime 输出校验、`supportportal_official_docs_v1` schema（9 类实体 + 10 类关系）和 strict schema hash。",
-          "SupportPortal KG PR2 已落地：`kg_graphrag_adapter.py` / `kg_offline_ingest.py` / `scripts/kg_ingest_official_doc_chunks.py` 把 official-doc chunk contract 转为 vendored cusmem `Chunk` 与 Graphiti episode，并保留 provenance、schema hash、content hash、deterministic episode UUID 和 dry-run 验证路径。",
-          "SupportPortal KG PR3（runtime client）已落地：`kg_graphrag_runtime.py` 新增 `GraphRagKgRuntimeClient`（纯映射层，把 KG 搜索命中映射为 expansion/rerank/fact 并强制 chunk_id 作用域）与 `GraphitiSearchBackend`（唯一 vendored-graphiti 耦合，search 限定 `supportportal_official_docs` 分区，按 episode `supportportal_*` 元数据还原 `KgProvenance`、按 entity 节点取扩展词）；`rag_api` startup 通过 `maybe_install_default_kg_client()` 按 `RAG_KG_AUXILIARY_ENABLED` + Neo4j 配置 best-effort 安装。此前 hook 调用点都传 `client=None`、默认 `KgRuntimeDisabled`，KG 即使开 flag 也恒为 no-op；现在具备真实图谱接入能力，但未配置 Neo4j 与 flag 时仍保持纯 RAG。",
-          "Local lightweight RAG+KG 试用路径已接通：compose 会启动本地 Neo4j sandbox，`rag_api` / `rag_worker` 默认设置 KG Neo4j env 与 `RAG_KG_AUXILIARY_ENABLED=true`，runtime image 复制 `vendor/cusmem` 并安装 GraphRAG 所需依赖；生产/default `.env` 仍保持 flag 关闭。",
-          "GraphRAG runtime 模型配置已补齐：KG 专用 `KG_LLM_*` / `KG_EMBEDDING_*` 优先，未设置时复用已有 DeepSeek 与 SiliconFlow embedding env；vendored GraphRAG 不再把 embedder api key 写死为 `ollama`。",
-          "新增 official-doc chunk export CLI：可从 pgvector 官方文档 chunk 表导出 `scripts/kg_ingest_official_doc_chunks.py` 消费的 JSONL 输入，作为本地 Neo4j 建图入口。",
-          "GraphRAG Phase 1/2 执行工具链已补齐：离线 KG ingest CLI 可输出 readiness report（scope/drop、episode、ingest 成败、provenance、schema、smoke 与 benchmark readiness），RAG benchmark CLI 已支持 `pure_rag` / `rag_plus_kg` / `rag_vs_rag_plus_kg` 三种模式并输出对照 gate report；benchmark summary 会聚合 KG enabled / contribution / degrade telemetry。",
-          "独立架构评审已完成：对比生产 RAG 链路（vector+BM25+FTS / RRF / metadata prune / external rerank / sufficiency gate / citation 合约）和 vendor/cusmem Graphiti（conversation-memory bi-temporal 模型），结论是 KG 不可替代 RAG，方案改为 RAG + KG 互补，并固化三个 KG 钩子位置与三条不能让步规则。"
+          { summary: "RAG 主链路和 access-aware routing 已固定：Client AI 使用 official-only citation，Engineer AI 优先非官网知识并可回查官网文档。", prs: [399, 400, 401, 403] },
+          { summary: "RAG governance 与知识边界已明确：官网文档、citation、source path 和重复文档治理留在 RAG，经验召回进入 Case Memory 后续路径。", prs: [403, 404] },
+          { summary: "Case Memory Ledger 已实现为审计账本，Active Retrieval Memory 保持为后续可召回子集，candidate 不自动 active。", prs: [428, 429] },
+          { summary: "`vendor/cusmem` 已引入 sanitized Graphiti/GraphRAG source，并重构为 text-first product-form pipeline，移除 PDF/OCR 默认入口。", prs: [430, 433, 438] },
+          { summary: "KG 首期 scope gate 已完成，只允许 official / official_markdown_upload 进入 Client AI RAG auxiliary 入库计划。", prs: [457] },
+          { summary: "SupportPortal KG contracts 已完成：official-doc chunk 输入契约、`KgProvenance` 校验、schema v1 和 strict schema hash 已固定。", prs: [486] },
+          { summary: "Offline KG ingest wiring 已完成：official-doc chunk contract 可转成 vendored cusmem / GraphRAG episode，并保留 provenance、schema hash、content hash 和 dry-run 验证路径。", prs: [493] },
+          { summary: "RAG+KG runtime hooks 与真实 GraphRAG client 已接上：query expansion、rerank boost、structured fact 都通过可降级 KG client 辅助纯 RAG。", prs: [504, 514] },
+          { summary: "Local lightweight RAG+KG 线上试用路径已完成：本地 Neo4j sandbox、runtime image deps、KG env 和默认 local flag 都已接通，生产仍由 flag 控制。", prs: [521, 522] },
+          { summary: "GraphRAG Phase 1/2 工具链已补齐：official-doc chunk export、offline readiness report、rag_vs_rag_plus_kg benchmark 和 gate report 已可运行。", prs: [519, 521, 525] },
+          { summary: "独立架构评审已完成并写回 Roadmap：RAG 保持 citation source of truth，KG 仅作为 query expansion、rerank boost 和 structured fact 辅助信号。", prs: [454, 482, 516] }
         ],
         review: [
           "Client AI 客户可见答案的 citation 是合同义务。KG 把多段原文压成 entity/edge 时丢失逐字证据；`kg_official_docs_scope.allow_answer_without_rag_citation=False` 已经在代码层承认这点，运行时层还需要 adapter 强制校验。",
@@ -2402,6 +2399,31 @@ flowchart TD
       }[char]));
     }
 
+    function doneItemSummary(item) {
+      return typeof item === "string" ? item : item?.summary || "";
+    }
+
+    function doneItemSearchText(item) {
+      if (typeof item === "string") return item;
+      const prs = Array.isArray(item?.prs) ? item.prs.map((pr) => `#${pr} pull/${pr}`).join(" ") : "";
+      return `${item?.summary || ""} ${prs}`.trim();
+    }
+
+    function renderPrLinks(prs) {
+      if (!Array.isArray(prs) || !prs.length) return "";
+      const links = prs.map((pr) => {
+        const prNumber = String(pr).replace(/^#/, "");
+        const url = `https://github.com/ZilingXie/SupportPortal/pull/${encodeURIComponent(prNumber)}`;
+        return `<a class="pr-link" href="${url}" target="_blank" rel="noopener noreferrer">#${escapeHtml(prNumber)}</a>`;
+      }).join("");
+      return `<span class="pr-links" aria-label="Related pull requests">${links}</span>`;
+    }
+
+    function renderDoneItem(item) {
+      if (typeof item === "string") return `<li>${escapeHtml(item)}</li>`;
+      return `<li>${escapeHtml(doneItemSummary(item))}${renderPrLinks(item?.prs)}</li>`;
+    }
+
     function renderHeroMetrics() {
       const totalTasks = LANES.reduce((sum, lane) => sum + (lane.next || []).length, 0);
       const doneTasks = LANES.reduce((sum, lane) => sum + (lane.next || []).filter(taskDone).length, 0);
@@ -2472,7 +2494,7 @@ flowchart TD
         lane.title,
         lane.short,
         lane.thesis,
-        ...(lane.done || []),
+        ...(lane.done || []).map(doneItemSearchText),
         lane.architecture?.title || "",
         lane.architecture?.summary || "",
         lane.architecture?.mermaid || "",
@@ -2593,7 +2615,7 @@ flowchart TD
             <section class="panel">
               <h4>已完成进展</h4>
               <ul class="evidence-list">
-                ${lane.done.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+                ${lane.done.map(renderDoneItem).join("")}
               </ul>
               ${renderMeetingMinutes(lane.meeting_minutes)}
               <details class="sources">
