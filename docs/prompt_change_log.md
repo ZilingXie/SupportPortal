@@ -12,6 +12,26 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-24 - Account verification missing-field reply tone
+
+- Area or subsystem: Account billing automation — customer-facing account verification intake replies
+- Prompt or model version: `billing-account-verification-missing-fields-v2` + `billing-reply-humanizer-v1`
+- Summary: Updated account verification missing-field replies to reuse the client-style email framing (`Hi {requester}, ... Sid`), ask for one or two missing fields inline, switch to a details list for three or more fields, and add a narrow `billing_reply` model profile for optional tone polishing with `BILLING_REPLY_TEMPERATURE` defaulting to `0.5`.
+- Reason: `TK-ACC-6856BF` showed the previous deterministic missing-field template was too rigid and always rendered a generic list, even when the customer only needed to provide one item such as use case.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/main.py`
+  - `backend/services/support_router.py`
+  - Env: `BILLING_REPLY_MODEL`, `BILLING_REPLY_REASONING_EFFORT`, `BILLING_REPLY_TEMPERATURE`, `BILLING_REPLY_TIMEOUT_SECONDS`, `BILLING_REPLY_MAX_RETRIES`
+- Expected behavior change:
+  - Account verification replies now greet the customer when a usable requester is available, ask only for the missing account verification fields, and end with `Thanks in advance!` followed by `Sid`.
+  - When one field is missing, Sid asks inline for that field; when two fields are missing, Sid asks inline with `and`; when three or more are missing, Sid renders a concise details list ordered as `Use Case`, `Address`, `Phone number`, then remaining fields.
+  - If configured model credentials are present, the billing reply humanizer may polish tone at higher temperature while guardrails reject outputs that remove required fields, escalation wording, greeting, or sign-off.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_support_router.py backend/tests/test_account_intake.py backend/tests/test_llm_profiles.py -q`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/billing_automation.py backend/services/llm_profiles.py backend/main.py backend/services/support_router.py`
+
 ## 2026-06-20 - Enable local GraphRAG KG model-provider config
 
 - Area or subsystem: Client AI RAG retrieval — KG auxiliary GraphRAG provider config

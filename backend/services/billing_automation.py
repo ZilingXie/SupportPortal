@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Any
 
+from backend.services.customer_reply_composer import compose_customer_reply_email
+from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, resolve_model_profile
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +34,15 @@ DEFAULT_BILLING_INTERNAL_EMAIL = "xieziling@agora.io"
 DEFAULT_BILLING_EMAIL_FROM = "xieziling97@163.com"
 DEFAULT_BILLING_SMTP_HOST = "smtp.163.com"
 DEFAULT_BILLING_SMTP_PORT = 465
+ACCOUNT_VERIFICATION_SIGNOFF = "Thanks in advance!\nSid"
+ACCOUNT_VERIFICATION_FIELD_DISPLAY_ORDER = (
+    "use_case",
+    "company_location",
+    "phone_number",
+    "company_name",
+    "website",
+    "contact_email",
+)
 
 
 @dataclass(frozen=True)
@@ -134,6 +147,7 @@ def build_billing_automation_result(
     message: str,
     ticket_id: str | None = None,
     customer_email: str | None = None,
+    requester: str | None = None,
     billing_ticket_id: str | None = None,
     response_link: str | None = None,
 ) -> BillingAutomationResult:
@@ -147,7 +161,12 @@ def build_billing_automation_result(
     ]
     if missing_fields:
         return BillingAutomationResult(
-            customer_reply=_build_missing_fields_reply(normalized_action, missing_fields),
+            customer_reply=_build_missing_fields_reply(
+                normalized_action,
+                missing_fields,
+                requester=requester,
+                customer_id=customer_email,
+            ),
             missing_fields=missing_fields,
             collected_fields=collected_fields,
             internal_email=None,
@@ -341,7 +360,115 @@ def _extract_fields(message: str, aliases: dict[str, tuple[str, ...]]) -> dict[s
     return extracted
 
 
-def _build_missing_fields_reply(action: str, missing_fields: list[str]) -> str:
+def _missing_field_label(field_name: str, *, inline: bool = False) -> str:
+    if field_name == "company_location":
+        return "address" if inline else "Address"
+    label = _FIELD_LABELS[field_name]
+    return label.lower() if inline else label
+
+
+def _join_missing_field_labels(field_names: list[str]) -> str:
+    labels = [_missing_field_label(field_name, inline=True) for field_name in field_names]
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return f"your {labels[0]}"
+    if len(labels) == 2:
+        return f"your {labels[0]} and {labels[1]}"
+    return f"your {', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def _account_verification_display_fields(missing_fields: list[str]) -> list[str]:
+    ordered: list[str] = []
+    for field_name in ACCOUNT_VERIFICATION_FIELD_DISPLAY_ORDER:
+        if field_name in missing_fields:
+            ordered.append(field_name)
+    ordered.extend(field_name for field_name in missing_fields if field_name not in ordered)
+    return ordered
+
+
+def _account_verification_missing_fields_body(missing_fields: list[str]) -> str:
+    display_fields = _account_verification_display_fields(missing_fields)
+    if len(missing_fields) <= 2:
+        requested_fields = _join_missing_field_labels(display_fields)
+        return (
+            "To help our internal team review your account verification request, "
+            f"could you please provide {requested_fields}? We would need this information to escalate the "
+            "request to our internal team."
+        )
+
+    field_lines = "\n".join(f"- {_missing_field_label(field_name)}:" for field_name in display_fields)
+    return (
+        "To help our internal team review your account verification request, could you please provide the "
+        f"following details?\n\n{field_lines}\n\nWe would need this information to escalate the request to "
+        "our internal team."
+    )
+
+
+def _account_verification_email_reply(
+    *,
+    body: str,
+    requester: str | None,
+    customer_id: str | None,
+) -> str:
+    effective_customer_id = None if _clean_text(requester) == _clean_text(customer_id) else customer_id
+    reply = compose_customer_reply_email(
+        body=body,
+        requester=requester,
+        customer_id=effective_customer_id,
+        language="en",
+    )
+    return reply.removesuffix("Best Regards,\nSid").rstrip() + f"\n\n{ACCOUNT_VERIFICATION_SIGNOFF}"
+
+
+def _humanize_account_verification_reply(reply: str, missing_fields: list[str]) -> str:
+    profile = resolve_model_profile(BILLING_REPLY_SCENARIO)
+    if not profile.has_invocation_credentials():
+        return reply
+
+    required_labels = [_missing_field_label(field_name, inline=True).lower() for field_name in missing_fields]
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=(
+                "You lightly polish customer-facing account verification intake replies. Keep the exact "
+                "email structure, greeting, required information, escalation meaning, and sign-off. Do not "
+                "add new requested fields, remove requested fields, mention internal tools, or change facts."
+            ),
+            user_prompt=(
+                "Polish this reply so it sounds warm, natural, and human while preserving every required "
+                f"detail. Reply only with the final email.\n\n{reply}"
+            ),
+        )
+    except (LlmInvocationError, ValueError):
+        return reply
+
+    candidate = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    lowered = candidate.lower()
+    if not candidate.startswith("Hi ") or not candidate.endswith(ACCOUNT_VERIFICATION_SIGNOFF):
+        return reply
+    if "account verification request" not in lowered or "internal team" not in lowered:
+        return reply
+    if any(label not in lowered for label in required_labels):
+        return reply
+    return candidate
+
+
+def _build_missing_fields_reply(
+    action: str,
+    missing_fields: list[str],
+    *,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> str:
+    if action == BILLING_ACTION_ACCOUNT_VERIFICATION:
+        reply = _account_verification_email_reply(
+            body=_account_verification_missing_fields_body(missing_fields),
+            requester=requester,
+            customer_id=customer_id,
+        )
+        return _humanize_account_verification_reply(reply, missing_fields)
+
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
         intro = (
             "Thanks for reaching out. To help our internal team review your account suspension request, "

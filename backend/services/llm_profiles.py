@@ -15,6 +15,7 @@ PRODUCT_SELECTION_SCENARIO = "product_selection"
 WEB_SEARCH_SCENARIO = "web_search_non_technical"
 CLIENT_ACK_SCENARIO = "client_ack"
 TICKET_TITLE_SCENARIO = "ticket_title"
+BILLING_REPLY_SCENARIO = "billing_reply"
 RAG_ANSWER_SCENARIO = "rag_answer"
 RAG_SUFFICIENCY_SCENARIO = "rag_sufficiency_judge"
 QUERY_EXPANSION_SCENARIO = "query_expansion"
@@ -358,6 +359,19 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("TICKET_TITLE_TIMEOUT_SECONDS", 2.0),
             max_retries=1,
+            fallback_models=(),
+        ))
+    if scenario == BILLING_REPLY_SCENARIO:
+        return _with_provider_fallback(ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("BILLING_REPLY_MODEL")) or "gpt-5.4-mini",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("BILLING_REPLY_REASONING_EFFORT")) or "low",
+            temperature=_safe_float_env("BILLING_REPLY_TEMPERATURE", 0.5),
+            timeout_seconds=_safe_positive_float_env("BILLING_REPLY_TIMEOUT_SECONDS", 6.0),
+            max_retries=_safe_int_env("BILLING_REPLY_MAX_RETRIES", 1),
             fallback_models=(),
         ))
     if scenario == RAG_ANSWER_SCENARIO:

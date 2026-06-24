@@ -546,6 +546,92 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertEqual(result.collected_fields["app_id"], "7994d63a6ee94bd8b16a65ea0707faad")
         self.assertIsNotNone(result.internal_email)
 
+    def test_account_verification_missing_use_case_asks_for_single_field_inline(self) -> None:
+        result = build_billing_automation_result(
+            action="account_verification",
+            message=(
+                "Company name: ExampleCorp. Company location: Singapore. "
+                "Website: https://example.com. Contact email: admin@example.com. "
+                "Phone number: +65-1234-5678."
+            ),
+            ticket_id="TK-ACC-6856BF",
+            customer_email="customer@example.com",
+            requester="Taylor",
+        )
+
+        self.assertEqual(result.missing_fields, ["use_case"])
+        self.assertTrue(result.customer_reply.startswith("Hi Taylor,"))
+        self.assertIn("could you please provide your use case?", result.customer_reply)
+        self.assertIn(
+            "We would need this information to escalate the request to our internal team.",
+            result.customer_reply,
+        )
+        self.assertNotIn("- Use Case:", result.customer_reply)
+        self.assertTrue(result.customer_reply.endswith("Thanks in advance!\nSid"))
+
+    def test_account_verification_two_missing_fields_asks_inline_with_and(self) -> None:
+        result = build_billing_automation_result(
+            action="account_verification",
+            message=(
+                "Company name: ExampleCorp. Company location: Singapore. "
+                "Website: https://example.com. Contact email: admin@example.com."
+            ),
+            ticket_id="TK-ACC-6856BF",
+            customer_email="customer@example.com",
+            requester="Taylor",
+        )
+
+        self.assertEqual(result.missing_fields, ["phone_number", "use_case"])
+        self.assertIn("could you please provide your use case and phone number?", result.customer_reply)
+        self.assertNotIn("- Phone number:", result.customer_reply)
+        self.assertTrue(result.customer_reply.endswith("Thanks in advance!\nSid"))
+
+    def test_account_verification_three_missing_fields_uses_detail_list(self) -> None:
+        result = build_billing_automation_result(
+            action="account_verification",
+            message=(
+                "Company name: ExampleCorp. Website: https://example.com. "
+                "Contact email: admin@example.com."
+            ),
+            ticket_id="TK-ACC-6856BF",
+            customer_email="customer@example.com",
+            requester="Taylor",
+        )
+
+        self.assertEqual(result.missing_fields, ["company_location", "phone_number", "use_case"])
+        self.assertIn("could you please provide the following details?", result.customer_reply)
+        self.assertLess(result.customer_reply.index("- Use Case:"), result.customer_reply.index("- Address:"))
+        self.assertLess(result.customer_reply.index("- Address:"), result.customer_reply.index("- Phone number:"))
+        self.assertIn("- Address:", result.customer_reply)
+        self.assertIn("- Phone number:", result.customer_reply)
+        self.assertIn("- Use Case:", result.customer_reply)
+        self.assertTrue(result.customer_reply.endswith("Thanks in advance!\nSid"))
+
+    def test_account_verification_humanized_reply_rejects_missing_required_fields(self) -> None:
+        with patch("backend.services.billing_automation.resolve_model_profile") as profile_mock, patch(
+            "backend.services.billing_automation.invoke_responses_text"
+        ) as invoke_mock:
+            profile_mock.return_value.has_invocation_credentials.return_value = True
+            invoke_mock.return_value.text = (
+                "Hi Taylor,\n\nCould you please provide your use case? We would need this information to "
+                "escalate the request to our internal team.\n\nThanks in advance!\nSid"
+            )
+
+            result = build_billing_automation_result(
+                action="account_verification",
+                message=(
+                    "Company name: ExampleCorp. Website: https://example.com. "
+                    "Contact email: admin@example.com."
+                ),
+                ticket_id="TK-ACC-6856BF",
+                customer_email="customer@example.com",
+                requester="Taylor",
+            )
+
+        self.assertIn("- Address:", result.customer_reply)
+        self.assertIn("- Phone number:", result.customer_reply)
+        self.assertIn("- Use Case:", result.customer_reply)
+
     def test_send_billing_internal_email_skips_when_smtp_password_missing(self) -> None:
         email_payload = {
             "to": "xieziling@agora.io",

@@ -1645,6 +1645,48 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(len(bt["missing_fields"]) > 0)
         self.assertTrue(bt["customer_reply"])
 
+    def test_account_verification_missing_use_case_uses_customer_name_email_style(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="account_verification",
+            confidence=0.93,
+            reason="account verification",
+            matched_signals=["company verification"],
+            response_language="en",
+            semantic_intent="billing.account_verification",
+            automation_eligibility="eligible",
+            policy_decision="policy_gate",
+            risk_flags=[],
+            evidence_spans=[],
+            router_source="llm_semantic",
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "decide_support_route",
+            return_value=decision,
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account verification",
+                    "question": (
+                        "Company name: ExampleCorp. Company location: Singapore. "
+                        "Website: https://example.com. Contact email: admin@example.com. "
+                        "Phone number: +65-1234-5678."
+                    ),
+                    "customer_email": "Taylor",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["route"], "account_verification")
+        self.assertEqual(payload["missing_fields"], ["use_case"])
+        self.assertTrue(payload["customer_reply"].startswith("Hi Taylor,"))
+        self.assertIn("could you please provide your use case?", payload["customer_reply"])
+        self.assertTrue(payload["customer_reply"].endswith("Thanks in advance!\nSid"))
+
     def test_billing_automation_reply_recomputes_fields(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             create_response = self.client.post(
