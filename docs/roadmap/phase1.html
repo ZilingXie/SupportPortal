@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SupportPortal Phase 1 Demo Plan</title>
+  <style>
+    :root {
+      --paper: #f4efe3;
+      --paper-soft: #fbf7ec;
+      --ink: #1d2522;
+      --muted: #667169;
+      --line: rgba(29, 37, 34, 0.16);
+      --line-strong: rgba(29, 37, 34, 0.28);
+      --blueprint: #1f4f68;
+      --field: #74633d;
+      --signal: #d56a3a;
+      --green: #3f7a57;
+      --amber: #ba7a2a;
+      --red: #a84c3f;
+      --shadow: 0 26px 70px rgba(31, 45, 38, 0.14);
+      --radius: 28px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 12%, rgba(213, 106, 58, 0.18), transparent 28rem),
+        radial-gradient(circle at 86% 0%, rgba(31, 79, 104, 0.17), transparent 24rem),
+        linear-gradient(135deg, #efe3cd 0%, #fbf7ec 45%, #e8f0e8 100%);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.25;
+      background-image:
+        linear-gradient(rgba(29, 37, 34, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(29, 37, 34, 0.07) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, black, transparent 84%);
+    }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 20;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--signal), var(--blueprint));
+      transform: scaleX(0);
+      transform-origin: left;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      width: min(1180px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 22px 0 60px;
+    }
+
+    .top-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .top-nav a {
+      color: var(--blueprint);
+      text-decoration: none;
+    }
+
+    .hero {
+      position: relative;
+      min-height: min(760px, calc(100svh - 44px));
+      display: grid;
+      align-content: center;
+      gap: 28px;
+      padding: clamp(28px, 5vw, 62px);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 12px);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      background:
+        linear-gradient(108deg, rgba(251, 247, 236, 0.95) 0%, rgba(251, 247, 236, 0.78) 52%, rgba(31, 79, 104, 0.16) 100%),
+        conic-gradient(from 140deg at 78% 38%, rgba(213, 106, 58, 0.2), rgba(63, 122, 87, 0.2), rgba(31, 79, 104, 0.24), rgba(213, 106, 58, 0.2));
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -120px;
+      top: 44px;
+      width: min(56vw, 650px);
+      height: min(56vw, 650px);
+      border: 1px solid rgba(29, 37, 34, 0.18);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, transparent 0 20%, rgba(31, 79, 104, 0.16) 20% 20.6%, transparent 20.8% 37%, rgba(29, 37, 34, 0.12) 37% 37.5%, transparent 37.8% 54%, rgba(213, 106, 58, 0.18) 54% 54.6%, transparent 55%),
+        linear-gradient(45deg, transparent 49.6%, rgba(29, 37, 34, 0.18) 50%, transparent 50.4%),
+        linear-gradient(-45deg, transparent 49.6%, rgba(29, 37, 34, 0.12) 50%, transparent 50.4%);
+      opacity: 0.72;
+      animation: slow-turn 34s linear infinite;
+    }
+
+    @keyframes slow-turn {
+      to { transform: rotate(360deg); }
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      gap: 10px;
+      min-height: 34px;
+      padding: 0 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.78);
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .pulse {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0 7px rgba(213, 106, 58, 0.14);
+    }
+
+    h1, h2, h3 {
+      font-family: Georgia, "Times New Roman", serif;
+      letter-spacing: -0.045em;
+    }
+
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 960px;
+      margin: 0;
+      font-size: clamp(42px, 7vw, 92px);
+      line-height: 0.94;
+    }
+
+    .hero-copy {
+      position: relative;
+      z-index: 1;
+      max-width: 760px;
+      margin: 0;
+      color: #39413b;
+      font-size: clamp(17px, 2vw, 24px);
+      line-height: 1.48;
+    }
+
+    .talk-track {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      max-width: 840px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .talk-track li {
+      padding: 10px 13px;
+      border: 1px solid rgba(29, 37, 34, 0.14);
+      border-radius: 999px;
+      background: rgba(251, 247, 236, 0.72);
+      color: #26312d;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .section {
+      min-height: 78svh;
+      display: grid;
+      align-content: center;
+      gap: 24px;
+      padding: clamp(52px, 8vw, 92px) 0;
+    }
+
+    .section-header {
+      display: grid;
+      gap: 14px;
+      max-width: 860px;
+    }
+
+    .section h2 {
+      margin: 0;
+      font-size: clamp(34px, 5vw, 70px);
+      line-height: 0.98;
+    }
+
+    .section-lead {
+      margin: 0;
+      color: #39413b;
+      font-size: clamp(17px, 1.9vw, 23px);
+      line-height: 1.5;
+    }
+
+    .proof-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .proof {
+      min-width: 0;
+      min-height: 200px;
+      display: grid;
+      align-content: space-between;
+      gap: 18px;
+      padding: 22px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .proof strong {
+      display: block;
+      color: var(--blueprint);
+      font-size: clamp(28px, 4vw, 54px);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+
+    .proof span {
+      color: #3f4943;
+      line-height: 1.5;
+    }
+
+    .flow {
+      display: grid;
+      gap: 12px;
+      padding: clamp(18px, 3vw, 28px);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: rgba(251, 247, 236, 0.72);
+      box-shadow: 0 14px 42px rgba(31, 45, 38, 0.09);
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flow-node {
+      min-width: 0;
+      display: grid;
+      gap: 6px;
+      align-content: center;
+      min-height: 94px;
+      padding: 16px;
+      border: 1px solid rgba(31, 79, 104, 0.2);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.38);
+    }
+
+    .flow-node b {
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .flow-node span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.42;
+    }
+
+    .flow-arrow {
+      align-self: center;
+      color: var(--blueprint);
+      font-size: 22px;
+      font-weight: 850;
+    }
+
+    .contrast {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .contrast-panel {
+      min-width: 0;
+      padding: clamp(22px, 3vw, 32px);
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .contrast-panel.future {
+      background:
+        linear-gradient(135deg, rgba(63, 122, 87, 0.15), rgba(251, 247, 236, 0.88));
+    }
+
+    .contrast-panel h3 {
+      margin: 0 0 14px;
+      font-size: clamp(24px, 3vw, 38px);
+      line-height: 1;
+    }
+
+    .contrast-panel ul,
+    .script-list,
+    .metric-list {
+      list-style: none;
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .contrast-panel li,
+    .script-list li,
+    .metric-list li {
+      position: relative;
+      padding-left: 22px;
+      color: #3f4943;
+      line-height: 1.55;
+    }
+
+    .contrast-panel li::before,
+    .script-list li::before,
+    .metric-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.76em;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal);
+      transform: translateY(-50%);
+    }
+
+    .showcase {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+      gap: 20px;
+      align-items: stretch;
+    }
+
+    .reply {
+      display: grid;
+      gap: 14px;
+      padding: clamp(20px, 3vw, 28px);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: rgba(251, 247, 236, 0.82);
+    }
+
+    .reply-box {
+      padding: 18px;
+      border: 1px solid rgba(168, 76, 63, 0.26);
+      border-radius: 18px;
+      background: rgba(168, 76, 63, 0.08);
+      color: #3f4943;
+      line-height: 1.55;
+    }
+
+    .guardrail {
+      display: grid;
+      gap: 12px;
+      padding: clamp(20px, 3vw, 28px);
+      border: 1px solid rgba(31, 79, 104, 0.2);
+      border-radius: 26px;
+      background: rgba(255, 255, 255, 0.36);
+    }
+
+    .decision {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 36px;
+      align-items: center;
+      gap: 8px;
+      padding: 0 13px;
+      border: 1px solid rgba(168, 76, 63, 0.36);
+      border-radius: 999px;
+      background: rgba(168, 76, 63, 0.11);
+      color: var(--red);
+      font-size: 13px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .metric-board {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .metric {
+      min-width: 0;
+      min-height: 128px;
+      display: grid;
+      align-content: space-between;
+      gap: 12px;
+      padding: 18px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .metric b {
+      color: var(--blueprint);
+      font-size: clamp(26px, 4vw, 48px);
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .metric span {
+      color: #3f4943;
+      font-size: 13px;
+      line-height: 1.42;
+    }
+
+    .phases {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .phase {
+      min-width: 0;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      min-height: 260px;
+      padding: 22px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .phase h3 {
+      margin: 0;
+      font-size: clamp(23px, 3vw, 36px);
+      line-height: 1;
+    }
+
+    .phase p {
+      margin: 0;
+      color: #3f4943;
+      line-height: 1.55;
+    }
+
+    .final {
+      min-height: 58svh;
+      align-content: center;
+      padding-bottom: 16px;
+    }
+
+    .final-line {
+      max-width: 980px;
+      margin: 0;
+      color: var(--ink);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(34px, 5vw, 68px);
+      line-height: 1;
+      letter-spacing: -0.045em;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      gap: 8px;
+      min-height: 40px;
+      margin-top: 24px;
+      padding: 0 14px;
+      border: 1px solid rgba(31, 79, 104, 0.26);
+      border-radius: 999px;
+      background: rgba(31, 79, 104, 0.1);
+      color: var(--blueprint);
+      font-weight: 850;
+      text-decoration: none;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 520ms ease, transform 520ms ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .hero::after { animation: none; }
+      .reveal { opacity: 1; transform: none; transition: none; }
+    }
+
+    @media (max-width: 900px) {
+      .hero { min-height: auto; }
+      .proof-grid,
+      .contrast,
+      .showcase,
+      .dashboard,
+      .phases {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-row {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-arrow {
+        transform: rotate(90deg);
+        justify-self: center;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        width: min(100% - 20px, 1180px);
+        padding-top: 12px;
+      }
+
+      .top-nav {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .hero,
+      .proof,
+      .contrast-panel,
+      .reply,
+      .guardrail,
+      .metric,
+      .phase {
+        padding: 20px;
+      }
+
+      .hero::after {
+        opacity: 0.24;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <main class="page">
+    <nav class="top-nav" aria-label="页面导航">
+      <a href="../roadmap.html">返回 Roadmap</a>
+      <span>Phase 1 leadership demo · 3 min talk track</span>
+    </nav>
+
+    <header class="hero reveal">
+      <div class="eyebrow"><span class="pulse"></span>SupportPortal Phase 1</div>
+      <h1>从 Zendesk 平替，走向 AI-native Support System</h1>
+      <p class="hero-copy">这不是一次工具替换，而是把路由、质量检查、调查辅助和管理指标内建到 support 流程里。Phase 1 的目标是先证明系统可控、可审计、可小流量试运行。</p>
+      <ul class="talk-track" aria-label="3 分钟演示节奏">
+        <li>0:00 背景与痛点</li>
+        <li>0:45 架构与角色变化</li>
+        <li>1:35 Guardrail showcase</li>
+        <li>2:25 Dashboard 与路线图</li>
+      </ul>
+    </header>
+
+    <section class="section reveal" aria-labelledby="why">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>01 · Why now</div>
+        <h2 id="why">传统 SaaS 已经很难承接我们的 support 目标。</h2>
+        <p class="section-lead">Zendesk license 续费约 73k USD/year，但更大的问题不是价格，而是团队需要更深的流程、数据和质量控制能力。</p>
+      </div>
+      <div class="proof-grid">
+        <article class="proof">
+          <strong>SLA</strong>
+          <span>回复不及时、升级等待和交接空档，都不能只靠事后报表管理。</span>
+        </article>
+        <article class="proof">
+          <strong>73k</strong>
+          <span>年费只买到通用 SaaS 能力，关键流程仍需要外部脚本、人工判断和临时补丁。</span>
+        </article>
+        <article class="proof">
+          <strong>Billing</strong>
+          <span>部分 invoice、account fraud / deactivate 等 case 不需要完整 HITL 流程，适合先做受控自动化 POC。</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="architecture">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>02 · Big picture</div>
+        <h2 id="architecture">Phase 1 先不改变客户入口，只改变内部处理能力。</h2>
+        <p class="section-lead">客户仍然从 Zendesk 进入；内部通过 Zendesk webhook / N8n 转到 SupportPortal，先跑 shadow mode、真实 case replay 和 1% 小流量门禁。</p>
+      </div>
+      <div class="flow" aria-label="当前 Phase 1 流程">
+        <div class="flow-row">
+          <div class="flow-node"><b>Zendesk / N8n</b><span>保留现有客户入口，降低迁移风险。</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Routing + Assignment</b><span>识别 billing、technical、human review 与 SLA 风险。</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Engineer Workspace</b><span>工程师仍负责最终判断，但系统提供上下文和审计。</span></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-node"><b>AI Guardrail</b><span>检查 conclusion、proof、next step 与客户可见边界。</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Final Approve</b><span>第一次 approve 生成/校验回复，第二次 final approve 才发送。</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Dashboard</b><span>把 SLA、通过率、拒绝原因和人工审核结果变成管理指标。</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="roles">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>03 · Role shift</div>
+        <h2 id="roles">AI 不是替代 support engineer，而是把 manager 的日常质量检查产品化。</h2>
+        <p class="section-lead">客户侧体验暂时不变；工程师从重复流程中释放出来；AI agent 承担实时检查、辅助调查和跨系统协作。</p>
+      </div>
+      <div class="contrast">
+        <article class="contrast-panel">
+          <h3>Before</h3>
+          <ul>
+            <li>Manager 只能抽样 review，无法逐条检查技术细节、表达边界和 SLA 风险。</li>
+            <li>客户不满通常要等客诉后才暴露，情绪和交接风险发现太晚。</li>
+            <li>工程师反复 copy/paste 到外部 AI，过程不可审计、不可稳定复用。</li>
+          </ul>
+        </article>
+        <article class="contrast-panel future">
+          <h3>After</h3>
+          <ul>
+            <li>每次回复都先过 AI guardrail，低级错误在发送前被拦住。</li>
+            <li>每条客户信息都可以做情感检测和 SLA 风险识别，提前报警。</li>
+            <li>AI agent 可以从研发 agent、日志 agent、数据 agent 汲取知识，逐步进入自主调查。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="showcase">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>04 · Showcase</div>
+        <h2 id="showcase">演示重点：AI 拒绝工程师的一次不完整回复。</h2>
+        <p class="section-lead">这个 case 最能说明项目价值：AI 不急着替人回答，而是在客户看到之前拦住不完整、不安全、不可执行的回复。</p>
+      </div>
+      <div class="showcase">
+        <article class="reply">
+          <div class="eyebrow">Engineer draft</div>
+          <div class="reply-box">“We checked the account. Please try again later.”</div>
+          <ul class="script-list">
+            <li>没有明确 conclusion：到底是什么问题？是否已处理？</li>
+            <li>没有 proof：基于哪个系统、哪条 evidence、哪个时间点？</li>
+            <li>没有 next step：客户下一步该做什么，谁负责跟进？</li>
+          </ul>
+        </article>
+        <article class="guardrail">
+          <span class="decision">Rejected by AI Guardrail</span>
+          <ul class="script-list">
+            <li>要求工程师补充可验证结论，避免模糊回答引发二次追问。</li>
+            <li>提醒不要暴露内部证据或敏感信息，只输出 customer-safe 解释。</li>
+            <li>如果信息不足，必须明确告诉客户下一步，而不是编造原因。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="dashboard">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>05 · Dashboard</div>
+        <h2 id="dashboard">管理指标也要从 SLA 时代升级到 AI guardrail 时代。</h2>
+        <p class="section-lead">传统指标仍然重要，但 Phase 1 开始追踪 AI 是否真的降低风险、提升质量，并解释为什么某些 case 还不能自动化。</p>
+      </div>
+      <div class="dashboard">
+        <ul class="metric-list">
+          <li>传统指标：first response time、second response time、SLA risk、交互次数、一次回复解决率。</li>
+          <li>新增指标：AI guardrail pass rate、approve / reject rate、not automated reason、route accuracy、response latency。</li>
+          <li>下一步指标：客户情绪检测、negative feedback、reopen、自动化覆盖率和抽查通过率。</li>
+        </ul>
+        <div class="metric-board" aria-label="Dashboard 指标示例">
+          <div class="metric"><b>SLA</b><span>及时发现超时风险，而不是事后复盘。</span></div>
+          <div class="metric"><b>Pass</b><span>衡量 guardrail 放行率和被拒绝原因。</span></div>
+          <div class="metric"><b>Route</b><span>跟踪 billing automation、billing review 与 technical handoff。</span></div>
+          <div class="metric"><b>Sentiment</b><span>客户情绪异常时及时报警。</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="roadmap">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>06 · Roadmap</div>
+        <h2 id="roadmap">三阶段推进：先规范行为，再辅助调查，最后自主调查。</h2>
+        <p class="section-lead">Phase 1 不是终点，而是后续自动化的安全地基。没有真实 replay、dashboard 和 guardrail，就不进入扩大切流。</p>
+      </div>
+      <div class="phases">
+        <article class="phase">
+          <div class="eyebrow">Phase 1</div>
+          <h3>自主检测 + 行为规范</h3>
+          <p>Zendesk 转发、routing、assignment、guardrail reject / approve、dashboard 指标和真实 case replay。</p>
+        </article>
+        <article class="phase">
+          <div class="eyebrow">Phase 2</div>
+          <h3>辅助调查 + 人 approve</h3>
+          <p>AI 先调查并生成 draft，人做 approve、revise 或 override；质量低于门禁时回退人工。</p>
+        </article>
+        <article class="phase">
+          <div class="eyebrow">Phase 3</div>
+          <h3>自主调查 + Agent-to-Agent</h3>
+          <p>Support agent 接入研发 agent、日志 agent、数据 agent，让人转向例外处理和质量抽查。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section final reveal" aria-labelledby="closing">
+      <div class="eyebrow"><span class="pulse"></span>Closing</div>
+      <p id="closing" class="final-line">Phase 1 要证明的不是 AI 会说话，而是 support 系统可以实时检查质量、解释决策、控制风险，并为小流量自动化打下地基。</p>
+      <a class="back-link" href="../roadmap.html">返回完整 Roadmap <span aria-hidden="true">-></span></a>
+    </section>
+  </main>
+
+  <script>
+    const progress = document.getElementById("progress");
+    const revealItems = Array.from(document.querySelectorAll(".reveal"));
+
+    function updateProgress() {
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const ratio = maxScroll > 0 ? window.scrollY / maxScroll : 0;
+      progress.style.transform = `scaleX(${Math.min(1, Math.max(0, ratio))})`;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) entry.target.classList.add("visible");
+      });
+    }, { threshold: 0.18 });
+
+    revealItems.forEach((item) => observer.observe(item));
+    updateProgress();
+    window.addEventListener("scroll", updateProgress, { passive: true });
+  </script>
+</body>
+</html>

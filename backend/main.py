@@ -28,7 +28,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import psycopg
@@ -174,6 +174,9 @@ from backend.services.troubleshooting_intake import evaluate_troubleshooting_int
 from backend.services.token_usage import aggregate_usage_ledger, resolve_ticket_family_identity
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+DOCS_DIR = BASE_DIR / "docs"
+ROADMAP_DIR = DOCS_DIR / "roadmap"
+ROADMAP_HTML = DOCS_DIR / "roadmap.html"
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ACCOUNT_DIR = UI_DIR / "account-ui"
@@ -543,6 +546,15 @@ if DASHBOARD_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard-ui")
 if SHARED_UI_DIR.exists():
     app.mount("/shared-ui", StaticFiles(directory=SHARED_UI_DIR), name="shared-ui")
+if ROADMAP_DIR.exists():
+    app.mount("/roadmap", StaticFiles(directory=ROADMAP_DIR, html=True), name="roadmap-ui")
+
+
+@app.get("/roadmap.html", include_in_schema=False)
+async def roadmap_html() -> FileResponse:
+    if not ROADMAP_HTML.exists():
+        raise HTTPException(status_code=404, detail="Roadmap page not found")
+    return FileResponse(ROADMAP_HTML)
 
 
 ticket_repository: TicketRepository = create_ticket_repository()
