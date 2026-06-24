@@ -33,7 +33,7 @@ class AccountUiContractTests(unittest.TestCase):
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
         self.assertIn('fetch("/account"', app_source)
-        self.assertIn('fetch("/api/account/billing-tickets', app_source)
+        self.assertIn("/api/account/billing-tickets", app_source)
         self.assertIn("title", app_source)
         self.assertIn("question", app_source)
         self.assertIn("billing_ticket_id", app_source)
@@ -128,16 +128,14 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("entry.transition", app_source)
         self.assertIn("render();", app_source)
 
-    def test_account_app_contains_clear_all_ticket_flow(self) -> None:
+    def test_account_app_does_not_expose_clear_all_ticket_flow(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn("clearAllTickets", app_source)
-        self.assertIn("Delete all account tickets? This cannot be undone.", app_source)
-        self.assertIn('fetch("/api/account/billing-tickets", { method: "DELETE" })', app_source)
-        self.assertIn('data-action="clear-all-tickets"', app_source)
-        self.assertIn("state.history = []", app_source)
-        self.assertIn('state.view = "create"', app_source)
-        self.assertIn("ticket(s) deleted", app_source)
+        self.assertNotIn("clearAllTickets", app_source)
+        self.assertNotIn("Delete all account tickets? This cannot be undone.", app_source)
+        self.assertNotIn('fetch("/api/account/billing-tickets", { method: "DELETE" })', app_source)
+        self.assertNotIn('data-action="clear-all-tickets"', app_source)
+        self.assertNotIn("ticket(s) deleted", app_source)
 
     def test_account_app_javascript_syntax(self) -> None:
         result = subprocess.run(
