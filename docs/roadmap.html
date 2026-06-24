@@ -330,6 +330,29 @@
     .phase-status.todo { color: var(--blueprint); }
     .phase-status.blocked { color: var(--field); }
 
+    .phase-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      margin-top: 16px;
+      padding: 0 13px;
+      border: 1px solid rgba(31, 79, 104, 0.26);
+      border-radius: 999px;
+      background: rgba(31, 79, 104, 0.1);
+      color: var(--blueprint);
+      font-size: 13px;
+      font-weight: 850;
+      text-decoration: none;
+      transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+    }
+
+    .phase-action:hover {
+      transform: translateY(-1px);
+      border-color: rgba(31, 79, 104, 0.42);
+      background: rgba(31, 79, 104, 0.16);
+    }
+
     .phase-gate-list, .meeting-list {
       list-style: none;
       display: grid;
@@ -1412,6 +1435,7 @@
             <li>Dashboard 展示 SLA、通过率、case 状态和人工审核结果。</li>
             <li>准备 1% 小流量切流前的真实 case 回放和幂等验证。</li>
           </ul>
+          <a class="phase-action" href="./roadmap/phase1.html" aria-label="打开 Phase 1 演示讲稿页">打开 Phase 1 演示讲稿 <span aria-hidden="true">-></span></a>
         </article>
         <article class="phase-card">
           <span class="phase-status todo">下一阶段</span>

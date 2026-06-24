@@ -1,14 +1,63 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import unittest
 
 
+os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
+os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
+
 ROADMAP_PATH = Path("docs/roadmap.html")
+PHASE1_PATH = Path("docs/roadmap/phase1.html")
 QBR_COMPAT_PATH = Path("docs/qbr_plan.html")
 
 
 class RoadmapContractTests(unittest.TestCase):
+    def test_phase1_talk_track_page_is_linked_from_roadmap(self) -> None:
+        html_source = ROADMAP_PATH.read_text(encoding="utf-8")
+        phase1_source = PHASE1_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('href="./roadmap/phase1.html"', html_source)
+        self.assertIn("打开 Phase 1 演示讲稿", html_source)
+
+        required_terms = [
+            "SupportPortal Phase 1",
+            "从 Zendesk 平替，走向 AI-native Support System",
+            "AI 拒绝工程师的一次不完整回复",
+            "AI guardrail pass rate",
+            "自主检测 + 行为规范",
+            "辅助调查 + 人 approve",
+            "自主调查 + Agent-to-Agent",
+            'href="../roadmap.html"',
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, phase1_source)
+
+    def test_roadmap_static_routes_serve_public_pages(self) -> None:
+        from fastapi.testclient import TestClient
+
+        import backend.main as main
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        main.ticket_repository = InMemoryTicketRepository()
+        main.ticket_repository.initialize()
+        client = TestClient(main.app)
+        try:
+            checks = [
+                ("/roadmap.html", "整体落地优化计划"),
+                ("/roadmap/phase1.html", "SupportPortal Phase 1"),
+            ]
+            for path, marker in checks:
+                with self.subTest(path=path):
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertIn("text/html", response.headers["content-type"])
+                    self.assertIn(marker, response.text)
+        finally:
+            client.close()
+
     def test_roadmap_is_new_primary_entry_and_qbr_redirects(self) -> None:
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")
         compat_source = QBR_COMPAT_PATH.read_text(encoding="utf-8")
