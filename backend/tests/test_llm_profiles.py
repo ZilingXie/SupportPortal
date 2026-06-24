@@ -7,6 +7,7 @@ from unittest.mock import patch
 from backend.services.llm_profiles import (
     AUTO_DEPLOY_REPORT_SCENARIO,
     BENCHMARK_JUDGE_SCENARIO,
+    BILLING_REPLY_SCENARIO,
     CLIENT_ACK_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
@@ -45,6 +46,7 @@ class LlmProfileTests(unittest.TestCase):
             compression = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
             request_body_analyzer = resolve_model_profile(REQUEST_BODY_ANALYZER_SCENARIO)
             ticket_title = resolve_model_profile(TICKET_TITLE_SCENARIO)
+            billing_reply = resolve_model_profile(BILLING_REPLY_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
             engineer_investigation_reply = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
             ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
@@ -111,6 +113,13 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(ticket_title.model, "gpt-5.4-nano")
         self.assertEqual(ticket_title.reasoning_effort, "none")
         self.assertEqual(ticket_title.timeout_seconds, 2.0)
+
+        self.assertEqual(billing_reply.provider, "openai")
+        self.assertEqual(billing_reply.api_mode, "openai_responses")
+        self.assertEqual(billing_reply.model, "gpt-5.4-mini")
+        self.assertEqual(billing_reply.reasoning_effort, "low")
+        self.assertEqual(billing_reply.temperature, 0.5)
+        self.assertEqual(billing_reply.timeout_seconds, 6.0)
 
         self.assertEqual(engineer.provider, "openai")
         self.assertEqual(engineer.api_mode, "openai_responses")
@@ -217,6 +226,22 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(profile.model, "gpt-5.4-nano-preview")
         self.assertEqual(profile.reasoning_effort, "none")
         self.assertEqual(profile.timeout_seconds, 2.5)
+
+    def test_billing_reply_profile_honors_temperature_override(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "BILLING_REPLY_MODEL": "gpt-5.4-mini-preview",
+                "BILLING_REPLY_TEMPERATURE": "0.7",
+                "BILLING_REPLY_TIMEOUT_SECONDS": "4.5",
+            },
+            clear=True,
+        ):
+            profile = resolve_model_profile(BILLING_REPLY_SCENARIO)
+
+        self.assertEqual(profile.model, "gpt-5.4-mini-preview")
+        self.assertEqual(profile.temperature, 0.7)
+        self.assertEqual(profile.timeout_seconds, 4.5)
 
     def test_ticket_title_profile_honors_env_overrides(self) -> None:
         with patch.dict(

@@ -1392,6 +1392,7 @@ def resolve_support_message(
             message=message,
             ticket_id=ticket_id,
             customer_email=customer_id,
+            requester=customer_id,
         )
         email_send_result = (
             send_billing_internal_email(billing_result.internal_email)

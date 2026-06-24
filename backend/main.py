@@ -2936,6 +2936,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
             message=question,
             ticket_id=ticket_id,
             customer_email=str(request.customer_email or "").strip() or None,
+            requester=str(request.customer_email or "").strip() or None,
             billing_ticket_id=billing_ticket_id,
         )
         customer_reply = billing_result.customer_reply
@@ -2949,6 +2950,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 message=question,
                 ticket_id=ticket_id,
                 customer_email=str(request.customer_email or "").strip() or None,
+                requester=str(request.customer_email or "").strip() or None,
                 billing_ticket_id=billing_ticket_id,
                 response_link=billing_response_link,
             )
@@ -3599,6 +3601,7 @@ async def reply_to_billing_ticket(
             message=conversation_text,
             ticket_id=client_ticket_id,
             customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
+            requester=str(canonical_ticket.get("requester") or "").strip() or None,
         )
 
         assistant_reply = billing_result.customer_reply
