@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
@@ -394,6 +395,51 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(billing_ticket)
         assert billing_ticket is not None
         self.assertEqual(billing_ticket["automation_status"], "customer_notified")
+
+    def test_billing_response_submit_generates_customer_reply_from_internal_details(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        captured_prompts: list[str] = []
+
+        def fake_invoke(**kwargs: object) -> SimpleNamespace:
+            captured_prompts.append(str(kwargs.get("user_prompt") or ""))
+            return SimpleNamespace(
+                text="We sent the detailed invoice to the email address on file. Please let us know if you need anything else."
+            )
+
+        fake_profile = SimpleNamespace(api_key="test-key")
+        with patch("backend.main.resolve_model_profile", return_value=fake_profile), patch(
+            "backend.main.invoke_responses_text",
+            side_effect=fake_invoke,
+        ) as invoke_mock:
+            response = self.client.post(
+                "/api/billing-response/submit",
+                json={
+                    "token": raw_token,
+                    "result": "completed",
+                    "notify_customer": True,
+                    "note": "已经通过邮件发送给客户",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["customer_notified"])
+        self.assertEqual(
+            payload["customer_reply"],
+            "We sent the detailed invoice to the email address on file. Please let us know if you need anything else.",
+        )
+        self.assertNotEqual(payload["customer_reply"], "已经通过邮件发送给客户")
+        invoke_mock.assert_called_once()
+        self.assertTrue(captured_prompts)
+        self.assertIn("已经通过邮件发送给客户", captured_prompts[0])
+        self.assertIn("Please send detailed invoice", captured_prompts[0])
+
+        ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        last_message = ticket["messages"][-1]
+        self.assertEqual(last_message["source"], "billing_response_ai")
+        self.assertEqual(last_message["content"], payload["customer_reply"])
 
     def test_billing_response_submit_does_not_notify_customer_with_internal_status_note(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()

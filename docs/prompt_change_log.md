@@ -12,6 +12,26 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-06-25 - Billing response link customer reply generation
+
+- Area or subsystem: Account billing automation — `/response` internal handling result flow
+- Prompt or model version: `billing-resolution-customer-reply-v1`
+- Summary: Added a customer-facing billing reply prompt for response-link submissions so the internal handling note is treated as source material instead of being sent directly to the customer.
+- Reason: Real response-link submissions can contain internal status notes such as "已经通过邮件发送给客户"; these notes must be transformed into customer-facing language before the AI notifies the customer.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/services/billing_response_flow.py`
+  - `ui/billing-response-ui/app.js`
+  - `backend/tests/test_account_intake.py`
+  - `backend/tests/test_billing_response_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - When `notify_customer=true`, `/api/billing-response/submit` now gives the original customer context, selected result, and internal resolution details to the `billing_reply` LLM profile and sends the generated customer-facing reply.
+  - The internal resolution details are no longer copied verbatim into customer messages; deterministic scenario replies remain as fallback when the model is unavailable or returns an unusable reply.
+  - The response-link UI now labels the textarea as internal handling details and warns that AI will rewrite it before customer notification.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_billing_response_flow.py backend/tests/test_account_intake.py backend/tests/test_billing_response_ui_contract.py -q`
+
 ## 2026-06-24 - Account verification missing-field reply tone
 
 - Area or subsystem: Account billing automation — customer-facing account verification intake replies

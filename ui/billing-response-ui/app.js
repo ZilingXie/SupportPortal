@@ -3,9 +3,9 @@ const params = new URLSearchParams(window.location.search);
 const token = (params.get("token") || "").trim();
 
 const resultOptions = [
-  { value: "completed", label: "已完成", hint: "处理已经完成；说明可以留空。" },
-  { value: "refused", label: "拒绝处理", hint: "请填写拒绝原因，便于 AI 判断是否通知客户。" },
-  { value: "customer_action_required", label: "需要客户操作", hint: "请说明客户下一步需要提供或完成什么。" },
+  { value: "completed", label: "已完成", hint: "处理已经完成；可填写内部处理细节供 AI 转写。" },
+  { value: "refused", label: "拒绝处理", hint: "请填写内部拒绝原因；AI 会生成客户可读回复。" },
+  { value: "customer_action_required", label: "需要客户操作", hint: "请填写客户下一步需要提供或完成什么；AI 会转写。" },
 ];
 
 const state = {
@@ -91,7 +91,7 @@ function renderForm() {
     <div class="response-header">
       <p class="eyebrow">Billing response</p>
       <h1>Submit handling result</h1>
-      <p class="body-copy">请提交内部处理结果。AI 会读取这个 internal resolution event，再决定是否回复客户。</p>
+      <p class="body-copy">请提交内部处理结果和处理细节。AI 会读取这些信息，生成面向客户的回复；这里填写的说明不会被原样发送给客户。</p>
     </div>
 
     <dl class="summary-grid">
@@ -115,8 +115,8 @@ function renderForm() {
       </fieldset>
 
       <label class="note-field" for="note">
-        <span>说明 <small id="note-rule">已完成可选；其他结果必填。</small></span>
-        <textarea id="note" name="note" rows="5" maxlength="4000" placeholder="例如：请客户补充账单地址，或说明拒绝处理原因。"></textarea>
+        <span>内部处理细节 <small id="note-rule">已完成可选；其他结果必填。</small></span>
+        <textarea id="note" name="note" rows="5" maxlength="4000" placeholder="例如：已通过邮件发送发票；拒绝原因；或客户还需要补充账单地址。AI 会转写成客户回复。"></textarea>
       </label>
 
       <p id="form-error" class="form-error" role="alert">${escapeHtml(state.error)}</p>
@@ -141,7 +141,7 @@ function updateNoteRule() {
   if (!form || !note || !noteRule) return;
   const requiresNote = currentResult(form) !== "completed";
   note.required = requiresNote;
-  noteRule.textContent = requiresNote ? "此处理结果必须填写说明。" : "已完成可选。";
+  noteRule.textContent = requiresNote ? "此处理结果必须填写内部处理细节。" : "已完成可选；如填写，AI 会转写。";
 }
 
 async function submitForm(event) {
@@ -153,7 +153,7 @@ async function submitForm(event) {
   const notify_customer = formData.get("notify_customer") === "true";
 
   if (result !== "completed" && !note) {
-    state.error = "拒绝处理或需要客户操作时，请填写说明。";
+    state.error = "拒绝处理或需要客户操作时，请填写内部处理细节。";
     renderForm();
     return;
   }

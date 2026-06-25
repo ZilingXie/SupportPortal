@@ -201,14 +201,16 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         self.assertEqual(event["created_at"], "2026-06-19T00:00:00+00:00")
         self.assertEqual(event["source"], "billing_response_link")
 
-    def test_completed_followup_uses_note_when_present(self) -> None:
+    def test_completed_followup_treats_note_as_internal_context_not_direct_reply(self) -> None:
         text = build_customer_followup_from_resolution(
             result="completed",
             note="Detailed invoice has been sent to your email.",
             customer_message="Please send invoice.",
             title="Detailed invoice request",
         )
-        self.assertIn("Detailed invoice has been sent", text)
+        self.assertIn("detailed invoice", text.lower())
+        self.assertIn("sent", text.lower())
+        self.assertNotEqual(text, "Detailed invoice has been sent to your email.")
 
     def test_completed_followup_does_not_echo_internal_notification_note(self) -> None:
         text = build_customer_followup_from_resolution(
