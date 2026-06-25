@@ -452,6 +452,57 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(last_message["source"], "billing_response_ai")
         self.assertEqual(last_message["content"], payload["customer_reply"])
 
+    def test_billing_response_submit_uses_original_question_for_resolution_context(self) -> None:
+        captured_payloads: list[dict[str, str]] = []
+
+        def fake_send(payload: dict[str, str]) -> dict[str, str]:
+            captured_payloads.append(payload)
+            return {"status": "sent", "reason": ""}
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email", side_effect=fake_send
+        ):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "E2E test - resolution reply",
+                    "question": "Please send me a detailed invoice for my Agora billing charge.",
+                    "customer_email": "customer@example.com",
+                    "source": "account-ui",
+                },
+            )
+            self.assertEqual(create_response.status_code, 200, create_response.text)
+            create_payload = create_response.json()
+            reply_response = self.client.post(
+                f"/api/account/billing-tickets/{create_payload['billing_ticket_id']}/reply",
+                json={
+                    "message": "Issue date: 1 Jan 2026. Transaction ID: TX-001. Amount: USD 100.",
+                },
+            )
+            self.assertEqual(reply_response.status_code, 200, reply_response.text)
+
+        self.assertTrue(captured_payloads)
+        raw_token = (
+            captured_payloads[0]["body"]
+            .split("https://support.stellarix.space/response?token=", 1)[1]
+            .split()[0]
+        )
+        response = self.client.post(
+            "/api/billing-response/submit",
+            json={
+                "token": raw_token,
+                "result": "completed",
+                "notify_customer": True,
+                "note": "已发送",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIn("detailed invoice", payload["customer_reply"].lower())
+        self.assertIn("sent", payload["customer_reply"].lower())
+        self.assertNotEqual(payload["customer_reply"], "Your billing request has been processed.")
+
     def test_billing_response_submit_no_notify_records_event_without_customer_reply(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
         ticket_id = str(create_payload["ticket_id"])
