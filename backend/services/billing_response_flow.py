@@ -187,7 +187,11 @@ def build_customer_followup_from_resolution(
 ) -> str:
     normalized_result = _normalize_result(result)
     normalized_note = _normalize_note(note)
-    if normalized_note and _looks_like_customer_facing_note(normalized_note):
+    if (
+        normalized_result != BILLING_RESPONSE_RESULT_COMPLETED
+        and normalized_note
+        and _looks_like_customer_facing_note(normalized_note)
+    ):
         return normalized_note
 
     if normalized_result == BILLING_RESPONSE_RESULT_COMPLETED:

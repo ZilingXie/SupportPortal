@@ -133,6 +133,7 @@ from backend.services.dashboard_ticket_ops import (
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
+    BILLING_REPLY_SCENARIO,
     CLIENT_ACK_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
     get_config_warnings,
@@ -3199,6 +3200,74 @@ def _billing_resolution_automation_status(result: str, notify_customer: bool) ->
     return "customer_notified" if notify_customer else "resolved_without_customer_notification"
 
 
+def _profile_can_generate_text(profile: object) -> bool:
+    checker = getattr(profile, "has_invocation_credentials", None)
+    if callable(checker):
+        return bool(checker())
+    return bool(str(getattr(profile, "api_key", "") or "").strip())
+
+
+def _response_text(response: object) -> str:
+    text = str(getattr(response, "text", "") or "").strip()
+    if text:
+        return text
+    return _llm_response_to_text(response).strip()
+
+
+def _build_billing_resolution_customer_reply(
+    *,
+    result: str,
+    note: str,
+    customer_message: str,
+    title: str,
+    billing_ticket_id: str,
+) -> str:
+    fallback = build_customer_followup_from_resolution(
+        result=result,
+        note=note,
+        customer_message=customer_message,
+        title=title,
+    )
+    profile = resolve_model_profile(BILLING_REPLY_SCENARIO)
+    if not _profile_can_generate_text(profile):
+        return fallback
+
+    user_prompt = (
+        "Write the next customer-facing billing support reply.\n\n"
+        "Important rules:\n"
+        "- The internal resolution details are source material only; never copy them verbatim.\n"
+        "- Do not expose internal notes, tools, workflow status, or the response link.\n"
+        "- If the result is completed, clearly tell the customer what was completed.\n"
+        "- If the result needs customer action, ask only for the specific next information/action needed.\n"
+        "- If the result is refused, politely explain that the request cannot be processed.\n"
+        "- Match the customer's language. Keep the reply concise and sendable.\n\n"
+        f"Billing Ticket ID: {billing_ticket_id}\n"
+        f"Title: {title}\n"
+        f"Resolution result: {result}\n"
+        f"Internal resolution details: {note or '(none provided)'}\n\n"
+        "Customer/request context:\n"
+        f"{customer_message or '(no customer context available)'}\n\n"
+        "Draft a polished customer reply now."
+    )
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=(
+                "You produce concise, customer-facing billing support replies from internal "
+                "resolution details. Never output internal-only status notes."
+            ),
+            user_prompt=user_prompt,
+            extra_payload={"max_output_tokens": 220},
+        )
+    except (LlmInvocationError, ValueError):
+        return fallback
+
+    reply = _response_text(response)
+    if not reply or (note and reply.strip() == note.strip()):
+        return fallback
+    return reply
+
+
 @app.get("/api/billing-response")
 def get_billing_response_context(token: str | None = None) -> dict[str, Any]:
     _, token_record = _load_billing_response_token(token)
@@ -3299,11 +3368,12 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
     customer_message = "\n".join(
         part for part in (original_question, latest_message) if part
     )
-    customer_reply = build_customer_followup_from_resolution(
+    customer_reply = _build_billing_resolution_customer_reply(
         result=submission["result"],
         note=submission["note"],
         customer_message=customer_message,
         title=str(billing_ticket.get("title") or canonical_ticket.get("subject") or "").strip(),
+        billing_ticket_id=billing_ticket_id,
     )
     assistant_message = {
         "role": "assistant",
