@@ -270,6 +270,100 @@ def _redact_billing_response_token(email_payload: dict[str, Any], raw_token: str
     return redacted
 
 
+def _build_billing_internal_email_attempt(
+    *,
+    action: str,
+    message: str,
+    ticket_id: str,
+    billing_ticket_id: str,
+    customer_email: str | None,
+    requester: str | None,
+) -> dict[str, Any]:
+    billing_result = build_billing_automation_result(
+        action=action,
+        message=message,
+        ticket_id=ticket_id,
+        customer_email=customer_email,
+        requester=requester,
+        billing_ticket_id=billing_ticket_id,
+    )
+    customer_reply = billing_result.customer_reply
+    missing_fields = list(billing_result.missing_fields)
+    collected_fields = dict(billing_result.collected_fields)
+    internal_email_payload: dict[str, Any] | None = None
+    internal_email_to_send: dict[str, Any] | None = None
+    billing_response_token_record: dict[str, Any] | None = None
+    internal_email_send_status = "not_ready"
+    internal_email_send_reason = "missing_required_fields"
+
+    if billing_result.internal_email:
+        billing_response_raw_token = generate_billing_response_token()
+        billing_response_link = _build_billing_response_link(billing_response_raw_token)
+        billing_result = build_billing_automation_result(
+            action=action,
+            message=message,
+            ticket_id=ticket_id,
+            customer_email=customer_email,
+            requester=requester,
+            billing_ticket_id=billing_ticket_id,
+            response_link=billing_response_link,
+        )
+        customer_reply = billing_result.customer_reply
+        missing_fields = list(billing_result.missing_fields)
+        collected_fields = dict(billing_result.collected_fields)
+        internal_email_to_send = dict(billing_result.internal_email or {})
+        internal_email_payload = _redact_billing_response_token(
+            internal_email_to_send,
+            billing_response_raw_token,
+        )
+        billing_response_token_record = {
+            "token_hash": hash_billing_response_token(billing_response_raw_token),
+            "billing_ticket_id": billing_ticket_id,
+            "created_at": now_iso(),
+            "used_at": None,
+        }
+        internal_email_send_status = "pending"
+        internal_email_send_reason = ""
+
+    return {
+        "customer_reply": customer_reply,
+        "missing_fields": missing_fields,
+        "collected_fields": collected_fields,
+        "internal_email_payload": internal_email_payload,
+        "internal_email_to_send": internal_email_to_send,
+        "billing_response_token_record": billing_response_token_record,
+        "internal_email_send_status": internal_email_send_status,
+        "internal_email_send_reason": internal_email_send_reason,
+    }
+
+
+async def _send_billing_internal_email_attempt(attempt: dict[str, Any]) -> tuple[str, str]:
+    token_record = attempt.get("billing_response_token_record")
+    internal_email_to_send = attempt.get("internal_email_to_send")
+    if not token_record or not internal_email_to_send:
+        return (
+            str(attempt.get("internal_email_send_status") or "not_ready"),
+            str(attempt.get("internal_email_send_reason") or "missing_required_fields"),
+        )
+
+    await async_to_thread(ticket_repository.save_billing_response_token, token_record)
+    try:
+        email_send_result = await async_to_thread(send_billing_internal_email, internal_email_to_send)
+        send_status = str(email_send_result.get("status") or "failed")
+        send_reason = str(email_send_result.get("reason") or "")
+    except Exception as exc:
+        send_status = "failed"
+        send_reason = str(exc)
+
+    if send_status != "sent":
+        await async_to_thread(
+            ticket_repository.mark_billing_response_token_used,
+            token_record["token_hash"],
+            now_iso(),
+        )
+    return send_status, send_reason
+
+
 def _ticket_db_startup_init_retries() -> int:
     return _safe_int_env("TICKET_DB_STARTUP_INIT_RETRIES", 2)
 
@@ -2936,54 +3030,26 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     missing_fields: list[str] = []
     collected_fields: dict[str, Any] = {}
     internal_email_payload: dict[str, Any] | None = None
-    internal_email_to_send: dict[str, Any] | None = None
-    billing_response_token_record: dict[str, Any] | None = None
+    billing_email_attempt: dict[str, Any] | None = None
     internal_email_send_status = "not_applicable"
     internal_email_send_reason = ""
 
     if is_billing_automation_route:
         response_status = "automation"
-        billing_result = build_billing_automation_result(
+        billing_email_attempt = _build_billing_internal_email_attempt(
             action=route,
             message=question,
             ticket_id=ticket_id,
+            billing_ticket_id=billing_ticket_id,
             customer_email=str(request.customer_email or "").strip() or None,
             requester=str(request.customer_email or "").strip() or None,
-            billing_ticket_id=billing_ticket_id,
         )
-        customer_reply = billing_result.customer_reply
-        missing_fields = list(billing_result.missing_fields)
-        collected_fields = dict(billing_result.collected_fields)
-        if billing_result.internal_email:
-            billing_response_raw_token = generate_billing_response_token()
-            billing_response_link = _build_billing_response_link(billing_response_raw_token)
-            billing_result = build_billing_automation_result(
-                action=route,
-                message=question,
-                ticket_id=ticket_id,
-                customer_email=str(request.customer_email or "").strip() or None,
-                requester=str(request.customer_email or "").strip() or None,
-                billing_ticket_id=billing_ticket_id,
-                response_link=billing_response_link,
-            )
-            customer_reply = billing_result.customer_reply
-            missing_fields = list(billing_result.missing_fields)
-            collected_fields = dict(billing_result.collected_fields)
-            internal_email_to_send = dict(billing_result.internal_email)
-            internal_email_payload = _redact_billing_response_token(
-                internal_email_to_send,
-                billing_response_raw_token,
-            )
-            billing_response_token_record = {
-                "token_hash": hash_billing_response_token(billing_response_raw_token),
-                "billing_ticket_id": billing_ticket_id,
-                "created_at": now_iso(),
-                "used_at": None,
-            }
-            internal_email_send_status = "pending"
-        else:
-            internal_email_send_status = "not_ready"
-            internal_email_send_reason = "missing_required_fields"
+        customer_reply = str(billing_email_attempt["customer_reply"] or "")
+        missing_fields = list(billing_email_attempt["missing_fields"])
+        collected_fields = dict(billing_email_attempt["collected_fields"])
+        internal_email_payload = billing_email_attempt["internal_email_payload"]
+        internal_email_send_status = str(billing_email_attempt["internal_email_send_status"])
+        internal_email_send_reason = str(billing_email_attempt["internal_email_send_reason"])
         if customer_reply:
             ticket["messages"].append(
                 {
@@ -3031,17 +3097,10 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     }
     await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
 
-    if billing_response_token_record and internal_email_to_send:
-        await async_to_thread(ticket_repository.save_billing_response_token, billing_response_token_record)
-        email_send_result = await async_to_thread(send_billing_internal_email, internal_email_to_send)
-        internal_email_send_status = str(email_send_result.get("status") or "failed")
-        internal_email_send_reason = str(email_send_result.get("reason") or "")
-        if internal_email_send_status != "sent":
-            await async_to_thread(
-                ticket_repository.mark_billing_response_token_used,
-                billing_response_token_record["token_hash"],
-                now_iso(),
-            )
+    if billing_email_attempt and billing_email_attempt.get("billing_response_token_record"):
+        internal_email_send_status, internal_email_send_reason = await _send_billing_internal_email_attempt(
+            billing_email_attempt
+        )
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
         billing_ticket["updated_at"] = now_iso()
@@ -3608,24 +3667,26 @@ async def reply_to_billing_ticket(
         ]
         conversation_text = "\n".join(all_contents)
 
-        billing_result = build_billing_automation_result(
+        billing_email_attempt = _build_billing_internal_email_attempt(
             action=route,
             message=conversation_text,
             ticket_id=client_ticket_id,
+            billing_ticket_id=billing_ticket_id,
             customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
             requester=str(canonical_ticket.get("requester") or "").strip() or None,
         )
 
-        assistant_reply = billing_result.customer_reply
-        missing_fields = list(billing_result.missing_fields)
-        collected_fields = dict(billing_result.collected_fields)
+        assistant_reply = str(billing_email_attempt["customer_reply"] or "")
+        missing_fields = list(billing_email_attempt["missing_fields"])
+        collected_fields = dict(billing_email_attempt["collected_fields"])
 
         # Update billing ticket with recomputed fields.
         billing_ticket["missing_fields"] = missing_fields
         billing_ticket["collected_fields"] = collected_fields
         billing_ticket["customer_reply"] = assistant_reply
-        billing_ticket["internal_email_send_status"] = "not_sending"
-        billing_ticket["internal_email_send_reason"] = "demo_mode"
+        billing_ticket["internal_email_payload"] = billing_email_attempt["internal_email_payload"]
+        billing_ticket["internal_email_send_status"] = billing_email_attempt["internal_email_send_status"]
+        billing_ticket["internal_email_send_reason"] = billing_email_attempt["internal_email_send_reason"]
         billing_ticket["updated_at"] = timestamp
 
         if assistant_reply:
@@ -3642,6 +3703,14 @@ async def reply_to_billing_ticket(
         new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
         await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
         await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+        if billing_email_attempt.get("billing_response_token_record"):
+            internal_email_send_status, internal_email_send_reason = await _send_billing_internal_email_attempt(
+                billing_email_attempt
+            )
+            billing_ticket["internal_email_send_status"] = internal_email_send_status
+            billing_ticket["internal_email_send_reason"] = internal_email_send_reason
+            billing_ticket["updated_at"] = now_iso()
+            await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
     else:
         # Non-automated: just save the customer message (reply handled by /api/tickets/query on frontend).
         new_messages = canonical_ticket.get("messages", [])[initial_message_count:]

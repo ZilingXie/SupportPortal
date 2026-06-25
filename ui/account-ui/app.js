@@ -109,6 +109,12 @@ function routeResultLabel(item) {
   return parts.length ? parts.join(" / ") : "manual review";
 }
 
+function internalEmailResponseLinkStatus(item) {
+  const payload = item && typeof item.internal_email_payload === "object" ? item.internal_email_payload : null;
+  const body = String(payload?.body || "");
+  return body.includes("/response?token=") ? "Generated" : "Not generated";
+}
+
 function safeSourceLink(source) {
   let link = "";
   if (source && typeof source === "object") {
@@ -687,8 +693,12 @@ function renderDetailView() {
           </div>
         </div>
         <div class="meta-row">
-          <span class="meta-label">Email</span>
+          <span class="meta-label">Internal email</span>
           <span class="meta-value">${escapeHtml(item.internal_email_send_status || "not_applicable")}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Response link</span>
+          <span class="meta-value">${escapeHtml(internalEmailResponseLinkStatus(item))}</span>
         </div>
         ${
           item.internal_email_send_reason
