@@ -235,6 +235,18 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         self.assertNotEqual(text, "Your billing request has been processed.")
         self.assertNotEqual(text, "已发送")
 
+    def test_completed_invoice_followup_rejects_fragmentary_customer_note(self) -> None:
+        text = build_customer_followup_from_resolution(
+            result="completed",
+            note="以及通过邮件发送",
+            customer_message="Please send me a detailed invoice for my Agora billing charge.",
+            title="Detailed invoice request",
+        )
+
+        self.assertIn("detailed invoice", text.lower())
+        self.assertIn("sent", text.lower())
+        self.assertNotEqual(text, "以及通过邮件发送")
+
     def test_customer_action_followup_uses_note(self) -> None:
         text = build_customer_followup_from_resolution(
             result="customer_action_required",

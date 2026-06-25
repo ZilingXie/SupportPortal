@@ -452,6 +452,34 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(last_message["source"], "billing_response_ai")
         self.assertEqual(last_message["content"], payload["customer_reply"])
 
+    def test_billing_response_submit_rejects_fragmentary_customer_note(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+
+        response = self.client.post(
+            "/api/billing-response/submit",
+            json={
+                "token": raw_token,
+                "result": "completed",
+                "notify_customer": True,
+                "note": "以及通过邮件发送",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["customer_notified"])
+        self.assertIn("detailed invoice", payload["customer_reply"].lower())
+        self.assertIn("sent", payload["customer_reply"].lower())
+        self.assertNotEqual(payload["customer_reply"], "以及通过邮件发送")
+
+        ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        last_message = ticket["messages"][-1]
+        self.assertEqual(last_message["role"], "assistant")
+        self.assertEqual(last_message["source"], "billing_response_ai")
+        self.assertEqual(last_message["content"], payload["customer_reply"])
+
     def test_billing_response_submit_uses_original_question_for_resolution_context(self) -> None:
         captured_payloads: list[dict[str, str]] = []
 
