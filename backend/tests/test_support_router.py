@@ -442,6 +442,27 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.internal_email["to"], "xieziling@agora.io")
         self.assertEqual(result.internal_email["from"], "xieziling97@163.com")
 
+    def test_detailed_invoice_extracts_single_line_labeled_fields_cleanly(self) -> None:
+        result = build_billing_automation_result(
+            action="detailed_invoice",
+            message=(
+                "Issue date: 1 Jan 2026. "
+                "Transaction ID: TX-001. "
+                "Amount: USD 100."
+            ),
+            ticket_id="TK-BILL-1",
+            customer_email="customer@example.com",
+        )
+
+        self.assertEqual(
+            result.collected_fields,
+            {
+                "issue_date": "1 Jan 2026",
+                "transaction_id": "TX-001",
+                "amount": "USD 100",
+            },
+        )
+
     def test_billing_internal_email_uses_action_specific_destinations(self) -> None:
         with patch.dict(
             os.environ,

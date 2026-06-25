@@ -3659,11 +3659,13 @@ async def reply_to_billing_ticket(
 
     if automation_status in {"automation", "automated"}:
         route = str(billing_ticket.get("route") or "").strip()
-        # Build conversation text from all messages for field extraction.
+        # Field extraction should use customer-provided text only; assistant checklist
+        # prompts contain the same labels and can be misread as customer values.
         all_contents = [
             str(msg.get("content") or "")
             for msg in canonical_ticket.get("messages", [])
             if isinstance(msg, dict)
+            and str(msg.get("role") or "").strip().lower() in {"customer", "user"}
         ]
         conversation_text = "\n".join(all_contents)
 
