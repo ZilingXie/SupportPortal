@@ -3294,7 +3294,11 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
             "automation_status": automation_status,
         }
 
-    customer_message = latest_customer_message(canonical_ticket)
+    original_question = str(billing_ticket.get("question") or "").strip()
+    latest_message = latest_customer_message(canonical_ticket)
+    customer_message = "\n".join(
+        part for part in (original_question, latest_message) if part
+    )
     customer_reply = build_customer_followup_from_resolution(
         result=submission["result"],
         note=submission["note"],
