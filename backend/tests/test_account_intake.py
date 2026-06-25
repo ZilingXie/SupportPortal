@@ -1754,6 +1754,126 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["missing_fields"], [])
         self.assertIn("company_name", bt["collected_fields"])
 
+    def test_billing_automation_reply_sends_internal_email_when_fields_complete(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended. I cannot log in.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        create_payload = create_response.json()
+        bt_id = create_payload["billing_ticket_id"]
+
+        captured_payloads: list[dict[str, str]] = []
+
+        def fake_send(payload: dict[str, str]) -> dict[str, str]:
+            captured_payloads.append(payload)
+            return {"status": "sent", "reason": ""}
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email",
+            side_effect=fake_send,
+        ):
+            reply_response = self.client.post(
+                f"/api/account/billing-tickets/{bt_id}/reply",
+                json={
+                    "message": (
+                        "Company name: Acme Corp. "
+                        "Company location: Singapore. "
+                        "Website: https://acme.example.com. "
+                        "Contact email: acme@example.com. "
+                        "Phone number: +65-12345678. "
+                        "Use case: live streaming."
+                    ),
+                },
+            )
+
+        self.assertEqual(reply_response.status_code, 200, reply_response.text)
+        reply_payload = reply_response.json()
+        self.assertEqual(reply_payload["missing_fields"], [])
+        self.assertEqual(reply_payload["internal_email_send_status"], "sent")
+        self.assertEqual(reply_payload["internal_email_send_reason"], "")
+        self.assertTrue(captured_payloads)
+        self.assertEqual(captured_payloads[0]["to"], "xieziling@agora.io")
+        link_prefix = "https://support.stellarix.space/response?token="
+        self.assertIn(link_prefix, captured_payloads[0]["body"])
+        raw_token = captured_payloads[0]["body"].split(link_prefix, 1)[1].split()[0]
+
+        token_record = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
+        self.assertIsNotNone(token_record)
+        assert token_record is not None
+        self.assertIsNone(token_record["used_at"])
+
+        bt = self.repository.get_billing_ticket(bt_id)
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["internal_email_send_status"], "sent")
+        self.assertIn("/response?token=<redacted>", bt["internal_email_payload"]["body"])
+        self.assertNotIn(raw_token, bt["internal_email_payload"]["body"])
+
+    def test_billing_automation_reply_invalidates_response_token_when_email_fails(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended. I cannot log in.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        bt_id = create_response.json()["billing_ticket_id"]
+        captured_payloads: list[dict[str, str]] = []
+
+        def fake_send(payload: dict[str, str]) -> dict[str, str]:
+            captured_payloads.append(payload)
+            return {"status": "failed", "reason": "smtp down"}
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_billing_internal_email",
+            side_effect=fake_send,
+        ):
+            reply_response = self.client.post(
+                f"/api/account/billing-tickets/{bt_id}/reply",
+                json={
+                    "message": (
+                        "Company name: Acme Corp. "
+                        "Company location: Singapore. "
+                        "Website: https://acme.example.com. "
+                        "Contact email: acme@example.com. "
+                        "Phone number: +65-12345678. "
+                        "Use case: live streaming."
+                    ),
+                },
+            )
+
+        self.assertEqual(reply_response.status_code, 200, reply_response.text)
+        reply_payload = reply_response.json()
+        self.assertEqual(reply_payload["internal_email_send_status"], "failed")
+        self.assertEqual(reply_payload["internal_email_send_reason"], "smtp down")
+        self.assertTrue(captured_payloads)
+        link_prefix = "https://support.stellarix.space/response?token="
+        raw_token = captured_payloads[0]["body"].split(link_prefix, 1)[1].split()[0]
+
+        token_record = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
+        self.assertIsNotNone(token_record)
+        assert token_record is not None
+        self.assertIsNotNone(token_record["used_at"])
+
+        bt = self.repository.get_billing_ticket(bt_id)
+        self.assertIsNotNone(bt)
+        assert bt is not None
+        self.assertEqual(bt["internal_email_send_status"], "failed")
+        self.assertEqual(bt["internal_email_send_reason"], "smtp down")
+        self.assertIn("/response?token=<redacted>", bt["internal_email_payload"]["body"])
+        self.assertNotIn(raw_token, bt["internal_email_payload"]["body"])
+
     def test_billing_automation_reply_404(self) -> None:
         response = self.client.post(
             "/api/account/billing-tickets/BT-nonexistent/reply",

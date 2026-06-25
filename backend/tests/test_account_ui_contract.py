@@ -200,3 +200,15 @@ class AccountUiContractTests(unittest.TestCase):
 
         # Route reason explanation is still rendered alongside the route result.
         self.assertIn("Route reason", app_source)
+
+    def test_account_detail_shows_internal_email_and_response_link_status(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("internalEmailResponseLinkStatus", app_source)
+        self.assertIn("internal_email_payload", app_source)
+        self.assertIn("internal_email_send_status", app_source)
+        self.assertIn("internal_email_send_reason", app_source)
+        self.assertIn("Internal email", app_source)
+        self.assertIn("Response link", app_source)
+        self.assertIn("Generated", app_source)
+        self.assertIn("Not generated", app_source)
