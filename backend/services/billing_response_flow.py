@@ -93,6 +93,40 @@ def _is_internal_notification_note(note: str) -> bool:
     return any(marker in normalized for marker in internal_markers)
 
 
+def _is_internal_status_note(note: str) -> bool:
+    normalized = " ".join(note.lower().split())
+    if not normalized:
+        return False
+    if _is_internal_notification_note(normalized):
+        return True
+    internal_statuses = {
+        "已发送",
+        "已处理",
+        "已完成",
+        "处理完成",
+        "done",
+        "sent",
+        "completed",
+        "processed",
+    }
+    return normalized in internal_statuses
+
+
+def _billing_context_text(*, customer_message: str, title: str) -> str:
+    return f"{title}\n{customer_message}".lower()
+
+
+def _completed_customer_reply(*, customer_message: str, title: str) -> str:
+    context = _billing_context_text(customer_message=customer_message, title=title)
+    if "invoice" in context or "receipt" in context:
+        return "Your detailed invoice has been sent to your email. Please check your inbox and let us know if you need anything else."
+    if "suspend" in context or "suspension" in context:
+        return "Our team has completed the review of your account suspension request. Please check your account and let us know if you still need help."
+    if "verif" in context:
+        return "Our team has completed the account verification review. Please check your account and let us know if you still need help."
+    return "Your billing request has been processed."
+
+
 def build_billing_internal_resolution_event(
     *,
     billing_ticket_id: str,
@@ -128,12 +162,11 @@ def build_customer_followup_from_resolution(
 ) -> str:
     normalized_result = _normalize_result(result)
     normalized_note = _normalize_note(note)
-    if normalized_note and not _is_internal_notification_note(normalized_note):
+    if normalized_note and not _is_internal_status_note(normalized_note):
         return normalized_note
 
-    _ = (customer_message, title)
     if normalized_result == BILLING_RESPONSE_RESULT_COMPLETED:
-        return "Your billing request has been processed."
+        return _completed_customer_reply(customer_message=customer_message, title=title)
     if normalized_result == BILLING_RESPONSE_RESULT_REFUSED:
         return "We are unable to process this billing request at this time."
     return "We need additional information from you to continue this billing request."
