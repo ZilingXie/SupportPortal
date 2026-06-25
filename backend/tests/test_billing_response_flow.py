@@ -210,6 +210,16 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         )
         self.assertIn("Detailed invoice has been sent", text)
 
+    def test_completed_followup_does_not_echo_internal_notification_note(self) -> None:
+        text = build_customer_followup_from_resolution(
+            result="completed",
+            note="已通过邮件发送给客户",
+            customer_message="Please send invoice.",
+            title="Detailed invoice request",
+        )
+
+        self.assertEqual(text, "Your billing request has been processed.")
+
     def test_customer_action_followup_uses_note(self) -> None:
         text = build_customer_followup_from_resolution(
             result="customer_action_required",

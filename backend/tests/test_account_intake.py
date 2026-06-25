@@ -395,6 +395,32 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert billing_ticket is not None
         self.assertEqual(billing_ticket["automation_status"], "customer_notified")
 
+    def test_billing_response_submit_does_not_notify_customer_with_internal_status_note(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+
+        response = self.client.post(
+            "/api/billing-response/submit",
+            json={
+                "token": raw_token,
+                "result": "completed",
+                "notify_customer": True,
+                "note": "已通过邮件发送给客户",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["customer_notified"])
+        self.assertEqual(payload["customer_reply"], "Your billing request has been processed.")
+
+        ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        last_message = ticket["messages"][-1]
+        self.assertEqual(last_message["role"], "assistant")
+        self.assertEqual(last_message["source"], "billing_response_ai")
+        self.assertEqual(last_message["content"], "Your billing request has been processed.")
+
     def test_billing_response_submit_no_notify_records_event_without_customer_reply(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
         ticket_id = str(create_payload["ticket_id"])
