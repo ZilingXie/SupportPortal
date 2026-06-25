@@ -71,6 +71,28 @@ def validate_billing_resolution_submission(
     }
 
 
+def _is_internal_notification_note(note: str) -> bool:
+    normalized = " ".join(note.lower().split())
+    if not normalized:
+        return False
+    internal_markers = (
+        "已通过邮件发送给客户",
+        "已经通过邮件发送给客户",
+        "已邮件发送给客户",
+        "邮件发送给客户",
+        "已通知客户",
+        "通知客户",
+        "ai will notify the customer",
+        "will notify the customer",
+        "notify customer",
+        "notified customer",
+        "sent to customer",
+        "emailed customer",
+        "email sent to customer",
+    )
+    return any(marker in normalized for marker in internal_markers)
+
+
 def build_billing_internal_resolution_event(
     *,
     billing_ticket_id: str,
@@ -106,7 +128,7 @@ def build_customer_followup_from_resolution(
 ) -> str:
     normalized_result = _normalize_result(result)
     normalized_note = _normalize_note(note)
-    if normalized_note:
+    if normalized_note and not _is_internal_notification_note(normalized_note):
         return normalized_note
 
     _ = (customer_message, title)
