@@ -284,14 +284,16 @@ def _field_boundary_aliases(aliases: dict[str, tuple[str, ...]]) -> tuple[str, .
 
 def _extract_labeled_value(message: str, label: str, boundary_aliases: tuple[str, ...]) -> str:
     escaped_label = re.escape(label)
+    boundary_pattern = "|".join(re.escape(item) for item in boundary_aliases)
     line_match = re.search(
         rf"(?im)^\s*(?:[-*]\s*)?{escaped_label}\s*:\s*(.+?)\s*$",
         message,
     )
     if line_match:
-        return _clean_text(line_match.group(1).strip(" .;"))
+        line_value = line_match.group(1).strip(" .;")
+        if not re.search(rf"(?:^|[\s.])(?:{boundary_pattern})\s*:", line_value, re.IGNORECASE):
+            return _clean_text(line_value)
 
-    boundary_pattern = "|".join(re.escape(item) for item in boundary_aliases)
     inline_match = re.search(
         rf"{escaped_label}\s*:\s*(.+?)(?=(?:\.\s+)?(?:{boundary_pattern})\s*:|\n\s*(?:[-*]\s*)?(?:{boundary_pattern})\s*:|\n\s*\[[^\]]+\]|\Z)",
         message,

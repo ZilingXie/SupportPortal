@@ -1896,7 +1896,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         ticket_id = create_response.json()["ticket_id"]
 
         # Reply via billing automation reply endpoint.
-        self.client.post(
+        reply_response = self.client.post(
             f"/api/account/billing-tickets/{bt_id}/reply",
             json={
                 "message": (
@@ -1904,6 +1904,15 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "Transaction ID: TX-001. "
                     "Amount: USD 100."
                 ),
+            },
+        )
+        self.assertEqual(reply_response.status_code, 200, reply_response.text)
+        self.assertEqual(
+            reply_response.json()["collected_fields"],
+            {
+                "issue_date": "1 Jan 2026",
+                "transaction_id": "TX-001",
+                "amount": "USD 100",
             },
         )
 
@@ -1916,6 +1925,14 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(detail["customer_id"], "customer@example.com")
         self.assertEqual(detail["requester"], "customer@example.com")
         self.assertIn("support_ticket_status", detail)
+        self.assertEqual(
+            detail["collected_fields"],
+            {
+                "issue_date": "1 Jan 2026",
+                "transaction_id": "TX-001",
+                "amount": "USD 100",
+            },
+        )
 
     def test_non_automated_ticket_remains_not_automated(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
