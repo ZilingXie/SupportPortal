@@ -112,6 +112,31 @@ def _is_internal_status_note(note: str) -> bool:
     return normalized in internal_statuses
 
 
+def _looks_like_customer_facing_note(note: str) -> bool:
+    normalized = " ".join(note.split()).strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if _is_internal_status_note(normalized):
+        return False
+    if normalized.startswith(("以及", "并且", "然后", "已", "已经")):
+        return False
+    if len(normalized) < 18 and not any(mark in normalized for mark in ".。!！?？"):
+        return False
+    customer_markers = (
+        "please",
+        "your",
+        "you ",
+        "您",
+        "请",
+        "customer",
+        "invoice",
+        "billing",
+        "account",
+    )
+    return any(marker in lowered or marker in normalized for marker in customer_markers)
+
+
 def _billing_context_text(*, customer_message: str, title: str) -> str:
     return f"{title}\n{customer_message}".lower()
 
@@ -162,7 +187,7 @@ def build_customer_followup_from_resolution(
 ) -> str:
     normalized_result = _normalize_result(result)
     normalized_note = _normalize_note(note)
-    if normalized_note and not _is_internal_status_note(normalized_note):
+    if normalized_note and _looks_like_customer_facing_note(normalized_note):
         return normalized_note
 
     if normalized_result == BILLING_RESPONSE_RESULT_COMPLETED:
