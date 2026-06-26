@@ -537,6 +537,10 @@ class InvestigationMessageRequest(BaseModel):
     multi_agent_enabled: bool = False
 
 
+class EngineerMultiAgentRunRequest(BaseModel):
+    engineer_id: str = Field(default="Jack")
+
+
 class InvestigationConfirmationRequest(BaseModel):
     engineer_id: str = Field(default="Jack")
     decision: str = Field(pattern="^(approve|revise|final_approve)$")
@@ -4264,7 +4268,6 @@ async def create_or_update_ticket(
                     now_value=now_iso(),
                 )
                 engineer_case["engineer_handoff_packet"] = summary_packet
-                now_iso_value = now_iso()
                 summary_agent_state = {
                     **(engineer_case.get("engineer_agent_state") or {}),
                     "summary_packet_id": summary_packet["packet_id"],
@@ -4275,11 +4278,6 @@ async def create_or_update_ticket(
                     "next_request_for_engineer": summary_packet["engineer_ticket_input"]["requested_action"],
                 }
                 engineer_case["engineer_agent_state"] = summary_agent_state
-                engineer_case = ensure_engineer_multi_agent_run(
-                    engineer_case,
-                    now_value=now_iso_value,
-                    reason="initial_case_creation",
-                )
                 case_context = build_engineer_case_context(ticket, engineer_case)
                 opening_context = build_investigation_opening_context(
                     case_context,
@@ -4749,44 +4747,11 @@ def _engineer_case_has_multi_agent_run(engineer_case: dict[str, Any]) -> bool:
     )
 
 
-def _hydrate_engineer_multi_agent_run_if_missing(
-    engineer_case: dict[str, Any],
-    *,
-    now_value: str,
-    reason: str,
-    persist: bool = False,
-) -> tuple[dict[str, Any], bool]:
-    if _engineer_case_has_multi_agent_run(engineer_case):
-        return engineer_case, False
-    ensure_engineer_multi_agent_run(
-        engineer_case,
-        now_value=now_value,
-        reason=reason,
-    )
-    if persist:
-        ticket_repository.save_engineer_case(engineer_case, new_messages=[])
-    return engineer_case, True
-
-
 @app.get("/api/engineer/tickets/{ticket_id}")
 def get_ticket_detail(ticket_id: str, include_context: bool = Query(default=True)) -> dict[str, Any]:
     engineer_case = _resolve_engineer_case_payload(ticket_id)
     if engineer_case is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    if not _engineer_case_has_multi_agent_run(engineer_case):
-        hydrated_record, hydrated = _hydrate_engineer_multi_agent_run_if_missing(
-            _engineer_case_payload_to_record(engineer_case),
-            now_value=now_iso(),
-            reason="initial_case_creation",
-            persist=True,
-        )
-        if hydrated:
-            refreshed_case = ticket_repository.get_engineer_case(
-                str(hydrated_record.get("engineer_case_id") or ticket_id),
-                include_client_messages=True,
-            )
-            if isinstance(refreshed_case, dict):
-                engineer_case = _normalize_engineer_case_payload_for_read(refreshed_case)
     client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
     client_ticket_id = str(client_ref.get("ticket_id") or "").strip() or None
     token_usage_fallback = {
@@ -4829,6 +4794,55 @@ def get_ticket_detail(ticket_id: str, include_context: bool = Query(default=True
         str(client_ref.get("ticket_id") or "")
     )
     return {"ticket": engineer_case}
+
+
+@app.post("/api/engineer/tickets/{ticket_id}/multi-agent/run")
+async def run_engineer_multi_agent_for_ticket(
+    ticket_id: str,
+    request: EngineerMultiAgentRunRequest,
+) -> dict[str, Any]:
+    engineer_case_payload = _resolve_engineer_case_payload(ticket_id)
+    if engineer_case_payload is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if normalize_ticket_status(engineer_case_payload.get("status")) != INVESTIGATING_STATUS:
+        raise HTTPException(status_code=400, detail="Multi-agent can only run for investigating tickets.")
+    if not isinstance(engineer_case_payload.get("active_investigation"), dict):
+        raise HTTPException(status_code=400, detail="No active investigation exists")
+
+    engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
+    timestamp = now_iso()
+    ensure_engineer_multi_agent_run(
+        engineer_case,
+        now_value=timestamp,
+        reason="manual_investigating_click",
+        force=True,
+    )
+    ticket_repository.save_engineer_case(engineer_case, new_messages=[])
+
+    engineer_case_id = str(engineer_case.get("engineer_case_id") or ticket_id)
+    event = {
+        "event": "engineer_multi_agent_run",
+        "ticket_id": engineer_case_id,
+        "client_ticket_id": str((engineer_case.get("client_ticket_ref") or {}).get("ticket_id") or ""),
+        "engineer_case_id": engineer_case_id,
+        "status": normalize_ticket_status(engineer_case.get("status")),
+        "engineer_id": request.engineer_id,
+        "message": "Multi-agent investigation run completed.",
+        "created_at": timestamp,
+    }
+    ticket_repository.record_engineer_case_event(engineer_case_id, event["event"], event)
+    await dispatch_event(["engineer", "dashboard"], event)
+
+    return {
+        "ticket_id": engineer_case_id,
+        "status": normalize_ticket_status(engineer_case.get("status")),
+        "engineer_agent_state": (
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else None
+        ),
+        "updated_at": engineer_case.get("updated_at"),
+    }
 
 
 @app.get("/api/engineer/tickets/{ticket_id}/summary")
@@ -5053,13 +5067,6 @@ async def request_engineer_assistance(ticket_id: str) -> dict[str, Any]:
     ensure_ticket_defaults(ticket)
     active_case_payload = _active_engineer_case_payload(ticket)
     if active_case_payload is not None:
-        active_case = _engineer_case_payload_to_record(active_case_payload)
-        _hydrate_engineer_multi_agent_run_if_missing(
-            active_case,
-            now_value=now_iso(),
-            reason="initial_case_creation",
-            persist=True,
-        )
         return {
             "ticket_id": ticket_id,
             "status": ticket["status"],
@@ -5097,14 +5104,6 @@ async def request_engineer_assistance(ticket_id: str) -> dict[str, Any]:
             handoff_packet=case_context.get("engineer_handoff_packet"),
             engineer_agent_state=case_context.get("engineer_agent_state"),
         )
-    # Seed every new/entered Engineer case with an initial multi-agent run so
-    # the right-hand Multi-Agent Run panel is not empty. Existing cases without
-    # multi-agent state are hydrated opportunistically (idempotent).
-    ensure_engineer_multi_agent_run(
-        engineer_case,
-        now_value=timestamp,
-        reason="initial_case_creation",
-    )
     ticket["status"] = ESCALATED_STATUS
     ticket["updated_at"] = timestamp
     ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
@@ -5208,12 +5207,6 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
                 handoff_packet=case_context.get("engineer_handoff_packet"),
                 engineer_agent_state=case_context.get("engineer_agent_state"),
             )
-        # Seed every new/entered Engineer case with an initial multi-agent run.
-        ensure_engineer_multi_agent_run(
-            engineer_case,
-            now_value=now_iso(),
-            reason="initial_case_creation",
-        )
     elif request.action == "resolved":
         if isinstance(engineer_case, dict):
             case_context = build_engineer_case_context(ticket, engineer_case)
@@ -5510,7 +5503,7 @@ def ensure_engineer_multi_agent_run(
             packet on the case. Not saved to the repository by this helper.
         now_value: ISO-8601 timestamp for created_at.
         reason: Short label describing why the run is happening (e.g.
-            ``"initial_case_creation"`` or ``"engineer_message"``). Recorded in
+            ``"manual_investigating_click"`` or ``"engineer_message"``). Recorded in
             ``multi_agent_last_run`` for observability only.
         engineer_note: Optional engineer message to carry as revise_context for
             the refresh round. ``None`` for initial creation runs.
