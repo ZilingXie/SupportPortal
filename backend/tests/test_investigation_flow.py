@@ -324,6 +324,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(main.TicketActionRequest(action="investigate").engineer_id, "Jack")
         self.assertEqual(main.InvestigationMessageRequest(message="share logs").engineer_id, "Jack")
         self.assertEqual(main.InvestigationConfirmationRequest(decision="approve").engineer_id, "Jack")
+        self.assertEqual(main.EngineerMultiAgentRunRequest().engineer_id, "Jack")
 
     def _seed_ticket(
         self,
@@ -2785,61 +2786,12 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         self.assertIsInstance(agent_state.get("reply_readiness"), dict)
         self.assertFalse(agent_state["reply_readiness"]["ready_for_customer_reply"])
-        # Plan Agent fields
-        self.assertIn("active_plan", agent_state)
-        active_plan = agent_state["active_plan"]
-        self.assertIsInstance(active_plan, dict)
-        self.assertEqual(active_plan["plan_version"], "engineer-plan-v1")
-        self.assertEqual(active_plan["plan_agent_version"], "engineer-plan-agent-v1")
-        self.assertEqual(active_plan["created_by"], "plan_agent")
-        self.assertIn("hypotheses", active_plan)
-        self.assertIn("tasks", active_plan)
-        self.assertIn("dependencies", active_plan)
-        self.assertIn("blockers", active_plan)
-        self.assertEqual(active_plan["memory_context"]["mode"], "fallback_unavailable")
-        self.assertEqual(active_plan["skill_context"]["mode"], "allowlist_fallback")
-        self.assertEqual(agent_state["plan_id"], active_plan["plan_id"])
-        self.assertEqual(agent_state["plan_version"], "engineer-plan-v1")
-        self.assertEqual(agent_state["plan_agent_version"], "engineer-plan-agent-v1")
-        # Execute Agent fields
-        self.assertIn("active_execution", agent_state)
-        active_execution = agent_state["active_execution"]
-        self.assertIsInstance(active_execution, dict)
-        self.assertEqual(active_execution["execution_version"], "engineer-execution-v1")
-        self.assertEqual(active_execution["execute_agent_version"], "engineer-execute-agent-v1")
-        self.assertEqual(active_execution["created_by"], "execute_agent")
-        self.assertIn("scheduler", active_execution)
-        self.assertIn("execution_order", active_execution["scheduler"])
-        self.assertGreaterEqual(len(active_execution["scheduler"]["execution_order"]), 1)
-        self.assertIsInstance(active_execution["task_results"], list)
-        self.assertGreaterEqual(len(active_execution["task_results"]), 1)
-        self.assertIn("evidence_packet", active_execution)
-        evidence_packet = active_execution["evidence_packet"]
-        self.assertIsInstance(evidence_packet, dict)
-        self.assertEqual(evidence_packet["packet_version"], "engineer-evidence-packet-v1")
-        self.assertIn("customer_safe_summary", evidence_packet)
-        self.assertIn("internal_summary", evidence_packet)
-        self.assertEqual(agent_state["execution_id"], active_execution["execution_id"])
-        self.assertEqual(agent_state["execution_version"], "engineer-execution-v1")
-        self.assertEqual(agent_state["execute_agent_version"], "engineer-execute-agent-v1")
-        self.assertIsInstance(agent_state["task_results"], list)
-        self.assertGreaterEqual(len(agent_state["task_results"]), 1)
-        # Review Agent fields
-        self.assertIn("active_review", agent_state)
-        active_review = agent_state["active_review"]
-        self.assertIsInstance(active_review, dict)
-        self.assertEqual(active_review["review_version"], "engineer-review-v1")
-        self.assertEqual(active_review["review_agent_version"], "engineer-review-agent-v1")
-        self.assertEqual(active_review["created_by"], "review_agent")
-        self.assertIn("review_decision", active_review)
-        self.assertIn(active_review["review_decision"], {"ready_for_engineer", "replan_required", "unable_to_resolve"})
-        self.assertIn("replan_count", active_review)
-        self.assertIn("max_replan_count", active_review)
-        self.assertEqual(active_review["max_replan_count"], 2)
-        self.assertEqual(agent_state["review_id"], active_review["review_id"])
-        self.assertEqual(agent_state["review_version"], "engineer-review-v1")
-        self.assertEqual(agent_state["review_agent_version"], "engineer-review-agent-v1")
-        self.assertEqual(agent_state["review_decision"], active_review["review_decision"])
+        # Multi-agent Plan / Execute / Review stays default-off until the
+        # engineer explicitly clicks Investigating in the detail view.
+        self.assertNotIn("active_plan", agent_state)
+        self.assertNotIn("active_execution", agent_state)
+        self.assertNotIn("active_review", agent_state)
+        self.assertNotIn("multi_agent_last_run", agent_state)
 
     def test_fallback_engineer_agent_state_omits_candidate_answer_from_known_facts(self) -> None:
         state = fallback_engineer_agent_state(
@@ -6758,16 +6710,14 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(detail.json()["ticket"]["status"], "escalated")
         self.assertEqual(detail.json()["ticket"]["engineer_case_id"], "TK-INV-105-1")
         self.assertEqual(detail.json()["ticket"]["title"], "how to join channel")
-        # Every new Engineer case is seeded with an initial multi-agent run.
+        # Multi-agent stays default-off until the engineer explicitly clicks
+        # Investigating in the detail view.
         agent_state = detail.json()["ticket"].get("engineer_agent_state") or {}
-        self.assertIsInstance(agent_state.get("active_plan"), dict)
-        self.assertIsInstance(agent_state.get("active_execution"), dict)
-        self.assertIsInstance(agent_state.get("active_review"), dict)
-        self.assertTrue(str(agent_state.get("plan_id") or "").strip())
-        self.assertTrue(str(agent_state.get("execution_id") or "").strip())
-        self.assertTrue(str(agent_state.get("review_id") or "").strip())
+        self.assertNotIn("active_plan", agent_state)
+        self.assertNotIn("active_execution", agent_state)
+        self.assertNotIn("active_review", agent_state)
 
-    def test_request_engineer_assistance_existing_active_case_hydrates_multi_agent_state(self) -> None:
+    def test_request_engineer_assistance_existing_active_case_does_not_hydrate_multi_agent_state(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-105B",
             subject="token callback issue",
@@ -6800,15 +6750,12 @@ class InvestigationFlowTests(unittest.TestCase):
         stored_case = self.repository.get_engineer_case("TK-INV-105B-1")
         self.assertIsNotNone(stored_case)
         agent_state = (stored_case or {}).get("engineer_agent_state") or {}
-        self.assertIsInstance(agent_state.get("active_plan"), dict)
-        self.assertIsInstance(agent_state.get("active_execution"), dict)
-        self.assertIsInstance(agent_state.get("active_review"), dict)
-        self.assertEqual(
-            str((agent_state.get("multi_agent_last_run") or {}).get("reason") or ""),
-            "initial_case_creation",
-        )
+        self.assertNotIn("active_plan", agent_state)
+        self.assertNotIn("active_execution", agent_state)
+        self.assertNotIn("active_review", agent_state)
+        self.assertNotIn("multi_agent_last_run", agent_state)
 
-    def test_engineer_ticket_detail_hydrates_existing_active_case_multi_agent_state(self) -> None:
+    def test_engineer_ticket_detail_does_not_hydrate_existing_active_case_multi_agent_state(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-105C",
             subject="legacy active case",
@@ -6830,13 +6777,80 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         agent_state = response.json()["ticket"].get("engineer_agent_state") or {}
-        self.assertIsInstance(agent_state.get("active_plan"), dict)
-        self.assertIsInstance(agent_state.get("active_execution"), dict)
-        self.assertIsInstance(agent_state.get("active_review"), dict)
+        self.assertNotIn("active_plan", agent_state)
+        self.assertNotIn("active_execution", agent_state)
+        self.assertNotIn("active_review", agent_state)
         stored_case = self.repository.get_engineer_case("TK-INV-105C-1")
         self.assertIsNotNone(stored_case)
         stored_state = (stored_case or {}).get("engineer_agent_state") or {}
+        self.assertNotIn("active_plan", stored_state)
+        self.assertNotIn("active_execution", stored_state)
+        self.assertNotIn("active_review", stored_state)
+
+    def test_manual_multi_agent_run_endpoint_runs_and_persists_plan_execute_review(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-105D",
+            subject="manual multi-agent run",
+            status="investigating",
+            active_investigation={
+                "id": "INV-105D",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-105D-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm SDK version.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+            engineer_agent_state={
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Manual click should start multi-agent.",
+            },
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-105D-1/multi-agent/run",
+                json={"engineer_id": "eng"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ticket_id"], "TK-INV-105D-1")
+        self.assertEqual(payload["status"], "investigating")
+        returned_state = payload.get("engineer_agent_state") or {}
+        self.assertIsInstance(returned_state.get("active_plan"), dict)
+        self.assertIsInstance(returned_state.get("active_execution"), dict)
+        self.assertIsInstance(returned_state.get("active_review"), dict)
+        self.assertEqual(
+            str((returned_state.get("multi_agent_last_run") or {}).get("reason") or ""),
+            "manual_investigating_click",
+        )
+
+        stored_case = self.repository.get_engineer_case("TK-INV-105D-1")
+        stored_state = (stored_case or {}).get("engineer_agent_state") or {}
         self.assertIsInstance(stored_state.get("active_plan"), dict)
+        self.assertIsInstance(stored_state.get("active_execution"), dict)
+        self.assertIsInstance(stored_state.get("active_review"), dict)
+        self.assertEqual(
+            str((stored_state.get("multi_agent_last_run") or {}).get("reason") or ""),
+            "manual_investigating_click",
+        )
+        self.assertEqual(
+            [
+                str(item.get("content") or "")
+                for item in ((stored_case or {}).get("active_investigation") or {}).get("messages", [])
+            ],
+            ["Please confirm SDK version."],
+        )
 
     def test_investigate_action_reuses_latest_rag_turn_when_escalated_ticket_enters_investigation(self) -> None:
         self._seed_ticket(
@@ -6897,12 +6911,12 @@ class InvestigationFlowTests(unittest.TestCase):
             opening_message["citations"][0]["source_url"],
             "https://docs.agora.io/en/video-calling/token-authentication",
         )
-        # Manual investigate also seeds an initial multi-agent run.
+        # Manual investigate opens the engineer workflow but leaves multi-agent
+        # default-off until the engineer explicitly clicks Investigating.
         agent_state = ticket.get("engineer_agent_state") or {}
-        self.assertIsInstance(agent_state.get("active_plan"), dict)
-        self.assertIsInstance(agent_state.get("active_execution"), dict)
-        self.assertIsInstance(agent_state.get("active_review"), dict)
-        self.assertTrue(str(agent_state.get("plan_id") or "").strip())
+        self.assertNotIn("active_plan", agent_state)
+        self.assertNotIn("active_execution", agent_state)
+        self.assertNotIn("active_review", agent_state)
 
     def test_investigate_action_without_latest_rag_turn_falls_back_to_generic_prompt(self) -> None:
         self._seed_ticket(ticket_id="TK-INV-106B", status="escalated")

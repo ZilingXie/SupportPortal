@@ -5764,7 +5764,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_investigating_badge_is_multi_agent_dblclick_entry(self) -> None:
+    def test_engineer_detail_investigating_badge_is_multi_agent_click_entry(self) -> None:
         self.run_engineer_app_script(
             self._engineer_multi_agent_ticket_fixture()
             + textwrap.dedent(
@@ -5786,27 +5786,49 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!primaryLine.includes("status-badge-investigating-toggle")) {
                   throw new Error("Investigating badge should be marked as the multi-agent toggle entry.");
                 }
-                if (!primaryLine.includes('aria-label="Double-click to toggle multi-agent workspace view"')) {
-                  throw new Error("Investigating badge should advertise the double-click affordance.");
+                if (!primaryLine.includes('aria-label="Run multi-agent investigation"')) {
+                  throw new Error("Investigating badge should advertise the click-to-run affordance.");
                 }
                 if (!primaryLine.includes('data-multi-agent-toggle="TK-MA-1"')) {
                   throw new Error("Investigating badge should carry the scoped multi-agent toggle target.");
                 }
 
-                // A single click on the toggle badge must stay a no-op.
-                let clickSideEffect = false;
+                let capturedUrl = "";
+                let capturedBody = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  capturedBody = options?.body;
+                  return {
+                    ticket_id: "TK-MA-1",
+                    status: "investigating",
+                    updated_at: "2026-06-01T08:35:00+00:00",
+                    engineer_agent_state: tickets[0].engineer_agent_state,
+                  };
+                };
                 const badgeTarget = {
                   closest(selector) {
-                    if (selector === 'button[data-detail-action="toggle-multi-agent-workspace"]') {
-                      return { dataset: { detailAction: "toggle-multi-agent-workspace" } };
+                    if (selector === "button[data-detail-action]") {
+                      return {
+                        dataset: {
+                          detailAction: "toggle-multi-agent-workspace",
+                          multiAgentToggle: "TK-MA-1",
+                        },
+                        disabled: false,
+                      };
                     }
                     return null;
                   },
                 };
-                window.alert = () => { clickSideEffect = true; };
-                handleDetailClick({ target: badgeTarget }).catch(() => { clickSideEffect = true; });
-                if (clickSideEffect) {
-                  throw new Error("Single click on the multi-agent toggle badge must not perform any action.");
+                await handleDetailClick({ target: badgeTarget });
+                if (capturedUrl !== "/api/engineer/tickets/TK-MA-1/multi-agent/run") {
+                  throw new Error(`Investigating click should call the manual multi-agent run endpoint, got ${capturedUrl}`);
+                }
+                const parsedBody = JSON.parse(capturedBody);
+                if (parsedBody.engineer_id !== ENGINEER_ID) {
+                  throw new Error("Manual multi-agent run should send the engineer id.");
+                }
+                if (!isMultiAgentWorkspaceActiveForTicket(selectedTicketId)) {
+                  throw new Error("Single click should activate the multi-agent workspace.");
                 }
 
                 // Non-investigating tickets must not expose the toggle entry.
@@ -5832,13 +5854,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketId = "TK-MA-1";
                 selectedTicket = tickets[0];
 
-                // Toggle the multi-agent workspace for this ticket within the session.
-                if (!toggleMultiAgentWorkspaceForTicket(selectedTicketId)) {
-                  throw new Error("Toggling the multi-agent workspace should turn the view on for the current ticket.");
-                }
-                if (!isMultiAgentWorkspaceActiveForTicket(selectedTicketId)) {
-                  throw new Error("Multi-agent workspace should be active for the current ticket after toggling.");
-                }
+                setMultiAgentWorkspaceActiveForTicket(selectedTicketId, true);
 
                 const html = renderTicketDetailView();
 
@@ -5893,11 +5909,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Replan to gather SDK upgrade confirmation.")) {
                   throw new Error("Multi-agent workspace should render the recommended_action.");
                 }
-
-                // Toggling off restores the guardrail-only default view.
-                if (toggleMultiAgentWorkspaceForTicket(selectedTicketId)) {
-                  throw new Error("Toggling the multi-agent workspace a second time should turn the view off.");
+                if (html.includes("Found candidate answer pointing to SDK 4.2.2 upgrade.</div>")) {
+                  throw new Error("Multi-agent results should not be rendered into the main conversation thread.");
                 }
+
+                // Turning off the session view restores the guardrail-only default view.
+                setMultiAgentWorkspaceActiveForTicket(selectedTicketId, false);
                 const offHtml = renderTicketDetailView();
                 if (offHtml.includes("detail-multi-agent-panel")) {
                   throw new Error("Turning the multi-agent workspace off should remove the insight panel.");
@@ -5975,7 +5992,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketId = "TK-MA-EMPTY-1";
                 selectedTicket = tickets[0];
 
-                toggleMultiAgentWorkspaceForTicket(selectedTicketId);
+                setMultiAgentWorkspaceActiveForTicket(selectedTicketId, true);
                 const html = renderTicketDetailView();
 
                 if (!html.includes("detail-multi-agent-panel")) {
@@ -6054,13 +6071,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketId = "TK-MA-1";
                 selectedTicket = tickets[0];
 
-                // Toggle the multi-agent workspace on for this ticket.
-                if (!toggleMultiAgentWorkspaceForTicket(selectedTicketId)) {
-                  throw new Error("Toggling the multi-agent workspace should turn it on for the current ticket.");
-                }
-                if (!isMultiAgentWorkspaceActiveForTicket(selectedTicketId)) {
-                  throw new Error("Multi-agent workspace should be active for the current ticket after toggling.");
-                }
+                setMultiAgentWorkspaceActiveForTicket(selectedTicketId, true);
 
                 let capturedBody = null;
                 fetchJson = async (url, options = undefined) => {

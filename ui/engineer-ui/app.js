@@ -73,11 +73,12 @@ let detailLoading = false;
 let tellAiDraft = "";
 let tellAiDraftRichHtml = "";
 let investigationReviseMode = false;
-// Multi-agent workspace is a per-ticket, per-session view toggle. When set to
-// the current ticket id, the engineer detail insight panel renders the Plan /
-// Execute / Review agent outputs captured in engineer_agent_state. It never
-// triggers or reruns any backend agent and resets when the ticket changes.
+// Multi-agent workspace is a per-ticket, per-session explicit mode. Clicking
+// the Investigating badge runs Plan / Execute / Review and shows the result in
+// the right-side insight panel only.
 let multiAgentWorkspaceTicketId = null;
+let multiAgentRunLoadingTicketId = null;
+let multiAgentRunError = "";
 let tellAiSubmitting = false;
 let hitlFeedbackLoading = false;
 let hitlFeedbackRequestSeq = 0;
@@ -2497,6 +2498,8 @@ function resetDetailWorkspaceState() {
   tellAiDraftRichHtml = "";
   investigationReviseMode = false;
   multiAgentWorkspaceTicketId = null;
+  multiAgentRunLoadingTicketId = null;
+  multiAgentRunError = "";
   tellAiSubmitting = false;
   hitlFeedbackLoading = false;
   hitlFeedbackRequestSeq += 1;
@@ -2511,17 +2514,36 @@ function isMultiAgentWorkspaceActiveForTicket(ticketId) {
   return normalizeDetailTicketId(multiAgentWorkspaceTicketId) === normalized;
 }
 
+function setMultiAgentWorkspaceActiveForTicket(ticketId, active) {
+  const normalized = normalizeDetailTicketId(ticketId);
+  if (!normalized) {
+    return false;
+  }
+  if (!active) {
+    if (isMultiAgentWorkspaceActiveForTicket(normalized)) {
+      multiAgentWorkspaceTicketId = null;
+    }
+    if (normalizeDetailTicketId(multiAgentRunLoadingTicketId) === normalized) {
+      multiAgentRunLoadingTicketId = null;
+    }
+    multiAgentRunError = "";
+    return false;
+  }
+  multiAgentWorkspaceTicketId = normalized;
+  multiAgentRunError = "";
+  return true;
+}
+
 function toggleMultiAgentWorkspaceForTicket(ticketId) {
   const normalized = normalizeDetailTicketId(ticketId);
   if (!normalized) {
     return false;
   }
   if (isMultiAgentWorkspaceActiveForTicket(normalized)) {
-    multiAgentWorkspaceTicketId = null;
+    setMultiAgentWorkspaceActiveForTicket(normalized, false);
     return false;
   }
-  multiAgentWorkspaceTicketId = normalized;
-  return true;
+  return setMultiAgentWorkspaceActiveForTicket(normalized, true);
 }
 
 function setInvestigationComposerDraftFromMarkdown(value) {
@@ -3343,12 +3365,15 @@ function buildTicketDetailViewState() {
   const hasMultiAgentState = Boolean(activePlan.plan_id || activeExecution.execution_id || activeReview.review_id);
   const isMultiAgentWorkspace =
     isMultiAgentWorkspaceActiveForTicket(ticketId) && status === "investigating";
+  const isMultiAgentRunLoading = normalizeDetailTicketId(multiAgentRunLoadingTicketId) === ticketId;
   const multiAgentWorkspacePanelHtml = isMultiAgentWorkspace
     ? renderMultiAgentWorkspacePanelHtml({
         activePlan,
         activeExecution,
         activeReview,
         hasMultiAgentState,
+        isLoading: isMultiAgentRunLoading,
+        errorMessage: isMultiAgentRunLoading ? "" : multiAgentRunError,
       })
     : "";
 
@@ -3393,6 +3418,7 @@ function buildTicketDetailViewState() {
     activePlan,
     activeExecution,
     activeReview,
+    isMultiAgentRunLoading,
     multiAgentWorkspacePanelHtml,
   };
 }
@@ -3435,13 +3461,11 @@ function renderTicketDetailHeaderHtml(viewState) {
 function renderTicketDetailStatusBadgeHtml(viewState) {
   const label = escapeHtml(statusLabel(viewState.status));
   const classes = `status-badge status-badge-compact ${statusClass(viewState.status)}`;
-  // Only the investigating badge is a double-click entry into the multi-agent
-  // workspace view. Single click stays a no-op so the badge behaves like the
-  // static status pill it replaces; the toggle lives on dblclick.
   if (viewState.status !== "investigating") {
     return `<span class="${classes}">${label}</span>`;
   }
   const isActive = Boolean(viewState.isMultiAgentWorkspace);
+  const isLoading = Boolean(viewState.isMultiAgentRunLoading);
   return `
     <button
       type="button"
@@ -3449,9 +3473,10 @@ function renderTicketDetailStatusBadgeHtml(viewState) {
       data-detail-action="toggle-multi-agent-workspace"
       data-multi-agent-toggle="${escapeHtml(viewState.ticketId)}"
       aria-pressed="${isActive ? "true" : "false"}"
-      aria-label="Double-click to toggle multi-agent workspace view"
-      title="Double-click to toggle multi-agent workspace view"
-    >${label}</button>
+      aria-label="Run multi-agent investigation"
+      title="Run multi-agent investigation"
+      ${isLoading ? "disabled" : ""}
+    >${isLoading ? "Investigating..." : label}</button>
   `;
 }
 
@@ -3544,11 +3569,55 @@ function renderTicketDetailInsightPanelHtml(viewState) {
 }
 
 function renderMultiAgentWorkspacePanelHtml(viewState) {
-  const { activePlan = {}, activeExecution = {}, activeReview = {}, hasMultiAgentState = false } = viewState || {};
+  const {
+    activePlan = {},
+    activeExecution = {},
+    activeReview = {},
+    hasMultiAgentState = false,
+    isLoading = false,
+    errorMessage = "",
+  } = viewState || {};
   // This panel only renders when the multi-agent workspace is toggled on for
   // the current ticket, so the active-mode status line always applies here.
   const activeStatusHtml =
     '<p class="detail-multi-agent-status">Multi-agent mode is active for this ticket.</p>';
+  if (isLoading) {
+    return `
+      <section class="panel-card detail-multi-agent-panel">
+        <div class="panel-card-head">
+          <div>
+            <p class="panel-card-kicker">Multi-Agent Run</p>
+            <h3 class="panel-card-title">Multi-Agent Run</h3>
+          </div>
+        </div>
+        <div class="detail-multi-agent-body">
+          ${activeStatusHtml}
+          <div class="empty-state detail-multi-agent-loading" role="status" aria-live="polite" aria-busy="true">
+            <span class="loading-spinner loading-spinner-sm" aria-hidden="true"></span>
+            Running Plan / Execute / Review...
+          </div>
+        </div>
+      </section>
+    `;
+  }
+  if (String(errorMessage || "").trim()) {
+    return `
+      <section class="panel-card detail-multi-agent-panel">
+        <div class="panel-card-head">
+          <div>
+            <p class="panel-card-kicker">Multi-Agent Run</p>
+            <h3 class="panel-card-title">Multi-Agent Run</h3>
+          </div>
+        </div>
+        <div class="detail-multi-agent-body">
+          ${activeStatusHtml}
+          <div class="empty-state detail-multi-agent-error" role="alert">
+            Multi-agent run failed: ${escapeHtml(String(errorMessage).trim())}
+          </div>
+        </div>
+      </section>
+    `;
+  }
   if (!hasMultiAgentState) {
     return `
       <section class="panel-card detail-multi-agent-panel">
@@ -4235,6 +4304,15 @@ async function updateTicketStatus(ticketId, action) {
   });
 }
 
+async function runMultiAgentInvestigation(ticketId) {
+  return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/multi-agent/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ engineer_id: ENGINEER_ID }),
+    timeoutMs: INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS,
+  });
+}
+
 async function submitInvestigationMessage(ticketId, messageText) {
   const cleaned = String(messageText || "").trim();
   if (!cleaned) {
@@ -4376,9 +4454,53 @@ async function handleDetailClick(event) {
     return;
   }
 
-  // The investigating status badge carries the toggle action but is driven by
-  // dblclick (handleDetailDblClick), so a single click must stay a no-op.
   if (action === "toggle-multi-agent-workspace") {
+    if (normalizeStatusValue(selectedTicket?.status || "open") !== "investigating") {
+      return;
+    }
+    const requestTicketId = normalizeDetailTicketId(button.dataset.multiAgentToggle || selectedTicketId);
+    if (!requestTicketId) {
+      return;
+    }
+    setMultiAgentWorkspaceActiveForTicket(requestTicketId, true);
+    multiAgentRunLoadingTicketId = requestTicketId;
+    multiAgentRunError = "";
+    button.disabled = true;
+    renderTicketDetail();
+    try {
+      const payload = await runMultiAgentInvestigation(requestTicketId);
+      const nextEngineerAgentState =
+        payload?.engineer_agent_state && typeof payload.engineer_agent_state === "object"
+          ? payload.engineer_agent_state
+          : selectedTicket?.engineer_agent_state;
+      if (selectedTicket && normalizeDetailTicketId(selectedTicket.ticket_id || selectedTicketId) === requestTicketId) {
+        selectedTicket = {
+          ...selectedTicket,
+          status: payload?.status ?? selectedTicket.status,
+          updated_at: payload?.updated_at ?? selectedTicket.updated_at,
+          engineer_agent_state: nextEngineerAgentState,
+        };
+      }
+      const ticketIndex = tickets.findIndex(
+        (ticket) => normalizeDetailTicketId(ticket?.ticket_id) === requestTicketId
+      );
+      if (ticketIndex >= 0) {
+        tickets[ticketIndex] = {
+          ...tickets[ticketIndex],
+          status: payload?.status ?? tickets[ticketIndex].status,
+          updated_at: payload?.updated_at ?? tickets[ticketIndex].updated_at,
+          engineer_agent_state: nextEngineerAgentState,
+        };
+      }
+    } catch (error) {
+      multiAgentRunError = error.message || "Unknown error";
+    } finally {
+      if (normalizeDetailTicketId(multiAgentRunLoadingTicketId) === requestTicketId) {
+        multiAgentRunLoadingTicketId = null;
+      }
+      button.disabled = false;
+      renderTicketDetail();
+    }
     return;
   }
 
@@ -4621,20 +4743,6 @@ function handleDetailSelectionChange(event) {
   if (tellAiInput && isRichTextComposerElement(tellAiInput)) {
     syncInvestigationComposerToolbarStateFromElement(tellAiInput);
   }
-}
-
-function handleDetailDblClick(event) {
-  const badge = event.target.closest('button[data-detail-action="toggle-multi-agent-workspace"]');
-  if (!badge || !selectedTicketId) {
-    return;
-  }
-  // Only the investigating badge is wired to the toggle; non-investigating
-  // tickets never render this action, but guard against stale state anyway.
-  if (normalizeStatusValue(selectedTicket?.status || "open") !== "investigating") {
-    return;
-  }
-  toggleMultiAgentWorkspaceForTicket(selectedTicketId);
-  renderTicketDetail();
 }
 
 function handleDetailKeydown(event) {
@@ -5058,7 +5166,6 @@ workspaceRegionEl?.addEventListener("focusout", handleDetailFocusOut);
 workspaceRegionEl?.addEventListener("paste", handleDetailPaste);
 workspaceRegionEl?.addEventListener("mouseup", handleDetailSelectionChange);
 workspaceRegionEl?.addEventListener("keyup", handleDetailSelectionChange);
-workspaceRegionEl?.addEventListener("dblclick", handleDetailDblClick);
 workspaceRegionEl?.addEventListener("keydown", (event) => {
   handleTableKeydown(event);
   handleDetailKeydown(event);
