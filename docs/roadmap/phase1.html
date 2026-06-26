@@ -389,6 +389,70 @@
       line-height: 1.55;
     }
 
+    .annotation-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .annotation {
+      position: relative;
+      display: grid;
+      gap: 8px;
+      padding: 16px 18px 16px 54px;
+      border-radius: 20px;
+      border: 1px solid var(--note-line, rgba(31, 79, 104, 0.22));
+      background: var(--note-bg, rgba(31, 79, 104, 0.08));
+      color: #32413d;
+      box-shadow: 0 14px 34px rgba(31, 45, 38, 0.08);
+    }
+
+    .annotation::before {
+      content: attr(data-icon);
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.54);
+      color: var(--note-accent, var(--blueprint));
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .annotation.speaker {
+      --note-bg: rgba(31, 79, 104, 0.1);
+      --note-line: rgba(31, 79, 104, 0.28);
+      --note-accent: var(--blueprint);
+    }
+
+    .annotation.prep {
+      --note-bg: rgba(186, 122, 42, 0.13);
+      --note-line: rgba(186, 122, 42, 0.34);
+      --note-accent: var(--amber);
+    }
+
+    .annotation strong {
+      color: var(--note-accent, var(--blueprint));
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .annotation p {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.58;
+    }
+
+    .annotation em {
+      color: var(--muted);
+      font-style: normal;
+      font-weight: 800;
+    }
+
     .agentrelay-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
@@ -660,6 +724,10 @@
         padding: 18px;
       }
 
+      .annotation {
+        padding: 15px 16px 15px 48px;
+      }
+
       .hero::after {
         opacity: 0.24;
       }
@@ -685,6 +753,16 @@
         <li>1:40 Guardrail showcase</li>
         <li>2:25 Dashboard 与路线图</li>
       </ul>
+      <div class="annotation-stack" aria-label="首页演示批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“今天我不把它包装成一个 ticket UI。Phase 1 要证明的是：我们能把 support 的质量检查、调查协作和管理指标放进系统流程里，而不是继续依赖 Zendesk 加人工经验。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：准备建议</strong>
+          <p>这一页控制在 15 秒以内。不要展开所有功能，先立住主线：<em>不是 SaaS 平替，而是 AI-native support operating system。</em></p>
+        </aside>
+      </div>
     </header>
 
     <section class="section reveal" aria-labelledby="why">
@@ -692,6 +770,16 @@
         <div class="eyebrow"><span class="pulse"></span>01 · Why now</div>
         <h2 id="why">传统 SaaS 已经很难承接我们的 support 目标。</h2>
         <p class="section-lead">Zendesk license 续费约 73k USD/year，但更大的问题不是价格，而是团队需要更深的流程、数据和质量控制能力。</p>
+      </div>
+      <div class="annotation-stack" aria-label="背景痛点批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“痛点不是单点功能缺失，而是 SLA、回复质量、billing 自动化和交接 gap 都散在不同工具里。Zendesk 可以记录工单，但它不能按我们的规则实时判断这条回复能不能发。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：准备建议</strong>
+          <p>准备一个具体例子：例如 billing case 中哪些不需要 HITL、哪些必须人工 approve。领导会更容易判断 POC 切入点是否安全。</p>
+        </aside>
       </div>
       <div class="proof-grid">
         <article class="proof">
@@ -714,6 +802,16 @@
         <div class="eyebrow"><span class="pulse"></span>02 · Big picture</div>
         <h2 id="architecture">Phase 1 先不改变客户入口，只改变内部处理能力。</h2>
         <p class="section-lead">客户仍然从 Zendesk 进入；内部通过 Zendesk webhook / N8n 转到 SupportPortal，先跑 shadow mode、真实 case replay 和 1% 小流量门禁。AgentRelay 已补上后续跨 Agent 协作所需的通信基础。</p>
+      </div>
+      <div class="annotation-stack" aria-label="架构批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“这里的迁移策略很保守：客户入口不动，CX 体验不变。我们先把内部 routing、review、guardrail 和 agent 协作跑起来，证明可控之后再扩大流量。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：图片建议</strong>
+          <p>这页建议放一张总架构图。重点不要画太多盒子，要突出三条链路：<em>customer entry 不变</em>、<em>SupportPortal 内部决策</em>、<em>AgentRelay 调度证据 Agent</em>。</p>
+        </aside>
       </div>
       <div class="image-slot" role="note" aria-label="图片占位：SupportPortal + AgentRelay 架构图">
         <strong>Image needed · Architecture</strong>
@@ -744,6 +842,16 @@
         <div class="eyebrow"><span class="pulse"></span>03 · Agent-to-Agent Foundation</div>
         <h2 id="agentrelay">AgentRelay 让 SupportPortal 从单 Agent 工作台，升级为可协作的 Agent network。</h2>
         <p class="section-lead">复杂 case 的瓶颈不是生成一句回复，而是跨系统、跨角色拿到可信证据。AgentRelay 已完成 A2A-shaped relay、MCP tools、token auth、thread reuse、completion ownership 和 audit events，为后续 Billing / Log / R&D / Data Agent 接入打基础。</p>
+      </div>
+      <div class="annotation-stack" aria-label="AgentRelay 批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“AgentRelay 的价值是把 Agent 之间的协作从临时聊天变成任务状态机。谁创建任务、谁 claim、交付了什么 artifact、结果有没有回到原始 thread，都能审计。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：图片建议</strong>
+          <p>这页建议准备 AgentRelay event trace 截图。不要只展示 GitHub repo 首页；要展示 <em>task.created -> artifact.submitted -> reply.delivered</em> 这条链路，证明它已经可以承接跨 Agent 交付。</p>
+        </aside>
       </div>
       <div class="agentrelay-grid">
         <div class="image-slot" role="note" aria-label="图片占位：AgentRelay task trace">
@@ -782,6 +890,16 @@
         <h2 id="roles">AI 不是替代 support engineer，而是把 manager 的日常质量检查产品化。</h2>
         <p class="section-lead">客户侧体验暂时不变；工程师从重复流程中释放出来；AI agent 承担实时检查、辅助调查和跨系统协作。</p>
       </div>
+      <div class="annotation-stack" aria-label="角色变化批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“很多人担心 AI 替代员工，但我认为第一阶段更准确地说是替代 manager 的 day-to-day 检查动作：技术是否准确、有没有下一步、有没有 SLA 风险、客户情绪是否异常。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：准备建议</strong>
+          <p>这里语气要克制：不要说 manager 不重要，而是说 manager 从逐条检查低级错误，转向规则设计、例外处理和质量抽查。</p>
+        </aside>
+      </div>
       <div class="contrast">
         <article class="contrast-panel">
           <h3>Before</h3>
@@ -807,6 +925,16 @@
         <div class="eyebrow"><span class="pulse"></span>05 · Showcase</div>
         <h2 id="showcase">演示重点：AgentRelay 先组织拿证据，AI 再拒绝不完整回复。</h2>
         <p class="section-lead">这个 case 最能说明项目价值：系统不是急着替人回答，而是先把调查任务交给专用 Agent，再在客户看到之前拦住缺 conclusion、proof 和 next step 的回复。</p>
+      </div>
+      <div class="annotation-stack" aria-label="Showcase 批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“这个 demo 我会故意给一个很像真实场景的低质量回复。系统不是直接改写得更礼貌，而是先问：证据够不够？结论清不清楚？客户下一步是什么？”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：图片建议</strong>
+          <p>建议准备一张四格拼图：<em>create task</em>、<em>remote agent artifact</em>、<em>delivery back to original case</em>、<em>guardrail reject</em>。演示时按这四格从左到右讲。</p>
+        </aside>
       </div>
       <div class="image-slot" role="note" aria-label="图片占位：AgentRelay 支持的 support case 演示截图">
         <strong>Image needed · Support case demo</strong>
@@ -839,6 +967,16 @@
         <h2 id="dashboard">管理指标也要从 SLA 时代升级到 AI guardrail 时代。</h2>
         <p class="section-lead">传统指标仍然重要，但 Phase 1 开始追踪 AI 是否真的降低风险、提升质量，并解释为什么某些 case 还不能自动化。</p>
       </div>
+      <div class="annotation-stack" aria-label="Dashboard 批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“以前的管理指标主要是 response time 和 SLA。现在还要看 AI guardrail pass rate、拒绝原因、not automated reason、AgentRelay delivery success rate。这样我们知道 AI 是在降风险，还是只是更快地产生风险。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：准备建议</strong>
+          <p>如果时间不够，这页只讲两个指标：<em>guardrail pass/reject reason</em> 和 <em>A2A delivery success</em>。它们最能说明 Phase 1 的管理价值。</p>
+        </aside>
+      </div>
       <div class="dashboard">
         <ul class="metric-list">
           <li>传统指标：first response time、second response time、SLA risk、交互次数、一次回复解决率。</li>
@@ -862,6 +1000,16 @@
         <h2 id="roadmap">三阶段推进：先完成可控通信和行为规范，再接真实证据工具，最后扩大自主调查。</h2>
         <p class="section-lead">Phase 1 不是终点，而是后续自动化的安全地基。AgentRelay communication foundation 已完成，但没有真实 replay、dashboard、guardrail 和 domain-agent 权限审计，就不进入扩大切流。</p>
       </div>
+      <div class="annotation-stack" aria-label="Roadmap 批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“我希望领导关注的不是今天自动化比例有多高，而是我们有没有一条安全扩大自动化的路径：Phase 1 控制行为，Phase 2 接真实证据工具，Phase 3 才做 governed autonomous investigation。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：准备建议</strong>
+          <p>这里要主动声明边界：AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2。不要在汇报里把它说成已经全自动解决 support case。</p>
+        </aside>
+      </div>
       <div class="phases">
         <article class="phase">
           <div class="eyebrow">Phase 1</div>
@@ -884,6 +1032,16 @@
     <section class="section final reveal" aria-labelledby="closing">
       <div class="eyebrow"><span class="pulse"></span>Closing</div>
       <p id="closing" class="final-line">Phase 1 要证明的不是 AI 会说话，而是 support 系统可以实时检查质量、解释决策、控制风险，并通过 AgentRelay 把跨 Agent 协作变成可审计、可回退的自动化地基。</p>
+      <div class="annotation-stack" aria-label="结尾批注">
+        <aside class="annotation speaker" data-icon="S">
+          <strong>批注：演示时这么说</strong>
+          <p>“我下一步需要的不是一次性替换 Zendesk，而是批准继续做 Phase 1 小流量验证：真实 case replay、dashboard 指标、billing POC 和 AgentRelay 接入 domain agent 的权限审计。”</p>
+        </aside>
+        <aside class="annotation prep" data-icon="P">
+          <strong>批注：准备建议</strong>
+          <p>结束前准备一个明确 ask：要资源、要试点范围，还是要下一阶段评审时间。3 分钟汇报不能只展示页面，必须落到一个决策请求。</p>
+        </aside>
+      </div>
       <a class="back-link" href="../roadmap.html">返回完整 Roadmap <span aria-hidden="true">-></span></a>
     </section>
   </main>
