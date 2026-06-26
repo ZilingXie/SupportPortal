@@ -24,11 +24,16 @@ class RoadmapContractTests(unittest.TestCase):
         required_terms = [
             "SupportPortal Phase 1",
             "从 Zendesk 平替，走向 AI-native Support System",
-            "AI 拒绝工程师的一次不完整回复",
+            "AgentRelay 先组织拿证据，AI 再拒绝不完整回复",
             "AI guardrail pass rate",
-            "自主检测 + 行为规范",
+            "AgentRelay 让 SupportPortal 从单 Agent 工作台",
+            "thread reuse",
+            "completion ownership",
+            "reply.delivered",
+            "Image needed · AgentRelay task trace",
+            "自主检测 + 行为规范 + A2A foundation",
             "辅助调查 + 人 approve",
-            "自主调查 + Agent-to-Agent",
+            "自主调查 + governed Agent-to-Agent",
             'href="../roadmap.html"',
         ]
         for term in required_terms:
@@ -88,7 +93,8 @@ class RoadmapContractTests(unittest.TestCase):
             "总计划追踪",
             "Phase 1：效率提升 + 工单系统雏形",
             "Phase 2：AI 主动处理 + 人 approve",
-            "Phase 3：agent-to-agent + 高自动化",
+            "AgentRelay communication foundation 已完成",
+            "Phase 3：governed agent-to-agent + 高自动化",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -126,7 +132,8 @@ class RoadmapContractTests(unittest.TestCase):
             "Zendesk webhook / N8n",
             "shadow mode",
             "1% 切流",
-            "agent-to-agent forum / hub",
+            "AgentRelay communication foundation",
+            "governed agent-to-agent 自主调查",
             "token 成本",
         ]
         for term in required_terms:

@@ -363,6 +363,84 @@
       transform: translateY(-50%);
     }
 
+    .image-slot {
+      display: grid;
+      gap: 10px;
+      min-height: 210px;
+      padding: 22px;
+      border: 1px dashed rgba(31, 79, 104, 0.42);
+      border-radius: 24px;
+      background:
+        linear-gradient(135deg, rgba(31, 79, 104, 0.08), rgba(213, 106, 58, 0.08)),
+        rgba(251, 247, 236, 0.68);
+      color: var(--muted);
+    }
+
+    .image-slot strong {
+      color: var(--blueprint);
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .image-slot span {
+      max-width: 720px;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .agentrelay-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .relay-cards {
+      display: grid;
+      gap: 14px;
+    }
+
+    .relay-card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(251, 247, 236, 0.74);
+      box-shadow: 0 18px 40px rgba(31, 45, 38, 0.08);
+    }
+
+    .relay-card b {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--blueprint);
+      font-size: 15px;
+    }
+
+    .relay-card span {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .event-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .event-strip li {
+      padding: 8px 10px;
+      border: 1px solid rgba(31, 79, 104, 0.22);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.48);
+      color: #314541;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
     .showcase {
       display: grid;
       grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
@@ -538,6 +616,7 @@
       .hero { min-height: auto; }
       .proof-grid,
       .contrast,
+      .agentrelay-grid,
       .showcase,
       .dashboard,
       .phases {
@@ -568,11 +647,17 @@
       .hero,
       .proof,
       .contrast-panel,
+      .relay-card,
       .reply,
       .guardrail,
       .metric,
       .phase {
         padding: 20px;
+      }
+
+      .image-slot {
+        min-height: 170px;
+        padding: 18px;
       }
 
       .hero::after {
@@ -595,8 +680,9 @@
       <p class="hero-copy">这不是一次工具替换，而是把路由、质量检查、调查辅助和管理指标内建到 support 流程里。Phase 1 的目标是先证明系统可控、可审计、可小流量试运行。</p>
       <ul class="talk-track" aria-label="3 分钟演示节奏">
         <li>0:00 背景与痛点</li>
-        <li>0:45 架构与角色变化</li>
-        <li>1:35 Guardrail showcase</li>
+        <li>0:35 架构与角色变化</li>
+        <li>1:05 AgentRelay foundation</li>
+        <li>1:40 Guardrail showcase</li>
         <li>2:25 Dashboard 与路线图</li>
       </ul>
     </header>
@@ -627,7 +713,11 @@
       <div class="section-header">
         <div class="eyebrow"><span class="pulse"></span>02 · Big picture</div>
         <h2 id="architecture">Phase 1 先不改变客户入口，只改变内部处理能力。</h2>
-        <p class="section-lead">客户仍然从 Zendesk 进入；内部通过 Zendesk webhook / N8n 转到 SupportPortal，先跑 shadow mode、真实 case replay 和 1% 小流量门禁。</p>
+        <p class="section-lead">客户仍然从 Zendesk 进入；内部通过 Zendesk webhook / N8n 转到 SupportPortal，先跑 shadow mode、真实 case replay 和 1% 小流量门禁。AgentRelay 已补上后续跨 Agent 协作所需的通信基础。</p>
+      </div>
+      <div class="image-slot" role="note" aria-label="图片占位：SupportPortal + AgentRelay 架构图">
+        <strong>Image needed · Architecture</strong>
+        <span>建议放架构图：Zendesk / N8n -> SupportPortal -> Support Agent -> AgentRelay -> Billing / Log / R&D / Data Agent -> Evidence Packet -> AI Guardrail -> Engineer Final Approve。</span>
       </div>
       <div class="flow" aria-label="当前 Phase 1 流程">
         <div class="flow-row">
@@ -647,9 +737,48 @@
       </div>
     </section>
 
+
+
+    <section class="section reveal" aria-labelledby="agentrelay">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>03 · Agent-to-Agent Foundation</div>
+        <h2 id="agentrelay">AgentRelay 让 SupportPortal 从单 Agent 工作台，升级为可协作的 Agent network。</h2>
+        <p class="section-lead">复杂 case 的瓶颈不是生成一句回复，而是跨系统、跨角色拿到可信证据。AgentRelay 已完成 A2A-shaped relay、MCP tools、token auth、thread reuse、completion ownership 和 audit events，为后续 Billing / Log / R&D / Data Agent 接入打基础。</p>
+      </div>
+      <div class="agentrelay-grid">
+        <div class="image-slot" role="note" aria-label="图片占位：AgentRelay task trace">
+          <strong>Image needed · AgentRelay task trace</strong>
+          <span>建议放 task event trace 截图：task.created -> task.claimed -> thread.created -> artifact.submitted -> ownership.transferred -> reply.delivered -> task.completed。重点证明它是可审计状态机，不是黑盒聊天。</span>
+        </div>
+        <div class="relay-cards">
+          <article class="relay-card">
+            <b>Thread reuse</b>
+            <span>结果必须投递回原始 requester_thread_id，避免新建散乱线程；Support 场景里就是回到原始 case thread。</span>
+          </article>
+          <article class="relay-card">
+            <b>Completion ownership</b>
+            <span>远端 Agent 只提交 artifact 和 next_action，业务是否完成由 requester-side owner 根据 done_criteria 显式关闭。</span>
+          </article>
+          <article class="relay-card">
+            <b>Audit events</b>
+            <span>关键状态变化进入事件链路，便于追踪 claim、交付、等待人工、关闭和失败原因。</span>
+          </article>
+        </div>
+      </div>
+      <ul class="event-strip" aria-label="AgentRelay audit event examples">
+        <li>task.created</li>
+        <li>task.claimed</li>
+        <li>thread.created</li>
+        <li>artifact.submitted</li>
+        <li>ownership.transferred</li>
+        <li>reply.delivered</li>
+        <li>task.completed</li>
+      </ul>
+    </section>
+
     <section class="section reveal" aria-labelledby="roles">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>03 · Role shift</div>
+        <div class="eyebrow"><span class="pulse"></span>04 · Role shift</div>
         <h2 id="roles">AI 不是替代 support engineer，而是把 manager 的日常质量检查产品化。</h2>
         <p class="section-lead">客户侧体验暂时不变；工程师从重复流程中释放出来；AI agent 承担实时检查、辅助调查和跨系统协作。</p>
       </div>
@@ -667,7 +796,7 @@
           <ul>
             <li>每次回复都先过 AI guardrail，低级错误在发送前被拦住。</li>
             <li>每条客户信息都可以做情感检测和 SLA 风险识别，提前报警。</li>
-            <li>AI agent 可以从研发 agent、日志 agent、数据 agent 汲取知识，逐步进入自主调查。</li>
+            <li>Support Agent 可通过 AgentRelay 调度 Billing、日志、研发、数据 Agent 收集证据，再由人和 guardrail 控制客户可见输出。</li>
           </ul>
         </article>
       </div>
@@ -675,9 +804,13 @@
 
     <section class="section reveal" aria-labelledby="showcase">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>04 · Showcase</div>
-        <h2 id="showcase">演示重点：AI 拒绝工程师的一次不完整回复。</h2>
-        <p class="section-lead">这个 case 最能说明项目价值：AI 不急着替人回答，而是在客户看到之前拦住不完整、不安全、不可执行的回复。</p>
+        <div class="eyebrow"><span class="pulse"></span>05 · Showcase</div>
+        <h2 id="showcase">演示重点：AgentRelay 先组织拿证据，AI 再拒绝不完整回复。</h2>
+        <p class="section-lead">这个 case 最能说明项目价值：系统不是急着替人回答，而是先把调查任务交给专用 Agent，再在客户看到之前拦住缺 conclusion、proof 和 next step 的回复。</p>
+      </div>
+      <div class="image-slot" role="note" aria-label="图片占位：AgentRelay 支持的 support case 演示截图">
+        <strong>Image needed · Support case demo</strong>
+        <span>建议放截图或拼图：Support Agent create_task，Billing / Log / R&D Agent 返回 artifact，结果回到原始 case thread，Guardrail 对 customer-facing draft 做 reject / approve。</span>
       </div>
       <div class="showcase">
         <article class="reply">
@@ -685,16 +818,16 @@
           <div class="reply-box">“We checked the account. Please try again later.”</div>
           <ul class="script-list">
             <li>没有明确 conclusion：到底是什么问题？是否已处理？</li>
-            <li>没有 proof：基于哪个系统、哪条 evidence、哪个时间点？</li>
+            <li>没有 proof：没有引用 Billing / Log / R&D Agent 返回的可验证 artifact。</li>
             <li>没有 next step：客户下一步该做什么，谁负责跟进？</li>
           </ul>
         </article>
         <article class="guardrail">
           <span class="decision">Rejected by AI Guardrail</span>
           <ul class="script-list">
-            <li>要求工程师补充可验证结论，避免模糊回答引发二次追问。</li>
+            <li>要求工程师把 AgentRelay 返回的证据转成可验证结论，避免模糊回答引发二次追问。</li>
             <li>提醒不要暴露内部证据或敏感信息，只输出 customer-safe 解释。</li>
-            <li>如果信息不足，必须明确告诉客户下一步，而不是编造原因。</li>
+            <li>如果 artifact 不足，必须明确下一步继续调查或转人工，而不是编造原因。</li>
           </ul>
         </article>
       </div>
@@ -702,7 +835,7 @@
 
     <section class="section reveal" aria-labelledby="dashboard">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>05 · Dashboard</div>
+        <div class="eyebrow"><span class="pulse"></span>06 · Dashboard</div>
         <h2 id="dashboard">管理指标也要从 SLA 时代升级到 AI guardrail 时代。</h2>
         <p class="section-lead">传统指标仍然重要，但 Phase 1 开始追踪 AI 是否真的降低风险、提升质量，并解释为什么某些 case 还不能自动化。</p>
       </div>
@@ -710,12 +843,14 @@
         <ul class="metric-list">
           <li>传统指标：first response time、second response time、SLA risk、交互次数、一次回复解决率。</li>
           <li>新增指标：AI guardrail pass rate、approve / reject rate、not automated reason、route accuracy、response latency。</li>
-          <li>下一步指标：客户情绪检测、negative feedback、reopen、自动化覆盖率和抽查通过率。</li>
+          <li>A2A 指标：agent task count、claim latency、artifact returned rate、ownership transfer、reply.delivered success rate。</li>
+          <li>下一步指标：客户情绪检测、negative feedback、reopen、自动化覆盖率、agent timeout / escalation 和抽查通过率。</li>
         </ul>
         <div class="metric-board" aria-label="Dashboard 指标示例">
           <div class="metric"><b>SLA</b><span>及时发现超时风险，而不是事后复盘。</span></div>
           <div class="metric"><b>Pass</b><span>衡量 guardrail 放行率和被拒绝原因。</span></div>
           <div class="metric"><b>Route</b><span>跟踪 billing automation、billing review 与 technical handoff。</span></div>
+          <div class="metric"><b>A2A</b><span>跟踪 AgentRelay claim、artifact、delivery 和 timeout。</span></div>
           <div class="metric"><b>Sentiment</b><span>客户情绪异常时及时报警。</span></div>
         </div>
       </div>
@@ -723,32 +858,32 @@
 
     <section class="section reveal" aria-labelledby="roadmap">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>06 · Roadmap</div>
-        <h2 id="roadmap">三阶段推进：先规范行为，再辅助调查，最后自主调查。</h2>
-        <p class="section-lead">Phase 1 不是终点，而是后续自动化的安全地基。没有真实 replay、dashboard 和 guardrail，就不进入扩大切流。</p>
+        <div class="eyebrow"><span class="pulse"></span>07 · Roadmap</div>
+        <h2 id="roadmap">三阶段推进：先完成可控通信和行为规范，再接真实证据工具，最后扩大自主调查。</h2>
+        <p class="section-lead">Phase 1 不是终点，而是后续自动化的安全地基。AgentRelay communication foundation 已完成，但没有真实 replay、dashboard、guardrail 和 domain-agent 权限审计，就不进入扩大切流。</p>
       </div>
       <div class="phases">
         <article class="phase">
           <div class="eyebrow">Phase 1</div>
-          <h3>自主检测 + 行为规范</h3>
-          <p>Zendesk 转发、routing、assignment、guardrail reject / approve、dashboard 指标和真实 case replay。</p>
+          <h3>自主检测 + 行为规范 + A2A foundation</h3>
+          <p>Zendesk 转发、routing、assignment、guardrail reject / approve、dashboard 指标、真实 case replay，以及 AgentRelay agent-to-agent communication foundation。</p>
         </article>
         <article class="phase">
           <div class="eyebrow">Phase 2</div>
           <h3>辅助调查 + 人 approve</h3>
-          <p>AI 先调查并生成 draft，人做 approve、revise 或 override；质量低于门禁时回退人工。</p>
+          <p>接入 Billing / Log / R&D / Data Agent 和真实 evidence tools；AI 先调查并生成 draft，人做 approve、revise 或 override。</p>
         </article>
         <article class="phase">
           <div class="eyebrow">Phase 3</div>
-          <h3>自主调查 + Agent-to-Agent</h3>
-          <p>Support agent 接入研发 agent、日志 agent、数据 agent，让人转向例外处理和质量抽查。</p>
+          <h3>自主调查 + governed Agent-to-Agent</h3>
+          <p>在权限、成本、审计和 guardrail 达标后扩大自主调查，让人转向例外处理、最终责任和质量抽查。</p>
         </article>
       </div>
     </section>
 
     <section class="section final reveal" aria-labelledby="closing">
       <div class="eyebrow"><span class="pulse"></span>Closing</div>
-      <p id="closing" class="final-line">Phase 1 要证明的不是 AI 会说话，而是 support 系统可以实时检查质量、解释决策、控制风险，并为小流量自动化打下地基。</p>
+      <p id="closing" class="final-line">Phase 1 要证明的不是 AI 会说话，而是 support 系统可以实时检查质量、解释决策、控制风险，并通过 AgentRelay 把跨 Agent 协作变成可审计、可回退的自动化地基。</p>
       <a class="back-link" href="../roadmap.html">返回完整 Roadmap <span aria-hidden="true">-></span></a>
     </section>
   </main>
