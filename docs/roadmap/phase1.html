@@ -90,11 +90,11 @@
 
     .hero {
       position: relative;
-      min-height: min(760px, calc(100svh - 44px));
+      min-height: min(660px, calc(100svh - 44px));
       display: grid;
       align-content: center;
-      gap: 28px;
-      padding: clamp(28px, 5vw, 62px);
+      gap: 22px;
+      padding: clamp(24px, 4.2vw, 52px);
       border: 1px solid var(--line);
       border-radius: calc(var(--radius) + 12px);
       overflow: hidden;
@@ -160,7 +160,7 @@
       z-index: 1;
       max-width: 960px;
       margin: 0;
-      font-size: clamp(42px, 7vw, 92px);
+      font-size: clamp(34px, 5.8vw, 72px);
       line-height: 0.94;
     }
 
@@ -170,7 +170,7 @@
       max-width: 760px;
       margin: 0;
       color: #39413b;
-      font-size: clamp(17px, 2vw, 24px);
+      font-size: clamp(15px, 1.7vw, 20px);
       line-height: 1.48;
     }
 
@@ -192,7 +192,7 @@
       border-radius: 999px;
       background: rgba(251, 247, 236, 0.72);
       color: #26312d;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
     }
 
@@ -200,8 +200,8 @@
       min-height: 78svh;
       display: grid;
       align-content: center;
-      gap: 24px;
-      padding: clamp(52px, 8vw, 92px) 0;
+      gap: 20px;
+      padding: clamp(44px, 6.8vw, 76px) 0;
     }
 
     .section-header {
@@ -212,14 +212,14 @@
 
     .section h2 {
       margin: 0;
-      font-size: clamp(34px, 5vw, 70px);
+      font-size: clamp(28px, 4.2vw, 54px);
       line-height: 0.98;
     }
 
     .section-lead {
       margin: 0;
       color: #39413b;
-      font-size: clamp(17px, 1.9vw, 23px);
+      font-size: clamp(15px, 1.55vw, 19px);
       line-height: 1.5;
     }
 
@@ -246,7 +246,7 @@
     .proof strong {
       display: block;
       color: var(--blueprint);
-      font-size: clamp(28px, 4vw, 54px);
+      font-size: clamp(23px, 3.3vw, 42px);
       line-height: 0.95;
       letter-spacing: -0.04em;
     }
@@ -326,7 +326,7 @@
 
     .contrast-panel h3 {
       margin: 0 0 14px;
-      font-size: clamp(24px, 3vw, 38px);
+      font-size: clamp(21px, 2.45vw, 30px);
       line-height: 1;
     }
 
@@ -443,14 +443,62 @@
 
     .annotation p {
       margin: 0;
-      font-size: 15px;
-      line-height: 1.58;
+      font-size: 14px;
+      line-height: 1.56;
     }
 
     .annotation em {
       color: var(--muted);
       font-style: normal;
       font-weight: 800;
+    }
+
+    .script-section {
+      min-height: auto;
+      padding-top: clamp(42px, 6vw, 68px);
+    }
+
+    .script-draft {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .script-block {
+      min-width: 0;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      padding: 20px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .script-block time {
+      width: fit-content;
+      padding: 6px 9px;
+      border: 1px solid rgba(31, 79, 104, 0.22);
+      border-radius: 999px;
+      color: var(--blueprint);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .script-block h3 {
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(19px, 2.2vw, 26px);
+      line-height: 1.08;
+    }
+
+    .script-block p {
+      margin: 0;
+      color: #3f4943;
+      font-size: 14px;
+      line-height: 1.62;
     }
 
     .agentrelay-grid {
@@ -584,7 +632,7 @@
 
     .metric b {
       color: var(--blueprint);
-      font-size: clamp(26px, 4vw, 48px);
+      font-size: clamp(22px, 3.2vw, 36px);
       line-height: 1;
       letter-spacing: -0.04em;
     }
@@ -617,7 +665,7 @@
 
     .phase h3 {
       margin: 0;
-      font-size: clamp(23px, 3vw, 36px);
+      font-size: clamp(20px, 2.45vw, 28px);
       line-height: 1;
     }
 
@@ -638,7 +686,7 @@
       margin: 0;
       color: var(--ink);
       font-family: Georgia, "Times New Roman", serif;
-      font-size: clamp(34px, 5vw, 68px);
+      font-size: clamp(27px, 4vw, 50px);
       line-height: 1;
       letter-spacing: -0.045em;
     }
@@ -680,6 +728,7 @@
       .hero { min-height: auto; }
       .proof-grid,
       .contrast,
+      .script-draft,
       .agentrelay-grid,
       .showcase,
       .dashboard,
@@ -756,7 +805,7 @@
       <div class="annotation-stack" aria-label="首页演示批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“今天我不把它包装成一个 ticket UI。Phase 1 要证明的是：我们能把 support 的质量检查、调查协作和管理指标放进系统流程里，而不是继续依赖 Zendesk 加人工经验。”</p>
+          <p>“今天我想用三分钟介绍 SupportPortal Phase 1。它不是一个简单的 Zendesk 平替，也不是再做一个 ticket UI。Phase 1 要证明的是：我们能把 support 的质量检查、调查协作和管理指标放进系统流程里，而不是继续依赖 Zendesk 加人工经验。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
@@ -764,6 +813,56 @@
         </aside>
       </div>
     </header>
+
+    <section class="section script-section reveal" aria-labelledby="full-script">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>00 · Full script</div>
+        <h2 id="full-script">完整演讲稿初稿（约 3 分钟）</h2>
+        <p class="section-lead">下面是一版可以直接朗读的完整稿；各 section 里的蓝色批注是同一份稿的拆分版，滚到对应页面直接读即可。</p>
+      </div>
+      <div class="script-draft" aria-label="完整演讲稿初稿">
+        <article class="script-block">
+          <time>0:00-0:15</time>
+          <h3>开场</h3>
+          <p>今天我想用三分钟介绍 SupportPortal Phase 1。它不是一个简单的 Zendesk 平替，也不是再做一个 ticket UI。Phase 1 要证明的是：我们能把 support 的质量检查、调查协作和管理指标放进系统流程里，而不是继续依赖 Zendesk 加人工经验。</p>
+        </article>
+        <article class="script-block">
+          <time>0:15-0:40</time>
+          <h3>背景与痛点</h3>
+          <p>现在做这件事有两个原因。第一，Zendesk license 续费大约 73k 美金一年，但它给我们的还是通用 SaaS 能力。第二，更关键的是 SLA、回复质量、billing 自动化和 handover gap 都散在不同工具里。Zendesk 可以记录工单，但不能按我们的规则实时判断这条回复能不能发、这个 case 是否应该自动化、客户情绪是否已经有风险。</p>
+        </article>
+        <article class="script-block">
+          <time>0:40-1:05</time>
+          <h3>架构策略</h3>
+          <p>Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部通过 Zendesk webhook 或 N8n 转到 SupportPortal。我们先把 routing、assignment、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。</p>
+        </article>
+        <article class="script-block">
+          <time>1:05-1:35</time>
+          <h3>AgentRelay</h3>
+          <p>这次新增的重点是 AgentRelay。复杂 support case 的瓶颈不是生成一句回复，而是跨系统、跨角色拿到可信证据。AgentRelay 已经完成 communication foundation：A2A-shaped relay、MCP tools、token auth、thread reuse、completion ownership 和 audit events。它让 Agent 之间的协作从临时聊天变成任务状态机：谁创建任务、谁 claim、交付了什么 artifact、结果有没有回到原始 thread，都可以审计。</p>
+        </article>
+        <article class="script-block">
+          <time>1:35-1:55</time>
+          <h3>角色变化</h3>
+          <p>所以我不把 AI 定义成替代 support engineer。更准确地说，第一阶段是把 manager 的 day-to-day 质量检查产品化。以前 manager 只能抽样看回复；现在每一条回复都可以检查技术是否准确、有没有 proof、有没有 next step、是否有 SLA 风险，以及客户情绪是否需要提前报警。</p>
+        </article>
+        <article class="script-block">
+          <time>1:55-2:25</time>
+          <h3>Showcase</h3>
+          <p>demo 我会展示一个低质量回复：工程师写了 “We checked the account. Please try again later.” 系统不会只是把它改得更礼貌，而是先问三个问题：结论清不清楚？证据够不够？客户下一步是什么？如果证据不足，Support Agent 可以通过 AgentRelay 去找 Billing、Log、R&D 或 Data Agent 拿 artifact；guardrail 再判断这些证据能否安全地转成 customer-facing reply。</p>
+        </article>
+        <article class="script-block">
+          <time>2:25-2:45</time>
+          <h3>Dashboard</h3>
+          <p>管理指标也要升级。以前我们主要看 first response time、second response time 和 SLA。Phase 1 还要看 AI guardrail pass rate、拒绝原因、not automated reason、route accuracy，以及 AgentRelay 的 claim latency、artifact returned rate 和 reply.delivered success rate。这样我们知道 AI 是在降低风险，还是只是更快地产生风险。</p>
+        </article>
+        <article class="script-block">
+          <time>2:45-3:00</time>
+          <h3>Roadmap 与请求</h3>
+          <p>最后是推进节奏：Phase 1 控制行为和通信地基，Phase 2 接真实 evidence tools 并让人 approve，Phase 3 才扩大 governed autonomous investigation。这里要明确边界：AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2。下一步我需要的是批准继续做 Phase 1 小流量验证：真实 case replay、dashboard 指标、billing POC 和 domain agent 权限审计。</p>
+        </article>
+      </div>
+    </section>
 
     <section class="section reveal" aria-labelledby="why">
       <div class="section-header">
@@ -774,7 +873,7 @@
       <div class="annotation-stack" aria-label="背景痛点批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“痛点不是单点功能缺失，而是 SLA、回复质量、billing 自动化和交接 gap 都散在不同工具里。Zendesk 可以记录工单，但它不能按我们的规则实时判断这条回复能不能发。”</p>
+          <p>“现在做这件事有两个原因。第一，Zendesk license 续费大约 73k 美金一年，但它给我们的还是通用 SaaS 能力。第二，更关键的是 SLA、回复质量、billing 自动化和 handover gap 都散在不同工具里。Zendesk 可以记录工单，但不能按我们的规则实时判断这条回复能不能发、这个 case 是否应该自动化、客户情绪是否已经有风险。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
@@ -806,7 +905,7 @@
       <div class="annotation-stack" aria-label="架构批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“这里的迁移策略很保守：客户入口不动，CX 体验不变。我们先把内部 routing、review、guardrail 和 agent 协作跑起来，证明可控之后再扩大流量。”</p>
+          <p>“Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部通过 Zendesk webhook 或 N8n 转到 SupportPortal。我们先把 routing、assignment、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：图片建议</strong>
@@ -846,7 +945,7 @@
       <div class="annotation-stack" aria-label="AgentRelay 批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“AgentRelay 的价值是把 Agent 之间的协作从临时聊天变成任务状态机。谁创建任务、谁 claim、交付了什么 artifact、结果有没有回到原始 thread，都能审计。”</p>
+          <p>“这次新增的重点是 AgentRelay。复杂 support case 的瓶颈不是生成一句回复，而是跨系统、跨角色拿到可信证据。AgentRelay 已经完成 communication foundation：A2A-shaped relay、MCP tools、token auth、thread reuse、completion ownership 和 audit events。它让 Agent 之间的协作从临时聊天变成任务状态机：谁创建任务、谁 claim、交付了什么 artifact、结果有没有回到原始 thread，都可以审计。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：图片建议</strong>
@@ -893,7 +992,7 @@
       <div class="annotation-stack" aria-label="角色变化批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“很多人担心 AI 替代员工，但我认为第一阶段更准确地说是替代 manager 的 day-to-day 检查动作：技术是否准确、有没有下一步、有没有 SLA 风险、客户情绪是否异常。”</p>
+          <p>“所以我不把 AI 定义成替代 support engineer。更准确地说，第一阶段是把 manager 的 day-to-day 质量检查产品化。以前 manager 只能抽样看回复；现在每一条回复都可以检查技术是否准确、有没有 proof、有没有 next step、是否有 SLA 风险，以及客户情绪是否需要提前报警。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
@@ -929,7 +1028,7 @@
       <div class="annotation-stack" aria-label="Showcase 批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“这个 demo 我会故意给一个很像真实场景的低质量回复。系统不是直接改写得更礼貌，而是先问：证据够不够？结论清不清楚？客户下一步是什么？”</p>
+          <p>“demo 我会展示一个低质量回复：工程师写了 ‘We checked the account. Please try again later.’ 系统不会只是把它改得更礼貌，而是先问三个问题：结论清不清楚？证据够不够？客户下一步是什么？如果证据不足，Support Agent 可以通过 AgentRelay 去找 Billing、Log、R&D 或 Data Agent 拿 artifact；guardrail 再判断这些证据能否安全地转成 customer-facing reply。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：图片建议</strong>
@@ -970,7 +1069,7 @@
       <div class="annotation-stack" aria-label="Dashboard 批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“以前的管理指标主要是 response time 和 SLA。现在还要看 AI guardrail pass rate、拒绝原因、not automated reason、AgentRelay delivery success rate。这样我们知道 AI 是在降风险，还是只是更快地产生风险。”</p>
+          <p>“管理指标也要升级。以前我们主要看 first response time、second response time 和 SLA。Phase 1 还要看 AI guardrail pass rate、拒绝原因、not automated reason、route accuracy，以及 AgentRelay 的 claim latency、artifact returned rate 和 reply.delivered success rate。这样我们知道 AI 是在降低风险，还是只是更快地产生风险。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
@@ -1003,7 +1102,7 @@
       <div class="annotation-stack" aria-label="Roadmap 批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“我希望领导关注的不是今天自动化比例有多高，而是我们有没有一条安全扩大自动化的路径：Phase 1 控制行为，Phase 2 接真实证据工具，Phase 3 才做 governed autonomous investigation。”</p>
+          <p>“最后是推进节奏：Phase 1 控制行为和通信地基，Phase 2 接真实 evidence tools 并让人 approve，Phase 3 才扩大 governed autonomous investigation。这里要明确边界：AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2。不要把它理解成已经全自动解决 support case。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
@@ -1035,7 +1134,7 @@
       <div class="annotation-stack" aria-label="结尾批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“我下一步需要的不是一次性替换 Zendesk，而是批准继续做 Phase 1 小流量验证：真实 case replay、dashboard 指标、billing POC 和 AgentRelay 接入 domain agent 的权限审计。”</p>
+          <p>“我下一步需要的不是一次性替换 Zendesk，而是批准继续做 Phase 1 小流量验证：真实 case replay、dashboard 指标、billing POC 和 AgentRelay 接入 domain agent 的权限审计。只要这些指标稳定，我们再进入 Phase 2 的真实 evidence-agent 接入。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
