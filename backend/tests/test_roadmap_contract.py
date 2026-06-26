@@ -24,19 +24,21 @@ class RoadmapContractTests(unittest.TestCase):
         required_terms = [
             "SupportPortal Phase 1",
             "从 Zendesk 平替，走向 AI-native Support System",
-            "AgentRelay 先组织拿证据，AI 再拒绝不完整回复",
             "AI guardrail pass rate",
-            "AgentRelay 让 SupportPortal 从单 Agent 工作台",
-            "thread reuse",
-            "completion ownership",
-            "reply.delivered",
-            "Image needed · AgentRelay task trace",
-            "批注：演示时这么说",
-            "批注：准备建议",
-            "批注：图片建议",
-            "完整演讲稿初稿（约 3 分钟）",
-            "各 section 里的蓝色批注是同一份稿的拆分版",
-            "Zendesk license 续费大约 73k 美金一年",
+            "展开完整演讲稿",
+            "默认折叠，现场需要完整朗读稿时再展开",
+            "内部讲工单转发到 SupportPortal",
+            "SupportPortal Phase 1 architecture diagram",
+            "Customer / Zendesk",
+            "SupportPortal Core",
+            "Future Agent Network",
+            "A2A communication path",
+            "R&amp;D Agent investigation loop",
+            "requester.closed",
+            "演示重点：AI Guardrail 如何拒绝不完整回复",
+            "customer-safe boundary",
+            "与Agent交互次数",
+            "一次回复解决问题率",
             "AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2",
             "font-size: clamp(34px, 5.8vw, 72px);",
             "自主检测 + 行为规范 + A2A foundation",
@@ -47,6 +49,16 @@ class RoadmapContractTests(unittest.TestCase):
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, phase1_source)
+
+        removed_terms = [
+            "AgentRelay 先组织拿证据，AI 再拒绝不完整回复",
+            "Image needed · AgentRelay task trace",
+            "Image needed · Support case demo",
+            "建议放截图或拼图：Support Agent create_task",
+        ]
+        for term in removed_terms:
+            with self.subTest(removed_term=term):
+                self.assertNotIn(term, phase1_source)
 
     def test_roadmap_static_routes_serve_public_pages(self) -> None:
         from fastapi.testclient import TestClient
