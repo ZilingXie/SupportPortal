@@ -39,6 +39,19 @@ class RoadmapContractTests(unittest.TestCase):
             "customer-safe boundary",
             "与Agent交互次数",
             "一次回复解决问题率",
+            "customization 空间不足",
+            "feature 扩展、内部流程定制、数据挖掘",
+            "打开 /assignment/admin",
+            'href="/assignment/admin"',
+            "AgentRelay task network",
+            "为什么需要 AgentRelay",
+            "为什么不用纯 A2A 协议",
+            "没有公网 IP",
+            "Support Agent 解决不了的问题，要找 R&D Agent 或 Data Agent 解决",
+            "R&amp;D Agent example",
+            "Data/R&amp;D Agent 返回可复用证据",
+            "./assets/rnd-agent-query.png",
+            "./assets/rnd-agent-result.png",
             "AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2",
             "font-size: clamp(34px, 5.8vw, 72px);",
             "自主检测 + 行为规范 + A2A foundation",
@@ -49,6 +62,15 @@ class RoadmapContractTests(unittest.TestCase):
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, phase1_source)
+
+
+        for asset in [
+            Path("docs/roadmap/assets/rnd-agent-query.png"),
+            Path("docs/roadmap/assets/rnd-agent-result.png"),
+        ]:
+            with self.subTest(asset=str(asset)):
+                self.assertTrue(asset.exists())
+                self.assertGreater(asset.stat().st_size, 1024)
 
         removed_terms = [
             "AgentRelay 先组织拿证据，AI 再拒绝不完整回复",

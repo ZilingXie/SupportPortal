@@ -225,7 +225,7 @@
 
     .proof-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 1px;
       border: 1px solid var(--line);
       border-radius: 26px;
@@ -608,6 +608,86 @@
       font-weight: 900;
     }
 
+    .assignment-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--line);
+      box-shadow: 0 14px 40px rgba(31, 45, 38, 0.08);
+    }
+
+    .assignment-copy,
+    .assignment-admin {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      padding: clamp(20px, 3vw, 28px);
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .assignment-copy h3,
+    .assignment-admin h3 {
+      margin: 0;
+      font-size: clamp(21px, 2.4vw, 30px);
+      line-height: 1.05;
+    }
+
+    .assignment-copy p,
+    .assignment-admin p {
+      margin: 0;
+      color: #3f4943;
+      font-size: 14px;
+      line-height: 1.58;
+    }
+
+    .admin-link {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 36px;
+      align-items: center;
+      padding: 0 12px;
+      border: 1px solid rgba(31, 79, 104, 0.26);
+      border-radius: 999px;
+      background: rgba(31, 79, 104, 0.1);
+      color: var(--blueprint);
+      font-size: 13px;
+      font-weight: 850;
+      text-decoration: none;
+    }
+
+    .relay-question-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .relay-question {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      min-height: 170px;
+      padding: 18px;
+      background: rgba(251, 247, 236, 0.84);
+    }
+
+    .relay-question b {
+      color: var(--blueprint);
+      font-size: 14px;
+    }
+
+    .relay-question span {
+      color: #3f4943;
+      font-size: 13px;
+      line-height: 1.48;
+    }
+
     .agent-workflow {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -667,6 +747,58 @@
       font-weight: 850;
       letter-spacing: 0.06em;
       text-transform: uppercase;
+    }
+
+    .rnd-proof {
+      display: grid;
+      gap: 14px;
+      padding: clamp(20px, 3vw, 28px);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: rgba(251, 247, 236, 0.78);
+      box-shadow: 0 14px 40px rgba(31, 45, 38, 0.08);
+    }
+
+    .rnd-proof h3 {
+      margin: 0;
+      font-size: clamp(21px, 2.4vw, 30px);
+      line-height: 1.05;
+    }
+
+    .rnd-proof p {
+      margin: 0;
+      color: #3f4943;
+      font-size: 14px;
+      line-height: 1.58;
+    }
+
+    .rnd-screenshots {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    .rnd-shot {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+    }
+
+    .rnd-shot img {
+      width: 100%;
+      max-height: 520px;
+      object-fit: contain;
+      border: 1px solid rgba(29, 37, 34, 0.2);
+      border-radius: 20px;
+      background: #202020;
+      box-shadow: 0 18px 48px rgba(31, 45, 38, 0.18);
+    }
+
+    .rnd-shot figcaption {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.42;
     }
 
     .guardrail-dimensions {
@@ -927,7 +1059,10 @@
       .contrast,
       .script-draft,
       .arch-layer,
+      .assignment-panel,
+      .relay-question-grid,
       .agent-workflow,
+      .rnd-screenshots,
       .guardrail-dimensions,
       .agentrelay-grid,
       .showcase,
@@ -987,7 +1122,11 @@
 
       .arch-label,
       .arch-cells,
+      .assignment-copy,
+      .assignment-admin,
       .workflow-panel,
+      .relay-question,
+      .rnd-proof,
       .guardrail-dimension {
         padding: 16px;
       }
@@ -1051,17 +1190,17 @@
           <article class="script-block">
             <time>0:15-0:40</time>
             <h3>背景与痛点</h3>
-            <p>现在做这件事有两个原因。第一，Zendesk license 续费大约 73k 美金一年，但它给我们的还是通用 SaaS 能力。第二，更关键的是 SLA、回复质量、billing 自动化和 handover gap 都散在不同工具里。Zendesk 可以记录工单，但不能按我们的规则实时判断这条回复能不能发、这个 case 是否应该自动化、客户情绪是否已经有风险。</p>
+            <p>现在做这件事有两个原因。第一，Zendesk license 续费大约 73k 美金一年，但它给我们的还是通用 SaaS 能力。第二，更关键的是 Zendesk 的 customization 空间不够，不管是 feature 扩展、内部流程定制，还是数据挖掘和质量分析，都很难满足我们自己的 support 目标。SLA、回复质量、billing 自动化和 handover gap 仍然散在不同工具里。</p>
           </article>
           <article class="script-block">
             <time>0:40-1:05</time>
             <h3>架构策略</h3>
-            <p>Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部讲工单转发到 SupportPortal。我们先把 routing、assignment、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。</p>
+            <p>Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部讲工单转发到 SupportPortal。我们先把 routing、assignment、/assignment/admin、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。</p>
           </article>
           <article class="script-block">
             <time>1:05-1:35</time>
             <h3>AgentRelay</h3>
-            <p>这次新增的重点是 AgentRelay，但我会讲清楚它不是黑盒聊天，而是 agent-to-agent 的通信状态机。Support Agent 创建任务，AgentRelay 负责 relay 和审计，目标 Agent claim 任务后提交 artifact，结果再投递回 requester thread，由 requester 判断是否完成。研发 Agent 未来的价值是接收问题、读取 case context、logs 或 repo clue，形成 hypothesis，再返回 evidence artifact、limitation 和 next action。</p>
+            <p>这次 AgentRelay 我会讲四个问题：为什么需要 relay、为什么不是直接用 A2A 协议、为什么 Agent 之间要通信，以及 R&D Agent 如何解决 support agent 解决不了的问题。核心是 agent 和 agent 不是互相发散聊天，而是通过 AgentRelay 交换任务；很多个人 Agent 没有公网 IP，所以需要 relay 承担转发、投递和审计。</p>
           </article>
           <article class="script-block">
             <time>1:35-1:55</time>
@@ -1091,12 +1230,12 @@
       <div class="section-header">
         <div class="eyebrow"><span class="pulse"></span>01 · Why now</div>
         <h2 id="why">传统 SaaS 已经很难承接我们的 support 目标。</h2>
-        <p class="section-lead">Zendesk license 续费约 73k USD/year，但更大的问题不是价格，而是团队需要更深的流程、数据和质量控制能力。</p>
+        <p class="section-lead">Zendesk license 续费约 73k USD/year，但更大的问题不是价格，而是 customization 空间不足：feature 扩展、内部流程定制、数据挖掘和质量分析都很难按 support 团队自己的节奏推进。</p>
       </div>
       <div class="annotation-stack" aria-label="背景痛点批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“现在做这件事有两个原因。第一，Zendesk license 续费大约 73k 美金一年，但它给我们的还是通用 SaaS 能力。第二，更关键的是 SLA、回复质量、billing 自动化和 handover gap 都散在不同工具里。Zendesk 可以记录工单，但不能按我们的规则实时判断这条回复能不能发、这个 case 是否应该自动化、客户情绪是否已经有风险。”</p>
+          <p>“现在做这件事有两个原因。第一，Zendesk license 续费大约 73k 美金一年，但它给我们的还是通用 SaaS 能力。第二，更关键的是 customization 空间不够，不管是在 feature 扩展、流程定制，还是数据挖掘方面，都很难满足 support 团队个性化的需求。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
@@ -1116,6 +1255,10 @@
           <strong>Billing</strong>
           <span>部分 invoice、account fraud / deactivate 等 case 不需要完整 HITL 流程，适合先做受控自动化 POC。</span>
         </article>
+        <article class="proof">
+          <strong>Custom</strong>
+          <span>缺少足够 customization 空间，feature、流程和数据挖掘都难以贴合团队自己的 support 标准。</span>
+        </article>
       </div>
     </section>
 
@@ -1128,7 +1271,7 @@
       <div class="annotation-stack" aria-label="架构批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部讲工单转发到 SupportPortal。我们先把 routing、assignment、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。”</p>
+          <p>“Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部讲工单转发到 SupportPortal。我们先把 routing、assignment、/assignment/admin、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：图片建议</strong>
@@ -1170,6 +1313,19 @@
           </div>
         </div>
       </div>
+      <div class="assignment-panel" aria-label="Assignment capability and admin console">
+        <article class="assignment-copy">
+          <div class="eyebrow">Assignment</div>
+          <h3>Assignment 是 Phase 1 的内部调度控制面。</h3>
+          <p>系统不只是生成回复，还要决定 case 应该给谁处理、是否进入 human review、是否有 SLA risk，以及 billing / technical / handoff 的分流是否正确。</p>
+        </article>
+        <article class="assignment-admin">
+          <div class="eyebrow">/assignment/admin</div>
+          <h3>Admin 用来管理排班、规则和兜底。</h3>
+          <p>通过 assignment admin，可以看 engineer/day picker、shift、manual override 和 routing fallback。这个页面是后续小流量试运行时 manager 控制风险的入口。</p>
+          <a class="admin-link" href="/assignment/admin">打开 /assignment/admin</a>
+        </article>
+      </div>
       <div class="flow" aria-label="当前 Phase 1 流程">
         <div class="flow-row">
           <div class="flow-node"><b>Zendesk / N8n</b><span>保留现有客户入口，降低迁移风险。</span></div>
@@ -1192,19 +1348,25 @@
 
     <section class="section reveal" aria-labelledby="agentrelay">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>03 · Agent-to-Agent Foundation</div>
-        <h2 id="agentrelay">AgentRelay 要说明两件事：Agent 如何通信，研发 Agent 如何解决问题。</h2>
-        <p class="section-lead">Phase 1 展示的是 communication foundation：任务、claim、artifact、投递和关闭都有状态与审计。真实 domain-agent 自动调查仍属于 Phase 2，不在这里过度承诺。</p>
+        <div class="eyebrow"><span class="pulse"></span>03 · AgentRelay task network</div>
+        <h2 id="agentrelay">为什么需要 AgentRelay：让私有 Agent 用任务协作解决 support 问题。</h2>
+        <p class="section-lead">这一页回答四个问题：为什么需要 relay、为什么不是直接用 A2A 协议、为什么 Agent 之间要通信，以及 R&D Agent 如何解决 Support Agent 解决不了的问题。</p>
       </div>
       <div class="annotation-stack" aria-label="AgentRelay 批注">
         <aside class="annotation speaker" data-icon="S">
           <strong>批注：演示时这么说</strong>
-          <p>“这页我讲两个问题。第一，agent 和 agent 不是互相发散聊天，而是通过 AgentRelay 交换任务：Support Agent 创建 task，目标 Agent claim，提交 artifact，结果投递回原始 thread，最后由 requester 判断是否完成。第二，研发 Agent 未来怎么解决问题：它接收问题后读取 case context、logs 或 repo clue，形成 hypothesis，再返回 evidence artifact、limitation 和 next action。”</p>
+          <p>“这页我讲四个问题。第一，为什么需要 AgentRelay：agent 和 agent 不是互相发散聊天，而是通过 AgentRelay 交换任务。第二，为什么不用纯 A2A 协议：很多 agent，特别是个人 Agent，没有公网 IP，所以需要 relay 来做转发、投递和审计。第三，为什么需要 Agent 之间通信：Support Agent 解决不了的问题，要找 R&D Agent 或 Data Agent 解决。第四，R&D Agent 怎么解决问题：它读取 case context、logs 或 repo clue，形成 hypothesis，再返回 evidence artifact 和 next action。”</p>
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
           <p>这页不要说 SupportPortal 已经能全自动研发调查；只强调 AgentRelay communication foundation 已完成，domain-agent 接真实证据工具是 Phase 2。</p>
         </aside>
+      </div>
+      <div class="relay-question-grid" aria-label="Why AgentRelay is needed">
+        <article class="relay-question"><b>为什么需要 AgentRelay</b><span>Agent 和 Agent 不是互相发散聊天，而是通过 task、artifact、done criteria 交换任务。</span></article>
+        <article class="relay-question"><b>为什么不用纯 A2A 协议</b><span>很多 Agent，特别是个人 Agent，没有公网 IP；relay 负责连接、投递、审计和失败兜底。</span></article>
+        <article class="relay-question"><b>为什么需要 Agent 通信</b><span>Support Agent 不应该硬猜。解决不了的问题，交给 R&D / Data / Log Agent 产出证据。</span></article>
+        <article class="relay-question"><b>R&D Agent 如何介入</b><span>读取 case context、logs、repo clue，形成 hypothesis，返回 evidence artifact、limitation 和 next action。</span></article>
       </div>
       <div class="agent-workflow" aria-label="Agent-to-agent communication and R&D agent investigation">
         <article class="workflow-panel">
@@ -1228,6 +1390,21 @@
             <li><b>4</b><span>返回 next action：继续调查、要求补充信息、转人工或形成 customer-safe 结论。</span></li>
           </ol>
         </article>
+      </div>
+      <div class="rnd-proof" aria-label="R&D agent solves a usage investigation example">
+        <div class="eyebrow">R&amp;D Agent example</div>
+        <h3>示例：Support Agent 询问 RTC 用量，Data/R&amp;D Agent 返回可复用证据。</h3>
+        <p>截图展示的是 Agent 先运行 discovery query，再返回 7 天 RTC 用量、WebRTC / Native 占比、峰值日期，并附带 markdown 证据文件。这个形态就是后续 SupportPortal 需要接入的 evidence artifact。</p>
+        <div class="rnd-screenshots">
+          <figure class="rnd-shot">
+            <img src="./assets/rnd-agent-query.png" alt="Data agent receives a usage investigation request and plans a discovery query">
+            <figcaption>Step 1 · Agent 接收问题并规划 discovery query。</figcaption>
+          </figure>
+          <figure class="rnd-shot">
+            <img src="./assets/rnd-agent-result.png" alt="Data agent returns RTC usage findings and an evidence markdown attachment">
+            <figcaption>Step 2 · Agent 返回用量结论、峰值分析和 evidence artifact。</figcaption>
+          </figure>
+        </div>
       </div>
       <p class="event-strip-label">Communication state machine · audit trail</p>
       <ul class="event-strip" aria-label="AgentRelay communication state machine examples">
@@ -1332,7 +1509,7 @@
         </aside>
         <aside class="annotation prep" data-icon="P">
           <strong>批注：准备建议</strong>
-          <p>如果时间不够，这页只讲两个指标：<em>guardrail pass/reject reason</em> 和 <em>A2A delivery success</em>。它们最能说明 Phase 1 的管理价值。</p>
+          <p>如果时间不够，这页只讲三个指标：<em>AI guardrail pass rate</em>、<em>与 Agent 交互次数</em>、<em>一次回复解决问题率</em>。它们最能说明 Phase 1 的管理价值。</p>
         </aside>
       </div>
       <div class="dashboard">
