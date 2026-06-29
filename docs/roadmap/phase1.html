@@ -852,6 +852,48 @@
       background: rgba(255, 255, 255, 0.36);
     }
 
+    .guardrail-walkthrough {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      padding: clamp(18px, 2.6vw, 24px);
+      border: 1px solid rgba(31, 79, 104, 0.18);
+      border-radius: 26px;
+      background: rgba(251, 247, 236, 0.72);
+      box-shadow: 0 14px 40px rgba(31, 45, 38, 0.08);
+    }
+
+    .guardrail-shot {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      min-width: 0;
+    }
+
+    .guardrail-shot img {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      object-position: top left;
+      border: 1px solid rgba(29, 37, 34, 0.18);
+      border-radius: 18px;
+      background: #f6f8fb;
+      box-shadow: 0 16px 36px rgba(31, 45, 38, 0.14);
+    }
+
+    .guardrail-shot figcaption {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.42;
+    }
+
+    .guardrail-shot figcaption b {
+      color: var(--blueprint);
+      font-size: 13px;
+    }
+
     .decision {
       display: inline-flex;
       width: fit-content;
@@ -1011,7 +1053,13 @@
       padding-bottom: 16px;
     }
 
-    .final-line {
+    .final-copy {
+      display: grid;
+      gap: 16px;
+      max-width: 980px;
+    }
+
+    .final-copy h2 {
       max-width: 980px;
       margin: 0;
       color: var(--ink);
@@ -1019,6 +1067,14 @@
       font-size: clamp(27px, 4vw, 50px);
       line-height: 1;
       letter-spacing: -0.045em;
+    }
+
+    .final-copy p {
+      max-width: 820px;
+      margin: 0;
+      color: #39413b;
+      font-size: clamp(16px, 1.7vw, 21px);
+      line-height: 1.5;
     }
 
     .back-link {
@@ -1065,6 +1121,7 @@
       .agent-workflow,
       .rnd-screenshots,
       .guardrail-dimensions,
+      .guardrail-walkthrough,
       .agentrelay-grid,
       .showcase,
       .dashboard,
@@ -1451,7 +1508,7 @@
       <div class="showcase">
         <article class="reply">
           <div class="eyebrow">Engineer draft</div>
-          <div class="reply-box">“We checked the account. Please try again later.”</div>
+          <div class="reply-box">“the camera is broken”</div>
           <ul class="script-list">
             <li>没有明确 conclusion：到底是什么问题？是否已处理？</li>
             <li>没有 proof：没有说明依据，客户无法信任结论。</li>
@@ -1472,6 +1529,20 @@
             <li>如果证据不足，必须继续调查或转人工，而不是编造原因。</li>
           </ul>
         </article>
+      </div>
+      <div class="guardrail-walkthrough" aria-label="Engineer Guardrail walkthrough">
+        <figure class="guardrail-shot">
+          <img src="./assets/engineer-guardrail-bad-draft.png" alt="Engineer writes an unsafe short draft saying the camera is broken">
+          <figcaption><b>1 · Unsafe engineer draft</b><span>工程师只写 “the camera is broken”，直接给出根因，但没有可追踪证据和安全下一步。</span></figcaption>
+        </figure>
+        <figure class="guardrail-shot">
+          <img src="./assets/engineer-guardrail-reject-reason.png" alt="AI Guardrail rejects the unsafe draft and asks for evidence and next step">
+          <figcaption><b>2 · Guardrail rejected the unsafe draft</b><span>AI 明确拒绝：不能在没有 traceable proof 的情况下给客户确认根因，必须补充 evidence 和 customer-facing next step。</span></figcaption>
+        </figure>
+        <figure class="guardrail-shot">
+          <img src="./assets/engineer-guardrail-safe-draft.png" alt="Engineer submits a safer customer draft with evidence and next step">
+          <figcaption><b>3 · Safe customer draft</b><span>补充 Web SDK log evidence 和 retest next step 后，回复变成保守、可解释、可发送的 customer-safe draft。</span></figcaption>
+        </figure>
       </div>
     </section>
 
@@ -1525,7 +1596,11 @@
 
     <section class="section final reveal" aria-labelledby="closing">
       <div class="eyebrow"><span class="pulse"></span>Closing</div>
-      <p id="closing" class="final-line">Phase 1 要证明的不是 AI 会说话，而是 support 系统可以实时检查质量、解释决策、控制风险，并通过 AgentRelay 把跨 Agent 协作变成可审计、可回退的自动化地基。</p>
+      <div class="final-copy">
+        <h2 id="closing">Closing: Phase 1 的判断标准</h2>
+        <p>Phase 1 要证明的不是 AI 会说话，而是 support 系统可以实时检查质量、解释决策、控制风险，并通过 AgentRelay 把跨 Agent 协作变成可审计、可回退的自动化地基。</p>
+        <p>如果 Phase 1 成功，support 不只是从 Zendesk 迁移出来，而是从 SLA 驱动的人工流程，走向 AI-native 的质量管理、证据协作和可控自动化。</p>
+      </div>
       <a class="back-link" href="../roadmap.html">返回完整 Roadmap <span aria-hidden="true">-></span></a>
     </section>
   </main>
