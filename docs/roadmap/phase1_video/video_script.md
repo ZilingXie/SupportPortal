@@ -1,0 +1,20 @@
+# SupportPortal Phase 1 3-minute video script
+
+Purpose: use this as the time-coded narration and editing guide for a 3-minute leadership video. The pace assumes a calm business voiceover. Keep transitions simple and let the real product screens carry the story.
+
+| Time | Visual | Voiceover |
+|---|---|---|
+| 00:00-00:15 | `phase1_video/1-intro.jpeg`, start on the Phase 1 title and move toward Why now. | In three minutes, I will introduce SupportPortal Phase 1. This is not just a Zendesk replacement or another ticket UI. Phase 1 must prove that support quality checks, investigation collaboration, and management metrics can live inside the operating workflow. |
+| 00:15-00:35 | `phase1_video/2-why-now.png`, zoom into 73k, SLA, Billing, and Custom. | There are two reasons to do this now. First, Zendesk license renewal is about seventy-three thousand dollars a year, but it still gives us generic SaaS capability. Second, Zendesk does not give us enough customization space for feature extension, internal workflow customization, data mining, and quality analytics. |
+| 00:35-01:05 | `phase1_video/3-big-pic.png`, show the three architecture layers. | The Phase 1 migration strategy is conservative. The customer entry point stays unchanged, and the customer experience also stays unchanged. Customers still enter through Zendesk. Internally, cases are forwarded into SupportPortal. We first prove routing, assignment, AI guardrail, final approval, dashboard, and real case replay through shadow mode and small-traffic gates. |
+| 01:05-01:25 | `phase1_video/4-admin.png`, show `/assignment/admin`. | Assignment is the Phase 1 dispatch control plane. The system is not only generating replies. It must decide who should handle the case, whether human review is needed, whether there is SLA risk, and how routing fallback should work. `/assignment/admin` is the manager control surface for shifts, rules, and manual override. |
+| 01:25-01:55 | `phase1_video/5-agent-relay.png`, show the AgentRelay questions and state machine. | AgentRelay solves agent collaboration. Agents are not loosely chatting with each other. They exchange tasks, artifacts, and done criteria through AgentRelay. Why not pure A2A protocol? Because many personal agents have no public IP addresses, so the relay handles forwarding, delivery, auditability, and fallback. |
+| 01:55-02:20 | `phase1.html#agentrelay`, focus on the R&D Agent dialogue and SQL evidence. | Support needs agent-to-agent communication because the Support Agent should not guess when it cannot solve a question. In this example, the customer wants to stop a running page recording but has no SID. The R&D Agent reverse-checks recording events, provides a verification query, and returns the likely running SID as evidence. |
+| 02:20-02:45 | `phase1_video/7-show-case.png`, show the engineer guardrail sequence. | AI Guardrail rejects an incomplete reply. The engineer writes, "the camera is broken." The issue is not tone; it claims a root cause without traceable proof or a safe customer next step. Guardrail rejects it and asks for evidence before the reply can move to approval. |
+| 02:45-03:00 | `phase1_video/12-dashboard.png`, close with Dashboard and the three-stage roadmap. | Management metrics also need to evolve. We still track first response time, second response time, and SLA, but we also need AI guardrail pass rate, agent interaction count, first-contact resolution, reject reasons, and route accuracy. Phase 1 proves control; Phase 2 connects real evidence tools; Phase 3 expands governed autonomous investigation. |
+
+## Editing Notes
+
+- Use simple cross-fades around 0.4 seconds. Avoid decorative transitions.
+- Keep these terms on screen as English subtitles: `AI guardrail pass rate`, `AgentRelay`, `evidence artifact`, `customer-safe boundary`, `first-contact resolution`.
+- Use mild zoom-in only for key proof points: 73k, architecture, AgentRelay, R&D Agent SQL evidence, Guardrail rejected, and Dashboard metrics.

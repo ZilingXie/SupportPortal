@@ -10,10 +10,10 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 
 ROADMAP_PATH = Path("docs/roadmap.html")
 PHASE1_PATH = Path("docs/roadmap/phase1.html")
-PHASE1_VIDEO_SCRIPT_PATH = Path("docs/roadmap/video_script.md")
-PHASE1_STORYBOARD_PATH = Path("docs/roadmap/storyboard.md")
-PHASE1_VOICEOVER_PATH = Path("docs/roadmap/voiceover.txt")
-PHASE1_SHOTS_DIR = Path("docs/roadmap/shots")
+PHASE1_VIDEO_DIR = Path("docs/roadmap/phase1_video")
+PHASE1_VIDEO_SCRIPT_PATH = PHASE1_VIDEO_DIR / "video_script.md"
+PHASE1_STORYBOARD_PATH = PHASE1_VIDEO_DIR / "storyboard.md"
+PHASE1_VOICEOVER_PATH = PHASE1_VIDEO_DIR / "voiceover-jianying.txt"
 QBR_COMPAT_PATH = Path("docs/qbr_plan.html")
 
 
@@ -27,11 +27,11 @@ class RoadmapContractTests(unittest.TestCase):
 
         required_terms = [
             "SupportPortal Phase 1",
-            "从 Zendesk 平替，走向 AI-native Support System",
+            "From Zendesk replacement to an AI-native Support System",
             "AI guardrail pass rate",
-            "展开完整演讲稿",
-            "默认折叠，现场需要完整朗读稿时再展开",
-            "内部讲工单转发到 SupportPortal",
+            "Expand full talk track",
+            "Collapsed by default",
+            "Internally, Zendesk cases are forwarded into SupportPortal",
             "SupportPortal Phase 1 architecture diagram",
             "Customer / Zendesk",
             "SupportPortal Core",
@@ -39,43 +39,44 @@ class RoadmapContractTests(unittest.TestCase):
             "A2A communication path",
             "R&amp;D Agent investigation loop",
             "requester.closed",
-            "演示重点：AI Guardrail 如何拒绝不完整回复",
+            "Showcase: how AI Guardrail rejects an incomplete reply",
             "customer-safe boundary",
             "./assets/engineer-guardrail-bad-draft.png",
             "./assets/engineer-guardrail-reject-reason.png",
             "./assets/engineer-guardrail-safe-draft.png",
             "Engineer Guardrail walkthrough",
             "Guardrail rejected the unsafe draft",
-            "Closing: Phase 1 的判断标准",
-            "如果 Phase 1 成功，support 不只是从 Zendesk 迁移出来",
-            "与Agent交互次数",
-            "一次回复解决问题率",
-            "customization 空间不足",
-            "feature 扩展、内部流程定制、数据挖掘",
-            "打开 /assignment/admin",
+            "Closing: what Phase 1 must prove",
+            "If Phase 1 works, support is not merely moving away from Zendesk",
+            "agent interaction count",
+            "first-contact resolution",
+            "limited customization space",
+            "feature extension, internal workflow customization, data mining",
+            "Open /assignment/admin",
             'href="/assignment/admin"',
             "AgentRelay task network",
-            "为什么需要 AgentRelay",
-            "为什么不用纯 A2A 协议",
-            "没有公网 IP",
-            "解决不了的问题，交给 R&D / Data / Log Agent 产出证据",
+            "Why AgentRelay is needed",
+            "Why not pure A2A protocol",
+            "no public IP",
+            "hand unresolved questions to R&D / Data / Log Agents for evidence",
             "R&amp;D Agent example",
-            "Data/R&amp;D Agent 返回可复用证据",
-            "./assets/rnd-agent-query.png",
-            "./assets/rnd-agent-result.png",
-            "AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2",
+            "Question: vid:1466271 There is currently a page recording in progress",
+            "Query completed (44.7s)",
+            "c4158a3390426fdecc5e9fbbc2e81eb1",
+            "select date, sid, vid, ip, lts",
+            "AgentRelay communication foundation is ready, while real SupportPortal domain-agent investigation remains a Phase 2 integration",
             "font-size: clamp(30px, 4.8vw, 60px);",
-            "SupportPortal Phase 1 是一个 AI-native support operating system 的 POC",
-            "把 Zendesk 转发、routing、assignment、AI guardrail、final approve、dashboard、case replay 和 AgentRelay communication foundation 串成一条可控流程",
-            "自主检测 + 行为规范 + A2A foundation",
-            "辅助调查 + 人 approve",
-            "自主调查 + governed Agent-to-Agent",
+            "SupportPortal Phase 1 is a POC for an AI-native support operating system",
+            "connects Zendesk forwarding, routing, assignment, AI guardrail, final approval, dashboard, case replay, and AgentRelay communication foundation",
+            "Self-check + behavior policy + A2A foundation",
+            "Assisted investigation + human approval",
+            "Autonomous investigation + governed Agent-to-Agent",
             'href="../roadmap.html"',
-            "3 分钟讲解视频素材包",
-            'href="./video_script.md"',
-            'href="./storyboard.md"',
-            'href="./voiceover.txt"',
-            'href="./shots/"',
+            "3-minute video kit",
+            'href="./phase1_video/video_script.md"',
+            'href="./phase1_video/storyboard.md"',
+            'href="./phase1_video/voiceover-jianying.txt"',
+            'href="./phase1_video/"',
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -83,8 +84,6 @@ class RoadmapContractTests(unittest.TestCase):
 
 
         for asset in [
-            Path("docs/roadmap/assets/rnd-agent-query.png"),
-            Path("docs/roadmap/assets/rnd-agent-result.png"),
             Path("docs/roadmap/assets/engineer-guardrail-bad-draft.png"),
             Path("docs/roadmap/assets/engineer-guardrail-reject-reason.png"),
             Path("docs/roadmap/assets/engineer-guardrail-safe-draft.png"),
@@ -104,10 +103,18 @@ class RoadmapContractTests(unittest.TestCase):
             "批注：演示时这么说",
             "批注：准备建议",
             "批注：图片建议",
+            "./assets/rnd-agent-query.png",
+            "./assets/rnd-agent-result.png",
+            "./assets/rnd-agent-example.png",
         ]
         for term in removed_terms:
             with self.subTest(removed_term=term):
                 self.assertNotIn(term, phase1_source)
+
+        self.assertIsNone(
+            __import__("re").search(r"[\u4e00-\u9fff]", phase1_source),
+            msg="phase1.html should be fully English after the leadership-demo translation.",
+        )
 
     def test_phase1_video_package_contains_script_storyboard_voiceover_and_shots(self) -> None:
         script = PHASE1_VIDEO_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -115,61 +122,61 @@ class RoadmapContractTests(unittest.TestCase):
         voiceover = PHASE1_VOICEOVER_PATH.read_text(encoding="utf-8")
 
         for term in [
-            "# SupportPortal Phase 1 3 分钟讲解视频逐秒旁白脚本",
+            "# SupportPortal Phase 1 3-minute video script",
             "00:00-00:15",
             "00:35-01:05",
             "01:05-01:25",
             "01:25-01:55",
             "02:20-02:45",
             "02:45-03:00",
-            "Zendesk 的 customization 空间不够",
+            "Zendesk does not give us enough customization space",
             "/assignment/admin",
             "AgentRelay",
-            "没有公网 IP",
+            "no public IP",
             "AI Guardrail",
-            "一次回复解决问题率",
+            "first-contact resolution",
         ]:
             with self.subTest(script_term=term):
                 self.assertIn(term, script)
 
         for term in [
-            "# SupportPortal Phase 1 3 分钟讲解视频 Storyboard",
-            "shots/01-why-now.png",
-            "shots/02-big-picture.png",
-            "shots/03-assignment-admin.png",
-            "shots/04-agentrelay-network.png",
-            "shots/05-rnd-agent-example.png",
-            "shots/06-guardrail-showcase.png",
-            "shots/07-dashboard-roadmap.png",
-            "docs/roadmap/assets/rnd-agent-query.png",
-            "docs/roadmap/assets/rnd-agent-result.png",
+            "# SupportPortal Phase 1 3-minute video storyboard",
+            "phase1_video/1-intro.jpeg",
+            "phase1_video/2-why-now.png",
+            "phase1_video/3-big-pic.png",
+            "phase1_video/4-admin.png",
+            "phase1_video/5-agent-relay.png",
+            "phase1_video/7-show-case.png",
+            "phase1_video/11-phase1-closing.png",
+            "phase1_video/12-dashboard.png",
         ]:
             with self.subTest(storyboard_term=term):
                 self.assertIn(term, storyboard)
 
         for term in [
-            "Zendesk license 每年七万三千美金",
-            "客户入口先不动",
-            "客户体验也不变",
-            "Assignment 是 Phase 1 的调度控制面",
-            "Agent 和 Agent 不是互相发散聊天",
-            "很多个人 Agent 没有公网 IP",
-            "AI Guardrail 拒绝不完整回复",
+            "Zendesk license renewal is about seventy-three thousand dollars a year",
+            "customer entry point stays unchanged",
+            "customer experience also stays unchanged",
+            "Assignment is the Phase 1 dispatch control plane",
+            "Agents are not loosely chatting with each other",
+            "many personal agents do not have public IP addresses",
+            "AI Guardrail rejects an incomplete reply",
             "AI guardrail pass rate",
         ]:
             with self.subTest(voiceover_term=term):
                 self.assertIn(term, voiceover)
 
         for shot_name in [
-            "01-why-now.png",
-            "02-big-picture.png",
-            "03-assignment-admin.png",
-            "04-agentrelay-network.png",
-            "05-rnd-agent-example.png",
-            "06-guardrail-showcase.png",
-            "07-dashboard-roadmap.png",
+            "1-intro.jpeg",
+            "2-why-now.png",
+            "3-big-pic.png",
+            "4-admin.png",
+            "5-agent-relay.png",
+            "7-show-case.png",
+            "11-phase1-closing.png",
+            "12-dashboard.png",
         ]:
-            shot = PHASE1_SHOTS_DIR / shot_name
+            shot = PHASE1_VIDEO_DIR / shot_name
             with self.subTest(shot=str(shot)):
                 self.assertTrue(shot.exists())
                 self.assertGreater(shot.stat().st_size, 1024)
@@ -187,10 +194,10 @@ class RoadmapContractTests(unittest.TestCase):
             checks = [
                 ("/roadmap.html", "整体落地优化计划"),
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
-                ("/roadmap/video_script.md", "SupportPortal Phase 1 3 分钟讲解视频逐秒旁白脚本"),
-                ("/roadmap/storyboard.md", "SupportPortal Phase 1 3 分钟讲解视频 Storyboard"),
-                ("/roadmap/voiceover.txt", "Zendesk license 每年七万三千美金"),
-                ("/roadmap/shots/01-why-now.png", "PNG"),
+                ("/roadmap/phase1_video/video_script.md", "SupportPortal Phase 1 3-minute video script"),
+                ("/roadmap/phase1_video/storyboard.md", "SupportPortal Phase 1 3-minute video storyboard"),
+                ("/roadmap/phase1_video/voiceover-jianying.txt", "Zendesk license renewal is about seventy-three thousand dollars a year"),
+                ("/roadmap/phase1_video/2-why-now.png", "PNG"),
             ]
             for path, marker in checks:
                 with self.subTest(path=path):
