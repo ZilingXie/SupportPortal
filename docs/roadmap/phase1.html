@@ -160,7 +160,7 @@
       z-index: 1;
       max-width: 960px;
       margin: 0;
-      font-size: clamp(34px, 5.8vw, 72px);
+      font-size: clamp(30px, 4.8vw, 60px);
       line-height: 0.94;
     }
 
@@ -387,70 +387,6 @@
       max-width: 720px;
       font-size: 15px;
       line-height: 1.55;
-    }
-
-    .annotation-stack {
-      display: grid;
-      gap: 12px;
-    }
-
-    .annotation {
-      position: relative;
-      display: grid;
-      gap: 8px;
-      padding: 16px 18px 16px 54px;
-      border-radius: 20px;
-      border: 1px solid var(--note-line, rgba(31, 79, 104, 0.22));
-      background: var(--note-bg, rgba(31, 79, 104, 0.08));
-      color: #32413d;
-      box-shadow: 0 14px 34px rgba(31, 45, 38, 0.08);
-    }
-
-    .annotation::before {
-      content: attr(data-icon);
-      position: absolute;
-      left: 16px;
-      top: 16px;
-      display: grid;
-      place-items: center;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      background: rgba(255, 255, 255, 0.54);
-      color: var(--note-accent, var(--blueprint));
-      font-size: 13px;
-      font-weight: 900;
-    }
-
-    .annotation.speaker {
-      --note-bg: rgba(31, 79, 104, 0.1);
-      --note-line: rgba(31, 79, 104, 0.28);
-      --note-accent: var(--blueprint);
-    }
-
-    .annotation.prep {
-      --note-bg: rgba(186, 122, 42, 0.13);
-      --note-line: rgba(186, 122, 42, 0.34);
-      --note-accent: var(--amber);
-    }
-
-    .annotation strong {
-      color: var(--note-accent, var(--blueprint));
-      font-size: 13px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .annotation p {
-      margin: 0;
-      font-size: 14px;
-      line-height: 1.56;
-    }
-
-    .annotation em {
-      color: var(--muted);
-      font-style: normal;
-      font-weight: 800;
     }
 
     .script-section {
@@ -1218,7 +1154,7 @@
     <header class="hero reveal">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal Phase 1</div>
       <h1>从 Zendesk 平替，走向 AI-native Support System</h1>
-      <p class="hero-copy">这不是一次工具替换，而是把路由、质量检查、调查辅助和管理指标内建到 support 流程里。Phase 1 的目标是先证明系统可控、可审计、可小流量试运行。</p>
+      <p class="hero-copy">SupportPortal Phase 1 是一个 AI-native support operating system 的 POC。它不是一次工具替换，而是把 Zendesk 转发、routing、assignment、AI guardrail、final approve、dashboard、case replay 和 AgentRelay communication foundation 串成一条可控流程。Phase 1 的目标是先证明系统能在不改变客户入口和客户体验的前提下，稳定降低回复风险、提升调查质量，并支持 shadow mode 与小流量试运行。</p>
       <ul class="talk-track" aria-label="3 分钟演示节奏">
         <li>0:00 背景与痛点</li>
         <li>0:35 架构与角色变化</li>
@@ -1226,16 +1162,6 @@
         <li>1:40 Guardrail showcase</li>
         <li>2:25 Dashboard 与路线图</li>
       </ul>
-      <div class="annotation-stack" aria-label="首页演示批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“今天我想用三分钟介绍 SupportPortal Phase 1。它不是一个简单的 Zendesk 平替，也不是再做一个 ticket UI。Phase 1 要证明的是：我们能把 support 的质量检查、调查协作和管理指标放进系统流程里，而不是继续依赖 Zendesk 加人工经验。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>这一页控制在 15 秒以内。不要展开所有功能，先立住主线：<em>不是 SaaS 平替，而是 AI-native support operating system。</em></p>
-        </aside>
-      </div>
     </header>
 
     <section class="section script-section reveal" aria-labelledby="full-script">
@@ -1335,16 +1261,6 @@
         <h2 id="why">传统 SaaS 已经很难承接我们的 support 目标。</h2>
         <p class="section-lead">Zendesk license 续费约 73k USD/year，但更大的问题不是价格，而是 customization 空间不足：feature 扩展、内部流程定制、数据挖掘和质量分析都很难按 support 团队自己的节奏推进。</p>
       </div>
-      <div class="annotation-stack" aria-label="背景痛点批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“现在做这件事有两个原因。第一，Zendesk license 续费大约 73k 美金一年，但它给我们的还是通用 SaaS 能力。第二，更关键的是 customization 空间不够，不管是在 feature 扩展、流程定制，还是数据挖掘方面，都很难满足 support 团队个性化的需求。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>准备一个具体例子：例如 billing case 中哪些不需要 HITL、哪些必须人工 approve。领导会更容易判断 POC 切入点是否安全。</p>
-        </aside>
-      </div>
       <div class="proof-grid">
         <article class="proof">
           <strong>SLA</strong>
@@ -1370,16 +1286,6 @@
         <div class="eyebrow"><span class="pulse"></span>02 · Big picture</div>
         <h2 id="architecture">Phase 1 先不改变客户入口，只改变内部处理能力。</h2>
         <p class="section-lead">客户仍然从 Zendesk 进入；内部讲工单转发到 SupportPortal，先跑 shadow mode、真实 case replay 和 1% 小流量门禁。AgentRelay 已补上后续跨 Agent 协作所需的通信基础。</p>
-      </div>
-      <div class="annotation-stack" aria-label="架构批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部讲工单转发到 SupportPortal。我们先把 routing、assignment、/assignment/admin、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：图片建议</strong>
-          <p>这页建议放一张总架构图。重点不要画太多盒子，要突出三条链路：<em>customer entry 不变</em>、<em>SupportPortal 内部决策</em>、<em>AgentRelay 调度证据 Agent</em>。</p>
-        </aside>
       </div>
       <div class="architecture-map" aria-label="SupportPortal Phase 1 architecture diagram">
         <div class="arch-layer">
@@ -1455,16 +1361,6 @@
         <h2 id="agentrelay">为什么需要 AgentRelay：让私有 Agent 用任务协作解决 support 问题。</h2>
         <p class="section-lead">这一页回答四个问题：为什么需要 relay、为什么不是直接用 A2A 协议、为什么 Agent 之间要通信，以及 R&D Agent 如何解决 Support Agent 解决不了的问题。</p>
       </div>
-      <div class="annotation-stack" aria-label="AgentRelay 批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“这页我讲四个问题。第一，为什么需要 AgentRelay：agent 和 agent 不是互相发散聊天，而是通过 AgentRelay 交换任务。第二，为什么不用纯 A2A 协议：很多 agent，特别是个人 Agent，没有公网 IP，所以需要 relay 来做转发、投递和审计。第三，为什么需要 Agent 之间通信：Support Agent 解决不了的问题，要找 R&D Agent 或 Data Agent 解决。第四，R&D Agent 怎么解决问题：它读取 case context、logs 或 repo clue，形成 hypothesis，再返回 evidence artifact 和 next action。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>这页不要说 SupportPortal 已经能全自动研发调查；只强调 AgentRelay communication foundation 已完成，domain-agent 接真实证据工具是 Phase 2。</p>
-        </aside>
-      </div>
       <div class="relay-question-grid" aria-label="Why AgentRelay is needed">
         <article class="relay-question"><b>为什么需要 AgentRelay</b><span>Agent 和 Agent 不是互相发散聊天，而是通过 task、artifact、done criteria 交换任务。</span></article>
         <article class="relay-question"><b>为什么不用纯 A2A 协议</b><span>很多 Agent，特别是个人 Agent，没有公网 IP；relay 负责连接、投递、审计和失败兜底。</span></article>
@@ -1526,16 +1422,6 @@
         <h2 id="roles">AI 不是替代 support engineer，而是把 manager 的日常质量检查产品化。</h2>
         <p class="section-lead">客户侧体验暂时不变；工程师从重复流程中释放出来；AI agent 承担实时检查、辅助调查和跨系统协作。</p>
       </div>
-      <div class="annotation-stack" aria-label="角色变化批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“所以我不把 AI 定义成替代 support engineer。更准确地说，第一阶段是把 manager 的 day-to-day 质量检查产品化。以前 manager 只能抽样看回复；现在每一条回复都可以检查技术是否准确、有没有 proof、有没有 next step、是否有 SLA 风险，以及客户情绪是否需要提前报警。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>这里语气要克制：不要说 manager 不重要，而是说 manager 从逐条检查低级错误，转向规则设计、例外处理和质量抽查。</p>
-        </aside>
-      </div>
       <div class="contrast">
         <article class="contrast-panel">
           <h3>Before</h3>
@@ -1561,16 +1447,6 @@
         <div class="eyebrow"><span class="pulse"></span>05 · Showcase</div>
         <h2 id="showcase">演示重点：AI Guardrail 如何拒绝不完整回复。</h2>
         <p class="section-lead">这个 case 最能说明 Phase 1 的质量价值：系统不是把话说得更礼貌，而是在客户看到之前拦住缺 conclusion、proof、next step 和 customer-safe boundary 的回复。</p>
-      </div>
-      <div class="annotation-stack" aria-label="Showcase 批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“demo 我会展示一个低质量回复：工程师写了 ‘We checked the account. Please try again later.’ 这个回复的问题不是语气，而是没有结论、没有证据、没有下一步，也没有客户可见边界。Guardrail 会直接拒绝它，并要求工程师补充明确 conclusion、可验证 proof、customer next step，再进入 final approve。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>这页只讲 guardrail 拒绝，不再展开 AgentRelay。重点让领导看到：系统能在发送前拦住容易引发二次追问或合规风险的回复。</p>
-        </aside>
       </div>
       <div class="showcase">
         <article class="reply">
@@ -1605,16 +1481,6 @@
         <h2 id="dashboard">管理指标也要从 SLA 时代升级到 AI guardrail 时代。</h2>
         <p class="section-lead">传统指标仍然重要，但 Phase 1 开始追踪 AI 是否真的降低风险、提升质量，并解释为什么某些 case 还不能自动化。</p>
       </div>
-      <div class="annotation-stack" aria-label="Dashboard 批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“管理指标也要升级。以前我们主要看 first response time、second response time 和 SLA。现在改为要看 AI guardrail pass rate，与Agent交互次数，一次回复解决问题率等。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>如果时间不够，这页只讲三个指标：<em>AI guardrail pass rate</em>、<em>与 Agent 交互次数</em>、<em>一次回复解决问题率</em>。它们最能说明 Phase 1 的管理价值。</p>
-        </aside>
-      </div>
       <div class="dashboard">
         <ul class="metric-list">
           <li>传统指标：first response time、second response time、SLA。</li>
@@ -1638,16 +1504,6 @@
         <h2 id="roadmap">三阶段推进：先完成可控通信和行为规范，再接真实证据工具，最后扩大自主调查。</h2>
         <p class="section-lead">Phase 1 不是终点，而是后续自动化的安全地基。AgentRelay communication foundation 已完成，但没有真实 replay、dashboard、guardrail 和 domain-agent 权限审计，就不进入扩大切流。</p>
       </div>
-      <div class="annotation-stack" aria-label="Roadmap 批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“最后是推进节奏：Phase 1 控制行为和通信地基，Phase 2 接真实 evidence tools 并让人 approve，Phase 3 才扩大 governed autonomous investigation。这里要明确边界：AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2。不要把它理解成已经全自动解决 support case。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>这里要主动声明边界：AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2。不要在汇报里把它说成已经全自动解决 support case。</p>
-        </aside>
-      </div>
       <div class="phases">
         <article class="phase">
           <div class="eyebrow">Phase 1</div>
@@ -1670,16 +1526,6 @@
     <section class="section final reveal" aria-labelledby="closing">
       <div class="eyebrow"><span class="pulse"></span>Closing</div>
       <p id="closing" class="final-line">Phase 1 要证明的不是 AI 会说话，而是 support 系统可以实时检查质量、解释决策、控制风险，并通过 AgentRelay 把跨 Agent 协作变成可审计、可回退的自动化地基。</p>
-      <div class="annotation-stack" aria-label="结尾批注">
-        <aside class="annotation speaker" data-icon="S">
-          <strong>批注：演示时这么说</strong>
-          <p>“我下一步需要的不是一次性替换 Zendesk，而是批准继续做 Phase 1 小流量验证：真实 case replay、dashboard 指标、billing POC 和 AgentRelay 接入 domain agent 的权限审计。只要这些指标稳定，我们再进入 Phase 2 的真实 evidence-agent 接入。”</p>
-        </aside>
-        <aside class="annotation prep" data-icon="P">
-          <strong>批注：准备建议</strong>
-          <p>结束前准备一个明确 ask：要资源、要试点范围，还是要下一阶段评审时间。3 分钟汇报不能只展示页面，必须落到一个决策请求。</p>
-        </aside>
-      </div>
       <a class="back-link" href="../roadmap.html">返回完整 Roadmap <span aria-hidden="true">-></span></a>
     </section>
   </main>
