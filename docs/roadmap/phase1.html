@@ -858,6 +858,11 @@
       box-shadow: 0 20px 56px rgba(31, 45, 38, 0.1);
     }
 
+    .showcase-demo.bad-case {
+      border-color: rgba(168, 76, 63, 0.22);
+      background: rgba(251, 247, 236, 0.58);
+    }
+
     .demo-toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -997,6 +1002,13 @@
       border-color: rgba(31, 79, 104, 0.22);
     }
 
+    .demo-bubble.customer {
+      justify-self: start;
+      border-top-left-radius: 8px;
+      background: rgba(168, 76, 63, 0.08);
+      border-color: rgba(168, 76, 63, 0.2);
+    }
+
     .demo-bubble.demo-final {
       max-width: 94%;
       background: rgba(63, 122, 87, 0.1);
@@ -1092,6 +1104,18 @@
       background: var(--red);
     }
 
+    .progress-step.risk.active,
+    .progress-step.risk.done {
+      color: var(--red);
+      border-color: rgba(168, 76, 63, 0.3);
+      background: rgba(168, 76, 63, 0.09);
+    }
+
+    .progress-step.risk.active::before,
+    .progress-step.risk.done::before {
+      background: var(--red);
+    }
+
     .progress-step.evidence.active,
     .progress-step.evidence.done,
     .progress-step.draft.active,
@@ -1128,6 +1152,11 @@
     }
 
     .status-card.reject.visible {
+      background: rgba(168, 76, 63, 0.1);
+      border-color: rgba(168, 76, 63, 0.24);
+    }
+
+    .status-card.risk.visible {
       background: rgba(168, 76, 63, 0.1);
       border-color: rgba(168, 76, 63, 0.24);
     }
@@ -1804,6 +1833,66 @@
         <h2 id="showcase">Showcase: how AI Guardrail rejects an incomplete reply.</h2>
         <p class="section-lead">This case shows the core quality value of Phase 1. The system is not merely making language more polite; it blocks replies that lack conclusion, proof, next step, and customer-safe boundary before customers see them.</p>
       </div>
+      <div class="showcase-demo bad-case" id="badCaseDemo" aria-label="Bad case support quality demo">
+        <div class="demo-toolbar">
+          <div class="demo-toolbar-copy">
+            <div class="eyebrow">Bad case: traditional support quality failure</div>
+            <h3>A fast but ungrounded answer can turn a technical issue into an angry customer.</h3>
+            <p>This is the traditional support pain point: how do we ensure reply quality, and how do we monitor it before the customer sees the damage?</p>
+          </div>
+          <div class="demo-actions">
+            <button class="demo-button" type="button" id="playBadCaseDemo" aria-label="Play bad case demo" title="Play bad case demo">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path class="play-icon" d="M8 5v14l11-7z"></path>
+              </svg>
+            </button>
+            <button class="demo-button secondary" type="button" id="resetBadCaseDemo" aria-label="Reset bad case demo" title="Reset bad case demo">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7v5h5"></path>
+                <path d="M20 12a8 8 0 0 0-14.7-4.4L4 12"></path>
+                <path d="M20 17v-5h-5"></path>
+                <path d="M4 12a8 8 0 0 0 14.7 4.4L20 12"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="demo-stage">
+          <div class="demo-chat" aria-live="polite">
+            <div class="demo-bubble customer" data-bad-case-step="customer-issue">
+              <b>Customer</b>
+              <p>I encountered black screen during my stream, my audience cannot see my face. What should I do!</p>
+            </div>
+            <div class="demo-bubble engineer" data-bad-case-step="bad-answer">
+              <b>Engineer</b>
+              <p>Your phone's camera might be broken.</p>
+            </div>
+            <div class="demo-bubble customer" data-bad-case-step="angry-customer">
+              <b>Customer</b>
+              <p>How do you know? It was working 5 minutes ago! And even if the camera is broken, what should I do now? My audiences are waiting!</p>
+            </div>
+          </div>
+          <aside class="demo-status" aria-label="Bad case quality risk timeline">
+            <div class="demo-progress-track" aria-label="Bad case progress steps">
+              <div class="progress-step" data-bad-case-progress="customer-issue"><b>Issue</b></div>
+              <div class="progress-step risk" data-bad-case-progress="bad-answer"><b>Guess</b></div>
+              <div class="progress-step risk" data-bad-case-progress="angry-customer"><b>Escalate</b></div>
+            </div>
+            <div class="status-card risk" data-bad-case-step="bad-answer">
+              <b>Quality risk</b>
+              <span>The reply is fast, but it guesses root cause without proof and gives no actionable next step.</span>
+            </div>
+            <div class="status-card risk" data-bad-case-step="angry-customer">
+              <b>After-the-fact visibility</b>
+              <span>If reply quality is not checked before send, we only discover the damage through after-the-fact review, customer escalation, or complaint.</span>
+            </div>
+          </aside>
+        </div>
+      </div>
+      <div class="proof">
+        <div class="eyebrow">Guardrail changes the control point</div>
+        <h3>Instead of finding bad replies after review, Phase 1 checks quality before a customer-visible reply is approved.</h3>
+        <p>Traditional support can measure response time, but quality problems often surface only after the customer reacts. The guardrail demo below shows the same failure mode stopped earlier: missing proof, missing next step, and unsafe root-cause claims are rejected before send.</p>
+      </div>
       <div class="showcase-demo" id="showcaseDemo" aria-label="Playable guardrail demo">
         <div class="demo-toolbar">
           <div class="demo-toolbar-copy">
@@ -2001,63 +2090,84 @@
     updateProgress();
     window.addEventListener("scroll", updateProgress, { passive: true });
 
-    const showcaseDemo = document.getElementById("showcaseDemo");
-    const playShowcaseDemo = document.getElementById("playShowcaseDemo");
-    const resetShowcaseDemo = document.getElementById("resetShowcaseDemo");
-    const showcaseTimeline = [
-      { step: "issue", delay: 400 },
-      { step: "bad-draft", delay: 2300 },
-      { step: "reject", delay: 4200 },
-      { step: "evidence", delay: 6100 },
-      { step: "draft", delay: 8000 },
-    ];
-    let showcaseTimers = [];
+    function createTimelineDemo({ rootId, playId, resetId, itemAttr, progressAttr, timeline }) {
+      const root = document.getElementById(rootId);
+      const play = document.getElementById(playId);
+      const reset = document.getElementById(resetId);
+      let timers = [];
 
-    function clearShowcaseTimers() {
-      showcaseTimers.forEach((timer) => window.clearTimeout(timer));
-      showcaseTimers = [];
-    }
+      function clearTimers() {
+        timers.forEach((timer) => window.clearTimeout(timer));
+        timers = [];
+      }
 
-    function setShowcaseStep(step) {
-      showcaseDemo
-        ?.querySelectorAll(`[data-showcase-step="${step}"]`)
-        .forEach((item) => item.classList.add("visible"));
-      const activeIndex = showcaseTimeline.findIndex((item) => item.step === step);
-      showcaseDemo
-        ?.querySelectorAll("[data-progress-step]")
-        .forEach((item) => {
-          const itemIndex = showcaseTimeline.findIndex((timelineItem) => timelineItem.step === item.dataset.progressStep);
-          item.classList.toggle("active", itemIndex === activeIndex);
-          item.classList.toggle("done", itemIndex >= 0 && itemIndex < activeIndex);
+      function setStep(step) {
+        root
+          ?.querySelectorAll(`[${itemAttr}="${step}"]`)
+          .forEach((item) => item.classList.add("visible"));
+        const activeIndex = timeline.findIndex((item) => item.step === step);
+        root
+          ?.querySelectorAll(`[${progressAttr}]`)
+          .forEach((item) => {
+            const itemIndex = timeline.findIndex((timelineItem) => timelineItem.step === item.getAttribute(progressAttr));
+            item.classList.toggle("active", itemIndex === activeIndex);
+            item.classList.toggle("done", itemIndex >= 0 && itemIndex < activeIndex);
+          });
+      }
+
+      function resetDemo() {
+        clearTimers();
+        root
+          ?.querySelectorAll(`[${itemAttr}]`)
+          .forEach((item) => item.classList.remove("visible"));
+        root
+          ?.querySelectorAll(`[${progressAttr}]`)
+          .forEach((item) => item.classList.remove("active", "done"));
+      }
+
+      function playDemo() {
+        resetDemo();
+        timeline.forEach(({ step, delay }) => {
+          const timer = window.setTimeout(() => setStep(step), delay);
+          timers.push(timer);
         });
+      }
+
+      play?.addEventListener("click", playDemo);
+      reset?.addEventListener("click", resetDemo);
+
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        timeline.forEach(({ step }) => setStep(step));
+      }
     }
 
-    function resetShowcase() {
-      clearShowcaseTimers();
-      showcaseDemo
-        ?.querySelectorAll("[data-showcase-step]")
-        .forEach((item) => item.classList.remove("visible"));
-      showcaseDemo
-        ?.querySelectorAll("[data-progress-step]")
-        .forEach((item) => item.classList.remove("active", "done"));
-    }
+    createTimelineDemo({
+      rootId: "badCaseDemo",
+      playId: "playBadCaseDemo",
+      resetId: "resetBadCaseDemo",
+      itemAttr: "data-bad-case-step",
+      progressAttr: "data-bad-case-progress",
+      timeline: [
+        { step: "customer-issue", delay: 400 },
+        { step: "bad-answer", delay: 2100 },
+        { step: "angry-customer", delay: 3800 },
+      ],
+    });
 
-    function playShowcase() {
-      resetShowcase();
-      showcaseTimeline.forEach(({ step, delay }, index) => {
-        const timer = window.setTimeout(() => {
-          setShowcaseStep(step);
-        }, delay);
-        showcaseTimers.push(timer);
-      });
-    }
-
-    playShowcaseDemo?.addEventListener("click", playShowcase);
-    resetShowcaseDemo?.addEventListener("click", resetShowcase);
-
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      showcaseTimeline.forEach(({ step }) => setShowcaseStep(step));
-    }
+    createTimelineDemo({
+      rootId: "showcaseDemo",
+      playId: "playShowcaseDemo",
+      resetId: "resetShowcaseDemo",
+      itemAttr: "data-showcase-step",
+      progressAttr: "data-progress-step",
+      timeline: [
+        { step: "issue", delay: 400 },
+        { step: "bad-draft", delay: 2300 },
+        { step: "reject", delay: 4200 },
+        { step: "evidence", delay: 6100 },
+        { step: "draft", delay: 8000 },
+      ],
+    });
   </script>
 </body>
 </html>
