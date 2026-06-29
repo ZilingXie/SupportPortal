@@ -2389,6 +2389,73 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
+    def test_follow_up_with_channel_uid_and_unavailable_timestamp_opens_engineer_ticket(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="channel is zilingtest, uid is 2. i dont have a timestamp",
+            ticket_id="TK-235-REGRESSION",
+            customer_id="C-001",
+            requester="Zac",
+            ticket_subject="Black screen",
+            ticket_context=[
+                {"role": "customer", "content": "I got black screen, what should I do?"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Hi Zac,\n\nThanks for the details.\n\n"
+                        "To help us investigate this Audio/Video Calling issue, could you also share "
+                        "channel name, problematic uid, and issue timestamp?\n\n"
+                        "Best Regards,\nSid"
+                    ),
+                    "workflow_action": "clarify_customer_for_intake",
+                    "client_intake_missing_information": [
+                        "channel_name",
+                        "problematic_uid",
+                        "issue_timestamp",
+                    ],
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-06-29T02:53:53.530082+00:00",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen issue"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "pending_investigation_reason": "rag_insufficient_evidence",
+                "clarification_rounds_used": 1,
+                "last_updated_at": "2026-06-29T02:52:42.727782+00:00",
+            },
+            route_agent=lambda **_kwargs: self.fail(
+                "route agent should not run when unavailable timestamp exhausts intake"
+            ),
+            route_executor=lambda **_kwargs: self.fail(
+                "route executor should not run when unavailable timestamp exhausts intake"
+            ),
+            rag_executor=lambda **_kwargs: self.fail(
+                "rag agent should not run when unavailable timestamp exhausts intake"
+            ),
+            review_agent=lambda **_kwargs: self.fail(
+                "review agent should not run when unavailable timestamp exhausts intake"
+            ),
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.route_reason, "investigation_intake_round_exhausted")
+        self.assertEqual(
+            execution.result.client_intake_state["known_information"]["channel_name"],
+            "zilingtest",
+        )
+        self.assertEqual(
+            execution.result.client_intake_state["known_information"]["problematic_uid"],
+            "2",
+        )
+        self.assertEqual(execution.result.client_intake_state["missing_information"], ["issue_timestamp"])
+        self.assertNotIn("could you also share issue timestamp", execution.result.answer.lower())
+
     def test_grounded_answer_fallback_with_exhausted_investigation_budget_opens_engineer_ticket(self) -> None:
         from backend.services.client_ticket_agent_runtime import _build_cited_answer_execution_result
 

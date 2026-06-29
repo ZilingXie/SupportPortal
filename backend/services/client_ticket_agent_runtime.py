@@ -42,6 +42,7 @@ from backend.services.troubleshooting_intake import (
     TroubleshootingIntakeResult,
     build_client_intake_state,
     customer_follow_up_adds_requested_investigation_detail,
+    customer_follow_up_marks_requested_investigation_detail_unavailable,
     evaluate_troubleshooting_intake,
     resolve_investigation_clarification_rounds_used,
 )
@@ -1728,6 +1729,18 @@ def _evaluate_investigation_intake_short_circuit(
         message_created_at=message_id,
     ):
         return None
+    if customer_follow_up_marks_requested_investigation_detail_unavailable(
+        message=message,
+        product=product,
+        current_state=current_state,
+        message_created_at=message_id,
+    ):
+        return InvestigationIntakeShortCircuitResult(
+            review_result=deterministic_review,
+            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+            reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+            clarification_rounds_used=max(clarification_rounds_used, MAX_INVESTIGATION_CLARIFICATION_ROUNDS),
+        )
     _, clarification_budget_exhausted = _resolve_investigation_exhaustion_state(
         review_result=deterministic_review,
         current_state=current_state,
