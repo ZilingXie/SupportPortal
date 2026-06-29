@@ -41,11 +41,11 @@ class RoadmapContractTests(unittest.TestCase):
             "requester.closed",
             "Showcase: how AI Guardrail rejects an incomplete reply",
             "customer-safe boundary",
-            "./assets/engineer-guardrail-bad-draft.png",
-            "./assets/engineer-guardrail-reject-reason.png",
-            "./assets/engineer-guardrail-safe-draft.png",
-            "Engineer Guardrail walkthrough",
-            "Guardrail rejected the unsafe draft",
+            "Black screen issue reported for channel zilingtest, uid 2",
+            "The note &quot;the camera is broken&quot; is not yet usable for a customer reply",
+            "[websdk] no input frame received",
+            "Draft Customer Reply",
+            "Thanks for your patience. We checked the Web SDK logs",
             "Closing: what Phase 1 must prove",
             "If Phase 1 works, support is not merely moving away from Zendesk",
             "agent interaction count",
@@ -60,10 +60,12 @@ class RoadmapContractTests(unittest.TestCase):
             "no public IP",
             "hand unresolved questions to R&D / Data / Log Agents for evidence",
             "R&amp;D Agent example",
-            "Question: vid:1466271 There is currently a page recording in progress",
-            "Query completed (44.7s)",
-            "c4158a3390426fdecc5e9fbbc2e81eb1",
-            "select date, sid, vid, ip, lts",
+            "Question: Please check channel 42175037575290",
+            "Investigation complete (390.3s)",
+            "Client.unpublish",
+            "track-scr-v-754e053e",
+            "C4E3D88760726EEEC8668FDE2B825157",
+            "not an abnormal interruption",
             "AgentRelay communication foundation is ready, while real SupportPortal domain-agent investigation remains a Phase 2 integration",
             "font-size: clamp(30px, 4.8vw, 60px);",
             "SupportPortal Phase 1 is a POC for an AI-native support operating system",
@@ -83,15 +85,6 @@ class RoadmapContractTests(unittest.TestCase):
                 self.assertIn(term, phase1_source)
 
 
-        for asset in [
-            Path("docs/roadmap/assets/engineer-guardrail-bad-draft.png"),
-            Path("docs/roadmap/assets/engineer-guardrail-reject-reason.png"),
-            Path("docs/roadmap/assets/engineer-guardrail-safe-draft.png"),
-        ]:
-            with self.subTest(asset=str(asset)):
-                self.assertTrue(asset.exists())
-                self.assertGreater(asset.stat().st_size, 1024)
-
         removed_terms = [
             "AgentRelay 先组织拿证据，AI 再拒绝不完整回复",
             "Image needed · AgentRelay task trace",
@@ -106,6 +99,11 @@ class RoadmapContractTests(unittest.TestCase):
             "./assets/rnd-agent-query.png",
             "./assets/rnd-agent-result.png",
             "./assets/rnd-agent-example.png",
+            "./assets/engineer-guardrail-bad-draft.png",
+            "./assets/engineer-guardrail-reject-reason.png",
+            "./assets/engineer-guardrail-safe-draft.png",
+            "c4158a3390426fdecc5e9fbbc2e81eb1",
+            "Query completed (44.7s)",
         ]
         for term in removed_terms:
             with self.subTest(removed_term=term):
@@ -133,6 +131,8 @@ class RoadmapContractTests(unittest.TestCase):
             "/assignment/admin",
             "AgentRelay",
             "no public IP",
+            "Client.unpublish",
+            "[websdk] no input frame received",
             "AI Guardrail",
             "first-contact resolution",
         ]:
@@ -146,6 +146,9 @@ class RoadmapContractTests(unittest.TestCase):
             "phase1_video/3-big-pic.png",
             "phase1_video/4-admin.png",
             "phase1_video/5-agent-relay.png",
+            "Client.unpublish",
+            "abnormal-disconnection exclusion",
+            "Guardrail showcase dialogue",
             "phase1_video/7-show-case.png",
             "phase1_video/11-phase1-closing.png",
             "phase1_video/12-dashboard.png",
@@ -160,7 +163,10 @@ class RoadmapContractTests(unittest.TestCase):
             "Assignment is the Phase 1 dispatch control plane",
             "Agents are not loosely chatting with each other",
             "many personal agents do not have public IP addresses",
+            "Client dot unpublish call",
+            "not an abnormal disconnection",
             "AI Guardrail rejects an incomplete reply",
+            "conservative customer draft",
             "AI guardrail pass rate",
         ]:
             with self.subTest(voiceover_term=term):

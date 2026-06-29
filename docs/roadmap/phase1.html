@@ -875,48 +875,6 @@
       background: rgba(255, 255, 255, 0.36);
     }
 
-    .guardrail-walkthrough {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-      padding: clamp(18px, 2.6vw, 24px);
-      border: 1px solid rgba(31, 79, 104, 0.18);
-      border-radius: 26px;
-      background: rgba(251, 247, 236, 0.72);
-      box-shadow: 0 14px 40px rgba(31, 45, 38, 0.08);
-    }
-
-    .guardrail-shot {
-      display: grid;
-      gap: 10px;
-      margin: 0;
-      min-width: 0;
-    }
-
-    .guardrail-shot img {
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      object-fit: cover;
-      object-position: top left;
-      border: 1px solid rgba(29, 37, 34, 0.18);
-      border-radius: 18px;
-      background: #f6f8fb;
-      box-shadow: 0 16px 36px rgba(31, 45, 38, 0.14);
-    }
-
-    .guardrail-shot figcaption {
-      display: grid;
-      gap: 5px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.42;
-    }
-
-    .guardrail-shot figcaption b {
-      color: var(--blueprint);
-      font-size: 13px;
-    }
-
     .decision {
       display: inline-flex;
       width: fit-content;
@@ -1143,7 +1101,6 @@
       .relay-question-grid,
       .agent-workflow,
       .guardrail-dimensions,
-      .guardrail-walkthrough,
       .agentrelay-grid,
       .showcase,
       .dashboard,
@@ -1281,7 +1238,7 @@
           <article class="script-block">
             <time>1:55-2:25</time>
             <h3>Showcase</h3>
-            <p>The demo shows a low-quality engineer draft: "the camera is broken." The problem is not tone. The problem is that it claims a root cause without a conclusion boundary, traceable proof, a safe next step, or a customer-safe explanation. AI Guardrail rejects an incomplete reply and requires a clear conclusion, verifiable proof, and customer next step before final approval.</p>
+            <p>The demo shows the engineer-side guardrail flow. The support agent starts with a black screen case and asks for proof plus a safe next step. The engineer first replies, "the camera is broken." AI Guardrail blocks that note because it claims a root cause without traceable proof. After the engineer adds Web SDK log evidence and a conservative next step, the system prepares a customer-safe draft.</p>
           </article>
           <article class="script-block">
             <time>2:25-2:45</time>
@@ -1472,26 +1429,28 @@
       </div>
       <div class="rnd-proof" aria-label="R&D agent solves a usage investigation example">
         <div class="eyebrow">R&amp;D Agent example</div>
-        <h3>Example: Support asks for a missing recording SID; R&amp;D Agent returns a usable evidence path.</h3>
-        <p>This is the kind of support question that should not be answered by guessing. The R&amp;D Agent runs the investigation, explains the reverse-check method, and returns the likely running SID with a verification query.</p>
+        <h3>Example: Support asks whether a screen sharing interruption was intentional or abnormal.</h3>
+        <p>This is the kind of support question that should not be answered by guessing. The R&amp;D Agent checks event evidence and returns a clear conclusion, proof trail, and customer-safe boundary.</p>
         <div class="rnd-dialogue" aria-label="R&D Agent dialogue example">
           <div class="dialogue-turn">
             <b>Question</b>
-            <p>Question: vid:1466271 There is currently a page recording in progress; the client wants to stop it, but there is no SID. Can you find the SID?</p>
+            <p>Question: Please check channel 42175037575290 (streamer <code>652NyjgkrD07HOf_KVjkhw</code>); the screen sharing session was interrupted at timestamp 01:28:44:649. Could you determine whether this was caused by the user calling the <code>unpublish</code> API or if it was an abnormal disconnection?</p>
           </div>
           <div class="dialogue-turn">
             <b>R&amp;D Agent</b>
             <div class="query-result">
-              <p><strong>Query completed (44.7s)</strong></p>
-              <p>These tables provide sufficient data for reverse-checking. For SIDs currently "still running," it is recommended to use <code>txservicestarted</code> to identify candidates, then exclude events such as <code>txservicestopped</code>, <code>txenginestopped</code>, or abnormal terminations, and finally verify activity using periodic or heartbeat events.</p>
-              <p>You can individually verify whether a candidate SID is still reporting activity:</p>
-              <pre><code>select date, sid, vid, ip, lts
-from ods.recording_webrecordertxperioduserinfo
-where date = 20260629
-and vid = 1466271
-order by lts desc
-limit 50;</code></pre>
-              <p>The latest SID here, <code>c4158a3390426fdecc5e9fbbc2e81eb1</code>, has no corresponding <code>servicestopped</code>, <code>enginestopped</code>, <code>error</code>, or <code>timeout</code> events. It is essentially the running SID that the client intends to stop.</p>
+              <p><strong>Investigation complete (390.3s)</strong></p>
+              <p><strong>Conclusion:</strong> This was an intentional <code>unpublish</code> call initiated by the user/application, not an abnormal interruption.</p>
+              <p><strong>Key evidence:</strong></p>
+              <ul class="script-list">
+                <li>Channel: <code>42175037575290</code>, CallId: <code>6a3b3201a3fff75800885094</code>.</li>
+                <li>Broadcaster: <code>652NyjgkrD07HOf_KVjkhw</code>, uid: <code>8933524</code>, SID: <code>C4E3D88760726EEEC8668FDE2B825157</code>.</li>
+                <li>Screen sharing track: <code>track-scr-v-754e053e</code>.</li>
+                <li>2026-06-24 01:28:44.686 UTC: Argus recorded <code>Client.unpublish</code> with <code>success=1</code>; <code>errorCode</code> and <code>errorMsg</code> were empty.</li>
+                <li>Between 01:28:47.348 and 01:28:47.350 UTC, the same track underwent <code>LocalVideoTrack.stop</code>, <code>unpipe</code>, and <code>close</code> operations, all with <code>success=1</code>.</li>
+                <li>No <code>webSocketQuit</code>, <code>WebQuit</code>, <code>uquit</code>, ICE disconnection, or connection loss occurred around this time; the broadcaster's actual <code>Client.leave</code> happened later, at 01:31:24 UTC.</li>
+              </ul>
+              <p>Therefore, the disconnection of screen sharing around 01:28:44.649 was caused by the application calling <code>Client.unpublish(["track-scr-v-754e053e"])</code> and subsequently closing the local screen track.</p>
             </div>
           </div>
         </div>
@@ -1540,43 +1499,51 @@ limit 50;</code></pre>
         <p class="section-lead">This case shows the core quality value of Phase 1. The system is not merely making language more polite; it blocks replies that lack conclusion, proof, next step, and customer-safe boundary before customers see them.</p>
       </div>
       <div class="showcase">
-        <article class="reply">
-          <div class="eyebrow">Engineer draft</div>
-          <div class="reply-box">“the camera is broken”</div>
-          <ul class="script-list">
-            <li>No clear conclusion: what exactly happened, and what is confirmed?</li>
-            <li>No proof: the customer cannot trust a root-cause claim without evidence.</li>
-            <li>No next step: the customer does not know what to do or who owns follow-up.</li>
-            <li>No customer-safe boundary: internal evidence is not separated from customer-visible explanation.</li>
-          </ul>
-        </article>
-        <article class="guardrail">
-          <span class="decision">Rejected by AI Guardrail</span>
-          <div class="guardrail-dimensions" aria-label="Guardrail rejection dimensions">
-            <div class="guardrail-dimension"><b>Conclusion</b><span>Must state the judgment instead of only saying the case was checked.</span></div>
-            <div class="guardrail-dimension"><b>Proof</b><span>Must cite verifiable evidence without exposing sensitive internal detail.</span></div>
-            <div class="guardrail-dimension"><b>Next step</b><span>Must tell the customer what to do next and who owns follow-up.</span></div>
-            <div class="guardrail-dimension"><b>Customer-safe</b><span>Must translate internal evidence into a safe customer-facing explanation.</span></div>
+        <article class="reply" aria-label="Engineer-side guardrail dialogue">
+          <div class="eyebrow">Guardrail dialogue</div>
+          <div class="rnd-dialogue">
+            <div class="dialogue-turn">
+              <b>Support Agent</b>
+              <div class="query-result">
+                <p><strong>Current issue</strong></p>
+                <p>Black screen issue reported for channel zilingtest, uid 2.</p>
+                <p><strong>Action needed</strong></p>
+                <ul class="script-list">
+                  <li>Explicit proof is missing or not verifiable. Add a reproduction result, log/error, config/version difference, or doc path.</li>
+                  <li>Explicit solution or next step is missing.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="dialogue-turn">
+              <b>Engineer</b>
+              <p>the camera is broken</p>
+            </div>
+            <div class="dialogue-turn">
+              <b>Support Agent</b>
+              <p>The note &quot;the camera is broken&quot; is not yet usable for a customer reply because it states a root cause without any traceable proof or a safe next step. Please provide the concrete evidence supporting that claim, for example: reproduction result, logs/error trace, device/config difference, or a cited internal/doc reference, and include the exact customer-facing next step or workaround we can safely recommend if root cause is still unconfirmed.</p>
+            </div>
           </div>
-          <ul class="script-list">
-            <li>The engineer must add a clear conclusion, evidence summary, and next step before final approval.</li>
-            <li>If evidence is insufficient, the case must continue investigation or escalate instead of inventing a cause.</li>
-          </ul>
         </article>
-      </div>
-      <div class="guardrail-walkthrough" aria-label="Engineer Guardrail walkthrough">
-        <figure class="guardrail-shot">
-          <img src="./assets/engineer-guardrail-bad-draft.png" alt="Engineer writes an unsafe short draft saying the camera is broken">
-          <figcaption><b>1 · Unsafe engineer draft</b><span>The engineer writes only "the camera is broken", claiming a root cause without traceable proof or a safe next step.</span></figcaption>
-        </figure>
-        <figure class="guardrail-shot">
-          <img src="./assets/engineer-guardrail-reject-reason.png" alt="AI Guardrail rejects the unsafe draft and asks for evidence and next step">
-          <figcaption><b>2 · Guardrail rejected the unsafe draft</b><span>AI rejects the draft because a confirmed root cause requires traceable proof and a customer-facing next step.</span></figcaption>
-        </figure>
-        <figure class="guardrail-shot">
-          <img src="./assets/engineer-guardrail-safe-draft.png" alt="Engineer submits a safer customer draft with evidence and next step">
-          <figcaption><b>3 · Safe customer draft</b><span>After adding Web SDK log evidence and a retest next step, the reply becomes conservative, explainable, and customer-safe.</span></figcaption>
-        </figure>
+        <article class="guardrail" aria-label="Guardrail accepts evidence and drafts customer reply">
+          <span class="decision">Rejected first, accepted after evidence</span>
+          <div class="rnd-dialogue">
+            <div class="dialogue-turn">
+              <b>Engineer</b>
+              <p>i checked the websdk logs:<br><code>[websdk] no input frame received. Please try a different device</code><br>could suggest the customer to try with a different device</p>
+            </div>
+            <div class="dialogue-turn">
+              <b>Support Agent</b>
+              <div class="query-result">
+                <p>We now have a traceable symptom-level proof point from the Web SDK log (<code>[websdk] no input frame received</code>) and a safe next step: retest with a different device. I prepared a conservative customer draft that avoids claiming a confirmed root cause.</p>
+                <p><strong>Draft Customer Reply</strong></p>
+                <p>Hi there,</p>
+                <p>Thanks for your patience. We checked the Web SDK logs and found that no input video frame was being received for the affected video stream, which can lead to a black screen.</p>
+                <p>As a next step, please try the call again using a different device and check whether the video displays normally. If the issue still happens after that, please let us know and share the approximate time of the new test if available so we can continue investigating.</p>
+                <p>Best Regards,<br>Sid</p>
+              </div>
+            </div>
+          </div>
+        </article>
       </div>
     </section>
 
