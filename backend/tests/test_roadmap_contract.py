@@ -51,13 +51,15 @@ class RoadmapContractTests(unittest.TestCase):
             "为什么需要 AgentRelay",
             "为什么不用纯 A2A 协议",
             "没有公网 IP",
-            "Support Agent 解决不了的问题，要找 R&D Agent 或 Data Agent 解决",
+            "解决不了的问题，交给 R&D / Data / Log Agent 产出证据",
             "R&amp;D Agent example",
             "Data/R&amp;D Agent 返回可复用证据",
             "./assets/rnd-agent-query.png",
             "./assets/rnd-agent-result.png",
             "AgentRelay communication foundation 已完成，但 SupportPortal 的真实 domain-agent 调查还在 Phase 2",
-            "font-size: clamp(34px, 5.8vw, 72px);",
+            "font-size: clamp(30px, 4.8vw, 60px);",
+            "SupportPortal Phase 1 是一个 AI-native support operating system 的 POC",
+            "把 Zendesk 转发、routing、assignment、AI guardrail、final approve、dashboard、case replay 和 AgentRelay communication foundation 串成一条可控流程",
             "自主检测 + 行为规范 + A2A foundation",
             "辅助调查 + 人 approve",
             "自主调查 + governed Agent-to-Agent",
@@ -86,6 +88,12 @@ class RoadmapContractTests(unittest.TestCase):
             "Image needed · AgentRelay task trace",
             "Image needed · Support case demo",
             "建议放截图或拼图：Support Agent create_task",
+            'class="annotation-stack"',
+            'class="annotation speaker"',
+            'class="annotation prep"',
+            "批注：演示时这么说",
+            "批注：准备建议",
+            "批注：图片建议",
         ]
         for term in removed_terms:
             with self.subTest(removed_term=term):
@@ -132,6 +140,7 @@ class RoadmapContractTests(unittest.TestCase):
         for term in [
             "Zendesk license 每年七万三千美金",
             "客户入口先不动",
+            "客户体验也不变",
             "Assignment 是 Phase 1 的调度控制面",
             "Agent 和 Agent 不是互相发散聊天",
             "很多个人 Agent 没有公网 IP",
