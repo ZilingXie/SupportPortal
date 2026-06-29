@@ -41,6 +41,13 @@ class RoadmapContractTests(unittest.TestCase):
             "requester.closed",
             "演示重点：AI Guardrail 如何拒绝不完整回复",
             "customer-safe boundary",
+            "./assets/engineer-guardrail-bad-draft.png",
+            "./assets/engineer-guardrail-reject-reason.png",
+            "./assets/engineer-guardrail-safe-draft.png",
+            "Engineer Guardrail walkthrough",
+            "Guardrail rejected the unsafe draft",
+            "Closing: Phase 1 的判断标准",
+            "如果 Phase 1 成功，support 不只是从 Zendesk 迁移出来",
             "与Agent交互次数",
             "一次回复解决问题率",
             "customization 空间不足",
@@ -78,6 +85,9 @@ class RoadmapContractTests(unittest.TestCase):
         for asset in [
             Path("docs/roadmap/assets/rnd-agent-query.png"),
             Path("docs/roadmap/assets/rnd-agent-result.png"),
+            Path("docs/roadmap/assets/engineer-guardrail-bad-draft.png"),
+            Path("docs/roadmap/assets/engineer-guardrail-reject-reason.png"),
+            Path("docs/roadmap/assets/engineer-guardrail-safe-draft.png"),
         ]:
             with self.subTest(asset=str(asset)):
                 self.assertTrue(asset.exists())
