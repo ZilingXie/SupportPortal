@@ -892,10 +892,13 @@
     }
 
     .demo-button {
-      min-height: 38px;
-      padding: 0 14px;
+      width: 40px;
+      height: 40px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
       border: 1px solid rgba(31, 79, 104, 0.28);
-      border-radius: 999px;
+      border-radius: 50%;
       background: rgba(31, 79, 104, 0.1);
       color: var(--blueprint);
       font: inherit;
@@ -903,6 +906,22 @@
       font-weight: 850;
       cursor: pointer;
       transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+    }
+
+    .demo-button svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+
+    .demo-button .play-icon {
+      fill: currentColor;
+      stroke: none;
+      transform: translateX(1px);
     }
 
     .demo-button:hover {
@@ -951,14 +970,16 @@
       background: rgba(255, 255, 255, 0.66);
       color: #2f3d39;
       align-self: start;
-      opacity: 0.18;
-      transform: translateY(12px);
-      filter: saturate(0.75);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(14px) scale(0.98);
+      filter: saturate(0.8);
       transition: opacity 420ms ease, transform 420ms ease, filter 420ms ease, box-shadow 420ms ease;
     }
 
     .demo-bubble.visible {
       opacity: 1;
+      visibility: visible;
       transform: translateY(0);
       filter: saturate(1);
       box-shadow: 0 12px 30px rgba(31, 45, 38, 0.08);
@@ -1008,6 +1029,85 @@
       padding: 18px;
     }
 
+    .demo-progress-track {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .progress-step {
+      display: grid;
+      gap: 7px;
+      min-height: 64px;
+      padding: 10px;
+      border: 1px solid rgba(31, 79, 104, 0.14);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.48);
+      color: rgba(49, 69, 65, 0.62);
+      transition: color 300ms ease, background 300ms ease, border-color 300ms ease, box-shadow 300ms ease, transform 300ms ease;
+    }
+
+    .progress-step::before {
+      content: "";
+      display: block;
+      width: 100%;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(31, 79, 104, 0.14);
+    }
+
+    .progress-step b {
+      font-size: 11px;
+      line-height: 1.15;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .progress-step.active,
+    .progress-step.done {
+      color: var(--blueprint);
+      border-color: rgba(31, 79, 104, 0.28);
+      background: rgba(31, 79, 104, 0.08);
+    }
+
+    .progress-step.active {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 24px rgba(31, 45, 38, 0.1);
+    }
+
+    .progress-step.active::before,
+    .progress-step.done::before {
+      background: var(--blueprint);
+    }
+
+    .progress-step.reject.active,
+    .progress-step.reject.done {
+      color: var(--red);
+      border-color: rgba(168, 76, 63, 0.3);
+      background: rgba(168, 76, 63, 0.09);
+    }
+
+    .progress-step.reject.active::before,
+    .progress-step.reject.done::before {
+      background: var(--red);
+    }
+
+    .progress-step.evidence.active,
+    .progress-step.evidence.done,
+    .progress-step.draft.active,
+    .progress-step.draft.done {
+      color: var(--green);
+      border-color: rgba(63, 122, 87, 0.3);
+      background: rgba(63, 122, 87, 0.09);
+    }
+
+    .progress-step.evidence.active::before,
+    .progress-step.evidence.done::before,
+    .progress-step.draft.active::before,
+    .progress-step.draft.done::before {
+      background: var(--green);
+    }
+
     .status-card {
       display: grid;
       gap: 8px;
@@ -1015,13 +1115,15 @@
       border: 1px solid rgba(29, 37, 34, 0.12);
       border-radius: 18px;
       background: rgba(255, 255, 255, 0.54);
-      opacity: 0.3;
+      opacity: 0;
+      visibility: hidden;
       transform: translateX(10px);
       transition: opacity 420ms ease, transform 420ms ease, background 420ms ease, border-color 420ms ease;
     }
 
     .status-card.visible {
       opacity: 1;
+      visibility: visible;
       transform: translateX(0);
     }
 
@@ -1045,22 +1147,6 @@
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
-    }
-
-    .demo-progress {
-      height: 7px;
-      border-radius: 999px;
-      overflow: hidden;
-      background: rgba(31, 79, 104, 0.12);
-    }
-
-    .demo-progress span {
-      display: block;
-      width: 0%;
-      height: 100%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, var(--signal), var(--green));
-      transition: width 500ms ease;
     }
 
     .reply {
@@ -1726,8 +1812,19 @@
             <p>Use this short sequence for live presentation or video capture. The full static transcript remains below.</p>
           </div>
           <div class="demo-actions">
-            <button class="demo-button" type="button" id="playShowcaseDemo">Play demo</button>
-            <button class="demo-button secondary" type="button" id="resetShowcaseDemo">Reset demo</button>
+            <button class="demo-button" type="button" id="playShowcaseDemo" aria-label="Play demo" title="Play demo">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path class="play-icon" d="M8 5v14l11-7z"></path>
+              </svg>
+            </button>
+            <button class="demo-button secondary" type="button" id="resetShowcaseDemo" aria-label="Reset demo" title="Reset demo">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7v5h5"></path>
+                <path d="M20 12a8 8 0 0 0-14.7-4.4L4 12"></path>
+                <path d="M20 17v-5h-5"></path>
+                <path d="M4 12a8 8 0 0 0 14.7 4.4L20 12"></path>
+              </svg>
+            </button>
           </div>
         </div>
         <div class="demo-stage">
@@ -1754,7 +1851,13 @@
             </div>
           </div>
           <aside class="demo-status" aria-label="Guardrail status timeline">
-            <div class="demo-progress"><span id="showcaseDemoProgress"></span></div>
+            <div class="demo-progress-track" aria-label="Showcase progress steps">
+              <div class="progress-step" data-progress-step="issue"><b>Issue</b></div>
+              <div class="progress-step" data-progress-step="bad-draft"><b>Draft</b></div>
+              <div class="progress-step reject" data-progress-step="reject"><b>Reject</b></div>
+              <div class="progress-step evidence" data-progress-step="evidence"><b>Evidence</b></div>
+              <div class="progress-step draft" data-progress-step="draft"><b>Approve</b></div>
+            </div>
             <div class="status-card reject" data-showcase-step="reject">
               <b>Rejected by AI Guardrail</b>
               <span>Missing proof and missing next step. Root-cause claim is blocked before final approval.</span>
@@ -1901,13 +2004,12 @@
     const showcaseDemo = document.getElementById("showcaseDemo");
     const playShowcaseDemo = document.getElementById("playShowcaseDemo");
     const resetShowcaseDemo = document.getElementById("resetShowcaseDemo");
-    const showcaseDemoProgress = document.getElementById("showcaseDemoProgress");
     const showcaseTimeline = [
-      { step: "issue", delay: 180, progress: 18 },
-      { step: "bad-draft", delay: 1550, progress: 36 },
-      { step: "reject", delay: 3050, progress: 56 },
-      { step: "evidence", delay: 4850, progress: 76 },
-      { step: "draft", delay: 6750, progress: 100 },
+      { step: "issue", delay: 180 },
+      { step: "bad-draft", delay: 1550 },
+      { step: "reject", delay: 3050 },
+      { step: "evidence", delay: 4850 },
+      { step: "draft", delay: 6750 },
     ];
     let showcaseTimers = [];
 
@@ -1916,11 +2018,18 @@
       showcaseTimers = [];
     }
 
-    function setShowcaseStep(step, progress) {
+    function setShowcaseStep(step) {
       showcaseDemo
         ?.querySelectorAll(`[data-showcase-step="${step}"]`)
         .forEach((item) => item.classList.add("visible"));
-      if (showcaseDemoProgress) showcaseDemoProgress.style.width = `${progress}%`;
+      const activeIndex = showcaseTimeline.findIndex((item) => item.step === step);
+      showcaseDemo
+        ?.querySelectorAll("[data-progress-step]")
+        .forEach((item) => {
+          const itemIndex = showcaseTimeline.findIndex((timelineItem) => timelineItem.step === item.dataset.progressStep);
+          item.classList.toggle("active", itemIndex === activeIndex);
+          item.classList.toggle("done", itemIndex >= 0 && itemIndex < activeIndex);
+        });
     }
 
     function resetShowcase() {
@@ -1928,19 +2037,16 @@
       showcaseDemo
         ?.querySelectorAll("[data-showcase-step]")
         .forEach((item) => item.classList.remove("visible"));
-      if (showcaseDemoProgress) showcaseDemoProgress.style.width = "0%";
-      if (playShowcaseDemo) playShowcaseDemo.textContent = "Play demo";
+      showcaseDemo
+        ?.querySelectorAll("[data-progress-step]")
+        .forEach((item) => item.classList.remove("active", "done"));
     }
 
     function playShowcase() {
       resetShowcase();
-      if (playShowcaseDemo) playShowcaseDemo.textContent = "Playing...";
-      showcaseTimeline.forEach(({ step, delay, progress }, index) => {
+      showcaseTimeline.forEach(({ step, delay }, index) => {
         const timer = window.setTimeout(() => {
-          setShowcaseStep(step, progress);
-          if (index === showcaseTimeline.length - 1 && playShowcaseDemo) {
-            playShowcaseDemo.textContent = "Replay demo";
-          }
+          setShowcaseStep(step);
         }, delay);
         showcaseTimers.push(timer);
       });
@@ -1950,8 +2056,7 @@
     resetShowcaseDemo?.addEventListener("click", resetShowcase);
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      showcaseTimeline.forEach(({ step, progress }) => setShowcaseStep(step, progress));
-      if (playShowcaseDemo) playShowcaseDemo.textContent = "Replay demo";
+      showcaseTimeline.forEach(({ step }) => setShowcaseStep(step));
     }
   </script>
 </body>
