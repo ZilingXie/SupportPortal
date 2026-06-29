@@ -10,6 +10,10 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 
 ROADMAP_PATH = Path("docs/roadmap.html")
 PHASE1_PATH = Path("docs/roadmap/phase1.html")
+PHASE1_VIDEO_SCRIPT_PATH = Path("docs/roadmap/video_script.md")
+PHASE1_STORYBOARD_PATH = Path("docs/roadmap/storyboard.md")
+PHASE1_VOICEOVER_PATH = Path("docs/roadmap/voiceover.txt")
+PHASE1_SHOTS_DIR = Path("docs/roadmap/shots")
 QBR_COMPAT_PATH = Path("docs/qbr_plan.html")
 
 
@@ -58,6 +62,11 @@ class RoadmapContractTests(unittest.TestCase):
             "辅助调查 + 人 approve",
             "自主调查 + governed Agent-to-Agent",
             'href="../roadmap.html"',
+            "3 分钟讲解视频素材包",
+            'href="../video_script.md"',
+            'href="../storyboard.md"',
+            'href="../voiceover.txt"',
+            'href="../shots/"',
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -81,6 +90,70 @@ class RoadmapContractTests(unittest.TestCase):
         for term in removed_terms:
             with self.subTest(removed_term=term):
                 self.assertNotIn(term, phase1_source)
+
+    def test_phase1_video_package_contains_script_storyboard_voiceover_and_shots(self) -> None:
+        script = PHASE1_VIDEO_SCRIPT_PATH.read_text(encoding="utf-8")
+        storyboard = PHASE1_STORYBOARD_PATH.read_text(encoding="utf-8")
+        voiceover = PHASE1_VOICEOVER_PATH.read_text(encoding="utf-8")
+
+        for term in [
+            "# SupportPortal Phase 1 3 分钟讲解视频逐秒旁白脚本",
+            "00:00-00:15",
+            "00:35-01:05",
+            "01:05-01:25",
+            "01:25-01:55",
+            "02:20-02:45",
+            "02:45-03:00",
+            "Zendesk 的 customization 空间不够",
+            "/assignment/admin",
+            "AgentRelay",
+            "没有公网 IP",
+            "AI Guardrail",
+            "一次回复解决问题率",
+        ]:
+            with self.subTest(script_term=term):
+                self.assertIn(term, script)
+
+        for term in [
+            "# SupportPortal Phase 1 3 分钟讲解视频 Storyboard",
+            "shots/01-why-now.png",
+            "shots/02-big-picture.png",
+            "shots/03-assignment-admin.png",
+            "shots/04-agentrelay-network.png",
+            "shots/05-rnd-agent-example.png",
+            "shots/06-guardrail-showcase.png",
+            "shots/07-dashboard-roadmap.png",
+            "docs/roadmap/assets/rnd-agent-query.png",
+            "docs/roadmap/assets/rnd-agent-result.png",
+        ]:
+            with self.subTest(storyboard_term=term):
+                self.assertIn(term, storyboard)
+
+        for term in [
+            "Zendesk license 每年七万三千美金",
+            "客户入口先不动",
+            "Assignment 是 Phase 1 的调度控制面",
+            "Agent 和 Agent 不是互相发散聊天",
+            "很多个人 Agent 没有公网 IP",
+            "AI Guardrail 拒绝不完整回复",
+            "AI guardrail pass rate",
+        ]:
+            with self.subTest(voiceover_term=term):
+                self.assertIn(term, voiceover)
+
+        for shot_name in [
+            "01-why-now.png",
+            "02-big-picture.png",
+            "03-assignment-admin.png",
+            "04-agentrelay-network.png",
+            "05-rnd-agent-example.png",
+            "06-guardrail-showcase.png",
+            "07-dashboard-roadmap.png",
+        ]:
+            shot = PHASE1_SHOTS_DIR / shot_name
+            with self.subTest(shot=str(shot)):
+                self.assertTrue(shot.exists())
+                self.assertGreater(shot.stat().st_size, 1024)
 
     def test_roadmap_static_routes_serve_public_pages(self) -> None:
         from fastapi.testclient import TestClient

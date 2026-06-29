@@ -1004,6 +1004,71 @@
       line-height: 1.55;
     }
 
+    .video-kit {
+      display: grid;
+      gap: 18px;
+      padding: clamp(20px, 3vw, 28px);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: rgba(251, 247, 236, 0.76);
+      box-shadow: 0 14px 42px rgba(31, 45, 38, 0.08);
+    }
+
+    .video-kit-links {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .video-kit-link {
+      min-width: 0;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      min-height: 124px;
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.36);
+      color: #33423e;
+      text-decoration: none;
+    }
+
+    .video-kit-link b {
+      color: var(--blueprint);
+      font-size: 14px;
+    }
+
+    .video-kit-link span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .shot-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .shot-strip li {
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 10px;
+      border: 1px solid rgba(31, 79, 104, 0.22);
+      border-radius: 999px;
+      color: #314541;
+      background: rgba(31, 79, 104, 0.07);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
     .final {
       min-height: 58svh;
       align-content: center;
@@ -1067,7 +1132,8 @@
       .agentrelay-grid,
       .showcase,
       .dashboard,
-      .phases {
+      .phases,
+      .video-kit-links {
         grid-template-columns: 1fr;
       }
 
@@ -1224,6 +1290,43 @@
           </article>
         </div>
       </details>
+    </section>
+
+    <section class="section script-section reveal" aria-labelledby="video-kit">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>00B · Video kit</div>
+        <h2 id="video-kit">3 分钟讲解视频素材包</h2>
+        <p class="section-lead">这组文件用于从当前演示页制作配音视频：逐秒旁白、分镜表、TTS 纯文本和 16:9 截图素材都已拆好。</p>
+      </div>
+      <div class="video-kit" aria-label="3 分钟讲解视频素材包">
+        <div class="video-kit-links">
+          <a class="video-kit-link" href="../video_script.md">
+            <b>video_script.md</b>
+            <span>逐秒旁白脚本，包含时间码、画面和讲解词。</span>
+          </a>
+          <a class="video-kit-link" href="../storyboard.md">
+            <b>storyboard.md</b>
+            <span>每个镜头使用哪张图、如何裁切和强调。</span>
+          </a>
+          <a class="video-kit-link" href="../voiceover.txt">
+            <b>voiceover.txt</b>
+            <span>给 TTS 工具使用的纯旁白文本。</span>
+          </a>
+          <a class="video-kit-link" href="../shots/">
+            <b>shots/</b>
+            <span>自动截图素材目录，按 16:9 视频画面准备。</span>
+          </a>
+        </div>
+        <ul class="shot-strip" aria-label="自动截图素材">
+          <li>01-why-now.png</li>
+          <li>02-big-picture.png</li>
+          <li>03-assignment-admin.png</li>
+          <li>04-agentrelay-network.png</li>
+          <li>05-rnd-agent-example.png</li>
+          <li>06-guardrail-showcase.png</li>
+          <li>07-dashboard-roadmap.png</li>
+        </ul>
+      </div>
     </section>
 
     <section class="section reveal" aria-labelledby="why">

@@ -1,0 +1,15 @@
+今天用三分钟介绍 SupportPortal Phase 1。它不是简单的 Zendesk 平替，也不是再做一个 ticket UI。Phase 1 要证明的是：我们能把 support 的质量检查、调查协作和管理指标放进系统流程里。
+
+现在做这件事有两个原因。第一，Zendesk license 每年七万三千美金，但给我们的仍然是通用 SaaS 能力。第二，更关键的是，Zendesk 的 customization 空间不够，不管是 feature 扩展、内部流程定制，还是数据挖掘和质量分析，都很难满足 support 团队自己的节奏。
+
+Phase 1 的迁移策略很保守：客户入口先不动，CX 体验也不变。客户仍然从 Zendesk 进入，内部将工单转发到 SupportPortal。我们先把 routing、assignment、AI guardrail、final approve、dashboard 和真实 case replay 跑起来，用 shadow mode 和小流量门禁证明系统可控之后，再考虑扩大切流。
+
+Assignment 是 Phase 1 的调度控制面。系统不只是生成回复，还要决定 case 应该给谁处理、是否进入 human review、是否有 SLA risk，以及 routing fallback 怎么兜底。/assignment/admin 是 manager 管排班、规则和 manual override 的入口。
+
+AgentRelay 解决的是 agent 协作问题。Agent 和 Agent 不是互相发散聊天，而是通过 AgentRelay 交换任务、artifact 和 done criteria。为什么不用纯 A2A 协议？因为很多个人 Agent 没有公网 IP，所以需要 relay 来负责转发、投递、审计和失败兜底。
+
+为什么 support 需要 agent 之间通信？因为 Support Agent 解决不了的问题，不应该硬猜，而是要找 R&D Agent 或 Data Agent 拿证据。这里的例子是 Agent 接收 RTC 用量问题，运行 discovery query，然后返回用量结论、峰值分析和 evidence artifact。这个形态就是后续 SupportPortal 要接入的调查证据包。
+
+Showcase 的重点是 AI Guardrail 拒绝不完整回复。比如工程师写 “We checked the account. Please try again later.” 这个问题不是语气，而是没有 conclusion、proof、next step，也没有 customer-safe boundary。Guardrail 会直接拒绝，并要求补充明确结论、证据摘要和客户下一步。
+
+管理指标也要升级。以前主要看 first response time、second response time 和 SLA。现在还要看 AI guardrail pass rate、与 Agent 交互次数、一次回复解决问题率。Phase 1 先证明系统可控；Phase 2 接真实 evidence tools；Phase 3 才扩大 governed autonomous investigation。
