@@ -8,12 +8,12 @@ Assignment is the Phase 1 dispatch control plane. The system is not only generat
 
 AgentRelay solves agent collaboration. Agents are not loosely chatting with each other. They exchange tasks, artifacts, and done criteria through AgentRelay. Why not pure A2A protocol? Because many personal agents do not have public IP addresses, so the relay handles forwarding, delivery, auditability, and fallback.
 
-Support needs agent-to-agent communication because the Support Agent should not guess when it cannot solve a question. In this example, the customer wants to stop a running page recording but has no SID. The R&D Agent reverse-checks recording events, provides a verification query, and returns the likely running SID as evidence.
+Support needs agent-to-agent communication because the Support Agent should not guess when it cannot solve a question. In this example, screen sharing stops around 01:28:44. The R&D Agent checks Argus events, finds a successful Client dot unpublish call, and concludes this was intentional application behavior, not an abnormal disconnection.
 
 Now look at the engineer-side guardrail flow. The engineer writes a short draft: the camera is broken. The issue is not tone. It directly claims a root cause without traceable proof and without a safe customer next step.
 
 AI Guardrail rejects an incomplete reply and tells the engineer that a root-cause claim needs traceable evidence, such as logs, reproduction result, device configuration difference, or an internal document reference.
 
-After the engineer adds Web SDK log evidence, such as no input frame received, and gives a safe next step, such as asking the customer to retest with a different device, the system can produce a customer-safe draft and move it toward approval.
+After the engineer adds Web SDK log evidence, such as no input frame received, and gives a safe next step, such as asking the customer to retest with a different device, the system prepares a conservative customer draft and moves it toward approval.
 
 Management metrics also need to evolve. We still track first response time, second response time, and SLA, but we also need AI guardrail pass rate, agent interaction count, first-contact resolution, reject reasons, and route accuracy. Phase 1 proves control. Phase 2 connects real evidence tools. Phase 3 expands governed autonomous investigation.
