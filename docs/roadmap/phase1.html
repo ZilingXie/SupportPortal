@@ -848,6 +848,221 @@
       align-items: stretch;
     }
 
+    .showcase-demo {
+      display: grid;
+      gap: 16px;
+      padding: clamp(20px, 3vw, 28px);
+      border: 1px solid rgba(31, 79, 104, 0.2);
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.44);
+      box-shadow: 0 20px 56px rgba(31, 45, 38, 0.1);
+    }
+
+    .demo-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .demo-toolbar-copy {
+      display: grid;
+      gap: 4px;
+    }
+
+    .demo-toolbar-copy h3 {
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(20px, 2.4vw, 30px);
+      line-height: 1.05;
+    }
+
+    .demo-toolbar-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .demo-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .demo-button {
+      min-height: 38px;
+      padding: 0 14px;
+      border: 1px solid rgba(31, 79, 104, 0.28);
+      border-radius: 999px;
+      background: rgba(31, 79, 104, 0.1);
+      color: var(--blueprint);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 850;
+      cursor: pointer;
+      transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+    }
+
+    .demo-button:hover {
+      transform: translateY(-1px);
+      background: rgba(31, 79, 104, 0.15);
+      border-color: rgba(31, 79, 104, 0.36);
+    }
+
+    .demo-button.secondary {
+      background: rgba(255, 255, 255, 0.48);
+      color: #4f5f5a;
+    }
+
+    .demo-stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+      gap: 16px;
+      align-items: stretch;
+      min-height: 520px;
+    }
+
+    .demo-chat,
+    .demo-status {
+      border: 1px solid rgba(29, 37, 34, 0.14);
+      border-radius: 24px;
+      background: rgba(251, 247, 236, 0.72);
+      overflow: hidden;
+    }
+
+    .demo-chat {
+      display: grid;
+      grid-auto-rows: max-content;
+      align-content: start;
+      align-items: start;
+      gap: 12px;
+      padding: 18px;
+    }
+
+    .demo-bubble {
+      max-width: 86%;
+      display: grid;
+      gap: 7px;
+      padding: 14px 15px;
+      border: 1px solid rgba(31, 79, 104, 0.14);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.66);
+      color: #2f3d39;
+      align-self: start;
+      opacity: 0.18;
+      transform: translateY(12px);
+      filter: saturate(0.75);
+      transition: opacity 420ms ease, transform 420ms ease, filter 420ms ease, box-shadow 420ms ease;
+    }
+
+    .demo-bubble.visible {
+      opacity: 1;
+      transform: translateY(0);
+      filter: saturate(1);
+      box-shadow: 0 12px 30px rgba(31, 45, 38, 0.08);
+    }
+
+    .demo-bubble.agent {
+      justify-self: start;
+      border-top-left-radius: 8px;
+    }
+
+    .demo-bubble.engineer {
+      justify-self: end;
+      border-top-right-radius: 8px;
+      background: rgba(31, 79, 104, 0.1);
+      border-color: rgba(31, 79, 104, 0.22);
+    }
+
+    .demo-bubble.demo-final {
+      max-width: 94%;
+      background: rgba(63, 122, 87, 0.1);
+      border-color: rgba(63, 122, 87, 0.24);
+    }
+
+    .demo-bubble b {
+      color: var(--blueprint);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .demo-bubble span,
+    .demo-bubble p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .demo-bubble code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    .demo-status {
+      display: grid;
+      align-content: start;
+      gap: 14px;
+      padding: 18px;
+    }
+
+    .status-card {
+      display: grid;
+      gap: 8px;
+      padding: 15px;
+      border: 1px solid rgba(29, 37, 34, 0.12);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.54);
+      opacity: 0.3;
+      transform: translateX(10px);
+      transition: opacity 420ms ease, transform 420ms ease, background 420ms ease, border-color 420ms ease;
+    }
+
+    .status-card.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .status-card.reject.visible {
+      background: rgba(168, 76, 63, 0.1);
+      border-color: rgba(168, 76, 63, 0.24);
+    }
+
+    .status-card.evidence.visible,
+    .status-card.draft.visible {
+      background: rgba(63, 122, 87, 0.1);
+      border-color: rgba(63, 122, 87, 0.24);
+    }
+
+    .status-card b {
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .status-card span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .demo-progress {
+      height: 7px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(31, 79, 104, 0.12);
+    }
+
+    .demo-progress span {
+      display: block;
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--signal), var(--green));
+      transition: width 500ms ease;
+    }
+
     .reply {
       display: grid;
       gap: 14px;
@@ -1102,6 +1317,7 @@
       .agent-workflow,
       .guardrail-dimensions,
       .agentrelay-grid,
+      .demo-stage,
       .showcase,
       .dashboard,
       .phases,
@@ -1258,7 +1474,7 @@
       <div class="section-header">
         <div class="eyebrow"><span class="pulse"></span>00B · Video kit</div>
         <h2 id="video-kit">3-minute video kit</h2>
-        <p class="section-lead">These files are prepared for a narrated video: time-coded script, storyboard, TTS voiceover text, and 16:9 screenshot assets.</p>
+        <p class="section-lead">These files are prepared for a narrated video: time-coded script, storyboard, TTS voiceover text, screenshot assets, and a playable Showcase animation export.</p>
       </div>
       <div class="video-kit" aria-label="3-minute video kit">
         <div class="video-kit-links">
@@ -1274,9 +1490,13 @@
             <b>voiceover-jianying.txt</b>
             <span>Plain narration text for Jianying or another TTS tool.</span>
           </a>
+          <a class="video-kit-link" href="./phase1_video/showcase-guardrail-demo.mp4">
+            <b>showcase-guardrail-demo.mp4</b>
+            <span>9-second H.264 animation export for the Guardrail Showcase.</span>
+          </a>
           <a class="video-kit-link" href="./phase1_video/">
             <b>phase1_video/</b>
-            <span>Screenshot asset folder prepared for 16:9 video production.</span>
+            <span>Screenshot and animation asset folder prepared for video production.</span>
           </a>
         </div>
         <ul class="shot-strip" aria-label="Video screenshot assets">
@@ -1498,6 +1718,58 @@
         <h2 id="showcase">Showcase: how AI Guardrail rejects an incomplete reply.</h2>
         <p class="section-lead">This case shows the core quality value of Phase 1. The system is not merely making language more polite; it blocks replies that lack conclusion, proof, next step, and customer-safe boundary before customers see them.</p>
       </div>
+      <div class="showcase-demo" id="showcaseDemo" aria-label="Playable guardrail demo">
+        <div class="demo-toolbar">
+          <div class="demo-toolbar-copy">
+            <div class="eyebrow">Playable guardrail demo</div>
+            <h3>Agent asks for proof, Engineer adds evidence, Guardrail produces a safe draft.</h3>
+            <p>Use this short sequence for live presentation or video capture. The full static transcript remains below.</p>
+          </div>
+          <div class="demo-actions">
+            <button class="demo-button" type="button" id="playShowcaseDemo">Play demo</button>
+            <button class="demo-button secondary" type="button" id="resetShowcaseDemo">Reset demo</button>
+          </div>
+        </div>
+        <div class="demo-stage">
+          <div class="demo-chat" aria-live="polite">
+            <div class="demo-bubble agent" data-showcase-step="issue">
+              <b>Support Agent</b>
+              <p>Current issue: Black screen issue reported for channel <code>zilingtest</code>, uid <code>2</code>. Action needed: add proof and a safe next step.</p>
+            </div>
+            <div class="demo-bubble engineer" data-showcase-step="bad-draft">
+              <b>Engineer</b>
+              <p>the camera is broken</p>
+            </div>
+            <div class="demo-bubble agent" data-showcase-step="reject">
+              <b>Support Agent</b>
+              <p>Rejected by AI Guardrail. This note claims a root cause without traceable proof or a customer-safe next step.</p>
+            </div>
+            <div class="demo-bubble engineer" data-showcase-step="evidence">
+              <b>Engineer</b>
+              <p>i checked the websdk logs:<br><code>[websdk] no input frame received. Please try a different device</code></p>
+            </div>
+            <div class="demo-bubble agent demo-final" data-showcase-step="draft">
+              <b>Support Agent</b>
+              <p>Ready for approval. The draft cites the Web SDK symptom, avoids an unconfirmed root cause, and asks the customer to retest with a different device.</p>
+            </div>
+          </div>
+          <aside class="demo-status" aria-label="Guardrail status timeline">
+            <div class="demo-progress"><span id="showcaseDemoProgress"></span></div>
+            <div class="status-card reject" data-showcase-step="reject">
+              <b>Rejected by AI Guardrail</b>
+              <span>Missing proof and missing next step. Root-cause claim is blocked before final approval.</span>
+            </div>
+            <div class="status-card evidence" data-showcase-step="evidence">
+              <b>Evidence accepted</b>
+              <span>Web SDK log gives traceable symptom-level proof: no input frame received.</span>
+            </div>
+            <div class="status-card draft" data-showcase-step="draft">
+              <b>Ready for approval</b>
+              <span>Customer reply is conservative, actionable, and safe to review.</span>
+            </div>
+          </aside>
+        </div>
+      </div>
       <div class="showcase">
         <article class="reply" aria-label="Engineer-side guardrail dialogue">
           <div class="eyebrow">Guardrail dialogue</div>
@@ -1625,6 +1897,62 @@
     revealItems.forEach((item) => observer.observe(item));
     updateProgress();
     window.addEventListener("scroll", updateProgress, { passive: true });
+
+    const showcaseDemo = document.getElementById("showcaseDemo");
+    const playShowcaseDemo = document.getElementById("playShowcaseDemo");
+    const resetShowcaseDemo = document.getElementById("resetShowcaseDemo");
+    const showcaseDemoProgress = document.getElementById("showcaseDemoProgress");
+    const showcaseTimeline = [
+      { step: "issue", delay: 180, progress: 18 },
+      { step: "bad-draft", delay: 1550, progress: 36 },
+      { step: "reject", delay: 3050, progress: 56 },
+      { step: "evidence", delay: 4850, progress: 76 },
+      { step: "draft", delay: 6750, progress: 100 },
+    ];
+    let showcaseTimers = [];
+
+    function clearShowcaseTimers() {
+      showcaseTimers.forEach((timer) => window.clearTimeout(timer));
+      showcaseTimers = [];
+    }
+
+    function setShowcaseStep(step, progress) {
+      showcaseDemo
+        ?.querySelectorAll(`[data-showcase-step="${step}"]`)
+        .forEach((item) => item.classList.add("visible"));
+      if (showcaseDemoProgress) showcaseDemoProgress.style.width = `${progress}%`;
+    }
+
+    function resetShowcase() {
+      clearShowcaseTimers();
+      showcaseDemo
+        ?.querySelectorAll("[data-showcase-step]")
+        .forEach((item) => item.classList.remove("visible"));
+      if (showcaseDemoProgress) showcaseDemoProgress.style.width = "0%";
+      if (playShowcaseDemo) playShowcaseDemo.textContent = "Play demo";
+    }
+
+    function playShowcase() {
+      resetShowcase();
+      if (playShowcaseDemo) playShowcaseDemo.textContent = "Playing...";
+      showcaseTimeline.forEach(({ step, delay, progress }, index) => {
+        const timer = window.setTimeout(() => {
+          setShowcaseStep(step, progress);
+          if (index === showcaseTimeline.length - 1 && playShowcaseDemo) {
+            playShowcaseDemo.textContent = "Replay demo";
+          }
+        }, delay);
+        showcaseTimers.push(timer);
+      });
+    }
+
+    playShowcaseDemo?.addEventListener("click", playShowcase);
+    resetShowcaseDemo?.addEventListener("click", resetShowcase);
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      showcaseTimeline.forEach(({ step, progress }) => setShowcaseStep(step, progress));
+      if (playShowcaseDemo) playShowcaseDemo.textContent = "Replay demo";
+    }
   </script>
 </body>
 </html>

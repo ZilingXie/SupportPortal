@@ -41,6 +41,14 @@ class RoadmapContractTests(unittest.TestCase):
             "requester.closed",
             "Showcase: how AI Guardrail rejects an incomplete reply",
             "customer-safe boundary",
+            "Playable guardrail demo",
+            "Play demo",
+            "Reset demo",
+            'data-showcase-step="reject"',
+            'data-showcase-step="evidence"',
+            'data-showcase-step="draft"',
+            "Rejected by AI Guardrail",
+            "Ready for approval",
             "Black screen issue reported for channel zilingtest, uid 2",
             "The note &quot;the camera is broken&quot; is not yet usable for a customer reply",
             "[websdk] no input frame received",
@@ -78,6 +86,7 @@ class RoadmapContractTests(unittest.TestCase):
             'href="./phase1_video/video_script.md"',
             'href="./phase1_video/storyboard.md"',
             'href="./phase1_video/voiceover-jianying.txt"',
+            'href="./phase1_video/showcase-guardrail-demo.mp4"',
             'href="./phase1_video/"',
         ]
         for term in required_terms:
@@ -186,6 +195,10 @@ class RoadmapContractTests(unittest.TestCase):
             with self.subTest(shot=str(shot)):
                 self.assertTrue(shot.exists())
                 self.assertGreater(shot.stat().st_size, 1024)
+
+        animation = PHASE1_VIDEO_DIR / "showcase-guardrail-demo.mp4"
+        self.assertTrue(animation.exists())
+        self.assertGreater(animation.stat().st_size, 100 * 1024)
 
     def test_roadmap_static_routes_serve_public_pages(self) -> None:
         from fastapi.testclient import TestClient
