@@ -487,6 +487,40 @@ def customer_follow_up_adds_requested_investigation_detail(
     return False
 
 
+def customer_follow_up_marks_requested_investigation_detail_unavailable(
+    *,
+    message: str,
+    product: str | None,
+    current_state: dict[str, Any] | None,
+    message_created_at: str | None = None,
+) -> bool:
+    if str((current_state or {}).get("issue_mode") or "").strip().lower() != "investigation":
+        return False
+    missing_information = _normalize_missing_information((current_state or {}).get("missing_information"))
+    if not missing_information:
+        return False
+    extracted, _timestamp_parts = _extract_from_message(
+        message,
+        product=product,
+        reference_year=_resolve_reference_year(
+            message_created_at=message_created_at,
+            current_state=current_state,
+        ),
+    )
+    normalized_message = _clean_text(message).lower()
+    multiple_missing_fields = len(missing_information) > 1
+    for field_name in missing_information:
+        if _clean_text(extracted.get(field_name)):
+            continue
+        if _requested_investigation_field_is_unavailable(
+            normalized_message,
+            field_name=field_name,
+            multiple_missing_fields=multiple_missing_fields,
+        ):
+            return True
+    return False
+
+
 def _requested_investigation_field_is_unavailable(
     normalized_message: str,
     *,
