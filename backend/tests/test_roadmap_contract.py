@@ -63,10 +63,10 @@ class RoadmapContractTests(unittest.TestCase):
             "自主调查 + governed Agent-to-Agent",
             'href="../roadmap.html"',
             "3 分钟讲解视频素材包",
-            'href="../video_script.md"',
-            'href="../storyboard.md"',
-            'href="../voiceover.txt"',
-            'href="../shots/"',
+            'href="./video_script.md"',
+            'href="./storyboard.md"',
+            'href="./voiceover.txt"',
+            'href="./shots/"',
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -168,13 +168,20 @@ class RoadmapContractTests(unittest.TestCase):
             checks = [
                 ("/roadmap.html", "整体落地优化计划"),
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
+                ("/roadmap/video_script.md", "SupportPortal Phase 1 3 分钟讲解视频逐秒旁白脚本"),
+                ("/roadmap/storyboard.md", "SupportPortal Phase 1 3 分钟讲解视频 Storyboard"),
+                ("/roadmap/voiceover.txt", "Zendesk license 每年七万三千美金"),
+                ("/roadmap/shots/01-why-now.png", "PNG"),
             ]
             for path, marker in checks:
                 with self.subTest(path=path):
                     response = client.get(path)
                     self.assertEqual(response.status_code, 200)
-                    self.assertIn("text/html", response.headers["content-type"])
-                    self.assertIn(marker, response.text)
+                    if path.endswith(".png"):
+                        self.assertIn("image/png", response.headers["content-type"])
+                        self.assertTrue(response.content.startswith(b"\x89PNG"))
+                    else:
+                        self.assertIn(marker, response.text)
         finally:
             client.close()
 
