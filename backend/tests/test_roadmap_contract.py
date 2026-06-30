@@ -30,8 +30,11 @@ class RoadmapContractTests(unittest.TestCase):
             "From Zendesk replacement to an AI-native Support System",
             "How do we ensure support reply quality before the customer sees the answer?",
             "AI guardrail pass rate",
-            "Expand full talk track",
+            "00 · Script + video kit",
+            "Expand script and video kit",
+            "Collapse script and video kit",
             "Collapsed by default",
+            "Full advertising-style video script, about 3 minutes",
             "customer UI stays the same",
             "Internally, Zendesk cases are forwarded into SupportPortal",
             "SupportPortal Phase 1 architecture diagram",
@@ -103,7 +106,8 @@ class RoadmapContractTests(unittest.TestCase):
             "Each agent can represent a person or a team",
             "cross-environment agent collaboration",
             "minimal configuration",
-            "font-size: clamp(30px, 4.8vw, 60px);",
+            "font-size: clamp(15px, 2.4vw, 30px);",
+            "font-size: clamp(14px, 2.1vw, 27px);",
             "SupportPortal Phase 1 is a POC for an AI-native support operating system",
             "connects Zendesk forwarding, routing, assignment, AI guardrail, final approval, dashboard, case replay, and AgentRelay communication foundation",
             "Self-check + behavior policy + A2A foundation",
@@ -137,6 +141,7 @@ class RoadmapContractTests(unittest.TestCase):
         self.assertEqual(ordered_positions, sorted(ordered_positions))
 
         removed_terms = [
+            "00B · Video kit",
             "AgentRelay 先组织拿证据，AI 再拒绝不完整回复",
             "Image needed · AgentRelay task trace",
             "Image needed · Support case demo",
