@@ -1860,7 +1860,7 @@
           <div class="demo-chat" aria-live="polite">
             <div class="demo-bubble customer" data-bad-case-step="customer-issue">
               <b>Customer</b>
-              <p>I encountered black screen during my stream, my audience cannot see my face. What should I do!</p>
+              <p>I encountered black screen during my stream, my audience cannot seem my face. What should I do!</p>
             </div>
             <div class="demo-bubble engineer" data-bad-case-step="bad-answer">
               <b>Engineer</b>
@@ -1870,18 +1870,36 @@
               <b>Customer</b>
               <p>How do you know? It was working 5 minutes ago! And even if the camera is broken, what should I do now? My audiences are waiting!</p>
             </div>
+            <div class="demo-bubble engineer" data-bad-case-step="delayed-investigation">
+              <b>Engineer</b>
+              <p>We will further investigate the issue.</p>
+            </div>
+            <div class="demo-bubble customer" data-bad-case-step="urgent-workaround">
+              <b>Customer</b>
+              <p>Please give me a workaround as soon as possible as the stream is ongoing!</p>
+            </div>
           </div>
           <aside class="demo-status" aria-label="Bad case quality risk timeline">
             <div class="demo-progress-track" aria-label="Bad case progress steps">
               <div class="progress-step" data-bad-case-progress="customer-issue"><b>Issue</b></div>
               <div class="progress-step risk" data-bad-case-progress="bad-answer"><b>Guess</b></div>
               <div class="progress-step risk" data-bad-case-progress="angry-customer"><b>Escalate</b></div>
+              <div class="progress-step risk" data-bad-case-progress="delayed-investigation"><b>Delay</b></div>
+              <div class="progress-step risk" data-bad-case-progress="urgent-workaround"><b>Urgent</b></div>
             </div>
             <div class="status-card risk" data-bad-case-step="bad-answer">
               <b>Quality risk</b>
               <span>The reply is fast, but it guesses root cause without proof and gives no actionable next step.</span>
             </div>
             <div class="status-card risk" data-bad-case-step="angry-customer">
+              <b>Customer trust breaks</b>
+              <span>The customer challenges both the unproven claim and the missing next action while the stream is still live.</span>
+            </div>
+            <div class="status-card risk" data-bad-case-step="delayed-investigation">
+              <b>No operational help</b>
+              <span>"We will investigate" is directionally true, but it still gives no immediate workaround for an ongoing incident.</span>
+            </div>
+            <div class="status-card risk" data-bad-case-step="urgent-workaround">
               <b>After-the-fact visibility</b>
               <span>If reply quality is not checked before send, we only discover the damage through after-the-fact review, customer escalation, or complaint.</span>
             </div>
@@ -2151,6 +2169,8 @@
         { step: "customer-issue", delay: 400 },
         { step: "bad-answer", delay: 2100 },
         { step: "angry-customer", delay: 3800 },
+        { step: "delayed-investigation", delay: 5500 },
+        { step: "urgent-workaround", delay: 7200 },
       ],
     });
 
