@@ -1521,12 +1521,13 @@
     <header class="hero reveal">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal Phase 1</div>
       <h1>From Zendesk replacement to an AI-native Support System</h1>
-      <p class="hero-copy">What if a support reply is fast, but wrong? SupportPortal Phase 1 is a POC for an AI-native support operating system: keep the customer UI stays the same, keep Zendesk as the entry point, and move reply quality, assignment, automation, investigation, and management metrics into one controllable workflow. It connects Zendesk forwarding, routing, assignment, AI guardrail, final approval, dashboard, case replay, and AgentRelay communication foundation.</p>
+      <p class="hero-copy">How do we ensure support reply quality before the customer sees the answer? SupportPortal Phase 1 is a POC for an AI-native support operating system: keep the customer UI stays the same, keep Zendesk as the entry point, and move reply quality, assignment, automation, investigation, and management metrics into one controllable workflow. It connects Zendesk forwarding, routing, assignment, AI guardrail, final approval, dashboard, case replay, and AgentRelay communication foundation.</p>
       <ul class="talk-track" aria-label="3-minute demo flow">
         <li>0:00 Hook and bad case</li>
         <li>0:28 Traditional support trap</li>
         <li>1:05 AI-native ticket system</li>
-        <li>1:25 Assignment and Guardrail</li>
+        <li>1:25 Assignment workspace</li>
+        <li>1:45 Guardrail quality control</li>
         <li>2:05 Dashboard, Account, R&amp;D, AgentRelay</li>
       </ul>
     </header>
@@ -1544,7 +1545,7 @@
           <article class="script-block">
             <time>0:00-0:10</time>
             <h3>Hook</h3>
-            <p>What if a support reply is fast, but wrong? What if the customer only tells us the damage after trust is already broken?</p>
+            <p>How do we ensure support reply quality before the customer sees the answer? What if the customer only tells us the damage after trust is already broken?</p>
           </article>
           <article class="script-block">
             <time>0:10-0:28</time>
@@ -1579,7 +1580,7 @@
           <article class="script-block">
             <time>2:05-3:00</time>
             <h3>Dashboard, Account, R&amp;D, AgentRelay</h3>
-            <p>Dashboard changes management from after-the-fact review to live quality control. AI account automation handles safe billing and account cases without engineer in the loop. For hard technical cases, the Support Agent asks an R&amp;D Agent for evidence. And we plan big: productize and protocolize AgentRelay for cross-environment agent collaboration with minimal configuration.</p>
+            <p>Dashboard changes management from after-the-fact review to live quality control. AI account automation handles safe billing and account cases without engineer in the loop. For hard technical cases, the Support Agent asks an R&amp;D Agent for evidence. And we plan big: productize and protocolize AgentRelay for cross-environment agent collaboration with minimal configuration. Each agent can represent a person or a team, so AgentRelay becomes the bridge between real support ownership and task-level AI collaboration.</p>
           </article>
         </div>
       </details>
@@ -1633,217 +1634,11 @@
       </div>
     </section>
 
-    <section class="section reveal" aria-labelledby="why">
+    <section class="section reveal" aria-labelledby="reply-quality">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>01 · Why now</div>
-        <h2 id="why">Traditional SaaS can no longer carry our support goals.</h2>
-        <p class="section-lead">Zendesk license renewal is about 73k USD per year, but the bigger issue is limited customization space: feature extension, internal workflow customization, data mining, and quality analytics cannot move at the pace our support team needs.</p>
-      </div>
-      <div class="proof-grid">
-        <article class="proof">
-          <strong>SLA</strong>
-          <span>Slow replies, escalation waiting time, and handoff gaps cannot be managed only through after-the-fact reports.</span>
-        </article>
-        <article class="proof">
-          <strong>73k</strong>
-          <span>The annual license buys generic SaaS capability while key workflows still need scripts, manual judgment, and temporary patches.</span>
-        </article>
-        <article class="proof">
-          <strong>Billing</strong>
-          <span>Some invoice, account fraud, and deactivate cases do not need the full HITL path, making them good candidates for controlled automation POC.</span>
-        </article>
-        <article class="proof">
-          <strong>Custom</strong>
-          <span>Zendesk leaves too little room to shape features, workflows, and data mining around our own support standards.</span>
-        </article>
-      </div>
-    </section>
-
-    <section class="section reveal" aria-labelledby="architecture">
-      <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>02 · Big picture</div>
-        <h2 id="architecture">Phase 1 keeps the customer entry point unchanged and upgrades internal handling first.</h2>
-        <p class="section-lead">Customers still enter through Zendesk. Internally, Zendesk cases are forwarded into SupportPortal for shadow mode, real case replay, and 1% traffic gates. AgentRelay provides the communication foundation for future cross-agent collaboration.</p>
-      </div>
-      <div class="architecture-map" aria-label="SupportPortal Phase 1 architecture diagram">
-        <div class="arch-layer">
-          <div class="arch-label"><b>Customer / Zendesk</b><span>Keep the customer entry point unchanged to reduce migration risk.</span></div>
-          <div class="arch-cells">
-            <span class="arch-pill">Customer message</span>
-            <span class="arch-arrow" aria-hidden="true">-></span>
-            <span class="arch-pill">Zendesk case</span>
-            <span class="arch-arrow" aria-hidden="true">-></span>
-            <span class="arch-pill">Internal forwarding</span>
-          </div>
-        </div>
-        <div class="arch-layer">
-          <div class="arch-label"><b>SupportPortal Core</b><span>The controlled operating surface for Phase 1.</span></div>
-          <div class="arch-cells">
-            <span class="arch-pill">Routing</span>
-            <span class="arch-pill">Assignment</span>
-            <span class="arch-pill">AI Guardrail</span>
-            <span class="arch-pill">Final Approve</span>
-            <span class="arch-pill">Dashboard</span>
-            <span class="arch-pill">Case Replay</span>
-          </div>
-        </div>
-        <div class="arch-layer">
-          <div class="arch-label"><b>Future Agent Network</b><span>AgentRelay as the foundation for future cross-agent collaboration.</span></div>
-          <div class="arch-cells">
-            <span class="arch-pill">Support Agent</span>
-            <span class="arch-arrow" aria-hidden="true">-></span>
-            <span class="arch-pill">AgentRelay</span>
-            <span class="arch-arrow" aria-hidden="true">-></span>
-            <span class="arch-pill">Billing / Log / R&amp;D / Data Agent</span>
-            <span class="arch-arrow" aria-hidden="true">-></span>
-            <span class="arch-pill">Evidence Packet</span>
-          </div>
-        </div>
-      </div>
-      <div class="assignment-panel" aria-label="Assignment capability and admin console">
-        <article class="assignment-copy">
-          <div class="eyebrow">Assignment</div>
-          <h3>Assignment is the Phase 1 dispatch control plane.</h3>
-          <p>The system is not only generating replies. It must decide who should handle the case, whether human review is required, whether SLA risk exists, and whether billing, technical, or handoff routing is correct.</p>
-          <a class="admin-link" href="/assignment">Open /assignment</a>
-        </article>
-        <article class="assignment-admin">
-          <div class="eyebrow">/assignment/admin</div>
-          <h3>Admin manages shifts, rules, and fallback.</h3>
-          <p>The assignment admin page exposes engineer/day picker, shifts, manual override, and routing fallback. It is the manager control surface for future small-traffic rollout.</p>
-          <a class="admin-link" href="/assignment/admin">Open /assignment/admin</a>
-        </article>
-      </div>
-      <div class="flow" aria-label="Current Phase 1 flow">
-        <div class="flow-row">
-          <div class="flow-node"><b>Zendesk / N8n</b><span>Keep the existing customer entry point and reduce migration risk.</span></div>
-          <div class="flow-arrow" aria-hidden="true">-></div>
-          <div class="flow-node"><b>Routing + Assignment</b><span>Identify billing, technical, human review, and SLA risk paths.</span></div>
-          <div class="flow-arrow" aria-hidden="true">-></div>
-          <div class="flow-node"><b>Engineer Workspace</b><span>Engineers still own judgment, while the system provides context and auditability.</span></div>
-        </div>
-        <div class="flow-row">
-          <div class="flow-node"><b>AI Guardrail</b><span>Check conclusion, proof, next step, and customer-safe boundaries.</span></div>
-          <div class="flow-arrow" aria-hidden="true">-></div>
-          <div class="flow-node"><b>Final Approve</b><span>The first approval generates and checks the reply; final approval sends it.</span></div>
-          <div class="flow-arrow" aria-hidden="true">-></div>
-          <div class="flow-node"><b>Dashboard</b><span>Turn SLA, pass rate, reject reasons, and human-review results into management signals.</span></div>
-        </div>
-      </div>
-    </section>
-
-
-
-    <section class="section reveal" aria-labelledby="agentrelay">
-      <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>03 · AgentRelay task network</div>
-        <h2 id="agentrelay">Why AgentRelay matters: private agents collaborate through tasks, not loose chat.</h2>
-        <p class="section-lead">This section answers four questions: why AgentRelay is needed, why not pure A2A protocol, why agents need to communicate, and how an R&D Agent solves questions that the Support Agent cannot solve alone.</p>
-      </div>
-      <div class="relay-question-grid" aria-label="Why AgentRelay is needed">
-        <article class="relay-question"><b>Why AgentRelay is needed</b><span>Agents are not loosely chatting with each other. They exchange tasks, artifacts, and done criteria.</span></article>
-        <article class="relay-question"><b>Why not pure A2A protocol</b><span>Many agents, especially personal agents, have no public IP. The relay handles connection, delivery, audit, and fallback.</span></article>
-        <article class="relay-question"><b>Why agents communicate</b><span>The Support Agent should not guess. It can hand unresolved questions to R&D / Data / Log Agents for evidence.</span></article>
-        <article class="relay-question"><b>How R&D Agent helps</b><span>It reads case context, logs, and repo clues, forms a hypothesis, and returns an evidence artifact, limitation, and next action.</span></article>
-      </div>
-      <div class="proof">
-        <div class="eyebrow">Productize and protocolize AgentRelay</div>
-        <h3>AgentRelay is the starting point for cross-environment agent collaboration.</h3>
-        <p>Current multi-agent frameworks mostly define how agents collaborate inside the same environment. AgentRelay connects agents that do not have public IP addresses, then points toward a simple protocol where agents owned by different people can solve problems together with minimal configuration.</p>
-      </div>
-      <div class="agent-workflow" aria-label="Agent-to-agent communication and R&D agent investigation">
-        <article class="workflow-panel">
-          <div class="eyebrow">A2A communication path</div>
-          <h3>How agents communicate</h3>
-          <ol class="workflow-steps">
-            <li><b>1</b><span>Support Agent creates a task with request, done criteria, and requester thread.</span></li>
-            <li><b>2</b><span>AgentRelay relays the task and records state plus permission boundaries.</span></li>
-            <li><b>3</b><span>The target agent claims the task instead of starting a scattered side conversation.</span></li>
-            <li><b>4</b><span>The target agent submits an artifact with evidence, limitations, and recommended next action.</span></li>
-            <li><b>5</b><span>reply.delivered returns to the original thread, and the requester-side owner decides whether to close.</span></li>
-          </ol>
-        </article>
-        <article class="workflow-panel">
-          <div class="eyebrow">R&amp;D Agent investigation loop</div>
-          <h3>How the R&amp;D Agent investigates</h3>
-          <ol class="workflow-steps">
-            <li><b>1</b><span>Receives the support question, environment, reproduction context, and known constraints.</span></li>
-            <li><b>2</b><span>Reads case context, logs, repo clues, or known knowledge to form a hypothesis.</span></li>
-            <li><b>3</b><span>Produces an evidence artifact with basis, verifiable proof, missing data, and risk boundary.</span></li>
-            <li><b>4</b><span>Returns the next action: continue investigation, request more info, escalate, or form a customer-safe conclusion.</span></li>
-          </ol>
-        </article>
-      </div>
-      <div class="rnd-proof" aria-label="R&D agent solves a usage investigation example">
-        <div class="eyebrow">R&amp;D Agent example</div>
-        <h3>Example: Support asks whether a screen sharing interruption was intentional or abnormal.</h3>
-        <p>This is the kind of support question that should not be answered by guessing. The R&amp;D Agent checks event evidence and returns a clear conclusion, proof trail, and customer-safe boundary.</p>
-        <div class="rnd-dialogue" aria-label="R&D Agent dialogue example">
-          <div class="dialogue-turn">
-            <b>Question</b>
-            <p>Question: Please check channel 42175037575290 (streamer <code>652NyjgkrD07HOf_KVjkhw</code>); the screen sharing session was interrupted at timestamp 01:28:44:649. Could you determine whether this was caused by the user calling the <code>unpublish</code> API or if it was an abnormal disconnection?</p>
-          </div>
-          <div class="dialogue-turn">
-            <b>R&amp;D Agent</b>
-            <div class="query-result">
-              <p><strong>Investigation complete (390.3s)</strong></p>
-              <p><strong>Conclusion:</strong> This was an intentional <code>unpublish</code> call initiated by the user/application, not an abnormal interruption.</p>
-              <p><strong>Key evidence:</strong></p>
-              <ul class="script-list">
-                <li>Channel: <code>42175037575290</code>, CallId: <code>6a3b3201a3fff75800885094</code>.</li>
-                <li>Broadcaster: <code>652NyjgkrD07HOf_KVjkhw</code>, uid: <code>8933524</code>, SID: <code>C4E3D88760726EEEC8668FDE2B825157</code>.</li>
-                <li>Screen sharing track: <code>track-scr-v-754e053e</code>.</li>
-                <li>2026-06-24 01:28:44.686 UTC: Argus recorded <code>Client.unpublish</code> with <code>success=1</code>; <code>errorCode</code> and <code>errorMsg</code> were empty.</li>
-                <li>Between 01:28:47.348 and 01:28:47.350 UTC, the same track underwent <code>LocalVideoTrack.stop</code>, <code>unpipe</code>, and <code>close</code> operations, all with <code>success=1</code>.</li>
-                <li>No <code>webSocketQuit</code>, <code>WebQuit</code>, <code>uquit</code>, ICE disconnection, or connection loss occurred around this time; the broadcaster's actual <code>Client.leave</code> happened later, at 01:31:24 UTC.</li>
-              </ul>
-              <p>Therefore, the disconnection of screen sharing around 01:28:44.649 was caused by the application calling <code>Client.unpublish(["track-scr-v-754e053e"])</code> and subsequently closing the local screen track.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <p class="event-strip-label">Communication state machine · audit trail</p>
-      <ul class="event-strip" aria-label="AgentRelay communication state machine examples">
-        <li>task.created</li>
-        <li>task.claimed</li>
-        <li>artifact.submitted</li>
-        <li>ownership.transferred</li>
-        <li>reply.delivered</li>
-        <li>requester.closed</li>
-      </ul>
-    </section>
-
-    <section class="section reveal" aria-labelledby="roles">
-      <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>04 · Role shift</div>
-        <h2 id="roles">AI is not replacing support engineers; it is productizing daily manager quality checks.</h2>
-        <p class="section-lead">The customer-facing experience stays unchanged. Engineers are freed from repetitive process work. AI agents handle real-time checks, assisted investigation, and cross-system collaboration.</p>
-      </div>
-      <div class="contrast">
-        <article class="contrast-panel">
-          <h3>Before</h3>
-          <ul>
-            <li>Managers could only sample replies, not check every technical detail, boundary, and SLA risk.</li>
-            <li>Customer dissatisfaction was usually discovered after complaints, too late for sentiment or handoff risk.</li>
-            <li>Engineers repeatedly copied context into external AI tools, making the process hard to audit or reuse.</li>
-          </ul>
-        </article>
-        <article class="contrast-panel future">
-          <h3>After</h3>
-          <ul>
-            <li>Every reply goes through AI guardrail before it can reach the customer.</li>
-            <li>Every customer message can be checked for sentiment and SLA risk before escalation becomes visible.</li>
-            <li>Support Agent can use AgentRelay to coordinate Billing, Log, R&amp;D, and Data Agents, while humans and guardrails control customer-visible output.</li>
-          </ul>
-        </article>
-      </div>
-    </section>
-
-    <section class="section reveal" aria-labelledby="showcase">
-      <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>05 · Showcase</div>
-        <h2 id="showcase">Showcase: how AI Guardrail rejects an incomplete reply.</h2>
-        <p class="section-lead">This case shows the core quality value of Phase 1. The system is not merely making language more polite; it blocks replies that lack conclusion, proof, next step, and customer-safe boundary before customers see them.</p>
+        <div class="eyebrow"><span class="pulse"></span>01 · Reply quality failure</div>
+        <h2 id="reply-quality">How do we ensure support reply quality before the customer sees the answer?</h2>
+        <p class="section-lead">Phase 1 starts with the most expensive support risk: a reply can be fast, polite, and still unsafe. If quality is checked only after a complaint, managers are reviewing damage instead of preventing it.</p>
       </div>
       <div class="showcase-demo bad-case" id="badCaseDemo" aria-label="Bad case support quality demo">
         <div class="demo-toolbar">
@@ -1917,6 +1712,141 @@
             </div>
           </aside>
         </div>
+      </div>
+      <div class="proof">
+        <div class="eyebrow">Traditional support pain point</div>
+        <h3>The real question is not only speed. It is whether every customer-visible reply is accurate, evidenced, and actionable before it is sent.</h3>
+        <p>Traditional support struggles with four operating problems: reply quality is hard to guarantee, manager visibility depends on manual review, we often only discover the damage through after-the-fact review after a bad rating or escalation, and late replies make every weak answer feel even worse.</p>
+      </div>
+      <div class="proof-grid">
+        <article class="proof">
+          <strong>Quality</strong>
+          <span>How do we ensure every reply has a conclusion, proof, a next step, and a customer-safe boundary?</span>
+        </article>
+        <article class="proof">
+          <strong>Manager</strong>
+          <span>How can managers monitor reply quality without sampling every case manually after the fact?</span>
+        </article>
+        <article class="proof">
+          <strong>Review</strong>
+          <span>Today, review often starts only after a customer rating, escalation, or complaint reveals that trust has already been hurt.</span>
+        </article>
+        <article class="proof">
+          <strong>Speed</strong>
+          <span>When replies are late, an ungrounded answer creates even more pressure because the customer needs help immediately.</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="why">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>02 · Why now</div>
+        <h2 id="why">Traditional SaaS can no longer carry our support goals.</h2>
+        <p class="section-lead">Zendesk license renewal is about 73k USD per year, but the bigger issue is limited customization space: feature extension, internal workflow customization, data mining, and quality analytics cannot move at the pace our support team needs.</p>
+      </div>
+      <div class="proof-grid">
+        <article class="proof">
+          <strong>SLA</strong>
+          <span>Slow replies, escalation waiting time, and handoff gaps cannot be managed only through after-the-fact reports.</span>
+        </article>
+        <article class="proof">
+          <strong>73k</strong>
+          <span>The annual license buys generic SaaS capability while key workflows still need scripts, manual judgment, and temporary patches.</span>
+        </article>
+        <article class="proof">
+          <strong>Billing</strong>
+          <span>Some invoice, account fraud, and deactivate cases do not need the full HITL path, making them good candidates for controlled automation POC.</span>
+        </article>
+        <article class="proof">
+          <strong>Custom</strong>
+          <span>Zendesk leaves too little room to shape features, workflows, and data mining around our own support standards.</span>
+        </article>
+      </div>
+    </section>
+
+
+    <section class="section reveal" aria-labelledby="architecture">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>03 · AI-native system</div>
+        <h2 id="architecture">SupportPortal is the AI-native ticket system that upgrades internal handling while the customer UI stays unchanged.</h2>
+        <p class="section-lead">The customer entry point stays unchanged. The customer experience also stays unchanged. Internally, Zendesk cases are forwarded into SupportPortal for shadow mode, real case replay, routing, assignment, guardrail, final approval, and dashboard control before broader rollout.</p>
+      </div>
+      <div class="architecture-map" aria-label="SupportPortal Phase 1 architecture diagram">
+        <div class="arch-layer">
+          <div class="arch-label"><b>Customer / Zendesk</b><span>Keep the customer entry point unchanged to reduce migration risk.</span></div>
+          <div class="arch-cells">
+            <span class="arch-pill">Customer message</span>
+            <span class="arch-arrow" aria-hidden="true">-></span>
+            <span class="arch-pill">Zendesk case</span>
+            <span class="arch-arrow" aria-hidden="true">-></span>
+            <span class="arch-pill">Internal forwarding</span>
+          </div>
+        </div>
+        <div class="arch-layer">
+          <div class="arch-label"><b>SupportPortal Core</b><span>The controlled operating surface for Phase 1.</span></div>
+          <div class="arch-cells">
+            <span class="arch-pill">Routing</span>
+            <span class="arch-pill">Assignment</span>
+            <span class="arch-pill">AI Guardrail</span>
+            <span class="arch-pill">Final Approve</span>
+            <span class="arch-pill">Dashboard</span>
+            <span class="arch-pill">Case Replay</span>
+          </div>
+        </div>
+        <div class="arch-layer">
+          <div class="arch-label"><b>Future Agent Network</b><span>AgentRelay as the foundation for future cross-agent collaboration.</span></div>
+          <div class="arch-cells">
+            <span class="arch-pill">Support Agent</span>
+            <span class="arch-arrow" aria-hidden="true">-></span>
+            <span class="arch-pill">AgentRelay</span>
+            <span class="arch-arrow" aria-hidden="true">-></span>
+            <span class="arch-pill">Billing / Log / R&amp;D / Data Agent</span>
+            <span class="arch-arrow" aria-hidden="true">-></span>
+            <span class="arch-pill">Evidence Packet</span>
+          </div>
+        </div>
+      </div>
+      <div class="assignment-panel" aria-label="Assignment capability and admin console">
+        <article class="assignment-copy">
+          <div class="eyebrow">Assignment</div>
+          <h3>Assignment is the Phase 1 dispatch control plane.</h3>
+          <p>The system is not only generating replies. It must decide who should handle the case, whether human review is required, whether SLA risk exists, and whether billing, technical, or handoff routing is correct.</p>
+          <a class="admin-link" href="/assignment">Open /assignment</a>
+        </article>
+        <article class="assignment-admin">
+          <div class="eyebrow">/assignment/admin</div>
+          <h3>Admin manages shifts, rules, and fallback.</h3>
+          <p>The assignment admin page exposes engineer/day picker, shifts, manual override, and routing fallback. It is the manager control surface for future small-traffic rollout.</p>
+          <a class="admin-link" href="/assignment/admin">Open /assignment/admin</a>
+        </article>
+      </div>
+      <div class="flow" aria-label="Current Phase 1 flow">
+        <div class="flow-row">
+          <div class="flow-node"><b>Zendesk / N8n</b><span>Keep the existing customer entry point and reduce migration risk.</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Routing + Assignment</b><span>Identify billing, technical, human review, and SLA risk paths.</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Engineer Workspace</b><span>Engineers still own judgment, while the system provides context and auditability.</span></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-node"><b>AI Guardrail</b><span>Check conclusion, proof, next step, and customer-safe boundaries.</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Final Approve</b><span>The first approval generates and checks the reply; final approval sends it.</span></div>
+          <div class="flow-arrow" aria-hidden="true">-></div>
+          <div class="flow-node"><b>Dashboard</b><span>Turn SLA, pass rate, reject reasons, and human-review results into management signals.</span></div>
+        </div>
+      </div>
+    </section>
+
+
+
+
+
+    <section class="section reveal" aria-labelledby="showcase">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>04 · Guardrail showcase</div>
+        <h2 id="showcase">Showcase: how AI Guardrail rejects an incomplete reply.</h2>
+        <p class="section-lead">This is the Phase 1 quality-control moment: the engineer still owns the answer, but AI Guardrail blocks replies that lack conclusion, proof, next step, and customer-safe boundary before customers see them.</p>
       </div>
       <div class="proof">
         <div class="eyebrow">Guardrail changes the control point</div>
@@ -2043,7 +1973,7 @@
 
     <section class="section reveal" aria-labelledby="dashboard">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>06 · Dashboard</div>
+        <div class="eyebrow"><span class="pulse"></span>05 · Dashboard</div>
         <h2 id="dashboard">Management metrics must move from the SLA era to the AI guardrail era.</h2>
         <p class="section-lead">Traditional metrics still matter, but Phase 1 also tracks whether AI is actually reducing risk, improving quality, and explaining why some cases should not be automated yet.</p>
       </div>
@@ -2064,9 +1994,10 @@
       </div>
     </section>
 
+
     <section class="section reveal" aria-labelledby="account-automation">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>07 · Account automation</div>
+        <div class="eyebrow"><span class="pulse"></span>06 · Account automation</div>
         <h2 id="account-automation">AI account automation handles safe billing cases without engineer in the loop.</h2>
         <p class="section-lead">Not every support case needs the same human-heavy path. Invoice requests, account fraud, deactivate, and company verification cases can be classified, field-checked, and moved through a controlled automation path when the risk boundary is clear.</p>
       </div>
@@ -2085,9 +2016,104 @@
       </div>
     </section>
 
+
+    <section class="section reveal" aria-labelledby="rnd-investigation">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>07 · R&amp;D Agent investigation</div>
+        <h2 id="rnd-investigation">AI agents should investigate evidence, not guess.</h2>
+        <p class="section-lead">For hard technical cases, the Support Agent can ask an R&amp;D Agent for a verifiable evidence artifact. This keeps the customer-facing reply grounded while leaving final accountability with the support owner.</p>
+      </div>
+      <div class="agent-workflow" aria-label="R&D Agent investigation loop">
+        <article class="workflow-panel">
+          <div class="eyebrow">R&amp;D Agent investigation loop</div>
+          <h3>How the R&amp;D Agent investigates</h3>
+          <ol class="workflow-steps">
+            <li><b>1</b><span>Receives the support question, environment, reproduction context, and known constraints.</span></li>
+            <li><b>2</b><span>Reads case context, logs, repo clues, or known knowledge to form a hypothesis.</span></li>
+            <li><b>3</b><span>Produces an evidence artifact with basis, verifiable proof, missing data, and risk boundary.</span></li>
+            <li><b>4</b><span>Returns the next action: continue investigation, request more info, escalate, or form a customer-safe conclusion.</span></li>
+          </ol>
+        </article>
+        <article class="workflow-panel">
+          <div class="eyebrow">Support owner stays in control</div>
+          <h3>The R&amp;D Agent returns evidence; Support decides what can be sent.</h3>
+          <p>The agent result is not a customer reply by itself. It is an evidence packet that helps the Support Agent produce a safer answer, choose escalation, or ask for missing customer data.</p>
+        </article>
+      </div>
+      <div class="rnd-proof" aria-label="R&D agent solves a usage investigation example">
+        <div class="eyebrow">R&amp;D Agent example</div>
+        <h3>Example: Support asks whether a screen sharing interruption was intentional or abnormal.</h3>
+        <p>This is the kind of support question that should not be answered by guessing. The R&amp;D Agent checks event evidence and returns a clear conclusion, proof trail, and customer-safe boundary.</p>
+        <div class="rnd-dialogue" aria-label="R&D Agent dialogue example">
+          <div class="dialogue-turn">
+            <b>Question</b>
+            <p>Question: Please check channel 42175037575290 (streamer <code>652NyjgkrD07HOf_KVjkhw</code>); the screen sharing session was interrupted at timestamp 01:28:44:649. Could you determine whether this was caused by the user calling the <code>unpublish</code> API or if it was an abnormal disconnection?</p>
+          </div>
+          <div class="dialogue-turn">
+            <b>R&amp;D Agent</b>
+            <div class="query-result">
+              <p><strong>Investigation complete (390.3s)</strong></p>
+              <p><strong>Conclusion:</strong> This was an intentional <code>unpublish</code> call initiated by the user/application, not an abnormal interruption.</p>
+              <p><strong>Key evidence:</strong></p>
+              <ul class="script-list">
+                <li>Channel: <code>42175037575290</code>, CallId: <code>6a3b3201a3fff75800885094</code>.</li>
+                <li>Broadcaster: <code>652NyjgkrD07HOf_KVjkhw</code>, uid: <code>8933524</code>, SID: <code>C4E3D88760726EEEC8668FDE2B825157</code>.</li>
+                <li>Screen sharing track: <code>track-scr-v-754e053e</code>.</li>
+                <li>2026-06-24 01:28:44.686 UTC: Argus recorded <code>Client.unpublish</code> with <code>success=1</code>; <code>errorCode</code> and <code>errorMsg</code> were empty.</li>
+                <li>Between 01:28:47.348 and 01:28:47.350 UTC, the same track underwent <code>LocalVideoTrack.stop</code>, <code>unpipe</code>, and <code>close</code> operations, all with <code>success=1</code>.</li>
+                <li>No <code>webSocketQuit</code>, <code>WebQuit</code>, <code>uquit</code>, ICE disconnection, or connection loss occurred around this time; the broadcaster's actual <code>Client.leave</code> happened later, at 01:31:24 UTC.</li>
+              </ul>
+              <p>Therefore, the disconnection of screen sharing around 01:28:44.649 was caused by the application calling <code>Client.unpublish(["track-scr-v-754e053e"])</code> and subsequently closing the local screen track.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="agentrelay">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>08 · AgentRelay task network</div>
+        <h2 id="agentrelay">AgentRelay turns private agents into task collaborators, not loose chat participants.</h2>
+        <p class="section-lead">Each agent can represent a person or a team. AgentRelay connects these agents through auditable tasks, especially when personal or internal agents do not have public IP addresses.</p>
+      </div>
+      <div class="relay-question-grid" aria-label="Why AgentRelay is needed">
+        <article class="relay-question"><b>Why AgentRelay is needed</b><span>Agents are not loosely chatting with each other. They exchange tasks, artifacts, and done criteria. Each agent can represent a person or a team.</span></article>
+        <article class="relay-question"><b>Why not pure A2A protocol</b><span>Many agents, especially personal agents, have no public IP. The relay handles connection, delivery, audit, and fallback.</span></article>
+        <article class="relay-question"><b>Why agents communicate</b><span>The Support Agent should not guess. It can hand unresolved questions to R&D / Data / Log Agents for evidence.</span></article>
+        <article class="relay-question"><b>How R&D Agent helps</b><span>It reads case context, logs, and repo clues, forms a hypothesis, and returns an evidence artifact, limitation, and next action.</span></article>
+      </div>
+      <div class="proof">
+        <div class="eyebrow">Productize and protocolize AgentRelay</div>
+        <h3>AgentRelay is the starting point for cross-environment agent collaboration.</h3>
+        <p>Current multi-agent frameworks mostly define how agents collaborate inside the same environment. AgentRelay connects agents that do not have public IP addresses, then points toward a simple protocol where agents owned by different people, or different teams, can solve problems together with minimal configuration. Each agent can represent a person or a team, making the network closer to real support ownership than a single shared chatbot.</p>
+      </div>
+      <div class="agent-workflow" aria-label="Agent-to-agent communication path">
+        <article class="workflow-panel">
+          <div class="eyebrow">A2A communication path</div>
+          <h3>How agents communicate</h3>
+          <ol class="workflow-steps">
+            <li><b>1</b><span>Support Agent creates a task with request, done criteria, and requester thread.</span></li>
+            <li><b>2</b><span>AgentRelay relays the task and records state plus permission boundaries.</span></li>
+            <li><b>3</b><span>The target agent claims the task instead of starting a scattered side conversation.</span></li>
+            <li><b>4</b><span>The target agent submits an artifact with evidence, limitations, and recommended next action.</span></li>
+            <li><b>5</b><span>reply.delivered returns to the original thread, and the requester-side owner decides whether to close.</span></li>
+          </ol>
+        </article>
+      </div>
+      <p class="event-strip-label">Communication state machine · audit trail</p>
+      <ul class="event-strip" aria-label="AgentRelay communication state machine examples">
+        <li>task.created</li>
+        <li>task.claimed</li>
+        <li>artifact.submitted</li>
+        <li>ownership.transferred</li>
+        <li>reply.delivered</li>
+        <li>requester.closed</li>
+      </ul>
+    </section>
+
     <section class="section reveal" aria-labelledby="roadmap">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>08 · Roadmap</div>
+        <div class="eyebrow"><span class="pulse"></span>09 · Roadmap</div>
         <h2 id="roadmap">Three stages: controlled behavior first, real evidence tools second, autonomous investigation last.</h2>
         <p class="section-lead">Phase 1 is not the endpoint. It is the safety foundation for later automation. AgentRelay communication foundation is ready, while real SupportPortal domain-agent investigation remains a Phase 2 integration.</p>
       </div>
