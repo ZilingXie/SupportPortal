@@ -160,7 +160,7 @@
       z-index: 1;
       max-width: 960px;
       margin: 0;
-      font-size: clamp(30px, 4.8vw, 60px);
+      font-size: clamp(15px, 2.4vw, 30px);
       line-height: 0.94;
     }
 
@@ -212,7 +212,7 @@
 
     .section h2 {
       margin: 0;
-      font-size: clamp(28px, 4.2vw, 54px);
+      font-size: clamp(14px, 2.1vw, 27px);
       line-height: 0.98;
     }
 
@@ -246,7 +246,7 @@
     .proof strong {
       display: block;
       color: var(--blueprint);
-      font-size: clamp(23px, 3.3vw, 42px);
+      font-size: clamp(12px, 1.65vw, 21px);
       line-height: 0.95;
       letter-spacing: -0.04em;
     }
@@ -326,7 +326,7 @@
 
     .contrast-panel h3 {
       margin: 0 0 14px;
-      font-size: clamp(21px, 2.45vw, 30px);
+      font-size: clamp(11px, 1.225vw, 15px);
       line-height: 1;
     }
 
@@ -426,7 +426,7 @@
     .script-block h3 {
       margin: 0;
       color: var(--ink);
-      font-size: clamp(19px, 2.2vw, 26px);
+      font-size: clamp(10px, 1.1vw, 13px);
       line-height: 1.08;
     }
 
@@ -458,7 +458,7 @@
     .script-toggle summary::-webkit-details-marker { display: none; }
 
     .script-toggle summary::after {
-      content: "Expand full talk track";
+      content: "Expand script and video kit";
       padding: 9px 13px;
       border: 1px solid rgba(31, 79, 104, 0.26);
       border-radius: 999px;
@@ -469,7 +469,7 @@
       white-space: nowrap;
     }
 
-    .script-toggle[open] summary::after { content: "Collapse full talk track"; }
+    .script-toggle[open] summary::after { content: "Collapse script and video kit"; }
 
     .script-toggle .section-header {
       max-width: 920px;
@@ -478,6 +478,12 @@
     .script-toggle .script-draft {
       border-width: 1px 0 0;
       border-radius: 0;
+    }
+
+    .script-toggle .video-kit {
+      border-width: 1px 0 0;
+      border-radius: 0;
+      box-shadow: none;
     }
 
     .architecture-map {
@@ -567,7 +573,7 @@
     .assignment-copy h3,
     .assignment-admin h3 {
       margin: 0;
-      font-size: clamp(21px, 2.4vw, 30px);
+      font-size: clamp(11px, 1.2vw, 15px);
       line-height: 1.05;
     }
 
@@ -643,7 +649,7 @@
     .workflow-panel h3 {
       margin: 0;
       color: var(--ink);
-      font-size: clamp(21px, 2.4vw, 30px);
+      font-size: clamp(11px, 1.2vw, 15px);
       line-height: 1.05;
     }
 
@@ -697,7 +703,7 @@
 
     .rnd-proof h3 {
       margin: 0;
-      font-size: clamp(21px, 2.4vw, 30px);
+      font-size: clamp(11px, 1.2vw, 15px);
       line-height: 1.05;
     }
 
@@ -879,7 +885,7 @@
     .demo-toolbar-copy h3 {
       margin: 0;
       color: var(--ink);
-      font-size: clamp(20px, 2.4vw, 30px);
+      font-size: clamp(10px, 1.2vw, 15px);
       line-height: 1.05;
     }
 
@@ -1250,7 +1256,7 @@
 
     .metric b {
       color: var(--blueprint);
-      font-size: clamp(22px, 3.2vw, 36px);
+      font-size: clamp(11px, 1.6vw, 18px);
       line-height: 1;
       letter-spacing: -0.04em;
     }
@@ -1283,7 +1289,7 @@
 
     .phase h3 {
       margin: 0;
-      font-size: clamp(20px, 2.45vw, 28px);
+      font-size: clamp(10px, 1.225vw, 14px);
       line-height: 1;
     }
 
@@ -1375,7 +1381,7 @@
       margin: 0;
       color: var(--ink);
       font-family: Georgia, "Times New Roman", serif;
-      font-size: clamp(27px, 4vw, 50px);
+      font-size: clamp(14px, 2vw, 25px);
       line-height: 1;
       letter-spacing: -0.045em;
     }
@@ -1532,13 +1538,13 @@
       </ul>
     </header>
 
-    <section class="section script-section reveal" aria-labelledby="full-script">
+    <section class="section script-section reveal" aria-labelledby="script-video-kit">
       <details class="script-toggle">
         <summary>
           <div class="section-header">
-            <div class="eyebrow"><span class="pulse"></span>00 · Full script</div>
-            <h2 id="full-script">Full advertising-style video script, about 3 minutes</h2>
-            <p class="section-lead">Collapsed by default. Expand it when you want the full ad-style narration in front of you during editing.</p>
+            <div class="eyebrow"><span class="pulse"></span>00 · Script + video kit</div>
+            <h2 id="script-video-kit">Full advertising-style video script, about 3 minutes, and production assets</h2>
+            <p class="section-lead">Collapsed by default. Expand it when you want the full ad-style narration, storyboard links, TTS voiceover text, screenshot assets, and playable animation exports during editing.</p>
           </div>
         </summary>
         <div class="script-draft" aria-label="Full talk track draft">
@@ -1583,55 +1589,51 @@
             <p>Dashboard changes management from after-the-fact review to live quality control. AI account automation handles safe billing and account cases without engineer in the loop. For hard technical cases, the Support Agent asks an R&amp;D Agent for evidence. And we plan big: productize and protocolize AgentRelay for cross-environment agent collaboration with minimal configuration. Each agent can represent a person or a team, so AgentRelay becomes the bridge between real support ownership and task-level AI collaboration.</p>
           </article>
         </div>
-      </details>
-    </section>
-
-    <section class="section script-section reveal" aria-labelledby="video-kit">
-      <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>00B · Video kit</div>
-        <h2 id="video-kit">3-minute video kit</h2>
-        <p class="section-lead">These files are prepared for a narrated product ad: time-coded script, storyboard, TTS voiceover text, screenshot assets, and two playable animation exports.</p>
-      </div>
-      <div class="video-kit" aria-label="3-minute video kit">
-        <div class="video-kit-links">
-          <a class="video-kit-link" href="./phase1_video/video_script.md">
-            <b>video_script.md</b>
-            <span>Time-coded narration script with shot and voiceover guidance.</span>
-          </a>
-          <a class="video-kit-link" href="./phase1_video/storyboard.md">
-            <b>storyboard.md</b>
-            <span>Shot-by-shot visual plan with asset usage and emphasis notes.</span>
-          </a>
-          <a class="video-kit-link" href="./phase1_video/voiceover-jianying.txt">
-            <b>voiceover-jianying.txt</b>
-            <span>Plain narration text for Jianying or another TTS tool.</span>
-          </a>
-          <a class="video-kit-link" href="./phase1_video/bad-case-support-failure-demo.mp4">
-            <b>bad-case-support-failure-demo.mp4</b>
-            <span>Traditional support failure animation for the opening hook.</span>
-          </a>
-          <a class="video-kit-link" href="./phase1_video/showcase-guardrail-demo.mp4">
-            <b>showcase-guardrail-demo.mp4</b>
-            <span>8-second H.264 animation export for the Guardrail Showcase with a 2-second final hold.</span>
-          </a>
-          <a class="video-kit-link" href="./phase1_video/">
-            <b>phase1_video/</b>
-            <span>Screenshot and animation asset folder prepared for video production.</span>
-          </a>
+        <div class="video-kit" aria-label="3-minute video kit">
+          <div class="section-header">
+            <div class="eyebrow">3-minute video kit</div>
+            <p class="section-lead">These files are prepared for a narrated product ad: time-coded script, storyboard, TTS voiceover text, screenshot assets, and two playable animation exports.</p>
+          </div>
+          <div class="video-kit-links">
+            <a class="video-kit-link" href="./phase1_video/video_script.md">
+              <b>video_script.md</b>
+              <span>Time-coded narration script with shot and voiceover guidance.</span>
+            </a>
+            <a class="video-kit-link" href="./phase1_video/storyboard.md">
+              <b>storyboard.md</b>
+              <span>Shot-by-shot visual plan with asset usage and emphasis notes.</span>
+            </a>
+            <a class="video-kit-link" href="./phase1_video/voiceover-jianying.txt">
+              <b>voiceover-jianying.txt</b>
+              <span>Plain narration text for Jianying or another TTS tool.</span>
+            </a>
+            <a class="video-kit-link" href="./phase1_video/bad-case-support-failure-demo.mp4">
+              <b>bad-case-support-failure-demo.mp4</b>
+              <span>Traditional support failure animation for the opening hook.</span>
+            </a>
+            <a class="video-kit-link" href="./phase1_video/showcase-guardrail-demo.mp4">
+              <b>showcase-guardrail-demo.mp4</b>
+              <span>8-second H.264 animation export for the Guardrail Showcase with a 2-second final hold.</span>
+            </a>
+            <a class="video-kit-link" href="./phase1_video/">
+              <b>phase1_video/</b>
+              <span>Screenshot and animation asset folder prepared for video production.</span>
+            </a>
+          </div>
+          <ul class="shot-strip" aria-label="Video screenshot assets">
+            <li>1-intro.jpeg</li>
+            <li>bad-case-support-failure-demo.mp4</li>
+            <li>2-why-now.png</li>
+            <li>3-big-pic.png</li>
+            <li>4-admin.png</li>
+            <li>showcase-guardrail-demo.mp4</li>
+            <li>5-agent-relay.png</li>
+            <li>7-show-case.png</li>
+            <li>11-phase1-closing.png</li>
+            <li>12-dashboard.png</li>
+          </ul>
         </div>
-        <ul class="shot-strip" aria-label="Video screenshot assets">
-          <li>1-intro.jpeg</li>
-          <li>bad-case-support-failure-demo.mp4</li>
-          <li>2-why-now.png</li>
-          <li>3-big-pic.png</li>
-          <li>4-admin.png</li>
-          <li>showcase-guardrail-demo.mp4</li>
-          <li>5-agent-relay.png</li>
-          <li>7-show-case.png</li>
-          <li>11-phase1-closing.png</li>
-          <li>12-dashboard.png</li>
-        </ul>
-      </div>
+      </details>
     </section>
 
     <section class="section reveal" aria-labelledby="reply-quality">
