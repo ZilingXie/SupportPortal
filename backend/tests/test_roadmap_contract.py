@@ -12,6 +12,7 @@ ROADMAP_PATH = Path("docs/roadmap.html")
 PHASE1_PATH = Path("docs/roadmap/phase1.html")
 PHASE1_VIDEO_DIR = Path("docs/roadmap/phase1_video")
 PHASE1_VIDEO_SCRIPT_PATH = PHASE1_VIDEO_DIR / "video_script.md"
+PHASE1_VIDEO_SCRIPT_CN_PATH = PHASE1_VIDEO_DIR / "video_script_cn.md"
 PHASE1_STORYBOARD_PATH = PHASE1_VIDEO_DIR / "storyboard.md"
 PHASE1_VOICEOVER_PATH = PHASE1_VIDEO_DIR / "voiceover-jianying.txt"
 QBR_COMPAT_PATH = Path("docs/qbr_plan.html")
@@ -116,6 +117,7 @@ class RoadmapContractTests(unittest.TestCase):
             'href="../roadmap.html"',
             "3-minute video kit",
             'href="./phase1_video/video_script.md"',
+            'href="./phase1_video/video_script_cn.md"',
             'href="./phase1_video/storyboard.md"',
             'href="./phase1_video/voiceover-jianying.txt"',
             'href="./phase1_video/bad-case-support-failure-demo.mp4"',
@@ -172,56 +174,75 @@ class RoadmapContractTests(unittest.TestCase):
 
     def test_phase1_video_package_contains_script_storyboard_voiceover_and_shots(self) -> None:
         script = PHASE1_VIDEO_SCRIPT_PATH.read_text(encoding="utf-8")
+        script_cn = PHASE1_VIDEO_SCRIPT_CN_PATH.read_text(encoding="utf-8")
         storyboard = PHASE1_STORYBOARD_PATH.read_text(encoding="utf-8")
         voiceover = PHASE1_VOICEOVER_PATH.read_text(encoding="utf-8")
 
         for term in [
             "# SupportPortal Phase 1 3-minute video script",
-            "advertising-style product video",
-            "00:00-00:10",
-            "00:10-00:28",
-            "00:28-00:45",
-            "01:05-01:25",
-            "01:25-01:45",
-            "01:45-02:05",
-            "02:05-02:25",
-            "02:25-02:43",
-            "02:43-03:00",
-            "## Detailed scene plan",
-            "Scene 01",
-            "Scene 18",
-            "Duration",
-            "Screenshot / asset",
-            "Jianying placement",
-            "phase1_video/1-intro.jpeg",
-            "phase1_video/bad-case-support-failure-demo.mp4",
-            "phase1_video/12-dashboard.png",
-            "support.stellarix.space/assignment",
-            "support.stellarix.space/account",
+            "Paste this script directly into Jianying",
             "How do we ensure support reply quality before the customer sees the answer?",
-            "phase1_video/bad-case-support-failure-demo.mp4",
             "reply quality",
             "manager visibility",
-            "after-the-fact review",
             "late replies",
-            "Zendesk does not give us enough customization space",
-            "/assignment/admin",
-            "/account",
+            "limited customization space",
             "AI-native ticket system",
-            "customer UI stays unchanged",
+            "The customer entry point stays unchanged",
+            "The customer UI stays unchanged",
+            "assignment workspace",
+            "assignment admin page",
+            "AI Guardrail rejects",
             "AI account automation",
             "AgentRelay",
             "productize and protocolize AgentRelay",
             "cross-environment agent collaboration",
             "minimal configuration",
-            "no public IP",
             "Client.unpublish",
-            "[websdk] no input frame received",
             "AI Guardrail",
             "first-contact resolution",
         ]:
             with self.subTest(script_term=term):
                 self.assertIn(term, script)
+
+        self.assertLess(len(script), 3000)
+        self.assertIsNone(
+            __import__("re").search(r"[\u4e00-\u9fff]", script),
+            msg="video_script.md should be English-only and pasteable into Jianying.",
+        )
+        for non_script_term in [
+            "00:00-00:10",
+            "phase1_video/",
+            "|",
+            "剪映",
+            "素材",
+        ]:
+            with self.subTest(non_script_term=non_script_term):
+                self.assertNotIn(non_script_term, script)
+
+        for term in [
+            "# SupportPortal Phase 1 视频分镜说明",
+            "用于你自己看，不建议直接粘到剪映",
+            "第 01 幕",
+            "第 19 幕",
+            "00:00-00:05",
+            "02:55-03:00",
+            "时长",
+            "素材",
+            "剪映操作",
+            "phase1_video/1-intro.jpeg",
+            "phase1_video/bad-case-support-failure-demo.mp4",
+            "phase1_video/showcase-guardrail-demo.mp4",
+            "phase1_video/12-dashboard.png",
+            "support.stellarix.space/assignment",
+            "support.stellarix.space/assignment/admin",
+            "support.stellarix.space/account",
+            "/assignment/admin",
+            "/account",
+            "[websdk] no input frame received",
+            "Client.unpublish",
+        ]:
+            with self.subTest(script_cn_term=term):
+                self.assertIn(term, script_cn)
 
         for term in [
             "# SupportPortal Phase 1 3-minute video storyboard",
@@ -308,6 +329,7 @@ class RoadmapContractTests(unittest.TestCase):
                 ("/roadmap.html", "整体落地优化计划"),
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
                 ("/roadmap/phase1_video/video_script.md", "SupportPortal Phase 1 3-minute video script"),
+                ("/roadmap/phase1_video/video_script_cn.md", "SupportPortal Phase 1 视频分镜说明"),
                 ("/roadmap/phase1_video/storyboard.md", "SupportPortal Phase 1 3-minute video storyboard"),
                 ("/roadmap/phase1_video/voiceover-jianying.txt", "How do we ensure support reply quality before the customer sees the answer?"),
                 ("/roadmap/phase1_video/bad-case-support-failure-demo.mp4", ""),
