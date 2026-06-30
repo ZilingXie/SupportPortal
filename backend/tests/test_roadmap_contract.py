@@ -28,7 +28,7 @@ class RoadmapContractTests(unittest.TestCase):
         required_terms = [
             "SupportPortal Phase 1",
             "From Zendesk replacement to an AI-native Support System",
-            "What if a support reply is fast, but wrong?",
+            "How do we ensure support reply quality before the customer sees the answer?",
             "AI guardrail pass rate",
             "Expand full talk track",
             "Collapsed by default",
@@ -100,6 +100,7 @@ class RoadmapContractTests(unittest.TestCase):
             "not an abnormal interruption",
             "AgentRelay communication foundation is ready, while real SupportPortal domain-agent investigation remains a Phase 2 integration",
             "Productize and protocolize AgentRelay",
+            "Each agent can represent a person or a team",
             "cross-environment agent collaboration",
             "minimal configuration",
             "font-size: clamp(30px, 4.8vw, 60px);",
@@ -121,6 +122,19 @@ class RoadmapContractTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIn(term, phase1_source)
 
+        ordered_terms = [
+            "01 · Reply quality failure",
+            "02 · Why now",
+            "03 · AI-native system",
+            "04 · Guardrail showcase",
+            "05 · Dashboard",
+            "06 · Account automation",
+            "07 · R&amp;D Agent investigation",
+            "08 · AgentRelay task network",
+            "09 · Roadmap",
+        ]
+        ordered_positions = [phase1_source.index(term) for term in ordered_terms]
+        self.assertEqual(ordered_positions, sorted(ordered_positions))
 
         removed_terms = [
             "AgentRelay 先组织拿证据，AI 再拒绝不完整回复",
@@ -168,7 +182,7 @@ class RoadmapContractTests(unittest.TestCase):
             "02:05-02:25",
             "02:25-02:43",
             "02:43-03:00",
-            "What if a support reply is fast, but wrong?",
+            "How do we ensure support reply quality before the customer sees the answer?",
             "phase1_video/bad-case-support-failure-demo.mp4",
             "reply quality",
             "manager visibility",
@@ -214,7 +228,7 @@ class RoadmapContractTests(unittest.TestCase):
                 self.assertIn(term, storyboard)
 
         for term in [
-            "What if a support reply is fast, but wrong?",
+            "How do we ensure support reply quality before the customer sees the answer?",
             "That is the traditional support trap",
             "reply quality",
             "manager visibility",
@@ -236,6 +250,7 @@ class RoadmapContractTests(unittest.TestCase):
             "conservative customer draft",
             "AI guardrail pass rate",
             "productize and protocolize AgentRelay",
+            "Each agent can represent a person or a team",
             "cross-environment agent collaboration",
         ]:
             with self.subTest(voiceover_term=term):
@@ -278,7 +293,7 @@ class RoadmapContractTests(unittest.TestCase):
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
                 ("/roadmap/phase1_video/video_script.md", "SupportPortal Phase 1 3-minute video script"),
                 ("/roadmap/phase1_video/storyboard.md", "SupportPortal Phase 1 3-minute video storyboard"),
-                ("/roadmap/phase1_video/voiceover-jianying.txt", "What if a support reply is fast, but wrong?"),
+                ("/roadmap/phase1_video/voiceover-jianying.txt", "How do we ensure support reply quality before the customer sees the answer?"),
                 ("/roadmap/phase1_video/bad-case-support-failure-demo.mp4", ""),
                 ("/roadmap/phase1_video/2-why-now.png", "PNG"),
             ]

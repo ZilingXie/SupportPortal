@@ -1,4 +1,4 @@
-What if a support reply is fast, but wrong? What if the customer only tells us the damage after trust is already broken?
+How do we ensure support reply quality before the customer sees the answer? What if the customer only tells us the damage after trust is already broken?
 
 A customer reports a live-stream black screen. The engineer answers quickly, but guesses: the camera might be broken. The customer asks for proof, asks what to do now, and asks for an immediate workaround because the stream is still ongoing.
 
@@ -18,4 +18,4 @@ Some billing and account cases do not need an engineer in the loop. AI account a
 
 For hard technical cases, the Support Agent should not guess. It can ask an R&D Agent for evidence. In this example, the R&D Agent checks event data, finds a successful Client dot unpublish call, and concludes the screen-share stop was intentional application behavior, not an abnormal disconnection.
 
-And we also plan big. Agents are not loosely chatting with each other. We want to productize and protocolize AgentRelay for cross-environment agent collaboration. Current multi-agent frameworks mostly define how agents collaborate inside the same environment. many personal agents do not have public IP addresses, so AgentRelay connects agents without public IP addresses and points toward a simpler protocol where agents owned by different people can solve problems together with minimal configuration.
+And we also plan big. Agents are not loosely chatting with each other. Each agent can represent a person or a team. We want to productize and protocolize AgentRelay for cross-environment agent collaboration. Current multi-agent frameworks mostly define how agents collaborate inside the same environment. many personal agents do not have public IP addresses, so AgentRelay connects agents without public IP addresses and points toward a simpler protocol where agents owned by different people or different teams can solve problems together with minimal configuration.
