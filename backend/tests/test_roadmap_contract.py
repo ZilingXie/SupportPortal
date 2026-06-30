@@ -28,9 +28,11 @@ class RoadmapContractTests(unittest.TestCase):
         required_terms = [
             "SupportPortal Phase 1",
             "From Zendesk replacement to an AI-native Support System",
+            "What if a support reply is fast, but wrong?",
             "AI guardrail pass rate",
             "Expand full talk track",
             "Collapsed by default",
+            "customer UI stays the same",
             "Internally, Zendesk cases are forwarded into SupportPortal",
             "SupportPortal Phase 1 architecture diagram",
             "Customer / Zendesk",
@@ -42,6 +44,7 @@ class RoadmapContractTests(unittest.TestCase):
             "Showcase: how AI Guardrail rejects an incomplete reply",
             "customer-safe boundary",
             "Bad case: traditional support quality failure",
+            "bad-case-support-failure-demo.mp4",
             "I encountered black screen during my stream, my audience cannot seem my face. What should I do!",
             "Your phone's camera might be broken.",
             "How do you know? It was working 5 minutes ago!",
@@ -76,8 +79,13 @@ class RoadmapContractTests(unittest.TestCase):
             "first-contact resolution",
             "limited customization space",
             "feature extension, internal workflow customization, data mining",
+            "Open /assignment",
             "Open /assignment/admin",
+            'href="/assignment"',
             'href="/assignment/admin"',
+            "AI account automation",
+            "Open /account",
+            'href="/account"',
             "AgentRelay task network",
             "Why AgentRelay is needed",
             "Why not pure A2A protocol",
@@ -91,6 +99,9 @@ class RoadmapContractTests(unittest.TestCase):
             "C4E3D88760726EEEC8668FDE2B825157",
             "not an abnormal interruption",
             "AgentRelay communication foundation is ready, while real SupportPortal domain-agent investigation remains a Phase 2 integration",
+            "Productize and protocolize AgentRelay",
+            "cross-environment agent collaboration",
+            "minimal configuration",
             "font-size: clamp(30px, 4.8vw, 60px);",
             "SupportPortal Phase 1 is a POC for an AI-native support operating system",
             "connects Zendesk forwarding, routing, assignment, AI guardrail, final approval, dashboard, case replay, and AgentRelay communication foundation",
@@ -102,6 +113,7 @@ class RoadmapContractTests(unittest.TestCase):
             'href="./phase1_video/video_script.md"',
             'href="./phase1_video/storyboard.md"',
             'href="./phase1_video/voiceover-jianying.txt"',
+            'href="./phase1_video/bad-case-support-failure-demo.mp4"',
             'href="./phase1_video/showcase-guardrail-demo.mp4"',
             'href="./phase1_video/"',
         ]
@@ -146,15 +158,32 @@ class RoadmapContractTests(unittest.TestCase):
 
         for term in [
             "# SupportPortal Phase 1 3-minute video script",
-            "00:00-00:15",
-            "00:35-01:05",
+            "advertising-style product video",
+            "00:00-00:10",
+            "00:10-00:28",
+            "00:28-00:45",
             "01:05-01:25",
-            "01:25-01:55",
-            "02:20-02:45",
-            "02:45-03:00",
+            "01:25-01:45",
+            "01:45-02:05",
+            "02:05-02:25",
+            "02:25-02:43",
+            "02:43-03:00",
+            "What if a support reply is fast, but wrong?",
+            "phase1_video/bad-case-support-failure-demo.mp4",
+            "reply quality",
+            "manager visibility",
+            "after-the-fact review",
+            "late replies",
             "Zendesk does not give us enough customization space",
             "/assignment/admin",
+            "/account",
+            "AI-native ticket system",
+            "customer UI stays unchanged",
+            "AI account automation",
             "AgentRelay",
+            "productize and protocolize AgentRelay",
+            "cross-environment agent collaboration",
+            "minimal configuration",
             "no public IP",
             "Client.unpublish",
             "[websdk] no input frame received",
@@ -167,6 +196,7 @@ class RoadmapContractTests(unittest.TestCase):
         for term in [
             "# SupportPortal Phase 1 3-minute video storyboard",
             "phase1_video/1-intro.jpeg",
+            "phase1_video/bad-case-support-failure-demo.mp4",
             "phase1_video/2-why-now.png",
             "phase1_video/3-big-pic.png",
             "phase1_video/4-admin.png",
@@ -175,6 +205,8 @@ class RoadmapContractTests(unittest.TestCase):
             "abnormal-disconnection exclusion",
             "Guardrail showcase dialogue",
             "phase1_video/7-show-case.png",
+            "/account",
+            "AI account automation",
             "phase1_video/11-phase1-closing.png",
             "phase1_video/12-dashboard.png",
         ]:
@@ -182,17 +214,29 @@ class RoadmapContractTests(unittest.TestCase):
                 self.assertIn(term, storyboard)
 
         for term in [
+            "What if a support reply is fast, but wrong?",
+            "That is the traditional support trap",
+            "reply quality",
+            "manager visibility",
+            "after-the-fact review",
+            "late replies",
             "Zendesk license renewal is about seventy-three thousand dollars a year",
             "customer entry point stays unchanged",
             "customer experience also stays unchanged",
+            "SupportPortal is our AI-native ticket system",
+            "The customer UI stays unchanged",
             "Assignment is the Phase 1 dispatch control plane",
+            "Open the assignment workspace",
             "Agents are not loosely chatting with each other",
             "many personal agents do not have public IP addresses",
+            "AI account automation",
             "Client dot unpublish call",
             "not an abnormal disconnection",
             "AI Guardrail rejects an incomplete reply",
             "conservative customer draft",
             "AI guardrail pass rate",
+            "productize and protocolize AgentRelay",
+            "cross-environment agent collaboration",
         ]:
             with self.subTest(voiceover_term=term):
                 self.assertIn(term, voiceover)
@@ -215,6 +259,9 @@ class RoadmapContractTests(unittest.TestCase):
         animation = PHASE1_VIDEO_DIR / "showcase-guardrail-demo.mp4"
         self.assertTrue(animation.exists())
         self.assertGreater(animation.stat().st_size, 100 * 1024)
+        bad_case_animation = PHASE1_VIDEO_DIR / "bad-case-support-failure-demo.mp4"
+        self.assertTrue(bad_case_animation.exists())
+        self.assertGreater(bad_case_animation.stat().st_size, 100 * 1024)
 
     def test_roadmap_static_routes_serve_public_pages(self) -> None:
         from fastapi.testclient import TestClient
@@ -231,7 +278,8 @@ class RoadmapContractTests(unittest.TestCase):
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
                 ("/roadmap/phase1_video/video_script.md", "SupportPortal Phase 1 3-minute video script"),
                 ("/roadmap/phase1_video/storyboard.md", "SupportPortal Phase 1 3-minute video storyboard"),
-                ("/roadmap/phase1_video/voiceover-jianying.txt", "Zendesk license renewal is about seventy-three thousand dollars a year"),
+                ("/roadmap/phase1_video/voiceover-jianying.txt", "What if a support reply is fast, but wrong?"),
+                ("/roadmap/phase1_video/bad-case-support-failure-demo.mp4", ""),
                 ("/roadmap/phase1_video/2-why-now.png", "PNG"),
             ]
             for path, marker in checks:
