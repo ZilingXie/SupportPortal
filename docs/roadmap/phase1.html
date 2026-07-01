@@ -160,7 +160,7 @@
       z-index: 1;
       max-width: 960px;
       margin: 0;
-      font-size: clamp(15px, 2.4vw, 30px);
+      font-size: clamp(17px, 2.55vw, 32px);
       line-height: 0.94;
     }
 
@@ -172,6 +172,35 @@
       color: #39413b;
       font-size: clamp(15px, 1.7vw, 20px);
       line-height: 1.48;
+    }
+
+    .hero-qa {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 10px;
+      max-width: 840px;
+      margin: 0;
+    }
+
+    .hero-qa-item {
+      display: grid;
+      gap: 5px;
+      padding-left: 14px;
+      border-left: 3px solid rgba(213, 106, 58, 0.55);
+    }
+
+    .hero-qa-question,
+    .hero-qa-answer {
+      margin: 0;
+      color: #39413b;
+      font-size: clamp(14px, 1.45vw, 18px);
+      line-height: 1.45;
+    }
+
+    .hero-qa-question {
+      color: #1f2925;
+      font-weight: 850;
     }
 
     .talk-track {
@@ -210,9 +239,17 @@
       max-width: 860px;
     }
 
+    .section-header.wide-title {
+      max-width: 1180px;
+    }
+
+    .section-header.wide-title h2 {
+      white-space: nowrap;
+    }
+
     .section h2 {
       margin: 0;
-      font-size: clamp(14px, 2.1vw, 27px);
+      font-size: clamp(16px, 2.25vw, 29px);
       line-height: 0.98;
     }
 
@@ -766,6 +803,91 @@
       line-height: 1.55;
     }
 
+    .account-automation-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .internal-request {
+      display: grid;
+      gap: 20px;
+      padding: clamp(22px, 3.2vw, 34px);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: #1f211f;
+      color: #f6f1e7;
+      box-shadow: 0 18px 44px rgba(31, 45, 38, 0.16);
+    }
+
+    .internal-request .eyebrow {
+      border-color: rgba(246, 241, 231, 0.28);
+      background: rgba(246, 241, 231, 0.08);
+      color: #f6f1e7;
+    }
+
+    .mail-subject {
+      margin: 0;
+      color: #f6f1e7;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: clamp(16px, 2vw, 26px);
+      line-height: 1.12;
+      letter-spacing: 0;
+      max-width: 900px;
+    }
+
+    .mail-meta {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 12px 0 4px;
+      color: rgba(246, 241, 231, 0.78);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .mail-meta-lines {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .mail-from {
+      color: #f6f1e7;
+      font-weight: 750;
+    }
+
+    .mail-avatar {
+      display: inline-grid;
+      width: 48px;
+      height: 48px;
+      place-items: center;
+      border-radius: 50%;
+      background: #1677d2;
+      color: #fff;
+      font-size: 22px;
+      font-weight: 850;
+    }
+
+    .mail-body {
+      display: grid;
+      gap: 13px;
+      max-width: 960px;
+      color: rgba(246, 241, 231, 0.92);
+      font-size: 15px;
+      line-height: 1.58;
+    }
+
+    .mail-body p {
+      margin: 0;
+    }
+
+    .mail-body a {
+      color: #66b7ff;
+    }
+
     .guardrail-dimensions {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1229,9 +1351,15 @@
 
     .dashboard {
       display: grid;
-      grid-template-columns: 0.9fr 1.1fr;
-      gap: 18px;
+      grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+      gap: 22px;
       align-items: start;
+    }
+
+    .dashboard-copy {
+      display: grid;
+      gap: 16px;
+      align-content: start;
     }
 
     .metric-board {
@@ -1434,6 +1562,7 @@
       .script-draft,
       .arch-layer,
       .assignment-panel,
+      .account-automation-grid,
       .relay-question-grid,
       .agent-workflow,
       .guardrail-dimensions,
@@ -1527,14 +1656,23 @@
     <header class="hero reveal">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal Phase 1</div>
       <h1>From Zendesk replacement to an AI-native Support System</h1>
-      <p class="hero-copy">How do we ensure support reply quality before the customer sees the answer? SupportPortal Phase 1 is a POC for an AI-native support operating system: keep the customer UI stays the same, keep Zendesk as the entry point, and move reply quality, assignment, automation, investigation, and management metrics into one controllable workflow. It connects Zendesk forwarding, routing, assignment, AI guardrail, final approval, dashboard, case replay, and AgentRelay communication foundation.</p>
+      <div class="hero-qa" aria-label="Phase 1 opening questions">
+        <div class="hero-qa-item">
+          <p class="hero-qa-question">Q: How do we ensure support reply quality before the customer sees the answer?</p>
+          <p class="hero-qa-answer">A: SupportPortal Phase 1 moves reply quality, assignment, automation, investigation, and management metrics into one controllable workflow.</p>
+        </div>
+        <div class="hero-qa-item">
+          <p class="hero-qa-question">Q: What changes for the customer?</p>
+          <p class="hero-qa-answer">A: Nothing at the entry point. The customer UI stays the same, Zendesk remains the entry point, and internally SupportPortal connects Zendesk forwarding, routing, assignment, AI guardrail, final approval, dashboard, case replay, and the AgentRelay communication foundation.</p>
+        </div>
+      </div>
       <ul class="talk-track" aria-label="3-minute demo flow">
         <li>0:00 Hook and bad case</li>
         <li>0:28 Traditional support trap</li>
         <li>1:05 AI-native ticket system</li>
         <li>1:25 Assignment workspace</li>
         <li>1:45 Guardrail quality control</li>
-        <li>2:05 Dashboard, Account, R&amp;D, AgentRelay</li>
+        <li>2:05 Dashboard, Account, AgentRelay, R&amp;D</li>
       </ul>
     </header>
 
@@ -1611,12 +1749,12 @@
               <b>voiceover-jianying.txt</b>
               <span>Plain narration text for Jianying or another TTS tool.</span>
             </a>
-            <a class="video-kit-link" href="./phase1_video/bad-case-support-failure-demo.mp4">
-              <b>bad-case-support-failure-demo.mp4</b>
+            <a class="video-kit-link" href="./phase1_video/2- bad-case-support-failure-demo.mp4">
+              <b>2- bad-case-support-failure-demo.mp4</b>
               <span>Traditional support failure animation for the opening hook.</span>
             </a>
-            <a class="video-kit-link" href="./phase1_video/showcase-guardrail-demo.mp4">
-              <b>showcase-guardrail-demo.mp4</b>
+            <a class="video-kit-link" href="./phase1_video/7-showcase-guardrail-demo.mp4">
+              <b>7-showcase-guardrail-demo.mp4</b>
               <span>8-second H.264 animation export for the Guardrail Showcase with a 2-second final hold.</span>
             </a>
             <a class="video-kit-link" href="./phase1_video/">
@@ -1626,11 +1764,11 @@
           </div>
           <ul class="shot-strip" aria-label="Video screenshot assets">
             <li>1-intro.jpeg</li>
-            <li>bad-case-support-failure-demo.mp4</li>
+            <li>2- bad-case-support-failure-demo.mp4</li>
             <li>2-why-now.png</li>
             <li>3-big-pic.png</li>
             <li>4-admin.png</li>
-            <li>showcase-guardrail-demo.mp4</li>
+            <li>7-showcase-guardrail-demo.mp4</li>
             <li>5-agent-relay.png</li>
             <li>7-show-case.png</li>
             <li>11-phase1-closing.png</li>
@@ -1820,10 +1958,9 @@
           <a class="admin-link" href="/assignment">Open /assignment</a>
         </article>
         <article class="assignment-admin">
-          <div class="eyebrow">/assignment/admin</div>
-          <h3>Admin manages shifts, rules, and fallback.</h3>
-          <p>The assignment admin page exposes engineer/day picker, shifts, manual override, and routing fallback. It is the manager control surface for future small-traffic rollout.</p>
-          <a class="admin-link" href="/assignment/admin">Open /assignment/admin</a>
+          <div class="eyebrow">Manager control</div>
+          <h3>Managers monitor ownership, SLA risk, and routing accuracy.</h3>
+          <p>Phase 1 keeps the demo focused on the engineer assignment workspace. Manager-side controls can stay behind the scenes while the leadership story emphasizes how tickets are received, routed, reviewed, and safely approved.</p>
         </article>
       </div>
       <div class="flow" aria-label="Current Phase 1 flow">
@@ -1898,7 +2035,7 @@
             </div>
             <div class="demo-bubble engineer" data-showcase-step="evidence">
               <b>Engineer</b>
-              <p>i checked the websdk logs:<br><code>[websdk] no input frame received. Please try a different device</code></p>
+              <p>i checked the websdk logs:<br><code>[websdk] no input frame received. Please try a different device</code><br>could suggest the customer to try with a different device</p>
             </div>
             <div class="demo-bubble agent demo-final" data-showcase-step="draft">
               <b>Support Agent</b>
@@ -1928,73 +2065,27 @@
           </aside>
         </div>
       </div>
-      <div class="showcase">
-        <article class="reply" aria-label="Engineer-side guardrail dialogue">
-          <div class="eyebrow">Guardrail dialogue</div>
-          <div class="rnd-dialogue">
-            <div class="dialogue-turn">
-              <b>Support Agent</b>
-              <div class="query-result">
-                <p><strong>Current issue</strong></p>
-                <p>Black screen issue reported for channel zilingtest, uid 2.</p>
-                <p><strong>Action needed</strong></p>
-                <ul class="script-list">
-                  <li>Explicit proof is missing or not verifiable. Add a reproduction result, log/error, config/version difference, or doc path.</li>
-                  <li>Explicit solution or next step is missing.</li>
-                </ul>
-              </div>
-            </div>
-            <div class="dialogue-turn">
-              <b>Engineer</b>
-              <p>the camera is broken</p>
-            </div>
-            <div class="dialogue-turn">
-              <b>Support Agent</b>
-              <p>The note &quot;the camera is broken&quot; is not yet usable for a customer reply because it states a root cause without any traceable proof or a safe next step. Please provide the concrete evidence supporting that claim, for example: reproduction result, logs/error trace, device/config difference, or a cited internal/doc reference, and include the exact customer-facing next step or workaround we can safely recommend if root cause is still unconfirmed.</p>
-            </div>
-          </div>
-        </article>
-        <article class="guardrail" aria-label="Guardrail accepts evidence and drafts customer reply">
-          <span class="decision">Rejected first, accepted after evidence</span>
-          <div class="rnd-dialogue">
-            <div class="dialogue-turn">
-              <b>Engineer</b>
-              <p>i checked the websdk logs:<br><code>[websdk] no input frame received. Please try a different device</code><br>could suggest the customer to try with a different device</p>
-            </div>
-            <div class="dialogue-turn">
-              <b>Support Agent</b>
-              <div class="query-result">
-                <p>We now have a traceable symptom-level proof point from the Web SDK log (<code>[websdk] no input frame received</code>) and a safe next step: retest with a different device. I prepared a conservative customer draft that avoids claiming a confirmed root cause.</p>
-                <p><strong>Draft Customer Reply</strong></p>
-                <p>Hi there,</p>
-                <p>Thanks for your patience. We checked the Web SDK logs and found that no input video frame was being received for the affected video stream, which can lead to a black screen.</p>
-                <p>As a next step, please try the call again using a different device and check whether the video displays normally. If the issue still happens after that, please let us know and share the approximate time of the new test if available so we can continue investigating.</p>
-                <p>Best Regards,<br>Sid</p>
-              </div>
-            </div>
-          </div>
-        </article>
-      </div>
     </section>
 
     <section class="section reveal" aria-labelledby="dashboard">
-      <div class="section-header">
+      <div class="section-header wide-title">
         <div class="eyebrow"><span class="pulse"></span>05 · Dashboard</div>
-        <h2 id="dashboard">Management metrics must move from the SLA era to the AI guardrail era.</h2>
-        <p class="section-lead">Traditional metrics still matter, but Phase 1 also tracks whether AI is actually reducing risk, improving quality, and explaining why some cases should not be automated yet.</p>
+        <h2 id="dashboard">Move management metrics from traditional SLA to the AI native era.</h2>
       </div>
       <div class="dashboard">
-        <ul class="metric-list">
-          <li>Traditional metrics: first response time, second response time, and SLA.</li>
-          <li>Core new metrics: AI guardrail pass rate, agent interaction count, and first-contact resolution.</li>
-          <li>Quality explanation metrics: guardrail reject reason, not automated reason, and route accuracy.</li>
-          <li>Future extension metrics: agent claim latency, artifact returned rate, reply.delivered success rate, sentiment alerts, and reopen.</li>
-        </ul>
+        <div class="dashboard-copy">
+          <p class="section-lead">Traditional metrics still matter, but the control point changes from after-the-fact review to live quality control.</p>
+          <ul class="metric-list">
+            <li>Traditional metrics: first response time, second response time, and SLA.</li>
+            <li>Core new metrics: AI guardrail pass rate, agent interaction count, and first-contact resolution.</li>
+            <li>Quality explanation metrics: guardrail reject reason, not automated reason, and route accuracy.</li>
+            <li>Future extension metrics: sentiment alerts, reopen risk, and agent delivery quality.</li>
+          </ul>
+        </div>
         <div class="metric-board" aria-label="Dashboard metric examples">
           <div class="metric"><b>SLA</b><span>Detect timeout risk before it becomes an after-the-fact review.</span></div>
           <div class="metric"><b>Pass</b><span>Measure AI guardrail pass rate and rejection reasons.</span></div>
           <div class="metric"><b>FCR</b><span>Track first-contact resolution and second-question risk.</span></div>
-          <div class="metric"><b>Agent</b><span>Track agent interaction count and future A2A delivery quality.</span></div>
           <div class="metric"><b>Sentiment</b><span>Alert when customer sentiment turns risky.</span></div>
         </div>
       </div>
@@ -2007,25 +2098,101 @@
         <h2 id="account-automation">AI account automation handles safe billing cases without engineer in the loop.</h2>
         <p class="section-lead">Not every support case needs the same human-heavy path. Invoice requests, account fraud, deactivate, and company verification cases can be classified, field-checked, and moved through a controlled automation path when the risk boundary is clear.</p>
       </div>
-      <div class="assignment-panel" aria-label="AI account automation showcase">
-        <article class="assignment-copy">
-          <div class="eyebrow">/account</div>
-          <h3>AI account automation collects fields and routes billing cases.</h3>
-          <p>The account intake flow identifies billing automation candidates, checks missing fields, prepares the next customer or internal response, and records whether a case was fully automated, human-approved, or handed off.</p>
+      <div class="account-automation-grid" aria-label="AI account automation dialogue and internal request">
+        <article class="rnd-proof">
+          <div class="eyebrow">Account Reactivation Request</div>
+          <h3>AI collects missing information before sending the internal request.</h3>
+          <div class="rnd-dialogue">
+            <div class="dialogue-turn">
+              <b>Customer</b>
+              <p>Dear Agora Support Team,</p>
+              <p>We received notification that our account has been suspended due to suspicious activity. We believe this is a misunderstanding and would like to provide the requested information for review:</p>
+              <p><strong>Company Information:</strong><br>Company Name:<br>Address: Sultan Selim Mah. Eski Büyükdere Cad. No: 61 İç Kapı No: 2 Kağıthane / İstanbul, Turkey<br>Website:<br>Registered Country:</p>
+            </div>
+            <div class="dialogue-turn">
+              <b>AI Account Agent</b>
+              <p>Thanks for the information. To help our internal team review the account verification request, could you also provide the company name, official website, registered country, account email, and any business context that explains expected Agora usage?</p>
+            </div>
+            <div class="dialogue-turn">
+              <b>Customer</b>
+              <p>Company Name: Demo Streaming Teknoloji Ltd.<br>Website: https://example-streaming.test<br>Registered Country: Turkey<br>Account email: customer@example.com<br>Business context: live streaming and real-time video engagement for our mobile app.</p>
+            </div>
+            <div class="dialogue-turn">
+              <b>AI Account Agent</b>
+              <p>Thanks for providing the details. We’ve escalated your account verification request to our internal team for review.</p>
+              <p>We’ll follow up once the information has been reviewed.</p>
+            </div>
+          </div>
           <a class="admin-link" href="/account">Open /account</a>
         </article>
-        <article class="assignment-admin">
-          <div class="eyebrow">No engineer in the loop</div>
-          <h3>Safe automation first, human review when needed.</h3>
-          <p>Phase 1 does not automate every case. It proves that some billing and account cases can skip repetitive engineer handling while still preserving route accuracy, missing-field reasons, and auditability.</p>
+        <article class="internal-request" aria-label="Simulated internal account reactivation email">
+          <div class="eyebrow">Internal request email</div>
+          <h3 class="mail-subject">Account verification review - Ticket TK-ACC-42F91C</h3>
+          <div class="mail-meta">
+            <span class="mail-avatar">A</span>
+            <span class="mail-meta-lines">
+              <span class="mail-from">AI Account Agent &lt;supportportal@stellarix.space&gt;</span>
+              <span>To: Account Operations</span>
+            </span>
+          </div>
+          <div class="mail-body">
+            <p>Hi team,</p>
+            <p>A customer has provided the requested information for account verification review after a suspension notification.</p>
+            <p>Ticket ID: TK-ACC-42F91C<br>Customer email: <a href="mailto:customer@example.com">customer@example.com</a><br>Company: Demo Streaming Teknoloji Ltd.</p>
+            <p>Address: Sultan Selim Mah. Eski Büyükdere Cad. No: 61 İç Kapı No: 2 Kağıthane / İstanbul, Turkey<br>Website: https://example-streaming.test<br>Registered Country: Turkey</p>
+            <p>Business context: live streaming and real-time video engagement for a mobile app.</p>
+            <p>Original customer message:<br>We received notification that our account has been suspended due to suspicious activity. We believe this is a misunderstanding and would like to provide the requested information for review.</p>
+            <p>Please review the verification information and advise whether the account can be reactivated.</p>
+          </div>
         </article>
       </div>
     </section>
 
 
+    <section class="section reveal" aria-labelledby="agentrelay">
+      <div class="section-header">
+        <div class="eyebrow"><span class="pulse"></span>07 · AgentRelay task network</div>
+        <h2 id="agentrelay">AgentRelay turns private agents into task collaborators, not loose chat participants.</h2>
+        <p class="section-lead">Each agent can represent a person or a team. AgentRelay connects these agents through auditable tasks, especially when personal or internal agents do not have public IP addresses.</p>
+      </div>
+      <div class="relay-question-grid" aria-label="Why AgentRelay is needed">
+        <article class="relay-question"><b>Why AgentRelay is needed</b><span>Agents are not loosely chatting with each other. They exchange tasks, artifacts, and done criteria. Each agent can represent a person or a team.</span></article>
+        <article class="relay-question"><b>Why not pure A2A protocol</b><span>Many agents, especially personal agents, have no public IP. The relay handles connection, delivery, audit, and fallback.</span></article>
+        <article class="relay-question"><b>Why agents communicate</b><span>The Support Agent should not guess. It can hand unresolved questions to R&D / Data / Log Agents for evidence.</span></article>
+        <article class="relay-question"><b>How R&D Agent helps</b><span>It reads case context, logs, and repo clues, forms a hypothesis, and returns an evidence artifact, limitation, and next action.</span></article>
+      </div>
+      <div class="proof">
+        <div class="eyebrow">Productize and protocolize AgentRelay</div>
+        <h3>AgentRelay is the starting point for cross-environment agent collaboration.</h3>
+        <p>Current multi-agent frameworks mostly define how agents collaborate inside the same environment. AgentRelay connects agents that do not have public IP addresses, then points toward a simple protocol where agents owned by different people, or different teams, can solve problems together with minimal configuration. Each agent can represent a person or a team, making the network closer to real support ownership than a single shared chatbot.</p>
+      </div>
+      <div class="agent-workflow" aria-label="Agent-to-agent communication path">
+        <article class="workflow-panel">
+          <div class="eyebrow">A2A communication path</div>
+          <h3>How agents communicate</h3>
+          <ol class="workflow-steps">
+            <li><b>1</b><span>Support Agent creates a task with request, done criteria, and requester thread.</span></li>
+            <li><b>2</b><span>AgentRelay relays the task and records state plus permission boundaries.</span></li>
+            <li><b>3</b><span>The target agent claims the task instead of starting a scattered side conversation.</span></li>
+            <li><b>4</b><span>The target agent submits an artifact with evidence, limitations, and recommended next action.</span></li>
+            <li><b>5</b><span>reply.delivered returns to the original thread, and the requester-side owner decides whether to close.</span></li>
+          </ol>
+        </article>
+      </div>
+      <p class="event-strip-label">Communication state machine · audit trail</p>
+      <ul class="event-strip" aria-label="AgentRelay communication state machine examples">
+        <li>task.created</li>
+        <li>task.claimed</li>
+        <li>artifact.submitted</li>
+        <li>ownership.transferred</li>
+        <li>reply.delivered</li>
+        <li>requester.closed</li>
+      </ul>
+    </section>
+
     <section class="section reveal" aria-labelledby="rnd-investigation">
       <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>07 · R&amp;D Agent investigation</div>
+        <div class="eyebrow"><span class="pulse"></span>08 · R&amp;D Agent investigation</div>
         <h2 id="rnd-investigation">AI agents should investigate evidence, not guess.</h2>
         <p class="section-lead">For hard technical cases, the Support Agent can ask an R&amp;D Agent for a verifiable evidence artifact. This keeps the customer-facing reply grounded while leaving final accountability with the support owner.</p>
       </div>
@@ -2074,47 +2241,6 @@
           </div>
         </div>
       </div>
-    </section>
-
-    <section class="section reveal" aria-labelledby="agentrelay">
-      <div class="section-header">
-        <div class="eyebrow"><span class="pulse"></span>08 · AgentRelay task network</div>
-        <h2 id="agentrelay">AgentRelay turns private agents into task collaborators, not loose chat participants.</h2>
-        <p class="section-lead">Each agent can represent a person or a team. AgentRelay connects these agents through auditable tasks, especially when personal or internal agents do not have public IP addresses.</p>
-      </div>
-      <div class="relay-question-grid" aria-label="Why AgentRelay is needed">
-        <article class="relay-question"><b>Why AgentRelay is needed</b><span>Agents are not loosely chatting with each other. They exchange tasks, artifacts, and done criteria. Each agent can represent a person or a team.</span></article>
-        <article class="relay-question"><b>Why not pure A2A protocol</b><span>Many agents, especially personal agents, have no public IP. The relay handles connection, delivery, audit, and fallback.</span></article>
-        <article class="relay-question"><b>Why agents communicate</b><span>The Support Agent should not guess. It can hand unresolved questions to R&D / Data / Log Agents for evidence.</span></article>
-        <article class="relay-question"><b>How R&D Agent helps</b><span>It reads case context, logs, and repo clues, forms a hypothesis, and returns an evidence artifact, limitation, and next action.</span></article>
-      </div>
-      <div class="proof">
-        <div class="eyebrow">Productize and protocolize AgentRelay</div>
-        <h3>AgentRelay is the starting point for cross-environment agent collaboration.</h3>
-        <p>Current multi-agent frameworks mostly define how agents collaborate inside the same environment. AgentRelay connects agents that do not have public IP addresses, then points toward a simple protocol where agents owned by different people, or different teams, can solve problems together with minimal configuration. Each agent can represent a person or a team, making the network closer to real support ownership than a single shared chatbot.</p>
-      </div>
-      <div class="agent-workflow" aria-label="Agent-to-agent communication path">
-        <article class="workflow-panel">
-          <div class="eyebrow">A2A communication path</div>
-          <h3>How agents communicate</h3>
-          <ol class="workflow-steps">
-            <li><b>1</b><span>Support Agent creates a task with request, done criteria, and requester thread.</span></li>
-            <li><b>2</b><span>AgentRelay relays the task and records state plus permission boundaries.</span></li>
-            <li><b>3</b><span>The target agent claims the task instead of starting a scattered side conversation.</span></li>
-            <li><b>4</b><span>The target agent submits an artifact with evidence, limitations, and recommended next action.</span></li>
-            <li><b>5</b><span>reply.delivered returns to the original thread, and the requester-side owner decides whether to close.</span></li>
-          </ol>
-        </article>
-      </div>
-      <p class="event-strip-label">Communication state machine · audit trail</p>
-      <ul class="event-strip" aria-label="AgentRelay communication state machine examples">
-        <li>task.created</li>
-        <li>task.claimed</li>
-        <li>artifact.submitted</li>
-        <li>ownership.transferred</li>
-        <li>reply.delivered</li>
-        <li>requester.closed</li>
-      </ul>
     </section>
 
     <section class="section reveal" aria-labelledby="roadmap">
