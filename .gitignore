@@ -18,6 +18,7 @@ env/
 artifacts/
 .env
 .env.local
+.msgraph/
 
 # CodeGraph
 .codegraph/
