@@ -1,41 +1,47 @@
-# SupportPortal Phase 1 视频分镜说明
+# SupportPortal Phase 1 剪映分镜脚本
 
-用于你自己看，不建议直接粘到剪映。英文 `video_script.md` 才是给剪映图文成片/TTS 用的短脚本。
+用于你自己看，也可以直接按表格把素材和字幕放进剪映。英文 `video_script.md` 是纯旁白；本文件负责每一幕用哪张图、哪段视频、字幕写什么。
 
-| 幕 | 时间 | 时长 | 素材 | 画面在做什么 | 剪映操作 |
+| Scene # | 时间段 | 时长 | 使用素材 | 字幕 / 画面文字 | 剪映画面动作 |
 |---|---:|---:|---|---|---|
-| 第 01 幕 | 00:00-00:05 | 5s | `phase1_video/1-intro.jpeg` | 开场标题和核心问题：如何在客户看到前确保 support 回复质量。 | 图片主轨，轻微放大。字幕突出 `reply quality`。 |
-| 第 02 幕 | 00:05-00:10 | 5s | `phase1_video/1-intro.jpeg` | 继续停留在问题上，引出“客户反馈时已经太晚”。 | 同一张图切一刀，继续慢推近。 |
-| 第 03 幕 | 00:10-00:18 | 8s | `phase1_video/bad-case-support-failure-demo.mp4` | 播放 bad case 前半：客户黑屏，工程师快速但武断地说相机坏了。 | 放入 mp4，保留动画节奏。 |
-| 第 04 幕 | 00:18-00:28 | 10s | `phase1_video/bad-case-support-failure-demo.mp4` | 播放 bad case 后半：客户追问证据和 workaround。 | 继续 mp4，加红色关键词：`no proof`、`no workaround`。 |
-| 第 05 幕 | 00:28-00:36 | 8s | `https://support.stellarix.space/roadmap/phase1.html#reply-quality` 截图 | 展示传统 support 的质量风险卡片。 | 截 bad-case risk cards，停留 Quality risk / Customer trust breaks。 |
-| 第 06 幕 | 00:36-00:45 | 9s | 同上 | 解释痛点：回复质量、manager 可见性、事后复盘、回复不及时。 | 横向平移或逐个高亮四个痛点。 |
-| 第 07 幕 | 00:45-00:55 | 10s | `phase1_video/2-why-now.png` | 展示 Zendesk 续费约 73k USD/year。 | 慢慢放大到 `73k`。 |
-| 第 08 幕 | 00:55-01:05 | 10s | `phase1_video/2-why-now.png` | 展示更大的问题：feature、workflow、data mining、quality analytics 定制空间不足。 | 高亮 `Custom` 或 customization 区域。 |
-| 第 09 幕 | 01:05-01:15 | 10s | `phase1_video/3-big-pic.png` | 展示客户入口不变：Customer / Zendesk 层。 | 高亮 Customer -> Zendesk。 |
-| 第 10 幕 | 01:15-01:25 | 10s | `phase1_video/3-big-pic.png` | 展示 SupportPortal Core：routing、assignment、guardrail、approve、dashboard。 | 镜头下移到 SupportPortal Core。 |
-| 第 11 幕 | 01:25-01:35 | 10s | `https://support.stellarix.space/assignment` 截图 | 展示 engineer 如何接工单。 | 截 `/assignment`，轻微平移过工单列表和详情。 |
-| 第 12 幕 | 01:35-01:45 | 10s | `phase1_video/4-admin.png` 或 `https://support.stellarix.space/assignment/admin` | 展示 manager 如何配置 assignment：班次、规则、fallback。 | 鼠标/高亮扫过 shift、rules、manual override。 |
-| 第 13 幕 | 01:45-01:53 | 8s | `phase1_video/showcase-guardrail-demo.mp4` | Guardrail demo 前半：工程师写 bad draft，AI 拒绝。 | 放 mp4，保留右侧进度。 |
-| 第 14 幕 | 01:53-02:05 | 12s | `phase1_video/showcase-guardrail-demo.mp4` 或 `phase1_video/7-show-case.png` | Guardrail demo 后半：补充 Web SDK log：`[websdk] no input frame received`，然后生成保守 customer draft。 | 继续 mp4，最后停一下 safe draft。 |
-| 第 15 幕 | 02:05-02:16 | 11s | `phase1_video/12-dashboard.png` | 展示 Dashboard：管理从事后 review 变成实时质量控制。 | 慢慢平移 Dashboard 指标。 |
-| 第 16 幕 | 02:16-02:25 | 9s | `phase1_video/12-dashboard.png` | 展示新指标：guardrail pass rate、agent interaction count、first-contact resolution。 | 逐个加关键词字幕。 |
-| 第 17 幕 | 02:25-02:43 | 18s | `https://support.stellarix.space/account` 截图 | 展示 account/billing case 可以自动处理，不需要 engineer in the loop。 | 截 `/account`，平移表单、分类、状态。 |
-| 第 18 幕 | 02:43-02:55 | 12s | `https://support.stellarix.space/roadmap/phase1.html#rnd-investigation` 截图 | 展示 R&D Agent 如何通过证据判断不是异常断开，而是 `Client.unpublish`。 | 高亮 `Client.unpublish` 和 conclusion。 |
-| 第 19 幕 | 02:55-03:00 | 5s | `phase1_video/11-phase1-closing.png` | 结尾：AgentRelay 产品化/协议化，agent 代表个人或团队。 | 最后一帧稳定停留，不要快切。 |
+| Scene 01 | 00:00-00:06 | 6s | `phase1_video/1-intro.jpeg` | How do we ensure support reply quality before the customer sees the answer? | 开场标题图，轻微放大，字幕居中停留。 |
+| Scene 02 | 00:06-00:13 | 7s | `phase1_video/2- bad-case-support-failure-demo.mp4` | A fast answer can still be a bad answer. | 播放 bad case 动画，保留原节奏。 |
+| Scene 03 | 00:13-00:22 | 9s | `phase1_video/3-painpoint.png` | Traditional support finds quality problems too late. | 慢推近 pain point 区域，依次强调 quality、visibility、review、speed。 |
+| Scene 04 | 00:22-00:33 | 11s | `phase1_video/4-whynow.png` | Zendesk costs about 73k USD/year, but the bigger issue is limited customization. | 从 cost 移动到 customization / data mining / analytics。 |
+| Scene 05 | 00:33-00:45 | 12s | `phase1_video/5-bigpic.png` | Customer UI stays the same. SupportPortal upgrades the internal workflow. | 先高亮 Customer / Zendesk，再高亮 SupportPortal Core。 |
+| Scene 06 | 00:45-00:54 | 9s | `phase1_video/6-1-engineer.png` | Engineers still receive and own cases in the assignment workspace. | 轻微横移工单列表和详情区。 |
+| Scene 07 | 00:54-01:03 | 9s | `phase1_video/6-2-engineer.png` | Assignment gives the team route, owner, review, SLA risk, and fallback control. | 继续展示 engineer 端，不展示 `/assignment/admin`。 |
+| Scene 08 | 01:03-01:13 | 10s | `phase1_video/7-showcase-guardrail-demo.mp4` | AI Guardrail rejects incomplete replies before customers see them. | 播放 guardrail demo，保留 progress 高亮。 |
+| Scene 09 | 01:13-01:25 | 12s | `phase1_video/7-showcase-guardrail-demo.mp4` | Proof plus a safe next step turns a risky draft into a reviewable answer. | 继续播放/截到 evidence 与 approval，最后停一下。 |
+| Scene 10 | 01:25-01:36 | 11s | `phase1_video/8-dashboard.png` | Move management metrics from traditional SLA to the AI native era. | 左右并排画面，慢慢平移 4 宫格指标。 |
+| Scene 11 | 01:36-01:48 | 12s | `phase1_video/9-automation1.png` | Some account cases do not need an engineer in the loop. | 展示 Account Reactivation Request 对话，强调 AI 收集信息。 |
+| Scene 12 | 01:48-01:58 | 10s | `phase1_video/10-email.png` | AI can package complete information into an internal request. | 展示内部邮件模拟，轻微放大 subject 和 To。 |
+| Scene 13 | 01:58-02:10 | 12s | `phase1_video/11-agentrelay.png` | AgentRelay turns private agents into task collaborators. | 展示 AgentRelay，突出 agent 代表 person / team。 |
+| Scene 14 | 02:10-02:22 | 12s | `phase1_video/12-rnd-agent.png` | When support should not guess, it asks an R&D Agent for evidence. | 展示 R&D investigation loop，强调 evidence artifact。 |
+| Scene 15 | 02:22-02:44 | 22s | `phase1_video/13-rnd-agent-example.png` | The R&D Agent finds `Client.unpublish`: intentional behavior, not an abnormal disconnection. | 慢慢移动到 conclusion 和 `Client.unpublish` 证据。 |
+| Scene 16 | 02:44-03:00 | 16s | `phase1_video/14-closing.png` | Phase 1 proves an AI-native support operating system: safer replies, smarter routing, controlled automation, and agent collaboration. | 结尾图稳定停留，最后 2 秒不要切。 |
 
-## 素材清单
+## 素材顺序
 
-- `phase1_video/1-intro.jpeg`
-- `phase1_video/bad-case-support-failure-demo.mp4`
-- `phase1_video/2-why-now.png`
-- `phase1_video/3-big-pic.png`
-- `https://support.stellarix.space/assignment`
-- `phase1_video/4-admin.png`
-- `https://support.stellarix.space/assignment/admin`
-- `phase1_video/showcase-guardrail-demo.mp4`
-- `phase1_video/7-show-case.png`
-- `phase1_video/12-dashboard.png`
-- `https://support.stellarix.space/account`
-- `https://support.stellarix.space/roadmap/phase1.html#rnd-investigation`
-- `phase1_video/11-phase1-closing.png`
+1. `phase1_video/1-intro.jpeg`
+2. `phase1_video/2- bad-case-support-failure-demo.mp4`
+3. `phase1_video/3-painpoint.png`
+4. `phase1_video/4-whynow.png`
+5. `phase1_video/5-bigpic.png`
+6. `phase1_video/6-1-engineer.png`
+7. `phase1_video/6-2-engineer.png`
+8. `phase1_video/7-showcase-guardrail-demo.mp4`
+9. `phase1_video/8-dashboard.png`
+10. `phase1_video/9-automation1.png`
+11. `phase1_video/10-email.png`
+12. `phase1_video/11-agentrelay.png`
+13. `phase1_video/12-rnd-agent.png`
+14. `phase1_video/13-rnd-agent-example.png`
+15. `phase1_video/14-closing.png`
+
+## 剪映建议
+
+- 图文成片时，把 `字幕 / 画面文字` 当作每幕主字幕。
+- 视频素材 `2- bad-case-support-failure-demo.mp4` 和 `7-showcase-guardrail-demo.mp4` 放主轨，不要再加过多动效。
+- 静态截图使用轻微放大或横移即可，避免花哨转场。
+- 重点字幕保留英文，方便领导直接看项目术语：`AI Guardrail`、`SupportPortal`、`AgentRelay`、`R&D Agent`。
