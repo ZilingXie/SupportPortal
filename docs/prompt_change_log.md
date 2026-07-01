@@ -12,6 +12,31 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-01 - Billing automation Outlook Graph sender
+
+- Area or subsystem: Deterministic billing intake internal email handoff
+- Prompt or model version: `billing-automation-email-v3`
+- Summary: Replaced the billing automation internal email sender path with Microsoft Graph `/me/sendMail` for the company Outlook mailbox `ai-support-agent@agora.io`, and disabled legacy personal SMTP sending.
+- Reason: Automated `/account` cases must send internal handoff emails from the company Outlook mailbox instead of a personal mailbox after customer information is confirmed.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/tests/test_billing_automation_email.py`
+  - `backend/tests/test_support_router.py`
+  - `.env.example`
+  - `.gitignore`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Internal billing email payloads default to `ai-support-agent@agora.io` as the sender.
+  - `send_billing_internal_email()` only sends when Graph config and a usable token cache are available; missing Graph config or token cache records `skipped_config_missing`.
+  - Legacy `BILLING_AUTOMATION_SMTP_*` settings are no longer used for billing automation, even if present.
+  - `.msgraph/` is ignored so local Graph token caches are not committed.
+- Verification:
+  - RED: `rtk python3 -m unittest backend.tests.test_billing_automation_email -v` failed before implementation because the default sender was `xieziling97@163.com`, Graph sendMail was not called, and legacy SMTP still sent.
+  - `rtk python3 -m unittest backend.tests.test_billing_automation_email -v`
+  - `rtk python3 -m unittest backend.tests.test_support_router -v`
+  - `rtk uv run --with fastapi --with 'pydantic==2.11.7' --with python-dotenv --with httpx --with 'psycopg[binary]' python -m unittest backend.tests.test_account_intake.AccountIntakeApiTests.test_account_intake_sends_internal_email_via_async_to_thread backend.tests.test_account_intake.AccountIntakeApiTests.test_billing_automation_reply_sends_internal_email_when_fields_complete backend.tests.test_account_intake.AccountIntakeApiTests.test_billing_automation_reply_invalidates_response_token_when_email_fails -v`
+  - `rtk python3 -m py_compile backend/services/billing_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_support_router.py`
+
 ## 2026-06-25 - Billing response link customer reply generation
 
 - Area or subsystem: Account billing automation — `/response` internal handling result flow

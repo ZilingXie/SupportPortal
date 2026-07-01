@@ -422,7 +422,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         send_mock.assert_called_once()
         payload = send_mock.call_args.args[0]
         self.assertEqual(payload["to"], "xieziling@agora.io")
-        self.assertEqual(payload["from"], "xieziling97@163.com")
+        self.assertEqual(payload["from"], "ai-support-agent@agora.io")
         self.assertEqual(payload["subject"], "Detailed invoice request - Ticket TK-BILL-1")
 
     def test_billing_internal_email_uses_default_recipient_and_sender(self) -> None:
@@ -440,7 +440,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIsNotNone(result.internal_email)
         assert result.internal_email is not None
         self.assertEqual(result.internal_email["to"], "xieziling@agora.io")
-        self.assertEqual(result.internal_email["from"], "xieziling97@163.com")
+        self.assertEqual(result.internal_email["from"], "ai-support-agent@agora.io")
 
     def test_detailed_invoice_extracts_single_line_labeled_fields_cleanly(self) -> None:
         result = build_billing_automation_result(
@@ -653,25 +653,10 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertIn("- Phone number:", result.customer_reply)
         self.assertIn("- Use Case:", result.customer_reply)
 
-    def test_send_billing_internal_email_skips_when_smtp_password_missing(self) -> None:
+    def test_send_billing_internal_email_skips_when_graph_token_cache_missing(self) -> None:
         email_payload = {
             "to": "xieziling@agora.io",
-            "from": "xieziling97@163.com",
-            "subject": "Detailed invoice request - Ticket TK-BILL-1",
-            "body": "Hi team",
-        }
-
-        with patch.dict(os.environ, {}, clear=True), patch("smtplib.SMTP_SSL") as smtp_mock:
-            result = send_billing_internal_email(email_payload)
-
-        self.assertEqual(result["status"], "skipped_config_missing")
-        self.assertIn("BILLING_AUTOMATION_SMTP_PASSWORD", result["reason"])
-        smtp_mock.assert_not_called()
-
-    def test_send_billing_internal_email_sends_via_smtp_when_configured(self) -> None:
-        email_payload = {
-            "to": "xieziling@agora.io",
-            "from": "xieziling97@163.com",
+            "from": "ai-support-agent@agora.io",
             "subject": "Detailed invoice request - Ticket TK-BILL-1",
             "body": "Hi team",
         }
@@ -679,6 +664,28 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         with patch.dict(
             os.environ,
             {
+                "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "client-secret",
+            },
+            clear=True,
+        ), patch("smtplib.SMTP_SSL") as smtp_mock:
+            result = send_billing_internal_email(email_payload)
+
+        self.assertEqual(result["status"], "skipped_config_missing")
+        self.assertIn("BILLING_AUTOMATION_GRAPH_TOKEN_CACHE", result["reason"])
+        smtp_mock.assert_not_called()
+
+    def test_send_billing_internal_email_does_not_use_legacy_smtp_when_configured(self) -> None:
+        email_payload = {
+            "to": "xieziling@agora.io",
+            "from": "ai-support-agent@agora.io",
+            "subject": "Detailed invoice request - Ticket TK-BILL-1",
+            "body": "Hi team",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "client-secret",
                 "BILLING_AUTOMATION_SMTP_PASSWORD": "app-password",
                 "BILLING_AUTOMATION_SMTP_HOST": "smtp.163.com",
                 "BILLING_AUTOMATION_SMTP_PORT": "465",
@@ -687,14 +694,9 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         ), patch("smtplib.SMTP_SSL") as smtp_mock:
             result = send_billing_internal_email(email_payload)
 
-        self.assertEqual(result["status"], "sent")
-        smtp = smtp_mock.return_value.__enter__.return_value
-        smtp.login.assert_called_once_with("xieziling97@163.com", "app-password")
-        sent_message = smtp.send_message.call_args.args[0]
-        self.assertEqual(sent_message["To"], "xieziling@agora.io")
-        self.assertEqual(sent_message["From"], "xieziling97@163.com")
-        self.assertEqual(sent_message["Subject"], "Detailed invoice request - Ticket TK-BILL-1")
-        self.assertEqual(sent_message.get_content().strip(), "Hi team")
+        self.assertEqual(result["status"], "skipped_config_missing")
+        self.assertIn("BILLING_AUTOMATION_GRAPH_TOKEN_CACHE", result["reason"])
+        smtp_mock.assert_not_called()
 
     def test_resolve_support_message_excludes_detailed_invoice_amount_disputes(self) -> None:
         decision = decide_support_route("The invoice amount is wrong and I want a refund.")

@@ -3,9 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import re
-import smtplib
+import json
+import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
-from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
@@ -26,14 +29,20 @@ BILLING_ACCOUNT_SUSPENSION_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EM
 BILLING_DETAILED_INVOICE_EMAIL_ENV = "BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL"
 BILLING_ACCOUNT_VERIFICATION_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL"
 BILLING_INTERNAL_EMAIL_FROM_ENV = "BILLING_AUTOMATION_EMAIL_FROM"
-BILLING_SMTP_HOST_ENV = "BILLING_AUTOMATION_SMTP_HOST"
-BILLING_SMTP_PORT_ENV = "BILLING_AUTOMATION_SMTP_PORT"
-BILLING_SMTP_USERNAME_ENV = "BILLING_AUTOMATION_SMTP_USERNAME"
-BILLING_SMTP_PASSWORD_ENV = "BILLING_AUTOMATION_SMTP_PASSWORD"
+BILLING_MAIL_TRANSPORT_ENV = "BILLING_AUTOMATION_MAIL_TRANSPORT"
+BILLING_GRAPH_TENANT_ID_ENV = "BILLING_AUTOMATION_GRAPH_TENANT_ID"
+BILLING_GRAPH_CLIENT_ID_ENV = "BILLING_AUTOMATION_GRAPH_CLIENT_ID"
+BILLING_GRAPH_CLIENT_SECRET_ENV = "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET"
+BILLING_GRAPH_USERNAME_ENV = "BILLING_AUTOMATION_GRAPH_USERNAME"
+BILLING_GRAPH_TOKEN_CACHE_ENV = "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"
 DEFAULT_BILLING_INTERNAL_EMAIL = "xieziling@agora.io"
-DEFAULT_BILLING_EMAIL_FROM = "xieziling97@163.com"
-DEFAULT_BILLING_SMTP_HOST = "smtp.163.com"
-DEFAULT_BILLING_SMTP_PORT = 465
+DEFAULT_BILLING_EMAIL_FROM = "ai-support-agent@agora.io"
+DEFAULT_BILLING_MAIL_TRANSPORT = "graph"
+DEFAULT_BILLING_GRAPH_TENANT_ID = "60275374-3eaa-49c2-83c3-cc189d126981"
+DEFAULT_BILLING_GRAPH_CLIENT_ID = "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80"
+DEFAULT_BILLING_GRAPH_USERNAME = "ai-support-agent@agora.io"
+DEFAULT_BILLING_GRAPH_TOKEN_CACHE = ".msgraph/billing-automation-token.json"
+GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
 ACCOUNT_VERIFICATION_SIGNOFF = "Thanks in advance!\nSid"
 ACCOUNT_VERIFICATION_FIELD_DISPLAY_ORDER = (
     "use_case",
@@ -195,10 +204,7 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
     from_address = _clean_text(payload.get("from")) or DEFAULT_BILLING_EMAIL_FROM
     subject = _clean_text(payload.get("subject"))
     body = str(payload.get("body") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    smtp_host = _clean_text(os.getenv(BILLING_SMTP_HOST_ENV)) or DEFAULT_BILLING_SMTP_HOST
-    smtp_port = _safe_int(os.getenv(BILLING_SMTP_PORT_ENV), DEFAULT_BILLING_SMTP_PORT)
-    smtp_username = _clean_text(os.getenv(BILLING_SMTP_USERNAME_ENV)) or from_address
-    smtp_password = _clean_text(os.getenv(BILLING_SMTP_PASSWORD_ENV))
+    mail_transport = (_clean_text(os.getenv(BILLING_MAIL_TRANSPORT_ENV)) or DEFAULT_BILLING_MAIL_TRANSPORT).lower()
 
     missing = [
         name
@@ -207,7 +213,6 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
             ("from", from_address),
             ("subject", subject),
             ("body", body),
-            (BILLING_SMTP_PASSWORD_ENV, smtp_password),
         )
         if not value
     ]
@@ -217,16 +222,37 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
             "reason": f"missing {', '.join(missing)}",
         }
 
-    message = EmailMessage()
-    message["To"] = to_address
-    message["From"] = from_address
-    message["Subject"] = subject
-    message.set_content(body)
+    if mail_transport != "graph":
+        return {
+            "status": "skipped_config_missing",
+            "reason": f"{BILLING_MAIL_TRANSPORT_ENV} must be graph; legacy SMTP is disabled",
+        }
 
+    graph_config = _load_graph_mail_config()
+    missing_graph = [name for name, value in graph_config.items() if not value]
+    if missing_graph:
+        return {
+            "status": "skipped_config_missing",
+            "reason": f"missing {', '.join(missing_graph)}",
+        }
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15) as smtp:
-            smtp.login(smtp_username, smtp_password)
-            smtp.send_message(message)
+        access_token = _acquire_graph_access_token(graph_config)
+        _send_graph_mail(
+            access_token=access_token,
+            to_address=to_address,
+            subject=subject,
+            body=body,
+        )
+    except FileNotFoundError as exc:
+        return {
+            "status": "skipped_config_missing",
+            "reason": str(exc),
+        }
+    except ValueError as exc:
+        return {
+            "status": "skipped_config_missing",
+            "reason": str(exc),
+        }
     except Exception as exc:
         LOGGER.warning("Billing internal email send failed: %s", exc)
         return {
@@ -237,6 +263,171 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
         "status": "sent",
         "reason": "",
     }
+
+
+def _load_graph_mail_config() -> dict[str, str]:
+    token_cache = _clean_text(os.getenv(BILLING_GRAPH_TOKEN_CACHE_ENV)) or DEFAULT_BILLING_GRAPH_TOKEN_CACHE
+    return {
+        BILLING_GRAPH_TENANT_ID_ENV: _clean_text(os.getenv(BILLING_GRAPH_TENANT_ID_ENV))
+        or DEFAULT_BILLING_GRAPH_TENANT_ID,
+        BILLING_GRAPH_CLIENT_ID_ENV: _clean_text(os.getenv(BILLING_GRAPH_CLIENT_ID_ENV))
+        or DEFAULT_BILLING_GRAPH_CLIENT_ID,
+        BILLING_GRAPH_CLIENT_SECRET_ENV: _clean_text(os.getenv(BILLING_GRAPH_CLIENT_SECRET_ENV)),
+        BILLING_GRAPH_USERNAME_ENV: _clean_text(os.getenv(BILLING_GRAPH_USERNAME_ENV))
+        or DEFAULT_BILLING_GRAPH_USERNAME,
+        BILLING_GRAPH_TOKEN_CACHE_ENV: token_cache,
+    }
+
+
+def _acquire_graph_access_token(graph_config: dict[str, str]) -> str:
+    cache_path = Path(graph_config[BILLING_GRAPH_TOKEN_CACHE_ENV]).expanduser()
+    token_cache = _read_graph_token_cache(cache_path)
+    cached_access_token, expires_at = _cached_graph_access_token(token_cache)
+    if cached_access_token and expires_at > int(time.time()) + 60:
+        return cached_access_token
+
+    refresh_token = _cached_graph_refresh_token(token_cache)
+    if not refresh_token:
+        raise ValueError(f"missing refresh_token in {BILLING_GRAPH_TOKEN_CACHE_ENV}")
+
+    tenant_id = graph_config[BILLING_GRAPH_TENANT_ID_ENV]
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    form = {
+        "client_id": graph_config[BILLING_GRAPH_CLIENT_ID_ENV],
+        "client_secret": graph_config[BILLING_GRAPH_CLIENT_SECRET_ENV],
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": "User.Read User.ReadBasic.All Mail.ReadWrite Mail.Send MailboxSettings.Read offline_access",
+    }
+    response_payload = _post_form_json(token_url, form)
+    access_token = _clean_text(response_payload.get("access_token"))
+    if not access_token:
+        raise RuntimeError("Microsoft Graph token refresh did not return access_token")
+
+    new_refresh_token = _clean_text(response_payload.get("refresh_token")) or refresh_token
+    expires_in = _safe_int(response_payload.get("expires_in"), 3600)
+    _write_graph_token_cache(
+        cache_path,
+        {
+            **token_cache,
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+            "expires_at": int(time.time()) + expires_in,
+            "username": graph_config[BILLING_GRAPH_USERNAME_ENV],
+        },
+    )
+    return access_token
+
+
+def _cached_graph_access_token(token_cache: dict[str, Any]) -> tuple[str, int]:
+    cached_access_token = _clean_text(token_cache.get("access_token"))
+    expires_at = _safe_int(token_cache.get("expires_at"), 0)
+    if cached_access_token:
+        return cached_access_token, expires_at
+
+    access_tokens = token_cache.get("AccessToken")
+    if isinstance(access_tokens, dict):
+        for token_record in access_tokens.values():
+            if not isinstance(token_record, dict):
+                continue
+            secret = _clean_text(token_record.get("secret"))
+            if not secret:
+                continue
+            expires_on = _safe_int(token_record.get("expires_on"), 0)
+            target = _clean_text(token_record.get("target")).lower()
+            if "mail.send" in target or not target:
+                return secret, expires_on
+    return "", 0
+
+
+def _cached_graph_refresh_token(token_cache: dict[str, Any]) -> str:
+    refresh_token = _clean_text(token_cache.get("refresh_token"))
+    if refresh_token:
+        return refresh_token
+
+    refresh_tokens = token_cache.get("RefreshToken")
+    if isinstance(refresh_tokens, dict):
+        for token_record in refresh_tokens.values():
+            if not isinstance(token_record, dict):
+                continue
+            secret = _clean_text(token_record.get("secret"))
+            if secret:
+                return secret
+    return ""
+
+
+def _read_graph_token_cache(cache_path: Path) -> dict[str, Any]:
+    if not cache_path.exists():
+        raise FileNotFoundError(f"missing {BILLING_GRAPH_TOKEN_CACHE_ENV}")
+    try:
+        parsed = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid {BILLING_GRAPH_TOKEN_CACHE_ENV}") from exc
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _write_graph_token_cache(cache_path: Path, token_cache: dict[str, Any]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(token_cache, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        cache_path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _post_form_json(url: str, form: dict[str, str]) -> dict[str, Any]:
+    data = urllib.parse.urlencode(form).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return _decode_json_response(response)
+
+
+def _send_graph_mail(*, access_token: str, to_address: str, subject: str, body: str) -> None:
+    graph_payload = {
+        "message": {
+            "subject": subject,
+            "body": {
+                "contentType": "Text",
+                "content": body,
+            },
+            "toRecipients": [
+                {
+                    "emailAddress": {
+                        "address": to_address,
+                    },
+                },
+            ],
+        },
+        "saveToSentItems": True,
+    }
+    request = urllib.request.Request(
+        GRAPH_SENDMAIL_URL,
+        data=json.dumps(graph_payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status not in {200, 202}:
+            raise RuntimeError(f"Microsoft Graph sendMail returned HTTP {response.status}")
+
+
+def _decode_json_response(response: Any) -> dict[str, Any]:
+    raw_body = response.read().decode("utf-8")
+    if not raw_body:
+        return {}
+    try:
+        parsed = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Microsoft Graph returned invalid JSON") from exc
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _clean_text(value: Any) -> str:
