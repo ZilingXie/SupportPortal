@@ -12,6 +12,24 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-02 - Billing request subject routing prefix
+
+- Area or subsystem: Deterministic billing intake internal email handoff
+- Prompt or model version: `billing-automation-email-v4`
+- Summary: Added a `[Billing Request]` subject prefix to billing automation internal handoff emails so Outlook rules can route replies into the `billing_automation` mailbox folder.
+- Reason: Internal billing replies with attachments should be isolated from the general Inbox and prepared for a folder-scoped reply worker.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/tests/test_support_router.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Internal handoff subjects now begin with `[Billing Request]` for account suspension, account verification, and detailed invoice requests.
+  - The lower-level Graph send function still sends the subject provided by callers unchanged; only billing automation's internal payload builder adds the routing prefix.
+- Verification:
+  - RED: `rtk python3 -m unittest backend.tests.test_support_router.SupportRouterTests.test_resolve_support_message_builds_account_suspension_internal_email_when_ready backend.tests.test_support_router.SupportRouterTests.test_resolve_support_message_builds_detailed_invoice_internal_email_when_ready backend.tests.test_support_router.SupportRouterTests.test_resolve_support_message_records_billing_email_send_status_when_ready -v` failed before implementation because subjects did not include `[Billing Request]`.
+  - `rtk python3 -m unittest backend.tests.test_support_router.SupportRouterTests.test_resolve_support_message_builds_account_suspension_internal_email_when_ready backend.tests.test_support_router.SupportRouterTests.test_resolve_support_message_builds_detailed_invoice_internal_email_when_ready backend.tests.test_support_router.SupportRouterTests.test_resolve_support_message_records_billing_email_send_status_when_ready -v`
+  - `rtk python3 -m unittest backend.tests.test_billing_automation_email backend.tests.test_support_router -v`
+
 ## 2026-07-01 - Billing automation Outlook Graph sender
 
 - Area or subsystem: Deterministic billing intake internal email handoff

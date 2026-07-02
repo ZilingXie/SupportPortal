@@ -43,6 +43,7 @@ DEFAULT_BILLING_GRAPH_CLIENT_ID = "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80"
 DEFAULT_BILLING_GRAPH_USERNAME = "ai-support-agent@agora.io"
 DEFAULT_BILLING_GRAPH_TOKEN_CACHE = ".msgraph/billing-automation-token.json"
 GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
+BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX = "[Billing Request]"
 ACCOUNT_VERIFICATION_SIGNOFF = "Thanks in advance!\nSid"
 ACCOUNT_VERIFICATION_FIELD_DISPLAY_ORDER = (
     "use_case",
@@ -765,6 +766,6 @@ def _build_internal_email(
     return {
         "to": to_address,
         "from": from_address,
-        "subject": subject,
+        "subject": f"{BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX} {subject}",
         "body": body,
     }
