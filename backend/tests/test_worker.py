@@ -1911,6 +1911,88 @@ class WorkerResilienceTests(unittest.TestCase):
                 ("ticket_query", "ticket_message_sentiment"),
             )
 
+    def test_handle_billing_request_reply_generates_customer_followup(self) -> None:
+        repository = Mock()
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "BT-TK-ACC-1",
+            "client_ticket_id": "TK-ACC-1",
+            "title": "Detailed invoice request",
+            "question": "Please send the detailed invoice.",
+            "automation_status": "automation",
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ACC-1",
+            "subject": "Detailed invoice request",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please send the detailed invoice for transaction 123.",
+                    "created_at": "2026-07-02T00:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "We have escalated this to billing.",
+                    "created_at": "2026-07-02T00:00:01+00:00",
+                },
+            ],
+        }
+        reply = types.SimpleNamespace(
+            message_id="msg-1",
+            subject="Re: [Billing Request] Detailed invoice request - Ticket TK-ACC-1",
+            sender="billing@example.com",
+            body_text="Done. The detailed invoice was sent to the customer email.",
+            received_at="2026-07-02T08:14:38Z",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "record_billing_request_reply",
+        ) as record_mock:
+            worker.handle_billing_request_reply(reply)
+
+        record_mock.assert_called_once_with(reply)
+        repository.get_billing_ticket_by_client_ticket_id.assert_called_once_with("TK-ACC-1")
+        repository.get_ticket.assert_called_once_with("TK-ACC-1")
+        saved_ticket = repository.save_ticket.call_args.args[0]
+        new_messages = repository.save_ticket.call_args.kwargs["new_messages"]
+        self.assertEqual(saved_ticket["messages"][-1]["role"], "assistant")
+        self.assertEqual(saved_ticket["messages"][-1]["source"], "billing_reply_email")
+        self.assertIn("detailed invoice", saved_ticket["messages"][-1]["content"].lower())
+        self.assertEqual(new_messages, [saved_ticket["messages"][-1]])
+        saved_billing_ticket = repository.save_billing_ticket.call_args.args[0]
+        self.assertEqual(saved_billing_ticket["automation_status"], "customer_notified")
+        self.assertIn("detailed invoice", saved_billing_ticket["customer_reply"].lower())
+        self.assertEqual(repository.record_event.call_count, 2)
+        self.assertEqual(repository.record_event.call_args_list[0].args[1], "billing_internal_resolution_submitted")
+        self.assertEqual(repository.record_event.call_args_list[1].args[1], "billing_customer_followup_generated")
+
+    def test_handle_billing_request_reply_rejects_empty_body_before_marking_read(self) -> None:
+        repository = Mock()
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "BT-TK-ACC-1",
+            "client_ticket_id": "TK-ACC-1",
+        }
+        repository.get_ticket.return_value = {"ticket_id": "TK-ACC-1", "messages": []}
+        reply = types.SimpleNamespace(
+            message_id="msg-empty",
+            subject="Re: [Billing Request] Detailed invoice request - Ticket TK-ACC-1",
+            sender="billing@example.com",
+            body_text="",
+            received_at="2026-07-02T08:14:38Z",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "record_billing_request_reply",
+        ) as record_mock:
+            with self.assertRaisesRegex(ValueError, "body is empty"):
+                worker.handle_billing_request_reply(reply)
+
+        record_mock.assert_called_once_with(reply)
+        repository.save_ticket.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
+
     def test_billing_reply_poller_is_disabled_by_default(self) -> None:
         with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": ""}, clear=False):
             self.assertFalse(worker._billing_reply_poller_enabled_from_env())

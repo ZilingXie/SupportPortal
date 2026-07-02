@@ -43,6 +43,13 @@ from backend.services.investigation_flow import (
     start_or_refresh_investigation,
 )
 from backend.services.billing_automation import poll_billing_request_replies, record_billing_request_reply
+from backend.services.billing_response_flow import (
+    BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+    BILLING_RESPONSE_EVENT,
+    BILLING_RESPONSE_RESULT_COMPLETED,
+    build_billing_internal_resolution_event,
+    build_customer_followup_from_resolution,
+)
 from backend.services.client_ticket_agent_runtime import (
     TicketExecutionResult,
     build_execution_route_payload,
@@ -73,6 +80,7 @@ SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
 BILLING_REPLY_POLL_ENABLED_ENV = "BILLING_AUTOMATION_REPLY_POLL_ENABLED"
 BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
+BILLING_REPLY_SUBJECT_TICKET_RE = re.compile(r"\bTicket\s+(TK-[A-Z0-9-]+)\b", re.IGNORECASE)
 
 
 def _safe_positive_int(value: Any, default: int) -> int:
@@ -187,7 +195,7 @@ def _run_billing_reply_poller(interval_seconds: float) -> None:
     while not SHUTTING_DOWN:
         try:
             replies = poll_billing_request_replies(
-                handler=record_billing_request_reply,
+                handler=handle_billing_request_reply,
                 max_messages=_billing_reply_poll_max_messages_from_env(),
             )
             if replies:
@@ -198,6 +206,105 @@ def _run_billing_reply_poller(interval_seconds: float) -> None:
         while not SHUTTING_DOWN and time.time() < sleep_until:
             time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
     LOGGER.info("Billing reply poller stopped.")
+
+
+def _ticket_id_from_billing_reply_subject(subject: str) -> str:
+    match = BILLING_REPLY_SUBJECT_TICKET_RE.search(str(subject or ""))
+    return match.group(1).upper() if match else ""
+
+
+def _billing_resolution_automation_status(result: str, notify_customer: bool) -> str:
+    if result == "customer_action_required":
+        return "waiting_customer_action" if notify_customer else "internal_resolution_submitted"
+    return "customer_notified" if notify_customer else "resolved_without_customer_notification"
+
+
+def handle_billing_request_reply(reply: Any) -> None:
+    record_billing_request_reply(reply)
+    client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
+    if not client_ticket_id:
+        raise ValueError("billing reply subject does not include client ticket id")
+
+    billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
+    if billing_ticket is None:
+        raise ValueError(f"billing ticket not found for {client_ticket_id}")
+    canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
+    if canonical_ticket is None:
+        raise ValueError(f"linked support ticket not found for {client_ticket_id}")
+
+    note = str(getattr(reply, "body_text", "") or "").strip()
+    if not note:
+        raise ValueError("billing reply body is empty")
+
+    timestamp = now_iso()
+    billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
+    title = str(billing_ticket.get("title") or canonical_ticket.get("subject") or "").strip()
+    original_question = str(billing_ticket.get("question") or "").strip()
+    customer_messages = [
+        str(message.get("content") or "").strip()
+        for message in canonical_ticket.get("messages", [])
+        if isinstance(message, dict)
+        and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+    ]
+    customer_message = "\n".join(part for part in [original_question, *customer_messages] if part)
+    customer_reply = build_customer_followup_from_resolution(
+        result=BILLING_RESPONSE_RESULT_COMPLETED,
+        note=note,
+        customer_message=customer_message,
+        title=title,
+    )
+
+    assistant_message = {
+        "role": "assistant",
+        "content": customer_reply,
+        "created_at": timestamp,
+        "content_format": "plaintext",
+        "source": "billing_reply_email",
+    }
+    initial_message_count = (
+        len(canonical_ticket.get("messages", []))
+        if isinstance(canonical_ticket.get("messages"), list)
+        else 0
+    )
+    canonical_ticket.setdefault("messages", []).append(assistant_message)
+    canonical_ticket["updated_at"] = timestamp
+
+    automation_status = _billing_resolution_automation_status(
+        BILLING_RESPONSE_RESULT_COMPLETED,
+        True,
+    )
+    billing_ticket["automation_status"] = automation_status
+    billing_ticket["customer_reply"] = customer_reply
+    billing_ticket["updated_at"] = timestamp
+
+    new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
+    ticket_repository.save_ticket(canonical_ticket, new_messages=new_messages)
+    ticket_repository.save_billing_ticket(billing_ticket)
+
+    resolution_event = build_billing_internal_resolution_event(
+        billing_ticket_id=billing_ticket_id,
+        client_ticket_id=client_ticket_id,
+        result=BILLING_RESPONSE_RESULT_COMPLETED,
+        notify_customer=True,
+        note=note,
+        created_at=timestamp,
+    )
+    resolution_event["source"] = "billing_reply_email"
+    resolution_event["billing_reply_message_id"] = str(getattr(reply, "message_id", "") or "").strip()
+    ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_EVENT, resolution_event)
+
+    followup_event = {
+        "event": BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+        "billing_ticket_id": billing_ticket_id,
+        "ticket_id": client_ticket_id,
+        "resolution_result": BILLING_RESPONSE_RESULT_COMPLETED,
+        "notify_customer": True,
+        "customer_reply": customer_reply,
+        "created_at": timestamp,
+        "source": "billing_reply_email",
+        "billing_reply_message_id": str(getattr(reply, "message_id", "") or "").strip(),
+    }
+    ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_AI_FOLLOWUP_EVENT, followup_event)
 
 
 def _start_billing_reply_poller_if_enabled() -> threading.Thread | None:

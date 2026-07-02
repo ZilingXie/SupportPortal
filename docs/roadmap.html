@@ -2035,7 +2035,7 @@ flowchart TD
           { summary: "Billing internal resolution event 已确认完成：提交后写 `billing_internal_resolution_submitted`，notify customer 时生成 `billing_response_ai` 客户跟进。", prs: [509, 512] },
           { summary: "Account Route errors 能力已确认完成：人工纠正保留 original / first corrected route tuple，并与低置信路由、review/pass 状态一起分析。", prs: [513, 515, 524, 526, 527] },
           { summary: "Account verification 字段收集已确认完成：Use Case section、Country+Address、个人开发者分支、可选 app_id 和内部邮件发送都已覆盖。", prs: [488] },
-          { summary: "Billing Outlook 回复轮询已落地：worker 可读取 Inbox 中未读且标题含 `[Billing Request]` 的回复正文，处理成功后标记已读。", prs: [] }
+          { summary: "Billing Outlook 回复轮询已落地：worker 可读取 Inbox 中未读且标题含 `[Billing Request]` 的回复正文，并自动生成客户跟进后标记已读。", prs: [] }
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
