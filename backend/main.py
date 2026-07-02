@@ -3437,13 +3437,30 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
 @app.get("/api/account/billing-tickets")
 def list_billing_tickets(
     limit: int = 30,
+    page: int = 1,
+    page_size: int | None = None,
     review_status: str | None = None,
+    automation_status: str | None = None,
+    route_errors: bool = False,
 ) -> dict[str, Any]:
-    safe_limit = max(1, min(limit, 100))
+    requested_page_size = page_size if page_size is not None else limit
+    safe_page_size = max(1, min(requested_page_size, 100))
     normalized_review_status = str(review_status).strip() if review_status else None
-    tickets = ticket_repository.list_billing_tickets(
-        limit=safe_limit,
+    normalized_automation_status = str(automation_status).strip() if automation_status else None
+    total = ticket_repository.count_billing_tickets(
         review_status=normalized_review_status,
+        automation_filter=normalized_automation_status,
+        route_errors_only=route_errors,
+    )
+    total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
+    safe_page = min(max(1, page), total_pages)
+    offset = (safe_page - 1) * safe_page_size
+    tickets = ticket_repository.list_billing_tickets(
+        limit=safe_page_size,
+        review_status=normalized_review_status,
+        offset=offset,
+        automation_filter=normalized_automation_status,
+        route_errors_only=route_errors,
     )
     billing_ticket_ids = [
         str(item.get("billing_ticket_id") or "").strip()
@@ -3466,7 +3483,16 @@ def list_billing_tickets(
         }
         for item in tickets
     ]
-    return {"tickets": items, "billing_tickets": items, "count": len(items)}
+    return {
+        "tickets": items,
+        "billing_tickets": items,
+        "count": len(items),
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "total": total,
+        "total_pages": total_pages,
+        "has_more": safe_page < total_pages,
+    }
 
 
 @app.delete("/api/account/billing-tickets")

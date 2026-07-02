@@ -304,6 +304,57 @@ button:disabled {
   color: var(--ink-muted);
 }
 
+.history-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 2px 2px;
+}
+
+.pagination-button,
+.pagination-ellipsis {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pagination-button {
+  border: 1px solid var(--ghost-border);
+  color: var(--ink-muted);
+  background: var(--surface-lowest);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.pagination-button:hover:not(:disabled) {
+  color: var(--ink-soft);
+  background: var(--surface-container);
+  border-color: rgba(0, 100, 147, 0.22);
+}
+
+.pagination-button--active,
+.pagination-button--active:hover:not(:disabled) {
+  color: white;
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.pagination-button:disabled {
+  opacity: 0.42;
+}
+
+.pagination-button .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.pagination-ellipsis {
+  color: var(--ink-muted);
+}
+
 /* --- Source badge --- */
 
 .source-badge {

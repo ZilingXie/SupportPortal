@@ -67,6 +67,30 @@ class AccountIntakeApiTests(unittest.TestCase):
         raw_token = body.split(link_prefix, 1)[1].split()[0]
         return response.json(), raw_token
 
+    def _save_billing_ticket(
+        self,
+        *,
+        ticket_id: str,
+        automation_status: str,
+        route_confidence: float = 0.95,
+    ) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": f"BT-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "source": "manual",
+                "title": f"Ticket {ticket_id}",
+                "question": "q",
+                "automation_status": automation_status,
+                "route": "detailed_invoice" if automation_status == "automation" else "web_search",
+                "scope_label": "billing",
+                "route_family": "billing_automation",
+                "execution_action": "detailed_invoice",
+                "tooling_profile": "deterministic_billing_intake",
+                "route_confidence": route_confidence,
+            }
+        )
+
     def test_account_intake_creates_ticket_routes_invoice_and_marks_automation(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.send_billing_internal_email",
@@ -1046,6 +1070,103 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertIn("created_at", item)
             self.assertIn("route_review_status", item)
             self.assertEqual(item["route_review_status"], "pending")
+
+    def test_billing_tickets_list_api_paginates_by_filter(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            for i in range(35):
+                self.client.post(
+                    "/account",
+                    json={
+                        "title": f"Paged ticket {i:02d}",
+                        "question": f"Question {i}",
+                    },
+                )
+
+        first_page = self.client.get(
+            "/api/account/billing-tickets?page=1&page_size=30&review_status=pending"
+        )
+        self.assertEqual(first_page.status_code, 200, first_page.text)
+        first_payload = first_page.json()
+        self.assertEqual(first_payload["count"], 30)
+        self.assertEqual(first_payload["page"], 1)
+        self.assertEqual(first_payload["page_size"], 30)
+        self.assertEqual(first_payload["total"], 35)
+        self.assertEqual(first_payload["total_pages"], 2)
+        self.assertTrue(first_payload["has_more"])
+        self.assertEqual(len(first_payload["tickets"]), 30)
+
+        second_page = self.client.get(
+            "/api/account/billing-tickets?page=2&page_size=30&review_status=pending"
+        )
+        self.assertEqual(second_page.status_code, 200, second_page.text)
+        second_payload = second_page.json()
+        self.assertEqual(second_payload["count"], 5)
+        self.assertEqual(second_payload["page"], 2)
+        self.assertEqual(second_payload["page_size"], 30)
+        self.assertEqual(second_payload["total"], 35)
+        self.assertEqual(second_payload["total_pages"], 2)
+        self.assertFalse(second_payload["has_more"])
+        self.assertEqual(len(second_payload["tickets"]), 5)
+
+        first_ids = {item["billing_ticket_id"] for item in first_payload["tickets"]}
+        second_ids = {item["billing_ticket_id"] for item in second_payload["tickets"]}
+        self.assertFalse(first_ids & second_ids)
+
+    def test_billing_tickets_list_api_paginates_status_filters(self) -> None:
+        for i in range(33):
+            self._save_billing_ticket(ticket_id=f"TK-AUTO-{i:02d}", automation_status="automation")
+        for i in range(32):
+            self._save_billing_ticket(
+                ticket_id=f"TK-MANUAL-{i:02d}",
+                automation_status="not_automated",
+                route_confidence=0.4 if i < 31 else 0.95,
+            )
+
+        automation_page = self.client.get(
+            "/api/account/billing-tickets?page=2&page_size=30&automation_status=automation"
+        )
+        self.assertEqual(automation_page.status_code, 200, automation_page.text)
+        automation_payload = automation_page.json()
+        self.assertEqual(automation_payload["count"], 3)
+        self.assertEqual(automation_payload["page"], 2)
+        self.assertEqual(automation_payload["page_size"], 30)
+        self.assertEqual(automation_payload["total"], 33)
+        self.assertEqual(automation_payload["total_pages"], 2)
+        self.assertTrue(
+            all(item["automation_status"] == "automation" for item in automation_payload["tickets"])
+        )
+
+        manual_page = self.client.get(
+            "/api/account/billing-tickets?page=2&page_size=30&automation_status=not_automated"
+        )
+        self.assertEqual(manual_page.status_code, 200, manual_page.text)
+        manual_payload = manual_page.json()
+        self.assertEqual(manual_payload["count"], 2)
+        self.assertEqual(manual_payload["page"], 2)
+        self.assertEqual(manual_payload["total"], 32)
+        self.assertEqual(manual_payload["total_pages"], 2)
+        self.assertTrue(
+            all(item["automation_status"] == "not_automated" for item in manual_payload["tickets"])
+        )
+
+        route_error_page = self.client.get(
+            "/api/account/billing-tickets?page=2&page_size=30&route_errors=true"
+        )
+        self.assertEqual(route_error_page.status_code, 200, route_error_page.text)
+        route_error_payload = route_error_page.json()
+        self.assertEqual(route_error_payload["count"], 1)
+        self.assertEqual(route_error_payload["page"], 2)
+        self.assertEqual(route_error_payload["total"], 31)
+        self.assertEqual(route_error_payload["total_pages"], 2)
+        self.assertTrue(all(item["route_error"] for item in route_error_payload["tickets"]))
+
+        clamped_page = self.client.get(
+            "/api/account/billing-tickets?page=99&page_size=30&automation_status=automation"
+        )
+        self.assertEqual(clamped_page.status_code, 200, clamped_page.text)
+        clamped_payload = clamped_page.json()
+        self.assertEqual(clamped_payload["page"], 2)
+        self.assertEqual(clamped_payload["count"], 3)
 
     def test_delete_all_billing_tickets_clears_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
