@@ -362,7 +362,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIsNotNone(resolution.evidence_summary)
         assert resolution.evidence_summary is not None
         internal_email = resolution.evidence_summary["billing_internal_email"]
-        self.assertEqual(internal_email["subject"], "Account suspension review request - Ticket {{ticket_id}}")
+        self.assertEqual(internal_email["subject"], "[Billing Request] Account suspension review request - Ticket {{ticket_id}}")
         self.assertIn("Company name: ExampleCo", internal_email["body"])
         self.assertIn("Contact email: ops@example.com", internal_email["body"])
 
@@ -388,7 +388,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIsNotNone(resolution.evidence_summary)
         assert resolution.evidence_summary is not None
         internal_email = resolution.evidence_summary["billing_internal_email"]
-        self.assertEqual(internal_email["subject"], "Detailed invoice request - Ticket {{ticket_id}}")
+        self.assertEqual(internal_email["subject"], "[Billing Request] Detailed invoice request - Ticket {{ticket_id}}")
         self.assertIn("Issue date: 6 May 2026", internal_email["body"])
         self.assertIn("Transaction ID: 1104245232004173824", internal_email["body"])
         self.assertIn("Amount: USD 705.97", internal_email["body"])
@@ -423,7 +423,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         payload = send_mock.call_args.args[0]
         self.assertEqual(payload["to"], "xieziling@agora.io")
         self.assertEqual(payload["from"], "ai-support-agent@agora.io")
-        self.assertEqual(payload["subject"], "Detailed invoice request - Ticket TK-BILL-1")
+        self.assertEqual(payload["subject"], "[Billing Request] Detailed invoice request - Ticket TK-BILL-1")
 
     def test_billing_internal_email_uses_default_recipient_and_sender(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -657,7 +657,7 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         email_payload = {
             "to": "xieziling@agora.io",
             "from": "ai-support-agent@agora.io",
-            "subject": "Detailed invoice request - Ticket TK-BILL-1",
+            "subject": "[Billing Request] Detailed invoice request - Ticket TK-BILL-1",
             "body": "Hi team",
         }
 
@@ -678,7 +678,7 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         email_payload = {
             "to": "xieziling@agora.io",
             "from": "ai-support-agent@agora.io",
-            "subject": "Detailed invoice request - Ticket TK-BILL-1",
+            "subject": "[Billing Request] Detailed invoice request - Ticket TK-BILL-1",
             "body": "Hi team",
         }
 
