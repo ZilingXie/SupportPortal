@@ -8,6 +8,7 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ BILLING_GRAPH_CLIENT_ID_ENV = "BILLING_AUTOMATION_GRAPH_CLIENT_ID"
 BILLING_GRAPH_CLIENT_SECRET_ENV = "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET"
 BILLING_GRAPH_USERNAME_ENV = "BILLING_AUTOMATION_GRAPH_USERNAME"
 BILLING_GRAPH_TOKEN_CACHE_ENV = "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"
+BILLING_REPLY_RECORD_PATH_ENV = "BILLING_AUTOMATION_REPLY_RECORD_PATH"
 DEFAULT_BILLING_INTERNAL_EMAIL = "xieziling@agora.io"
 DEFAULT_BILLING_EMAIL_FROM = "ai-support-agent@agora.io"
 DEFAULT_BILLING_MAIL_TRANSPORT = "graph"
@@ -42,7 +44,10 @@ DEFAULT_BILLING_GRAPH_TENANT_ID = "60275374-3eaa-49c2-83c3-cc189d126981"
 DEFAULT_BILLING_GRAPH_CLIENT_ID = "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80"
 DEFAULT_BILLING_GRAPH_USERNAME = "ai-support-agent@agora.io"
 DEFAULT_BILLING_GRAPH_TOKEN_CACHE = ".msgraph/billing-automation-token.json"
+DEFAULT_BILLING_REPLY_RECORD_PATH = ".msgraph/billing-request-replies.jsonl"
 GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
+GRAPH_INBOX_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
+GRAPH_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/messages"
 BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX = "[Billing Request]"
 ACCOUNT_VERIFICATION_SIGNOFF = "Thanks in advance!\nSid"
 ACCOUNT_VERIFICATION_FIELD_DISPLAY_ORDER = (
@@ -68,6 +73,15 @@ class BillingRouteMatch:
     action: str
     reason: str
     matched_signals: list[str]
+
+
+@dataclass(frozen=True)
+class BillingRequestReply:
+    message_id: str
+    subject: str
+    sender: str
+    body_text: str
+    received_at: str
 
 
 _FIELD_ALIASES = {
@@ -266,6 +280,58 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
     }
 
 
+def poll_billing_request_replies(
+    *,
+    handler: Any | None = None,
+    max_messages: int = 25,
+) -> list[BillingRequestReply]:
+    graph_config = _load_graph_mail_config()
+    missing_graph = [name for name, value in graph_config.items() if not value]
+    if missing_graph:
+        raise ValueError(f"missing {', '.join(missing_graph)}")
+
+    access_token = _acquire_graph_access_token(graph_config)
+    replies: list[BillingRequestReply] = []
+    for summary in _list_unread_inbox_messages(access_token=access_token, max_messages=max_messages):
+        subject = _clean_text(summary.get("subject"))
+        message_id = _clean_text(summary.get("id"))
+        if BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX.lower() not in subject.lower() or not message_id:
+            continue
+
+        message = _get_graph_message(access_token=access_token, message_id=message_id)
+        reply = _billing_request_reply_from_graph_message(message or summary)
+        if not reply.message_id:
+            continue
+        if handler is not None:
+            handler(reply)
+        _mark_graph_message_read(access_token=access_token, message_id=reply.message_id)
+        replies.append(reply)
+    return replies
+
+
+def record_billing_request_reply(reply: BillingRequestReply, *, record_path: str | Path | None = None) -> None:
+    target_path = Path(
+        record_path
+        or _clean_text(os.getenv(BILLING_REPLY_RECORD_PATH_ENV))
+        or DEFAULT_BILLING_REPLY_RECORD_PATH
+    ).expanduser()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "message_id": reply.message_id,
+        "subject": reply.subject,
+        "sender": reply.sender,
+        "body_text": reply.body_text,
+        "received_at": reply.received_at,
+        "recorded_at": int(time.time()),
+    }
+    with target_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    try:
+        target_path.chmod(0o600)
+    except OSError:
+        pass
+
+
 def _load_graph_mail_config() -> dict[str, str]:
     token_cache = _clean_text(os.getenv(BILLING_GRAPH_TOKEN_CACHE_ENV)) or DEFAULT_BILLING_GRAPH_TOKEN_CACHE
     return {
@@ -418,6 +484,87 @@ def _send_graph_mail(*, access_token: str, to_address: str, subject: str, body: 
     with urllib.request.urlopen(request, timeout=15) as response:
         if response.status not in {200, 202}:
             raise RuntimeError(f"Microsoft Graph sendMail returned HTTP {response.status}")
+
+
+def _list_unread_inbox_messages(*, access_token: str, max_messages: int) -> list[dict[str, Any]]:
+    top = max(1, min(_safe_int(max_messages, 25), 100))
+    params = urllib.parse.urlencode(
+        {
+            "$filter": "isRead eq false",
+            "$select": "id,subject,from,receivedDateTime",
+            "$top": str(top),
+        }
+    )
+    request = urllib.request.Request(
+        f"{GRAPH_INBOX_MESSAGES_URL}?{params}",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = _decode_json_response(response)
+    value = payload.get("value")
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _get_graph_message(*, access_token: str, message_id: str) -> dict[str, Any]:
+    encoded_message_id = urllib.parse.quote(message_id, safe="")
+    params = urllib.parse.urlencode({"$select": "id,subject,from,body,receivedDateTime"})
+    request = urllib.request.Request(
+        f"{GRAPH_MESSAGES_URL}/{encoded_message_id}?{params}",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return _decode_json_response(response)
+
+
+def _mark_graph_message_read(*, access_token: str, message_id: str) -> None:
+    encoded_message_id = urllib.parse.quote(message_id, safe="")
+    request = urllib.request.Request(
+        f"{GRAPH_MESSAGES_URL}/{encoded_message_id}",
+        data=json.dumps({"isRead": True}).encode("utf-8"),
+        method="PATCH",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status not in {200, 202}:
+            raise RuntimeError(f"Microsoft Graph mark read returned HTTP {response.status}")
+
+
+def _billing_request_reply_from_graph_message(message: dict[str, Any]) -> BillingRequestReply:
+    sender_payload = message.get("from") if isinstance(message.get("from"), dict) else {}
+    email_payload = sender_payload.get("emailAddress") if isinstance(sender_payload.get("emailAddress"), dict) else {}
+    body_payload = message.get("body") if isinstance(message.get("body"), dict) else {}
+    return BillingRequestReply(
+        message_id=_clean_text(message.get("id")),
+        subject=_clean_text(message.get("subject")),
+        sender=_clean_text(email_payload.get("address")),
+        body_text=_normalize_graph_message_body(
+            body_payload.get("content"),
+            content_type=_clean_text(body_payload.get("contentType")).lower(),
+        ),
+        received_at=_clean_text(message.get("receivedDateTime")),
+    )
+
+
+def _normalize_graph_message_body(value: Any, *, content_type: str = "") -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    if content_type == "html" or re.search(r"<[a-zA-Z][^>]*>", text):
+        text = re.sub(r"(?is)<\s*(br|/p|/div|/li)\b[^>]*>", "\n", text)
+        text = re.sub(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>", " ", text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        text = unescape(text)
+    lines = [" ".join(line.split()) for line in text.split("\n")]
+    return "\n".join(line for line in lines if line).strip()
 
 
 def _decode_json_response(response: Any) -> dict[str, Any]:

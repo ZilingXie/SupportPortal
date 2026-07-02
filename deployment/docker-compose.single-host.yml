@@ -22,6 +22,7 @@ services:
       - ../.env
     volumes:
       - huggingface_cache:/root/.cache/huggingface
+      - ../.msgraph:/app/.msgraph
     command:
       - uvicorn
       - backend.main:app
@@ -384,6 +385,7 @@ services:
       - ../.env
     volumes:
       - huggingface_cache:/root/.cache/huggingface
+      - ../.msgraph:/app/.msgraph
     command:
       - python
       - -m
@@ -414,6 +416,15 @@ services:
       TICKET_AUX_QUEUE_NAME: ${TICKET_AUX_QUEUE_NAME:-support.ticket_aux}
       WORKER_TASK_TYPES: ${WORKER_AUX_TASK_TYPES:-ticket_message_sentiment}
       WORKER_CONCURRENCY: ${WORKER_AUX_CONCURRENCY:-1}
+      BILLING_AUTOMATION_REPLY_POLL_ENABLED: ${BILLING_AUTOMATION_REPLY_POLL_ENABLED:-false}
+      BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS: ${BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS:-300}
+      BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES: ${BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES:-25}
+      BILLING_AUTOMATION_REPLY_RECORD_PATH: ${BILLING_AUTOMATION_REPLY_RECORD_PATH:-.msgraph/billing-request-replies.jsonl}
+      BILLING_AUTOMATION_GRAPH_TENANT_ID: ${BILLING_AUTOMATION_GRAPH_TENANT_ID:-60275374-3eaa-49c2-83c3-cc189d126981}
+      BILLING_AUTOMATION_GRAPH_CLIENT_ID: ${BILLING_AUTOMATION_GRAPH_CLIENT_ID:-cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80}
+      BILLING_AUTOMATION_GRAPH_CLIENT_SECRET: ${BILLING_AUTOMATION_GRAPH_CLIENT_SECRET:-}
+      BILLING_AUTOMATION_GRAPH_USERNAME: ${BILLING_AUTOMATION_GRAPH_USERNAME:-ai-support-agent@agora.io}
+      BILLING_AUTOMATION_GRAPH_TOKEN_CACHE: ${BILLING_AUTOMATION_GRAPH_TOKEN_CACHE:-.msgraph/billing-automation-token.json}
       RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag_api:8020}
       RAG_SERVICE_TIMEOUT_SECONDS: ${RAG_SERVICE_TIMEOUT_SECONDS:-45.0}
       CLIENT_RAG_SERVICE_TIMEOUT_SECONDS: ${CLIENT_RAG_SERVICE_TIMEOUT_SECONDS:-180.0}

@@ -124,6 +124,26 @@ class SingleHostComposeTests(unittest.TestCase):
             "SENTIMENT_MIN_CONFIDENCE: ${SENTIMENT_MIN_CONFIDENCE:-0.45}",
             worker_block,
         )
+        self.assertIn(
+            "BILLING_AUTOMATION_REPLY_POLL_ENABLED: ${BILLING_AUTOMATION_REPLY_POLL_ENABLED:-false}",
+            worker_block,
+        )
+        self.assertIn(
+            "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS: ${BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS:-300}",
+            worker_block,
+        )
+        self.assertIn(
+            "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES: ${BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES:-25}",
+            worker_block,
+        )
+        self.assertIn(
+            "BILLING_AUTOMATION_REPLY_RECORD_PATH: ${BILLING_AUTOMATION_REPLY_RECORD_PATH:-.msgraph/billing-request-replies.jsonl}",
+            worker_block,
+        )
+        self.assertIn(
+            "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE: ${BILLING_AUTOMATION_GRAPH_TOKEN_CACHE:-.msgraph/billing-automation-token.json}",
+            worker_block,
+        )
 
     def test_worker_service_mounts_huggingface_cache(self) -> None:
         worker_block = self._service_block("worker_query")
@@ -132,6 +152,13 @@ class SingleHostComposeTests(unittest.TestCase):
             "volumes:\n      - huggingface_cache:/root/.cache/huggingface",
             worker_block,
         )
+
+    def test_billing_graph_token_cache_is_mounted_for_api_and_worker_aux(self) -> None:
+        api_block = self._service_block("api")
+        worker_aux_block = self._service_block("worker_aux")
+
+        self.assertIn("- ../.msgraph:/app/.msgraph", api_block)
+        self.assertIn("- ../.msgraph:/app/.msgraph", worker_aux_block)
 
     def test_legacy_single_worker_service_is_removed(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")

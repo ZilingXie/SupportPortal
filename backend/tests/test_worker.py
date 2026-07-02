@@ -1911,6 +1911,42 @@ class WorkerResilienceTests(unittest.TestCase):
                 ("ticket_query", "ticket_message_sentiment"),
             )
 
+    def test_billing_reply_poller_is_disabled_by_default(self) -> None:
+        with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": ""}, clear=False):
+            self.assertFalse(worker._billing_reply_poller_enabled_from_env())
+
+    def test_billing_reply_poller_enabled_from_env(self) -> None:
+        with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": "true"}, clear=False):
+            self.assertTrue(worker._billing_reply_poller_enabled_from_env())
+
+    def test_start_billing_reply_poller_starts_daemon_thread_when_enabled(self) -> None:
+        started_threads = []
+
+        class _FakeThread:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.daemon = kwargs.get("daemon")
+                self.name = kwargs.get("name")
+
+            def start(self) -> None:
+                started_threads.append(self)
+
+        with patch.dict(
+            os.environ,
+            {
+                "BILLING_AUTOMATION_REPLY_POLL_ENABLED": "true",
+                "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS": "7",
+            },
+            clear=False,
+        ), patch.object(worker.threading, "Thread", _FakeThread):
+            thread = worker._start_billing_reply_poller_if_enabled()
+
+        self.assertIsNotNone(thread)
+        self.assertEqual(len(started_threads), 1)
+        self.assertEqual(started_threads[0].name, "billing-reply-poller")
+        self.assertTrue(started_threads[0].daemon)
+        self.assertEqual(started_threads[0].kwargs["args"], (7.0,))
+
 
 if __name__ == "__main__":
     unittest.main()
