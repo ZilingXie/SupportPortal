@@ -836,11 +836,6 @@ function renderDetailView() {
               .join("")}</ul></div>`
           : ""
       }
-      ${
-        item.customer_reply
-          ? `<div class="detail-section success"><div class="detail-section-title">Customer reply</div><p class="result-copy">${renderMarkdownMessage(item.customer_reply)}</p></div>`
-          : ""
-      }
       ${renderMessageThread()}
       ${renderReplyComposer()}
     </div>

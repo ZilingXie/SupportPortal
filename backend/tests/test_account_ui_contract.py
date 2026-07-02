@@ -103,6 +103,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("/api/account/billing-tickets/", app_source)
         self.assertIn("/reply", app_source)
         self.assertIn("/api/tickets/query", app_source)
+        self.assertNotIn("Customer reply", app_source)
 
     def test_account_app_contains_route_correction_flow(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
