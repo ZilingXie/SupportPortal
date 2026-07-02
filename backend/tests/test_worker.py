@@ -1913,6 +1913,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
     def test_handle_billing_request_reply_generates_customer_followup(self) -> None:
         repository = Mock()
+        repository.list_ticket_events.return_value = []
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "billing_ticket_id": "BT-TK-ACC-1",
             "client_ticket_id": "TK-ACC-1",
@@ -1966,8 +1967,39 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(repository.record_event.call_args_list[0].args[1], "billing_internal_resolution_submitted")
         self.assertEqual(repository.record_event.call_args_list[1].args[1], "billing_customer_followup_generated")
 
+    def test_handle_billing_request_reply_skips_duplicate_graph_message(self) -> None:
+        repository = Mock()
+        repository.list_ticket_events.return_value = [
+            {
+                "event_type": "billing_customer_followup_generated",
+                "payload": {"billing_reply_message_id": "msg-1"},
+            }
+        ]
+        reply = types.SimpleNamespace(
+            message_id="msg-1",
+            subject="Re: [Billing Request] Detailed invoice request - Ticket TK-ACC-1",
+            sender="billing@example.com",
+            body_text="Done. The detailed invoice was sent to the customer email.",
+            received_at="2026-07-02T08:14:38Z",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "record_billing_request_reply",
+        ) as record_mock:
+            worker.handle_billing_request_reply(reply)
+
+        record_mock.assert_called_once_with(reply)
+        repository.list_ticket_events.assert_called_once_with("TK-ACC-1", limit=200)
+        repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
+        repository.get_ticket.assert_not_called()
+        repository.save_ticket.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
+
     def test_handle_billing_request_reply_rejects_empty_body_before_marking_read(self) -> None:
         repository = Mock()
+        repository.list_ticket_events.return_value = []
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "billing_ticket_id": "BT-TK-ACC-1",
             "client_ticket_id": "TK-ACC-1",

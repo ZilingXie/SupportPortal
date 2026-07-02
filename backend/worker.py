@@ -219,11 +219,32 @@ def _billing_resolution_automation_status(result: str, notify_customer: bool) ->
     return "customer_notified" if notify_customer else "resolved_without_customer_notification"
 
 
+def _billing_reply_already_processed(client_ticket_id: str, message_id: str) -> bool:
+    normalized_message_id = str(message_id or "").strip()
+    if not normalized_message_id:
+        return False
+    for event in ticket_repository.list_ticket_events(client_ticket_id, limit=200):
+        payload = event.get("payload") if isinstance(event, dict) else {}
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("billing_reply_message_id") or "").strip() == normalized_message_id:
+            return True
+    return False
+
+
 def handle_billing_request_reply(reply: Any) -> None:
     record_billing_request_reply(reply)
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
     if not client_ticket_id:
         raise ValueError("billing reply subject does not include client ticket id")
+    message_id = str(getattr(reply, "message_id", "") or "").strip()
+    if _billing_reply_already_processed(client_ticket_id, message_id):
+        LOGGER.info(
+            "Billing reply message %s for ticket %s was already processed.",
+            message_id,
+            client_ticket_id,
+        )
+        return
 
     billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
     if billing_ticket is None:
@@ -290,7 +311,7 @@ def handle_billing_request_reply(reply: Any) -> None:
         created_at=timestamp,
     )
     resolution_event["source"] = "billing_reply_email"
-    resolution_event["billing_reply_message_id"] = str(getattr(reply, "message_id", "") or "").strip()
+    resolution_event["billing_reply_message_id"] = message_id
     ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_EVENT, resolution_event)
 
     followup_event = {
@@ -302,7 +323,7 @@ def handle_billing_request_reply(reply: Any) -> None:
         "customer_reply": customer_reply,
         "created_at": timestamp,
         "source": "billing_reply_email",
-        "billing_reply_message_id": str(getattr(reply, "message_id", "") or "").strip(),
+        "billing_reply_message_id": message_id,
     }
     ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_AI_FOLLOWUP_EVENT, followup_event)
 
