@@ -80,6 +80,15 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("submitRouteReview", app_source)
         self.assertIn("Unreviewed tickets", app_source)
         self.assertIn("Reviewed tickets", app_source)
+        self.assertIn("pagination", app_source)
+        self.assertIn("renderPaginationControls", app_source)
+        self.assertIn("data-action=\"set-page\"", app_source)
+        self.assertIn("page_size", app_source)
+        self.assertIn("total_pages", app_source)
+        self.assertIn("automation_status", app_source)
+        self.assertIn('params.set("route_errors", "true")', app_source)
+        self.assertIn("PAGE_SIZE", app_source)
+        self.assertIn("currentPage", app_source)
 
         # Reply composer state and flow.
         self.assertIn("replyMessage", app_source)
@@ -156,6 +165,11 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn(".filter-chips", styles)
         self.assertIn(".filter-chip", styles)
         self.assertIn(".filter-chip--active", styles)
+        # Pagination.
+        self.assertIn(".history-pagination", styles)
+        self.assertIn(".pagination-button", styles)
+        self.assertIn(".pagination-button--active", styles)
+        self.assertIn(".pagination-ellipsis", styles)
         # Message thread.
         self.assertIn(".message-thread", styles)
         self.assertIn(".msg-bubble", styles)

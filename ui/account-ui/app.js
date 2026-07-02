@@ -25,6 +25,8 @@ const renderSharedComposerFormattingToolbarButtons =
 const applySharedComposerToolbarStateToButtons =
   SharedComposer.applyComposerToolbarStateToButtons || (() => {});
 
+const PAGE_SIZE = 30;
+
 const state = {
   view: "create",
   title: "",
@@ -33,6 +35,14 @@ const state = {
   source: "manual",
   isSubmitting: false,
   history: [],
+  currentPage: 1,
+  pagination: {
+    page: 1,
+    pageSize: PAGE_SIZE,
+    total: 0,
+    totalPages: 1,
+    hasMore: false,
+  },
   activeItem: null,
   error: "",
   composerToolbarState: buildDefaultComposerToolbarState(),
@@ -189,18 +199,42 @@ function showToast(message) {
 
 async function fetchTickets() {
   try {
-    const params = new URLSearchParams({ limit: "30" });
+    const params = new URLSearchParams({
+      page: String(state.currentPage),
+      page_size: String(PAGE_SIZE),
+    });
     if (state.statusFilter === "unreviewed") {
       params.set("review_status", "pending");
     } else if (state.statusFilter === "reviewed") {
       params.set("review_status", "reviewed");
+    } else if (state.statusFilter === "automation") {
+      params.set("automation_status", "automation");
+    } else if (state.statusFilter === "not_automated") {
+      params.set("automation_status", "not_automated");
+    } else if (state.statusFilter === "route_errors") {
+      params.set("route_errors", "true");
     }
     const response = await fetch(`/api/account/billing-tickets?${params.toString()}`);
     if (!response.ok) return;
     const data = await response.json();
     state.history = data.tickets || data.billing_tickets || [];
+    state.pagination = {
+      page: Number(data.page || state.currentPage || 1),
+      pageSize: Number(data.page_size || PAGE_SIZE),
+      total: Number(data.total || 0),
+      totalPages: Math.max(1, Number(data.total_pages || 1)),
+      hasMore: Boolean(data.has_more),
+    };
+    state.currentPage = state.pagination.page;
   } catch {
     state.history = [];
+    state.pagination = {
+      page: state.currentPage,
+      pageSize: PAGE_SIZE,
+      total: 0,
+      totalPages: 1,
+      hasMore: false,
+    };
   }
 }
 
@@ -360,6 +394,76 @@ function renderFilterControls() {
   `;
 }
 
+function paginationPages(currentPage, totalPages) {
+  const pages = [];
+  const add = (value) => {
+    if (!pages.includes(value)) pages.push(value);
+  };
+  add(1);
+  add(currentPage - 1);
+  add(currentPage);
+  add(currentPage + 1);
+  add(totalPages);
+  return pages
+    .filter((value) => value >= 1 && value <= totalPages)
+    .sort((a, b) => a - b)
+    .reduce((items, value, index, source) => {
+      if (index > 0 && value - source[index - 1] > 1) {
+        items.push("ellipsis");
+      }
+      items.push(value);
+      return items;
+    }, []);
+}
+
+function renderPaginationControls() {
+  const totalPages = Math.max(1, state.pagination.totalPages || 1);
+  if (totalPages <= 1) return "";
+  const currentPage = Math.min(Math.max(1, state.currentPage || 1), totalPages);
+  const pageItems = paginationPages(currentPage, totalPages);
+  return `
+    <nav class="history-pagination" aria-label="Account case pages">
+      <button
+        class="pagination-button"
+        type="button"
+        data-action="set-page"
+        data-page="${currentPage - 1}"
+        ${currentPage <= 1 ? "disabled" : ""}
+        aria-label="Previous page"
+      >
+        <span class="material-symbols-outlined">chevron_left</span>
+      </button>
+      ${pageItems
+        .map((item) => {
+          if (item === "ellipsis") {
+            return `<span class="pagination-ellipsis" aria-hidden="true">...</span>`;
+          }
+          const isActive = item === currentPage;
+          return `
+            <button
+              class="pagination-button ${isActive ? "pagination-button--active" : ""}"
+              type="button"
+              data-action="set-page"
+              data-page="${item}"
+              ${isActive ? 'aria-current="page"' : ""}
+            >${item}</button>
+          `;
+        })
+        .join("")}
+      <button
+        class="pagination-button"
+        type="button"
+        data-action="set-page"
+        data-page="${currentPage + 1}"
+        ${currentPage >= totalPages ? "disabled" : ""}
+        aria-label="Next page"
+      >
+        <span class="material-symbols-outlined">chevron_right</span>
+      </button>
+    </nav>
+  `;
+}
+
 function renderHistorySidebar() {
   const visibleItems = state.history.filter(matchesFilter);
   if (!state.history.length) {
@@ -413,6 +517,7 @@ function renderHistorySidebar() {
         }
       )
       .join("")}
+    ${renderPaginationControls()}
   `;
 }
 
@@ -940,10 +1045,19 @@ function bind() {
       const filterBtn = event.target.closest("[data-action='set-filter']");
       if (filterBtn) {
         state.statusFilter = filterBtn.dataset.value || "unreviewed";
+        state.currentPage = 1;
         if (state.statusFilter === "route_errors") {
           state.routeErrorSummary = null;
           void fetchRouteErrorSummary();
         }
+        void fetchTickets().then(() => render());
+        return;
+      }
+      const pageBtn = event.target.closest("[data-action='set-page']");
+      if (pageBtn && !pageBtn.disabled) {
+        const targetPage = Number(pageBtn.dataset.page || "1");
+        const totalPages = Math.max(1, state.pagination.totalPages || 1);
+        state.currentPage = Math.min(Math.max(1, targetPage), totalPages);
         void fetchTickets().then(() => render());
         return;
       }

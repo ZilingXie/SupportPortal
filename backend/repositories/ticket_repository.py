@@ -94,6 +94,13 @@ def _normalize_status(value: Any) -> str:
     return status if status in _VALID_STATUSES else "open"
 
 
+def _safe_float_value(value: Any, default: float) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _normalize_role(value: Any) -> str:
     role = str(value or "assistant").strip().lower()
     return role if role in _VALID_ROLES else "assistant"
@@ -810,8 +817,21 @@ class TicketRepository(Protocol):
         ...
 
     def list_billing_tickets(
-        self, limit: int = 30, review_status: str | None = None
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        automation_filter: str | None = None,
+        route_errors_only: bool = False,
     ) -> list[dict[str, Any]]:
+        ...
+
+    def count_billing_tickets(
+        self,
+        review_status: str | None = None,
+        automation_filter: str | None = None,
+        route_errors_only: bool = False,
+    ) -> int:
         ...
 
     def delete_all_billing_tickets(self) -> int:
@@ -1511,9 +1531,15 @@ class InMemoryTicketRepository:
         return None
 
     def list_billing_tickets(
-        self, limit: int = 30, review_status: str | None = None
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        automation_filter: str | None = None,
+        route_errors_only: bool = False,
     ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
+        safe_offset = _safe_non_negative_int(offset, 0)
         items = sorted(
             self._billing_tickets.values(),
             key=lambda item: str(item.get("created_at") or ""),
@@ -1525,7 +1551,45 @@ class InMemoryTicketRepository:
                 for item in items
                 if str(item.get("route_review_status") or "pending") == review_status
             ]
-        return [copy.deepcopy(item) for item in items[:safe_limit]]
+        if automation_filter == "automation":
+            items = [
+                item
+                for item in items
+                if str(item.get("automation_status") or item.get("status") or "").strip()
+                in {"automation", "automated"}
+            ]
+        elif automation_filter == "not_automated":
+            items = [
+                item
+                for item in items
+                if str(item.get("automation_status") or item.get("status") or "").strip()
+                not in {"automation", "automated"}
+            ]
+        if route_errors_only:
+            corrected_ids = set(self._billing_route_corrections)
+            items = [
+                item
+                for item in items
+                if str(item.get("billing_ticket_id") or "").strip() in corrected_ids
+                or _safe_float_value(item.get("route_confidence"), 1.0) < 0.6
+            ]
+        return [copy.deepcopy(item) for item in items[safe_offset : safe_offset + safe_limit]]
+
+    def count_billing_tickets(
+        self,
+        review_status: str | None = None,
+        automation_filter: str | None = None,
+        route_errors_only: bool = False,
+    ) -> int:
+        return len(
+            self.list_billing_tickets(
+                limit=max(1, len(self._billing_tickets)),
+                review_status=review_status,
+                offset=0,
+                automation_filter=automation_filter,
+                route_errors_only=route_errors_only,
+            )
+        )
 
     def delete_all_billing_tickets(self) -> int:
         count = len(self._billing_tickets)
@@ -5036,40 +5100,97 @@ class PostgresTicketRepository:
         return self._run_with_connection_retry("get_billing_ticket_by_client_ticket_id", _operation)
 
     def list_billing_tickets(
-        self, limit: int = 30, review_status: str | None = None
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        automation_filter: str | None = None,
+        route_errors_only: bool = False,
     ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
+        safe_offset = _safe_non_negative_int(offset, 0)
         normalized_review_status = str(review_status).strip() if review_status else None
+        normalized_automation_filter = str(automation_filter or "").strip()
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
-                if normalized_review_status:
-                    cur.execute(
-                        sql.SQL(
-                            """
-                            SELECT * FROM {}
-                            WHERE route_review_status = %s
-                            ORDER BY created_at DESC
-                            LIMIT %s
-                            """
-                        ).format(self._table("support_billing_tickets")),
-                        (normalized_review_status, safe_limit),
-                    )
-                else:
-                    cur.execute(
-                        sql.SQL(
-                            """
-                            SELECT * FROM {}
-                            ORDER BY created_at DESC
-                            LIMIT %s
-                            """
-                        ).format(self._table("support_billing_tickets")),
-                        (safe_limit,),
-                    )
+                where_sql, params = self._billing_ticket_filter_sql(
+                    review_status=normalized_review_status,
+                    automation_filter=normalized_automation_filter,
+                    route_errors_only=route_errors_only,
+                )
+                query = sql.SQL(
+                    """
+                    SELECT bt.* FROM {} bt
+                    {}
+                    ORDER BY bt.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """
+                ).format(self._table("support_billing_tickets"), where_sql)
+                cur.execute(query, (*params, safe_limit, safe_offset))
                 col_names = [desc[0] for desc in cur.description]
                 return [dict(zip(col_names, row)) for row in cur.fetchall()]
 
         return self._run_with_connection_retry("list_billing_tickets", _operation)
+
+    def count_billing_tickets(
+        self,
+        review_status: str | None = None,
+        automation_filter: str | None = None,
+        route_errors_only: bool = False,
+    ) -> int:
+        normalized_review_status = str(review_status).strip() if review_status else None
+        normalized_automation_filter = str(automation_filter or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> int:
+            with conn.cursor() as cur:
+                where_sql, params = self._billing_ticket_filter_sql(
+                    review_status=normalized_review_status,
+                    automation_filter=normalized_automation_filter,
+                    route_errors_only=route_errors_only,
+                )
+                query = sql.SQL("SELECT COUNT(*) FROM {} bt {}").format(
+                    self._table("support_billing_tickets"), where_sql
+                )
+                cur.execute(query, params)
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+
+        return self._run_with_connection_retry("count_billing_tickets", _operation)
+
+    def _billing_ticket_filter_sql(
+        self,
+        *,
+        review_status: str | None,
+        automation_filter: str,
+        route_errors_only: bool,
+    ) -> tuple[sql.SQL, tuple[Any, ...]]:
+        clauses: list[sql.SQL] = []
+        params: list[Any] = []
+        if review_status:
+            clauses.append(sql.SQL("bt.route_review_status = %s"))
+            params.append(review_status)
+        if automation_filter == "automation":
+            clauses.append(sql.SQL("bt.automation_status IN ('automation', 'automated')"))
+        elif automation_filter == "not_automated":
+            clauses.append(sql.SQL("bt.automation_status NOT IN ('automation', 'automated')"))
+        if route_errors_only:
+            clauses.append(
+                sql.SQL(
+                    """
+                    (
+                        EXISTS (
+                            SELECT 1 FROM {} brc
+                            WHERE brc.billing_ticket_id = bt.billing_ticket_id
+                        )
+                        OR COALESCE(bt.route_confidence, 1.0) < 0.6
+                    )
+                    """
+                ).format(self._table("support_billing_route_corrections"))
+            )
+        if not clauses:
+            return sql.SQL(""), tuple()
+        return sql.SQL("WHERE ") + sql.SQL(" AND ").join(clauses), tuple(params)
 
     def delete_all_billing_tickets(self) -> int:
         def _operation(conn: psycopg.Connection[Any]) -> int:
