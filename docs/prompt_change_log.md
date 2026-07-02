@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-02 - Billing inbox reply customer follow-up
+
+- Area or subsystem: Account billing automation — Outlook inbox reply poller
+- Prompt or model version: `billing-inbox-reply-followup-v1`
+- Summary: Changed the billing Outlook reply poller from record-only handling to automatic customer follow-up generation for `[Billing Request]` replies that reference a `TK-...` ticket.
+- Reason: Internal billing replies processed from the company mailbox must continue the customer-facing automation flow instead of only being written to a JSONL audit record and marked read.
+- Affected files or config:
+  - `backend/worker.py`
+  - `backend/tests/test_worker.py`
+  - `docs/prompt_change_log.md`
+  - `docs/feature_list.md`
+- Expected behavior change:
+  - The worker parses the client ticket id from billing reply subjects such as `Re: [Billing Request] ... Ticket TK-...`.
+  - Matching replies are recorded, transformed into a customer-facing billing follow-up, saved as an assistant message on the original client ticket, and reflected on the linked billing ticket as `customer_notified`.
+  - Empty reply bodies, missing ticket ids, or missing linked tickets fail the handler before the Graph message is marked read, so the poller can retry after correction.
+- Verification:
+  - RED/diagnosis: live `TK-ACC-A3377C` showed the prior poller recorded one matching email but did not append any customer-facing follow-up to the ticket.
+  - `docker run --rm -v /home/ubuntu/SupportPortal/.worktrees/billing-email-reply-autoprocess:/app -w /app localhost/supportportal-app:unknown python -m unittest backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_generates_customer_followup backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_rejects_empty_body_before_marking_read -v`
+  - `docker run --rm -v /home/ubuntu/SupportPortal/.worktrees/billing-email-reply-autoprocess:/app -w /app localhost/supportportal-app:unknown python -m unittest backend.tests.test_billing_automation_email backend.tests.test_worker.WorkerResilienceTests.test_billing_reply_poller_is_disabled_by_default backend.tests.test_worker.WorkerResilienceTests.test_billing_reply_poller_enabled_from_env backend.tests.test_worker.WorkerResilienceTests.test_start_billing_reply_poller_starts_daemon_thread_when_enabled backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_generates_customer_followup backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_rejects_empty_body_before_marking_read -v`
+  - `python3 -m py_compile backend/worker.py backend/tests/test_worker.py`
+
 ## 2026-07-02 - Billing request subject routing prefix
 
 - Area or subsystem: Deterministic billing intake internal email handoff
