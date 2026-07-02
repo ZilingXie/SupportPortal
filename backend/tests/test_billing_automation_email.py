@@ -9,7 +9,10 @@ from unittest.mock import patch
 
 from backend.services.billing_automation import (
     BILLING_ACTION_ACCOUNT_VERIFICATION,
+    BillingRequestReply,
     build_billing_automation_result,
+    poll_billing_request_replies,
+    record_billing_request_reply,
     send_billing_internal_email,
 )
 
@@ -38,6 +41,12 @@ class _FakeHttpResponse:
         if self.payload is None:
             return b""
         return json.dumps(self.payload).encode("utf-8")
+
+
+def _json_request_body(request) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    raw = request.data.decode("utf-8") if request.data else "{}"
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else {}
 
 
 class BillingAutomationEmailTests(unittest.TestCase):
@@ -194,6 +203,178 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertEqual(len(requests), 1)
         self.assertEqual(requests[0].full_url, "https://graph.microsoft.com/v1.0/me/sendMail")
         self.assertEqual(requests[0].headers["Authorization"], "Bearer cached-access-token")
+
+    def test_poll_billing_request_replies_reads_matching_unread_messages_and_marks_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "billing-graph-token.json"
+            cache_path.write_text(
+                json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
+                encoding="utf-8",
+            )
+            requests = []
+            handled = []
+
+            def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+                requests.append(request)
+                url = request.full_url
+                if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
+                    return _FakeHttpResponse(
+                        {
+                            "value": [
+                                {
+                                    "id": "msg-match",
+                                    "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-1",
+                                    "from": {"emailAddress": {"address": "billing@example.com"}},
+                                    "receivedDateTime": "2026-07-02T06:00:00Z",
+                                },
+                                {
+                                    "id": "msg-other",
+                                    "subject": "Re: unrelated support thread",
+                                    "from": {"emailAddress": {"address": "other@example.com"}},
+                                },
+                            ]
+                        },
+                        status=200,
+                    )
+                if url.startswith("https://graph.microsoft.com/v1.0/me/messages/msg-match?"):
+                    return _FakeHttpResponse(
+                        {
+                            "id": "msg-match",
+                            "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-1",
+                            "from": {"emailAddress": {"address": "billing@example.com"}},
+                            "body": {
+                                "contentType": "html",
+                                "content": "<p>Approved. Please proceed.</p><p>Thanks &amp; regards.</p>",
+                            },
+                            "receivedDateTime": "2026-07-02T06:00:00Z",
+                        },
+                        status=200,
+                    )
+                raise AssertionError(f"unexpected URL {url}")
+
+            def fake_mark_read_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+                if request.full_url == "https://graph.microsoft.com/v1.0/me/messages/msg-match" and request.get_method() == "PATCH":
+                    requests.append(request)
+                    return _FakeHttpResponse(status=200)
+                return fake_urlopen(request, timeout=timeout)
+
+            env = dict(GRAPH_ENV)
+            env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
+            with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_mark_read_urlopen):
+                replies = poll_billing_request_replies(handler=handled.append)
+
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].message_id, "msg-match")
+        self.assertEqual(replies[0].subject, "Re: [Billing Request] Detailed invoice request - Ticket TK-1")
+        self.assertEqual(replies[0].sender, "billing@example.com")
+        self.assertEqual(replies[0].body_text, "Approved. Please proceed.\nThanks & regards.")
+        self.assertEqual(handled, replies)
+        self.assertEqual([request.get_method() for request in requests], ["GET", "GET", "PATCH"])
+        patch_payload = _json_request_body(requests[-1])
+        self.assertEqual(patch_payload, {"isRead": True})
+
+    def test_poll_billing_request_replies_ignores_unmatched_subjects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "billing-graph-token.json"
+            cache_path.write_text(
+                json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
+                encoding="utf-8",
+            )
+            requests = []
+
+            def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+                requests.append(request)
+                if request.full_url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
+                    return _FakeHttpResponse(
+                        {
+                            "value": [
+                                {
+                                    "id": "msg-other",
+                                    "subject": "Re: unrelated support thread",
+                                    "from": {"emailAddress": {"address": "other@example.com"}},
+                                }
+                            ]
+                        },
+                        status=200,
+                    )
+                raise AssertionError(f"unexpected URL {request.full_url}")
+
+            env = dict(GRAPH_ENV)
+            env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
+            with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                replies = poll_billing_request_replies()
+
+        self.assertEqual(replies, [])
+        self.assertEqual(len(requests), 1)
+
+    def test_poll_billing_request_replies_leaves_message_unread_when_handler_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "billing-graph-token.json"
+            cache_path.write_text(
+                json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
+                encoding="utf-8",
+            )
+            requests = []
+
+            def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+                requests.append(request)
+                url = request.full_url
+                if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
+                    return _FakeHttpResponse(
+                        {
+                            "value": [
+                                {
+                                    "id": "msg-match",
+                                    "subject": "[Billing Request] Account verification request - Ticket TK-2",
+                                    "from": {"emailAddress": {"address": "billing@example.com"}},
+                                }
+                            ]
+                        },
+                        status=200,
+                    )
+                if url.startswith("https://graph.microsoft.com/v1.0/me/messages/msg-match?") and request.get_method() == "GET":
+                    return _FakeHttpResponse(
+                        {
+                            "id": "msg-match",
+                            "subject": "[Billing Request] Account verification request - Ticket TK-2",
+                            "from": {"emailAddress": {"address": "billing@example.com"}},
+                            "body": {"content": "Looks good."},
+                        },
+                        status=200,
+                    )
+                raise AssertionError(f"unexpected URL {url}")
+
+            env = dict(GRAPH_ENV)
+            env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
+            with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                with self.assertRaisesRegex(RuntimeError, "handler failed"):
+                    poll_billing_request_replies(handler=lambda _reply: (_ for _ in ()).throw(RuntimeError("handler failed")))
+
+        self.assertEqual([request.get_method() for request in requests], ["GET", "GET"])
+
+    def test_record_billing_request_reply_appends_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            record_path = Path(temp_dir) / "billing-replies.jsonl"
+            reply = BillingRequestReply(
+                message_id="msg-1",
+                subject="Re: [Billing Request] Detailed invoice request - Ticket TK-1",
+                sender="billing@example.com",
+                body_text="Approved. Please proceed.",
+                received_at="2026-07-02T06:00:00Z",
+            )
+
+            record_billing_request_reply(reply, record_path=record_path)
+
+            lines = record_path.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(len(lines), 1)
+        payload = json.loads(lines[0])
+        self.assertEqual(payload["message_id"], "msg-1")
+        self.assertEqual(payload["subject"], "Re: [Billing Request] Detailed invoice request - Ticket TK-1")
+        self.assertEqual(payload["sender"], "billing@example.com")
+        self.assertEqual(payload["body_text"], "Approved. Please proceed.")
+        self.assertEqual(payload["received_at"], "2026-07-02T06:00:00Z")
+        self.assertIsInstance(payload["recorded_at"], int)
 
 
 if __name__ == "__main__":

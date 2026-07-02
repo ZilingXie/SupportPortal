@@ -42,6 +42,7 @@ from backend.services.investigation_flow import (
     normalize_ticket_status,
     start_or_refresh_investigation,
 )
+from backend.services.billing_automation import poll_billing_request_replies, record_billing_request_reply
 from backend.services.client_ticket_agent_runtime import (
     TicketExecutionResult,
     build_execution_route_payload,
@@ -69,6 +70,9 @@ TICKET_LOOKUP_RETRY_MAX = 6
 TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
+BILLING_REPLY_POLL_ENABLED_ENV = "BILLING_AUTOMATION_REPLY_POLL_ENABLED"
+BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
+BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
 
 
 def _safe_positive_int(value: Any, default: int) -> int:
@@ -156,6 +160,18 @@ def _worker_concurrency_from_env() -> int:
     return _safe_positive_int(os.getenv("WORKER_CONCURRENCY"), 1)
 
 
+def _billing_reply_poller_enabled_from_env() -> bool:
+    return str(os.getenv(BILLING_REPLY_POLL_ENABLED_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _billing_reply_poll_interval_from_env() -> float:
+    return _safe_positive_float(os.getenv(BILLING_REPLY_POLL_INTERVAL_ENV), 300.0)
+
+
+def _billing_reply_poll_max_messages_from_env() -> int:
+    return _safe_positive_int(os.getenv(BILLING_REPLY_POLL_MAX_MESSAGES_ENV), 25)
+
+
 def _install_signal_handlers() -> None:
     def _handle_signal(signum: int, _frame: Any) -> None:
         global SHUTTING_DOWN
@@ -164,6 +180,38 @@ def _install_signal_handlers() -> None:
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
+
+
+def _run_billing_reply_poller(interval_seconds: float) -> None:
+    LOGGER.info("Billing reply poller started with interval_seconds=%s.", interval_seconds)
+    while not SHUTTING_DOWN:
+        try:
+            replies = poll_billing_request_replies(
+                handler=record_billing_request_reply,
+                max_messages=_billing_reply_poll_max_messages_from_env(),
+            )
+            if replies:
+                LOGGER.info("Billing reply poller handled %s reply message(s).", len(replies))
+        except Exception as exc:
+            LOGGER.warning("Billing reply poller failed: %s", exc)
+        sleep_until = time.time() + max(interval_seconds, 1.0)
+        while not SHUTTING_DOWN and time.time() < sleep_until:
+            time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
+    LOGGER.info("Billing reply poller stopped.")
+
+
+def _start_billing_reply_poller_if_enabled() -> threading.Thread | None:
+    if not _billing_reply_poller_enabled_from_env():
+        return None
+    interval_seconds = _billing_reply_poll_interval_from_env()
+    thread = threading.Thread(
+        target=_run_billing_reply_poller,
+        args=(interval_seconds,),
+        name="billing-reply-poller",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def _publish(bus: SyncRedisEventBus, channels: list[str], payload: dict[str, Any]) -> None:
@@ -1650,6 +1698,7 @@ def run_worker() -> int:
         ",".join(task_types),
         concurrency,
     )
+    _start_billing_reply_poller_if_enabled()
     if concurrency <= 1:
         _run_worker_consumer(task_types, 1)
         LOGGER.info("Worker stopped.")
