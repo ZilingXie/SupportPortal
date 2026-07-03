@@ -144,6 +144,38 @@ class SingleHostComposeTests(unittest.TestCase):
             "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE: ${BILLING_AUTOMATION_GRAPH_TOKEN_CACHE:-.msgraph/billing-automation-token.json}",
             worker_block,
         )
+        self.assertIn(
+            "BILLING_AUTOMATION_REPLY_PDF_OCR_MAX_ATTACHMENTS: ${BILLING_AUTOMATION_REPLY_PDF_OCR_MAX_ATTACHMENTS:-3}",
+            worker_block,
+        )
+        self.assertIn(
+            "BILLING_AUTOMATION_REPLY_PDF_OCR_MAX_BYTES: ${BILLING_AUTOMATION_REPLY_PDF_OCR_MAX_BYTES:-20971520}",
+            worker_block,
+        )
+        self.assertIn(
+            "PADDLEOCR_API_TOKEN: ${PADDLEOCR_API_TOKEN:-}",
+            worker_block,
+        )
+        self.assertIn(
+            "PADDLEOCR_API_URL: ${PADDLEOCR_API_URL:-https://paddleocr.aistudio-app.com/api/v2/ocr/jobs}",
+            worker_block,
+        )
+        self.assertIn(
+            "PADDLEOCR_MODEL: ${PADDLEOCR_MODEL:-PaddleOCR-VL-1.6}",
+            worker_block,
+        )
+        self.assertIn(
+            "PADDLEOCR_TIMEOUT_SECONDS: ${PADDLEOCR_TIMEOUT_SECONDS:-30}",
+            worker_block,
+        )
+        self.assertIn(
+            "PADDLEOCR_POLL_INTERVAL_SECONDS: ${PADDLEOCR_POLL_INTERVAL_SECONDS:-2.0}",
+            worker_block,
+        )
+        self.assertIn(
+            "PADDLEOCR_MAX_WAIT_SECONDS: ${PADDLEOCR_MAX_WAIT_SECONDS:-120.0}",
+            worker_block,
+        )
 
     def test_worker_service_mounts_huggingface_cache(self) -> None:
         worker_block = self._service_block("worker_query")

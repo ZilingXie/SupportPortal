@@ -7,10 +7,11 @@ import json
 import time
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html import unescape
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
@@ -37,6 +38,14 @@ BILLING_GRAPH_CLIENT_SECRET_ENV = "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET"
 BILLING_GRAPH_USERNAME_ENV = "BILLING_AUTOMATION_GRAPH_USERNAME"
 BILLING_GRAPH_TOKEN_CACHE_ENV = "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"
 BILLING_REPLY_RECORD_PATH_ENV = "BILLING_AUTOMATION_REPLY_RECORD_PATH"
+BILLING_REPLY_PDF_OCR_MAX_ATTACHMENTS_ENV = "BILLING_AUTOMATION_REPLY_PDF_OCR_MAX_ATTACHMENTS"
+BILLING_REPLY_PDF_OCR_MAX_BYTES_ENV = "BILLING_AUTOMATION_REPLY_PDF_OCR_MAX_BYTES"
+PADDLEOCR_API_TOKEN_ENV = "PADDLEOCR_API_TOKEN"
+PADDLEOCR_API_URL_ENV = "PADDLEOCR_API_URL"
+PADDLEOCR_MODEL_ENV = "PADDLEOCR_MODEL"
+PADDLEOCR_TIMEOUT_SECONDS_ENV = "PADDLEOCR_TIMEOUT_SECONDS"
+PADDLEOCR_POLL_INTERVAL_SECONDS_ENV = "PADDLEOCR_POLL_INTERVAL_SECONDS"
+PADDLEOCR_MAX_WAIT_SECONDS_ENV = "PADDLEOCR_MAX_WAIT_SECONDS"
 DEFAULT_BILLING_INTERNAL_EMAIL = "xieziling@agora.io"
 DEFAULT_BILLING_EMAIL_FROM = "ai-support-agent@agora.io"
 DEFAULT_BILLING_MAIL_TRANSPORT = "graph"
@@ -45,6 +54,13 @@ DEFAULT_BILLING_GRAPH_CLIENT_ID = "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80"
 DEFAULT_BILLING_GRAPH_USERNAME = "ai-support-agent@agora.io"
 DEFAULT_BILLING_GRAPH_TOKEN_CACHE = ".msgraph/billing-automation-token.json"
 DEFAULT_BILLING_REPLY_RECORD_PATH = ".msgraph/billing-request-replies.jsonl"
+DEFAULT_BILLING_REPLY_PDF_OCR_MAX_ATTACHMENTS = 3
+DEFAULT_BILLING_REPLY_PDF_OCR_MAX_BYTES = 20 * 1024 * 1024
+DEFAULT_PADDLEOCR_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
+DEFAULT_PADDLEOCR_MODEL = "PaddleOCR-VL-1.6"
+DEFAULT_PADDLEOCR_TIMEOUT_SECONDS = 30
+DEFAULT_PADDLEOCR_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_PADDLEOCR_MAX_WAIT_SECONDS = 120.0
 GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
 GRAPH_INBOX_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
 GRAPH_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/messages"
@@ -82,6 +98,8 @@ class BillingRequestReply:
     sender: str
     body_text: str
     received_at: str
+    attachment_names: tuple[str, ...] = ()
+    attachment_text: str = ""
 
 
 _FIELD_ALIASES = {
@@ -302,6 +320,17 @@ def poll_billing_request_replies(
         reply = _billing_request_reply_from_graph_message(message or summary)
         if not reply.message_id:
             continue
+        if bool(message.get("hasAttachments")) or bool(summary.get("hasAttachments")):
+            attachment_names, attachment_text = _ocr_billing_reply_pdf_attachments(
+                access_token=access_token,
+                message_id=reply.message_id,
+            )
+            if attachment_names or attachment_text:
+                reply = replace(
+                    reply,
+                    attachment_names=attachment_names,
+                    attachment_text=attachment_text,
+                )
         if handler is not None:
             handler(reply)
         _mark_graph_message_read(access_token=access_token, message_id=reply.message_id)
@@ -321,6 +350,8 @@ def record_billing_request_reply(reply: BillingRequestReply, *, record_path: str
         "subject": reply.subject,
         "sender": reply.sender,
         "body_text": reply.body_text,
+        "attachment_names": list(reply.attachment_names),
+        "attachment_text": reply.attachment_text,
         "received_at": reply.received_at,
         "recorded_at": int(time.time()),
     }
@@ -491,7 +522,7 @@ def _list_unread_inbox_messages(*, access_token: str, max_messages: int) -> list
     params = urllib.parse.urlencode(
         {
             "$filter": "isRead eq false",
-            "$select": "id,subject,from,receivedDateTime",
+            "$select": "id,subject,from,receivedDateTime,hasAttachments",
             "$top": str(top),
         }
     )
@@ -511,7 +542,7 @@ def _list_unread_inbox_messages(*, access_token: str, max_messages: int) -> list
 
 def _get_graph_message(*, access_token: str, message_id: str) -> dict[str, Any]:
     encoded_message_id = urllib.parse.quote(message_id, safe="")
-    params = urllib.parse.urlencode({"$select": "id,subject,from,body,receivedDateTime"})
+    params = urllib.parse.urlencode({"$select": "id,subject,from,body,receivedDateTime,hasAttachments"})
     request = urllib.request.Request(
         f"{GRAPH_MESSAGES_URL}/{encoded_message_id}?{params}",
         method="GET",
@@ -522,6 +553,260 @@ def _get_graph_message(*, access_token: str, message_id: str) -> dict[str, Any]:
     )
     with urllib.request.urlopen(request, timeout=15) as response:
         return _decode_json_response(response)
+
+
+def _ocr_billing_reply_pdf_attachments(*, access_token: str, message_id: str) -> tuple[tuple[str, ...], str]:
+    attachments = _list_graph_message_pdf_attachments(
+        access_token=access_token,
+        message_id=message_id,
+    )
+    if not attachments:
+        return (), ""
+
+    max_attachments = _safe_int(
+        os.getenv(BILLING_REPLY_PDF_OCR_MAX_ATTACHMENTS_ENV),
+        DEFAULT_BILLING_REPLY_PDF_OCR_MAX_ATTACHMENTS,
+    )
+    selected = attachments[:max_attachments]
+    names: list[str] = []
+    parts: list[str] = []
+    for attachment in selected:
+        attachment_id = _clean_text(attachment.get("id"))
+        name = _clean_text(attachment.get("name")) or "attachment.pdf"
+        if not attachment_id:
+            continue
+        content = _download_graph_message_attachment(
+            access_token=access_token,
+            message_id=message_id,
+            attachment_id=attachment_id,
+        )
+        text = _ocr_pdf_bytes_with_paddleocr(filename=name, content=content)
+        if text:
+            names.append(name)
+            parts.append(f"[PDF attachment: {name}]\n{text}")
+    return tuple(names), "\n\n".join(parts).strip()
+
+
+def _list_graph_message_pdf_attachments(*, access_token: str, message_id: str) -> list[dict[str, Any]]:
+    encoded_message_id = urllib.parse.quote(message_id, safe="")
+    params = urllib.parse.urlencode({"$select": "id,name,contentType,size,isInline"})
+    request = urllib.request.Request(
+        f"{GRAPH_MESSAGES_URL}/{encoded_message_id}/attachments?{params}",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = _decode_json_response(response)
+    value = payload.get("value")
+    attachments = [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    max_bytes = _safe_int(
+        os.getenv(BILLING_REPLY_PDF_OCR_MAX_BYTES_ENV),
+        DEFAULT_BILLING_REPLY_PDF_OCR_MAX_BYTES,
+    )
+    pdf_attachments: list[dict[str, Any]] = []
+    for attachment in attachments:
+        if bool(attachment.get("isInline")):
+            continue
+        name = _clean_text(attachment.get("name"))
+        content_type = _clean_text(attachment.get("contentType")).lower()
+        if content_type != "application/pdf" and not name.lower().endswith(".pdf"):
+            continue
+        size = _safe_int(attachment.get("size"), 0)
+        if size > max_bytes:
+            raise RuntimeError(f"billing reply PDF attachment {name or '<unnamed>'} exceeds OCR size limit")
+        pdf_attachments.append(attachment)
+    return pdf_attachments
+
+
+def _download_graph_message_attachment(*, access_token: str, message_id: str, attachment_id: str) -> bytes:
+    encoded_message_id = urllib.parse.quote(message_id, safe="")
+    encoded_attachment_id = urllib.parse.quote(attachment_id, safe="")
+    request = urllib.request.Request(
+        f"{GRAPH_MESSAGES_URL}/{encoded_message_id}/attachments/{encoded_attachment_id}/$value",
+        method="GET",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        content = response.read()
+        if response.status not in {200, 201, 202}:
+            raise RuntimeError(f"Microsoft Graph attachment download returned HTTP {response.status}")
+    if not content:
+        raise RuntimeError("Microsoft Graph attachment download returned empty content")
+    return content
+
+
+def _ocr_pdf_bytes_with_paddleocr(*, filename: str, content: bytes) -> str:
+    token = _clean_text(os.getenv(PADDLEOCR_API_TOKEN_ENV))
+    if not token:
+        raise RuntimeError(f"missing {PADDLEOCR_API_TOKEN_ENV} for billing reply PDF OCR")
+
+    api_url = _clean_text(os.getenv(PADDLEOCR_API_URL_ENV)) or DEFAULT_PADDLEOCR_API_URL
+    timeout_seconds = _safe_int(os.getenv(PADDLEOCR_TIMEOUT_SECONDS_ENV), DEFAULT_PADDLEOCR_TIMEOUT_SECONDS)
+    job_id = _submit_paddleocr_job(
+        api_url=api_url,
+        token=token,
+        filename=filename,
+        content=content,
+        timeout_seconds=timeout_seconds,
+    )
+    json_url = _wait_for_paddleocr_result_url(
+        api_url=api_url,
+        token=token,
+        job_id=job_id,
+        timeout_seconds=timeout_seconds,
+    )
+    return _download_paddleocr_jsonl_text(json_url=json_url, timeout_seconds=timeout_seconds)
+
+
+def _submit_paddleocr_job(
+    *,
+    api_url: str,
+    token: str,
+    filename: str,
+    content: bytes,
+    timeout_seconds: int,
+) -> str:
+    model = _clean_text(os.getenv(PADDLEOCR_MODEL_ENV)) or DEFAULT_PADDLEOCR_MODEL
+    optional_payload = json.dumps(
+        {
+            "useDocOrientationClassify": False,
+            "useDocUnwarping": False,
+            "useChartRecognition": False,
+        },
+        separators=(",", ":"),
+    )
+    body, content_type = _build_multipart_form_data(
+        fields={
+            "model": model,
+            "optionalPayload": optional_payload,
+        },
+        files={
+            "file": (
+                filename or "attachment.pdf",
+                "application/pdf",
+                content,
+            )
+        },
+    )
+    request = urllib.request.Request(
+        api_url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"bearer {token}",
+            "Content-Type": content_type,
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        payload = _decode_json_response(response, service_name="PaddleOCR")
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    job_id = _clean_text(data.get("jobId") or payload.get("jobId"))
+    if not job_id:
+        raise RuntimeError("PaddleOCR submit did not return jobId")
+    return job_id
+
+
+def _wait_for_paddleocr_result_url(
+    *,
+    api_url: str,
+    token: str,
+    job_id: str,
+    timeout_seconds: int,
+) -> str:
+    poll_interval = _safe_float(
+        os.getenv(PADDLEOCR_POLL_INTERVAL_SECONDS_ENV),
+        DEFAULT_PADDLEOCR_POLL_INTERVAL_SECONDS,
+    )
+    max_wait = _safe_float(os.getenv(PADDLEOCR_MAX_WAIT_SECONDS_ENV), DEFAULT_PADDLEOCR_MAX_WAIT_SECONDS)
+    deadline = time.monotonic() + max_wait
+    status_url = f"{api_url.rstrip('/')}/{urllib.parse.quote(job_id, safe='')}"
+    while True:
+        request = urllib.request.Request(
+            status_url,
+            method="GET",
+            headers={
+                "Authorization": f"bearer {token}",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = _decode_json_response(response, service_name="PaddleOCR")
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        state = _clean_text(data.get("state")).lower()
+        if state == "done":
+            result_url = data.get("resultUrl") if isinstance(data.get("resultUrl"), dict) else {}
+            json_url = _clean_text(result_url.get("jsonUrl"))
+            if not json_url:
+                raise RuntimeError("PaddleOCR result did not include jsonUrl")
+            return json_url
+        if state in {"failed", "error", "canceled", "cancelled"}:
+            raise RuntimeError(f"PaddleOCR job {job_id} failed with state {state}")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"PaddleOCR job {job_id} timed out")
+        time.sleep(poll_interval)
+
+
+def _download_paddleocr_jsonl_text(*, json_url: str, timeout_seconds: int) -> str:
+    request = urllib.request.Request(json_url, method="GET")
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        raw_body = response.read().decode("utf-8")
+    parts: list[str] = []
+    for line in raw_body.splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("PaddleOCR result JSONL contained invalid JSON") from exc
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        layouts = result.get("layoutParsingResults")
+        if not isinstance(layouts, list):
+            continue
+        for layout in layouts:
+            if not isinstance(layout, dict):
+                continue
+            markdown = layout.get("markdown") if isinstance(layout.get("markdown"), dict) else {}
+            text = str(markdown.get("text") or "").strip()
+            if text:
+                parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+def _build_multipart_form_data(
+    *,
+    fields: dict[str, str],
+    files: dict[str, tuple[str, str, bytes]],
+) -> tuple[bytes, str]:
+    boundary = f"----supportportal-{uuid4().hex}"
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.extend(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+                str(value).encode("utf-8"),
+                b"\r\n",
+            ]
+        )
+    for name, (filename, content_type, content) in files.items():
+        safe_filename = filename.replace('"', "")
+        chunks.extend(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                (
+                    f'Content-Disposition: form-data; name="{name}"; '
+                    f'filename="{safe_filename}"\r\n'
+                ).encode("utf-8"),
+                f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"),
+                content,
+                b"\r\n",
+            ]
+        )
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
 def _mark_graph_message_read(*, access_token: str, message_id: str) -> None:
@@ -567,14 +852,14 @@ def _normalize_graph_message_body(value: Any, *, content_type: str = "") -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
-def _decode_json_response(response: Any) -> dict[str, Any]:
+def _decode_json_response(response: Any, *, service_name: str = "Microsoft Graph") -> dict[str, Any]:
     raw_body = response.read().decode("utf-8")
     if not raw_body:
         return {}
     try:
         parsed = json.loads(raw_body)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("Microsoft Graph returned invalid JSON") from exc
+        raise RuntimeError(f"{service_name} returned invalid JSON") from exc
     return parsed if isinstance(parsed, dict) else {}
 
 
@@ -585,6 +870,14 @@ def _clean_text(value: Any) -> str:
 def _safe_int(value: Any, default: int) -> int:
     try:
         parsed = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _safe_float(value: Any, default: float) -> float:
+    try:
+        parsed = float(str(value or "").strip())
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
