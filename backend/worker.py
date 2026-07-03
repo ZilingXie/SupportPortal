@@ -22,9 +22,12 @@ from backend.main import (
     ensure_ticket_defaults,
     now_iso,
     resolve_support_message,
+    asset_repository,
+    asset_storage,
     ticket_repository,
 )
 from backend.services.app_build import get_app_build_info
+from backend.services.asset_storage import build_asset_s3_key, create_asset_id, sanitize_asset_filename
 from backend.services.engineer_cases import (
     build_new_engineer_case,
     apply_case_context_to_engineer_case,
@@ -235,7 +238,9 @@ def _billing_reply_already_processed(client_ticket_id: str, message_id: str) -> 
 def _billing_reply_attachment_note(reply: Any) -> str:
     attachment_text = str(getattr(reply, "attachment_text", "") or "").strip()
     if not attachment_text:
-        return ""
+        names = tuple(str(name or "").strip() for name in getattr(reply, "attachment_names", ()) or ())
+        names = tuple(name for name in names if name)
+        return f"[PDF attachment: {', '.join(names)}]" if names else ""
     if "[PDF attachment:" in attachment_text:
         return attachment_text
     names = tuple(str(name or "").strip() for name in getattr(reply, "attachment_names", ()) or ())
@@ -243,6 +248,93 @@ def _billing_reply_attachment_note(reply: Any) -> str:
     if not names:
         return attachment_text
     return f"[PDF attachment: {', '.join(names)}]\n{attachment_text}"
+
+
+def _public_billing_attachment_summary(asset: dict[str, Any]) -> dict[str, Any]:
+    original_filename = str(asset.get("original_filename") or "").strip()
+    return {
+        "asset_id": str(asset.get("asset_id") or "").strip(),
+        "ticket_id": str(asset.get("ticket_id") or "").strip(),
+        "customer_id": str(asset.get("customer_id") or "").strip(),
+        "original_filename": original_filename,
+        "file_name": original_filename,
+        "content_type": str(asset.get("content_type") or "application/octet-stream").strip(),
+        "size_bytes": int(asset.get("size_bytes") or 0),
+        "extension": str(asset.get("extension") or "").strip().lower(),
+        "status": str(asset.get("status") or "").strip(),
+        "agent_read_enabled": False,
+        "created_at": asset.get("created_at"),
+        "uploaded_at": asset.get("uploaded_at"),
+        "attached_at": asset.get("attached_at"),
+    }
+
+
+def _reply_pdf_attachments(reply: Any) -> list[Any]:
+    attachments = getattr(reply, "attachments", ()) or ()
+    normalized: list[Any] = []
+    for item in attachments:
+        name = str(getattr(item, "name", "") if not isinstance(item, dict) else item.get("name") or "").strip()
+        content = getattr(item, "content", None) if not isinstance(item, dict) else item.get("content")
+        content_type = str(
+            getattr(item, "content_type", "") if not isinstance(item, dict) else item.get("content_type") or ""
+        ).strip()
+        if not name.lower().endswith(".pdf") and content_type.lower() != "application/pdf":
+            continue
+        if not isinstance(content, (bytes, bytearray)) or not content:
+            continue
+        normalized.append(item)
+    return normalized
+
+
+def _store_billing_reply_pdf_attachments(
+    *,
+    reply: Any,
+    ticket_id: str,
+    customer_id: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    attachments = _reply_pdf_attachments(reply)
+    if not attachments:
+        return [], []
+    if not customer_id:
+        raise ValueError("linked support ticket is missing customer_id for billing PDF attachment")
+
+    message_attachments: list[dict[str, Any]] = []
+    asset_ids: list[str] = []
+    for item in attachments:
+        raw_name = getattr(item, "name", "") if not isinstance(item, dict) else item.get("name")
+        safe_name = sanitize_asset_filename(str(raw_name or "billing-attachment.pdf"))
+        content = getattr(item, "content", b"") if not isinstance(item, dict) else item.get("content") or b""
+        content_bytes = bytes(content)
+        content_type = str(
+            getattr(item, "content_type", "") if not isinstance(item, dict) else item.get("content_type") or ""
+        ).strip() or "application/pdf"
+        asset_id = create_asset_id()
+        bucket = str(getattr(asset_storage, "bucket", "") or os.getenv("ASSET_S3_BUCKET") or "").strip()
+        asset = {
+            "asset_id": asset_id,
+            "ticket_id": ticket_id,
+            "customer_id": customer_id,
+            "original_filename": safe_name,
+            "content_type": content_type,
+            "size_bytes": len(content_bytes),
+            "extension": ".pdf",
+            "status": "uploaded",
+            "storage_provider": "s3",
+            "bucket": bucket,
+            "s3_key": build_asset_s3_key(ticket_id=ticket_id, asset_id=asset_id, file_name=safe_name),
+            "meta": {
+                "agent_read_enabled": False,
+                "source": "billing_reply_email",
+                "billing_reply_message_id": str(getattr(reply, "message_id", "") or "").strip(),
+            },
+        }
+        upload_info = asset_storage.store_bytes(asset, content_bytes)
+        asset["etag"] = str(upload_info.get("etag") or "").strip() or None
+        asset["checksum"] = str(upload_info.get("checksum") or "").strip() or None
+        stored_asset = asset_repository.create_asset(asset)
+        message_attachments.append(_public_billing_attachment_summary(stored_asset))
+        asset_ids.append(asset_id)
+    return message_attachments, asset_ids
 
 
 def handle_billing_request_reply(reply: Any) -> None:
@@ -288,6 +380,12 @@ def handle_billing_request_reply(reply: Any) -> None:
         note=note,
         customer_message=customer_message,
         title=title,
+        has_attachments=bool(_reply_pdf_attachments(reply)),
+    )
+    message_attachments, attached_asset_ids = _store_billing_reply_pdf_attachments(
+        reply=reply,
+        ticket_id=client_ticket_id,
+        customer_id=str(canonical_ticket.get("customer_id") or "").strip(),
     )
 
     assistant_message = {
@@ -296,6 +394,7 @@ def handle_billing_request_reply(reply: Any) -> None:
         "created_at": timestamp,
         "content_format": "plaintext",
         "source": "billing_reply_email",
+        **({"attachments": message_attachments} if message_attachments else {}),
     }
     initial_message_count = (
         len(canonical_ticket.get("messages", []))
@@ -316,6 +415,8 @@ def handle_billing_request_reply(reply: Any) -> None:
     new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(canonical_ticket, new_messages=new_messages)
     ticket_repository.save_billing_ticket(billing_ticket)
+    if attached_asset_ids:
+        asset_repository.mark_attached(attached_asset_ids)
 
     resolution_event = build_billing_internal_resolution_event(
         billing_ticket_id=billing_ticket_id,

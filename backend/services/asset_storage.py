@@ -140,6 +140,23 @@ class S3AssetStorage:
             ExpiresIn=asset_presign_ttl_seconds(),
         )
 
+    def store_bytes(self, asset: dict[str, Any], content: bytes) -> dict[str, Any]:
+        extra_args: dict[str, Any] = {
+            "Bucket": str(asset.get("bucket") or self.bucket),
+            "Key": str(asset.get("s3_key") or ""),
+            "Body": content,
+            "ContentType": str(asset.get("content_type") or "application/octet-stream").strip(),
+        }
+        kms_key_id = str(os.getenv("ASSET_S3_KMS_KEY_ID") or "").strip()
+        if kms_key_id:
+            extra_args["ServerSideEncryption"] = "aws:kms"
+            extra_args["SSEKMSKeyId"] = kms_key_id
+        response = self.client.put_object(**extra_args)
+        return {
+            "etag": str(response.get("ETag") or "").strip('"') or None,
+            "checksum": response.get("ChecksumSHA256") or response.get("ChecksumCRC32") or None,
+        }
+
 
 class MissingAssetStorage:
     def __init__(self, reason: str) -> None:
@@ -152,6 +169,10 @@ class MissingAssetStorage:
         raise RuntimeError(self.reason)
 
     def create_download_url(self, asset: dict[str, Any]) -> str:
+        raise RuntimeError(self.reason)
+
+    def store_bytes(self, asset: dict[str, Any], content: bytes) -> dict[str, Any]:
+        _ = content
         raise RuntimeError(self.reason)
 
 

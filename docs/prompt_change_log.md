@@ -12,6 +12,37 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-03 - Billing reply PDF attachment forwarding
+
+- Area or subsystem: Account billing automation — Outlook inbox reply poller
+- Prompt or model version: `billing-inbox-reply-followup-v3`
+- Summary: Changed PDF handling for `[Billing Request]` replies from OCR-derived note input to direct customer-visible PDF attachment forwarding.
+- Reason: Detailed invoice replies often include the invoice as a PDF attachment; the customer follow-up must attach that PDF instead of only producing text that says the invoice was emailed separately.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/services/billing_response_flow.py`
+  - `backend/services/asset_storage.py`
+  - `backend/worker.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `.env.example`
+  - `backend/tests/test_billing_automation_email.py`
+  - `backend/tests/test_billing_response_flow.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_worker.py`
+  - `docs/feature_list.md`
+  - `docs/roadmap.html`
+- Expected behavior change:
+  - The poller downloads non-inline PDF attachments from matching unread Inbox replies without requiring or calling PaddleOCR.
+  - The worker stores downloaded PDFs in the existing asset storage, attaches them to the customer-facing assistant message, and marks those assets attached after saving.
+  - Detailed invoice customer follow-up text says the invoice is attached when a PDF is attached, instead of claiming it was sent to the customer's email.
+  - If attachment storage or the handler fails, the Graph message is not marked read so the poller can retry.
+- Verification:
+  - RED: `rtk python3 -m unittest backend.tests.test_billing_automation_email.BillingAutomationEmailTests.test_poll_billing_request_replies_downloads_pdf_attachments_without_ocr_before_marking_read backend.tests.test_billing_automation_email.BillingAutomationEmailTests.test_poll_billing_request_replies_leaves_pdf_message_unread_when_handler_fails_after_download -v` failed before implementation because the poller required `PADDLEOCR_API_TOKEN`.
+  - RED: `rtk bash -lc 'podman run --rm -v "$PWD":/app -w /app localhost/supportportal-app:f0f8f9f90055 python -m unittest backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_attaches_pdf_to_customer_message_without_ocr -v'` failed before implementation because the worker did not store or attach PDFs.
+  - `rtk python3 -m unittest backend.tests.test_billing_automation_email backend.tests.test_billing_response_flow backend.tests.test_single_host_compose.SingleHostComposeTests.test_worker_aux_service_defaults_sentiment_provider_and_queue -v`
+  - `rtk bash -lc 'podman run --rm -v "$PWD":/app -w /app localhost/supportportal-app:f0f8f9f90055 python -m unittest backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_generates_customer_followup backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_skips_duplicate_graph_message backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_rejects_empty_body_before_marking_read backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_uses_pdf_ocr_text_when_body_is_empty backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_attaches_pdf_to_customer_message_without_ocr -v'`
+  - `rtk python3 -m py_compile backend/services/billing_automation.py backend/services/billing_response_flow.py backend/services/asset_storage.py backend/worker.py backend/tests/test_billing_automation_email.py backend/tests/test_billing_response_flow.py backend/tests/test_single_host_compose.py backend/tests/test_worker.py`
+
 ## 2026-07-03 - Billing reply PDF OCR follow-up input
 
 - Area or subsystem: Account billing automation — Outlook inbox reply poller

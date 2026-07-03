@@ -367,7 +367,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
 
         self.assertEqual([request.get_method() for request in requests], ["GET", "GET"])
 
-    def test_poll_billing_request_replies_ocr_reads_pdf_attachments_before_marking_read(self) -> None:
+    def test_poll_billing_request_replies_downloads_pdf_attachments_without_ocr_before_marking_read(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"
             cache_path.write_text(
@@ -431,26 +431,8 @@ class BillingAutomationEmailTests(unittest.TestCase):
                     )
                 if url == "https://graph.microsoft.com/v1.0/me/messages/msg-with-pdf/attachments/att-pdf/$value":
                     return _FakeBytesResponse(b"%PDF-1.4\nfake billing approval\n%%EOF")
-                if url == "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs" and request.get_method() == "POST":
-                    body = request.data or b""
-                    self.assertIn(b'invoice-approval.pdf', body)
-                    self.assertIn(b"PaddleOCR-VL-1.6", body)
-                    return _FakeHttpResponse({"data": {"jobId": "ocr-job-1"}}, status=200)
-                if url == "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs/ocr-job-1":
-                    return _FakeHttpResponse(
-                        {
-                            "data": {
-                                "state": "done",
-                                "resultUrl": {"jsonUrl": "https://ocr.example.test/result.jsonl"},
-                            }
-                        },
-                        status=200,
-                    )
-                if url == "https://ocr.example.test/result.jsonl":
-                    return _FakeBytesResponse(
-                        b'{"result":{"layoutParsingResults":[{"markdown":{"text":"Invoice total: USD 705.97\\nApproved by finance."}}]}}\n',
-                        status=200,
-                    )
+                if "paddleocr.aistudio-app.com" in url or url == "https://ocr.example.test/result.jsonl":
+                    raise AssertionError("PDF attachment forwarding must not call OCR")
                 if url == "https://graph.microsoft.com/v1.0/me/messages/msg-with-pdf" and request.get_method() == "PATCH":
                     return _FakeHttpResponse(status=200)
                 raise AssertionError(f"unexpected URL {url}")
@@ -458,21 +440,25 @@ class BillingAutomationEmailTests(unittest.TestCase):
             def handle(reply: BillingRequestReply) -> None:
                 handled.append(reply)
                 self.assertEqual(reply.attachment_names, ("invoice-approval.pdf",))
-                self.assertIn("Invoice total: USD 705.97", reply.attachment_text)
+                self.assertEqual(reply.attachment_text, "")
+                self.assertEqual(len(reply.attachments), 1)
+                self.assertEqual(reply.attachments[0].name, "invoice-approval.pdf")
+                self.assertEqual(reply.attachments[0].content_type, "application/pdf")
+                self.assertEqual(reply.attachments[0].content, b"%PDF-1.4\nfake billing approval\n%%EOF")
                 self.assertFalse(any(request.get_method() == "PATCH" for request in requests))
 
             env = dict(GRAPH_ENV)
             env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
-            env["PADDLEOCR_API_TOKEN"] = "test-paddleocr-token"
+            env["PADDLEOCR_API_TOKEN"] = ""
             with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
                 replies = poll_billing_request_replies(handler=handle)
 
         self.assertEqual(handled, replies)
         self.assertEqual(replies[0].attachment_names, ("invoice-approval.pdf",))
-        self.assertIn("Approved by finance.", replies[0].attachment_text)
-        self.assertEqual([request.get_method() for request in requests], ["GET", "GET", "GET", "GET", "POST", "GET", "GET", "PATCH"])
+        self.assertEqual(replies[0].attachment_text, "")
+        self.assertEqual([request.get_method() for request in requests], ["GET", "GET", "GET", "GET", "PATCH"])
 
-    def test_poll_billing_request_replies_leaves_pdf_message_unread_when_ocr_fails(self) -> None:
+    def test_poll_billing_request_replies_leaves_pdf_message_unread_when_handler_fails_after_download(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"
             cache_path.write_text(
@@ -524,16 +510,18 @@ class BillingAutomationEmailTests(unittest.TestCase):
                     )
                 if url == "https://graph.microsoft.com/v1.0/me/messages/msg-with-pdf/attachments/att-pdf/$value":
                     return _FakeBytesResponse(b"%PDF-1.4\nfake billing approval\n%%EOF")
-                if url == "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs":
-                    return _FakeHttpResponse({"data": {}}, status=200)
+                if "paddleocr.aistudio-app.com" in url:
+                    raise AssertionError("PDF attachment forwarding must not call OCR")
                 raise AssertionError(f"unexpected URL {url}")
 
             env = dict(GRAPH_ENV)
             env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
-            env["PADDLEOCR_API_TOKEN"] = "test-paddleocr-token"
+            env["PADDLEOCR_API_TOKEN"] = ""
             with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
-                with self.assertRaisesRegex(RuntimeError, "PaddleOCR"):
-                    poll_billing_request_replies(handler=lambda _reply: None)
+                with self.assertRaisesRegex(RuntimeError, "handler failed"):
+                    poll_billing_request_replies(
+                        handler=lambda _reply: (_ for _ in ()).throw(RuntimeError("handler failed"))
+                    )
 
         self.assertFalse(any(request.get_method() == "PATCH" for request in requests))
 
