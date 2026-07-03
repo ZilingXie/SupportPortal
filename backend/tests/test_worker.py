@@ -73,6 +73,8 @@ def _load_worker_module():
     fake_main._run_client_ticket_review_agent = lambda *_args, **_kwargs: None
     fake_main._record_ticket_agent_runtime_events = lambda *_args, **_kwargs: None
     fake_main.ticket_repository = Mock()
+    fake_main.asset_repository = Mock()
+    fake_main.asset_storage = Mock()
 
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, {"backend.main": fake_main}):
@@ -2069,6 +2071,97 @@ class WorkerResilienceTests(unittest.TestCase):
         resolution_payload = repository.record_event.call_args_list[0].args[2]
         self.assertIn("[PDF attachment: invoice-approval.pdf]", resolution_payload["note"])
         self.assertIn("Invoice total: USD 705.97", resolution_payload["note"])
+
+    def test_handle_billing_request_reply_attaches_pdf_to_customer_message_without_ocr(self) -> None:
+        repository = Mock()
+        repository.list_ticket_events.return_value = []
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "BT-TK-ACC-1",
+            "client_ticket_id": "TK-ACC-1",
+            "title": "Detailed invoice request",
+            "question": "Please send the detailed invoice.",
+            "automation_status": "automation",
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ACC-1",
+            "customer_id": "C-001",
+            "subject": "Detailed invoice request",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please send the detailed invoice for transaction 123.",
+                    "created_at": "2026-07-02T00:00:00+00:00",
+                }
+            ],
+        }
+        asset_repository = Mock()
+        asset_repository.create_asset.side_effect = lambda asset: {
+            **asset,
+            "status": "uploaded",
+            "created_at": "2026-07-02T08:14:38Z",
+            "uploaded_at": "2026-07-02T08:14:38Z",
+            "attached_at": None,
+        }
+        asset_repository.mark_attached.return_value = []
+        asset_storage = Mock()
+        asset_storage.bucket = "supportportal-assets"
+        asset_storage.store_bytes.return_value = {"etag": "etag-1", "checksum": "checksum-1"}
+        reply = types.SimpleNamespace(
+            message_id="msg-pdf",
+            subject="Re: [Billing Request] Detailed invoice request - Ticket TK-ACC-1",
+            sender="billing@example.com",
+            body_text="Approved. Please send the attached invoice to the customer.",
+            attachment_names=("invoice-approval.pdf",),
+            attachments=(
+                types.SimpleNamespace(
+                    name="invoice-approval.pdf",
+                    content_type="application/pdf",
+                    content=b"%PDF-1.4\nfake billing approval\n%%EOF",
+                    size_bytes=32,
+                ),
+            ),
+            received_at="2026-07-02T08:14:38Z",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "record_billing_request_reply",
+        ) as record_mock, patch.object(
+            worker,
+            "asset_repository",
+            asset_repository,
+            create=True,
+        ), patch.object(
+            worker,
+            "asset_storage",
+            asset_storage,
+            create=True,
+        ), patch.object(
+            worker,
+            "create_asset_id",
+            return_value="ASSET-BILLINGPDF1",
+            create=True,
+        ):
+            worker.handle_billing_request_reply(reply)
+
+        record_mock.assert_called_once_with(reply)
+        asset_storage.store_bytes.assert_called_once()
+        stored_asset = asset_repository.create_asset.call_args.args[0]
+        self.assertEqual(stored_asset["asset_id"], "ASSET-BILLINGPDF1")
+        self.assertEqual(stored_asset["ticket_id"], "TK-ACC-1")
+        self.assertEqual(stored_asset["customer_id"], "C-001")
+        self.assertEqual(stored_asset["original_filename"], "invoice-approval.pdf")
+        self.assertEqual(stored_asset["content_type"], "application/pdf")
+        self.assertEqual(stored_asset["extension"], ".pdf")
+        self.assertEqual(stored_asset["status"], "uploaded")
+        asset_repository.mark_attached.assert_called_once_with(["ASSET-BILLINGPDF1"])
+        saved_ticket = repository.save_ticket.call_args.args[0]
+        assistant_message = saved_ticket["messages"][-1]
+        self.assertEqual(assistant_message["source"], "billing_reply_email")
+        self.assertEqual(assistant_message["attachments"][0]["asset_id"], "ASSET-BILLINGPDF1")
+        self.assertEqual(assistant_message["attachments"][0]["original_filename"], "invoice-approval.pdf")
+        self.assertIn("attached", assistant_message["content"].lower())
+        self.assertNotIn("sent to your email", assistant_message["content"].lower())
 
     def test_billing_reply_poller_is_disabled_by_default(self) -> None:
         with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": ""}, clear=False):

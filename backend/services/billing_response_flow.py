@@ -141,9 +141,11 @@ def _billing_context_text(*, customer_message: str, title: str) -> str:
     return f"{title}\n{customer_message}".lower()
 
 
-def _completed_customer_reply(*, customer_message: str, title: str) -> str:
+def _completed_customer_reply(*, customer_message: str, title: str, has_attachments: bool = False) -> str:
     context = _billing_context_text(customer_message=customer_message, title=title)
     if "invoice" in context or "receipt" in context:
+        if has_attachments:
+            return "The detailed invoice is attached here. Please review it and let us know if you need anything else."
         return "Your detailed invoice has been sent to your email. Please check your inbox and let us know if you need anything else."
     if "suspend" in context or "suspension" in context:
         return "Our team has completed the review of your account suspension request. Please check your account and let us know if you still need help."
@@ -184,6 +186,7 @@ def build_customer_followup_from_resolution(
     note: str | None,
     customer_message: str,
     title: str,
+    has_attachments: bool = False,
 ) -> str:
     normalized_result = _normalize_result(result)
     normalized_note = _normalize_note(note)
@@ -195,7 +198,11 @@ def build_customer_followup_from_resolution(
         return normalized_note
 
     if normalized_result == BILLING_RESPONSE_RESULT_COMPLETED:
-        return _completed_customer_reply(customer_message=customer_message, title=title)
+        return _completed_customer_reply(
+            customer_message=customer_message,
+            title=title,
+            has_attachments=has_attachments,
+        )
     if normalized_result == BILLING_RESPONSE_RESULT_REFUSED:
         return "We are unable to process this billing request at this time."
     return "We need additional information from you to continue this billing request."

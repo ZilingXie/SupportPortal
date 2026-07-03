@@ -237,6 +237,19 @@ class BillingResponseFlowServiceTests(unittest.TestCase):
         self.assertNotEqual(text, "Your billing request has been processed.")
         self.assertNotEqual(text, "已发送")
 
+    def test_completed_invoice_followup_mentions_attached_pdf_when_attachment_is_present(self) -> None:
+        text = build_customer_followup_from_resolution(
+            result="completed",
+            note="Approved. Please send the attached invoice to the customer.",
+            customer_message="Please send me a detailed invoice for my Agora billing charge.",
+            title="Detailed invoice request",
+            has_attachments=True,
+        )
+
+        self.assertIn("attached", text.lower())
+        self.assertIn("detailed invoice", text.lower())
+        self.assertNotIn("sent to your email", text.lower())
+
     def test_completed_invoice_followup_rejects_fragmentary_customer_note(self) -> None:
         text = build_customer_followup_from_resolution(
             result="completed",
