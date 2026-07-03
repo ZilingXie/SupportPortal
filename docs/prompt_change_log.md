@@ -12,6 +12,33 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-03 - Billing reply PDF OCR follow-up input
+
+- Area or subsystem: Account billing automation — Outlook inbox reply poller
+- Prompt or model version: `billing-inbox-reply-followup-v2`
+- Summary: Extended `[Billing Request]` reply handling so PDF attachments are OCR'd with AIStudio PaddleOCR and appended to the internal billing resolution note used for customer follow-up generation.
+- Reason: Billing owners may reply with approval or invoice details inside PDF attachments; those details must be available to the automated customer follow-up path before the Graph message is marked read.
+- Affected files or config:
+  - `backend/services/billing_automation.py`
+  - `backend/worker.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `.env.example`
+  - `backend/tests/test_billing_automation_email.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/feature_list.md`
+  - `docs/roadmap.html`
+- Expected behavior change:
+  - The poller checks Graph `hasAttachments` for matching unread Inbox replies and downloads non-inline PDF attachments only.
+  - PDF bytes are submitted to `PaddleOCR-VL-1.6`; completed JSONL markdown text is attached to `BillingRequestReply`.
+  - OCR failure or missing OCR token raises before the Graph message is marked read, allowing retry after configuration or service recovery.
+  - The worker now accepts PDF OCR text as billing reply content when the email body is empty.
+- Verification:
+  - RED: `rtk python3 -m unittest backend.tests.test_billing_automation_email.BillingAutomationEmailTests.test_poll_billing_request_replies_ocr_reads_pdf_attachments_before_marking_read backend.tests.test_billing_automation_email.BillingAutomationEmailTests.test_poll_billing_request_replies_leaves_pdf_message_unread_when_ocr_fails -v` failed before implementation because replies had no attachment OCR fields and PDF messages were still marked read.
+  - `rtk python3 -m unittest backend.tests.test_billing_automation_email -v`
+  - `rtk bash -lc 'podman run --rm -v "$PWD":/app -w /app localhost/supportportal-app:be60bf5a8fb3 python -m unittest backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_generates_customer_followup backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_skips_duplicate_graph_message backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_rejects_empty_body_before_marking_read backend.tests.test_worker.WorkerResilienceTests.test_handle_billing_request_reply_uses_pdf_ocr_text_when_body_is_empty -v'`
+  - `rtk python3 -m py_compile backend/services/billing_automation.py backend/worker.py backend/tests/test_billing_automation_email.py backend/tests/test_worker.py`
+
 ## 2026-07-02 - Billing inbox reply customer follow-up
 
 - Area or subsystem: Account billing automation — Outlook inbox reply poller

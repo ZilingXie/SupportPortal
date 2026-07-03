@@ -232,6 +232,19 @@ def _billing_reply_already_processed(client_ticket_id: str, message_id: str) -> 
     return False
 
 
+def _billing_reply_attachment_note(reply: Any) -> str:
+    attachment_text = str(getattr(reply, "attachment_text", "") or "").strip()
+    if not attachment_text:
+        return ""
+    if "[PDF attachment:" in attachment_text:
+        return attachment_text
+    names = tuple(str(name or "").strip() for name in getattr(reply, "attachment_names", ()) or ())
+    names = tuple(name for name in names if name)
+    if not names:
+        return attachment_text
+    return f"[PDF attachment: {', '.join(names)}]\n{attachment_text}"
+
+
 def handle_billing_request_reply(reply: Any) -> None:
     record_billing_request_reply(reply)
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
@@ -253,7 +266,9 @@ def handle_billing_request_reply(reply: Any) -> None:
     if canonical_ticket is None:
         raise ValueError(f"linked support ticket not found for {client_ticket_id}")
 
-    note = str(getattr(reply, "body_text", "") or "").strip()
+    body_note = str(getattr(reply, "body_text", "") or "").strip()
+    attachment_note = _billing_reply_attachment_note(reply)
+    note = "\n\n".join(part for part in (body_note, attachment_note) if part)
     if not note:
         raise ValueError("billing reply body is empty")
 

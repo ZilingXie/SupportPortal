@@ -2025,6 +2025,51 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_billing_ticket.assert_not_called()
         repository.record_event.assert_not_called()
 
+    def test_handle_billing_request_reply_uses_pdf_ocr_text_when_body_is_empty(self) -> None:
+        repository = Mock()
+        repository.list_ticket_events.return_value = []
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "BT-TK-ACC-1",
+            "client_ticket_id": "TK-ACC-1",
+            "title": "Detailed invoice request",
+            "question": "Please send the detailed invoice.",
+            "automation_status": "automation",
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ACC-1",
+            "subject": "Detailed invoice request",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please send the detailed invoice for transaction 123.",
+                    "created_at": "2026-07-02T00:00:00+00:00",
+                }
+            ],
+        }
+        reply = types.SimpleNamespace(
+            message_id="msg-pdf-only",
+            subject="Re: [Billing Request] Detailed invoice request - Ticket TK-ACC-1",
+            sender="billing@example.com",
+            body_text="",
+            attachment_names=("invoice-approval.pdf",),
+            attachment_text="Invoice total: USD 705.97\nApproved by finance.",
+            received_at="2026-07-02T08:14:38Z",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "record_billing_request_reply",
+        ) as record_mock:
+            worker.handle_billing_request_reply(reply)
+
+        record_mock.assert_called_once_with(reply)
+        saved_ticket = repository.save_ticket.call_args.args[0]
+        self.assertEqual(saved_ticket["messages"][-1]["source"], "billing_reply_email")
+        self.assertIn("detailed invoice", saved_ticket["messages"][-1]["content"].lower())
+        resolution_payload = repository.record_event.call_args_list[0].args[2]
+        self.assertIn("[PDF attachment: invoice-approval.pdf]", resolution_payload["note"])
+        self.assertIn("Invoice total: USD 705.97", resolution_payload["note"])
+
     def test_billing_reply_poller_is_disabled_by_default(self) -> None:
         with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": ""}, clear=False):
             self.assertFalse(worker._billing_reply_poller_enabled_from_env())
