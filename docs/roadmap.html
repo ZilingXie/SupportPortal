@@ -2023,7 +2023,7 @@ flowchart TD
         short: "Billing",
         title: "Billing intake / ticket routing",
         status: "doing",
-        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，Zendesk webhook / N8n 内部转发和 response link demo 闭环已完成，下一步优先验证真实 Zendesk replay、人工审核和 dashboard 指标，不直接迁移客户入口。",
+        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，Zendesk webhook / N8n 内部转发、response link demo 闭环和 Outlook 回复轮询 + PDF 附件转发已完成，下一步优先验证真实 Zendesk replay、人工审核和 dashboard 指标，不直接迁移客户入口。",
         done: [
           { summary: "Billing automation intake 已覆盖 `account_suspension`、`detailed_invoice` 和 `account_verification`，并能追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
@@ -2035,13 +2035,13 @@ flowchart TD
           { summary: "Billing internal resolution event 已确认完成：提交后写 `billing_internal_resolution_submitted`，notify customer 时生成 `billing_response_ai` 客户跟进。", prs: [509, 512] },
           { summary: "Account Route errors 能力已确认完成：人工纠正保留 original / first corrected route tuple，并与低置信路由、review/pass 状态一起分析。", prs: [513, 515, 524, 526, 527] },
           { summary: "Account verification 字段收集已确认完成：Use Case section、Country+Address、个人开发者分支、可选 app_id 和内部邮件发送都已覆盖。", prs: [488] },
-          { summary: "Billing Outlook 回复轮询已落地：worker 可读取 Inbox 中未读且标题含 `[Billing Request]` 的回复正文，将 PDF 附件转发到客户工单，并自动生成客户跟进后标记已读。", prs: [] }
+          { summary: "Billing Outlook 回复轮询已落地：worker 可读取 Inbox 中未读且标题含 `[Billing Request]` 的回复正文，将 PDF 附件转发到客户工单，并自动生成客户跟进后标记已读。", prs: [575] }
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
           "TK-ACC-C31612 修复已验证：semantic-first 路由 + gratitude 降级后，长正文末尾 thank you 不再误判为 small_talk。",
-          "Zendesk webhook / N8n 中转已完成为内部来源入口；response link demo 闭环也已落地，后续重点转为真实 case replay、人工审核和指标门禁，而不是继续迁移客户入口。",
-          "原会议提到的邮件回执/邮箱轮询已收口为一次性 response link：内部邮件带 `support.stellarix.space/response?token=...`，处理人提交结构化结果后触发 AI 读取 internal resolution event。",
+          "Zendesk webhook / N8n 中转已完成为内部来源入口；response link demo 闭环与 Outlook 回复轮询都已落地，后续重点转为真实 case replay、人工审核和指标门禁，而不是继续迁移客户入口。",
+          "内部处理入口现在有两条：结构化结果优先走一次性 response link；直接回复 `[Billing Request]` 邮件时，worker 会读取正文并把 PDF 附件转发到客户工单，成功处理后才标记 Outlook 邮件已读。",
           "白名单不要扩大过快；先用 real Zendesk replay set 证明 invoice、account fraud / deactivate / company verification 的 route_accuracy，再决定是否进一步扩展。"
         ],
         next: [
@@ -2056,7 +2056,7 @@ flowchart TD
         ],
         architecture: {
           title: "Billing Flow: Route -> Internal Response -> AI Follow-up",
-          summary: "Billing tab 新增这张架构图，用来固定 billing category 命中后的试运行闭环：Zendesk/N8n 只做内部中转；route 命中 billing 后，由内部邮件里的 response link 收集结构化处理结果，再用 internal resolution event 触发 AI 决定是否通知客户。",
+          summary: "Billing tab 新增这张架构图，用来固定 billing category 命中后的试运行闭环：Zendesk/N8n 只做内部中转；route 命中 billing 后，内部处理人可通过 response link 提交结构化结果，或直接回复 `[Billing Request]` 邮件；Outlook 回复轮询会读取正文、转发 PDF 附件，并触发客户跟进。",
           mermaid: [
             "flowchart TD",
             "  Z[\"Zendesk webhook / N8n internal forward\"] --> I[\"Billing intake: content + external_id + comments + metadata\"]",
@@ -2068,8 +2068,14 @@ flowchart TD
             "  C -->|no| Q[\"AI asks customer for missing fields\"]",
             "  C -->|yes| E[\"Internal email to billing owner/team\"]",
             "  E --> L[\"https://support.stellarix.space/response?token=...\"]",
+            "  E --> O[\"Outlook reply: subject contains [Billing Request]\"]",
             "  L --> U[\"Unified response UI (billing_ticket_id only)\"]",
             "  U --> F[\"Result: completed / refused / customer action required\"]",
+            "  O --> P[\"Poll unread Inbox replies\"]",
+            "  P --> D[\"Download non-inline PDF attachments (no OCR)\"]",
+            "  D --> SA[\"Store PDF as ticket asset\"]",
+            "  SA --> CR",
+            "  P --> CR",
             "  F --> N{\"Notify customer?\"}",
             "  N --> S[\"One-time submit\"]",
             "  S --> V{\"token unused?\"}",
@@ -2081,11 +2087,15 @@ flowchart TD
             "  CR -->|completed or refused| CL[\"Customer notified / close or await review\"]",
             "  CR -->|customer action required| WA[\"Ask customer for action / wait for reply\"]"
           ].join("\n"),
-          note: "表单字段固定为处理结果（已完成、拒绝处理、需要客户操作）、是否通知客户（是、否）和说明。已完成时说明可空；拒绝处理或需要客户操作时说明必填，避免 AI 在客户回复中编造原因或下一步。response link 当前不校验收件人/处理组、不设置过期时间，但必须一次性提交；提交后只写 internal resolution event，AI 再读取该 event 决定是否给客户回复。"
+          note: "表单字段固定为处理结果（已完成、拒绝处理、需要客户操作）、是否通知客户（是、否）和说明。已完成时说明可空；拒绝处理或需要客户操作时说明必填，避免 AI 在客户回复中编造原因或下一步。response link 当前不校验收件人/处理组、不设置过期时间，但必须一次性提交；提交后只写 internal resolution event，AI 再读取该 event 决定是否给客户回复。Outlook 回复轮询不启用 OCR：PDF 只作为客户工单附件转发，handler 成功后才标记邮件已读。"
         },
         sources: [
           "docs/prompt_change_log.md",
           "backend/services/billing_automation.py",
+          "backend/services/asset_storage.py",
+          "backend/worker.py",
+          "backend/tests/test_billing_automation_email.py",
+          "backend/tests/test_worker.py",
           "ui/billing-response-ui/app.js",
           "backend/tests/test_billing_response_ui_contract.py",
           "backend/tests/test_billing_response_flow.py",
