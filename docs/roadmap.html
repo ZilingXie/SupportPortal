@@ -1409,7 +1409,7 @@
       <h1>整体落地优化计划</h1>
       <ul class="hero-bullets" aria-label="Roadmap summary">
         <li><strong>项目定位：</strong>建设基于 agent 的工单系统，不把 AI 包装成完全替代真人的 support engineer。</li>
-        <li><strong>当前阶段：</strong>Billing 已进入 real Zendesk replay monitor；Routing、Assignment、RAG/KG 继续以可审计试运行为优先级，Multi-Agent 降为低优先级保留计划。</li>
+        <li><strong>当前阶段：</strong>Billing 已进入 real Zendesk replay monitor；Routing、Assignment/Workspace 验证入口、RAG/KG 继续以可审计试运行为优先级，Multi-Agent 降为低优先级保留计划。</li>
         <li><strong>Phase 1/2/3 门禁：</strong>先把工单雏形、guardrail、dashboard 和 AgentRelay communication foundation 稳住，再扩大 AI 主动处理和自主调查。</li>
         <li><strong>近期 POC：</strong>验证 billing route、邮件回执、engineer reply 通过/拒绝、dashboard 指标和真实 case 模拟。</li>
       </ul>
@@ -1985,17 +1985,19 @@ flowchart TD
         short: "Assignment",
         title: "Ticket assignment UI demo",
         status: "doing",
-        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready + read-only admin queue view 三段式 demo；生产级调度、持久化、审计和真实队列接入仍未开始。",
+        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready + read-only admin queue view 三段式 demo；新增 /workspace 验证入口把 assignment 式登录/readiness 与真实 investigating engineer case workflow 接在一起，但生产级调度、持久化、审计和真实 claim/assignment backend 仍未开始。",
         done: [
           { summary: "`/assignment` 已形成选择工程师、welcome readiness、显式领取 ticket、进入 workspace 的三段式原型。", prs: [413, 418, 448] },
           { summary: "工程师 shift 编辑已前置到 welcome / Daily shift 卡片，in-shift、out-of-shift、下一段 shift 与显式领取状态会同步刷新。", prs: [459, 475] },
           { summary: "关闭或 approve 当前 ticket 后不会自动连续领取，工程师需要再次通过 ready CTA 明确接下一单。", prs: [448] },
           { summary: "`/assignment/admin` 已有 queue、active assignment、on-shift coverage、Engineer overview 与 weekly schedule demo。", prs: [461, 473, 476, 478] },
           { summary: "Admin schedule 支持 engineer/day picker、空白日期新建或调整 shift，并与个人 assignment shift localStorage 隔离。", prs: [461, 473, 475] },
-          { summary: "Assignment UI 已完成多轮 polish：SLA 秒级展示、hover sidebar、brand/icon 对齐、shift form 防重叠和移动端布局。", prs: [451, 462, 465, 466, 467, 471] }
+          { summary: "Assignment UI 已完成多轮 polish：SLA 秒级展示、hover sidebar、brand/icon 对齐、shift form 防重叠和移动端布局。", prs: [451, 462, 465, 466, 467, 471] },
+          { summary: "`/workspace` 已作为验证入口接通：使用 assignment 风格的工程师选择、welcome readiness、UTC+8 ready gate，只自动打开真实 investigating engineer case，并复用 Engineer 端真实 case detail、Engineer AI、approve/revise/final approve、multi-agent toggle 和 API 数据流。", prs: [] }
         ],
         review: [
           "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",
+          "`/workspace` 目前是 demo UI + real investigating case workflow 的验证入口，不新增 server-side assignment/claim/assignee 状态，也不会自动打开 escalated、communicating 或 resolved case。",
           "Welcome 页 Daily shift 卡片现在就是排班调整入口，避免为了改 shift 先进入 workspace/sidebar。",
           "Admin 页新增 Engineer overview、weekly schedule grid 和 engineer/day picker 提供 demo 排班可视化，admin-only shift 编辑不联动 /assignment 个人 shift。",
           "Online/Offline 状态使用固定 mock 数据展示，不联动 /assignment 登录状态或 workspace 状态。",
@@ -2006,7 +2008,7 @@ flowchart TD
           { id: "assign-shift-api", status: "todo", label: "实现真实登录/排班 API，shift schedule 持久化并统一 UTC+8。", horizon: "Model" },
           { id: "assign-scheduler", status: "todo", label: "实现单 active case 分配器、first response 优先级、等待时间排序和无可用工程师回队列。", horizon: "Scheduler" },
           { id: "assign-audit", status: "todo", label: "记录创建、入队、分配、SLA 开始、AI 草稿、批准、超时、转派和关闭事件。", horizon: "Audit" },
-          { id: "assign-real-ui", status: "todo", label: "把 demo 能力迁移到真实 Engineer Portal 工作台和队列运行视图。", horizon: "Portal" },
+          { id: "assign-real-ui", status: "doing", label: "基于 /workspace 验证入口继续收敛 demo readiness 与真实 Engineer Portal 工作台的生产迁移边界。", horizon: "Portal" },
           { id: "assign-pilot", status: "todo", label: "小范围试点 Tier One，统计处理量、平均处理时长、超时、转派和有效回复比例。", horizon: "Pilot" }
         ],
         sources: [
@@ -2015,7 +2017,11 @@ flowchart TD
           "ui/assignment-ui/admin/index.html",
           "ui/assignment-ui/app.js",
           "ui/assignment-ui/styles.css",
+          "ui/workspace-ui/index.html",
+          "ui/workspace-ui/app.js",
+          "ui/workspace-ui/styles.css",
           "backend/tests/test_assignment_ui_contract.py",
+          "backend/tests/test_workspace_ui_contract.py",
           "docs/feature_list.md"
         ]
       },
