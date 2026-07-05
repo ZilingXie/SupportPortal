@@ -3030,12 +3030,13 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-welcome-view {
   grid-template-rows: auto auto;
   align-content: start;
+  padding-top: clamp(18px, 3vw, 34px);
 }
 
 .workspace-welcome-hero {
   display: grid;
   gap: 34px;
-  padding: clamp(28px, 4vw, 48px);
+  padding: clamp(12px, 2vw, 20px) 0;
 }
 
 .workspace-welcome-top,
@@ -3119,8 +3120,8 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .workspace-home-intro h1 {
   margin: 0;
-  font-size: clamp(2.2rem, 5vw, 4.8rem);
-  line-height: 0.98;
+  font-size: clamp(1.2rem, 2.5vw, 2.4rem);
+  line-height: 1.06;
 }
 
 .workspace-home-intro p {
