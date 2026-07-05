@@ -2891,7 +2891,7 @@ async function readyToRoll() {
     saveWorkspaceActive(true);
     readyTransitionActive = false;
     window.location.hash = `#/tickets/${encodeURIComponent(ticketId)}`;
-    await enterBoard();
+    await enterBoard({ continuousLoading: true });
   } catch (error) {
     readyTransitionActive = false;
     renderNoInvestigatingCase(`No investigating cases available. Queue check failed: ${error.message}`);
@@ -2899,7 +2899,7 @@ async function readyToRoll() {
 }
 
 async function syncRouteToWorkspace(options = {}) {
-  const { silent = true, showLoading = true } = options;
+  const { silent = true, showLoading = true, continuousLoading = false } = options;
   parseRoute();
 
   if (routeState.view === "detail" && routeState.ticketId) {
@@ -2912,9 +2912,11 @@ async function syncRouteToWorkspace(options = {}) {
       detailLoading = true;
     }
 
-    renderTicketDetail();
+    if (!continuousLoading) {
+      renderTicketDetail();
+    }
     if (routeChanged || !selectedTicket) {
-      await refreshSelectedTicket({ silent, showLoading });
+      await refreshSelectedTicket({ silent, showLoading: showLoading && !continuousLoading });
     }
     return;
   }
@@ -5837,7 +5839,8 @@ function setupWebSocket() {
   }, 10000);
 }
 
-async function enterBoard() {
+async function enterBoard(options = {}) {
+  const { continuousLoading = false } = options;
   parseRoute();
   if (routeState.view !== "detail" || !routeState.ticketId) {
     renderReadinessInsteadOfPool();
@@ -5845,12 +5848,14 @@ async function enterBoard() {
   }
   toggleScreens();
   boardLoading = routeState.view === "pool" && tickets.length === 0;
-  renderWorkspace();
+  if (!continuousLoading) {
+    renderWorkspace();
+  }
   await detectStorageMode();
   setRealtimeStatus("Realtime: connecting...");
   try {
     await loadTickets({ refreshDetail: false });
-    await syncRouteToWorkspace({ silent: true, showLoading: true });
+    await syncRouteToWorkspace({ silent: true, showLoading: true, continuousLoading });
   } catch (error) {
     showBoardError(`Failed to load tickets: ${error.message}`);
   }

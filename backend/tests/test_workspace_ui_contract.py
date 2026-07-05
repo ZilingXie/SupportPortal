@@ -220,7 +220,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn("workspace-preparing-no-sidebar-1", html)
+        self.assertIn("workspace-continuous-loading-1", html)
         self.assertNotIn("detail-back-icon-btn", app_source)
         self.assertNotIn('aria-label="Back to Pool"', app_source)
         self.assertNotIn(">arrow_back<", app_source)
@@ -454,6 +454,76 @@ class WorkspaceUiContractTests(unittest.TestCase):
             }
             if (window.location.hash !== "#/tickets/TK-INV-1") {
               throw new Error(`expected investigating case hash, got ${window.location.hash}`);
+            }
+            """
+        )
+
+    def test_workspace_ready_to_detail_uses_continuous_preparing_loading(self) -> None:
+        html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
+        app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("workspace-continuous-loading-1", html)
+        self.assertIn("continuousLoading", app_source)
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Maya"));
+            localStorage.setItem("supportportal_workspace_active", JSON.stringify(false));
+            const workspace = document.getElementById("workspace-region");
+            let preparingRenderCount = 0;
+            let workspaceHtml = "";
+            Object.defineProperty(workspace, "innerHTML", {
+              configurable: true,
+              get() {
+                return workspaceHtml;
+              },
+              set(value) {
+                workspaceHtml = String(value || "");
+                if (workspaceHtml.includes("Preparing your workspace")) {
+                  preparingRenderCount += 1;
+                }
+              },
+            });
+
+            window.__fetchResponses.push(
+              {
+                tickets: [
+                  {
+                    ticket_id: "TK-INV-1",
+                    engineer_case_id: "TK-INV-1",
+                    status: "investigating",
+                  },
+                ],
+              },
+              {
+                tickets: [
+                  {
+                    ticket_id: "TK-INV-1",
+                    engineer_case_id: "TK-INV-1",
+                    status: "investigating",
+                  },
+                ],
+              },
+              {
+                ticket: {
+                  ticket_id: "TK-INV-1",
+                  status: "investigating",
+                  title: "Black screen issue",
+                  requester: "Client",
+                  messages: [],
+                },
+              }
+            );
+
+            await readyToRoll();
+
+            if (window.location.hash !== "#/tickets/TK-INV-1") {
+              throw new Error(`expected investigating case hash, got ${window.location.hash}`);
+            }
+            if (preparingRenderCount !== 1) {
+              throw new Error(`expected one continuous preparing render, got ${preparingRenderCount}`);
+            }
+            if (workspace.innerHTML.includes("Preparing your workspace")) {
+              throw new Error("continuous loading view was not replaced after ticket detail fetch");
             }
             """
         )
