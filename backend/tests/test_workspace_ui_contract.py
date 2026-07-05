@@ -227,6 +227,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
 
         self.assertIn("workspace-home-readiness-redesign-1", html)
         self.assertIn("workspace-home-layout-tune-1", html)
+        self.assertIn("workspace-home-density-1", html)
         self.assertIn('const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";', app_source)
         self.assertIn("WEEKLY_KNOWN_ISSUES", app_source)
         self.assertIn("RTC black screen reports in Chromium 124", app_source)
@@ -251,6 +252,18 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertRegex(
             css,
             r"(?s)\.workspace-home-status-grid\s*\{.*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-welcome-view\s*\{.*padding-top: clamp\(18px, 3vw, 34px\);",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-welcome-hero\s*\{.*padding: clamp\(12px, 2vw, 20px\) 0;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-home-intro h1\s*\{.*font-size: clamp\(1\.2rem, 2\.5vw, 2\.4rem\);",
         )
 
     def test_workspace_home_renders_welcome_shift_known_issues_and_fetched_service_status(self) -> None:
