@@ -3494,6 +3494,14 @@ html.material-symbols-pending .material-symbols-outlined {
   margin-left: var(--workspace-sidebar-collapsed-width);
 }
 
+.screen-engineer.workspace-detail-mode .workspace-assignment-sidebar {
+  display: none;
+}
+
+.screen-engineer.workspace-detail-mode .engineer-shell.problem-workspace {
+  margin-left: 0;
+}
+
 .problem-workspace .workspace-region {
   background: #f7f9fc;
 }
