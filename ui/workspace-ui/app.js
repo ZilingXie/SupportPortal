@@ -5,10 +5,36 @@ const WORKSPACE_BREAK_AFTER_CASE_KEY = "supportportal_workspace_break_after_case
 const WORKSPACE_CASE_SLA_STARTED_AT_KEY = "supportportal_workspace_case_sla_started_at";
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
 const WORKSPACE_CASE_SLA_MS = 3 * 60 * 60 * 1000;
+const AGORA_STATUS_PAGE_URL = "https://status.agora.io/";
+const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";
+const SERVICE_EVENTS_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DEMO_ENGINEERS = [
   { id: "Jack", name: "Jack", role: "Tier One Engineer", initials: "J" },
   { id: "Maya", name: "Maya", role: "Tier One Engineer", initials: "M" },
   { id: "Leo", name: "Leo", role: "Tier One Engineer", initials: "L" },
+];
+const WEEKLY_KNOWN_ISSUES = [
+  {
+    title: "RTC black screen reports in Chromium 124",
+    severity: "High",
+    owner: "RTC Client",
+    surface: "Video rendering",
+    brief: "Several Web SDK escalations mention remote video rendering a black frame after tab restore.",
+  },
+  {
+    title: "Webhook replay latency for billing exports",
+    severity: "Medium",
+    owner: "Billing Ops",
+    surface: "Replay pipeline",
+    brief: "Zendesk billing replay export jobs can lag behind the customer reply stream during peak ingest windows.",
+  },
+  {
+    title: "iOS screen share permission prompt confusion",
+    severity: "Low",
+    owner: "Mobile SDK",
+    surface: "Screen share UX",
+    brief: "Customers often miss the iOS broadcast picker confirmation and report screen share as stuck.",
+  },
 ];
 const DEFAULT_SHIFT = {
   start: "00:00",
@@ -127,6 +153,7 @@ let workspaceBreakAfterCase = false;
 let readyTransitionActive = false;
 let workspaceSlaCountdownTimer = null;
 let workspaceRealtimeStatusText = "Realtime: connecting...";
+let workspaceServiceEventsState = buildDefaultWorkspaceServiceEventsState();
 
 const ENGINEER_POOL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];
 const POOL_STATUS_RANK = {
@@ -196,6 +223,102 @@ function removeStorage(key) {
   } catch {
     // Ignore storage failures in private browsing or locked-down contexts.
   }
+}
+
+function normalizeSingleLineText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildDefaultWorkspaceServiceEventsState() {
+  return {
+    loadState: "idle",
+    items: [],
+    statusPageUrl: AGORA_STATUS_PAGE_URL,
+    fetchedAt: "",
+    lastRequestedAtMs: 0,
+  };
+}
+
+function normalizeWorkspaceServiceEventItem(item, index) {
+  const title = normalizeSingleLineText(item?.title);
+  return {
+    title: title || `Service Event ${index + 1}`,
+    summary: normalizeSingleLineText(item?.summary),
+    link: sanitizeHttpUrl(item?.link),
+    statusLabel: normalizeSingleLineText(item?.status_label || item?.statusLabel),
+    postedAtLabel: normalizeSingleLineText(item?.posted_at_label || item?.postedAtLabel),
+  };
+}
+
+function normalizeWorkspaceServiceEventsPayload(payload, requestedAtMs) {
+  const items = Array.isArray(payload?.items)
+    ? payload.items.map((item, index) => normalizeWorkspaceServiceEventItem(item, index)).filter(Boolean)
+    : [];
+  return {
+    loadState: "ready",
+    items,
+    statusPageUrl: sanitizeHttpUrl(payload?.status_page_url || payload?.statusPageUrl) || AGORA_STATUS_PAGE_URL,
+    fetchedAt: normalizeSingleLineText(payload?.fetched_at || payload?.fetchedAt),
+    lastRequestedAtMs: requestedAtMs,
+  };
+}
+
+function shouldRefreshWorkspaceServiceEvents() {
+  const current = workspaceServiceEventsState || buildDefaultWorkspaceServiceEventsState();
+  if (current.loadState === "loading") {
+    return false;
+  }
+  if (current.loadState === "idle") {
+    return true;
+  }
+  const requestedAtMs = Number(current.lastRequestedAtMs || 0);
+  if (!requestedAtMs) {
+    return current.loadState !== "ready";
+  }
+  return Date.now() - requestedAtMs >= SERVICE_EVENTS_REFRESH_INTERVAL_MS;
+}
+
+async function fetchWorkspaceServiceEvents(requestedAtMs) {
+  let nextState;
+  try {
+    const response = await fetch(SERVICE_EVENTS_ENDPOINT);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    nextState = normalizeWorkspaceServiceEventsPayload(payload, requestedAtMs);
+  } catch {
+    nextState = {
+      ...buildDefaultWorkspaceServiceEventsState(),
+      loadState: "error",
+      lastRequestedAtMs: requestedAtMs,
+    };
+  }
+
+  if (Number(workspaceServiceEventsState?.lastRequestedAtMs || 0) !== requestedAtMs) {
+    return;
+  }
+  workspaceServiceEventsState = nextState;
+  if (routeState.view === "pool" && getSelectedEngineer() && workspaceRegionEl) {
+    workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
+  }
+}
+
+function ensureWorkspaceServiceEventsLoaded() {
+  if (!getSelectedEngineer() || !shouldRefreshWorkspaceServiceEvents()) {
+    return;
+  }
+  const current = workspaceServiceEventsState || buildDefaultWorkspaceServiceEventsState();
+  const requestedAtMs = Date.now();
+  workspaceServiceEventsState = {
+    ...current,
+    loadState: "loading",
+    statusPageUrl: sanitizeHttpUrl(current.statusPageUrl) || AGORA_STATUS_PAGE_URL,
+    lastRequestedAtMs: requestedAtMs,
+  };
+  void fetchWorkspaceServiceEvents(requestedAtMs);
 }
 
 function normalizeEngineerId(value) {
@@ -2607,6 +2730,73 @@ function renderEngineerOption(engineer, selected) {
   `;
 }
 
+function renderWeeklyKnownIssuesHtml() {
+  return `
+    <div class="workspace-known-issue-list">
+      ${WEEKLY_KNOWN_ISSUES.map(
+        (issue) => `
+          <article class="workspace-known-issue-item">
+            <div class="workspace-known-issue-meta">
+              <span class="status-pill ${issue.severity === "High" ? "is-warning" : "is-muted"}">${escapeHtml(issue.severity)}</span>
+              <span>${escapeHtml(issue.surface)}</span>
+            </div>
+            <h4>${escapeHtml(issue.title)}</h4>
+            <p>${escapeHtml(issue.brief)}</p>
+            <div class="workspace-known-issue-owner">
+              <span class="material-symbols-outlined" aria-hidden="true">groups</span>
+              <span>${escapeHtml(issue.owner)}</span>
+            </div>
+          </article>
+        `
+      ).join("")}
+    </div>
+  `;
+}
+
+function renderWorkspaceServiceStatusHtml() {
+  const state = workspaceServiceEventsState || buildDefaultWorkspaceServiceEventsState();
+  const statusPageUrl = sanitizeHttpUrl(state.statusPageUrl) || AGORA_STATUS_PAGE_URL;
+  const isLoading = state.loadState === "loading" || state.loadState === "idle";
+  const hasItems = Array.isArray(state.items) && state.items.length > 0;
+
+  if (isLoading) {
+    return `<p class="workspace-service-empty">Loading latest Agora service events...</p>`;
+  }
+
+  if (!hasItems) {
+    return `
+      <div class="workspace-service-empty">
+        <p>Service events are temporarily unavailable.</p>
+        <a href="${escapeHtml(statusPageUrl)}" target="_blank" rel="noopener noreferrer">Open Agora Status Page</a>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="workspace-service-event-list">
+      ${state.items
+        .map(
+          (item) => `
+            <article class="workspace-service-event-item">
+              <div class="workspace-service-event-meta">
+                ${item.statusLabel ? `<span class="workspace-service-status">${escapeHtml(item.statusLabel)}</span>` : ""}
+                ${item.postedAtLabel ? `<span>${escapeHtml(item.postedAtLabel)}</span>` : ""}
+              </div>
+              <h4>${escapeHtml(item.title)}</h4>
+              ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
+              ${
+                item.link
+                  ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">View incident</a>`
+                  : ""
+              }
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderLogin() {
   if (!workspaceRootEl) {
     return;
@@ -2661,26 +2851,21 @@ function renderWelcomeViewHtml() {
   const inShift = isInShift();
   return `
     <section class="workspace-welcome-view">
-      <header class="workspace-welcome-hero">
+      <header class="workspace-welcome-hero workspace-home-hero">
         <div class="workspace-welcome-top">
           <div class="workspace-brand-lockup">
             <span class="workspace-brand-icon material-symbols-outlined" aria-hidden="true">bolt</span>
             <div>
               <p class="workspace-eyebrow">Real case workspace</p>
-              <strong>Investigating queue gate</strong>
+              <strong>Shift readiness</strong>
             </div>
           </div>
           <button class="btn btn-ghost" type="button" data-action="sign-out">Change engineer</button>
         </div>
-        <div class="workspace-welcome-body">
-          <div class="workspace-engineer-card">
-            <span class="engineer-avatar welcome-avatar" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
-            <div>
-              <p class="workspace-eyebrow">Signed in as</p>
-              <h1>${escapeHtml(engineer.name)}</h1>
-              <p>${escapeHtml(engineer.role)}</p>
-            </div>
-          </div>
+        <div class="workspace-home-intro">
+          <p class="workspace-eyebrow">Engineer workspace</p>
+          <h1>Welcome back, ${escapeHtml(engineer.name)}</h1>
+          <p>Review today&rsquo;s operating context, adjust your UTC+8 shift, then open the next real investigating case when you are ready.</p>
           <div class="workspace-status-strip">
             <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
             <span class="status-pill is-muted">${escapeHtml(workspaceShift.start)}-${escapeHtml(workspaceShift.end)} UTC+8</span>
@@ -2688,16 +2873,45 @@ function renderWelcomeViewHtml() {
           </div>
         </div>
       </header>
-      <section class="workspace-readiness-grid">
-        <article class="workspace-info-panel">
-          <p class="ticket-kicker">UTC+8 shift readiness</p>
-          <h2>${escapeHtml(nextShiftInfo())}</h2>
-          <p>Ready will request the backend investigating queue and open the first eligible engineer case.</p>
+      <section class="workspace-home-layout">
+        <article class="workspace-info-panel workspace-shift-panel">
+          <div class="workspace-panel-heading">
+            <p class="ticket-kicker">UTC+8 shift</p>
+            <h2>${escapeHtml(nextShiftInfo())}</h2>
+            <p>Ready requests the backend investigating queue and opens the first eligible engineer case.</p>
+          </div>
+          <form class="workspace-shift-form" data-workspace-shift-form>
+            <label class="field">
+              <span class="field-label">Start</span>
+              <input name="start" type="time" value="${escapeHtml(workspaceShift.start)}" required />
+            </label>
+            <label class="field">
+              <span class="field-label">End</span>
+              <input name="end" type="time" value="${escapeHtml(workspaceShift.end)}" required />
+            </label>
+            <button class="btn btn-ghost" type="submit">Save shift</button>
+          </form>
+          ${!inShift ? `<p class="workspace-shift-note">Ready is disabled outside the saved UTC+8 shift.</p>` : ""}
         </article>
-        <article class="workspace-info-panel">
-          <p class="ticket-kicker">Assignment scope</p>
-          <h2>Investigating only</h2>
-          <p>Escalated, communicating, and resolved cases stay closed during automatic assignment.</p>
+        <article class="workspace-info-panel workspace-known-issues-panel">
+          <div class="workspace-panel-heading">
+            <p class="ticket-kicker">This week</p>
+            <h2>Known issues</h2>
+            <p>Demo context for common patterns engineers may see this week.</p>
+          </div>
+          ${renderWeeklyKnownIssuesHtml()}
+        </article>
+        <article class="workspace-info-panel workspace-service-status-panel">
+          <div class="workspace-panel-heading workspace-service-heading">
+            <div>
+              <p class="ticket-kicker">Service Status</p>
+              <h2>Latest Agora platform events</h2>
+            </div>
+            <a href="${escapeHtml(
+              sanitizeHttpUrl(workspaceServiceEventsState?.statusPageUrl) || AGORA_STATUS_PAGE_URL
+            )}" target="_blank" rel="noopener noreferrer">Open Agora Status Page</a>
+          </div>
+          ${renderWorkspaceServiceStatusHtml()}
         </article>
       </section>
       <div class="workspace-ready-actions">
@@ -2816,6 +3030,7 @@ function renderReadinessInsteadOfPool() {
     if (workspaceRegionEl) {
       workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
     }
+    ensureWorkspaceServiceEventsLoaded();
   } else {
     toggleScreens();
     renderLogin();
@@ -5948,6 +6163,22 @@ function handleWorkspaceEntryClick(event) {
   }
 }
 
+function handleWorkspaceShiftSubmit(event) {
+  event?.preventDefault?.();
+  const formData = new FormData(event?.target);
+  const nextShift = normalizeShift({
+    start: formData.get("start"),
+    end: formData.get("end"),
+  });
+  workspaceShift = nextShift;
+  writeStorage(WORKSPACE_SHIFT_KEY, nextShift);
+  saveWorkspaceActive(false);
+  renderWorkspaceAssignmentSidebar();
+  if (workspaceRegionEl) {
+    workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
+  }
+}
+
 hydrateTicketPoolViewMode();
 
 async function handleLogoutClick() {
@@ -6012,6 +6243,11 @@ workspaceRegionEl?.addEventListener("click", (event) => {
   handleTableClick(event).catch((error) => {
     showBoardError(`Operation failed: ${error.message}`);
   });
+});
+workspaceRegionEl?.addEventListener("submit", (event) => {
+  if (event.target?.matches?.("[data-workspace-shift-form]")) {
+    handleWorkspaceShiftSubmit(event);
+  }
 });
 workspaceRegionEl?.addEventListener("mousedown", (event) => {
   if (event.target.closest("[data-composer-markdown-action]")) {

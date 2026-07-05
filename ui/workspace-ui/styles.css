@@ -3086,6 +3086,11 @@ html.material-symbols-pending .material-symbols-outlined {
   color: #5d6b82;
 }
 
+.status-pill.is-warning {
+  background: rgba(255, 232, 214, 0.94);
+  color: var(--warning);
+}
+
 .workspace-readiness-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3095,6 +3100,183 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-info-panel {
   border-radius: 8px;
   padding: 24px;
+}
+
+.workspace-home-hero {
+  align-content: start;
+}
+
+.workspace-home-intro {
+  display: grid;
+  gap: 14px;
+  max-width: 880px;
+}
+
+.workspace-home-intro h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4.8rem);
+  line-height: 0.98;
+}
+
+.workspace-home-intro p {
+  margin: 0;
+  max-width: 720px;
+  color: #44546a;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.workspace-home-intro .workspace-status-strip {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+
+.workspace-home-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.workspace-home-layout .workspace-info-panel {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+.workspace-panel-heading {
+  display: grid;
+  gap: 6px;
+}
+
+.workspace-panel-heading h2,
+.workspace-known-issue-item h4,
+.workspace-service-event-item h4 {
+  margin: 0;
+}
+
+.workspace-panel-heading p:last-child {
+  margin: 0;
+  color: #5d6b82;
+}
+
+.workspace-shift-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.workspace-shift-form .field {
+  display: grid;
+  gap: 7px;
+}
+
+.workspace-shift-form input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(110, 120, 130, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #162033;
+  padding: 0 12px;
+}
+
+.workspace-shift-form .btn {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.workspace-shift-note {
+  margin: 0;
+  color: #9f5d12;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.workspace-known-issues-panel,
+.workspace-service-status-panel {
+  grid-column: 2;
+}
+
+.workspace-shift-panel {
+  grid-row: span 2;
+}
+
+.workspace-known-issue-list,
+.workspace-service-event-list {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-known-issue-item,
+.workspace-service-event-item,
+.workspace-service-empty {
+  display: grid;
+  gap: 9px;
+  padding: 16px;
+  border: 1px solid rgba(159, 174, 200, 0.18);
+  border-radius: 18px;
+  background: rgba(234, 238, 245, 0.84);
+}
+
+.workspace-known-issue-meta,
+.workspace-known-issue-owner,
+.workspace-service-event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  color: #5d6b82;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-known-issue-item h4,
+.workspace-service-event-item h4 {
+  color: #162033;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.workspace-known-issue-item p,
+.workspace-service-event-item p,
+.workspace-service-empty p {
+  margin: 0;
+  color: #44546a;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.workspace-known-issue-owner .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.workspace-service-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.workspace-service-heading a,
+.workspace-service-event-item a,
+.workspace-service-empty a {
+  color: var(--secondary);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-service-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(224, 224, 255, 0.74);
+  color: var(--secondary);
 }
 
 .workspace-ready-actions {
@@ -3611,8 +3793,20 @@ html.material-symbols-pending .material-symbols-outlined {
   }
 
   .workspace-entry-view,
-  .workspace-readiness-grid {
+  .workspace-readiness-grid,
+  .workspace-home-layout,
+  .workspace-shift-form,
+  .workspace-service-heading {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-known-issues-panel,
+  .workspace-service-status-panel {
+    grid-column: auto;
+  }
+
+  .workspace-shift-panel {
+    grid-row: auto;
   }
 
   .workspace-entry-intro {
