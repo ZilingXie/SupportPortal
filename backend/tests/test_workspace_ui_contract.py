@@ -74,8 +74,12 @@ class WorkspaceUiContractTests(unittest.TestCase):
             const sandbox = {{
               console,
               URL,
-              FormData: function FormData() {{
-                return {{ get() {{ return ""; }} }};
+              FormData: function FormData(form) {{
+                return {{
+                  get(name) {{
+                    return form && form.__formData ? form.__formData[name] || "" : "";
+                  }},
+                }};
               }},
               window: {{
                 location: {{
@@ -215,6 +219,153 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("workspace-assignment-sidebar", css)
         self.assertIn("workspace-case-controls", css)
         self.assertIn("break-after-case-btn", css)
+
+    def test_workspace_home_redesign_has_shift_known_issues_and_service_status(self) -> None:
+        html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
+        app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("workspace-home-readiness-redesign-1", html)
+        self.assertIn('const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";', app_source)
+        self.assertIn("WEEKLY_KNOWN_ISSUES", app_source)
+        self.assertIn("RTC black screen reports in Chromium 124", app_source)
+        self.assertIn("Webhook replay latency for billing exports", app_source)
+        self.assertIn("iOS screen share permission prompt confusion", app_source)
+        self.assertIn("renderWorkspaceServiceStatusHtml", app_source)
+        self.assertIn("handleWorkspaceShiftSubmit", app_source)
+        self.assertIn("Welcome back,", app_source)
+        self.assertIn("Loading latest Agora service events...", app_source)
+        self.assertIn("Open Agora Status Page", app_source)
+        self.assertIn("workspace-home-layout", css)
+        self.assertIn("workspace-known-issue-list", css)
+        self.assertIn("workspace-service-event-list", css)
+
+    def test_workspace_home_renders_welcome_shift_known_issues_and_fetched_service_status(self) -> None:
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Maya"));
+            localStorage.setItem("supportportal_workspace_daily_shift", JSON.stringify({ start: "00:00", end: "23:59" }));
+            window.__fetchResponses.push({
+              items: [
+                {
+                  title: "RTC black screen issue",
+                  summary: "A limited number of users experienced black screen behavior.",
+                  link: "https://status.agora.io/events/44",
+                  status_label: "Resolved",
+                  posted_at_label: "Posted Feb 24, 2026 - 01:04 PM UTC",
+                },
+              ],
+              status_page_url: "https://status.agora.io/",
+              fetched_at: "2026-04-21T02:00:00.000Z",
+            });
+
+            renderReadinessInsteadOfPool();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const workspace = document.getElementById("workspace-region");
+            const sidebar = document.getElementById("workspace-assignment-sidebar");
+            if (!workspace.innerHTML.includes("Welcome back, Maya")) {
+              throw new Error("workspace home should lead with a welcome back headline");
+            }
+            if (workspace.innerHTML.includes("Signed in as")) {
+              throw new Error("workspace home should not duplicate the full engineer profile in the main area");
+            }
+            if (!sidebar.innerHTML.includes("Engineer context") || !sidebar.innerHTML.includes("Maya")) {
+              throw new Error("engineer details should remain in the left sidebar");
+            }
+            if (!workspace.innerHTML.includes("UTC+8 shift")) {
+              throw new Error("workspace home should expose shift controls");
+            }
+            if (!workspace.innerHTML.includes("RTC black screen reports in Chromium 124")) {
+              throw new Error("workspace home should render weekly known issue demo data");
+            }
+            if (!window.__fetchCalls.some((call) => call.url === "/api/client/service-events")) {
+              throw new Error("workspace home should fetch service status through the client service events endpoint");
+            }
+            if (!workspace.innerHTML.includes("RTC black screen issue") || !workspace.innerHTML.includes("Resolved")) {
+              throw new Error("workspace home should render fetched service status events");
+            }
+            """
+        )
+
+    def test_workspace_home_shift_form_updates_storage_and_ready_state(self) -> None:
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Jack"));
+            localStorage.setItem("supportportal_workspace_daily_shift", JSON.stringify({ start: "00:00", end: "23:59" }));
+            renderReadinessInsteadOfPool();
+
+            handleWorkspaceShiftSubmit({
+              preventDefault() {},
+              target: { __formData: { start: "09:30", end: "18:00" } },
+            });
+
+            const storedShift = JSON.parse(localStorage.getItem("supportportal_workspace_daily_shift"));
+            if (storedShift.start !== "09:30" || storedShift.end !== "18:00") {
+              throw new Error(`shift form did not save expected values: ${JSON.stringify(storedShift)}`);
+            }
+            const workspace = document.getElementById("workspace-region");
+            if (!workspace.innerHTML.includes("09:30") || !workspace.innerHTML.includes("18:00")) {
+              throw new Error("workspace home should re-render the saved shift");
+            }
+            if (!workspace.innerHTML.includes("Next shift starts") && !workspace.innerHTML.includes("On shift now")) {
+              throw new Error("workspace home should refresh readiness copy after saving shift");
+            }
+            """
+        )
+
+    def test_workspace_service_status_error_does_not_block_ready_flow(self) -> None:
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Maya"));
+            localStorage.setItem("supportportal_workspace_active", JSON.stringify(false));
+            localStorage.setItem("supportportal_workspace_daily_shift", JSON.stringify({ start: "00:00", end: "23:59" }));
+
+            fetch = async (url, options = {}) => {
+              window.__fetchCalls.push({ url: String(url), options });
+              if (String(url) === "/api/client/service-events") {
+                return { ok: false, status: 503, json: async () => ({}) };
+              }
+              return {
+                ok: true,
+                json: async () => ({
+                  tickets: [
+                    { ticket_id: "TK-INV-1", engineer_case_id: "TK-INV-1", status: "investigating" },
+                  ],
+                }),
+              };
+            };
+
+            renderReadinessInsteadOfPool();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            if (!document.getElementById("workspace-region").innerHTML.includes("Service events are temporarily unavailable")) {
+              throw new Error("workspace home should render a service status empty/error state");
+            }
+
+            await readyToRoll();
+            if (window.location.hash !== "#/tickets/TK-INV-1") {
+              throw new Error(`service status failure should not block ready flow, got ${window.location.hash}`);
+            }
+            """
+        )
 
     def test_workspace_detail_header_has_no_back_arrow_and_uses_preparing_loading(self) -> None:
         html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
