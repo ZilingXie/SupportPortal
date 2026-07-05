@@ -2874,57 +2874,61 @@ function renderWelcomeViewHtml() {
         </div>
       </header>
       <section class="workspace-home-layout">
-        <article class="workspace-info-panel workspace-shift-panel">
+        <article class="workspace-info-panel workspace-shift-readiness-panel">
           <div class="workspace-panel-heading">
-            <p class="ticket-kicker">UTC+8 shift</p>
+            <p class="ticket-kicker">Real queue gate</p>
             <h2>${escapeHtml(nextShiftInfo())}</h2>
             <p>Ready requests the backend investigating queue and opens the first eligible engineer case.</p>
           </div>
-          <form class="workspace-shift-form" data-workspace-shift-form>
-            <label class="field">
-              <span class="field-label">Start</span>
-              <input name="start" type="time" value="${escapeHtml(workspaceShift.start)}" required />
-            </label>
-            <label class="field">
-              <span class="field-label">End</span>
-              <input name="end" type="time" value="${escapeHtml(workspaceShift.end)}" required />
-            </label>
-            <button class="btn btn-ghost" type="submit">Save shift</button>
-          </form>
+          <div class="workspace-shift-readiness-body">
+            <form class="workspace-shift-form" data-workspace-shift-form>
+              <label class="field">
+                <span class="field-label">Start</span>
+                <input name="start" type="time" value="${escapeHtml(workspaceShift.start)}" required />
+              </label>
+              <label class="field">
+                <span class="field-label">End</span>
+                <input name="end" type="time" value="${escapeHtml(workspaceShift.end)}" required />
+              </label>
+              <button class="btn btn-ghost" type="submit">Save shift</button>
+            </form>
+            <div class="workspace-ready-actions">
+              <button
+                class="btn btn-primary workspace-ready-btn"
+                type="button"
+                data-action="ready-to-roll"
+                ${inShift ? "" : "disabled"}
+              >
+                I'm ready to roll
+                <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+              </button>
+            </div>
+          </div>
           ${!inShift ? `<p class="workspace-shift-note">Ready is disabled outside the saved UTC+8 shift.</p>` : ""}
         </article>
-        <article class="workspace-info-panel workspace-known-issues-panel">
-          <div class="workspace-panel-heading">
-            <p class="ticket-kicker">This week</p>
-            <h2>Known issues</h2>
-            <p>Demo context for common patterns engineers may see this week.</p>
-          </div>
-          ${renderWeeklyKnownIssuesHtml()}
-        </article>
-        <article class="workspace-info-panel workspace-service-status-panel">
-          <div class="workspace-panel-heading workspace-service-heading">
-            <div>
-              <p class="ticket-kicker">Service Status</p>
-              <h2>Latest Agora platform events</h2>
+        <section class="workspace-home-status-grid" aria-label="Known issues and service status">
+          <article class="workspace-info-panel workspace-known-issues-panel">
+            <div class="workspace-panel-heading">
+              <p class="ticket-kicker">This week</p>
+              <h2>Known issues</h2>
+              <p>Demo context for common patterns engineers may see this week.</p>
             </div>
-            <a href="${escapeHtml(
-              sanitizeHttpUrl(workspaceServiceEventsState?.statusPageUrl) || AGORA_STATUS_PAGE_URL
-            )}" target="_blank" rel="noopener noreferrer">Open Agora Status Page</a>
-          </div>
-          ${renderWorkspaceServiceStatusHtml()}
-        </article>
+            ${renderWeeklyKnownIssuesHtml()}
+          </article>
+          <article class="workspace-info-panel workspace-service-status-panel">
+            <div class="workspace-panel-heading workspace-service-heading">
+              <div>
+                <p class="ticket-kicker">Service Status</p>
+                <h2>Latest Agora platform events</h2>
+              </div>
+              <a href="${escapeHtml(
+                sanitizeHttpUrl(workspaceServiceEventsState?.statusPageUrl) || AGORA_STATUS_PAGE_URL
+              )}" target="_blank" rel="noopener noreferrer">Open Agora Status Page</a>
+            </div>
+            ${renderWorkspaceServiceStatusHtml()}
+          </article>
+        </section>
       </section>
-      <div class="workspace-ready-actions">
-        <button
-          class="btn btn-primary workspace-ready-btn"
-          type="button"
-          data-action="ready-to-roll"
-          ${inShift ? "" : "disabled"}
-        >
-          I'm ready to roll
-          <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
-        </button>
-      </div>
     </section>
   `;
 }
