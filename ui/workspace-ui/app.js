@@ -2690,25 +2690,31 @@ function renderWelcome() {
   `;
 }
 
-function renderReadyLoading() {
-  if (!workspaceRootEl) {
-    return;
-  }
-  const engineer = getSelectedEngineer();
-  workspaceRootEl.innerHTML = `
-    <section class="workspace-ready-loading-view">
+function renderWorkspacePreparingLoadingHtml(message = "Preparing the real case workspace.") {
+  return `
+    <section class="workspace-ready-loading-view" aria-label="Preparing your workspace">
       <div class="workspace-ready-loading-card">
         <div class="ready-loading-spinner" aria-label="Preparing your workspace">
           <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
         </div>
         <h1>Preparing your workspace</h1>
-        <p>Checking real investigating cases for ${escapeHtml(engineer ? engineer.name : "this engineer")}.</p>
+        <p>${escapeHtml(message)}</p>
         <div class="ready-loading-bar">
           <span class="ready-loading-bar-fill"></span>
         </div>
       </div>
     </section>
   `;
+}
+
+function renderReadyLoading() {
+  if (!workspaceRootEl) {
+    return;
+  }
+  const engineer = getSelectedEngineer();
+  workspaceRootEl.innerHTML = renderWorkspacePreparingLoadingHtml(
+    `Checking real investigating cases for ${engineer ? engineer.name : "this engineer"}.`
+  );
 }
 
 function renderNoInvestigatingCase(message = "No investigating cases available") {
@@ -4089,15 +4095,6 @@ function renderTicketDetailHeaderHtml(viewState) {
   return `
     <header class="workspace-header">
       <div class="workspace-header-line workspace-header-line-primary">
-        <button
-          class="detail-back-icon-btn"
-          type="button"
-          data-detail-action="back-to-pool"
-          aria-label="Back to Pool"
-          title="Back to Pool"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-        </button>
         <span class="workspace-ticket-id">${escapeHtml(viewState.ticketId)}</span>
         <h2 class="workspace-ticket-title">${escapeHtml(
           String(viewState.ticket.title || viewState.ticket.subject || "(No subject)")
@@ -4693,14 +4690,7 @@ function renderTicketDetailView() {
   }
 
   if (detailLoading) {
-    return `
-      <section class="ticket-workspace">
-        <section class="detail-loading" role="status" aria-live="polite" aria-busy="true">
-          <span class="loading-spinner" aria-hidden="true"></span>
-          <p>Loading ticket workspace...</p>
-        </section>
-      </section>
-    `;
+    return renderWorkspacePreparingLoadingHtml();
   }
 
   if (!selectedTicket) {
@@ -5243,11 +5233,6 @@ async function handleDetailClick(event) {
       button.disabled = false;
       renderTicketDetail();
     }
-    return;
-  }
-
-  if (action === "back-to-pool") {
-    closeTicketDetail();
     return;
   }
 
