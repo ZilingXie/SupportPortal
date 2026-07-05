@@ -3105,11 +3105,11 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .workspace-home-hero {
   align-content: start;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid var(--ghost-border);
+  box-shadow: 0 12px 34px rgba(23, 28, 33, 0.05);
   backdrop-filter: none;
-  padding-inline: 0;
+  padding: clamp(16px, 2vw, 22px);
 }
 
 .workspace-home-intro {
@@ -3148,11 +3148,11 @@ html.material-symbols-pending .material-symbols-outlined {
   display: grid;
   gap: 18px;
   align-content: start;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid var(--ghost-border);
+  box-shadow: 0 12px 34px rgba(23, 28, 33, 0.05);
   backdrop-filter: none;
-  padding: 0;
+  padding: 20px;
 }
 
 .workspace-panel-heading {

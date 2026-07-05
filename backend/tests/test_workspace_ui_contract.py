@@ -228,6 +228,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("workspace-home-readiness-redesign-1", html)
         self.assertIn("workspace-home-layout-tune-1", html)
         self.assertIn("workspace-home-density-1", html)
+        self.assertIn("workspace-home-section-blocks-1", html)
         self.assertIn('const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";', app_source)
         self.assertIn("WEEKLY_KNOWN_ISSUES", app_source)
         self.assertIn("RTC black screen reports in Chromium 124", app_source)
@@ -245,9 +246,15 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("workspace-service-event-list", css)
         self.assertNotIn("workspace-shift-panel", app_source)
         self.assertNotIn("<p class=\"ticket-kicker\">UTC+8 shift</p>", app_source)
+        self.assertNotRegex(css, r"(?s)\.workspace-home-hero\s*\{.*background: transparent;")
         self.assertRegex(
             css,
-            r"(?s)\.workspace-home-hero\s*\{.*background: transparent;.*border: 0;.*box-shadow: none;",
+            r"(?s)\.workspace-home-hero\s*\{.*background: rgba\(255, 255, 255, 0\.74\);.*border: 1px solid var\(--ghost-border\);.*box-shadow: 0 12px 34px rgba\(23, 28, 33, 0\.05\);",
+        )
+        self.assertNotRegex(css, r"(?s)\.workspace-home-layout \.workspace-info-panel\s*\{.*background: transparent;")
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-home-layout \.workspace-info-panel\s*\{.*background: rgba\(255, 255, 255, 0\.74\);.*border: 1px solid var\(--ghost-border\);.*box-shadow: 0 12px 34px rgba\(23, 28, 33, 0\.05\);.*padding: 20px;",
         )
         self.assertRegex(
             css,
