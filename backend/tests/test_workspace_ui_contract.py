@@ -226,6 +226,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertIn("workspace-home-readiness-redesign-1", html)
+        self.assertIn("workspace-home-layout-tune-1", html)
         self.assertIn('const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";', app_source)
         self.assertIn("WEEKLY_KNOWN_ISSUES", app_source)
         self.assertIn("RTC black screen reports in Chromium 124", app_source)
@@ -237,8 +238,20 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("Loading latest Agora service events...", app_source)
         self.assertIn("Open Agora Status Page", app_source)
         self.assertIn("workspace-home-layout", css)
+        self.assertIn("workspace-shift-readiness-panel", app_source)
+        self.assertIn("workspace-home-status-grid", app_source)
         self.assertIn("workspace-known-issue-list", css)
         self.assertIn("workspace-service-event-list", css)
+        self.assertNotIn("workspace-shift-panel", app_source)
+        self.assertNotIn("<p class=\"ticket-kicker\">UTC+8 shift</p>", app_source)
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-home-hero\s*\{.*background: transparent;.*border: 0;.*box-shadow: none;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-home-status-grid\s*\{.*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);",
+        )
 
     def test_workspace_home_renders_welcome_shift_known_issues_and_fetched_service_status(self) -> None:
         self.run_workspace_app_script(
@@ -282,8 +295,19 @@ class WorkspaceUiContractTests(unittest.TestCase):
             if (!sidebar.innerHTML.includes("Engineer context") || !sidebar.innerHTML.includes("Maya")) {
               throw new Error("engineer details should remain in the left sidebar");
             }
-            if (!workspace.innerHTML.includes("UTC+8 shift")) {
-              throw new Error("workspace home should expose shift controls");
+            if (!workspace.innerHTML.includes("Shift readiness")) {
+              throw new Error("workspace home should expose the Shift readiness section");
+            }
+            const shiftPanelIndex = workspace.innerHTML.indexOf("workspace-shift-readiness-panel");
+            const readyIndex = workspace.innerHTML.indexOf("data-action=\\"ready-to-roll\\"");
+            const statusGridIndex = workspace.innerHTML.indexOf("workspace-home-status-grid");
+            const knownIndex = workspace.innerHTML.indexOf("workspace-known-issues-panel");
+            const serviceIndex = workspace.innerHTML.indexOf("workspace-service-status-panel");
+            if (shiftPanelIndex < 0 || readyIndex < shiftPanelIndex || readyIndex > statusGridIndex) {
+              throw new Error("ready action should live inside the Shift readiness section before the issue/status grid");
+            }
+            if (statusGridIndex < 0 || knownIndex < statusGridIndex || serviceIndex < statusGridIndex) {
+              throw new Error("known issues and service status should live in the same side-by-side grid");
             }
             if (!workspace.innerHTML.includes("RTC black screen reports in Chromium 124")) {
               throw new Error("workspace home should render weekly known issue demo data");
