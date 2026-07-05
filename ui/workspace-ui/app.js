@@ -1018,6 +1018,7 @@ function renderWorkspaceAssignmentSidebar() {
   if (!workspaceAssignmentSidebarEl) {
     return;
   }
+  workspaceAssignmentSidebarEl.classList.remove("hidden");
   workspaceAssignmentSidebarEl.innerHTML = renderWorkspaceAssignmentSidebarHtml();
   renderHeaderUserControls();
 }
@@ -1106,9 +1107,28 @@ function renderRailNav() {
   `;
 }
 
+function setWorkspaceShellMode(mode) {
+  const isDetailMode = mode === "detail";
+  engineerScreenEl?.classList.toggle("workspace-detail-mode", isDetailMode);
+  engineerScreenEl?.classList.toggle("workspace-home-mode", !isDetailMode);
+  if (workspaceAssignmentSidebarEl) {
+    workspaceAssignmentSidebarEl.classList.toggle("hidden", isDetailMode);
+    if (isDetailMode) {
+      workspaceAssignmentSidebarEl.innerHTML = "";
+    }
+  }
+}
+
+function showWorkspaceShell(mode = "home") {
+  loginScreenEl?.classList.add("hidden");
+  engineerScreenEl?.classList.remove("hidden");
+  setWorkspaceShellMode(mode);
+}
+
 function renderWorkspaceChrome() {
   const engineerVisibleTickets = tickets.filter((ticket) => isEngineerVisibleStatus(ticket?.status || "open"));
   if (routeState.view === "detail" && routeState.ticketId) {
+    setWorkspaceShellMode("detail");
     const detailStatus = selectedTicket
       ? statusLabel(normalizeStatusValue(selectedTicket.status || "open"))
       : "Loading ticket context...";
@@ -1123,6 +1143,7 @@ function renderWorkspaceChrome() {
       filterControlsEl.innerHTML = "";
     }
   } else {
+    setWorkspaceShellMode("home");
     if (workspaceTitleEl) {
       workspaceTitleEl.textContent = "Engineer Command Center";
     }
@@ -1133,7 +1154,9 @@ function renderWorkspaceChrome() {
     renderFilterControls();
   }
 
-  renderWorkspaceAssignmentSidebar();
+  if (routeState.view !== "detail") {
+    renderWorkspaceAssignmentSidebar();
+  }
 }
 
 function formatMultiline(value) {
@@ -2555,6 +2578,9 @@ function toggleScreens() {
   const authed = isAuthenticated();
   loginScreenEl?.classList.toggle("hidden", authed);
   engineerScreenEl?.classList.toggle("hidden", !authed);
+  if (authed) {
+    setWorkspaceShellMode(routeState.view === "detail" && routeState.ticketId ? "detail" : "home");
+  }
 }
 
 function renderEngineerOption(engineer, selected) {
@@ -2624,17 +2650,13 @@ function renderLogin() {
   `;
 }
 
-function renderWelcome() {
-  if (!workspaceRootEl) {
-    return;
-  }
+function renderWelcomeViewHtml() {
   const engineer = getSelectedEngineer();
   if (!engineer) {
-    renderLogin();
-    return;
+    return "";
   }
   const inShift = isInShift();
-  workspaceRootEl.innerHTML = `
+  return `
     <section class="workspace-welcome-view">
       <header class="workspace-welcome-hero">
         <div class="workspace-welcome-top">
@@ -2690,6 +2712,18 @@ function renderWelcome() {
   `;
 }
 
+function renderWelcome() {
+  if (!workspaceRootEl) {
+    return;
+  }
+  const html = renderWelcomeViewHtml();
+  if (!html) {
+    renderLogin();
+    return;
+  }
+  workspaceRootEl.innerHTML = html;
+}
+
 function renderWorkspacePreparingLoadingHtml(message = "Preparing the real case workspace.") {
   return `
     <section class="workspace-ready-loading-view" aria-label="Preparing your workspace">
@@ -2708,22 +2742,30 @@ function renderWorkspacePreparingLoadingHtml(message = "Preparing the real case 
 }
 
 function renderReadyLoading() {
-  if (!workspaceRootEl) {
+  const targetEl = engineerScreenEl?.classList.contains("workspace-home-mode") ? workspaceRegionEl : workspaceRootEl;
+  if (!targetEl) {
     return;
   }
   const engineer = getSelectedEngineer();
-  workspaceRootEl.innerHTML = renderWorkspacePreparingLoadingHtml(
+  targetEl.innerHTML = renderWorkspacePreparingLoadingHtml(
     `Checking real investigating cases for ${engineer ? engineer.name : "this engineer"}.`
   );
 }
 
 function renderNoInvestigatingCase(message = "No investigating cases available") {
-  if (!workspaceRootEl) {
+  const engineer = getSelectedEngineer();
+  const targetEl = engineer ? workspaceRegionEl : workspaceRootEl;
+  if (!targetEl) {
     return;
   }
   saveWorkspaceActive(false);
-  toggleScreens();
-  workspaceRootEl.innerHTML = `
+  if (engineer) {
+    showWorkspaceShell("home");
+    renderWorkspaceAssignmentSidebar();
+  } else {
+    toggleScreens();
+  }
+  targetEl.innerHTML = `
     <section class="workspace-empty-queue-view">
       <div class="workspace-empty-queue-panel">
         <span class="material-symbols-outlined" aria-hidden="true">hourglass_empty</span>
@@ -2757,10 +2799,15 @@ function renderReadinessInsteadOfPool() {
   if (workspaceRegionEl) {
     workspaceRegionEl.innerHTML = "";
   }
-  toggleScreens();
   if (getSelectedEngineer()) {
-    renderWelcome();
+    showWorkspaceShell("home");
+    filterControlsEl?.classList.add("hidden");
+    renderWorkspaceAssignmentSidebar();
+    if (workspaceRegionEl) {
+      workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
+    }
   } else {
+    toggleScreens();
     renderLogin();
   }
   setRealtimeStatus("Realtime: signed out");
@@ -5833,8 +5880,7 @@ function enterWelcome() {
   selectedEngineerCandidate = engineer.id;
   saveWorkspaceActive(false);
   resetWorkspaceBoardState();
-  toggleScreens();
-  renderWelcome();
+  renderReadinessInsteadOfPool();
   setRealtimeStatus("Realtime: signed out");
 }
 
@@ -5883,7 +5929,7 @@ function handleWorkspaceEntryClick(event) {
     signOut();
   }
   if (action === "back-to-welcome") {
-    renderWelcome();
+    renderReadinessInsteadOfPool();
   }
 }
 
@@ -5919,6 +5965,11 @@ filterControlsEl?.addEventListener("focusin", handleFilterControlsFocusIn);
 filterControlsEl?.addEventListener("focusout", handleFilterControlsFocusOut);
 filterControlsEl?.addEventListener("keydown", handleFilterControlsKeydown);
 workspaceRegionEl?.addEventListener("click", (event) => {
+  if (event.target.closest('[data-action="ready-to-roll"], [data-action="sign-out"], [data-action="back-to-welcome"]')) {
+    handleWorkspaceEntryClick(event);
+    return;
+  }
+
   const assetDownloadButton = event.target.closest("[data-asset-download-id]");
   if (assetDownloadButton) {
     downloadAsset(assetDownloadButton.getAttribute("data-asset-download-id")).catch((error) => {
@@ -6003,11 +6054,14 @@ if (isAuthenticated()) {
     renderNoInvestigatingCase(`No investigating cases available. Workspace initialization failed: ${error.message}`);
   });
 } else {
-  toggleScreens();
   parseRoute();
-  if (getSelectedEngineer()) {
+  if (getSelectedEngineer() && routeState.view === "pool") {
+    renderReadinessInsteadOfPool();
+  } else if (getSelectedEngineer()) {
+    toggleScreens();
     renderWelcome();
   } else {
+    toggleScreens();
     renderLogin();
   }
   setRealtimeStatus("Realtime: signed out");

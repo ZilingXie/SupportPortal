@@ -19,6 +19,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
             const source = fs.readFileSync("ui/workspace-ui/app.js", "utf8");
 
             function createElementStub(id = "") {{
+              const classes = new Set();
               return {{
                 id,
                 innerHTML: "",
@@ -28,10 +29,32 @@ class WorkspaceUiContractTests(unittest.TestCase):
                 disabled: false,
                 hidden: false,
                 classList: {{
-                  add() {{}},
-                  remove() {{}},
-                  toggle() {{}},
-                  contains() {{ return false; }},
+                  add(...names) {{
+                    names.forEach((name) => classes.add(String(name)));
+                  }},
+                  remove(...names) {{
+                    names.forEach((name) => classes.delete(String(name)));
+                  }},
+                  toggle(name, force) {{
+                    const className = String(name);
+                    if (force === true) {{
+                      classes.add(className);
+                      return true;
+                    }}
+                    if (force === false) {{
+                      classes.delete(className);
+                      return false;
+                    }}
+                    if (classes.has(className)) {{
+                      classes.delete(className);
+                      return false;
+                    }}
+                    classes.add(className);
+                    return true;
+                  }},
+                  contains(name) {{
+                    return classes.has(String(name));
+                  }},
                 }},
                 addEventListener() {{}},
                 removeEventListener() {{}},
@@ -197,7 +220,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn("workspace-ticket-number-home-1", html)
+        self.assertIn("workspace-sidebar-home-only-1", html)
         self.assertNotIn("detail-back-icon-btn", app_source)
         self.assertNotIn('aria-label="Back to Pool"', app_source)
         self.assertNotIn(">arrow_back<", app_source)
@@ -248,6 +271,74 @@ class WorkspaceUiContractTests(unittest.TestCase):
 
             if (window.location.hash !== "#/tickets") {
               throw new Error(`expected workspace home hash, got ${window.location.hash}`);
+            }
+            """
+        )
+
+    def test_workspace_sidebar_moves_to_tickets_home_and_hides_on_detail(self) -> None:
+        app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("renderWelcomeViewHtml", app_source)
+        self.assertIn(
+            '[data-action="ready-to-roll"], [data-action="sign-out"], [data-action="back-to-welcome"]',
+            app_source,
+        )
+        self.assertRegex(
+            app_source,
+            r"(?s)function renderReadinessInsteadOfPool\s*\(.*?\)\s*\{.*renderWorkspaceAssignmentSidebar\(\);.*workspaceRegionEl\.innerHTML = renderWelcomeViewHtml\(\);",
+        )
+        self.assertRegex(
+            app_source,
+            r"(?s)if \(routeState\.view === \"detail\" && routeState\.ticketId\) \{.*setWorkspaceShellMode\(\"detail\"\);",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.screen-engineer\.workspace-detail-mode \.workspace-assignment-sidebar\s*\{.*display: none;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.screen-engineer\.workspace-detail-mode \.engineer-shell\.problem-workspace\s*\{.*margin-left: 0;",
+        )
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Maya"));
+            localStorage.setItem("supportportal_workspace_active", JSON.stringify(false));
+            window.location.hash = "#/tickets";
+
+            renderReadinessInsteadOfPool();
+
+            const engineerScreen = document.getElementById("engineer-screen");
+            const loginScreen = document.getElementById("login-screen");
+            const sidebar = document.getElementById("workspace-assignment-sidebar");
+            const workspace = document.getElementById("workspace-region");
+            if (engineerScreen.classList.contains("hidden")) {
+              throw new Error("tickets home should use the engineer shell so the sidebar can be shown");
+            }
+            if (!loginScreen.classList.contains("hidden")) {
+              throw new Error("tickets home should hide the standalone readiness screen");
+            }
+            if (!engineerScreen.classList.contains("workspace-home-mode")) {
+              throw new Error("tickets home should mark the shell as home mode");
+            }
+            if (!sidebar.innerHTML.includes("Concierge AI")) {
+              throw new Error("tickets home did not render the assignment command sidebar");
+            }
+            if (!workspace.innerHTML.includes("I'm ready to roll")) {
+              throw new Error("tickets home did not render the readiness main view");
+            }
+
+            routeState.view = "detail";
+            routeState.ticketId = "TK-231-1";
+            selectedTicketId = "TK-231-1";
+            selectedTicket = { ticket_id: "TK-231-1", status: "investigating" };
+            renderWorkspaceChrome();
+
+            if (!engineerScreen.classList.contains("workspace-detail-mode")) {
+              throw new Error("detail view should mark the shell as detail mode");
+            }
+            if (!sidebar.classList.contains("hidden")) {
+              throw new Error("detail view should hide the assignment command sidebar");
             }
             """
         )
@@ -356,9 +447,13 @@ class WorkspaceUiContractTests(unittest.TestCase):
             if (window.location.hash.includes("TK-")) {
               throw new Error(`non-investigating case should not be opened: ${window.location.hash}`);
             }
-            const root = document.getElementById("workspace-root");
-            if (!root.innerHTML.includes("No investigating cases available")) {
+            const workspace = document.getElementById("workspace-region");
+            const sidebar = document.getElementById("workspace-assignment-sidebar");
+            if (!workspace.innerHTML.includes("No investigating cases available")) {
               throw new Error("missing no-investigating empty state");
+            }
+            if (!sidebar.innerHTML.includes("Concierge AI")) {
+              throw new Error("tickets empty state should keep the assignment sidebar visible");
             }
             """
         )
@@ -375,11 +470,14 @@ class WorkspaceUiContractTests(unittest.TestCase):
             if (window.__fetchCalls.some((call) => call.url === "/api/engineer/tickets?status=all")) {
               throw new Error("workspace root should not load the engineer ticket pool");
             }
-            const root = document.getElementById("workspace-root");
-            if (!root.innerHTML.includes("I'm ready to roll")) {
-              throw new Error("workspace root should return to readiness instead of pool");
-            }
             const workspace = document.getElementById("workspace-region");
+            const sidebar = document.getElementById("workspace-assignment-sidebar");
+            if (!workspace.innerHTML.includes("I'm ready to roll")) {
+              throw new Error("workspace region should return to readiness instead of pool");
+            }
+            if (!sidebar.innerHTML.includes("Concierge AI")) {
+              throw new Error("tickets home should keep the assignment sidebar visible");
+            }
             if (workspace.innerHTML.includes("Engineer queue metrics")) {
               throw new Error("workspace root rendered the engineer pool fallback");
             }
