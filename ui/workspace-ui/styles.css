@@ -3498,7 +3498,15 @@ html.material-symbols-pending .material-symbols-outlined {
   display: none;
 }
 
+.screen-engineer.workspace-preparing-mode .workspace-assignment-sidebar {
+  display: none;
+}
+
 .screen-engineer.workspace-detail-mode .engineer-shell.problem-workspace {
+  margin-left: 0;
+}
+
+.screen-engineer.workspace-preparing-mode .engineer-shell.problem-workspace {
   margin-left: 0;
 }
 
