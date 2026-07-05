@@ -197,7 +197,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn("workspace-header-loading-1", html)
+        self.assertIn("workspace-logout-footer-1", html)
         self.assertNotIn("detail-back-icon-btn", app_source)
         self.assertNotIn('aria-label="Back to Pool"', app_source)
         self.assertNotIn(">arrow_back<", app_source)
@@ -209,6 +209,39 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertRegex(
             app_source,
             r"(?s)if \(detailLoading\) \{\s*return renderWorkspacePreparingLoadingHtml",
+        )
+
+    def test_workspace_sidebar_footer_keeps_logout_visible(self) -> None:
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.rail-user-controls,\s*"
+            r"\.workspace-assignment-sidebar:hover \.rail-user-controls,\s*"
+            r"\.workspace-assignment-sidebar:focus-within \.rail-user-controls\s*\{"
+            r".*grid-template-columns: minmax\(0, 1fr\) auto;"
+            r".*min-width: 0;"
+            r".*max-width: 100%;"
+            r".*overflow: hidden;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.user-profile-chip,\s*"
+            r"\.workspace-assignment-sidebar:hover \.user-profile-chip,\s*"
+            r"\.workspace-assignment-sidebar:focus-within \.user-profile-chip\s*\{"
+            r".*min-width: 0;"
+            r".*max-width: 100%;"
+            r".*overflow: hidden;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.logout-icon-btn\s*\{.*flex: 0 0 52px;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.user-name,\s*"
+            r"\.workspace-assignment-sidebar \.user-role,\s*"
+            r"\.workspace-assignment-sidebar \.realtime-value\s*\{.*text-overflow: ellipsis;",
         )
 
     def test_workspace_assignment_sidebar_collapses_until_hover(self) -> None:

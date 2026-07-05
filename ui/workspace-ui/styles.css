@@ -3424,15 +3424,21 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .workspace-assignment-sidebar .workspace-sidebar-footer {
   justify-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .workspace-assignment-sidebar .rail-status-card,
 .workspace-assignment-sidebar:hover .rail-status-card,
 .workspace-assignment-sidebar:focus-within .rail-status-card {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   justify-content: flex-start;
   gap: 12px;
   padding-inline: 14px;
+  overflow: hidden;
 }
 
 .workspace-assignment-sidebar .rail-user-controls,
@@ -3440,6 +3446,9 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-assignment-sidebar:focus-within .rail-user-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   justify-content: stretch;
 }
 
@@ -3447,9 +3456,25 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-assignment-sidebar:hover .user-profile-chip,
 .workspace-assignment-sidebar:focus-within .user-profile-chip {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   justify-content: flex-start;
   gap: 12px;
   padding: 8px 10px 8px 8px;
+}
+
+.workspace-assignment-sidebar .user-name,
+.workspace-assignment-sidebar .user-role,
+.workspace-assignment-sidebar .realtime-value {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-assignment-sidebar .logout-icon-btn {
+  flex: 0 0 52px;
 }
 
 .engineer-shell.problem-workspace {
