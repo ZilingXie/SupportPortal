@@ -1109,11 +1109,14 @@ function renderRailNav() {
 
 function setWorkspaceShellMode(mode) {
   const isDetailMode = mode === "detail";
+  const isPreparingMode = mode === "preparing";
+  const hidesSidebar = isDetailMode || isPreparingMode;
   engineerScreenEl?.classList.toggle("workspace-detail-mode", isDetailMode);
-  engineerScreenEl?.classList.toggle("workspace-home-mode", !isDetailMode);
+  engineerScreenEl?.classList.toggle("workspace-preparing-mode", isPreparingMode);
+  engineerScreenEl?.classList.toggle("workspace-home-mode", !hidesSidebar);
   if (workspaceAssignmentSidebarEl) {
-    workspaceAssignmentSidebarEl.classList.toggle("hidden", isDetailMode);
-    if (isDetailMode) {
+    workspaceAssignmentSidebarEl.classList.toggle("hidden", hidesSidebar);
+    if (hidesSidebar) {
       workspaceAssignmentSidebarEl.innerHTML = "";
     }
   }
@@ -2742,11 +2745,18 @@ function renderWorkspacePreparingLoadingHtml(message = "Preparing the real case 
 }
 
 function renderReadyLoading() {
-  const targetEl = engineerScreenEl?.classList.contains("workspace-home-mode") ? workspaceRegionEl : workspaceRootEl;
+  const engineer = getSelectedEngineer();
+  if (engineer) {
+    showWorkspaceShell("preparing");
+    filterControlsEl?.classList.add("hidden");
+    if (filterControlsEl) {
+      filterControlsEl.innerHTML = "";
+    }
+  }
+  const targetEl = engineer ? workspaceRegionEl : workspaceRootEl;
   if (!targetEl) {
     return;
   }
-  const engineer = getSelectedEngineer();
   targetEl.innerHTML = renderWorkspacePreparingLoadingHtml(
     `Checking real investigating cases for ${engineer ? engineer.name : "this engineer"}.`
   );

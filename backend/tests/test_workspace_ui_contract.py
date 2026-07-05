@@ -220,7 +220,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn("workspace-sidebar-home-only-1", html)
+        self.assertIn("workspace-preparing-no-sidebar-1", html)
         self.assertNotIn("detail-back-icon-btn", app_source)
         self.assertNotIn('aria-label="Back to Pool"', app_source)
         self.assertNotIn(">arrow_back<", app_source)
@@ -293,12 +293,24 @@ class WorkspaceUiContractTests(unittest.TestCase):
             r"(?s)if \(routeState\.view === \"detail\" && routeState\.ticketId\) \{.*setWorkspaceShellMode\(\"detail\"\);",
         )
         self.assertRegex(
+            app_source,
+            r"(?s)function renderReadyLoading\s*\(.*?\)\s*\{.*showWorkspaceShell\(\"preparing\"\);",
+        )
+        self.assertRegex(
             css,
             r"(?s)\.screen-engineer\.workspace-detail-mode \.workspace-assignment-sidebar\s*\{.*display: none;",
         )
         self.assertRegex(
             css,
+            r"(?s)\.screen-engineer\.workspace-preparing-mode \.workspace-assignment-sidebar\s*\{.*display: none;",
+        )
+        self.assertRegex(
+            css,
             r"(?s)\.screen-engineer\.workspace-detail-mode \.engineer-shell\.problem-workspace\s*\{.*margin-left: 0;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.screen-engineer\.workspace-preparing-mode \.engineer-shell\.problem-workspace\s*\{.*margin-left: 0;",
         )
         self.run_workspace_app_script(
             """
@@ -326,6 +338,21 @@ class WorkspaceUiContractTests(unittest.TestCase):
             }
             if (!workspace.innerHTML.includes("I'm ready to roll")) {
               throw new Error("tickets home did not render the readiness main view");
+            }
+
+            renderReadyLoading();
+
+            if (!engineerScreen.classList.contains("workspace-preparing-mode")) {
+              throw new Error("preparing workspace should mark the shell as preparing mode");
+            }
+            if (!sidebar.classList.contains("hidden")) {
+              throw new Error("preparing workspace should hide the assignment command sidebar");
+            }
+            if (sidebar.innerHTML.includes("Concierge AI")) {
+              throw new Error("preparing workspace should clear the assignment command sidebar");
+            }
+            if (!workspace.innerHTML.includes("Preparing your workspace")) {
+              throw new Error("preparing workspace should render the loading view in the workspace region");
             }
 
             routeState.view = "detail";
