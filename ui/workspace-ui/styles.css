@@ -3181,8 +3181,253 @@ html.material-symbols-pending .material-symbols-outlined {
   border-right-color: rgba(24, 39, 75, 0.1);
 }
 
+.workspace-assignment-sidebar,
+.workspace-assignment-sidebar:hover {
+  width: 320px;
+  padding: 24px 18px 22px;
+  transition: none;
+}
+
+.workspace-assignment-sidebar .sidebar-inner {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 46px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.workspace-assignment-sidebar .sidebar-inner::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-assignment-sidebar .rail-brand {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  width: 100%;
+  min-height: 54px;
+  margin-bottom: 8px;
+}
+
+.workspace-assignment-sidebar .rail-brand-copy,
+.workspace-assignment-sidebar:hover .rail-brand-copy,
+.workspace-assignment-sidebar .rail-footer-copy,
+.workspace-assignment-sidebar:hover .rail-footer-copy,
+.workspace-assignment-sidebar .user-meta,
+.workspace-assignment-sidebar:hover .user-meta {
+  opacity: 1;
+  max-width: none;
+}
+
+.workspace-assignment-sidebar .rail-compact-stack {
+  display: none;
+}
+
+.workspace-assignment-sidebar .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack),
+.workspace-assignment-sidebar:hover .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack) {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.workspace-assignment-sidebar .engineer-context-card,
+.workspace-assignment-sidebar .context-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow: none;
+}
+
+.workspace-assignment-sidebar .engineer-context-card .eyebrow,
+.workspace-assignment-sidebar .context-panel .eyebrow,
+.workspace-assignment-sidebar .engineer-context-card p,
+.workspace-assignment-sidebar .context-panel p,
+.workspace-assignment-sidebar .field-label {
+  color: rgba(221, 229, 255, 0.74);
+}
+
+.workspace-assignment-sidebar .engineer-context-card h2,
+.workspace-assignment-sidebar .context-panel h3 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 16px;
+}
+
+.workspace-assignment-sidebar .sidebar-profile {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.workspace-assignment-sidebar .status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace-assignment-sidebar .status-pill,
+.current-ticket-sla {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.current-ticket-sla.is-success,
+.workspace-assignment-sidebar .status-pill.is-success {
+  background: rgba(127, 209, 255, 0.16);
+  color: #7fd1ff;
+}
+
+.current-ticket-sla.is-muted,
+.workspace-assignment-sidebar .status-pill.is-muted {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(221, 229, 255, 0.74);
+}
+
+.current-ticket-sla.is-warning,
+.workspace-assignment-sidebar .status-pill.is-warning {
+  background: rgba(255, 232, 214, 0.94);
+  color: var(--warning);
+}
+
+.current-ticket-sla.is-danger,
+.workspace-assignment-sidebar .status-pill.is-danger {
+  background: rgba(255, 223, 228, 0.92);
+  color: var(--danger);
+}
+
+.workspace-assignment-sidebar .shift-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workspace-assignment-sidebar .shift-form-readonly .field {
+  display: grid;
+  gap: 6px;
+  min-height: 42px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 9px 11px;
+}
+
+.workspace-assignment-sidebar .shift-form-readonly strong {
+  color: rgba(255, 255, 255, 0.96);
+  font-family: "Manrope", sans-serif;
+  font-size: 15px;
+}
+
+.workspace-assignment-sidebar .sidebar-metrics {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-assignment-sidebar .sidebar-metrics span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 8px;
+  color: rgba(221, 229, 255, 0.74);
+  font-size: 13px;
+}
+
+.workspace-assignment-sidebar .sidebar-metrics strong {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.workspace-assignment-sidebar .workspace-sidebar-footer {
+  justify-items: stretch;
+}
+
+.workspace-assignment-sidebar .rail-status-card,
+.workspace-assignment-sidebar:hover .rail-status-card {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 12px;
+  padding-inline: 14px;
+}
+
+.workspace-assignment-sidebar .rail-user-controls,
+.workspace-assignment-sidebar:hover .rail-user-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  justify-content: stretch;
+}
+
+.workspace-assignment-sidebar .user-profile-chip,
+.workspace-assignment-sidebar:hover .user-profile-chip {
+  display: flex;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 8px 10px 8px 8px;
+}
+
+.engineer-shell.problem-workspace {
+  margin-left: 320px;
+}
+
 .problem-workspace .workspace-region {
   background: #f7f9fc;
+}
+
+.workspace-header-line-primary {
+  gap: 10px;
+}
+
+.workspace-case-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.workspace-case-controls .current-ticket-sla {
+  background: rgba(0, 183, 204, 0.14);
+  color: var(--success);
+}
+
+.workspace-case-controls .current-ticket-sla.is-warning {
+  background: rgba(255, 232, 214, 0.94);
+  color: var(--warning);
+}
+
+.workspace-case-controls .current-ticket-sla.is-danger {
+  background: rgba(255, 223, 228, 0.92);
+  color: var(--danger);
+}
+
+.break-after-case-btn {
+  min-height: 38px;
+  gap: 7px;
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+
+.break-after-case-btn.is-active {
+  border-color: rgba(0, 183, 204, 0.3);
+  background: rgba(0, 183, 204, 0.18);
+  color: var(--success);
+}
+
+.break-after-case-btn .material-symbols-outlined {
+  font-size: 19px;
 }
 
 @keyframes workspace-ready-bar {
@@ -3195,6 +3440,22 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 @media (max-width: 900px) {
+  .workspace-assignment-sidebar,
+  .workspace-assignment-sidebar:hover {
+    width: 100%;
+  }
+
+  .workspace-assignment-sidebar .sidebar-inner {
+    max-height: none;
+  }
+
+  .workspace-case-controls {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
   .workspace-entry-view,
   .workspace-readiness-grid {
     grid-template-columns: 1fr;

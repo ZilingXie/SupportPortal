@@ -1,7 +1,10 @@
 const WORKSPACE_AUTH_KEY = "supportportal_workspace_selected_engineer";
 const WORKSPACE_SHIFT_KEY = "supportportal_workspace_daily_shift";
 const WORKSPACE_ACTIVE_KEY = "supportportal_workspace_active";
+const WORKSPACE_BREAK_AFTER_CASE_KEY = "supportportal_workspace_break_after_case";
+const WORKSPACE_CASE_SLA_STARTED_AT_KEY = "supportportal_workspace_case_sla_started_at";
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
+const WORKSPACE_CASE_SLA_MS = 3 * 60 * 60 * 1000;
 const DEMO_ENGINEERS = [
   { id: "Jack", name: "Jack", role: "Tier One Engineer", initials: "J" },
   { id: "Maya", name: "Maya", role: "Tier One Engineer", initials: "M" },
@@ -74,6 +77,7 @@ const workspaceRegionEl = document.getElementById("workspace-region");
 const workspaceTitleEl = document.getElementById("workspace-title");
 const workspaceSubtitleEl = document.getElementById("workspace-subtitle");
 const railNavEl = document.getElementById("rail-nav");
+const workspaceAssignmentSidebarEl = document.getElementById("workspace-assignment-sidebar");
 
 let tickets = [];
 let boardLoading = false;
@@ -119,7 +123,10 @@ let selectedEngineerId = "";
 let selectedEngineerCandidate = DEMO_ENGINEERS[0].id;
 let workspaceShift = DEFAULT_SHIFT;
 let workspaceActive = false;
+let workspaceBreakAfterCase = false;
 let readyTransitionActive = false;
+let workspaceSlaCountdownTimer = null;
+let workspaceRealtimeStatusText = "Realtime: connecting...";
 
 const ENGINEER_POOL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];
 const POOL_STATUS_RANK = {
@@ -203,6 +210,7 @@ function refreshWorkspaceSessionState() {
   selectedEngineerCandidate = storedEngineerId || normalizeEngineerId(selectedEngineerCandidate) || DEMO_ENGINEERS[0].id;
   workspaceShift = normalizeShift(readStorage(WORKSPACE_SHIFT_KEY, DEFAULT_SHIFT));
   workspaceActive = Boolean(readStorage(WORKSPACE_ACTIVE_KEY, false));
+  workspaceBreakAfterCase = Boolean(readStorage(WORKSPACE_BREAK_AFTER_CASE_KEY, false));
 }
 
 function getSelectedEngineerId() {
@@ -291,6 +299,109 @@ function nextShiftInfo() {
 function saveWorkspaceActive(value) {
   workspaceActive = Boolean(value);
   writeStorage(WORKSPACE_ACTIVE_KEY, workspaceActive);
+}
+
+function saveWorkspaceBreakAfterCase(value) {
+  workspaceBreakAfterCase = Boolean(value);
+  writeStorage(WORKSPACE_BREAK_AFTER_CASE_KEY, workspaceBreakAfterCase);
+}
+
+function toggleWorkspaceBreakAfterCase() {
+  saveWorkspaceBreakAfterCase(!workspaceBreakAfterCase);
+  renderWorkspaceChrome();
+  renderTicketDetail();
+}
+
+function readWorkspaceCaseSlaStarts() {
+  const value = readStorage(WORKSPACE_CASE_SLA_STARTED_AT_KEY, {});
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function writeWorkspaceCaseSlaStarts(value) {
+  writeStorage(WORKSPACE_CASE_SLA_STARTED_AT_KEY, value && typeof value === "object" ? value : {});
+}
+
+function parseEpochMs(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric;
+  }
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function rememberWorkspaceCaseSlaStart(ticketId, startedAt = Date.now()) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  if (!normalizedTicketId) {
+    return 0;
+  }
+  const starts = readWorkspaceCaseSlaStarts();
+  const existing = parseEpochMs(starts[normalizedTicketId]);
+  if (existing) {
+    return existing;
+  }
+  starts[normalizedTicketId] = startedAt;
+  writeWorkspaceCaseSlaStarts(starts);
+  return startedAt;
+}
+
+function workspaceCaseAssignedAt(ticket = selectedTicket) {
+  const explicitAssignedAt = parseEpochMs(
+    ticket?.assignedAt ||
+      ticket?.assigned_at ||
+      ticket?.assignment_started_at ||
+      ticket?.engineer_assigned_at
+  );
+  if (explicitAssignedAt) {
+    return explicitAssignedAt;
+  }
+  const ticketId = engineerCaseRouteId(ticket) || selectedTicketId;
+  return rememberWorkspaceCaseSlaStart(ticketId);
+}
+
+function workspaceTicketSlaState(ticket = selectedTicket) {
+  const assignedAt = workspaceCaseAssignedAt(ticket);
+  if (!assignedAt) {
+    return {
+      label: "3h SLA from assign",
+      className: "is-muted",
+      remainingMs: WORKSPACE_CASE_SLA_MS,
+      overdue: false,
+    };
+  }
+  const remainingMs = WORKSPACE_CASE_SLA_MS - (Date.now() - assignedAt);
+  if (remainingMs <= 0) {
+    return { label: "SLA overdue", className: "is-danger", remainingMs, overdue: true };
+  }
+  if (remainingMs <= 30 * 60 * 1000) {
+    return { label: `${formatDuration(remainingMs)} left`, className: "is-warning", remainingMs, overdue: false };
+  }
+  return { label: `${formatDuration(remainingMs)} left`, className: "is-success", remainingMs, overdue: false };
+}
+
+function formatDuration(ms) {
+  const totalMinutes = Math.max(0, Math.ceil(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function formatCountdown(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getWorkspaceSlaCountdownLabel(sla) {
+  if (!selectedTicketId) {
+    return "3h SLA from assign";
+  }
+  if (sla?.overdue) {
+    return "SLA overdue";
+  }
+  return formatCountdown(sla?.remainingMs ?? WORKSPACE_CASE_SLA_MS);
 }
 
 function nextLocalInvestigationMessageId(prefix = "message") {
@@ -757,12 +868,26 @@ function LogoutButton({ loading = false } = {}) {
   `;
 }
 
+function getHeaderUserControlsEl() {
+  return document.getElementById("header-user-controls") || headerUserControlsEl;
+}
+
+function getWsStatusEl() {
+  return document.getElementById("ws-status") || wsStatusEl;
+}
+
+function workspaceRealtimeStatusLabel() {
+  const suffix = storageMode === "unknown" ? "" : ` | Storage: ${storageMode}`;
+  return `${workspaceRealtimeStatusText}${suffix}`;
+}
+
 function renderHeaderUserControls() {
-  if (!headerUserControlsEl) {
+  const controlsEl = getHeaderUserControlsEl();
+  if (!controlsEl) {
     return;
   }
   const engineer = getSelectedEngineer() || getCandidateEngineer();
-  headerUserControlsEl.innerHTML = [
+  controlsEl.innerHTML = [
     UserProfileChip({ username: engineer.name, role: "ENGINEER" }),
     LogoutButton({ loading: logoutLoading }),
   ].join("");
@@ -772,6 +897,129 @@ function renderHeaderUserControls() {
       window.alert(`Logout failed: ${error.message}`);
     });
   });
+}
+
+function renderWorkspaceAssignmentSidebarHtml() {
+  refreshWorkspaceSessionState();
+  const engineer = getSelectedEngineer() || getCandidateEngineer();
+  const inShift = isInShift();
+  const activeTicketId = selectedTicketId || engineerCaseRouteId(selectedTicket);
+  const activeTicketTitle = selectedTicket
+    ? String(selectedTicket.title || selectedTicket.subject || "Current engineer case")
+    : activeTicketId
+    ? "Loading assigned case"
+    : "No active Engineer Ticket";
+  const investigatingCount = tickets.filter((ticket) => normalizeStatusValue(ticket?.status || "open") === "investigating").length;
+  const sla = workspaceTicketSlaState(selectedTicket);
+  const assignable = Boolean(inShift && !activeTicketId);
+  const assignmentSummary = activeTicketId
+    ? `${activeTicketId} is locked until this case is completed.`
+    : "Ready opens the first real investigating case.";
+
+  return `
+    <div class="sidebar-inner">
+      <div class="rail-brand">
+        <div class="rail-brand-icon">
+          <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+        </div>
+        <div class="rail-brand-copy">
+          <span class="rail-brand-title">Concierge AI</span>
+          <span class="rail-brand-subtitle">Assignment Command</span>
+        </div>
+      </div>
+
+      <div class="rail-compact-stack" aria-hidden="true">
+        <span class="engineer-avatar mono rail-compact-avatar">${escapeHtml(engineer.initials)}</span>
+        <span class="rail-compact-status ${inShift ? "is-success" : "is-muted"}">
+          <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
+        </span>
+        <span class="rail-compact-status ${activeTicketId ? "is-warning" : "is-success"}">
+          <span class="material-symbols-outlined" aria-hidden="true">${activeTicketId ? "confirmation_number" : "task_alt"}</span>
+        </span>
+      </div>
+
+      <section class="engineer-context-card panel-card">
+        <div class="sidebar-profile">
+          <span class="engineer-avatar mono" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
+          <div>
+            <p class="eyebrow">Engineer context</p>
+            <h2>${escapeHtml(engineer.name)}</h2>
+            <p>${escapeHtml(engineer.role)}</p>
+          </div>
+        </div>
+        <div class="status-pills">
+          <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
+          <span class="status-pill ${assignable ? "is-success" : "is-warning"}">${assignable ? "Ready for next" : "Not assignable"}</span>
+        </div>
+      </section>
+
+      <section class="context-panel panel-card">
+        <div class="panel-head">
+          <p class="eyebrow">UTC+8 daily shift</p>
+          <h3>${escapeHtml(workspaceShift.start)}-${escapeHtml(workspaceShift.end)}</h3>
+          <p>${escapeHtml(formatUtc8Time())}</p>
+        </div>
+        <div class="shift-form shift-form-readonly" aria-label="UTC+8 daily shift">
+          <span class="field">
+            <span class="field-label">Start</span>
+            <strong>${escapeHtml(workspaceShift.start)}</strong>
+          </span>
+          <span class="field">
+            <span class="field-label">End</span>
+            <strong>${escapeHtml(workspaceShift.end)}</strong>
+          </span>
+        </div>
+      </section>
+
+      <section class="context-panel panel-card">
+        <div class="panel-head">
+          <p class="eyebrow">Assignment</p>
+          <h3>${activeTicketId ? "One active ticket" : "No active Engineer Ticket"}</h3>
+          <p>${escapeHtml(assignmentSummary)}</p>
+        </div>
+        <div class="sidebar-metrics">
+          <span><strong>${escapeHtml(String(investigatingCount))}</strong> investigating</span>
+          <span><strong>3h</strong> SLA</span>
+          <span><strong class="current-ticket-sla ${escapeHtml(sla.className)}" data-sla-countdown>${escapeHtml(
+            getWorkspaceSlaCountdownLabel(sla)
+          )}</strong></span>
+        </div>
+      </section>
+
+      <section class="context-panel panel-card">
+        <div class="panel-head">
+          <p class="eyebrow">Current case</p>
+          <h3>${escapeHtml(activeTicketId || "Waiting")}</h3>
+          <p>${escapeHtml(activeTicketTitle)}</p>
+        </div>
+      </section>
+
+      <div class="rail-footer workspace-sidebar-footer">
+        <div class="rail-status-card">
+          <svg class="rail-status-icon realtime-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="1.8" fill="currentColor"></circle>
+            <path d="M8.8 8.8C7 10.6 7 13.4 8.8 15.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+            <path d="M15.2 8.8C17 10.6 17 13.4 15.2 15.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+            <path d="M5.6 5.6C2.7 8.5 2.7 15.5 5.6 18.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+            <path d="M18.4 5.6C21.3 8.5 21.3 15.5 18.4 18.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+          </svg>
+          <div class="rail-footer-copy">
+            <span class="realtime-label">Realtime</span>
+            <span id="ws-status" class="realtime-value">${escapeHtml(workspaceRealtimeStatusLabel())}</span>
+          </div>
+        </div>
+        <div id="header-user-controls" class="header-user-controls rail-user-controls"></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderWorkspaceAssignmentSidebar() {
+  if (!workspaceAssignmentSidebarEl) {
+    return;
+  }
+  workspaceAssignmentSidebarEl.innerHTML = renderWorkspaceAssignmentSidebarHtml();
+  renderHeaderUserControls();
 }
 
 function parseRoute() {
@@ -885,8 +1133,7 @@ function renderWorkspaceChrome() {
     renderFilterControls();
   }
 
-  renderHeaderUserControls();
-  renderRailNav();
+  renderWorkspaceAssignmentSidebar();
 }
 
 function formatMultiline(value) {
@@ -2260,8 +2507,11 @@ function buildDetailComboboxHtml({
 }
 
 function setRealtimeStatus(text) {
-  const suffix = storageMode === "unknown" ? "" : ` | Storage: ${storageMode}`;
-  wsStatusEl.textContent = `${text}${suffix}`;
+  workspaceRealtimeStatusText = String(text || "");
+  const statusEl = getWsStatusEl();
+  if (statusEl) {
+    statusEl.textContent = workspaceRealtimeStatusLabel();
+  }
 }
 
 function applyLocalTicketPatch(ticketId, patch) {
@@ -2489,6 +2739,7 @@ function renderReadinessInsteadOfPool() {
   saveWorkspaceActive(false);
   readyTransitionActive = false;
   boardLoading = false;
+  stopWorkspaceSlaCountdown();
   closeSocket();
   tickets = [];
   selectedPoolStatus = "investigating";
@@ -2573,6 +2824,7 @@ async function readyToRoll() {
 
     const ticketId = engineerCaseRouteId(nextTicket);
     selectedPoolStatus = "investigating";
+    rememberWorkspaceCaseSlaStart(ticketId);
     saveWorkspaceActive(true);
     readyTransitionActive = false;
     window.location.hash = `#/tickets/${encodeURIComponent(ticketId)}`;
@@ -2893,6 +3145,7 @@ function renderTicketPoolView() {
 }
 
 function resetDetailWorkspaceState() {
+  stopWorkspaceSlaCountdown();
   clearStatusComboboxBlurTimer();
   clearLocalInvestigationThreadState();
   resetDetailRefreshState();
@@ -3850,6 +4103,7 @@ function renderTicketDetailHeaderHtml(viewState) {
           String(viewState.ticket.title || viewState.ticket.subject || "(No subject)")
         )}</h2>
         ${renderTicketDetailStatusBadgeHtml(viewState)}
+        ${renderWorkspaceCaseControlsHtml(viewState)}
       </div>
       <div class="workspace-header-line workspace-header-line-secondary">
         ${
@@ -3864,6 +4118,27 @@ function renderTicketDetailHeaderHtml(viewState) {
         <span>Updated ${escapeHtml(formatDateTime(viewState.ticket.updated_at))}</span>
       </div>
     </header>
+  `;
+}
+
+function renderWorkspaceCaseControlsHtml(viewState) {
+  const sla = workspaceTicketSlaState(viewState?.ticket);
+  return `
+    <div class="workspace-case-controls">
+      <span class="current-ticket-sla ${escapeHtml(sla.className)}" data-sla-countdown>${escapeHtml(
+        getWorkspaceSlaCountdownLabel(sla)
+      )}</span>
+      <button
+        class="btn btn-ghost break-after-case-btn ${workspaceBreakAfterCase ? "is-active" : ""}"
+        type="button"
+        data-action="toggle-break-after-case"
+        data-detail-action="toggle-break-after-case"
+        aria-pressed="${workspaceBreakAfterCase ? "true" : "false"}"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">free_cancellation</span>
+        ${workspaceBreakAfterCase ? "Break queued after this case" : "Break after this case"}
+      </button>
+    </div>
   `;
 }
 
@@ -4327,6 +4602,55 @@ function renderTicketDetailViewFromState(viewState) {
   `;
 }
 
+function getWorkspaceSlaCountdownNodes() {
+  const nodes = [];
+  if (workspaceRegionEl && typeof workspaceRegionEl.querySelectorAll === "function") {
+    nodes.push(...Array.from(workspaceRegionEl.querySelectorAll("[data-sla-countdown]")));
+  }
+  if (workspaceAssignmentSidebarEl && typeof workspaceAssignmentSidebarEl.querySelectorAll === "function") {
+    nodes.push(...Array.from(workspaceAssignmentSidebarEl.querySelectorAll("[data-sla-countdown]")));
+  }
+  return nodes;
+}
+
+function updateWorkspaceSlaCountdown() {
+  const sla = workspaceTicketSlaState(selectedTicket);
+  const label = getWorkspaceSlaCountdownLabel(sla);
+  getWorkspaceSlaCountdownNodes().forEach((node) => {
+    node.textContent = label;
+    node.className = `current-ticket-sla ${sla.className}`;
+  });
+  return sla;
+}
+
+function stopWorkspaceSlaCountdown() {
+  if (workspaceSlaCountdownTimer) {
+    clearInterval(workspaceSlaCountdownTimer);
+    workspaceSlaCountdownTimer = null;
+  }
+}
+
+function startWorkspaceSlaCountdown() {
+  stopWorkspaceSlaCountdown();
+  if (!selectedTicketId) {
+    return;
+  }
+  const initialSla = updateWorkspaceSlaCountdown();
+  if (initialSla.overdue) {
+    return;
+  }
+  workspaceSlaCountdownTimer = setInterval(() => {
+    if (!selectedTicketId) {
+      stopWorkspaceSlaCountdown();
+      return;
+    }
+    const sla = updateWorkspaceSlaCountdown();
+    if (sla.overdue) {
+      stopWorkspaceSlaCountdown();
+    }
+  }, 1000);
+}
+
 function shouldPreserveInvestigationComposerOnRender(viewState) {
   if (!viewState?.showInvestigationComposer || viewState.controlsDisabled) {
     return false;
@@ -4443,6 +4767,7 @@ function closeTicketDetail() {
 
 function renderTicketDetail() {
   if (!workspaceRegionEl || routeState.view !== "detail") {
+    stopWorkspaceSlaCountdown();
     detailScheduledScrollPlans = null;
     detailScheduledScrollJobId += 1;
     return;
@@ -4451,15 +4776,18 @@ function renderTicketDetail() {
   renderWorkspaceChrome();
   if (!selectedTicketId || detailLoading || !selectedTicket) {
     workspaceRegionEl.innerHTML = renderTicketDetailView();
+    startWorkspaceSlaCountdown();
     return;
   }
   const viewState = buildTicketDetailViewState();
   if (shouldPreserveInvestigationComposerOnRender(viewState) && patchTicketDetailWhilePreservingComposer(viewState)) {
     syncDetailPaneScrollPosition(previousPaneSnapshot, viewState);
+    startWorkspaceSlaCountdown();
     return;
   }
   workspaceRegionEl.innerHTML = renderTicketDetailViewFromState(viewState);
   syncDetailPaneScrollPosition(previousPaneSnapshot, viewState);
+  startWorkspaceSlaCountdown();
 }
 
 function redirectOpenTicketToPool() {
@@ -4860,6 +5188,11 @@ async function handleDetailClick(event) {
 
   const action = button.dataset.detailAction;
   if (!action) {
+    return;
+  }
+
+  if (action === "toggle-break-after-case") {
+    toggleWorkspaceBreakAfterCase();
     return;
   }
 

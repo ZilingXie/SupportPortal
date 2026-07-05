@@ -175,6 +175,24 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("assignment-sidebar", css)
         self.assertIn("problem-workspace", css)
 
+    def test_workspace_case_shell_keeps_assignment_sidebar_and_case_controls(self) -> None:
+        app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("supportportal_workspace_break_after_case", app_source)
+        self.assertIn("renderWorkspaceAssignmentSidebarHtml", app_source)
+        self.assertIn("renderWorkspaceCaseControlsHtml", app_source)
+        self.assertIn("Concierge AI", app_source)
+        self.assertIn("Assignment Command", app_source)
+        self.assertIn("Engineer context", app_source)
+        self.assertIn("UTC+8 daily shift", app_source)
+        self.assertIn("Break after this case", app_source)
+        self.assertIn("data-action=\"toggle-break-after-case\"", app_source)
+        self.assertIn("current-ticket-sla", app_source)
+        self.assertIn("workspace-assignment-sidebar", css)
+        self.assertIn("workspace-case-controls", css)
+        self.assertIn("break-after-case-btn", css)
+
     def test_workspace_ready_opens_only_investigating_case(self) -> None:
         self.run_workspace_app_script(
             """
