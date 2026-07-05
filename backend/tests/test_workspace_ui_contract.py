@@ -219,6 +219,29 @@ class WorkspaceUiContractTests(unittest.TestCase):
             """
         )
 
+    def test_workspace_root_does_not_fallback_to_engineer_ticket_pool(self) -> None:
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Maya"));
+            localStorage.setItem("supportportal_workspace_active", JSON.stringify(true));
+            window.location.hash = "";
+
+            await enterBoard();
+
+            if (window.__fetchCalls.some((call) => call.url === "/api/engineer/tickets?status=all")) {
+              throw new Error("workspace root should not load the engineer ticket pool");
+            }
+            const root = document.getElementById("workspace-root");
+            if (!root.innerHTML.includes("I'm ready to roll")) {
+              throw new Error("workspace root should return to readiness instead of pool");
+            }
+            const workspace = document.getElementById("workspace-region");
+            if (workspace.innerHTML.includes("Engineer queue metrics")) {
+              throw new Error("workspace root rendered the engineer pool fallback");
+            }
+            """
+        )
+
     def test_workspace_mutation_payloads_use_selected_engineer_id(self) -> None:
         self.run_workspace_app_script(
             """

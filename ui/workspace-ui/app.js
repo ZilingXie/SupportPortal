@@ -2485,6 +2485,30 @@ function renderNoInvestigatingCase(message = "No investigating cases available")
   `;
 }
 
+function renderReadinessInsteadOfPool() {
+  saveWorkspaceActive(false);
+  readyTransitionActive = false;
+  boardLoading = false;
+  closeSocket();
+  tickets = [];
+  selectedPoolStatus = "investigating";
+  closeAllHeaderFilterComboboxes({ render: false });
+  resetDetailWorkspaceState();
+  if (filterControlsEl) {
+    filterControlsEl.innerHTML = "";
+  }
+  if (workspaceRegionEl) {
+    workspaceRegionEl.innerHTML = "";
+  }
+  toggleScreens();
+  if (getSelectedEngineer()) {
+    renderWelcome();
+  } else {
+    renderLogin();
+  }
+  setRealtimeStatus("Realtime: signed out");
+}
+
 function renderWorkspace() {
   parseRoute();
 
@@ -2500,7 +2524,7 @@ function renderWorkspace() {
     return;
   }
 
-  renderTickets();
+  renderReadinessInsteadOfPool();
 }
 
 function engineerCaseRouteId(ticket) {
@@ -2580,10 +2604,7 @@ async function syncRouteToWorkspace(options = {}) {
     return;
   }
 
-  if (selectedTicketId || selectedTicket || detailLoading) {
-    resetDetailWorkspaceState();
-  }
-  renderTickets();
+  renderReadinessInsteadOfPool();
 }
 
 async function fetchJson(url, options = undefined) {
@@ -5431,8 +5452,12 @@ function setupWebSocket() {
 }
 
 async function enterBoard() {
-  toggleScreens();
   parseRoute();
+  if (routeState.view !== "detail" || !routeState.ticketId) {
+    renderReadinessInsteadOfPool();
+    return;
+  }
+  toggleScreens();
   boardLoading = routeState.view === "pool" && tickets.length === 0;
   renderWorkspace();
   await detectStorageMode();
