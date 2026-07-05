@@ -193,6 +193,30 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("workspace-case-controls", css)
         self.assertIn("break-after-case-btn", css)
 
+    def test_workspace_assignment_sidebar_collapses_until_hover(self) -> None:
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("--workspace-sidebar-collapsed-width: 96px", css)
+        self.assertIn("--workspace-sidebar-expanded-width: 320px", css)
+        self.assertIn("width: var(--workspace-sidebar-collapsed-width)", css)
+        self.assertIn("margin-left: var(--workspace-sidebar-collapsed-width)", css)
+        self.assertIn(".workspace-assignment-sidebar:hover,\n.workspace-assignment-sidebar:focus-within", css)
+        self.assertIn("width: var(--workspace-sidebar-expanded-width)", css)
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.rail-compact-stack\s*\{.*visibility: visible",
+        )
+        self.assertIn(".workspace-assignment-sidebar .rail-compact-status", css)
+        self.assertIn(".workspace-assignment-sidebar .rail-compact-avatar", css)
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\)\s*\{.*opacity: 0;.*pointer-events: none",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar:hover \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\),\s*\.workspace-assignment-sidebar:focus-within \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\)\s*\{.*opacity: 1;.*pointer-events: auto",
+        )
+
     def test_workspace_ready_opens_only_investigating_case(self) -> None:
         self.run_workspace_app_script(
             """
