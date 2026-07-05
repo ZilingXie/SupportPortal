@@ -1447,6 +1447,19 @@ html.material-symbols-pending .material-symbols-outlined {
   text-transform: uppercase;
 }
 
+.workspace-ticket-id-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  line-height: inherit;
+}
+
+.workspace-ticket-id-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
 .workspace-ticket-title {
   flex: 1 1 auto;
   min-width: 0;

@@ -4095,7 +4095,13 @@ function renderTicketDetailHeaderHtml(viewState) {
   return `
     <header class="workspace-header">
       <div class="workspace-header-line workspace-header-line-primary">
-        <span class="workspace-ticket-id">${escapeHtml(viewState.ticketId)}</span>
+        <button
+          class="workspace-ticket-id workspace-ticket-id-button"
+          type="button"
+          data-detail-action="back-to-workspace-home"
+          aria-label="Return to workspace home"
+          title="Return to workspace home"
+        >${escapeHtml(viewState.ticketId)}</button>
         <h2 class="workspace-ticket-title">${escapeHtml(
           String(viewState.ticket.title || viewState.ticket.subject || "(No subject)")
         )}</h2>
@@ -5178,6 +5184,11 @@ async function handleDetailClick(event) {
 
   const action = button.dataset.detailAction;
   if (!action) {
+    return;
+  }
+
+  if (action === "back-to-workspace-home") {
+    closeTicketDetail();
     return;
   }
 
