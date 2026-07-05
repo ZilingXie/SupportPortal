@@ -3201,7 +3201,10 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-assignment-sidebar .sidebar-inner {
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   max-height: calc(100vh - 46px);
   overflow-x: hidden;
   overflow-y: auto;
@@ -3218,14 +3221,24 @@ html.material-symbols-pending .material-symbols-outlined {
   justify-content: center;
   gap: 0;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 54px;
   margin-bottom: 8px;
+}
+
+.workspace-assignment-sidebar .rail-brand-icon {
+  flex: 0 0 54px;
 }
 
 .workspace-assignment-sidebar:hover .rail-brand,
 .workspace-assignment-sidebar:focus-within .rail-brand {
   justify-content: flex-start;
   gap: 16px;
+}
+
+.workspace-assignment-sidebar .rail-brand-copy {
+  flex: 0 0 0;
 }
 
 .workspace-assignment-sidebar .rail-brand-copy,
@@ -3243,6 +3256,11 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-assignment-sidebar:focus-within .user-meta {
   opacity: 1;
   max-width: none;
+}
+
+.workspace-assignment-sidebar:hover .rail-brand-copy,
+.workspace-assignment-sidebar:focus-within .rail-brand-copy {
+  flex: 1 1 auto;
 }
 
 .workspace-assignment-sidebar .rail-compact-stack {
@@ -3558,6 +3576,7 @@ html.material-symbols-pending .material-symbols-outlined {
   .workspace-assignment-sidebar .rail-footer-copy,
   .workspace-assignment-sidebar .user-meta {
     opacity: 1;
+    flex: 1 1 auto;
     max-width: none;
   }
 

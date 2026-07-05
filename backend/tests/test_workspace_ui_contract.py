@@ -200,6 +200,16 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("--workspace-sidebar-expanded-width: 320px", css)
         self.assertIn("width: var(--workspace-sidebar-collapsed-width)", css)
         self.assertIn("margin-left: var(--workspace-sidebar-collapsed-width)", css)
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.sidebar-inner\s*\{.*grid-template-columns: minmax\(0, 1fr\);.*min-width: 0;.*max-width: 100%",
+        )
+        self.assertIn(".workspace-assignment-sidebar .rail-brand-icon", css)
+        self.assertIn("flex: 0 0 54px", css)
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.rail-brand\s*\{.*min-width: 0;.*max-width: 100%",
+        )
         self.assertIn(".workspace-assignment-sidebar:hover,\n.workspace-assignment-sidebar:focus-within", css)
         self.assertIn("width: var(--workspace-sidebar-expanded-width)", css)
         self.assertRegex(
