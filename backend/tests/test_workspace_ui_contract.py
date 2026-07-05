@@ -197,7 +197,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn("workspace-logout-footer-1", html)
+        self.assertIn("workspace-ticket-number-home-1", html)
         self.assertNotIn("detail-back-icon-btn", app_source)
         self.assertNotIn('aria-label="Back to Pool"', app_source)
         self.assertNotIn(">arrow_back<", app_source)
@@ -209,6 +209,47 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertRegex(
             app_source,
             r"(?s)if \(detailLoading\) \{\s*return renderWorkspacePreparingLoadingHtml",
+        )
+
+    def test_workspace_ticket_number_is_hidden_home_button(self) -> None:
+        app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('data-detail-action="back-to-workspace-home"', app_source)
+        self.assertIn('aria-label="Return to workspace home"', app_source)
+        self.assertRegex(
+            app_source,
+            r"(?s)if \(action === \"back-to-workspace-home\"\) \{\s*closeTicketDetail\(\);",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-ticket-id-button\s*\{.*appearance: none;.*border: 0;.*background: transparent;",
+        )
+        self.run_workspace_app_script(
+            """
+            selectedTicketId = "TK-231-1";
+            routeState.view = "detail";
+            routeState.ticketId = "TK-231-1";
+            window.location.hash = "#/tickets/TK-231-1";
+
+            await handleDetailClick({
+              target: {
+                closest(selector) {
+                  if (selector === "button[data-detail-action]") {
+                    return {
+                      dataset: { detailAction: "back-to-workspace-home" },
+                      disabled: false,
+                    };
+                  }
+                  return null;
+                },
+              },
+            });
+
+            if (window.location.hash !== "#/tickets") {
+              throw new Error(`expected workspace home hash, got ${window.location.hash}`);
+            }
+            """
         )
 
     def test_workspace_sidebar_footer_keeps_logout_visible(self) -> None:
