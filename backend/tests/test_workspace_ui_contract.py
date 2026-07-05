@@ -193,6 +193,24 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("workspace-case-controls", css)
         self.assertIn("break-after-case-btn", css)
 
+    def test_workspace_detail_header_has_no_back_arrow_and_uses_preparing_loading(self) -> None:
+        html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
+        app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("workspace-header-loading-1", html)
+        self.assertNotIn("detail-back-icon-btn", app_source)
+        self.assertNotIn('aria-label="Back to Pool"', app_source)
+        self.assertNotIn(">arrow_back<", app_source)
+        self.assertNotIn("Loading ticket workspace...", app_source)
+        self.assertRegex(
+            app_source,
+            r"(?s)function renderWorkspacePreparingLoadingHtml\s*\(.*?\)\s*\{.*Preparing your workspace.*ready-loading-spinner",
+        )
+        self.assertRegex(
+            app_source,
+            r"(?s)if \(detailLoading\) \{\s*return renderWorkspacePreparingLoadingHtml",
+        )
+
     def test_workspace_assignment_sidebar_collapses_until_hover(self) -> None:
         css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
 

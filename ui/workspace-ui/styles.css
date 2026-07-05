@@ -1447,47 +1447,6 @@ html.material-symbols-pending .material-symbols-outlined {
   text-transform: uppercase;
 }
 
-.detail-back-icon-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--ink-muted);
-  transition:
-    color 160ms ease,
-    background-color 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms ease;
-}
-
-.detail-back-icon-btn .material-symbols-outlined {
-  font-size: 14px;
-  font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 20;
-}
-
-.detail-back-icon-btn:hover:not(:disabled) {
-  color: var(--ink);
-  background: rgba(228, 233, 239, 0.28);
-  box-shadow: 0 0 0 6px rgba(228, 233, 239, 0.26);
-  transform: translateY(-1px);
-}
-
-.detail-back-icon-btn:focus-visible {
-  outline: none;
-  color: var(--ink);
-  background: rgba(228, 233, 239, 0.24);
-  box-shadow:
-    0 0 0 4px rgba(0, 100, 147, 0.12),
-    0 0 0 7px rgba(228, 233, 239, 0.22);
-}
-
 .workspace-ticket-title {
   flex: 1 1 auto;
   min-width: 0;
