@@ -23,7 +23,7 @@ PORT = 9227
 SHOTS_SPEC = [
     ("01-why-now.png", "http://127.0.0.1:8765/docs/roadmap/phase1.html", None),
     ("02-big-picture.png", "http://127.0.0.1:8765/docs/roadmap/phase1.html#architecture", "architecture"),
-    ("03-assignment-admin.png", "https://support.stellarix.space/assignment/admin", None),
+    ("03-assignment-admin.png", "https://support.stellarix.space/workspace/admin", None),
     ("04-agentrelay-network.png", "http://127.0.0.1:8765/docs/roadmap/phase1.html#agentrelay", None),
     ("05-rnd-agent-example.png", "http://127.0.0.1:8765/docs/roadmap/phase1.html#agentrelay", "rnd"),
     ("06-guardrail-showcase.png", "http://127.0.0.1:8765/docs/roadmap/phase1.html#showcase", None),
