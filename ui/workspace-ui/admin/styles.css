@@ -1582,6 +1582,13 @@ p {
   box-shadow: 0 12px 28px rgba(0, 176, 255, 0.36);
 }
 
+.admin-main-ai-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+  transform: none;
+  box-shadow: none;
+}
+
 .admin-main-ai-btn .material-symbols-outlined {
   font-size: 18px;
   font-variation-settings: "FILL" 1;
