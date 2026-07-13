@@ -19,10 +19,10 @@ const LEGACY_REASSURANCE_MESSAGES = new Set([
 const DEMO_USERS = [
   {
     id: "user-1",
-    username: "Zac",
     name: "Zac",
     email: "zac@example.com",
-    password: "Zac",
+    role: "Demo customer",
+    initials: "Z",
   },
 ];
 const REPLY_COUNTDOWN_BASELINE_MINUTES = 20;
@@ -1074,13 +1074,8 @@ function getCurrentUser() {
   }
 }
 
-function login(username, password) {
-  const normalizedUsername = String(username || "").trim().toLowerCase();
-  const normalizedPassword = String(password || "").trim();
-  const match = DEMO_USERS.find(
-    (user) =>
-      user.username.toLowerCase() === normalizedUsername && user.password === normalizedPassword
-  );
+function login(userId) {
+  const match = DEMO_USERS.find((user) => user.id === String(userId || "").trim());
   if (!match) {
     return null;
   }
@@ -2710,57 +2705,61 @@ function renderLogin() {
         </section>
         <section class="panel auth-panel">
           <div class="panel-header">
-            <h2 class="panel-title">Sign In</h2>
-            <p class="panel-desc">Enter your credentials to access ${CLIENT_ASSISTANT_NAME}.</p>
+            <p class="auth-panel-kicker">Choose a demo customer</p>
+            <h2 class="panel-title">Customer login</h2>
+            <p class="panel-desc">Choose a customer to enter the client workspace.</p>
           </div>
           <div class="panel-body">
-            <form id="login-form" class="stack">
-              ${
-                state.loginError
-                  ? `<div class="error-box">${escapeHtml(state.loginError)}</div>`
-                  : ""
-              }
-              <div class="field">
-                <label for="username">Username</label>
-                <input class="input" id="username" name="username" type="text" placeholder="Zac" required />
-              </div>
-              <div class="field">
-                <label for="password">Password</label>
-                <input class="input" id="password" name="password" type="password" placeholder="Zac" required />
-              </div>
-              <button class="btn btn-primary w-full" type="submit" ${
-                state.isSubmittingLogin ? "disabled" : ""
-              }>
-                ${state.isSubmittingLogin ? "Signing in..." : "Sign In"}
-              </button>
-            </form>
+            ${
+              state.loginError
+                ? `<div class="error-box">${escapeHtml(state.loginError)}</div>`
+                : ""
+            }
+            <div class="client-user-selector" aria-label="Choose a demo customer">
+              ${DEMO_USERS.map(
+                (user) => `
+                  <button
+                    class="client-user-option"
+                    type="button"
+                    data-login-user-id="${escapeHtml(user.id)}"
+                    ${state.isSubmittingLogin ? "disabled" : ""}
+                  >
+                    <span class="client-user-avatar" aria-hidden="true">${escapeHtml(user.initials)}</span>
+                    <span class="client-user-copy">
+                      <strong>${escapeHtml(user.name)}</strong>
+                      <span>${escapeHtml(user.role)}</span>
+                    </span>
+                    <span class="material-symbols-outlined client-user-arrow" aria-hidden="true">arrow_forward</span>
+                  </button>
+                `
+              ).join("")}
+            </div>
           </div>
         </section>
       </div>
-      <section class="demo-box">
-        <div><strong>Demo Account</strong></div>
-        <div>Username: Zac / Password: Zac</div>
-      </section>
     </div>
   `;
 
-  const form = document.getElementById("login-form");
-  form?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const username = document.getElementById("username")?.value?.trim() || "";
-    const password = document.getElementById("password")?.value || "";
-    state.loginError = "";
-    const result = login(username, password);
-    if (!result) {
-      state.isSubmittingLogin = false;
-      state.loginError = "Invalid username or password. Please try again.";
+  appRoot.querySelectorAll("[data-login-user-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (state.isSubmittingLogin) {
+        return;
+      }
+      state.isSubmittingLogin = true;
       render();
-      return;
-    }
-    state.user = result;
-    state.isSubmittingLogin = false;
-    await syncTicketsFromBackend({ silent: true });
-    navigate("/chat");
+      const result = login(button.dataset.loginUserId);
+      if (!result) {
+        state.isSubmittingLogin = false;
+        state.loginError = "This demo customer is unavailable. Please try again.";
+        render();
+        return;
+      }
+      state.loginError = "";
+      state.user = result;
+      await syncTicketsFromBackend({ silent: true });
+      state.isSubmittingLogin = false;
+      navigate("/chat");
+    });
   });
 }
 
