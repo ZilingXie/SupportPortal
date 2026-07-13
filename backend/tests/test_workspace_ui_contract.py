@@ -590,7 +590,9 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("function ChangeEngineerButton", app_source)
         self.assertIn('title="Change engineer"', app_source)
         self.assertIn('aria-label="Change engineer"', app_source)
-        self.assertIn("workspace-original-change-icon-1", Path("ui/workspace-ui/index.html").read_text(encoding="utf-8"))
+        html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
+        self.assertIn("workspace-original-change-icon-1", html)
+        self.assertIn("workspace-sidebar-footer-bottom-1", html)
         self.assertIn('<svg class="logout-icon" viewBox="0 0 24 24"', app_source)
         self.assertIn('d="M14 8L18 12L14 16"', app_source)
         self.assertNotIn(">switch_account</span>", app_source)
@@ -598,11 +600,26 @@ class WorkspaceUiContractTests(unittest.TestCase):
             app_source,
             r"(?s)function handleChangeEngineerClick\s*\(\).*?signOut\(\);",
         )
+        sidebar_source = app_source.split("function renderWorkspaceAssignmentSidebarHtml()", 1)[1].split(
+            "function renderWorkspaceAssignmentSidebar()", 1
+        )[0]
+        self.assertIn('class="workspace-sidebar-scroll"', sidebar_source)
+        self.assertNotIn('class="rail-status-card"', sidebar_source)
+        self.assertNotIn('id="ws-status"', sidebar_source)
         self.run_workspace_app_script(
             """
             localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Jack"));
             localStorage.setItem("supportportal_workspace_active", JSON.stringify(false));
             renderReadinessInsteadOfPool();
+
+            const sidebar = document.getElementById("workspace-assignment-sidebar");
+            if (sidebar.innerHTML.includes("Realtime") || sidebar.innerHTML.includes("ws-status")) {
+              throw new Error("workspace sidebar should not render the Realtime status card");
+            }
+            const controls = document.getElementById("header-user-controls");
+            if (!controls.innerHTML.includes('aria-label="Change engineer"')) {
+              throw new Error("collapsed workspace sidebar should keep the change engineer control");
+            }
 
             handleChangeEngineerClick();
 
@@ -623,19 +640,28 @@ class WorkspaceUiContractTests(unittest.TestCase):
 
         self.assertRegex(
             css,
-            r"(?s)\.workspace-assignment-sidebar \.rail-user-controls,\s*"
-            r"\.workspace-assignment-sidebar:hover \.rail-user-controls,\s*"
-            r"\.workspace-assignment-sidebar:focus-within \.rail-user-controls\s*\{"
-            r".*grid-template-columns: minmax\(0, 1fr\) auto;"
+            r"(?s)\.workspace-assignment-sidebar \.rail-user-controls\s*\{"
+            r".*grid-template-columns: 1fr;"
+            r".*justify-items: center;"
             r".*min-width: 0;"
             r".*max-width: 100%;"
             r".*overflow: hidden;",
         )
         self.assertRegex(
             css,
-            r"(?s)\.workspace-assignment-sidebar \.user-profile-chip,\s*"
-            r"\.workspace-assignment-sidebar:hover \.user-profile-chip,\s*"
+            r"(?s)\.workspace-assignment-sidebar:hover \.rail-user-controls,\s*"
+            r"\.workspace-assignment-sidebar:focus-within \.rail-user-controls\s*\{"
+            r".*grid-template-columns: minmax\(0, 1fr\) auto;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.user-profile-chip\s*\{.*display: none;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar:hover \.user-profile-chip,\s*"
             r"\.workspace-assignment-sidebar:focus-within \.user-profile-chip\s*\{"
+            r".*display: flex;"
             r".*min-width: 0;"
             r".*max-width: 100%;"
             r".*overflow: hidden;",
@@ -647,8 +673,20 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertRegex(
             css,
             r"(?s)\.workspace-assignment-sidebar \.user-name,\s*"
-            r"\.workspace-assignment-sidebar \.user-role,\s*"
-            r"\.workspace-assignment-sidebar \.realtime-value\s*\{.*text-overflow: ellipsis;",
+            r"\.workspace-assignment-sidebar \.user-role\s*\{.*text-overflow: ellipsis;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.sidebar-inner\s*\{"
+            r".*grid-template-rows: auto minmax\(0, 1fr\) auto;"
+            r".*height: calc\(100vh - 46px\);"
+            r".*overflow: hidden;",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)\.workspace-assignment-sidebar \.workspace-sidebar-footer\s*\{"
+            r".*align-self: end;"
+            r".*margin-top: 0;",
         )
 
     def test_workspace_assignment_sidebar_collapses_until_hover(self) -> None:
@@ -678,11 +716,11 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn(".workspace-assignment-sidebar .rail-compact-avatar", css)
         self.assertRegex(
             css,
-            r"(?s)\.workspace-assignment-sidebar \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\)\s*\{.*opacity: 0;.*pointer-events: none",
+            r"(?s)\.workspace-assignment-sidebar \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\):not\(\.workspace-sidebar-footer\)\s*\{.*opacity: 0;.*pointer-events: none",
         )
         self.assertRegex(
             css,
-            r"(?s)\.workspace-assignment-sidebar:hover \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\),\s*\.workspace-assignment-sidebar:focus-within \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\)\s*\{.*opacity: 1;.*pointer-events: auto",
+            r"(?s)\.workspace-assignment-sidebar:hover \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\):not\(\.workspace-sidebar-footer\),\s*\.workspace-assignment-sidebar:focus-within \.sidebar-inner > :not\(\.rail-brand\):not\(\.rail-compact-stack\):not\(\.workspace-sidebar-footer\)\s*\{.*opacity: 1;.*pointer-events: auto",
         )
 
     def test_workspace_ready_opens_only_investigating_case(self) -> None:
