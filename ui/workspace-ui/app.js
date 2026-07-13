@@ -1059,6 +1059,7 @@ function renderWorkspaceAssignmentSidebarHtml() {
         </span>
       </div>
 
+      <div class="workspace-sidebar-scroll">
       <section class="engineer-context-card panel-card">
         <div class="sidebar-profile">
           <span class="engineer-avatar mono" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
@@ -1114,21 +1115,9 @@ function renderWorkspaceAssignmentSidebarHtml() {
           <p>${escapeHtml(activeTicketTitle)}</p>
         </div>
       </section>
+      </div>
 
       <div class="rail-footer workspace-sidebar-footer">
-        <div class="rail-status-card">
-          <svg class="rail-status-icon realtime-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="1.8" fill="currentColor"></circle>
-            <path d="M8.8 8.8C7 10.6 7 13.4 8.8 15.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-            <path d="M15.2 8.8C17 10.6 17 13.4 15.2 15.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-            <path d="M5.6 5.6C2.7 8.5 2.7 15.5 5.6 18.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-            <path d="M18.4 5.6C21.3 8.5 21.3 15.5 18.4 18.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-          </svg>
-          <div class="rail-footer-copy">
-            <span class="realtime-label">Realtime</span>
-            <span id="ws-status" class="realtime-value">${escapeHtml(workspaceRealtimeStatusLabel())}</span>
-          </div>
-        </div>
         <div id="header-user-controls" class="header-user-controls rail-user-controls"></div>
       </div>
     </div>
@@ -1145,10 +1134,18 @@ function renderWorkspaceAssignmentSidebar() {
 }
 
 function parseRoute() {
-  const hash = String(window.location.hash || "#/tickets").trim();
+  const hash = String(window.location.hash || "").trim();
   const path = hash.replace(/^#/, "") || "/tickets";
 
   if (path === "/" || path === "/tickets") {
+    if (hash) {
+      const homeUrl = `${window.location.pathname || "/workspace/"}${window.location.search || ""}`;
+      if (typeof window.history?.replaceState === "function") {
+        window.history.replaceState(null, "", homeUrl);
+      } else {
+        window.location.hash = "";
+      }
+    }
     routeState.view = "pool";
     routeState.ticketId = null;
     return routeState;
@@ -1169,7 +1166,7 @@ function parseRoute() {
 }
 
 function navigate(path) {
-  const target = `#${path}`;
+  const target = path === "/" || path === "/tickets" ? "" : `#${path}`;
   if (window.location.hash === target) {
     void syncRouteToWorkspace({ silent: true, showLoading: false });
     return false;
@@ -3083,7 +3080,7 @@ async function readyToRoll() {
     tickets = Array.isArray(payload?.tickets) ? payload.tickets : [];
     if (!nextTicket) {
       readyTransitionActive = false;
-      window.location.hash = "#/tickets";
+      window.location.hash = "";
       renderNoInvestigatingCase("No investigating cases available for automatic assignment right now.");
       return;
     }
@@ -5053,7 +5050,7 @@ function redirectOpenTicketToPool() {
   resetDetailWorkspaceState();
   routeState.view = "pool";
   routeState.ticketId = null;
-  window.location.hash = "#/tickets";
+  window.location.hash = "";
   showWorkspaceFeedback(
     "Client Workspace Only",
     "This ticket is only visible in the client workspace."
@@ -6085,7 +6082,7 @@ function resetWorkspaceBoardState() {
   selectedPoolStatus = "investigating";
   closeAllHeaderFilterComboboxes({ render: false });
   resetDetailWorkspaceState();
-  window.location.hash = "#/tickets";
+  window.location.hash = "";
   parseRoute();
   renderFilterControls();
   renderWorkspace();
