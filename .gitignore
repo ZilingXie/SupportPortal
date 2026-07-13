@@ -23,6 +23,7 @@ artifacts/
 # CodeGraph
 .codegraph/
 AGENTS.md
+CLAUDE.md
 .deploy_ec2.lock
 .DS_Store
 .superpowers/
