@@ -3203,10 +3203,7 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .workspace-shift-readiness-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 18px;
-  align-items: end;
+  display: block;
 }
 
 .workspace-shift-note {

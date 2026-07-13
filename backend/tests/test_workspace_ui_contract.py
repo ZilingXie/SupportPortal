@@ -229,6 +229,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("workspace-home-layout-tune-1", html)
         self.assertIn("workspace-home-density-1", html)
         self.assertIn("workspace-home-section-blocks-1", html)
+        self.assertIn("workspace-ready-action-placement-1", html)
         self.assertIn('const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";', app_source)
         self.assertIn("WEEKLY_KNOWN_ISSUES", app_source)
         self.assertIn("RTC black screen reports in Chromium 124", app_source)
@@ -246,6 +247,19 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("workspace-service-event-list", css)
         self.assertNotIn("workspace-shift-panel", app_source)
         self.assertNotIn("<p class=\"ticket-kicker\">UTC+8 shift</p>", app_source)
+        welcome_source = app_source.split("function renderWelcomeViewHtml()", 1)[1].split(
+            "function renderWelcome()", 1
+        )[0]
+        self.assertEqual(welcome_source.count('data-action="ready-to-roll"'), 1)
+        self.assertRegex(
+            welcome_source,
+            r'(?s)workspace-welcome-top.*data-action="ready-to-roll".*workspace-home-intro',
+        )
+        shift_form_source = welcome_source.split('<form class="workspace-shift-form"', 1)[1].split(
+            "</form>", 1
+        )[0]
+        self.assertIn("Save shift", shift_form_source)
+        self.assertNotIn("I'm ready to roll", shift_form_source)
         self.assertNotRegex(css, r"(?s)\.workspace-home-hero\s*\{.*background: transparent;")
         self.assertRegex(
             css,
@@ -323,8 +337,12 @@ class WorkspaceUiContractTests(unittest.TestCase):
             const statusGridIndex = workspace.innerHTML.indexOf("workspace-home-status-grid");
             const knownIndex = workspace.innerHTML.indexOf("workspace-known-issues-panel");
             const serviceIndex = workspace.innerHTML.indexOf("workspace-service-status-panel");
-            if (shiftPanelIndex < 0 || readyIndex < shiftPanelIndex || readyIndex > statusGridIndex) {
-              throw new Error("ready action should live inside the Shift readiness section before the issue/status grid");
+            if (readyIndex < 0 || shiftPanelIndex < 0 || readyIndex > shiftPanelIndex) {
+              throw new Error("ready action should live in the workspace header before the Shift readiness section");
+            }
+            const shiftPanelHtml = workspace.innerHTML.slice(shiftPanelIndex, statusGridIndex);
+            if (!shiftPanelHtml.includes("Save shift") || shiftPanelHtml.includes('data-action="ready-to-roll"')) {
+              throw new Error("Shift readiness should keep Save shift without a second ready action");
             }
             if (statusGridIndex < 0 || knownIndex < statusGridIndex || serviceIndex < statusGridIndex) {
               throw new Error("known issues and service status should live in the same side-by-side grid");
@@ -565,8 +583,40 @@ class WorkspaceUiContractTests(unittest.TestCase):
             """
         )
 
-    def test_workspace_sidebar_footer_keeps_logout_visible(self) -> None:
+    def test_workspace_sidebar_footer_keeps_change_engineer_visible(self) -> None:
+        app_source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("function ChangeEngineerButton", app_source)
+        self.assertIn('title="Change engineer"', app_source)
+        self.assertIn('aria-label="Change engineer"', app_source)
+        self.assertIn(">switch_account</span>", app_source)
+        self.assertRegex(
+            app_source,
+            r"(?s)function handleChangeEngineerClick\s*\(\).*?signOut\(\);",
+        )
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Jack"));
+            localStorage.setItem("supportportal_workspace_active", JSON.stringify(false));
+            renderReadinessInsteadOfPool();
+
+            handleChangeEngineerClick();
+
+            if (localStorage.getItem("supportportal_workspace_selected_engineer") !== null) {
+              throw new Error("change engineer should clear the selected workspace engineer");
+            }
+            if (document.getElementById("login-screen").classList.contains("hidden")) {
+              throw new Error("change engineer should return to the engineer selector");
+            }
+            if (!document.getElementById("engineer-screen").classList.contains("hidden")) {
+              throw new Error("change engineer should hide the engineer workspace shell");
+            }
+            if (!document.getElementById("workspace-root").innerHTML.includes("Engineer login")) {
+              throw new Error("change engineer should render the workspace engineer selector");
+            }
+            """
+        )
 
         self.assertRegex(
             css,

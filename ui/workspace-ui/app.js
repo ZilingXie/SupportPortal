@@ -140,7 +140,7 @@ let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
 let storageMode = "unknown";
-let logoutLoading = false;
+let changeEngineerLoading = false;
 const routeState = {
   view: "pool",
   ticketId: null,
@@ -972,21 +972,17 @@ function UserProfileChip({ username, role }) {
   `;
 }
 
-function LogoutButton({ loading = false } = {}) {
+function ChangeEngineerButton({ loading = false } = {}) {
   return `
     <button
       id="logout-btn"
       class="logout-icon-btn"
       type="button"
-      title="Logout"
-      aria-label="Logout"
+      title="Change engineer"
+      aria-label="Change engineer"
       ${loading ? "disabled" : ""}
     >
-      <svg class="logout-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M14 8L18 12L14 16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
-        <path d="M18 12H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
-        <path d="M10 4H7C5.9 4 5 4.9 5 6V18C5 19.1 5.9 20 7 20H10" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-      </svg>
+      <span class="logout-icon material-symbols-outlined" aria-hidden="true">switch_account</span>
     </button>
   `;
 }
@@ -1012,13 +1008,11 @@ function renderHeaderUserControls() {
   const engineer = getSelectedEngineer() || getCandidateEngineer();
   controlsEl.innerHTML = [
     UserProfileChip({ username: engineer.name, role: "ENGINEER" }),
-    LogoutButton({ loading: logoutLoading }),
+    ChangeEngineerButton({ loading: changeEngineerLoading }),
   ].join("");
   const logoutBtn = document.getElementById("logout-btn");
   logoutBtn?.addEventListener("click", () => {
-    handleLogoutClick().catch((error) => {
-      window.alert(`Logout failed: ${error.message}`);
-    });
+    handleChangeEngineerClick();
   });
 }
 
@@ -2689,17 +2683,6 @@ function isAuthenticated() {
   return Boolean(selectedEngineerId && workspaceActive);
 }
 
-function setAuthenticated(value) {
-  if (value) {
-    if (!getSelectedEngineerId()) {
-      writeStorage(WORKSPACE_AUTH_KEY, getCandidateEngineer().id);
-    }
-    saveWorkspaceActive(true);
-  } else {
-    saveWorkspaceActive(false);
-  }
-}
-
 function toggleScreens() {
   const authed = isAuthenticated();
   loginScreenEl?.classList.toggle("hidden", authed);
@@ -2860,7 +2843,15 @@ function renderWelcomeViewHtml() {
               <strong>Shift readiness</strong>
             </div>
           </div>
-          <button class="btn btn-ghost" type="button" data-action="sign-out">Change engineer</button>
+          <button
+            class="btn btn-primary workspace-ready-btn"
+            type="button"
+            data-action="ready-to-roll"
+            ${inShift ? "" : "disabled"}
+          >
+            I'm ready to roll
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+          </button>
         </div>
         <div class="workspace-home-intro">
           <p class="workspace-eyebrow">Engineer workspace</p>
@@ -2892,17 +2883,6 @@ function renderWelcomeViewHtml() {
               </label>
               <button class="btn btn-ghost" type="submit">Save shift</button>
             </form>
-            <div class="workspace-ready-actions">
-              <button
-                class="btn btn-primary workspace-ready-btn"
-                type="button"
-                data-action="ready-to-roll"
-                ${inShift ? "" : "disabled"}
-              >
-                I'm ready to roll
-                <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
-              </button>
-            </div>
           </div>
           ${!inShift ? `<p class="workspace-shift-note">Ready is disabled outside the saved UTC+8 shift.</p>` : ""}
         </article>
@@ -6129,14 +6109,6 @@ function signOut() {
   setRealtimeStatus("Realtime: signed out");
 }
 
-function handleLocalLogout() {
-  setAuthenticated(false);
-  resetWorkspaceBoardState();
-  toggleScreens();
-  resetLoginForm();
-  renderWelcome();
-}
-
 function handleWorkspaceEntryClick(event) {
   const target = event?.target;
   const engineerButton = target?.closest?.("[data-engineer-id]");
@@ -6185,16 +6157,16 @@ function handleWorkspaceShiftSubmit(event) {
 
 hydrateTicketPoolViewMode();
 
-async function handleLogoutClick() {
-  if (logoutLoading) {
+function handleChangeEngineerClick() {
+  if (changeEngineerLoading) {
     return;
   }
-  logoutLoading = true;
+  changeEngineerLoading = true;
   renderHeaderUserControls();
   try {
-    handleLocalLogout();
+    signOut();
   } finally {
-    logoutLoading = false;
+    changeEngineerLoading = false;
     renderHeaderUserControls();
   }
 }
