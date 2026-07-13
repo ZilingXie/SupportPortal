@@ -173,7 +173,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
             main_source,
         )
         self.assertIn('app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")', main_source)
-        self.assertIn('app.mount("/assignment", StaticFiles(directory=ASSIGNMENT_DIR, html=True), name="assignment-ui")', main_source)
+        self.assertNotIn('app.mount("/assignment"', main_source)
 
         for path in (
             Path("ui/workspace-ui/index.html"),

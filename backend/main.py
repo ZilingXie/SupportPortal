@@ -183,7 +183,6 @@ CLIENT_DIR = UI_DIR / "client-ui"
 ACCOUNT_DIR = UI_DIR / "account-ui"
 BILLING_RESPONSE_DIR = UI_DIR / "billing-response-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
-ASSIGNMENT_DIR = UI_DIR / "assignment-ui"
 WORKSPACE_DIR = UI_DIR / "workspace-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 SHARED_UI_DIR = UI_DIR / "shared-ui"
@@ -640,8 +639,6 @@ if BILLING_RESPONSE_DIR.exists():
     app.mount("/response", StaticFiles(directory=BILLING_RESPONSE_DIR, html=True), name="billing-response-ui")
 if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
-if ASSIGNMENT_DIR.exists():
-    app.mount("/assignment", StaticFiles(directory=ASSIGNMENT_DIR, html=True), name="assignment-ui")
 if WORKSPACE_DIR.exists():
     app.mount("/workspace", StaticFiles(directory=WORKSPACE_DIR, html=True), name="workspace-ui")
 if DASHBOARD_DIR.exists():

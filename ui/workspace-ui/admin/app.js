@@ -148,7 +148,7 @@ let adminSchedule = normalizeAdminSchedule(readStorage(ASSIGNMENT_ADMIN_SCHEDULE
 let adminEditState = null; // { engineerId, weekday } | null
 let adminSection = "engineer-management";
 
-const root = document.getElementById("assignment-root");
+const root = document.getElementById("workspace-admin-root");
 const isAdminPage = window.location.pathname.includes("/admin");
 
 function readStorage(key, fallback) {
@@ -947,7 +947,7 @@ function renderAdminShell(contentHtml, activeSection, mainClass, searchPlacehold
           <input type="text" placeholder="${escapeHtml(searchPlaceholder)}" aria-label="Search" />
         </div>
         <div class="admin-topbar-actions">
-          <a href="/assignment" class="admin-topbar-btn" title="Back to engineer demo" aria-label="Back to engineer demo">
+          <a href="/workspace" class="admin-topbar-btn" title="Back to workspace" aria-label="Back to workspace">
             <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
           </a>
           <button class="admin-topbar-btn" aria-label="Notifications">
@@ -1487,7 +1487,7 @@ function enterWelcome() {
   writeStorage(ASSIGNMENT_AUTH_KEY, selectedEngineerId);
   workspaceActive = false;
   saveWorkspaceActive();
-  addEvent("Engineer selected", `${selectedEngineerId} opened /assignment.`);
+  addEvent("Engineer selected", `${selectedEngineerId} opened /workspace.`);
   renderWelcome();
 }
 

@@ -9,7 +9,7 @@ Goal: turn `phase1.html` into a 3-minute product ad. Start with a concrete custo
 | 03 · Pain points | 00:28-00:45 | `phase1.html#reply-quality` | Hold on the bad-case risk cards: Quality risk, Customer trust breaks, No operational help, After-the-fact visibility. | Explain reply quality, manager visibility, after-the-fact review, and late replies. |
 | 04 · Why now | 00:45-01:05 | `phase1_video/2-why-now.png` | Slow zoom toward 73k and Custom. | Explain Zendesk cost plus limited customization space. |
 | 05 · AI-native system | 01:05-01:25 | `phase1_video/3-big-pic.png` | Highlight Customer / Zendesk, SupportPortal Core, and Future Agent Network. | Show customer UI unchanged and internal workflow upgraded. |
-| 06 · Assignment | 01:25-01:45 | `phase1_video/4-admin.png` plus `/assignment` if screen capture is available. | Highlight engineer intake, assignment admin, shifts, rules, fallback. | Show how support engineers receive cases and how managers control routing. |
+| 06 · Assignment | 01:25-01:45 | `phase1_video/4-admin.png` plus `/workspace` if screen capture is available. | Highlight engineer intake, assignment admin, shifts, rules, fallback. | Show how support engineers receive cases and how managers control routing. |
 | 07 · Guardrail showcase | 01:45-02:05 | `phase1_video/showcase-guardrail-demo.mp4` or `phase1_video/7-show-case.png` | Play Guardrail showcase dialogue. | Demonstrate how Guardrail rejects incomplete replies before customers see them. |
 | 08 · Dashboard | 02:05-02:25 | `phase1_video/12-dashboard.png` | Pan across metrics and roadmap. | Show live quality control metrics, not only SLA reports. |
 | 09 · Account automation | 02:25-02:43 | `/account` | Show account intake / billing route automation. | Demonstrate AI account automation for billing cases that do not need engineer in the loop. |
@@ -22,7 +22,7 @@ Goal: turn `phase1.html` into a 3-minute product ad. Start with a concrete custo
 - `phase1_video/bad-case-support-failure-demo.mp4`: Bad case traditional support failure animation.
 - `phase1_video/2-why-now.png`: Why now section.
 - `phase1_video/3-big-pic.png`: architecture and customer UI unchanged.
-- `phase1_video/4-admin.png`: `/assignment/admin`; optionally record `/assignment` for engineer intake.
+- `phase1_video/4-admin.png`: `/workspace/admin`; optionally record `/workspace` for engineer intake.
 - `phase1_video/5-agent-relay.png`: AgentRelay network screenshot; use as a fallback or overlay during the final productization message.
 - `phase1_video/showcase-guardrail-demo.mp4`: Guardrail showcase animation.
 - `phase1_video/7-show-case.png`: static fallback for Guardrail showcase dialogue.
