@@ -590,7 +590,10 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("function ChangeEngineerButton", app_source)
         self.assertIn('title="Change engineer"', app_source)
         self.assertIn('aria-label="Change engineer"', app_source)
-        self.assertIn(">switch_account</span>", app_source)
+        self.assertIn("workspace-original-change-icon-1", Path("ui/workspace-ui/index.html").read_text(encoding="utf-8"))
+        self.assertIn('<svg class="logout-icon" viewBox="0 0 24 24"', app_source)
+        self.assertIn('d="M14 8L18 12L14 16"', app_source)
+        self.assertNotIn(">switch_account</span>", app_source)
         self.assertRegex(
             app_source,
             r"(?s)function handleChangeEngineerClick\s*\(\).*?signOut\(\);",
