@@ -3373,16 +3373,25 @@ html.material-symbols-pending .material-symbols-outlined {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 12px;
+  height: calc(100vh - 46px);
   min-width: 0;
   max-width: 100%;
   max-height: calc(100vh - 46px);
+  overflow: hidden;
+}
+
+.workspace-assignment-sidebar .workspace-sidebar-scroll {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
 }
 
-.workspace-assignment-sidebar .sidebar-inner::-webkit-scrollbar {
+.workspace-assignment-sidebar .workspace-sidebar-scroll::-webkit-scrollbar {
   display: none;
 }
 
@@ -3501,7 +3510,7 @@ html.material-symbols-pending .material-symbols-outlined {
     visibility 0s linear 120ms;
 }
 
-.workspace-assignment-sidebar .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack) {
+.workspace-assignment-sidebar .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack):not(.workspace-sidebar-footer) {
   opacity: 0;
   pointer-events: none;
   transform: translateX(-8px);
@@ -3510,8 +3519,8 @@ html.material-symbols-pending .material-symbols-outlined {
     transform 180ms ease 90ms;
 }
 
-.workspace-assignment-sidebar:hover .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack),
-.workspace-assignment-sidebar:focus-within .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack) {
+.workspace-assignment-sidebar:hover .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack):not(.workspace-sidebar-footer),
+.workspace-assignment-sidebar:focus-within .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack):not(.workspace-sidebar-footer) {
   opacity: 1;
   pointer-events: auto;
   transform: none;
@@ -3635,36 +3644,38 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .workspace-assignment-sidebar .workspace-sidebar-footer {
+  align-self: end;
   justify-items: stretch;
+  margin-top: 0;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
 }
 
-.workspace-assignment-sidebar .rail-status-card,
-.workspace-assignment-sidebar:hover .rail-status-card,
-.workspace-assignment-sidebar:focus-within .rail-status-card {
-  width: 100%;
+.workspace-assignment-sidebar .rail-user-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  justify-items: center;
   min-width: 0;
   max-width: 100%;
-  justify-content: flex-start;
-  gap: 12px;
-  padding-inline: 14px;
   overflow: hidden;
 }
 
-.workspace-assignment-sidebar .rail-user-controls,
 .workspace-assignment-sidebar:hover .rail-user-controls,
 .workspace-assignment-sidebar:focus-within .rail-user-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  justify-items: stretch;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
   justify-content: stretch;
 }
 
-.workspace-assignment-sidebar .user-profile-chip,
+.workspace-assignment-sidebar .user-profile-chip {
+  display: none;
+}
+
 .workspace-assignment-sidebar:hover .user-profile-chip,
 .workspace-assignment-sidebar:focus-within .user-profile-chip {
   display: flex;
@@ -3677,8 +3688,7 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .workspace-assignment-sidebar .user-name,
-.workspace-assignment-sidebar .user-role,
-.workspace-assignment-sidebar .realtime-value {
+.workspace-assignment-sidebar .user-role {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3776,7 +3786,13 @@ html.material-symbols-pending .material-symbols-outlined {
   }
 
   .workspace-assignment-sidebar .sidebar-inner {
+    grid-template-rows: auto;
+    height: auto;
     max-height: none;
+  }
+
+  .workspace-assignment-sidebar .workspace-sidebar-scroll {
+    overflow: visible;
   }
 
   .workspace-assignment-sidebar .rail-brand {
@@ -3800,6 +3816,10 @@ html.material-symbols-pending .material-symbols-outlined {
     opacity: 1;
     pointer-events: auto;
     transform: none;
+  }
+
+  .workspace-assignment-sidebar .user-profile-chip {
+    display: flex;
   }
 
   .workspace-case-controls {

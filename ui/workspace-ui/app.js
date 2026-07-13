@@ -1059,6 +1059,7 @@ function renderWorkspaceAssignmentSidebarHtml() {
         </span>
       </div>
 
+      <div class="workspace-sidebar-scroll">
       <section class="engineer-context-card panel-card">
         <div class="sidebar-profile">
           <span class="engineer-avatar mono" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
@@ -1114,21 +1115,9 @@ function renderWorkspaceAssignmentSidebarHtml() {
           <p>${escapeHtml(activeTicketTitle)}</p>
         </div>
       </section>
+      </div>
 
       <div class="rail-footer workspace-sidebar-footer">
-        <div class="rail-status-card">
-          <svg class="rail-status-icon realtime-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="1.8" fill="currentColor"></circle>
-            <path d="M8.8 8.8C7 10.6 7 13.4 8.8 15.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-            <path d="M15.2 8.8C17 10.6 17 13.4 15.2 15.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-            <path d="M5.6 5.6C2.7 8.5 2.7 15.5 5.6 18.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-            <path d="M18.4 5.6C21.3 8.5 21.3 15.5 18.4 18.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-          </svg>
-          <div class="rail-footer-copy">
-            <span class="realtime-label">Realtime</span>
-            <span id="ws-status" class="realtime-value">${escapeHtml(workspaceRealtimeStatusLabel())}</span>
-          </div>
-        </div>
         <div id="header-user-controls" class="header-user-controls rail-user-controls"></div>
       </div>
     </div>
