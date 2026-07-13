@@ -168,6 +168,7 @@ def build_new_engineer_case(
         "final_confirmation_requested_at": None,
         "engineer_handoff_packet": None,
         "engineer_agent_state": None,
+        "assigned_engineer_id": None,
         "opened_at": now_value,
         "updated_at": now_value,
         "closed_at": None,

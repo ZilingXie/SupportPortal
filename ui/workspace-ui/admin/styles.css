@@ -2214,6 +2214,11 @@ p {
   padding: 0 18px 20px;
 }
 
+.admin-ticket-board {
+  width: 100%;
+  margin-top: 24px;
+}
+
 .admin-ticket-card {
   display: grid;
   gap: 14px;
@@ -2224,6 +2229,14 @@ p {
     linear-gradient(90deg, rgba(0, 176, 255, 0.07), transparent 34%),
     var(--surface-lowest);
   transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.admin-ticket-card.is-pending {
+  background: linear-gradient(90deg, rgba(159, 93, 18, 0.07), transparent 34%), var(--surface-lowest);
+}
+
+.admin-ticket-card.is-resolved {
+  background: linear-gradient(90deg, rgba(0, 104, 117, 0.06), transparent 34%), var(--surface-lowest);
 }
 
 .admin-ticket-card:hover {
@@ -2320,6 +2333,7 @@ p {
 
 .admin-ticket-state-row {
   align-items: center;
+  justify-content: flex-end;
 }
 
 .admin-ticket-status.is-handling {
@@ -2335,6 +2349,11 @@ p {
 .admin-ticket-status.is-queued {
   background: rgba(110, 120, 130, 0.12);
   color: var(--ink-soft);
+}
+
+.admin-ticket-status.is-resolved {
+  background: rgba(0, 104, 117, 0.1);
+  color: var(--success);
 }
 
 .admin-ticket-owner {

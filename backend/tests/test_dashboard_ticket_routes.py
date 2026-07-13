@@ -163,6 +163,7 @@ class DashboardTicketRouteTests(unittest.TestCase):
         closed_at: str | None = None,
         trigger_reason: str = "rag_insufficient_evidence",
         trigger_source: str = "worker_async_rag",
+        assigned_engineer_id: str | None = None,
         messages: list[dict[str, object]] | None = None,
     ) -> None:
         engineer_case = {
@@ -174,6 +175,7 @@ class DashboardTicketRouteTests(unittest.TestCase):
             "investigation_state": investigation_state,
             "trigger_source": trigger_source,
             "trigger_reason": trigger_reason,
+            "assigned_engineer_id": assigned_engineer_id,
             "opened_at": "2026-04-08T03:05:00+00:00",
             "updated_at": updated_at,
             "closed_at": closed_at,
@@ -247,6 +249,38 @@ class DashboardTicketRouteTests(unittest.TestCase):
         self.assertEqual(payload["investigation_history"], [])
         self.assertIsNone(payload["engineer_handoff_packet"])
         self.assertIsNone(payload["engineer_agent_state"])
+
+    def test_workspace_claim_assigns_engineer_case_and_rejects_other_engineer(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-CLAIM-001",
+            subject="claim me",
+            status="investigating",
+        )
+        self._seed_engineer_case(
+            engineer_case_id="TK-CLAIM-001-1",
+            client_ticket_id="TK-CLAIM-001",
+            status="investigating",
+            investigation_state="active",
+            updated_at="2026-04-08T03:07:00+00:00",
+            case_sequence=1,
+        )
+
+        claim_response = self.client.post(
+            "/api/engineer/tickets/TK-CLAIM-001-1/claim",
+            json={"engineer_id": "Maya"},
+        )
+
+        self.assertEqual(claim_response.status_code, 200, claim_response.text)
+        self.assertEqual(claim_response.json()["assigned_engineer_id"], "Maya")
+        tickets = self.client.get("/api/engineer/tickets?status=all").json()["tickets"]
+        self.assertEqual(tickets[0]["assigned_engineer_id"], "Maya")
+
+        conflict_response = self.client.post(
+            "/api/engineer/tickets/TK-CLAIM-001-1/claim",
+            json={"engineer_id": "Leo"},
+        )
+        self.assertEqual(conflict_response.status_code, 409, conflict_response.text)
+        self.assertIn("Maya", conflict_response.json()["detail"])
 
     def test_engineer_ticket_list_recovers_from_pool_acquire_error_within_shared_budget(self) -> None:
         repository = PostgresTicketRepository(

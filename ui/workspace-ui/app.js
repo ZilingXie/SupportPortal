@@ -3045,16 +3045,30 @@ function engineerCaseRouteId(ticket) {
   return String(ticket?.engineer_case_id || ticket?.ticket_id || ticket?.id || "").trim();
 }
 
-function findNextInvestigatingCase(payloadOrTickets) {
+function findNextInvestigatingCase(payloadOrTickets, engineerId = currentEngineerId()) {
   const items = Array.isArray(payloadOrTickets)
     ? payloadOrTickets
     : Array.isArray(payloadOrTickets?.tickets)
     ? payloadOrTickets.tickets
     : [];
+  const investigatingCases = items.filter(
+    (ticket) => normalizeStatusValue(ticket?.status || "open") === "investigating" && engineerCaseRouteId(ticket)
+  );
   return (
-    items.find((ticket) => normalizeStatusValue(ticket?.status || "open") === "investigating" && engineerCaseRouteId(ticket)) ||
+    investigatingCases.find(
+      (ticket) => String(ticket?.assigned_engineer_id || "").trim() === engineerId
+    ) ||
+    investigatingCases.find((ticket) => !String(ticket?.assigned_engineer_id || "").trim()) ||
     null
   );
+}
+
+async function claimEngineerCase(ticketId, engineerId) {
+  return fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ engineer_id: engineerId }),
+  });
 }
 
 async function readyToRoll() {
@@ -3076,7 +3090,7 @@ async function readyToRoll() {
     if (!readyTransitionActive) {
       return;
     }
-    const nextTicket = findNextInvestigatingCase(payload);
+    const nextTicket = findNextInvestigatingCase(payload, engineer.id);
     tickets = Array.isArray(payload?.tickets) ? payload.tickets : [];
     if (!nextTicket) {
       readyTransitionActive = false;
@@ -3086,6 +3100,12 @@ async function readyToRoll() {
     }
 
     const ticketId = engineerCaseRouteId(nextTicket);
+    const claim = await claimEngineerCase(ticketId, engineer.id);
+    tickets = tickets.map((ticket) =>
+      engineerCaseRouteId(ticket) === ticketId
+        ? { ...ticket, assigned_engineer_id: claim.assigned_engineer_id || engineer.id }
+        : ticket
+    );
     selectedPoolStatus = "investigating";
     rememberWorkspaceCaseSlaStart(ticketId);
     saveWorkspaceActive(true);

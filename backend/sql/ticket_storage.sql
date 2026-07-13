@@ -187,8 +187,12 @@ CREATE TABLE IF NOT EXISTS support_engineer_cases (
     engineer_agent_state JSONB,
     opened_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    closed_at TIMESTAMPTZ
+    closed_at TIMESTAMPTZ,
+    assigned_engineer_id TEXT
 );
+
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS assigned_engineer_id TEXT;
 
 CREATE TABLE IF NOT EXISTS support_engineer_case_messages (
     id BIGSERIAL PRIMARY KEY,

@@ -766,6 +766,13 @@ class WorkspaceUiContractTests(unittest.TestCase):
             if (!window.__fetchCalls.some((call) => call.url === "/api/engineer/tickets?status=investigating")) {
               throw new Error("ready flow did not request investigating tickets");
             }
+            const claimCall = window.__fetchCalls.find((call) => call.url === "/api/engineer/tickets/TK-INV-1/claim");
+            if (!claimCall) {
+              throw new Error("ready flow did not claim the selected engineer case");
+            }
+            if (JSON.parse(claimCall.options.body).engineer_id !== "Maya") {
+              throw new Error("ready flow did not claim the case for Maya");
+            }
             if (window.location.hash !== "#/tickets/TK-INV-1") {
               throw new Error(`expected investigating case hash, got ${window.location.hash}`);
             }
@@ -809,6 +816,9 @@ class WorkspaceUiContractTests(unittest.TestCase):
                 ],
               },
               {
+                assigned_engineer_id: "Maya",
+              },
+              {
                 tickets: [
                   {
                     ticket_id: "TK-INV-1",
@@ -838,6 +848,31 @@ class WorkspaceUiContractTests(unittest.TestCase):
             }
             if (workspace.innerHTML.includes("Preparing your workspace")) {
               throw new Error("continuous loading view was not replaced after ticket detail fetch");
+            }
+            """
+        )
+
+    def test_workspace_ready_prefers_own_assignment_and_skips_other_engineers(self) -> None:
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Maya"));
+            localStorage.setItem("supportportal_workspace_active", JSON.stringify(false));
+            window.__fetchResponses.push({
+              tickets: [
+                { ticket_id: "TK-JACK-1", status: "investigating", assigned_engineer_id: "Jack" },
+                { ticket_id: "TK-MAYA-1", status: "investigating", assigned_engineer_id: "Maya" },
+                { ticket_id: "TK-OPEN-1", status: "investigating", assigned_engineer_id: null },
+              ],
+            });
+
+            await readyToRoll();
+
+            const claimCall = window.__fetchCalls.find((call) => call.url.includes("/claim"));
+            if (!claimCall || claimCall.url !== "/api/engineer/tickets/TK-MAYA-1/claim") {
+              throw new Error(`expected Maya's existing assignment, got ${claimCall && claimCall.url}`);
+            }
+            if (window.location.hash !== "#/tickets/TK-MAYA-1") {
+              throw new Error(`expected Maya assignment hash, got ${window.location.hash}`);
             }
             """
         )

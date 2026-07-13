@@ -178,12 +178,13 @@ function escapeHtml(value) {
 
 function normalizeAdminTicket(ticket) {
   const status = String(ticket?.status || "open").trim().toLowerCase();
+  const assignedEngineerId = String(ticket?.assigned_engineer_id || "").trim();
+  const viewStatus = status === "resolved" ? "resolved" : assignedEngineerId ? "investigating" : "pending";
   const statusConfig = {
     investigating: { label: "Investigating", tone: "handling" },
-    communicating: { label: "Customer Follow-up", tone: "handling" },
-    escalated: { label: "Pending Triage", tone: "triage" },
-    open: { label: "Pending Triage", tone: "triage" },
-  }[status] || { label: status || "Open", tone: "queued" };
+    pending: { label: "Pending", tone: "triage" },
+    resolved: { label: "Resolved", tone: "resolved" },
+  }[viewStatus];
   const clientRef = ticket?.client_ticket_ref && typeof ticket.client_ticket_ref === "object"
     ? ticket.client_ticket_ref
     : {};
@@ -194,22 +195,12 @@ function normalizeAdminTicket(ticket) {
     title: String(ticket?.title || ticket?.subject || clientRef.subject || "Untitled engineer ticket").trim(),
     requester: String(ticket?.requester || "Customer").trim(),
     status,
+    viewStatus,
+    assignedEngineerId,
     poolStatus: statusConfig.label,
     statusTone: statusConfig.tone,
-    triggerSource: String(ticket?.trigger_source || "").trim(),
-    triggerReason: String(ticket?.trigger_reason || "").trim(),
     updatedAt: String(ticket?.updated_at || ticket?.opened_at || ticket?.created_at || "").trim(),
   };
-}
-
-function formatAdminIdentifier(value) {
-  const normalized = String(value || "").trim();
-  if (!normalized) return "Not provided";
-  return normalized
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 function formatAdminUpdatedAt(value) {
@@ -230,7 +221,7 @@ async function loadAdminTickets() {
   adminTicketsError = "";
   renderAdmin();
   try {
-    const response = await fetch("/api/engineer/tickets?status=open");
+    const response = await fetch("/api/engineer/tickets?status=all");
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -997,11 +988,11 @@ function renderNoTicketHtml(inShift, eligible) {
 // =============================================================================
 
 function renderAdmin() {
-  const isTicketPool = adminSection === "ticket-pool";
-  const contentHtml = isTicketPool ? renderAdminTicketPool() : renderAdminEngineerManagement();
-  const mainClass = !isTicketPool && adminEditState ? "admin-main has-edit-panel" : "admin-main";
-  const searchPlaceholder = isTicketPool
-    ? "Search ticket pool, customer, priority..."
+  const isTicketSection = adminSection === "active-tickets" || adminSection === "resolved-tickets";
+  const contentHtml = isTicketSection ? renderAdminTicketBoard(adminSection) : renderAdminEngineerManagement();
+  const mainClass = !isTicketSection && adminEditState ? "admin-main has-edit-panel" : "admin-main";
+  const searchPlaceholder = isTicketSection
+    ? "Search tickets or customers..."
     : "Search systems, tickets, engineers...";
   root.innerHTML = renderAdminShell(contentHtml, adminSection, mainClass, searchPlaceholder);
 }
@@ -1044,13 +1035,17 @@ function renderAdminShell(contentHtml, activeSection, mainClass, searchPlacehold
         <aside class="admin-sidebar">
           <nav class="admin-sidebar-nav">
             <ul>
-              <li><a href="#" data-action="admin-show-ticket-pool" class="${activeSection === "ticket-pool" ? "is-active" : ""}">
-                <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
-                Ticket Pool
-              </a></li>
               <li><a href="#" data-action="admin-show-engineer-management" class="${activeSection === "engineer-management" ? "is-active" : ""}">
                 <span class="material-symbols-outlined" aria-hidden="true">engineering</span>
                 Engineer Management
+              </a></li>
+              <li><a href="#" data-action="admin-show-active-tickets" class="${activeSection === "active-tickets" ? "is-active" : ""}">
+                <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
+                Active Ticket
+              </a></li>
+              <li><a href="#" data-action="admin-show-resolved-tickets" class="${activeSection === "resolved-tickets" ? "is-active" : ""}">
+                <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+                Resolved Ticket
               </a></li>
             </ul>
           </nav>
@@ -1076,8 +1071,8 @@ function renderAdminShell(contentHtml, activeSection, mainClass, searchPlacehold
 }
 
 function renderAdminEngineerManagement() {
-  const waitingCases = adminTickets.filter((ticket) => ticket.statusTone === "triage");
-  const activeCases = adminTickets.filter((ticket) => ticket.statusTone === "handling");
+  const waitingCases = adminTickets.filter((ticket) => ticket.viewStatus === "pending");
+  const activeCases = adminTickets.filter((ticket) => ticket.viewStatus === "investigating");
   const onShiftNow = getEngineersOnShiftNow();
   const onlineCount = getOnlineCoverage();
 
@@ -1169,7 +1164,7 @@ function renderAdminEngineerManagement() {
   }
 
   // Compute derived metrics
-  var assignmentVolume = adminTickets.length;
+  var assignmentVolume = waitingCases.length + activeCases.length;
 
   return `
           <!-- Header -->
@@ -1178,10 +1173,6 @@ function renderAdminEngineerManagement() {
               <h1>Operations Overview</h1>
               <p>Real-time engineer distribution and queue status.</p>
             </div>
-            <button class="admin-main-ai-btn" type="button" data-action="admin-refresh-tickets" aria-label="Refresh engineer tickets" ${adminTicketsLoading ? "disabled" : ""}>
-              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
-              ${adminTicketsLoading ? "Refreshing..." : "Refresh Tickets"}
-            </button>
           </header>
 
           <!-- Metric Cards -->
@@ -1319,7 +1310,7 @@ function renderAdminEngineerManagement() {
                         <tr>
                           <td><span class="admin-work-ticket">#${escapeHtml(ticket.id)}</span></td>
                           <td>${escapeHtml(ticket.requester)}</td>
-                          <td><span class="admin-work-status is-active"><span class="material-symbols-outlined" aria-hidden="true">psychiatry</span>${escapeHtml(ticket.poolStatus)}</span></td>
+                          <td><span class="admin-work-status is-active"><span class="material-symbols-outlined" aria-hidden="true">psychiatry</span>${escapeHtml(ticket.assignedEngineerId)}</span></td>
                         </tr>
                       `).join("")}
                   </tbody>
@@ -1350,107 +1341,49 @@ function renderAdminEngineerManagement() {
   `;
 }
 
-function getAdminPoolTickets() {
-  return adminTickets;
+function getAdminTicketsForSection(section) {
+  if (section === "resolved-tickets") {
+    return adminTickets.filter((ticket) => ticket.viewStatus === "resolved");
+  }
+  return adminTickets.filter((ticket) => ticket.viewStatus !== "resolved");
 }
 
-function renderAdminTicketPool() {
-  const poolTickets = getAdminPoolTickets();
-  const handlingCount = poolTickets.filter((ticket) => ticket.statusTone === "handling").length;
-  const triageCount = poolTickets.filter((ticket) => ticket.statusTone === "triage").length;
+function renderAdminTicketBoard(section) {
+  const isResolved = section === "resolved-tickets";
+  const sectionTickets = getAdminTicketsForSection(section);
+  const title = isResolved ? "Resolved Ticket" : "Active Ticket";
+  const description = isResolved
+    ? "Resolved Engineer cases, most recently updated first."
+    : "Pending and investigating Engineer cases, synchronized with /workspace.";
 
   return `
-          <header class="admin-main-header">
-            <div>
-              <h1>Ticket Pool</h1>
-              <p>Prioritize open customer issues and monitor engineer handoffs.</p>
-            </div>
-            <button class="admin-main-ai-btn" type="button" data-action="admin-refresh-tickets" aria-label="Refresh engineer tickets" ${adminTicketsLoading ? "disabled" : ""}>
-              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
-              ${adminTicketsLoading ? "Refreshing..." : "Refresh Tickets"}
-            </button>
-          </header>
-
-          <div class="admin-ticket-pool-layout">
-            <aside class="admin-pool-sidebar" aria-label="Ticket pool controls">
-              <section class="admin-pool-filter-card">
-                <div class="admin-pool-title-row">
-                  <div>
-                    <h2>Active Pool</h2>
-                    <p>Open Engineer cases from the live SupportPortal API.</p>
-                  </div>
-                  <span>${poolTickets.length} Total</span>
-                </div>
-                <h3>Data Source</h3>
-                <p>Showing non-resolved Engineer tickets. The pool refreshes every 30 seconds.</p>
-              </section>
-
-              <section class="admin-pool-metrics-card">
-                <div class="admin-pool-card-head">
-                  <h3>Queue Metrics</h3>
-                  <span class="material-symbols-outlined" aria-hidden="true">bar_chart</span>
-                </div>
-                ${renderAdminPoolMetric("Engineer Handling", poolTickets.length ? Math.round((handlingCount / poolTickets.length) * 100) : 0, "primary")}
-                ${renderAdminPoolMetric("Pending Triage", poolTickets.length ? Math.round((triageCount / poolTickets.length) * 100) : 0, "warning")}
-                ${renderAdminPoolMetric("API Synced", adminTicketsError ? 0 : 100, "success")}
-              </section>
-            </aside>
-
-            <section class="admin-pool-panel" aria-label="Ticket pool list">
-              <div class="admin-pool-stat-grid">
-                <div>
-                  <span>All Open Tickets</span>
-                  <strong>${poolTickets.length}</strong>
-                </div>
-                <div>
-                  <span>Engineer Handling</span>
-                  <strong>${handlingCount}</strong>
-                </div>
-                <div>
-                  <span>Pending Triage</span>
-                  <strong>${triageCount}</strong>
-                </div>
-              </div>
-              <div class="admin-pool-list-head">
-                <div>
-                  <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
-                  <span>Sorted by Recent Activity</span>
-                </div>
-              </div>
-              <div class="admin-ticket-list">
-                ${adminTicketsLoading && poolTickets.length === 0
-                  ? renderAdminPoolState("progress_activity", "Loading engineer tickets", "Fetching the current Engineer queue from SupportPortal.")
-                  : adminTicketsError && poolTickets.length === 0
-                  ? renderAdminPoolState("error", "Engineer tickets unavailable", `The Engineer API request failed: ${adminTicketsError}`)
-                  : poolTickets.length === 0
-                  ? renderAdminEmptyPool()
-                  : poolTickets.map(renderAdminTicketCard).join("")}
-              </div>
-            </section>
-          </div>
-  `;
-}
-
-function renderAdminPoolMetric(label, value, tone) {
-  const boundedValue = Math.max(0, Math.min(100, value));
-  return `
-    <div class="admin-pool-progress is-${tone}">
+    <header class="admin-main-header">
       <div>
-        <span>${escapeHtml(label)}</span>
-        <strong>${boundedValue}%</strong>
+        <h1>${title}</h1>
+        <p>${description}</p>
       </div>
-      <div class="admin-pool-progress-track"><span style="width:${boundedValue}%"></span></div>
-    </div>
-  `;
-}
-
-function renderAdminEmptyPool() {
-  return `
-    <article class="admin-ticket-card is-empty">
-      <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
-      <h3>No open tickets</h3>
-      <p>The queue is clear. New customer issues will appear here for triage.</p>
-    </article>
+    </header>
+    <section class="admin-pool-panel admin-ticket-board" aria-label="${title} list">
+      <div class="admin-pool-list-head">
+        <div>
+          <span class="material-symbols-outlined" aria-hidden="true">${isResolved ? "task_alt" : "schedule"}</span>
+          <span>${sectionTickets.length} ${sectionTickets.length === 1 ? "ticket" : "tickets"} &middot; updates automatically</span>
+        </div>
+      </div>
+      <div class="admin-ticket-list">
+        ${adminTicketsLoading && adminTickets.length === 0
+          ? renderAdminPoolState("progress_activity", "Loading engineer tickets", "Fetching the current Engineer cases from SupportPortal.")
+          : adminTicketsError && adminTickets.length === 0
+          ? renderAdminPoolState("error", "Engineer tickets unavailable", `The Engineer API request failed: ${adminTicketsError}`)
+          : sectionTickets.length === 0
+          ? renderAdminPoolState(
+              isResolved ? "task_alt" : "inventory_2",
+              isResolved ? "No resolved tickets" : "No active tickets",
+              isResolved ? "Resolved Engineer cases will appear here." : "New Engineer cases will appear here when they need assignment."
+            )
+          : sectionTickets.map(renderAdminTicketCard).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -1465,16 +1398,25 @@ function renderAdminPoolState(icon, title, description) {
 }
 
 function renderAdminTicketCard(ticket) {
-  const statusClass = ticket.statusTone === "handling" ? "is-handling" : ticket.statusTone === "triage" ? "is-triage" : "is-queued";
+  const statusClass = ticket.statusTone === "handling"
+    ? "is-handling"
+    : ticket.statusTone === "resolved"
+    ? "is-resolved"
+    : "is-triage";
+  const owner = ticket.viewStatus === "investigating"
+    ? `Assigned to ${ticket.assignedEngineerId}`
+    : ticket.viewStatus === "pending"
+    ? "Awaiting assignment"
+    : "";
 
   return `
-    <article class="admin-ticket-card">
+    <article class="admin-ticket-card is-${escapeHtml(ticket.viewStatus)}">
       <div class="admin-ticket-card-top">
         <div>
           <span class="admin-ticket-id">${escapeHtml(ticket.id)}</span>
           <h3>${escapeHtml(ticket.title)}</h3>
         </div>
-        <span class="admin-priority-pill">${escapeHtml(ticket.poolStatus)}</span>
+        <span class="admin-ticket-status ${statusClass}">${escapeHtml(ticket.poolStatus)}</span>
       </div>
       <div class="admin-ticket-meta">
         <span><span class="material-symbols-outlined" aria-hidden="true">business</span>${escapeHtml(ticket.requester || "Customer")}</span>
@@ -1482,17 +1424,7 @@ function renderAdminTicketCard(ticket) {
         <span><span class="material-symbols-outlined" aria-hidden="true">schedule</span>${escapeHtml(formatAdminUpdatedAt(ticket.updatedAt))}</span>
       </div>
       <p class="admin-ticket-summary">${escapeHtml(ticket.title)}</p>
-      <div class="admin-ticket-state-row">
-        <span class="admin-ticket-status ${statusClass}">${escapeHtml(ticket.poolStatus || "Queued Review")}</span>
-        <span class="admin-ticket-owner">Engineer queue</span>
-      </div>
-      <div class="admin-ticket-insight">
-        <span class="material-symbols-outlined" aria-hidden="true">account_tree</span>
-        <div>
-          <h4>Escalation Context</h4>
-          <p>${escapeHtml(formatAdminIdentifier(ticket.triggerReason))} &middot; ${escapeHtml(formatAdminIdentifier(ticket.triggerSource))}</p>
-        </div>
-      </div>
+      ${owner ? `<div class="admin-ticket-state-row"><span class="admin-ticket-owner">${escapeHtml(owner)}</span></div>` : ""}
     </article>
   `;
 }
@@ -1742,17 +1674,19 @@ root.addEventListener("click", (event) => {
   if (action === "reset-demo") resetDemo();
   if (action === "toggle-sidebar") toggleSidebar();
   if (action === "toggle-break-after-case") toggleBreakAfterCase();
-  if (action === "admin-show-ticket-pool") {
-    adminSection = "ticket-pool";
+  if (action === "admin-show-active-tickets") {
+    adminSection = "active-tickets";
+    adminEditState = null;
+    renderAdmin();
+  }
+  if (action === "admin-show-resolved-tickets") {
+    adminSection = "resolved-tickets";
     adminEditState = null;
     renderAdmin();
   }
   if (action === "admin-show-engineer-management") {
     adminSection = "engineer-management";
     renderAdmin();
-  }
-  if (action === "admin-refresh-tickets") {
-    loadAdminTickets();
   }
   if (action === "admin-close-panel" || action === "admin-cancel-edit") {
     adminEditState = null;
