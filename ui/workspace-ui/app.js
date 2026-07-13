@@ -982,7 +982,11 @@ function ChangeEngineerButton({ loading = false } = {}) {
       aria-label="Change engineer"
       ${loading ? "disabled" : ""}
     >
-      <span class="logout-icon material-symbols-outlined" aria-hidden="true">switch_account</span>
+      <svg class="logout-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M14 8L18 12L14 16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M18 12H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M10 4H7C5.9 4 5 4.9 5 6V18C5 19.1 5.9 20 7 20H10" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+      </svg>
     </button>
   `;
 }
