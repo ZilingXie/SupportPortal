@@ -80,7 +80,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn("System Admin", html)
         self.assertIn('id="workspace-admin-root"', html)
         self.assertIn("./styles.css?v=20260713-workspace-admin-3", html)
-        self.assertIn("./app.js?v=20260713-workspace-admin-3", html)
+        self.assertIn("./app.js?v=20260713-workspace-admin-4", html)
         self.assertIn('document.getElementById("workspace-admin-root")', app_source)
         self.assertIn('href="/workspace"', app_source)
         self.assertNotIn('href="/assignment"', app_source)
@@ -159,6 +159,14 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             }
             if (!activeHtml.includes("Assigned to Maya") || activeHtml.includes("TK-RESOLVED-1")) {
               throw new Error("active board assignment or filtering is incorrect");
+            }
+            if (!activeHtml.includes("Tickets in queue</span><strong>2") ||
+                !activeHtml.includes("Assigned</span><strong>1") ||
+                !activeHtml.includes("Pending assignment</span><strong>1")) {
+              throw new Error("active board ticket counts are incorrect");
+            }
+            if (activeHtml.includes("Awaiting assignment")) {
+              throw new Error("pending ticket card should not render assignment helper text");
             }
             const resolvedHtml = renderAdminTicketBoard("resolved-tickets");
             if (!resolvedHtml.includes("TK-RESOLVED-1") || resolvedHtml.includes("TK-ACTIVE-1")) {

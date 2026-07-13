@@ -1351,6 +1351,10 @@ function getAdminTicketsForSection(section) {
 function renderAdminTicketBoard(section) {
   const isResolved = section === "resolved-tickets";
   const sectionTickets = getAdminTicketsForSection(section);
+  const assignedTicketCount = isResolved
+    ? 0
+    : sectionTickets.filter((ticket) => Boolean(ticket.assignedEngineerId)).length;
+  const pendingAssignmentCount = isResolved ? 0 : sectionTickets.length - assignedTicketCount;
   const title = isResolved ? "Resolved Ticket" : "Active Ticket";
   const description = isResolved
     ? "Resolved Engineer cases, most recently updated first."
@@ -1364,6 +1368,13 @@ function renderAdminTicketBoard(section) {
       </div>
     </header>
     <section class="admin-pool-panel admin-ticket-board" aria-label="${title} list">
+      ${isResolved ? "" : `
+        <div class="admin-pool-stat-grid" aria-label="Active ticket summary">
+          <div><span>Tickets in queue</span><strong>${sectionTickets.length}</strong></div>
+          <div><span>Assigned</span><strong>${assignedTicketCount}</strong></div>
+          <div><span>Pending assignment</span><strong>${pendingAssignmentCount}</strong></div>
+        </div>
+      `}
       <div class="admin-pool-list-head">
         <div>
           <span class="material-symbols-outlined" aria-hidden="true">${isResolved ? "task_alt" : "schedule"}</span>
@@ -1405,8 +1416,6 @@ function renderAdminTicketCard(ticket) {
     : "is-triage";
   const owner = ticket.viewStatus === "investigating"
     ? `Assigned to ${ticket.assignedEngineerId}`
-    : ticket.viewStatus === "pending"
-    ? "Awaiting assignment"
     : "";
 
   return `
