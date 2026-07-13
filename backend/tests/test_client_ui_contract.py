@@ -37,8 +37,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         self.assertIn("<title>Support Portal</title>", html)
         self.assertIn('/shared-ui/composer.css?v=20260519-json-codeblock-1', html)
         self.assertIn('/shared-ui/composer.js?v=20260519-json-codeblock-1', html)
-        self.assertIn("./styles.css?v=20260519-json-codeblock-1", html)
-        self.assertIn("./app.js?v=20260519-json-codeblock-1", html)
+        self.assertIn("./styles.css?v=20260713-client-user-picker-login-1", html)
+        self.assertIn("./app.js?v=20260713-client-user-picker-login-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -181,6 +181,34 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
 
     run_client2_app_script = run_client_app_script
+
+    def test_client_login_uses_direct_demo_customer_selection(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("Choose a demo customer", app_source)
+        self.assertIn('data-login-user-id="${escapeHtml(user.id)}"', app_source)
+        self.assertIn('appRoot.querySelectorAll("[data-login-user-id]")', app_source)
+        self.assertNotIn('id="username"', app_source)
+        self.assertNotIn('id="password"', app_source)
+        self.assertNotIn("Username: Zac / Password: Zac", app_source)
+
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const selected = login("user-1");
+                if (!selected || selected.name !== "Zac") {
+                  throw new Error("Expected Zac to be selected by user id");
+                }
+                const stored = JSON.parse(localStorage.getItem(AUTH_KEY));
+                if (stored.id !== "user-1" || stored.email !== "zac@example.com") {
+                  throw new Error("Expected selected demo customer to persist");
+                }
+                if (login("missing-user") !== null) {
+                  throw new Error("Unknown demo users must not authenticate");
+                }
+                """
+            )
+        )
 
     def test_client2_shell_uses_merged_ui_without_preview_copy(self) -> None:
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
