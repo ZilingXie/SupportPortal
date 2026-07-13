@@ -562,6 +562,7 @@ def _engineer_case_record_to_payload(
         "title": title,
         "subject": title,
         "status": _normalize_status(engineer_case.get("status")),
+        "assigned_engineer_id": str(engineer_case.get("assigned_engineer_id") or "").strip() or None,
         "trigger_source": str(engineer_case.get("trigger_source") or "").strip(),
         "trigger_reason": str(engineer_case.get("trigger_reason") or "").strip(),
         "requester": str((client_ticket or {}).get("requester") or "").strip(),
@@ -608,6 +609,7 @@ def _engineer_case_record_to_header_payload(
         "title": title,
         "subject": title,
         "status": _normalize_status(engineer_case.get("status")),
+        "assigned_engineer_id": str(engineer_case.get("assigned_engineer_id") or "").strip() or None,
         "trigger_source": str(engineer_case.get("trigger_source") or "").strip(),
         "trigger_reason": str(engineer_case.get("trigger_reason") or "").strip(),
         "requester": str((client_ticket or {}).get("requester") or "").strip(),
@@ -704,6 +706,15 @@ class TicketRepository(Protocol):
         engineer_case: dict[str, Any],
         new_messages: list[dict[str, Any]] | None = None,
     ) -> None:
+        ...
+
+    def claim_engineer_case(
+        self,
+        engineer_case_id: str,
+        engineer_id: str,
+        *,
+        updated_at: str,
+    ) -> bool:
         ...
 
     def record_engineer_case_event(
@@ -1025,6 +1036,9 @@ class InMemoryTicketRepository:
         )
         normalized["title"] = str(normalized.get("title") or "").strip() or "Engineer case"
         normalized["status"] = _normalize_status(normalized.get("status"))
+        normalized["assigned_engineer_id"] = (
+            str(normalized.get("assigned_engineer_id") or "").strip() or None
+        )
         normalized["trigger_source"] = str(normalized.get("trigger_source") or "").strip() or "support_query"
         normalized["trigger_reason"] = str(normalized.get("trigger_reason") or "").strip() or "unknown"
         normalized["investigation_state"] = _normalize_investigation_state(
@@ -1224,6 +1238,16 @@ class InMemoryTicketRepository:
         engineer_case: dict[str, Any],
         new_messages: list[dict[str, Any]] | None = None,
     ) -> None:
+        existing = self._engineer_cases.get(str(engineer_case.get("engineer_case_id") or "").strip())
+        if (
+            isinstance(existing, dict)
+            and existing.get("assigned_engineer_id")
+            and not engineer_case.get("assigned_engineer_id")
+        ):
+            engineer_case = {
+                **engineer_case,
+                "assigned_engineer_id": existing["assigned_engineer_id"],
+            }
         saved = self._normalize_engineer_case_record(engineer_case)
         if new_messages:
             existing_ids = {str(item.get("id") or "").strip() for item in saved["messages"]}
@@ -1244,6 +1268,27 @@ class InMemoryTicketRepository:
                     ticket["active_engineer_case_id"] = None
             else:
                 ticket["active_engineer_case_id"] = str(saved.get("engineer_case_id") or "").strip() or None
+
+    def claim_engineer_case(
+        self,
+        engineer_case_id: str,
+        engineer_id: str,
+        *,
+        updated_at: str,
+    ) -> bool:
+        normalized_case_id = str(engineer_case_id or "").strip()
+        normalized_engineer_id = str(engineer_id or "").strip()
+        engineer_case = self._engineer_cases.get(normalized_case_id)
+        if not isinstance(engineer_case, dict) or not normalized_engineer_id:
+            return False
+        current_engineer_id = str(engineer_case.get("assigned_engineer_id") or "").strip()
+        if _normalize_status(engineer_case.get("status")) == "resolved":
+            return False
+        if current_engineer_id and current_engineer_id != normalized_engineer_id:
+            return False
+        engineer_case["assigned_engineer_id"] = normalized_engineer_id
+        engineer_case["updated_at"] = updated_at
+        return True
 
     def record_engineer_case_event(
         self,
@@ -2372,12 +2417,18 @@ class PostgresTicketRepository:
                             engineer_agent_state JSONB,
                             opened_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL,
-                            closed_at TIMESTAMPTZ
+                            closed_at TIMESTAMPTZ,
+                            assigned_engineer_id TEXT
                         )
                         """
                     ).format(
                         self._table("support_engineer_cases"),
                         self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS assigned_engineer_id TEXT").format(
+                        self._table("support_engineer_cases")
                     )
                 )
                 cur.execute(
@@ -3252,7 +3303,8 @@ class PostgresTicketRepository:
                 engineer_agent_state,
                 opened_at,
                 updated_at,
-                closed_at
+                closed_at,
+                assigned_engineer_id
             FROM {}
             """
         ).format(self._table("support_engineer_cases"))
@@ -3319,6 +3371,7 @@ class PostgresTicketRepository:
             "opened_at": _to_iso(row[11]),
             "updated_at": _to_iso(row[12]),
             "closed_at": _to_iso(row[13]) if row[13] is not None else None,
+            "assigned_engineer_id": str(row[14] or "").strip() or None if len(row) > 14 else None,
             "investigation_state": investigation_state,
             "messages": messages,
         }
@@ -3972,6 +4025,7 @@ class PostgresTicketRepository:
         final_confirmation_requested_at = saved.get("final_confirmation_requested_at")
         engineer_handoff_packet = saved.get("engineer_handoff_packet") if isinstance(saved.get("engineer_handoff_packet"), dict) else None
         engineer_agent_state = saved.get("engineer_agent_state") if isinstance(saved.get("engineer_agent_state"), dict) else None
+        assigned_engineer_id = str(saved.get("assigned_engineer_id") or "").strip() or None
         opened_at = saved.get("opened_at") or _utc_now()
         updated_at = saved.get("updated_at") or opened_at
         closed_at = saved.get("closed_at")
@@ -3996,9 +4050,10 @@ class PostgresTicketRepository:
                                 engineer_agent_state,
                                 opened_at,
                                 updated_at,
-                                closed_at
+                                closed_at,
+                                assigned_engineer_id
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (engineer_case_id) DO UPDATE SET
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 case_sequence = EXCLUDED.case_sequence,
@@ -4011,7 +4066,11 @@ class PostgresTicketRepository:
                                 engineer_handoff_packet = EXCLUDED.engineer_handoff_packet,
                                 engineer_agent_state = EXCLUDED.engineer_agent_state,
                                 updated_at = EXCLUDED.updated_at,
-                                closed_at = EXCLUDED.closed_at
+                                closed_at = EXCLUDED.closed_at,
+                                assigned_engineer_id = COALESCE(
+                                    EXCLUDED.assigned_engineer_id,
+                                    support_engineer_cases.assigned_engineer_id
+                                )
                             """
                         ).format(self._table("support_engineer_cases")),
                         (
@@ -4029,6 +4088,7 @@ class PostgresTicketRepository:
                             opened_at,
                             updated_at,
                             closed_at,
+                            assigned_engineer_id,
                         ),
                     )
                     for message in new_messages or []:
@@ -4060,6 +4120,42 @@ class PostgresTicketRepository:
                         )
 
         self._run_with_connection_retry("save_engineer_case", _operation)
+
+    def claim_engineer_case(
+        self,
+        engineer_case_id: str,
+        engineer_id: str,
+        *,
+        updated_at: str,
+    ) -> bool:
+        normalized_case_id = str(engineer_case_id or "").strip()
+        normalized_engineer_id = str(engineer_id or "").strip()
+        if not normalized_case_id or not normalized_engineer_id:
+            return False
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET assigned_engineer_id = %s, updated_at = %s
+                            WHERE engineer_case_id = %s
+                              AND status <> 'resolved'
+                              AND (assigned_engineer_id IS NULL OR assigned_engineer_id = %s)
+                            """
+                        ).format(self._table("support_engineer_cases")),
+                        (
+                            normalized_engineer_id,
+                            updated_at,
+                            normalized_case_id,
+                            normalized_engineer_id,
+                        ),
+                    )
+                    return cur.rowcount > 0
+
+        return self._run_with_connection_retry("claim_engineer_case", _operation)
 
     def record_engineer_case_event(
         self,

@@ -1409,7 +1409,7 @@
       <h1>整体落地优化计划</h1>
       <ul class="hero-bullets" aria-label="Roadmap summary">
         <li><strong>项目定位：</strong>建设基于 agent 的工单系统，不把 AI 包装成完全替代真人的 support engineer。</li>
-        <li><strong>当前阶段：</strong>Billing 已进入 real Zendesk replay monitor；Routing、Assignment/Workspace 验证入口、RAG/KG 继续以可审计试运行为优先级，Multi-Agent 降为低优先级保留计划。</li>
+        <li><strong>当前阶段：</strong>Billing 已进入 real Zendesk replay monitor；Assignment/Workspace 已落地 Engineer case 原子领取、assignee 持久化和 Admin active/resolved 同步视图；Routing、RAG/KG 继续以可审计试运行为优先级，Multi-Agent 降为低优先级保留计划。</li>
         <li><strong>Phase 1/2/3 门禁：</strong>先把工单雏形、guardrail、dashboard 和 AgentRelay communication foundation 稳住，再扩大 AI 主动处理和自主调查。</li>
         <li><strong>近期 POC：</strong>验证 billing route、邮件回执、engineer reply 通过/拒绝、dashboard 指标和真实 case 模拟。</li>
       </ul>
@@ -1985,24 +1985,24 @@ flowchart TD
         short: "Assignment",
         title: "Ticket assignment UI demo",
         status: "doing",
-        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready 三段式 demo；/workspace 验证入口把 assignment 式登录/readiness 与真实 investigating engineer case workflow 接在一起，/workspace/admin 也已读取真实 open Engineer 工单，但生产级调度、持久化、审计和真实 claim/assignment backend 仍未开始。",
+        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready 三段式 demo；/workspace 已通过原子 claim API 持久化 Engineer case assignee，/workspace/admin 会同步区分 pending、investigating 和 resolved case；生产级排班、自动调度、SLA/transfer 状态机与完整审计仍未完成。",
         done: [
           { summary: "`/assignment` 已形成选择工程师、welcome readiness、显式领取 ticket、进入 workspace 的三段式原型。", prs: [413, 418, 448] },
           { summary: "工程师 shift 编辑已前置到 welcome / Daily shift 卡片，in-shift、out-of-shift、下一段 shift 与显式领取状态会同步刷新。", prs: [459, 475] },
           { summary: "关闭或 approve 当前 ticket 后不会自动连续领取，工程师需要再次通过 ready CTA 明确接下一单。", prs: [448] },
-          { summary: "管理页现由 `/workspace/admin` 提供真实 open Engineer 工单池与定时刷新，并保留 on-shift coverage、Engineer overview 和 weekly schedule demo。", prs: [461, 473, 476, 478] },
+          { summary: "`/workspace/admin` 现按 Active Ticket / Resolved Ticket 展示真实 Engineer case，并通过服务端 assignee 与 `/workspace` claim 流程同步 pending 和 investigating 状态。", prs: [461, 473, 476, 478] },
           { summary: "Admin schedule 支持 engineer/day picker、空白日期新建或调整 shift，并与个人 assignment shift localStorage 隔离。", prs: [461, 473, 475] },
           { summary: "Assignment UI 已完成多轮 polish：SLA 秒级展示、hover sidebar、brand/icon 对齐、shift form 防重叠和移动端布局。", prs: [451, 462, 465, 466, 467, 471] },
           { summary: "`/workspace` 已作为验证入口接通：使用 assignment 风格的工程师选择、welcome readiness、UTC+8 ready gate，只自动打开真实 investigating engineer case，并复用 Engineer 端真实 case detail、Engineer AI、approve/revise/final approve、multi-agent toggle 和 API 数据流。", prs: [] }
         ],
         review: [
           "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",
-          "`/workspace` 目前是 demo UI + real investigating case workflow 的验证入口，不新增 server-side assignment/claim/assignee 状态，也不会自动打开 escalated、communicating 或 resolved case。",
+          "`/workspace` 目前会优先恢复当前工程师已领取的 investigating case，否则原子领取未分配 case；不会打开已分配给其他工程师或 resolved case。",
           "Welcome 页 Daily shift 卡片现在就是排班调整入口，避免为了改 shift 先进入 workspace/sidebar。",
           "Admin 页新增 Engineer overview、weekly schedule grid 和 engineer/day picker 提供 demo 排班可视化，admin-only shift 编辑不联动 /assignment 个人 shift。",
-          "Admin Ticket Pool 与工单计数读取 `/api/engineer/tickets?status=open`，不再使用 localStorage mock queue；真实 assignee 尚无后端字段，因此页面不伪造工单与 demo engineer 的绑定。",
+          "Admin 自动读取 `/api/engineer/tickets?status=all`，未领取 active case 显示 pending，领取后显示 investigating 与 assignee，resolved case 独立归档展示。",
           "Online/Offline 状态使用固定 mock 数据展示，不联动 /assignment 登录状态或 workspace 状态。",
-          "生产化最缺的是 server-side queue、assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。"
+          "生产化最缺的是自动调度、完整 assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。"
         ],
         next: [
           { id: "assign-data-model", status: "todo", label: "定义生产 Engineer Ticket 生命周期、状态机和队列持久化模型。", horizon: "Model" },

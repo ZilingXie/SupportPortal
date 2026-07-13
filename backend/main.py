@@ -541,6 +541,10 @@ class EngineerMultiAgentRunRequest(BaseModel):
     engineer_id: str = Field(default="Jack")
 
 
+class EngineerCaseClaimRequest(BaseModel):
+    engineer_id: str = Field(min_length=1, max_length=128)
+
+
 class InvestigationConfirmationRequest(BaseModel):
     engineer_id: str = Field(default="Jack")
     decision: str = Field(pattern="^(approve|revise|final_approve)$")
@@ -894,6 +898,7 @@ def _engineer_case_payload_to_record(engineer_case: dict[str, Any]) -> dict[str,
         "case_sequence": engineer_case.get("case_sequence"),
         "title": str(engineer_case.get("title") or engineer_case.get("subject") or "Engineer case").strip(),
         "status": normalize_ticket_status(engineer_case.get("status")),
+        "assigned_engineer_id": str(engineer_case.get("assigned_engineer_id") or "").strip() or None,
         "trigger_source": str(investigation.get("trigger_source") or engineer_case.get("trigger_source") or "").strip(),
         "trigger_reason": str(investigation.get("trigger_reason") or engineer_case.get("trigger_reason") or "").strip(),
         "draft_customer_reply": str(investigation.get("draft_customer_reply") or "").strip(),
@@ -4822,6 +4827,55 @@ def get_ticket_detail(ticket_id: str, include_context: bool = Query(default=True
     return {"ticket": engineer_case}
 
 
+@app.post("/api/engineer/tickets/{ticket_id}/claim")
+async def claim_engineer_ticket(
+    ticket_id: str,
+    request: EngineerCaseClaimRequest,
+) -> dict[str, Any]:
+    engineer_case = _resolve_engineer_case_payload(ticket_id)
+    if engineer_case is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if normalize_ticket_status(engineer_case.get("status")) == RESOLVED_STATUS:
+        raise HTTPException(status_code=409, detail="Resolved tickets cannot be assigned")
+
+    engineer_case_id = str(
+        engineer_case.get("engineer_case_id") or engineer_case.get("ticket_id") or ticket_id
+    ).strip()
+    engineer_id = str(request.engineer_id or "").strip()
+    claimed_at = now_iso()
+    claimed = ticket_repository.claim_engineer_case(
+        engineer_case_id,
+        engineer_id,
+        updated_at=claimed_at,
+    )
+    if not claimed:
+        current = _resolve_engineer_case_payload(engineer_case_id)
+        assigned_engineer_id = str((current or {}).get("assigned_engineer_id") or "").strip()
+        detail = (
+            f"Ticket is already assigned to {assigned_engineer_id}"
+            if assigned_engineer_id
+            else "Ticket is no longer available for assignment"
+        )
+        raise HTTPException(status_code=409, detail=detail)
+
+    payload = {
+        "event": "engineer_case_claimed",
+        "ticket_id": engineer_case_id,
+        "engineer_case_id": engineer_case_id,
+        "client_ticket_id": str(engineer_case.get("client_ticket_id") or "").strip(),
+        "status": normalize_ticket_status(engineer_case.get("status")),
+        "assigned_engineer_id": engineer_id,
+        "created_at": claimed_at,
+    }
+    ticket_repository.record_engineer_case_event(
+        engineer_case_id,
+        payload["event"],
+        payload,
+    )
+    await dispatch_event(["engineer", "dashboard"], payload)
+    return payload
+
+
 @app.post("/api/engineer/tickets/{ticket_id}/multi-agent/run")
 async def run_engineer_multi_agent_for_ticket(
     ticket_id: str,
@@ -5227,6 +5281,7 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
         )
         investigation_messages = investigate_result.get("new_internal_messages") or []
         engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+        engineer_case["assigned_engineer_id"] = str(request.engineer_id or "").strip() or None
         if investigation_created:
             engineer_case["title"] = derive_engineer_case_title(
                 ticket,
