@@ -1145,10 +1145,18 @@ function renderWorkspaceAssignmentSidebar() {
 }
 
 function parseRoute() {
-  const hash = String(window.location.hash || "#/tickets").trim();
+  const hash = String(window.location.hash || "").trim();
   const path = hash.replace(/^#/, "") || "/tickets";
 
   if (path === "/" || path === "/tickets") {
+    if (hash) {
+      const homeUrl = `${window.location.pathname || "/workspace/"}${window.location.search || ""}`;
+      if (typeof window.history?.replaceState === "function") {
+        window.history.replaceState(null, "", homeUrl);
+      } else {
+        window.location.hash = "";
+      }
+    }
     routeState.view = "pool";
     routeState.ticketId = null;
     return routeState;
@@ -1169,7 +1177,7 @@ function parseRoute() {
 }
 
 function navigate(path) {
-  const target = `#${path}`;
+  const target = path === "/" || path === "/tickets" ? "" : `#${path}`;
   if (window.location.hash === target) {
     void syncRouteToWorkspace({ silent: true, showLoading: false });
     return false;
@@ -3083,7 +3091,7 @@ async function readyToRoll() {
     tickets = Array.isArray(payload?.tickets) ? payload.tickets : [];
     if (!nextTicket) {
       readyTransitionActive = false;
-      window.location.hash = "#/tickets";
+      window.location.hash = "";
       renderNoInvestigatingCase("No investigating cases available for automatic assignment right now.");
       return;
     }
@@ -5053,7 +5061,7 @@ function redirectOpenTicketToPool() {
   resetDetailWorkspaceState();
   routeState.view = "pool";
   routeState.ticketId = null;
-  window.location.hash = "#/tickets";
+  window.location.hash = "";
   showWorkspaceFeedback(
     "Client Workspace Only",
     "This ticket is only visible in the client workspace."
@@ -6085,7 +6093,7 @@ function resetWorkspaceBoardState() {
   selectedPoolStatus = "investigating";
   closeAllHeaderFilterComboboxes({ render: false });
   resetDetailWorkspaceState();
-  window.location.hash = "#/tickets";
+  window.location.hash = "";
   parseRoute();
   renderFilterControls();
   renderWorkspace();

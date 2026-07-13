@@ -482,8 +482,8 @@ class WorkspaceUiContractTests(unittest.TestCase):
               },
             });
 
-            if (window.location.hash !== "#/tickets") {
-              throw new Error(`expected workspace home hash, got ${window.location.hash}`);
+            if (window.location.hash !== "") {
+              throw new Error(`expected workspace home without a hash, got ${window.location.hash}`);
             }
             """
         )
@@ -529,7 +529,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
             """
             localStorage.setItem("supportportal_workspace_selected_engineer", JSON.stringify("Maya"));
             localStorage.setItem("supportportal_workspace_active", JSON.stringify(false));
-            window.location.hash = "#/tickets";
+            window.location.hash = "";
 
             renderReadinessInsteadOfPool();
 
@@ -579,6 +579,34 @@ class WorkspaceUiContractTests(unittest.TestCase):
             }
             if (!sidebar.classList.contains("hidden")) {
               throw new Error("detail view should hide the assignment command sidebar");
+            }
+            """
+        )
+
+    def test_workspace_legacy_tickets_hash_is_replaced_with_home_url(self) -> None:
+        self.run_workspace_app_script(
+            """
+            window.location.pathname = "/workspace/";
+            window.location.search = "";
+            window.location.hash = "#/tickets";
+            let replacedUrl = null;
+            window.history = {
+              replaceState(_state, _title, url) {
+                replacedUrl = url;
+                window.location.hash = "";
+              },
+            };
+
+            parseRoute();
+
+            if (replacedUrl !== "/workspace/") {
+              throw new Error(`expected legacy hash replacement, got ${replacedUrl}`);
+            }
+            if (window.location.hash !== "") {
+              throw new Error(`expected canonical workspace URL, got ${window.location.hash}`);
+            }
+            if (routeState.view !== "pool" || routeState.ticketId !== null) {
+              throw new Error("legacy tickets hash should still resolve to workspace home");
             }
             """
         )
