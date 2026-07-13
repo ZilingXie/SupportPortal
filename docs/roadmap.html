@@ -1985,12 +1985,12 @@ flowchart TD
         short: "Assignment",
         title: "Ticket assignment UI demo",
         status: "doing",
-        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready + read-only admin queue view 三段式 demo；新增 /workspace 验证入口把 assignment 式登录/readiness 与真实 investigating engineer case workflow 接在一起，但生产级调度、持久化、审计和真实 claim/assignment backend 仍未开始。",
+        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready 三段式 demo；/workspace 验证入口把 assignment 式登录/readiness 与真实 investigating engineer case workflow 接在一起，/workspace/admin 也已读取真实 open Engineer 工单，但生产级调度、持久化、审计和真实 claim/assignment backend 仍未开始。",
         done: [
           { summary: "`/assignment` 已形成选择工程师、welcome readiness、显式领取 ticket、进入 workspace 的三段式原型。", prs: [413, 418, 448] },
           { summary: "工程师 shift 编辑已前置到 welcome / Daily shift 卡片，in-shift、out-of-shift、下一段 shift 与显式领取状态会同步刷新。", prs: [459, 475] },
           { summary: "关闭或 approve 当前 ticket 后不会自动连续领取，工程师需要再次通过 ready CTA 明确接下一单。", prs: [448] },
-          { summary: "管理页现由 `/workspace/admin` 提供 queue、active assignment、on-shift coverage、Engineer overview 与 weekly schedule demo。", prs: [461, 473, 476, 478] },
+          { summary: "管理页现由 `/workspace/admin` 提供真实 open Engineer 工单池与定时刷新，并保留 on-shift coverage、Engineer overview 和 weekly schedule demo。", prs: [461, 473, 476, 478] },
           { summary: "Admin schedule 支持 engineer/day picker、空白日期新建或调整 shift，并与个人 assignment shift localStorage 隔离。", prs: [461, 473, 475] },
           { summary: "Assignment UI 已完成多轮 polish：SLA 秒级展示、hover sidebar、brand/icon 对齐、shift form 防重叠和移动端布局。", prs: [451, 462, 465, 466, 467, 471] },
           { summary: "`/workspace` 已作为验证入口接通：使用 assignment 风格的工程师选择、welcome readiness、UTC+8 ready gate，只自动打开真实 investigating engineer case，并复用 Engineer 端真实 case detail、Engineer AI、approve/revise/final approve、multi-agent toggle 和 API 数据流。", prs: [] }
@@ -2000,6 +2000,7 @@ flowchart TD
           "`/workspace` 目前是 demo UI + real investigating case workflow 的验证入口，不新增 server-side assignment/claim/assignee 状态，也不会自动打开 escalated、communicating 或 resolved case。",
           "Welcome 页 Daily shift 卡片现在就是排班调整入口，避免为了改 shift 先进入 workspace/sidebar。",
           "Admin 页新增 Engineer overview、weekly schedule grid 和 engineer/day picker 提供 demo 排班可视化，admin-only shift 编辑不联动 /assignment 个人 shift。",
+          "Admin Ticket Pool 与工单计数读取 `/api/engineer/tickets?status=open`，不再使用 localStorage mock queue；真实 assignee 尚无后端字段，因此页面不伪造工单与 demo engineer 的绑定。",
           "Online/Offline 状态使用固定 mock 数据展示，不联动 /assignment 登录状态或 workspace 状态。",
           "生产化最缺的是 server-side queue、assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。"
         ],

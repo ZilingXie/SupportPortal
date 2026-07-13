@@ -147,6 +147,9 @@ let slaCountdownTimer = null;
 let adminSchedule = normalizeAdminSchedule(readStorage(ASSIGNMENT_ADMIN_SCHEDULE_KEY, DEFAULT_ADMIN_SCHEDULE));
 let adminEditState = null; // { engineerId, weekday } | null
 let adminSection = "engineer-management";
+let adminTickets = [];
+let adminTicketsLoading = false;
+let adminTicketsError = "";
 
 const root = document.getElementById("workspace-admin-root");
 const isAdminPage = window.location.pathname.includes("/admin");
@@ -171,6 +174,76 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function normalizeAdminTicket(ticket) {
+  const status = String(ticket?.status || "open").trim().toLowerCase();
+  const statusConfig = {
+    investigating: { label: "Investigating", tone: "handling" },
+    communicating: { label: "Customer Follow-up", tone: "handling" },
+    escalated: { label: "Pending Triage", tone: "triage" },
+    open: { label: "Pending Triage", tone: "triage" },
+  }[status] || { label: status || "Open", tone: "queued" };
+  const clientRef = ticket?.client_ticket_ref && typeof ticket.client_ticket_ref === "object"
+    ? ticket.client_ticket_ref
+    : {};
+
+  return {
+    id: String(ticket?.engineer_case_id || ticket?.ticket_id || "").trim(),
+    clientTicket: String(ticket?.client_ticket_id || clientRef.ticket_id || "").trim(),
+    title: String(ticket?.title || ticket?.subject || clientRef.subject || "Untitled engineer ticket").trim(),
+    requester: String(ticket?.requester || "Customer").trim(),
+    status,
+    poolStatus: statusConfig.label,
+    statusTone: statusConfig.tone,
+    triggerSource: String(ticket?.trigger_source || "").trim(),
+    triggerReason: String(ticket?.trigger_reason || "").trim(),
+    updatedAt: String(ticket?.updated_at || ticket?.opened_at || ticket?.created_at || "").trim(),
+  };
+}
+
+function formatAdminIdentifier(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "Not provided";
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatAdminUpdatedAt(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "Update time unavailable";
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+async function loadAdminTickets() {
+  if (!isAdminPage || adminTicketsLoading) return;
+  adminTicketsLoading = true;
+  adminTicketsError = "";
+  renderAdmin();
+  try {
+    const response = await fetch("/api/engineer/tickets?status=open");
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    adminTickets = Array.isArray(payload?.tickets)
+      ? payload.tickets.map(normalizeAdminTicket).filter((ticket) => ticket.id)
+      : [];
+  } catch (error) {
+    adminTicketsError = error instanceof Error ? error.message : "Unknown error";
+  } finally {
+    adminTicketsLoading = false;
+    renderAdmin();
+  }
 }
 
 function getSelectedEngineer() {
@@ -1003,12 +1076,8 @@ function renderAdminShell(contentHtml, activeSection, mainClass, searchPlacehold
 }
 
 function renderAdminEngineerManagement() {
-  const waitingCases = queue.map((ticket, index) => ({
-    ...ticket,
-    position: index + 1,
-  }));
-
-  const hasActive = Boolean(activeTicket);
+  const waitingCases = adminTickets.filter((ticket) => ticket.statusTone === "triage");
+  const activeCases = adminTickets.filter((ticket) => ticket.statusTone === "handling");
   const onShiftNow = getEngineersOnShiftNow();
   const onlineCount = getOnlineCoverage();
 
@@ -1100,8 +1169,7 @@ function renderAdminEngineerManagement() {
   }
 
   // Compute derived metrics
-  var assignmentVolume = queue.length + (activeTicket ? 1 : 0) + events.length;
-  var highPriCount = waitingCases.filter(function (t) { return t.priority && t.priority.toLowerCase().indexOf("first") !== -1; }).length;
+  var assignmentVolume = adminTickets.length;
 
   return `
           <!-- Header -->
@@ -1110,9 +1178,9 @@ function renderAdminEngineerManagement() {
               <h1>Operations Overview</h1>
               <p>Real-time engineer distribution and queue status.</p>
             </div>
-            <button class="admin-main-ai-btn" type="button" data-action="admin-ai-insights" aria-label="AI Insights">
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-              AI Insights
+            <button class="admin-main-ai-btn" type="button" data-action="admin-refresh-tickets" aria-label="Refresh engineer tickets" ${adminTicketsLoading ? "disabled" : ""}>
+              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+              ${adminTicketsLoading ? "Refreshing..." : "Refresh Tickets"}
             </button>
           </header>
 
@@ -1148,7 +1216,7 @@ function renderAdminEngineerManagement() {
               </div>
               <div class="admin-metric-value">${assignmentVolume}</div>
               <div class="admin-metric-sub" style="color: var(--ink-muted)">
-                Queue + active + events
+                Open engineer tickets
               </div>
             </div>
             <div class="admin-metric-card">
@@ -1197,24 +1265,34 @@ function renderAdminEngineerManagement() {
             <section class="admin-bottom-card">
               <div class="admin-bottom-card-header">
                 <h3>Pending Triage</h3>
-                ${highPriCount > 0 ? `<span class="admin-prio-badge">${highPriCount} High Pri</span>` : ""}
+                ${waitingCases.length > 0 ? `<span class="admin-prio-badge">${waitingCases.length} Waiting</span>` : ""}
               </div>
               <div class="admin-bottom-card-body">
-                ${waitingCases.length === 0 ? `
+                ${adminTicketsLoading && adminTickets.length === 0 ? `
+                  <div style="padding:24px;text-align:center;color:var(--ink-muted);font-size:13px;">
+                    <span class="material-symbols-outlined" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:8px;">progress_activity</span>
+                    Loading engineer tickets...
+                  </div>
+                ` : adminTicketsError && adminTickets.length === 0 ? `
+                  <div style="padding:24px;text-align:center;color:var(--danger);font-size:13px;">
+                    <span class="material-symbols-outlined" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:8px;">error</span>
+                    Could not load engineer tickets: ${escapeHtml(adminTicketsError)}
+                  </div>
+                ` : waitingCases.length === 0 ? `
                   <div style="padding:24px;text-align:center;color:var(--ink-muted);font-size:13px;">
                     <span class="material-symbols-outlined" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:8px;">inventory_2</span>
-                    Queue is empty
+                    No tickets are waiting for triage
                   </div>
                 ` : waitingCases.slice(0, 8).map((ticket) => `
                   <div class="admin-triage-item">
                     <div class="admin-triage-item-top">
                       <span class="admin-triage-id">#${escapeHtml(ticket.id)}</span>
                       <span class="admin-triage-sla">
-                        <span class="material-symbols-outlined" aria-hidden="true">timer</span>
-                        ${ticket.priority && ticket.priority.toLowerCase().indexOf("first") !== -1 ? "Urgent" : "Standard"}
+                        <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
+                        ${escapeHtml(formatAdminUpdatedAt(ticket.updatedAt))}
                       </span>
                     </div>
-                    <span class="admin-triage-summary">${escapeHtml(ticket.issue)}</span>
+                    <span class="admin-triage-summary">${escapeHtml(ticket.title)}</span>
                   </div>
                 `).join("")}
               </div>
@@ -1223,50 +1301,27 @@ function renderAdminEngineerManagement() {
             <!-- Active Work Distribution -->
             <section class="admin-bottom-card">
               <div class="admin-bottom-card-header">
-                <h3>Active Work Distribution</h3>
+                <h3>Active Engineer Work</h3>
               </div>
               <div class="admin-bottom-card-body">
                 <table class="admin-work-table">
                   <thead>
                     <tr>
-                      <th>Engineer</th>
-                      <th>Active Ticket</th>
+                      <th>Engineer Ticket</th>
+                      <th>Customer</th>
                       <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    ${DEMO_ENGINEERS.map((eng) => {
-                      var color = getEngineerColor(eng.id);
-                      var isOnline = ADMIN_PRESENCE_MOCK[eng.id] === "online";
-                      var isOnShift = onShiftNow.some(function (e) { return e.id === eng.id; });
-                      var hasTicket = hasActive && activeTicket.engineerId === eng.id;
-                      var statusHtml = "";
-                      var ticketHtml = '<span style="color:var(--ink-muted)">\u2014</span>';
-
-                      if (hasTicket) {
-                        ticketHtml = '<span class="admin-work-ticket">#' + escapeHtml(activeTicket.id) + '</span>';
-                        statusHtml = '<span class="admin-work-status is-active"><span class="material-symbols-outlined" aria-hidden="true">psychiatry</span>Active</span>';
-                      } else if (isOnShift && isOnline) {
-                        statusHtml = '<span class="admin-work-status is-available"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Available</span>';
-                      } else if (isOnShift && !isOnline) {
-                        statusHtml = '<span class="admin-work-status is-offline"><span class="material-symbols-outlined" aria-hidden="true">wifi_off</span>Offline</span>';
-                      } else if (!isOnShift && isOnline) {
-                        statusHtml = '<span class="admin-work-status"><span class="material-symbols-outlined" aria-hidden="true">bedtime</span>Off shift</span>';
-                      } else {
-                        statusHtml = '<span class="admin-work-status is-offline"><span class="material-symbols-outlined" aria-hidden="true">do_not_disturb</span>Offline</span>';
-                      }
-
-                      return '<tr>' +
-                        '<td>' +
-                          '<div class="admin-work-engineer">' +
-                            '<div class="admin-work-avatar" style="background:' + color.bg + ';color:' + color.fg + '">' + escapeHtml(eng.initials) + '</div>' +
-                            '<span class="admin-work-name">' + escapeHtml(eng.name) + '</span>' +
-                          '</div>' +
-                        '</td>' +
-                        '<td>' + ticketHtml + '</td>' +
-                        '<td>' + statusHtml + '</td>' +
-                      '</tr>';
-                    }).join("")}
+                    ${activeCases.length === 0
+                      ? '<tr><td colspan="3" style="color:var(--ink-muted)">No engineer tickets are currently in progress.</td></tr>'
+                      : activeCases.slice(0, 8).map((ticket) => `
+                        <tr>
+                          <td><span class="admin-work-ticket">#${escapeHtml(ticket.id)}</span></td>
+                          <td>${escapeHtml(ticket.requester)}</td>
+                          <td><span class="admin-work-status is-active"><span class="material-symbols-outlined" aria-hidden="true">psychiatry</span>${escapeHtml(ticket.poolStatus)}</span></td>
+                        </tr>
+                      `).join("")}
                   </tbody>
                 </table>
               </div>
@@ -1296,24 +1351,13 @@ function renderAdminEngineerManagement() {
 }
 
 function getAdminPoolTickets() {
-  const tickets = [];
-  if (activeTicket) {
-    tickets.push({ ...activeTicket, poolStatus: "Engineer Handling", statusTone: "handling" });
-  }
-  queue.forEach((ticket, index) => {
-    tickets.push({
-      ...ticket,
-      poolStatus: index === 0 ? "Pending Triage" : "Queued Review",
-      statusTone: index === 0 ? "triage" : "queued",
-    });
-  });
-  return tickets;
+  return adminTickets;
 }
 
 function renderAdminTicketPool() {
   const poolTickets = getAdminPoolTickets();
-  const handlingCount = poolTickets.filter((ticket) => ticket.poolStatus === "Engineer Handling").length;
-  const triageCount = poolTickets.filter((ticket) => ticket.poolStatus === "Pending Triage").length;
+  const handlingCount = poolTickets.filter((ticket) => ticket.statusTone === "handling").length;
+  const triageCount = poolTickets.filter((ticket) => ticket.statusTone === "triage").length;
 
   return `
           <header class="admin-main-header">
@@ -1321,9 +1365,9 @@ function renderAdminTicketPool() {
               <h1>Ticket Pool</h1>
               <p>Prioritize open customer issues and monitor engineer handoffs.</p>
             </div>
-            <button class="admin-main-ai-btn" type="button" data-action="admin-ai-insights" aria-label="AI Insights">
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-              AI Insights
+            <button class="admin-main-ai-btn" type="button" data-action="admin-refresh-tickets" aria-label="Refresh engineer tickets" ${adminTicketsLoading ? "disabled" : ""}>
+              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+              ${adminTicketsLoading ? "Refreshing..." : "Refresh Tickets"}
             </button>
           </header>
 
@@ -1333,38 +1377,12 @@ function renderAdminTicketPool() {
                 <div class="admin-pool-title-row">
                   <div>
                     <h2>Active Pool</h2>
-                    <p>Manage and triage customer work entering the queue.</p>
+                    <p>Open Engineer cases from the live SupportPortal API.</p>
                   </div>
                   <span>${poolTickets.length} Total</span>
                 </div>
-                <h3>View Filters</h3>
-                <label class="field">
-                  <span class="field-label">Priority</span>
-                  <select aria-label="Priority filter">
-                    <option>All priorities</option>
-                    <option>P0 Critical</option>
-                    <option>First response</option>
-                    <option>Regular response</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span class="field-label">Status</span>
-                  <select aria-label="Status filter">
-                    <option>All</option>
-                    <option>Needs Triage</option>
-                    <option>Engineer Handling</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span class="field-label">Region</span>
-                  <select aria-label="Region filter">
-                    <option>Global</option>
-                    <option>US-East</option>
-                    <option>EMEA</option>
-                    <option>APAC</option>
-                  </select>
-                </label>
-                <button class="admin-pool-apply-btn" type="button">Apply View</button>
+                <h3>Data Source</h3>
+                <p>Showing non-resolved Engineer tickets. The pool refreshes every 30 seconds.</p>
               </section>
 
               <section class="admin-pool-metrics-card">
@@ -1372,9 +1390,9 @@ function renderAdminTicketPool() {
                   <h3>Queue Metrics</h3>
                   <span class="material-symbols-outlined" aria-hidden="true">bar_chart</span>
                 </div>
-                ${renderAdminPoolMetric("AI Prepared", 68, "primary")}
-                ${renderAdminPoolMetric("Pending Triage", Math.max(18, triageCount * 16), "warning")}
-                ${renderAdminPoolMetric("Engineer Handling", Math.max(22, handlingCount * 22), "success")}
+                ${renderAdminPoolMetric("Engineer Handling", poolTickets.length ? Math.round((handlingCount / poolTickets.length) * 100) : 0, "primary")}
+                ${renderAdminPoolMetric("Pending Triage", poolTickets.length ? Math.round((triageCount / poolTickets.length) * 100) : 0, "warning")}
+                ${renderAdminPoolMetric("API Synced", adminTicketsError ? 0 : 100, "success")}
               </section>
             </aside>
 
@@ -1395,22 +1413,21 @@ function renderAdminTicketPool() {
               </div>
               <div class="admin-pool-list-head">
                 <div>
-                  <span class="material-symbols-outlined" aria-hidden="true">filter_list</span>
-                  <span>Sorted by Urgency</span>
-                </div>
-                <div class="admin-pool-view-actions" aria-label="View options">
-                  <button type="button" aria-label="List view"><span class="material-symbols-outlined" aria-hidden="true">view_list</span></button>
-                  <button type="button" aria-label="Grid view"><span class="material-symbols-outlined" aria-hidden="true">grid_view</span></button>
+                  <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
+                  <span>Sorted by Recent Activity</span>
                 </div>
               </div>
               <div class="admin-ticket-list">
-                ${poolTickets.length === 0 ? renderAdminEmptyPool() : poolTickets.map(renderAdminTicketCard).join("")}
+                ${adminTicketsLoading && poolTickets.length === 0
+                  ? renderAdminPoolState("progress_activity", "Loading engineer tickets", "Fetching the current Engineer queue from SupportPortal.")
+                  : adminTicketsError && poolTickets.length === 0
+                  ? renderAdminPoolState("error", "Engineer tickets unavailable", `The Engineer API request failed: ${adminTicketsError}`)
+                  : poolTickets.length === 0
+                  ? renderAdminEmptyPool()
+                  : poolTickets.map(renderAdminTicketCard).join("")}
               </div>
             </section>
           </div>
-          <button class="admin-ticket-fab" type="button" aria-label="Create ticket">
-            <span class="material-symbols-outlined" aria-hidden="true">add</span>
-          </button>
   `;
 }
 
@@ -1437,41 +1454,43 @@ function renderAdminEmptyPool() {
   `;
 }
 
-function renderAdminTicketCard(ticket, index) {
-  const isUrgent = ticket.priority && ticket.priority.toLowerCase().indexOf("first") !== -1;
-  const region = index === 0 ? "US-East" : index === 1 ? "EMEA" : "APAC";
-  const owner = ticket.engineerId || (index === 0 ? "Unassigned" : DEMO_ENGINEERS[index % DEMO_ENGINEERS.length].name);
-  const insightTitle = index === 1 ? "Handoff Context" : "AI Insight";
-  const insightIcon = index === 1 ? "history" : "lightbulb";
-  const insightCopy = index === 1
-    ? "AI prepared the customer timeline and marked the latest escalation reason for Tier 2 review."
-    : "Similar cases resolved fastest after checking service restart state, telemetry heartbeat, and recent policy changes.";
+function renderAdminPoolState(icon, title, description) {
+  return `
+    <article class="admin-ticket-card is-empty">
+      <span class="material-symbols-outlined" aria-hidden="true">${escapeHtml(icon)}</span>
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(description)}</p>
+    </article>
+  `;
+}
+
+function renderAdminTicketCard(ticket) {
   const statusClass = ticket.statusTone === "handling" ? "is-handling" : ticket.statusTone === "triage" ? "is-triage" : "is-queued";
 
   return `
-    <article class="admin-ticket-card ${isUrgent ? "is-urgent" : ""}">
+    <article class="admin-ticket-card">
       <div class="admin-ticket-card-top">
         <div>
           <span class="admin-ticket-id">${escapeHtml(ticket.id)}</span>
           <h3>${escapeHtml(ticket.title)}</h3>
         </div>
-        <span class="admin-priority-pill ${isUrgent ? "is-critical" : ""}">${isUrgent ? "P0 Critical" : escapeHtml(ticket.priority || "Standard")}</span>
+        <span class="admin-priority-pill">${escapeHtml(ticket.poolStatus)}</span>
       </div>
       <div class="admin-ticket-meta">
         <span><span class="material-symbols-outlined" aria-hidden="true">business</span>${escapeHtml(ticket.requester || "Customer")}</span>
-        <span><span class="material-symbols-outlined" aria-hidden="true">public</span>${region}</span>
-        <span><span class="material-symbols-outlined" aria-hidden="true">schedule</span>${index === 0 ? "8m waiting" : `${(index + 1) * 11}m waiting`}</span>
+        <span><span class="material-symbols-outlined" aria-hidden="true">link</span>${escapeHtml(ticket.clientTicket || "No client ticket")}</span>
+        <span><span class="material-symbols-outlined" aria-hidden="true">schedule</span>${escapeHtml(formatAdminUpdatedAt(ticket.updatedAt))}</span>
       </div>
-      <p class="admin-ticket-summary">${escapeHtml(ticket.issue || ticket.draft || "Awaiting issue summary.")}</p>
+      <p class="admin-ticket-summary">${escapeHtml(ticket.title)}</p>
       <div class="admin-ticket-state-row">
         <span class="admin-ticket-status ${statusClass}">${escapeHtml(ticket.poolStatus || "Queued Review")}</span>
-        <span class="admin-ticket-owner">${escapeHtml(owner)}${ticket.engineerId ? " Handling" : ""}</span>
+        <span class="admin-ticket-owner">Engineer queue</span>
       </div>
-      <div class="admin-ticket-insight ${insightTitle === "AI Insight" ? "is-ai" : ""}">
-        <span class="material-symbols-outlined" aria-hidden="true">${insightIcon}</span>
+      <div class="admin-ticket-insight">
+        <span class="material-symbols-outlined" aria-hidden="true">account_tree</span>
         <div>
-          <h4>${insightTitle}</h4>
-          <p>${escapeHtml(insightCopy)}</p>
+          <h4>Escalation Context</h4>
+          <p>${escapeHtml(formatAdminIdentifier(ticket.triggerReason))} &middot; ${escapeHtml(formatAdminIdentifier(ticket.triggerSource))}</p>
         </div>
       </div>
     </article>
@@ -1732,6 +1751,9 @@ root.addEventListener("click", (event) => {
     adminSection = "engineer-management";
     renderAdmin();
   }
+  if (action === "admin-refresh-tickets") {
+    loadAdminTickets();
+  }
   if (action === "admin-close-panel" || action === "admin-cancel-edit") {
     adminEditState = null;
     renderAdmin();
@@ -1788,7 +1810,7 @@ root.addEventListener("change", (event) => {
 window.setInterval(() => {
   if (readyTransitionActive) return;
   if (isAdminPage) {
-    renderAdmin();
+    loadAdminTickets();
     return;
   }
   const engineer = getSelectedEngineer();
@@ -1807,6 +1829,7 @@ window.setInterval(() => {
 
 if (isAdminPage) {
   renderAdmin();
+  loadAdminTickets();
 } else if (selectedEngineerId) {
   if (workspaceActive) {
     renderWorkspace();

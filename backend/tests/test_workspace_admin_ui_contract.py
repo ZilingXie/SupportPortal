@@ -30,8 +30,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
 
         self.assertIn("System Admin", html)
         self.assertIn('id="workspace-admin-root"', html)
-        self.assertIn("./styles.css?v=20260713-workspace-admin-1", html)
-        self.assertIn("./app.js?v=20260713-workspace-admin-1", html)
+        self.assertIn("./styles.css?v=20260713-workspace-admin-2", html)
+        self.assertIn("./app.js?v=20260713-workspace-admin-2", html)
         self.assertIn('document.getElementById("workspace-admin-root")', app_source)
         self.assertIn('href="/workspace"', app_source)
         self.assertNotIn('href="/assignment"', app_source)
@@ -52,8 +52,17 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "Online Coverage",
             "admin-save-shift",
             "supportportal_assignment_admin_schedule",
+            'fetch("/api/engineer/tickets?status=open")',
+            "normalizeAdminTicket",
+            "adminTicketsLoading",
+            "adminTicketsError",
         ):
             self.assertIn(marker, app_source)
+
+        self.assertIn("return adminTickets;", app_source)
+        self.assertIn('ticket.statusTone === "handling"', app_source)
+        self.assertNotIn("Sorted by Urgency", app_source)
+        self.assertNotIn("US-East", app_source)
 
         for marker in (
             ".admin-shell",
