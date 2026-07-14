@@ -88,8 +88,16 @@ class InMemoryEventRepository:
 
 
 class PostgresEventRepository:
-    def __init__(self, dsn: str, schema: str = "supportportal", connect_timeout: int = 10) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        schema: str = "supportportal",
+        connect_timeout: int = 10,
+        *,
+        migration_dsn: str | None = None,
+    ) -> None:
         self._dsn = dsn.strip()
+        self._migration_dsn = str(migration_dsn or self._dsn).strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
 
@@ -102,8 +110,11 @@ class PostgresEventRepository:
     def _connect(self) -> psycopg.Connection[Any]:
         return psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
 
+    def _connect_for_initialize(self) -> psycopg.Connection[Any]:
+        return psycopg.connect(self._migration_dsn, connect_timeout=self._connect_timeout)
+
     def initialize(self) -> None:
-        with self._connect() as conn:
+        with self._connect_for_initialize() as conn:
             with conn.cursor() as cur:
                 # Serialize bootstrap across services/workers sharing the same AWS database.
                 cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842918, 1))
@@ -217,4 +228,5 @@ def create_event_repository() -> EventRepository:
         dsn=dsn,
         schema=schema,
         connect_timeout=connect_timeout,
+        migration_dsn=(os.getenv("TICKET_DB_MIGRATION_DSN") or "").strip() or None,
     )

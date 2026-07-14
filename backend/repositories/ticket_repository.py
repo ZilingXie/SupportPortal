@@ -1904,8 +1904,10 @@ class PostgresTicketRepository:
         pool_max_lifetime_seconds: float = 300.0,
         pool_max_idle_seconds: float = 60.0,
         application_name: str | None = None,
+        migration_dsn: str | None = None,
     ) -> None:
         self._dsn = dsn.strip()
+        self._migration_dsn = str(migration_dsn or self._dsn).strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
         self._connect_retries = _safe_positive_int(connect_retries, 0)
@@ -1931,6 +1933,9 @@ class PostgresTicketRepository:
         return sql.Identifier(self._schema, table_name)
 
     def _connect(self) -> psycopg.Connection[Any]:
+        return self._connect_dsn(self._dsn)
+
+    def _connect_dsn(self, dsn: str) -> psycopg.Connection[Any]:
         attempts = max(1, self._connect_retries + 1)
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
@@ -1938,7 +1943,7 @@ class PostgresTicketRepository:
                 connect_kwargs: dict[str, Any] = {"connect_timeout": self._connect_timeout}
                 if self._application_name:
                     connect_kwargs["application_name"] = self._application_name
-                connection = psycopg.connect(self._dsn, **connect_kwargs)
+                connection = psycopg.connect(dsn, **connect_kwargs)
                 connection.autocommit = True
                 return connection
             except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
@@ -1955,6 +1960,9 @@ class PostgresTicketRepository:
         if last_error is not None:
             raise last_error
         raise RuntimeError("Ticket repository connection failed without an exception")
+
+    def _connect_for_initialize(self) -> psycopg.Connection[Any]:
+        return self._connect_dsn(self._migration_dsn)
 
     def _pool_factory(self) -> Any:
         if ConnectionPool is None:
@@ -2208,7 +2216,7 @@ class PostgresTicketRepository:
                 self.close()
 
     def initialize(self) -> None:
-        with self._connect() as conn:
+        with self._connect_for_initialize() as conn:
             with conn.cursor() as cur:
                 # Serialize bootstrap across services/workers sharing the same AWS database.
                 cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842918, 1))
@@ -5718,6 +5726,7 @@ def create_ticket_repository() -> TicketRepository:
         300.0,
     )
     application_name = str(os.getenv("TICKET_DB_APPLICATION_NAME") or "").strip() or None
+    migration_dsn = (os.getenv("TICKET_DB_MIGRATION_DSN") or "").strip() or None
     return PostgresTicketRepository(
         dsn=dsn,
         schema=schema,
@@ -5732,4 +5741,5 @@ def create_ticket_repository() -> TicketRepository:
         pool_max_lifetime_seconds=pool_max_lifetime_seconds,
         pool_max_idle_seconds=pool_max_idle_seconds,
         application_name=application_name,
+        migration_dsn=migration_dsn,
     )
