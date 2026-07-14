@@ -76,21 +76,6 @@ class BillingResponseTokenRepositoryTests(unittest.TestCase):
             self.repository.mark_billing_response_token_used("hash-duplicate", "2026-06-19T00:03:00+00:00")
         )
 
-    def test_delete_all_billing_tickets_cascades_response_tokens_in_memory(self) -> None:
-        self.repository.save_billing_ticket({"billing_ticket_id": "BT-TK-ACC-123456"})
-        self.repository.save_billing_response_token(
-            {
-                "token_hash": "hash-cascade",
-                "billing_ticket_id": "BT-TK-ACC-123456",
-                "created_at": "2026-06-19T00:00:00+00:00",
-                "used_at": None,
-            }
-        )
-
-        self.assertEqual(self.repository.delete_all_billing_tickets(), 1)
-
-        self.assertIsNone(self.repository.get_billing_response_token("hash-cascade"))
-
     def test_postgres_billing_response_token_sql_preserves_one_time_use_guard(self) -> None:
         save_source = inspect.getsource(PostgresTicketRepository.save_billing_response_token)
         mark_source = inspect.getsource(PostgresTicketRepository.mark_billing_response_token_used)

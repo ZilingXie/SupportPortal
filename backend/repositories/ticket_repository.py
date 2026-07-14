@@ -845,9 +845,6 @@ class TicketRepository(Protocol):
     ) -> int:
         ...
 
-    def delete_all_billing_tickets(self) -> int:
-        ...
-
     def save_billing_response_token(self, token: dict[str, Any]) -> None:
         ...
 
@@ -1635,13 +1632,6 @@ class InMemoryTicketRepository:
                 route_errors_only=route_errors_only,
             )
         )
-
-    def delete_all_billing_tickets(self) -> int:
-        count = len(self._billing_tickets)
-        self._billing_tickets.clear()
-        self._billing_response_tokens.clear()
-        self._billing_route_corrections.clear()
-        return count
 
     def save_billing_response_token(self, token: dict[str, Any]) -> None:
         token_hash = str(token.get("token_hash") or "").strip()
@@ -5295,18 +5285,6 @@ class PostgresTicketRepository:
         if not clauses:
             return sql.SQL(""), tuple()
         return sql.SQL("WHERE ") + sql.SQL(" AND ").join(clauses), tuple(params)
-
-    def delete_all_billing_tickets(self) -> int:
-        def _operation(conn: psycopg.Connection[Any]) -> int:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL("DELETE FROM {}").format(
-                        self._table("support_billing_tickets")
-                    )
-                )
-                return cur.rowcount
-
-        return self._run_with_connection_retry("delete_all_billing_tickets", _operation)
 
     def save_billing_response_token(self, token: dict[str, Any]) -> None:
         token_hash = str(token.get("token_hash") or "").strip()

@@ -3500,12 +3500,6 @@ def list_billing_tickets(
     }
 
 
-@app.delete("/api/account/billing-tickets")
-def delete_all_billing_tickets() -> dict[str, Any]:
-    deleted = ticket_repository.delete_all_billing_tickets()
-    return {"deleted": deleted}
-
-
 @app.get("/api/account/billing-tickets/{billing_ticket_id}")
 def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     ticket = ticket_repository.get_billing_ticket(billing_ticket_id)

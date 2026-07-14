@@ -1168,7 +1168,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(clamped_payload["page"], 2)
         self.assertEqual(clamped_payload["count"], 3)
 
-    def test_delete_all_billing_tickets_clears_account_list(self) -> None:
+    def test_delete_all_billing_tickets_is_not_allowed_and_preserves_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             for i in range(2):
                 response = self.client.post(
@@ -1182,24 +1182,26 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         before = self.client.get("/api/account/billing-tickets?limit=30")
         self.assertEqual(before.status_code, 200)
-        self.assertEqual(before.json()["count"], 2)
+        before_payload = before.json()
+        self.assertEqual(before_payload["count"], 2)
+        before_ids = [item["billing_ticket_id"] for item in before_payload["tickets"]]
 
         response = self.client.delete("/api/account/billing-tickets")
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"deleted": 2})
+        self.assertEqual(response.status_code, 405, response.text)
 
         after = self.client.get("/api/account/billing-tickets?limit=30")
         self.assertEqual(after.status_code, 200)
         after_payload = after.json()
-        self.assertEqual(after_payload["count"], 0)
-        self.assertEqual(after_payload["tickets"], [])
-        self.assertEqual(after_payload["billing_tickets"], [])
+        self.assertEqual(after_payload["count"], 2)
+        self.assertEqual(
+            [item["billing_ticket_id"] for item in after_payload["tickets"]],
+            before_ids,
+        )
 
-    def test_delete_all_billing_tickets_returns_zero_when_empty(self) -> None:
+    def test_delete_all_billing_tickets_is_not_allowed_when_empty(self) -> None:
         response = self.client.delete("/api/account/billing-tickets")
 
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"deleted": 0})
+        self.assertEqual(response.status_code, 405, response.text)
 
     def test_billing_tickets_detail_api(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
