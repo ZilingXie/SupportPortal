@@ -371,7 +371,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect", return_value=connection):
+        with patch.object(repository, "_connect_for_initialize", return_value=connection):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
@@ -384,7 +384,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect", return_value=connection):
+        with patch.object(repository, "_connect_for_initialize", return_value=connection):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
@@ -474,7 +474,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresAssetRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect", return_value=connection):
+        with patch.object(repository, "_connect_for_initialize", return_value=connection):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
@@ -561,6 +561,73 @@ class RepositoryConfigurationTests(unittest.TestCase):
             repository = create_ticket_repository()
         self.assertIsInstance(repository, PostgresTicketRepository)
         self.assertEqual(repository._application_name, "supportportal-api")
+
+    def test_ticket_repositories_read_separate_migration_dsn(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://runtime",
+                "TICKET_DB_MIGRATION_DSN": "postgresql://migration",
+            },
+            clear=True,
+        ):
+            ticket_repository = create_ticket_repository()
+            event_repository = create_event_repository()
+            asset_repository = create_asset_repository()
+
+        self.assertEqual(ticket_repository._dsn, "postgresql://runtime")
+        self.assertEqual(ticket_repository._migration_dsn, "postgresql://migration")
+        self.assertEqual(event_repository._dsn, "postgresql://runtime")
+        self.assertEqual(event_repository._migration_dsn, "postgresql://migration")
+        self.assertEqual(asset_repository._dsn, "postgresql://runtime")
+        self.assertEqual(asset_repository._migration_dsn, "postgresql://migration")
+
+    def test_ticket_repositories_default_migration_dsn_to_runtime_dsn(self) -> None:
+        with patch.dict(os.environ, {"TICKET_DB_DSN": "postgresql://runtime"}, clear=True):
+            repositories = [
+                create_ticket_repository(),
+                create_event_repository(),
+                create_asset_repository(),
+            ]
+
+        self.assertTrue(all(repository._migration_dsn == "postgresql://runtime" for repository in repositories))
+
+    def test_repository_initialization_connections_use_migration_dsn(self) -> None:
+        ticket_repository = PostgresTicketRepository(
+            dsn="postgresql://runtime",
+            migration_dsn="postgresql://migration",
+        )
+        event_repository = PostgresEventRepository(
+            dsn="postgresql://runtime",
+            migration_dsn="postgresql://migration",
+        )
+        asset_repository = PostgresAssetRepository(
+            dsn="postgresql://runtime",
+            migration_dsn="postgresql://migration",
+        )
+
+        ticket_connection = _ReusableConnection(_ReusableCursor())
+        event_connection = _ReusableConnection(_ReusableCursor())
+        asset_connection = _ReusableConnection(_ReusableCursor())
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            return_value=ticket_connection,
+        ) as ticket_connect:
+            ticket_repository._connect_for_initialize()
+        with patch(
+            "backend.repositories.event_repository.psycopg.connect",
+            return_value=event_connection,
+        ) as event_connect:
+            event_repository._connect_for_initialize()
+        with patch(
+            "backend.repositories.asset_repository.psycopg.connect",
+            return_value=asset_connection,
+        ) as asset_connect:
+            asset_repository._connect_for_initialize()
+
+        ticket_connect.assert_called_once_with("postgresql://migration", connect_timeout=10)
+        event_connect.assert_called_once_with("postgresql://migration", connect_timeout=10)
+        asset_connect.assert_called_once_with("postgresql://migration")
 
     def test_ticket_repository_clamps_pool_timeout_to_connect_timeout(self) -> None:
         repository = PostgresTicketRepository(

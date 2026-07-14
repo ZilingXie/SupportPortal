@@ -211,8 +211,10 @@ class PostgresAssetRepository:
         pool_min_size: int = 1,
         pool_max_size: int = 8,
         pool_timeout_seconds: float = 15.0,
+        migration_dsn: str | None = None,
     ) -> None:
         self._dsn = dsn
+        self._migration_dsn = str(migration_dsn or dsn).strip()
         self._schema = schema
         self._pool_min_size = pool_min_size
         self._pool_max_size = pool_max_size
@@ -235,8 +237,11 @@ class PostgresAssetRepository:
             return self._pool.connection()
         return psycopg.connect(self._dsn)
 
+    def _connect_for_initialize(self) -> psycopg.Connection[Any]:
+        return psycopg.connect(self._migration_dsn)
+
     def initialize(self) -> None:
-        with self._connect() as conn:
+        with self._connect_for_initialize() as conn:
             with conn.transaction():
                 with conn.cursor() as cur:
                     cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842918, 2))
@@ -499,4 +504,5 @@ def create_asset_repository() -> AssetRepository:
         pool_min_size=_safe_positive_int(os.getenv("TICKET_DB_POOL_MIN_SIZE"), 1),
         pool_max_size=_safe_positive_int(os.getenv("TICKET_DB_POOL_MAX_SIZE"), 8),
         pool_timeout_seconds=_safe_positive_float(os.getenv("TICKET_DB_POOL_TIMEOUT_SECONDS"), 15.0),
+        migration_dsn=(os.getenv("TICKET_DB_MIGRATION_DSN") or "").strip() or None,
     )
