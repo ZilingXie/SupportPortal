@@ -1710,6 +1710,14 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("KG_EMBEDDING_MODEL: ${KG_EMBEDDING_MODEL:-}", compose_source)
         self.assertIn("KG_EMBEDDING_BASE_URL: ${KG_EMBEDDING_BASE_URL:-}", compose_source)
         self.assertIn("KG_EMBEDDING_DIM: ${KG_EMBEDDING_DIM:-}", compose_source)
+        self.assertIn(
+            "NEO4J_server_memory_heap_initial__size: ${LOCAL_NEO4J_HEAP_INITIAL:-256m}", compose_source
+        )
+        self.assertIn("NEO4J_server_memory_heap_max__size: ${LOCAL_NEO4J_HEAP_MAX:-512m}", compose_source)
+        self.assertIn("NEO4J_server_memory_pagecache_size: ${LOCAL_NEO4J_PAGECACHE:-256m}", compose_source)
+        self.assertIn('NEO4J_server_http_enabled: "false"', compose_source)
+        self.assertIn('"${LOCAL_NEO4J_BOLT_PORT:-17687}:7687"', compose_source)
+        self.assertNotIn("7474", compose_source)
         self.assertIn("local_neo4j:", compose_source)
         self.assertIn("condition: service_healthy", compose_source)
 
@@ -1724,6 +1732,10 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("LOCAL_POSTGRES_HOST_PORT=15432", local_env_source)
         self.assertIn("LOCAL_PGVECTOR_TABLE=docagent_chunks_bge_m3_1024", local_env_source)
         self.assertIn("KG_NEO4J_URI=bolt://local_neo4j:7687", local_env_source)
+        self.assertIn("LOCAL_NEO4J_HEAP_INITIAL=256m", local_env_source)
+        self.assertIn("LOCAL_NEO4J_HEAP_MAX=512m", local_env_source)
+        self.assertIn("LOCAL_NEO4J_PAGECACHE=256m", local_env_source)
+        self.assertNotIn("LOCAL_NEO4J_HTTP_PORT", local_env_source)
         self.assertIn("KG_EMBEDDING_MODEL=BAAI/bge-m3", local_env_source)
         self.assertIn("KG_EMBEDDING_DIM=1024", local_env_source)
         self.assertIn("# Use --db local to opt into local Postgres/pgvector.", local_env_source)

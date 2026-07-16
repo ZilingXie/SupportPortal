@@ -11,6 +11,25 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-07-16 - Harden local Neo4j resource and Browser defaults
+
+- Summary:
+  - Reduced the local lightweight Neo4j defaults to a 256 MiB initial heap, 512 MiB maximum heap, and 256 MiB page cache.
+  - Disabled the unused Neo4j HTTP/Browser endpoint and removed its host port mapping while retaining Bolt and the Bolt-based healthcheck.
+- Reason:
+  - A 2 GiB Podman VM repeatedly OOM-killed Neo4j. Each abrupt restart left an approximately 92 MiB Browser extraction directory in the container writable layer, eventually consuming about 47 GB.
+- Affected files/config:
+  - `.env.local.example`
+  - `deployment/docker-compose.single-host.local-lightweight.yml`
+  - `backend/tests/test_workflow_scripts.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - None. Neo4j data/log volumes, graph schema, nodes, relationships, RAG chunks, embeddings, pgvector/BM25/FTS data, and ingestion behavior are unchanged.
+- Verification:
+  - `rtk python -m pytest backend/tests/test_workflow_scripts.py::WorkflowScriptTests::test_local_lightweight_compose_enables_rag_kg_sandbox backend/tests/test_workflow_scripts.py::WorkflowScriptTests::test_local_env_template_keeps_remote_db_default_and_does_not_replace_online_env -q`
+  - Render the two-file local lightweight compose config and verify the Neo4j memory values, disabled HTTP setting, Bolt-only host port, and retained named volumes.
+  - After merge, restart the official lightweight stack and verify `/health`, `app_build.ref`, Neo4j health, effective environment, exposed ports, Bolt query, and Browser temp-directory count.
+
 ## 2026-06-22 - Record GraphRAG ingest model bake-off plan
 
 - Summary:
