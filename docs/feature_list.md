@@ -25,12 +25,13 @@
 - 对话支持上传 txt/log/err 日志附件。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Billing 白名单问题会自动收集字段并升级内部团队处理。
-- Billing 自动化可轮询公司 Outlook Inbox，读取带 `[Billing Request]` 标题的内部回复正文并将 PDF 附件转发到客户工单。
+- Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口可查看 Billing ticket 历史和详情。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
-- Billing 自动化支持一次性内部 response link，并根据结构化处理结果触发 AI 客户通知。
+- Account 入口会对 Not automated 工单按可配置比例创建 Engineer Case，当前支持每第 10 单试运行并可切换到 100%。
+- Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
@@ -51,15 +52,19 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
-- Engineer Assignment 支持服务端 case 领取与 assignee 同步，`/workspace/admin` 会分栏展示 active 和 resolved Engineer 工单。
-- `/workspace` 验证入口会用 Assignment 风格的工程师选择、welcome readiness 和 UTC+8 ready gate 打开真实 investigating 工程师 case，并复用 Engineer 端真实 case detail、Engineer AI、approve/revise/final approve、multi-agent toggle 和 API 数据流。
+- `/workspace` 是正式 Engineer Case 处理入口，工程师通过账号登录后仅能查看和处理系统派发给自己的 case。
+- `/workspace/admin` 可创建 Admin/Engineer 账号、管理 Engineer available/unavailable 状态并审计 availability 变更。
+- Engineer Case 使用 available engineer + round-robin 自动派单，派单后立即开始 3 小时 SLA。
+- Engineer unavailable 或 3 小时 SLA 到期时，系统会把未完成 Engineer Case 自动派给下一个 available engineer。
+- Engineer Case 派单状态使用 pending、assigned、resolved，并通过版本保护、事务更新和审计避免重复派发。
+- Client Ticket status 与 Engineer Case assignment status 在 API、Workspace 和 Admin 中独立展示与处理。
+- Admin 可人工调整 Engineer Case 派单，所有调整会记录操作者、原因、前后 assignee、状态和版本。
+- 旧 `/engineer` UI 已转为 legacy；`/api/engineer/*` 仍是 active backend contract，manual claim endpoint 已禁用。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 - Engineer AI 会在调查前生成结构化 Plan Agent 计划。
 - Engineer AI 会按 Plan Agent 计划执行 allowlisted subagents 并生成 evidence packet。
 - Engineer AI 会根据执行结果生成 Review Agent 决策。
-- 工程师点击 investigating 状态徽标后才运行并查看当前 ticket 的 Plan/Execute/Review Agent 输出。
-- Engineer 工单默认不预跑 multi-agent run，右侧 Multi-Agent Run 面板只在工程师显式点击 investigating 后打开。
-- 工程师在 multi-agent workspace 下提交消息会携带 multi_agent_enabled，后端先刷新一轮 Plan/Execute/Review 再让 Engineer AI 回复；默认 workspace 仍走 summary packet + guardrail-only 消息流程。
+- Engineer multi-agent 默认关闭并与 9/1 Controlled Launch 主链路隔离。
 - revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。
 - Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。
 - Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。
@@ -78,12 +83,12 @@
 - Dashboard 的 ticket detail 可查看 client agent runtime 摘要与最近 agent events。
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 - Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
+- `/workspace/admin` 可查看 Client Ticket、Engineer Case、SLA、派单/转派、Engineer availability、Billing automation 和 guardrail 指标。
 - 对话支持上传 txt/log/err 日志附件。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
-- Billing 自动化支持一次性内部 response link，并根据结构化处理结果触发 AI 客户通知。
-- Billing 自动化可轮询公司 Outlook Inbox，读取带 `[Billing Request]` 标题的内部回复正文并将 PDF 附件转发到客户工单。
+- Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 
 ### 未完成
 - 待补充。

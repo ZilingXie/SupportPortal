@@ -370,13 +370,16 @@ class RoadmapContractTests(unittest.TestCase):
             'class="hero-bullets"',
             "项目定位",
             "当前阶段",
-            "Phase 1/2/3 门禁",
-            "近期 POC",
+            "9/1 Controlled Launch",
+            "9/1 主链路",
             "总计划追踪",
             "Phase 1：效率提升 + 工单系统雏形",
-            "Phase 2：AI 主动处理 + 人 approve",
+            "Phase 2：Billing automation + Engineer Case 生产闭环",
             "AgentRelay communication foundation 已完成",
-            "Phase 3：governed agent-to-agent + 高自动化",
+            "Phase 3：Engineer multi-agent + governed agent-to-agent",
+            "P0、P1、P2 都属于 9/1 交付范围",
+            "available engineer + round-robin",
+            "每第 10 单创建 Engineer Case",
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -402,7 +405,7 @@ class RoadmapContractTests(unittest.TestCase):
             "meeting-minutes-card",
             "AI review 人",
             "人 review AI",
-            "WeCom 不适合作审计 source of truth",
+            "第三方聊天工具不作为审计 source of truth",
             "billing route 验证",
             "renderMeetingMinutes",
             "renderMeetingLane",
@@ -410,10 +413,9 @@ class RoadmapContractTests(unittest.TestCase):
             'title: "下一步计划"',
             "最快不能超过 5 分钟",
             "AI 只检查 conclusion / proof / next step",
-            "invoice / account fraud / deactivate",
+            "invoice / account suspension / company verification",
             "Zendesk webhook / N8n",
-            "shadow mode",
-            "1% 切流",
+            "每第 10 单创建 Engineer Case",
             "AgentRelay communication foundation",
             "governed agent-to-agent 自主调查",
             "token 成本",
@@ -447,9 +449,9 @@ class RoadmapContractTests(unittest.TestCase):
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")
         required_terms = [
             "Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口",
-            "AI account",
+            "Not automated case",
             "invoice request",
-            "account fraud / deactivate / company verification",
+            "account suspension / company verification",
             "邮件回执/邮箱轮询",
             "engineer reply 通过/拒绝",
             "route_accuracy",
@@ -470,7 +472,7 @@ class RoadmapContractTests(unittest.TestCase):
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")
         required_terms = [
             "Engineer AI multi-agent",
-            "Ticket assignment UI demo",
+            "Engineer Case assignment + Workspace",
             "Billing intake / ticket routing",
             "Routing rules",
             "RAG vs KG / Case Memory",
@@ -480,6 +482,10 @@ class RoadmapContractTests(unittest.TestCase):
             "replay runner / metrics dashboard / regression gate",
             "billing.account_verification",
             "SupportPortal adapter",
+            "`/engineer` UI 是 legacy",
+            "`/api/engineer/*` 仍是 active backend contract",
+            "pending/assigned/resolved",
+            "Outlook reply",
         ]
         for term in required_terms:
             with self.subTest(term=term):

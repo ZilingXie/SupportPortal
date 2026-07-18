@@ -206,6 +206,14 @@
    - primary title 使用 `engineer case title`
    - `Client Ticket <ticket_id> · <subject>` 作为次级引用信息
 5. engineer detail 的 `Customer Timeline` 必须继续展示 parent client ticket 的公开对话，但 header 不能因此回退成 client ticket title。
+6. `/engineer` 是 legacy Engineer UI；Controlled Launch 的正式工程师入口是 `/workspace`，管理入口是 `/workspace/admin`。
+7. `/workspace` 只展示系统派发给当前账号的 Engineer Case，不提供 claim、take ticket、ready to claim 或任何人工抢单控件。
+8. `/workspace/admin` 必须分别展示：
+   - Client Ticket status：`open / communicating / escalated / investigating / resolved`
+   - Engineer Case assignment status：`pending / assigned / resolved`
+9. assignment status 只能读取后端 `assignment_status`，不得根据 Client Ticket status 或 `assigned_engineer_id` 是否为空在前端推导。
+10. engineer availability 由 `/workspace/admin` 的 `available / unavailable` 控件管理；Engineer Workspace 只读展示 availability，不提供本地 shift 或 availability 写入。
+11. Engineer Case 的 SLA 使用后端 `assigned_at / sla_due_at`，不得使用浏览器本地时间或 localStorage 创建 SLA 起点。
 
 ### 6.3 Ticket Dashboard (`/dashboard`)
 1. 固定 KPI 名称：

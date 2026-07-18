@@ -3027,6 +3027,11 @@ html.material-symbols-pending .material-symbols-outlined {
   justify-content: center;
 }
 
+.workspace-login-form {
+  display: grid;
+  gap: 16px;
+}
+
 .workspace-welcome-view {
   grid-template-rows: auto auto;
   align-content: start;
@@ -3781,23 +3786,45 @@ html.material-symbols-pending .material-symbols-outlined {
   .workspace-assignment-sidebar,
   .workspace-assignment-sidebar:hover,
   .workspace-assignment-sidebar:focus-within {
+    position: sticky;
+    top: 0;
     width: 100%;
-    padding-inline: 18px;
+    min-height: 0;
+    padding: 10px 12px;
+    box-shadow: 0 10px 28px rgba(23, 28, 33, 0.16);
   }
 
   .workspace-assignment-sidebar .sidebar-inner {
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto;
+    align-items: center;
+    gap: 10px;
     height: auto;
     max-height: none;
   }
 
   .workspace-assignment-sidebar .workspace-sidebar-scroll {
-    overflow: visible;
+    display: none;
   }
 
   .workspace-assignment-sidebar .rail-brand {
     justify-content: flex-start;
-    gap: 16px;
+    gap: 10px;
+    margin: 0;
+  }
+
+  .workspace-assignment-sidebar .rail-brand-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+
+  .workspace-assignment-sidebar .rail-brand-title {
+    font-size: 14px;
+  }
+
+  .workspace-assignment-sidebar .rail-brand-subtitle {
+    font-size: 9px;
   }
 
   .workspace-assignment-sidebar .rail-brand-copy,
@@ -3812,14 +3839,42 @@ html.material-symbols-pending .material-symbols-outlined {
     display: none;
   }
 
-  .workspace-assignment-sidebar .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack) {
+  .workspace-assignment-sidebar .sidebar-inner > :not(.rail-brand):not(.rail-compact-stack):not(.workspace-sidebar-footer) {
     opacity: 1;
     pointer-events: auto;
     transform: none;
   }
 
+  .workspace-assignment-sidebar .workspace-sidebar-footer {
+    align-self: center;
+    margin: 0;
+    overflow: visible;
+  }
+
+  .workspace-assignment-sidebar .rail-user-controls,
+  .workspace-assignment-sidebar:hover .rail-user-controls,
+  .workspace-assignment-sidebar:focus-within .rail-user-controls {
+    display: flex;
+    grid-template-columns: none;
+    align-items: center;
+    gap: 6px;
+    overflow: visible;
+  }
+
   .workspace-assignment-sidebar .user-profile-chip {
     display: flex;
+    padding: 5px 7px 5px 5px;
+  }
+
+  .workspace-assignment-sidebar .logout-icon-btn {
+    flex-basis: 38px;
+    width: 38px;
+    min-height: 38px;
+  }
+
+  .engineer-shell.problem-workspace {
+    width: 100%;
+    margin-left: 0;
   }
 
   .workspace-case-controls {
@@ -3853,5 +3908,15 @@ html.material-symbols-pending .material-symbols-outlined {
   .workspace-status-strip,
   .workspace-ready-actions {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 520px) {
+  .workspace-assignment-sidebar .user-meta {
+    display: none;
+  }
+
+  .workspace-assignment-sidebar .user-profile-chip {
+    padding-right: 5px;
   }
 }

@@ -1,13 +1,14 @@
 const WORKSPACE_AUTH_KEY = "supportportal_workspace_selected_engineer";
-const WORKSPACE_SHIFT_KEY = "supportportal_workspace_daily_shift";
+const WORKSPACE_ACCESS_TOKEN_KEY = "supportportal_workspace_access_token";
+const WORKSPACE_ACCOUNT_KEY = "supportportal_workspace_account";
 const WORKSPACE_ACTIVE_KEY = "supportportal_workspace_active";
 const WORKSPACE_BREAK_AFTER_CASE_KEY = "supportportal_workspace_break_after_case";
-const WORKSPACE_CASE_SLA_STARTED_AT_KEY = "supportportal_workspace_case_sla_started_at";
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
 const WORKSPACE_CASE_SLA_MS = 3 * 60 * 60 * 1000;
 const AGORA_STATUS_PAGE_URL = "https://status.agora.io/";
 const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";
 const SERVICE_EVENTS_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const ENGINEER_MULTI_AGENT_ENABLED = false;
 const DEMO_ENGINEERS = [
   { id: "Jack", name: "Jack", role: "Tier One Engineer", initials: "J" },
   { id: "Maya", name: "Maya", role: "Tier One Engineer", initials: "M" },
@@ -36,10 +37,6 @@ const WEEKLY_KNOWN_ISSUES = [
     brief: "Customers often miss the iOS broadcast picker confirmation and report screen share as stuck.",
   },
 ];
-const DEFAULT_SHIFT = {
-  start: "00:00",
-  end: "23:59",
-};
 const ENGINEER_DISPLAY_NAME = "engineer";
 const ENGINEER_AI_DISPLAY_NAME = "Sid";
 const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";
@@ -146,8 +143,9 @@ const routeState = {
   ticketId: null,
 };
 let selectedEngineerId = "";
+let workspaceAccount = null;
+let workspaceAccessToken = "";
 let selectedEngineerCandidate = DEMO_ENGINEERS[0].id;
-let workspaceShift = DEFAULT_SHIFT;
 let workspaceActive = false;
 let workspaceBreakAfterCase = false;
 let readyTransitionActive = false;
@@ -322,16 +320,16 @@ function ensureWorkspaceServiceEventsLoaded() {
 }
 
 function normalizeEngineerId(value) {
-  const raw = String(value || "").trim();
-  const engineer = DEMO_ENGINEERS.find((candidate) => candidate.id === raw);
-  return engineer ? engineer.id : "";
+  return String(value || "").trim();
 }
 
 function refreshWorkspaceSessionState() {
   const storedEngineerId = normalizeEngineerId(readStorage(WORKSPACE_AUTH_KEY, ""));
+  const storedAccount = readStorage(WORKSPACE_ACCOUNT_KEY, null);
+  workspaceAccount = storedAccount && typeof storedAccount === "object" ? storedAccount : null;
+  workspaceAccessToken = String(readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "") || "").trim();
   selectedEngineerId = storedEngineerId;
-  selectedEngineerCandidate = storedEngineerId || normalizeEngineerId(selectedEngineerCandidate) || DEMO_ENGINEERS[0].id;
-  workspaceShift = normalizeShift(readStorage(WORKSPACE_SHIFT_KEY, DEFAULT_SHIFT));
+  selectedEngineerCandidate = storedEngineerId || normalizeEngineerId(selectedEngineerCandidate);
   workspaceActive = Boolean(readStorage(WORKSPACE_ACTIVE_KEY, false));
   workspaceBreakAfterCase = Boolean(readStorage(WORKSPACE_BREAK_AFTER_CASE_KEY, false));
 }
@@ -342,29 +340,26 @@ function getSelectedEngineerId() {
 }
 
 function currentEngineerId() {
-  return getSelectedEngineerId() || DEMO_ENGINEERS[0].id;
+  return getSelectedEngineerId();
 }
 
 function getSelectedEngineer() {
   const engineerId = getSelectedEngineerId();
-  return DEMO_ENGINEERS.find((engineer) => engineer.id === engineerId) || null;
+  if (!engineerId || !workspaceAccount) {
+    return null;
+  }
+  const displayName = String(workspaceAccount.display_name || engineerId).trim() || engineerId;
+  return {
+    id: engineerId,
+    name: displayName,
+    role: String(workspaceAccount.role || "engineer").toUpperCase(),
+    initials: displayName.slice(0, 2).toUpperCase(),
+  };
 }
 
 function getCandidateEngineer() {
   const candidateId = normalizeEngineerId(selectedEngineerCandidate) || getSelectedEngineerId() || DEMO_ENGINEERS[0].id;
   return DEMO_ENGINEERS.find((engineer) => engineer.id === candidateId) || DEMO_ENGINEERS[0];
-}
-
-function normalizeShift(value) {
-  const candidate = value && typeof value === "object" ? value : {};
-  const start = normalizeShiftTime(candidate.start, DEFAULT_SHIFT.start);
-  const end = normalizeShiftTime(candidate.end, DEFAULT_SHIFT.end);
-  return { start, end };
-}
-
-function normalizeShiftTime(value, fallback) {
-  const text = String(value || "").trim();
-  return /^\d{2}:\d{2}$/.test(text) ? text : fallback;
 }
 
 function utc8Now() {
@@ -380,43 +375,15 @@ function formatUtc8Time(date = utc8Now()) {
   return `${year}-${month}-${day} ${hour}:${minute} UTC+8`;
 }
 
-function minutesFromShiftTime(value) {
-  const match = String(value || "").match(/^(\d{2}):(\d{2})$/);
-  if (!match) {
-    return 0;
-  }
-  return Number(match[1]) * 60 + Number(match[2]);
-}
-
 function isInShift(now = utc8Now()) {
+  void now;
   refreshWorkspaceSessionState();
-  const current = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const start = minutesFromShiftTime(workspaceShift.start);
-  const end = minutesFromShiftTime(workspaceShift.end);
-  if (start === end) {
-    return false;
-  }
-  if (start < end) {
-    return current >= start && current < end;
-  }
-  return current >= start || current < end;
+  return String(workspaceAccount?.availability || "").toLowerCase() === "available";
 }
 
 function nextShiftInfo() {
   refreshWorkspaceSessionState();
-  const now = utc8Now();
-  const current = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const start = minutesFromShiftTime(workspaceShift.start);
-  const end = minutesFromShiftTime(workspaceShift.end);
-  if (start === end) {
-    return "Shift is not configured";
-  }
-  if (isInShift(now)) {
-    const remaining = start < end ? end - current : current < end ? end - current : 24 * 60 - current + end;
-    return `On shift now, ${Math.max(1, remaining)} min left`;
-  }
-  const untilStart = current < start ? start - current : 24 * 60 - current + start;
-  return `Next shift starts in ${Math.max(1, untilStart)} min`;
+  return isInShift() ? "Available for system dispatch" : "Unavailable for new assignments";
 }
 
 function saveWorkspaceActive(value) {
@@ -435,15 +402,6 @@ function toggleWorkspaceBreakAfterCase() {
   renderTicketDetail();
 }
 
-function readWorkspaceCaseSlaStarts() {
-  const value = readStorage(WORKSPACE_CASE_SLA_STARTED_AT_KEY, {});
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function writeWorkspaceCaseSlaStarts(value) {
-  writeStorage(WORKSPACE_CASE_SLA_STARTED_AT_KEY, value && typeof value === "object" ? value : {});
-}
-
 function parseEpochMs(value) {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric > 0) {
@@ -453,38 +411,20 @@ function parseEpochMs(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function rememberWorkspaceCaseSlaStart(ticketId, startedAt = Date.now()) {
-  const normalizedTicketId = normalizeDetailTicketId(ticketId);
-  if (!normalizedTicketId) {
-    return 0;
-  }
-  const starts = readWorkspaceCaseSlaStarts();
-  const existing = parseEpochMs(starts[normalizedTicketId]);
-  if (existing) {
-    return existing;
-  }
-  starts[normalizedTicketId] = startedAt;
-  writeWorkspaceCaseSlaStarts(starts);
-  return startedAt;
-}
-
 function workspaceCaseAssignedAt(ticket = selectedTicket) {
-  const explicitAssignedAt = parseEpochMs(
+  return parseEpochMs(
     ticket?.assignedAt ||
       ticket?.assigned_at ||
       ticket?.assignment_started_at ||
       ticket?.engineer_assigned_at
   );
-  if (explicitAssignedAt) {
-    return explicitAssignedAt;
-  }
-  const ticketId = engineerCaseRouteId(ticket) || selectedTicketId;
-  return rememberWorkspaceCaseSlaStart(ticketId);
 }
 
 function workspaceTicketSlaState(ticket = selectedTicket) {
   const assignedAt = workspaceCaseAssignedAt(ticket);
-  if (!assignedAt) {
+  const explicitDueAt = parseEpochMs(ticket?.sla_due_at || ticket?.slaDueAt);
+  const dueAt = explicitDueAt || (assignedAt ? assignedAt + WORKSPACE_CASE_SLA_MS : 0);
+  if (!dueAt) {
     return {
       label: "3h SLA from assign",
       className: "is-muted",
@@ -492,7 +432,7 @@ function workspaceTicketSlaState(ticket = selectedTicket) {
       overdue: false,
     };
   }
-  const remainingMs = WORKSPACE_CASE_SLA_MS - (Date.now() - assignedAt);
+  const remainingMs = dueAt - Date.now();
   if (remainingMs <= 0) {
     return { label: "SLA overdue", className: "is-danger", remainingMs, overdue: true };
   }
@@ -625,8 +565,8 @@ function shouldDiscardStaleDetailPayload(currentTicket, nextTicket) {
     return true;
   }
 
-  const currentStatus = normalizeStatusValue(currentTicket.status || "open");
-  const nextStatus = normalizeStatusValue(nextTicket.status || "open");
+  const currentStatus = workspaceClientStatus(currentTicket);
+  const nextStatus = workspaceClientStatus(nextTicket);
   if (
     currentStatus === "resolved" &&
     nextStatus !== "resolved" &&
@@ -1029,13 +969,15 @@ function renderWorkspaceAssignmentSidebarHtml() {
     ? String(selectedTicket.title || selectedTicket.subject || "Current engineer case")
     : activeTicketId
     ? "Loading assigned case"
-    : "No active Engineer Ticket";
-  const investigatingCount = tickets.filter((ticket) => normalizeStatusValue(ticket?.status || "open") === "investigating").length;
+    : "No active Engineer Case";
+  const investigatingCount = tickets.filter(
+    (ticket) => String(ticket?.assignment_status || "").toLowerCase() === "assigned"
+  ).length;
   const sla = workspaceTicketSlaState(selectedTicket);
   const assignable = Boolean(inShift && !activeTicketId);
   const assignmentSummary = activeTicketId
     ? `${activeTicketId} is locked until this case is completed.`
-    : "Ready opens the first real investigating case.";
+    : "Open the next Engineer Case already assigned by the system.";
 
   return `
     <div class="sidebar-inner">
@@ -1070,37 +1012,27 @@ function renderWorkspaceAssignmentSidebarHtml() {
           </div>
         </div>
         <div class="status-pills">
-          <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
-          <span class="status-pill ${assignable ? "is-success" : "is-warning"}">${assignable ? "Ready for next" : "Not assignable"}</span>
+          <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "Available" : "Unavailable"}</span>
+          <span class="status-pill ${assignable ? "is-success" : "is-warning"}">${assignable ? "Ready for dispatch" : "Assignment active"}</span>
         </div>
       </section>
 
       <section class="context-panel panel-card">
         <div class="panel-head">
-          <p class="eyebrow">UTC+8 daily shift</p>
-          <h3>${escapeHtml(workspaceShift.start)}-${escapeHtml(workspaceShift.end)}</h3>
-          <p>${escapeHtml(formatUtc8Time())}</p>
-        </div>
-        <div class="shift-form shift-form-readonly" aria-label="UTC+8 daily shift">
-          <span class="field">
-            <span class="field-label">Start</span>
-            <strong>${escapeHtml(workspaceShift.start)}</strong>
-          </span>
-          <span class="field">
-            <span class="field-label">End</span>
-            <strong>${escapeHtml(workspaceShift.end)}</strong>
-          </span>
+          <p class="eyebrow">Availability</p>
+          <h3>${inShift ? "Available" : "Unavailable"}</h3>
+          <p>Managed by Workspace Admin</p>
         </div>
       </section>
 
       <section class="context-panel panel-card">
         <div class="panel-head">
           <p class="eyebrow">Assignment</p>
-          <h3>${activeTicketId ? "One active ticket" : "No active Engineer Ticket"}</h3>
+          <h3>${activeTicketId ? "One active case" : "No active Engineer Case"}</h3>
           <p>${escapeHtml(assignmentSummary)}</p>
         </div>
         <div class="sidebar-metrics">
-          <span><strong>${escapeHtml(String(investigatingCount))}</strong> investigating</span>
+          <span><strong>${escapeHtml(String(investigatingCount))}</strong> assigned</span>
           <span><strong>3h</strong> SLA</span>
           <span><strong class="current-ticket-sla ${escapeHtml(sla.className)}" data-sla-countdown>${escapeHtml(
             getWorkspaceSlaCountdownLabel(sla)
@@ -1247,11 +1179,13 @@ function showWorkspaceShell(mode = "home") {
 }
 
 function renderWorkspaceChrome() {
-  const engineerVisibleTickets = tickets.filter((ticket) => isEngineerVisibleStatus(ticket?.status || "open"));
+  const engineerVisibleTickets = tickets.filter((ticket) =>
+    isEngineerVisibleStatus(workspaceClientStatus(ticket))
+  );
   if (routeState.view === "detail" && routeState.ticketId) {
     setWorkspaceShellMode("detail");
     const detailStatus = selectedTicket
-      ? statusLabel(normalizeStatusValue(selectedTicket.status || "open"))
+      ? statusLabel(workspaceClientStatus(selectedTicket))
       : "Loading ticket context...";
     if (workspaceTitleEl) {
       workspaceTitleEl.textContent = "Active Ticket Workspace";
@@ -1505,6 +1439,12 @@ function normalizeStatusValue(value) {
     return "resolved";
   }
   return normalized === "investigating" ? "investigating" : "open";
+}
+
+function workspaceClientStatus(ticket) {
+  return normalizeStatusValue(
+    ticket?.client_status || ticket?.client_ticket_ref?.status || "open"
+  );
 }
 
 function statusLabel(value) {
@@ -1971,7 +1911,7 @@ function renderHitlFeedbackReadOnlyFieldHtml(label, value, fallbackText = "Not c
 function renderHitlFeedbackPanelHtml(ticket) {
   const latestFeedback = getLatestEngineerHitlFeedback(ticket);
   const feedbackCount = getEngineerHitlFeedbackRecords(ticket).length;
-  const isResolved = normalizeStatusValue(ticket?.status) === "resolved";
+  const isResolved = String(ticket?.assignment_status || "pending").toLowerCase() === "resolved";
   const statusLabel = hitlFeedbackLoading
     ? "Loading review"
     : latestFeedback
@@ -2196,7 +2136,7 @@ function investigationStateLabel(value) {
   if (normalized === "closed") {
     return "Closed";
   }
-  return "Open Engineer Ticket";
+  return "Open Engineer Case";
 }
 
 function engineerRequestStatusLabel(status) {
@@ -2564,7 +2504,7 @@ function applyHeaderFilterValue(key, value) {
 
 function applyTicketFilters(items) {
   return items.filter((ticket) => {
-    const status = normalizeStatusValue(ticket?.status || "open");
+    const status = workspaceClientStatus(ticket);
 
     if (!isEngineerVisibleStatus(status)) {
       return false;
@@ -2681,7 +2621,7 @@ function applyLocalTicketPatch(ticketId, patch) {
 
 function isAuthenticated() {
   refreshWorkspaceSessionState();
-  return Boolean(selectedEngineerId && workspaceActive);
+  return Boolean(selectedEngineerId && workspaceAccount && workspaceAccessToken);
 }
 
 function toggleScreens() {
@@ -2786,7 +2726,6 @@ function renderLogin() {
     return;
   }
   refreshWorkspaceSessionState();
-  const selected = getCandidateEngineer();
   workspaceRootEl.innerHTML = `
     <section class="workspace-entry-view">
       <aside class="workspace-entry-intro">
@@ -2794,34 +2733,42 @@ function renderLogin() {
           <span class="workspace-brand-icon material-symbols-outlined" aria-hidden="true">assignment_ind</span>
           <div>
             <p class="workspace-eyebrow">SupportPortal Workspace</p>
-            <strong>Engineer readiness</strong>
+            <strong>Engineer Case Workspace</strong>
           </div>
         </div>
         <div>
-          <h1>Start with the assignment flow. Work the real case.</h1>
+          <h1>Work the Engineer Cases assigned to you.</h1>
           <p class="workspace-intro-copy">
-            Choose a demo engineer, confirm UTC+8 readiness, then open the next real investigating engineer case.
+            Sign in with your Workspace account. System dispatch controls assignment and starts the three-hour SLA.
           </p>
         </div>
         <ul class="workspace-policy-list" aria-label="Workspace policy">
-          <li><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span>Outside shift: ready is disabled until the UTC+8 shift opens.</span></li>
-          <li><span class="material-symbols-outlined" aria-hidden="true">troubleshoot</span><span>Ready opens only real investigating cases.</span></li>
-          <li><span class="material-symbols-outlined" aria-hidden="true">fact_check</span><span>Case detail, Engineer AI, approve/revise, and final approve use the real engineer APIs.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">assignment_ind</span><span>Engineer Cases are assigned by the system; manual claim is disabled.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span>The SLA starts immediately when a case is assigned.</span></li>
+          <li><span class="material-symbols-outlined" aria-hidden="true">fact_check</span><span>Replies continue through guardrail, approve, and final approve.</span></li>
         </ul>
       </aside>
       <section class="workspace-selector-panel">
         <div class="workspace-panel-head">
-          <p class="workspace-eyebrow">Choose a demo engineer</p>
+          <p class="workspace-eyebrow">Workspace account</p>
           <h2>Engineer login</h2>
-          <p>Selection is stored locally for this workspace validation entry.</p>
+          <p>Use the account created by Workspace Admin.</p>
         </div>
-        <div id="engineer-selector" class="engineer-selector-grid" role="radiogroup" aria-label="Choose a demo engineer">
-          ${DEMO_ENGINEERS.map((engineer) => renderEngineerOption(engineer, engineer.id === selected.id)).join("")}
-        </div>
-        <button class="btn btn-primary workspace-entry-cta" type="button" data-action="enter-welcome">
-          View readiness overview
-          <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
-        </button>
+        <form id="workspace-login-form" class="workspace-login-form">
+          <label class="field">
+            <span>Account ID</span>
+            <input name="account_id" type="text" autocomplete="username" required maxlength="128" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="current-password" required maxlength="512" />
+          </label>
+          <p id="workspace-login-error" class="login-error" role="alert"></p>
+          <button class="btn btn-primary workspace-entry-cta" type="submit">
+            Sign in
+            <span class="material-symbols-outlined" aria-hidden="true">login</span>
+          </button>
+        </form>
       </section>
     </section>
   `;
@@ -2841,26 +2788,25 @@ function renderWelcomeViewHtml() {
             <span class="workspace-brand-icon material-symbols-outlined" aria-hidden="true">bolt</span>
             <div>
               <p class="workspace-eyebrow">Real case workspace</p>
-              <strong>Shift readiness</strong>
+              <strong>Assignment overview</strong>
             </div>
           </div>
           <button
             class="btn btn-primary workspace-ready-btn"
             type="button"
             data-action="ready-to-roll"
-            ${inShift ? "" : "disabled"}
           >
-            I'm ready to roll
+            Open assigned case
             <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
           </button>
         </div>
         <div class="workspace-home-intro">
           <p class="workspace-eyebrow">Engineer workspace</p>
           <h1>Welcome back, ${escapeHtml(engineer.name)}</h1>
-          <p>Review today&rsquo;s operating context, adjust your UTC+8 shift, then open the next real investigating case when you are ready.</p>
+          <p>Review today&rsquo;s operating context, then open the next Engineer Case assigned by the system.</p>
           <div class="workspace-status-strip">
-            <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "In shift" : "Out of shift"}</span>
-            <span class="status-pill is-muted">${escapeHtml(workspaceShift.start)}-${escapeHtml(workspaceShift.end)} UTC+8</span>
+            <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "Available" : "Unavailable"}</span>
+            <span class="status-pill is-muted">Managed by Workspace Admin</span>
             <span class="status-pill is-muted">${escapeHtml(formatUtc8Time())}</span>
           </div>
         </div>
@@ -2868,24 +2814,13 @@ function renderWelcomeViewHtml() {
       <section class="workspace-home-layout">
         <article class="workspace-info-panel workspace-shift-readiness-panel">
           <div class="workspace-panel-heading">
-            <p class="ticket-kicker">Real queue gate</p>
+            <p class="ticket-kicker">System dispatch</p>
             <h2>${escapeHtml(nextShiftInfo())}</h2>
-            <p>Ready requests the backend investigating queue and opens the first eligible engineer case.</p>
+            <p>This workspace only opens Engineer Cases already assigned to this account.</p>
           </div>
           <div class="workspace-shift-readiness-body">
-            <form class="workspace-shift-form" data-workspace-shift-form>
-              <label class="field">
-                <span class="field-label">Start</span>
-                <input name="start" type="time" value="${escapeHtml(workspaceShift.start)}" required />
-              </label>
-              <label class="field">
-                <span class="field-label">End</span>
-                <input name="end" type="time" value="${escapeHtml(workspaceShift.end)}" required />
-              </label>
-              <button class="btn btn-ghost" type="submit">Save shift</button>
-            </form>
+            <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "Available" : "Unavailable"}</span>
           </div>
-          ${!inShift ? `<p class="workspace-shift-note">Ready is disabled outside the saved UTC+8 shift.</p>` : ""}
         </article>
         <section class="workspace-home-status-grid" aria-label="Known issues and service status">
           <article class="workspace-info-panel workspace-known-issues-panel">
@@ -2961,7 +2896,7 @@ function renderReadyLoading() {
   );
 }
 
-function renderNoInvestigatingCase(message = "No investigating cases available") {
+function renderNoInvestigatingCase(message = "No Engineer Case is currently assigned") {
   const engineer = getSelectedEngineer();
   const targetEl = engineer ? workspaceRegionEl : workspaceRootEl;
   if (!targetEl) {
@@ -2978,12 +2913,12 @@ function renderNoInvestigatingCase(message = "No investigating cases available")
     <section class="workspace-empty-queue-view">
       <div class="workspace-empty-queue-panel">
         <span class="material-symbols-outlined" aria-hidden="true">hourglass_empty</span>
-        <p class="workspace-eyebrow">Real queue check</p>
-        <h1>No investigating cases available</h1>
+        <p class="workspace-eyebrow">System dispatch</p>
+        <h1>No assigned Engineer Case</h1>
         <p>${escapeHtml(message)}</p>
         <div class="workspace-ready-actions">
-          <button class="btn btn-secondary" type="button" data-action="back-to-welcome">Back to readiness</button>
-          <button class="btn btn-primary" type="button" data-action="ready-to-roll" ${isInShift() ? "" : "disabled"}>
+          <button class="btn btn-secondary" type="button" data-action="back-to-welcome">Back to workspace</button>
+          <button class="btn btn-primary" type="button" data-action="ready-to-roll">
             Try again
           </button>
         </div>
@@ -3048,27 +2983,16 @@ function engineerCaseRouteId(ticket) {
 function findNextInvestigatingCase(payloadOrTickets, engineerId = currentEngineerId()) {
   const items = Array.isArray(payloadOrTickets)
     ? payloadOrTickets
-    : Array.isArray(payloadOrTickets?.tickets)
-    ? payloadOrTickets.tickets
+    : Array.isArray(payloadOrTickets?.cases)
+    ? payloadOrTickets.cases
     : [];
   const investigatingCases = items.filter(
-    (ticket) => normalizeStatusValue(ticket?.status || "open") === "investigating" && engineerCaseRouteId(ticket)
+    (ticket) =>
+      String(ticket?.assignment_status || "").trim().toLowerCase() === "assigned" &&
+      String(ticket?.assigned_engineer_id || "").trim() === engineerId &&
+      engineerCaseRouteId(ticket)
   );
-  return (
-    investigatingCases.find(
-      (ticket) => String(ticket?.assigned_engineer_id || "").trim() === engineerId
-    ) ||
-    investigatingCases.find((ticket) => !String(ticket?.assigned_engineer_id || "").trim()) ||
-    null
-  );
-}
-
-async function claimEngineerCase(ticketId, engineerId) {
-  return fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/claim`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ engineer_id: engineerId }),
-  });
+  return investigatingCases[0] || null;
 }
 
 async function readyToRoll() {
@@ -3077,44 +3001,31 @@ async function readyToRoll() {
     renderLogin();
     return;
   }
-  if (!isInShift()) {
-    saveWorkspaceActive(false);
-    renderWelcome();
-    return;
-  }
-
   readyTransitionActive = true;
   renderReadyLoading();
   try {
-    const payload = await fetchJson("/api/engineer/tickets?status=investigating");
+    const payload = await fetchJson("/api/workspace/cases?assignment_status=assigned");
     if (!readyTransitionActive) {
       return;
     }
     const nextTicket = findNextInvestigatingCase(payload, engineer.id);
-    tickets = Array.isArray(payload?.tickets) ? payload.tickets : [];
+    tickets = Array.isArray(payload?.cases) ? payload.cases : [];
     if (!nextTicket) {
       readyTransitionActive = false;
       window.location.hash = "";
-      renderNoInvestigatingCase("No investigating cases available for automatic assignment right now.");
+      renderNoInvestigatingCase("No Engineer Case is currently assigned to this account.");
       return;
     }
 
     const ticketId = engineerCaseRouteId(nextTicket);
-    const claim = await claimEngineerCase(ticketId, engineer.id);
-    tickets = tickets.map((ticket) =>
-      engineerCaseRouteId(ticket) === ticketId
-        ? { ...ticket, assigned_engineer_id: claim.assigned_engineer_id || engineer.id }
-        : ticket
-    );
     selectedPoolStatus = "investigating";
-    rememberWorkspaceCaseSlaStart(ticketId);
     saveWorkspaceActive(true);
     readyTransitionActive = false;
     window.location.hash = `#/tickets/${encodeURIComponent(ticketId)}`;
     await enterBoard({ continuousLoading: true });
   } catch (error) {
     readyTransitionActive = false;
-    renderNoInvestigatingCase(`No investigating cases available. Queue check failed: ${error.message}`);
+    renderNoInvestigatingCase(`Assigned-case check failed: ${error.message}`);
   }
 }
 
@@ -3146,6 +3057,12 @@ async function syncRouteToWorkspace(options = {}) {
 
 async function fetchJson(url, options = undefined) {
   const requestOptions = options ? { ...options } : {};
+  const headers = new Headers(requestOptions.headers || {});
+  const storedToken = String(readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "") || "").trim();
+  if (storedToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${storedToken}`);
+  }
+  requestOptions.headers = headers;
   const timeoutMsCandidate = Number(requestOptions.timeoutMs);
   const timeoutMs =
     Number.isFinite(timeoutMsCandidate) && timeoutMsCandidate > 0
@@ -3194,6 +3111,9 @@ async function fetchJson(url, options = undefined) {
     } catch {
       // Keep fallback reason.
     }
+    if (response.status === 401 && storedToken) {
+      signOut();
+    }
     throw new Error(reason);
   }
   return response.json();
@@ -3215,8 +3135,8 @@ async function detectStorageMode() {
 
 function sortTicketsByRecency(items) {
   return [...items].sort((a, b) => {
-    const statusRankA = POOL_STATUS_RANK[normalizeStatusValue(a.status || "open")] || 0;
-    const statusRankB = POOL_STATUS_RANK[normalizeStatusValue(b.status || "open")] || 0;
+    const statusRankA = POOL_STATUS_RANK[workspaceClientStatus(a)] || 0;
+    const statusRankB = POOL_STATUS_RANK[workspaceClientStatus(b)] || 0;
     if (statusRankA !== statusRankB) {
       return statusRankB - statusRankA;
     }
@@ -3228,7 +3148,9 @@ function sortTicketsByRecency(items) {
 
 function describeTicketPoolTicket(ticket) {
   const ticketId = String(ticket.ticket_id || "-");
-  const status = normalizeStatusValue(ticket.status || "open");
+  const status = normalizeStatusValue(
+    ticket.client_status || ticket?.client_ticket_ref?.status || "open"
+  );
   const subject = String(ticket.title || ticket.subject || "(No subject)");
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const clientTicketId = String(ticket?.client_ticket_ref?.ticket_id || ticket?.client_ticket_id || "").trim();
@@ -3366,21 +3288,21 @@ function renderTicketPoolGrid(rows) {
 
 function renderTicketPoolView() {
   const engineerVisibleTickets = tickets.filter((ticket) =>
-    isEngineerVisibleStatus(ticket?.status || "open")
+    isEngineerVisibleStatus(workspaceClientStatus(ticket))
   );
   const rows = sortTicketsByRecency(applyTicketFilters(engineerVisibleTickets));
   const viewMode = normalizeTicketPoolViewMode(ticketPoolViewMode);
   const communicatingCount = engineerVisibleTickets.filter(
-    (ticket) => normalizeStatusValue(ticket.status) === "communicating"
+    (ticket) => workspaceClientStatus(ticket) === "communicating"
   ).length;
   const escalatedCount = engineerVisibleTickets.filter(
-    (ticket) => normalizeStatusValue(ticket.status) === "escalated"
+    (ticket) => workspaceClientStatus(ticket) === "escalated"
   ).length;
   const investigatingCount = engineerVisibleTickets.filter(
-    (ticket) => normalizeStatusValue(ticket.status) === "investigating"
+    (ticket) => workspaceClientStatus(ticket) === "investigating"
   ).length;
   const resolvedCount = engineerVisibleTickets.filter(
-    (ticket) => normalizeStatusValue(ticket.status) === "resolved"
+    (ticket) => workspaceClientStatus(ticket) === "resolved"
   ).length;
   const showLoadingState = boardLoading && engineerVisibleTickets.length === 0;
   const emptyStateLabel = statusLabel(selectedPoolStatus).toLowerCase();
@@ -3391,7 +3313,7 @@ function renderTicketPoolView() {
         <article class="metric-card">
           <span class="metric-label">Investigating</span>
           <strong>${investigatingCount}</strong>
-          <p>Tickets with an open engineer ticket awaiting AI and engineer handling.</p>
+          <p>Client Tickets with an open Engineer Case awaiting engineer handling.</p>
         </article>
         <article class="metric-card">
           <span class="metric-label">Escalated</span>
@@ -3612,7 +3534,7 @@ function renderFinalApprovalPendingHtml() {
       <span class="loading-spinner loading-spinner-sm" aria-hidden="true"></span>
       <div class="detail-investigation-closing-copy">
         <strong>Final Approving</strong>
-        <p>Sending final approved reply and closing this engineer ticket...</p>
+        <p>Sending the final approved reply and closing this Engineer Case...</p>
       </div>
     </section>
   `;
@@ -3908,7 +3830,7 @@ function renderConversationHtml(messages, options = {}) {
 
 function renderInvestigationHistoryHtml(historyItems) {
   if (!historyItems.length) {
-    return '<p class="request-record-empty">No prior engineer ticket cycles yet.</p>';
+    return '<p class="request-record-empty">No prior Engineer Case cycles yet.</p>';
   }
 
   return `
@@ -4253,7 +4175,12 @@ function buildTicketDetailViewState() {
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
   const clientTicketId = String(ticket?.client_ticket_ref?.ticket_id || ticket?.client_ticket_id || "").trim();
   const clientTicketSubject = String(ticket?.client_ticket_ref?.subject || "").trim();
-  const status = normalizeStatusValue(ticket.status || "open");
+  const clientStatus = normalizeStatusValue(
+    ticket.client_status || ticket?.client_ticket_ref?.status || "open"
+  );
+  const assignmentStatus = String(ticket.assignment_status || "pending")
+    .trim()
+    .toLowerCase();
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const activeInvestigation = getActiveInvestigation(ticket);
   const displayInvestigation = getDisplayInvestigation(ticket);
@@ -4311,7 +4238,7 @@ function buildTicketDetailViewState() {
       : {};
   const hasMultiAgentState = Boolean(activePlan.plan_id || activeExecution.execution_id || activeReview.review_id);
   const isMultiAgentWorkspace =
-    isMultiAgentWorkspaceActiveForTicket(ticketId) && status === "investigating";
+    isMultiAgentWorkspaceActiveForTicket(ticketId) && clientStatus === "investigating";
   const isMultiAgentRunLoading = normalizeDetailTicketId(multiAgentRunLoadingTicketId) === ticketId;
   const multiAgentWorkspacePanelHtml = isMultiAgentWorkspace
     ? renderMultiAgentWorkspacePanelHtml({
@@ -4329,7 +4256,8 @@ function buildTicketDetailViewState() {
     ticketId,
     clientTicketId,
     clientTicketSubject,
-    status,
+    clientStatus,
+    assignmentStatus,
     requester,
     activeInvestigation,
     displayInvestigation,
@@ -4396,6 +4324,7 @@ function renderTicketDetailHeaderHtml(viewState) {
             : ""
         }
         <span>Requester ${escapeHtml(viewState.requester)}</span>
+        <span>Assignment ${escapeHtml(statusLabel(viewState.assignmentStatus))}</span>
         <span>Created ${escapeHtml(formatDateTime(viewState.ticket.created_at))}</span>
         <span>Updated ${escapeHtml(formatDateTime(viewState.ticket.updated_at))}</span>
       </div>
@@ -4425,9 +4354,9 @@ function renderWorkspaceCaseControlsHtml(viewState) {
 }
 
 function renderTicketDetailStatusBadgeHtml(viewState) {
-  const label = escapeHtml(statusLabel(viewState.status));
-  const classes = `status-badge status-badge-compact ${statusClass(viewState.status)}`;
-  if (viewState.status !== "investigating") {
+  const label = `Client ${escapeHtml(statusLabel(viewState.clientStatus))}`;
+  const classes = `status-badge status-badge-compact ${statusClass(viewState.clientStatus)}`;
+  if (viewState.clientStatus !== "investigating" || !ENGINEER_MULTI_AGENT_ENABLED) {
     return `<span class="${classes}">${label}</span>`;
   }
   const isActive = Boolean(viewState.isMultiAgentWorkspace);
@@ -4450,8 +4379,8 @@ function renderTicketDetailConversationStaticHtml(viewState) {
   return `
     <div class="panel-card-head">
       <div>
-        <p class="panel-card-kicker">Engineer Ticket</p>
-        <h3 class="panel-card-title">Engineer Ticket Thread</h3>
+        <p class="panel-card-kicker">Engineer Case</p>
+        <h3 class="panel-card-title">Engineer Case Thread</h3>
       </div>
     </div>
   `;
@@ -4473,7 +4402,7 @@ function renderTicketDetailConversationBodyHtml(viewState) {
             structuredCaseBuddyMessageIndex: viewState.openingCaseBuddyMessageIndex,
             structuredCaseBuddySections: viewState.structuredCaseBuddySections,
           })
-        : '<div class="empty-state">No open engineer ticket yet.</div>'
+        : '<div class="empty-state">No open Engineer Case yet.</div>'
     }
     ${
       viewState.showInvestigationDraftPreview
@@ -5101,7 +5030,7 @@ async function refreshSelectedTicket(options = {}) {
   }
 
   try {
-    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}?include_context=false`, {
+    const payload = await fetchJson(`/api/workspace/cases/${encodeURIComponent(requestedTicketId)}`, {
       signal: controller.signal,
     });
     if (selectedTicketId !== requestedTicketId) {
@@ -5174,7 +5103,7 @@ async function refreshSelectedTicketHitlFeedback(ticketId) {
   hitlFeedbackLoading = true;
   renderTicketDetail();
   try {
-    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(normalizedTicketId)}/feedback`);
+    const payload = await fetchJson(`/api/workspace/cases/${encodeURIComponent(normalizedTicketId)}/feedback`);
     if (requestSeq !== hitlFeedbackRequestSeq || normalizeDetailTicketId(selectedTicketId) !== normalizedTicketId) {
       return;
     }
@@ -5242,10 +5171,9 @@ async function performTicketLoad(options = {}) {
     boardLoading = true;
     renderTickets();
   }
-  const params = new URLSearchParams({ status: "all" });
   try {
-    const payload = await fetchJson(`/api/engineer/tickets?${params.toString()}`);
-    tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
+    const payload = await fetchJson("/api/workspace/cases?assignment_status=assigned");
+    tickets = Array.isArray(payload.cases) ? payload.cases : [];
     boardLoading = false;
     parseRoute();
     if (routeState.view === "pool") {
@@ -5309,19 +5237,10 @@ function showBoardError(message) {
 }
 
 async function updateTicketStatus(ticketId, action) {
-  await fetchJson(`/api/tickets/${encodeURIComponent(ticketId)}/action`, {
+  await fetchJson(`/api/workspace/cases/${encodeURIComponent(ticketId)}/action`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, engineer_id: currentEngineerId() }),
-  });
-}
-
-async function runMultiAgentInvestigation(ticketId) {
-  return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/multi-agent/run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ engineer_id: currentEngineerId() }),
-    timeoutMs: INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS,
   });
 }
 
@@ -5335,7 +5254,7 @@ async function submitInvestigationMessage(ticketId, messageText) {
   // on for this ticket. The default guardrail-only workspace sends false so the
   // backend keeps the existing Plan/Execute/Review state untouched.
   const multiAgentEnabled = isMultiAgentWorkspaceActiveForTicket(ticketId);
-  return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/messages`, {
+  return await fetchJson(`/api/workspace/cases/${encodeURIComponent(ticketId)}/investigation/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -5353,7 +5272,7 @@ async function submitInvestigationConfirmation(ticketId, decision, note = "", op
     Number.isFinite(timeoutMsCandidate) && timeoutMsCandidate > 0
       ? timeoutMsCandidate
       : INVESTIGATION_APPROVE_FETCH_TIMEOUT_MS;
-  return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/confirmation`, {
+  return await fetchJson(`/api/workspace/cases/${encodeURIComponent(ticketId)}/investigation/confirmation`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -5477,7 +5396,7 @@ async function handleDetailClick(event) {
   }
 
   if (action === "toggle-multi-agent-workspace") {
-    if (normalizeStatusValue(selectedTicket?.status || "open") !== "investigating") {
+    if (workspaceClientStatus(selectedTicket) !== "investigating") {
       return;
     }
     const requestTicketId = normalizeDetailTicketId(button.dataset.multiAgentToggle || selectedTicketId);
@@ -6011,7 +5930,10 @@ function setupWebSocket() {
   closeSocket();
 
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(`${protocol}://${window.location.host}/ws/engineer`);
+  const accessToken = String(readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "") || "").trim();
+  socket = new WebSocket(
+    `${protocol}://${window.location.host}/ws/workspace?access_token=${encodeURIComponent(accessToken)}`
+  );
 
   socket.onopen = () => {
     setRealtimeStatus("Realtime: connected");
@@ -6091,7 +6013,33 @@ function resetLoginForm() {
 
 async function handleLoginSubmit(event) {
   event?.preventDefault?.();
-  enterWelcome();
+  const form = event?.target;
+  const formData = new FormData(form);
+  const accountId = String(formData.get("account_id") || "").trim();
+  const password = String(formData.get("password") || "");
+  const errorEl = form?.querySelector?.("#workspace-login-error");
+  if (errorEl) {
+    errorEl.textContent = "";
+  }
+  const payload = await fetchJson("/api/workspace/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account_id: accountId, password }),
+  });
+  const account = payload?.account;
+  const accessToken = String(payload?.access_token || "").trim();
+  if (!account || !accessToken) {
+    throw new Error("Workspace login returned an invalid session");
+  }
+  writeStorage(WORKSPACE_AUTH_KEY, String(account.account_id || accountId));
+  writeStorage(WORKSPACE_ACCOUNT_KEY, account);
+  writeStorage(WORKSPACE_ACCESS_TOKEN_KEY, accessToken);
+  selectedEngineerId = String(account.account_id || accountId);
+  workspaceAccount = account;
+  workspaceAccessToken = accessToken;
+  saveWorkspaceActive(true);
+  resetWorkspaceBoardState();
+  await readyToRoll();
 }
 
 function resetWorkspaceBoardState() {
@@ -6122,8 +6070,12 @@ function enterWelcome() {
 function signOut() {
   saveWorkspaceActive(false);
   removeStorage(WORKSPACE_AUTH_KEY);
+  removeStorage(WORKSPACE_ACCOUNT_KEY);
+  removeStorage(WORKSPACE_ACCESS_TOKEN_KEY);
   selectedEngineerId = "";
-  selectedEngineerCandidate = DEMO_ENGINEERS[0].id;
+  selectedEngineerCandidate = "";
+  workspaceAccount = null;
+  workspaceAccessToken = "";
   resetWorkspaceBoardState();
   toggleScreens();
   renderLogin();
@@ -6149,7 +6101,7 @@ function handleWorkspaceEntryClick(event) {
   }
   if (action === "ready-to-roll") {
     readyToRoll().catch((error) => {
-      renderNoInvestigatingCase(`No investigating cases available. Queue check failed: ${error.message}`);
+      renderNoInvestigatingCase(`Assigned-case check failed: ${error.message}`);
     });
   }
   if (action === "sign-out") {
@@ -6157,22 +6109,6 @@ function handleWorkspaceEntryClick(event) {
   }
   if (action === "back-to-welcome") {
     renderReadinessInsteadOfPool();
-  }
-}
-
-function handleWorkspaceShiftSubmit(event) {
-  event?.preventDefault?.();
-  const formData = new FormData(event?.target);
-  const nextShift = normalizeShift({
-    start: formData.get("start"),
-    end: formData.get("end"),
-  });
-  workspaceShift = nextShift;
-  writeStorage(WORKSPACE_SHIFT_KEY, nextShift);
-  saveWorkspaceActive(false);
-  renderWorkspaceAssignmentSidebar();
-  if (workspaceRegionEl) {
-    workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
   }
 }
 
@@ -6192,10 +6128,14 @@ function handleChangeEngineerClick() {
   }
 }
 
-loginFormEl?.addEventListener("submit", (event) => {
+workspaceRootEl?.addEventListener("submit", (event) => {
+  if (!event.target?.matches?.("#workspace-login-form")) {
+    return;
+  }
   handleLoginSubmit(event).catch((error) => {
-    if (loginErrorEl) {
-      loginErrorEl.textContent = `Login failed: ${error.message}`;
+    const errorEl = event.target?.querySelector?.("#workspace-login-error");
+    if (errorEl) {
+      errorEl.textContent = `Login failed: ${error.message}`;
     }
   });
 });
@@ -6240,11 +6180,6 @@ workspaceRegionEl?.addEventListener("click", (event) => {
   handleTableClick(event).catch((error) => {
     showBoardError(`Operation failed: ${error.message}`);
   });
-});
-workspaceRegionEl?.addEventListener("submit", (event) => {
-  if (event.target?.matches?.("[data-workspace-shift-form]")) {
-    handleWorkspaceShiftSubmit(event);
-  }
 });
 workspaceRegionEl?.addEventListener("mousedown", (event) => {
   if (event.target.closest("[data-composer-markdown-action]")) {
@@ -6299,7 +6234,7 @@ refreshWorkspaceSessionState();
 
 if (isAuthenticated()) {
   enterBoard().catch((error) => {
-    renderNoInvestigatingCase(`No investigating cases available. Workspace initialization failed: ${error.message}`);
+    renderNoInvestigatingCase(`Workspace initialization failed: ${error.message}`);
   });
 } else {
   parseRoute();
