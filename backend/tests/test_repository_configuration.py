@@ -392,6 +392,54 @@ class RepositoryConfigurationTests(unittest.TestCase):
         first_sql = str(cursor.executed[0][0][0])
         self.assertIn("pg_advisory_xact_lock", first_sql)
 
+    def test_ticket_repository_initialize_grants_separate_runtime_role_access(self) -> None:
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://runtime",
+            migration_dsn="postgresql://migration",
+            schema="supportportal",
+        )
+
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_runtime_database_role", return_value="runtime-role"),
+        ):
+            repository.initialize()
+
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
+        self.assertIn("GRANT USAGE ON SCHEMA", executed_sql)
+        self.assertIn("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES", executed_sql)
+        self.assertIn("GRANT USAGE, SELECT ON ALL SEQUENCES", executed_sql)
+        self.assertIn("ALTER DEFAULT PRIVILEGES", executed_sql)
+        self.assertIn("runtime-role", executed_sql)
+
+    def test_ticket_repository_resolves_runtime_role_from_runtime_connection(self) -> None:
+        cursor = _ReusableCursor(fetchone_results=[("runtime-role",)])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://runtime",
+            migration_dsn="postgresql://migration",
+        )
+
+        with patch.object(repository, "_connect_dsn", return_value=connection) as connect_mock:
+            runtime_role = repository._runtime_database_role()
+
+        self.assertEqual(runtime_role, "runtime-role")
+        connect_mock.assert_called_once_with("postgresql://runtime")
+        self.assertEqual(str(cursor.executed[0][0][0]), "SELECT current_user")
+
+    def test_ticket_repository_initialize_skips_runtime_grants_for_shared_dsn(self) -> None:
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://shared", schema="supportportal")
+
+        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+            repository.initialize()
+
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
+        self.assertNotIn("GRANT USAGE ON SCHEMA", executed_sql)
+
     def test_ticket_repository_initialize_creates_engineer_replay_eval_items_table(self) -> None:
         cursor = _ReusableCursor()
         connection = _ReusableConnection(cursor)
