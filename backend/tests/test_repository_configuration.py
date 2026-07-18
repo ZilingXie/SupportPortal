@@ -379,6 +379,19 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("support_case_memory_ledger", executed_sql)
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
 
+    def test_ticket_repository_initialize_holds_advisory_lock_in_one_transaction(self) -> None:
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        connection.autocommit = True
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+            repository.initialize()
+
+        self.assertFalse(connection.autocommit)
+        first_sql = str(cursor.executed[0][0][0])
+        self.assertIn("pg_advisory_xact_lock", first_sql)
+
     def test_ticket_repository_initialize_creates_engineer_replay_eval_items_table(self) -> None:
         cursor = _ReusableCursor()
         connection = _ReusableConnection(cursor)

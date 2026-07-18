@@ -2684,6 +2684,8 @@ class PostgresTicketRepository:
 
     def initialize(self) -> None:
         with self._connect_for_initialize() as conn:
+            # Keep the transaction-scoped advisory lock for the entire schema bootstrap.
+            conn.autocommit = False
             with conn.cursor() as cur:
                 # Serialize bootstrap across services/workers sharing the same AWS database.
                 cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842918, 1))
