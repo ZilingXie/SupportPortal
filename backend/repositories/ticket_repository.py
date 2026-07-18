@@ -2431,6 +2431,45 @@ class PostgresTicketRepository:
     def _connect_for_initialize(self) -> psycopg.Connection[Any]:
         return self._connect_dsn(self._migration_dsn)
 
+    def _runtime_database_role(self) -> str | None:
+        if self._dsn == self._migration_dsn:
+            return None
+        with self._connect_dsn(self._dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_user")
+                row = cur.fetchone()
+        role = str(row[0] if row else "").strip()
+        if not role:
+            raise RuntimeError("Unable to resolve the ticket database runtime role")
+        return role
+
+    def _grant_runtime_privileges(self, cur: psycopg.Cursor[Any], runtime_role: str) -> None:
+        schema = sql.Identifier(self._schema)
+        role = sql.Identifier(runtime_role)
+        cur.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(schema, role))
+        cur.execute(
+            sql.SQL(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO {}"
+            ).format(schema, role)
+        )
+        cur.execute(
+            sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}").format(
+                schema, role
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA {} "
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
+            ).format(schema, role)
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA {} "
+                "GRANT USAGE, SELECT ON SEQUENCES TO {}"
+            ).format(schema, role)
+        )
+
     def _pool_factory(self) -> Any:
         if ConnectionPool is None:
             raise RuntimeError("psycopg_pool is required when TICKET_DB connection pooling is enabled")
@@ -2683,6 +2722,7 @@ class PostgresTicketRepository:
                 self.close()
 
     def initialize(self) -> None:
+        runtime_role = self._runtime_database_role()
         with self._connect_for_initialize() as conn:
             # Keep the transaction-scoped advisory lock for the entire schema bootstrap.
             conn.autocommit = False
@@ -3478,6 +3518,8 @@ class PostgresTicketRepository:
                     )
                 )
                 self._backfill_engineer_cases_from_legacy_storage(cur)
+                if runtime_role:
+                    self._grant_runtime_privileges(cur, runtime_role)
             conn.commit()
 
     def _legacy_support_ticket_has_column(self, cur: psycopg.Cursor[Any], column_name: str) -> bool:
