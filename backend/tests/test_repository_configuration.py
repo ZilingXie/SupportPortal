@@ -228,6 +228,17 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def list_engineer_cases", repo_source)
         self.assertIn("def save_engineer_case", repo_source)
 
+    def test_workspace_account_upsert_qualifies_existing_account_columns(self) -> None:
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "INSERT INTO {} AS existing_account (\n"
+            "                                account_id, display_name, role, password_hash, active",
+            repo_source,
+        )
+        self.assertIn("THEN existing_account.password_hash", repo_source)
+        self.assertIn("existing_account.last_assigned_at", repo_source)
+
     def test_ticket_storage_contract_includes_session_product_field(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
