@@ -5006,7 +5006,7 @@ class PostgresTicketRepository:
                     cur.execute(
                         sql.SQL(
                             """
-                            INSERT INTO {} (
+                            INSERT INTO {} AS existing_account (
                                 account_id, display_name, role, password_hash, active,
                                 availability, availability_reason, availability_updated_at,
                                 last_assigned_at, created_at, updated_at
@@ -5016,13 +5016,13 @@ class PostgresTicketRepository:
                                 display_name = EXCLUDED.display_name,
                                 role = EXCLUDED.role,
                                 password_hash = CASE
-                                    WHEN EXCLUDED.password_hash = '' THEN password_hash
+                                    WHEN EXCLUDED.password_hash = '' THEN existing_account.password_hash
                                     ELSE EXCLUDED.password_hash
                                 END,
                                 active = EXCLUDED.active,
                                 last_assigned_at = COALESCE(
                                     EXCLUDED.last_assigned_at,
-                                    last_assigned_at
+                                    existing_account.last_assigned_at
                                 ),
                                 updated_at = EXCLUDED.updated_at
                             RETURNING account_id, display_name, role, password_hash, active,
