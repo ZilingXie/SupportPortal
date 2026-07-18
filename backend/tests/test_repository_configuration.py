@@ -1888,6 +1888,35 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("communicating", repo_source)
         self.assertIn("escalated", repo_source)
 
+    def test_ticket_storage_contract_includes_phase_two_assignment_and_rollout_state(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        for marker in (
+            "assignment_status TEXT NOT NULL DEFAULT 'pending'",
+            "sla_due_at TIMESTAMPTZ",
+            "previous_assignees JSONB NOT NULL DEFAULT '[]'::jsonb",
+            "assignment_version INTEGER NOT NULL DEFAULT 0",
+            "CREATE TABLE IF NOT EXISTS support_workspace_accounts",
+            "CREATE TABLE IF NOT EXISTS support_workspace_audit_events",
+            "CREATE TABLE IF NOT EXISTS support_idempotency_records",
+            "CREATE TABLE IF NOT EXISTS support_rollout_counters",
+            "CREATE TABLE IF NOT EXISTS support_rollout_events",
+        ):
+            self.assertIn(marker, sql_source)
+        for marker in (
+            "def update_engineer_case_assignment",
+            "FOR UPDATE",
+            "AND assignment_version = %s",
+            "next_version = current_version + 1",
+            "assigned_engineer_id = support_engineer_cases.assigned_engineer_id",
+            "assignment_status = support_engineer_cases.assignment_status",
+            "def set_engineer_availability",
+            "def begin_idempotent_request",
+            "def record_rollout_event",
+        ):
+            self.assertIn(marker, repo_source)
+
 
 if __name__ == "__main__":
     unittest.main()

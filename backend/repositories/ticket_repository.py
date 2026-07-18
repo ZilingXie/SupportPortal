@@ -22,6 +22,10 @@ except ImportError:  # pragma: no cover - exercised in environments without pool
 LOGGER = logging.getLogger(__name__)
 
 _VALID_STATUSES = {"open", "communicating", "escalated", "investigating", "resolved"}
+_VALID_ASSIGNMENT_STATUSES = {"pending", "assigned", "resolved"}
+_VALID_DISPATCH_STATUSES = {"pending", "assigned", "failed", "resolved"}
+_VALID_WORKSPACE_ROLES = {"admin", "engineer"}
+_VALID_ENGINEER_AVAILABILITY = {"available", "unavailable"}
 _VALID_ROLES = {"customer", "assistant", "engineer", "system"}
 _VALID_INVESTIGATION_ROLES = {"engineer_ai", "engineer", "system"}
 _VALID_INVESTIGATION_STATES = {"active", "awaiting_confirmation", "awaiting_final_approval", "closed"}
@@ -92,6 +96,78 @@ def _normalize_status(value: Any) -> str:
     if status == "waiting_for_engineer":
         return "investigating"
     return status if status in _VALID_STATUSES else "open"
+
+
+def _normalize_assignment_status(value: Any, *, assigned_engineer_id: Any = None) -> str:
+    status = str(value or "").strip().lower()
+    if status in _VALID_ASSIGNMENT_STATUSES:
+        return status
+    return "assigned" if str(assigned_engineer_id or "").strip() else "pending"
+
+
+def _normalize_dispatch_status(value: Any, *, assignment_status: Any = None) -> str:
+    status = str(value or "").strip().lower()
+    if status in _VALID_DISPATCH_STATUSES:
+        return status
+    normalized_assignment = _normalize_assignment_status(assignment_status)
+    return "resolved" if normalized_assignment == "resolved" else normalized_assignment
+
+
+def _normalize_previous_assignees(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        engineer_id = str(item or "").strip()
+        if engineer_id and engineer_id not in normalized:
+            normalized.append(engineer_id)
+    return normalized
+
+
+def _normalize_workspace_role(value: Any) -> str:
+    role = str(value or "engineer").strip().lower()
+    return role if role in _VALID_WORKSPACE_ROLES else "engineer"
+
+
+def _normalize_engineer_availability(value: Any) -> str:
+    availability = str(value or "unavailable").strip().lower()
+    return availability if availability in _VALID_ENGINEER_AVAILABILITY else "unavailable"
+
+
+def _normalize_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
+    account_id = str(account.get("account_id") or "").strip()
+    if not account_id:
+        raise ValueError("account_id is required")
+    now = account.get("updated_at") or account.get("created_at") or _utc_now()
+    return {
+        "account_id": account_id,
+        "display_name": str(account.get("display_name") or account_id).strip() or account_id,
+        "role": _normalize_workspace_role(account.get("role")),
+        "password_hash": str(account.get("password_hash") or "").strip(),
+        "active": bool(account.get("active", True)),
+        "availability": _normalize_engineer_availability(account.get("availability")),
+        "availability_reason": str(account.get("availability_reason") or "").strip() or None,
+        "availability_updated_at": account.get("availability_updated_at"),
+        "last_assigned_at": account.get("last_assigned_at"),
+        "created_at": account.get("created_at") or now,
+        "updated_at": now,
+    }
+
+
+def _workspace_account_row_to_payload(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "account_id": str(row[0]),
+        "display_name": str(row[1]),
+        "role": _normalize_workspace_role(row[2]),
+        "password_hash": str(row[3] or ""),
+        "active": bool(row[4]),
+        "availability": _normalize_engineer_availability(row[5]),
+        "availability_reason": str(row[6] or "").strip() or None,
+        "availability_updated_at": _to_iso(row[7]) if row[7] is not None else None,
+        "last_assigned_at": _to_iso(row[8]) if row[8] is not None else None,
+        "created_at": _to_iso(row[9]),
+        "updated_at": _to_iso(row[10]),
+    }
 
 
 def _safe_float_value(value: Any, default: float) -> float:
@@ -487,6 +563,7 @@ def _ticket_client_reference(ticket: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "ticket_id": str(ticket.get("ticket_id") or "").strip(),
         "subject": str(ticket.get("subject") or "").strip(),
+        "status": _normalize_status(ticket.get("status")),
     }
 
 
@@ -550,6 +627,10 @@ def _engineer_case_record_to_payload(
         else []
     )
     is_closed = investigation["state"] == "closed"
+    assignment_status = _normalize_assignment_status(
+        engineer_case.get("assignment_status"),
+        assigned_engineer_id=engineer_case.get("assigned_engineer_id"),
+    )
     return {
         "engineer_case_id": str(engineer_case.get("engineer_case_id") or "").strip(),
         "ticket_id": str(engineer_case.get("engineer_case_id") or "").strip(),
@@ -562,7 +643,25 @@ def _engineer_case_record_to_payload(
         "title": title,
         "subject": title,
         "status": _normalize_status(engineer_case.get("status")),
+        "client_status": _normalize_status((client_ticket or {}).get("status"))
+        if isinstance(client_ticket, dict)
+        else None,
+        "assignment_status": assignment_status,
         "assigned_engineer_id": str(engineer_case.get("assigned_engineer_id") or "").strip() or None,
+        "assigned_at": _to_iso(engineer_case.get("assigned_at")) if engineer_case.get("assigned_at") else None,
+        "sla_due_at": _to_iso(engineer_case.get("sla_due_at")) if engineer_case.get("sla_due_at") else None,
+        "assignment_attempt_count": _safe_non_negative_int(engineer_case.get("assignment_attempt_count"), 0),
+        "previous_assignees": _normalize_previous_assignees(engineer_case.get("previous_assignees")),
+        "last_assignment_reason": str(engineer_case.get("last_assignment_reason") or "").strip() or None,
+        "dispatch_status": _normalize_dispatch_status(
+            engineer_case.get("dispatch_status"), assignment_status=assignment_status
+        ),
+        "assignment_updated_at": (
+            _to_iso(engineer_case.get("assignment_updated_at"))
+            if engineer_case.get("assignment_updated_at")
+            else None
+        ),
+        "assignment_version": _safe_non_negative_int(engineer_case.get("assignment_version"), 0),
         "trigger_source": str(engineer_case.get("trigger_source") or "").strip(),
         "trigger_reason": str(engineer_case.get("trigger_reason") or "").strip(),
         "requester": str((client_ticket or {}).get("requester") or "").strip(),
@@ -597,6 +696,10 @@ def _engineer_case_record_to_header_payload(
 ) -> dict[str, Any]:
     parent_ref = _ticket_client_reference(client_ticket)
     title = str(engineer_case.get("title") or "").strip() or parent_ref["subject"] or "Engineer case"
+    assignment_status = _normalize_assignment_status(
+        engineer_case.get("assignment_status"),
+        assigned_engineer_id=engineer_case.get("assigned_engineer_id"),
+    )
     return {
         "engineer_case_id": str(engineer_case.get("engineer_case_id") or "").strip(),
         "ticket_id": str(engineer_case.get("engineer_case_id") or "").strip(),
@@ -609,7 +712,25 @@ def _engineer_case_record_to_header_payload(
         "title": title,
         "subject": title,
         "status": _normalize_status(engineer_case.get("status")),
+        "client_status": _normalize_status((client_ticket or {}).get("status"))
+        if isinstance(client_ticket, dict)
+        else None,
+        "assignment_status": assignment_status,
         "assigned_engineer_id": str(engineer_case.get("assigned_engineer_id") or "").strip() or None,
+        "assigned_at": _to_iso(engineer_case.get("assigned_at")) if engineer_case.get("assigned_at") else None,
+        "sla_due_at": _to_iso(engineer_case.get("sla_due_at")) if engineer_case.get("sla_due_at") else None,
+        "assignment_attempt_count": _safe_non_negative_int(engineer_case.get("assignment_attempt_count"), 0),
+        "previous_assignees": _normalize_previous_assignees(engineer_case.get("previous_assignees")),
+        "last_assignment_reason": str(engineer_case.get("last_assignment_reason") or "").strip() or None,
+        "dispatch_status": _normalize_dispatch_status(
+            engineer_case.get("dispatch_status"), assignment_status=assignment_status
+        ),
+        "assignment_updated_at": (
+            _to_iso(engineer_case.get("assignment_updated_at"))
+            if engineer_case.get("assignment_updated_at")
+            else None
+        ),
+        "assignment_version": _safe_non_negative_int(engineer_case.get("assignment_version"), 0),
         "trigger_source": str(engineer_case.get("trigger_source") or "").strip(),
         "trigger_reason": str(engineer_case.get("trigger_reason") or "").strip(),
         "requester": str((client_ticket or {}).get("requester") or "").strip(),
@@ -715,6 +836,85 @@ class TicketRepository(Protocol):
         *,
         updated_at: str,
     ) -> bool:
+        ...
+
+    def update_engineer_case_assignment(
+        self,
+        engineer_case_id: str,
+        *,
+        expected_version: int | None,
+        assignment_status: str,
+        assigned_engineer_id: str | None,
+        assigned_at: str | None,
+        sla_due_at: str | None,
+        reason: str,
+        updated_at: str,
+        actor: str,
+        event_type: str,
+        dispatch_status: str | None = None,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def save_workspace_account(self, account: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def get_workspace_account(self, account_id: str) -> dict[str, Any] | None:
+        ...
+
+    def list_workspace_accounts(self) -> list[dict[str, Any]]:
+        ...
+
+    def set_engineer_availability(
+        self,
+        account_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        actor_id: str,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def record_workspace_audit_event(
+        self,
+        event_type: str,
+        *,
+        actor_id: str,
+        target_id: str | None,
+        payload: dict[str, Any],
+        created_at: str,
+    ) -> None:
+        ...
+
+    def list_workspace_audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        ...
+
+    def begin_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        created_at: str,
+    ) -> dict[str, Any]:
+        ...
+
+    def complete_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        response_payload: dict[str, Any],
+        updated_at: str,
+    ) -> None:
+        ...
+
+    def record_rollout_event(
+        self,
+        counter_key: str,
+        event_key: str,
+        *,
+        created_at: str,
+    ) -> tuple[int, bool]:
         ...
 
     def record_engineer_case_event(
@@ -900,6 +1100,12 @@ class InMemoryTicketRepository:
         self._billing_tickets: dict[str, dict[str, Any]] = {}
         self._billing_response_tokens: dict[str, dict[str, Any]] = {}
         self._billing_route_corrections: dict[str, dict[str, Any]] = {}
+        self._assignment_lock = threading.RLock()
+        self._workspace_accounts: dict[str, dict[str, Any]] = {}
+        self._workspace_audit_events: list[dict[str, Any]] = []
+        self._idempotency_records: dict[tuple[str, str], dict[str, Any]] = {}
+        self._rollout_counters: dict[str, int] = {}
+        self._rollout_events: dict[tuple[str, str], int] = {}
 
     def initialize(self) -> None:
         return None
@@ -1035,6 +1241,31 @@ class InMemoryTicketRepository:
         normalized["status"] = _normalize_status(normalized.get("status"))
         normalized["assigned_engineer_id"] = (
             str(normalized.get("assigned_engineer_id") or "").strip() or None
+        )
+        normalized["assignment_status"] = _normalize_assignment_status(
+            normalized.get("assignment_status"),
+            assigned_engineer_id=normalized.get("assigned_engineer_id"),
+        )
+        if normalized["status"] == "resolved" or normalized.get("closed_at") is not None:
+            normalized["assignment_status"] = "resolved"
+        normalized["assigned_at"] = normalized.get("assigned_at")
+        normalized["sla_due_at"] = normalized.get("sla_due_at")
+        normalized["assignment_attempt_count"] = _safe_non_negative_int(
+            normalized.get("assignment_attempt_count"), 0
+        )
+        normalized["previous_assignees"] = _normalize_previous_assignees(
+            normalized.get("previous_assignees")
+        )
+        normalized["last_assignment_reason"] = (
+            str(normalized.get("last_assignment_reason") or "").strip() or None
+        )
+        normalized["dispatch_status"] = _normalize_dispatch_status(
+            normalized.get("dispatch_status"),
+            assignment_status=normalized.get("assignment_status"),
+        )
+        normalized["assignment_updated_at"] = normalized.get("assignment_updated_at")
+        normalized["assignment_version"] = _safe_non_negative_int(
+            normalized.get("assignment_version"), 0
         )
         normalized["trigger_source"] = str(normalized.get("trigger_source") or "").strip() or "support_query"
         normalized["trigger_reason"] = str(normalized.get("trigger_reason") or "").strip() or "unknown"
@@ -1236,16 +1467,26 @@ class InMemoryTicketRepository:
         new_messages: list[dict[str, Any]] | None = None,
     ) -> None:
         existing = self._engineer_cases.get(str(engineer_case.get("engineer_case_id") or "").strip())
-        if (
-            isinstance(existing, dict)
-            and existing.get("assigned_engineer_id")
-            and not engineer_case.get("assigned_engineer_id")
-        ):
-            engineer_case = {
-                **engineer_case,
-                "assigned_engineer_id": existing["assigned_engineer_id"],
-            }
+        if isinstance(existing, dict):
+            assignment_fields = (
+                "assigned_engineer_id",
+                "assignment_status",
+                "assigned_at",
+                "sla_due_at",
+                "assignment_attempt_count",
+                "previous_assignees",
+                "last_assignment_reason",
+                "dispatch_status",
+                "assignment_updated_at",
+                "assignment_version",
+            )
+            engineer_case = dict(engineer_case)
+            for field in assignment_fields:
+                engineer_case[field] = copy.deepcopy(existing.get(field))
         saved = self._normalize_engineer_case_record(engineer_case)
+        if isinstance(existing, dict):
+            for field in assignment_fields:
+                saved[field] = copy.deepcopy(existing.get(field))
         if new_messages:
             existing_ids = {str(item.get("id") or "").strip() for item in saved["messages"]}
             for item in new_messages:
@@ -1286,6 +1527,242 @@ class InMemoryTicketRepository:
         engineer_case["assigned_engineer_id"] = normalized_engineer_id
         engineer_case["updated_at"] = updated_at
         return True
+
+    def update_engineer_case_assignment(
+        self,
+        engineer_case_id: str,
+        *,
+        expected_version: int | None,
+        assignment_status: str,
+        assigned_engineer_id: str | None,
+        assigned_at: str | None,
+        sla_due_at: str | None,
+        reason: str,
+        updated_at: str,
+        actor: str,
+        event_type: str,
+        dispatch_status: str | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_case_id = str(engineer_case_id or "").strip()
+        normalized_status = _normalize_assignment_status(assignment_status)
+        normalized_engineer_id = str(assigned_engineer_id or "").strip() or None
+        if not normalized_case_id:
+            return None
+        if normalized_status == "assigned" and not normalized_engineer_id:
+            raise ValueError("assigned_engineer_id is required for assigned cases")
+        with self._assignment_lock:
+            engineer_case = self._engineer_cases.get(normalized_case_id)
+            if not isinstance(engineer_case, dict):
+                return None
+            current_version = _safe_non_negative_int(engineer_case.get("assignment_version"), 0)
+            if expected_version is not None and current_version != expected_version:
+                return None
+            previous_engineer_id = str(engineer_case.get("assigned_engineer_id") or "").strip() or None
+            previous_assigned_at = engineer_case.get("assigned_at")
+            previous_assignment_status = _normalize_assignment_status(
+                engineer_case.get("assignment_status"), assigned_engineer_id=previous_engineer_id
+            )
+            previous_assignees = _normalize_previous_assignees(engineer_case.get("previous_assignees"))
+            if (
+                previous_engineer_id
+                and previous_engineer_id != normalized_engineer_id
+                and previous_engineer_id not in previous_assignees
+            ):
+                previous_assignees.append(previous_engineer_id)
+            engineer_case.update(
+                {
+                    "assignment_status": normalized_status,
+                    "assigned_engineer_id": normalized_engineer_id,
+                    "assigned_at": (
+                        assigned_at
+                        if normalized_status == "assigned"
+                        else previous_assigned_at
+                        if normalized_status == "resolved"
+                        else None
+                    ),
+                    "sla_due_at": sla_due_at if normalized_status == "assigned" else None,
+                    "assignment_attempt_count": _safe_non_negative_int(
+                        engineer_case.get("assignment_attempt_count"), 0
+                    ) + (1 if normalized_status == "assigned" else 0),
+                    "previous_assignees": previous_assignees,
+                    "last_assignment_reason": str(reason or "").strip() or "assignment_update",
+                    "dispatch_status": _normalize_dispatch_status(
+                        dispatch_status, assignment_status=normalized_status
+                    ),
+                    "assignment_updated_at": updated_at,
+                    "assignment_version": current_version + 1,
+                    "updated_at": updated_at,
+                }
+            )
+            event = {
+                "event": str(event_type or "engineer_case_assignment_changed"),
+                "engineer_case_id": normalized_case_id,
+                "actor": str(actor or "system").strip() or "system",
+                "reason": str(reason or "").strip() or "assignment_update",
+                "previous_assignment_status": previous_assignment_status,
+                "assignment_status": normalized_status,
+                "previous_assigned_engineer_id": previous_engineer_id,
+                "assigned_engineer_id": normalized_engineer_id,
+                "assignment_version": current_version + 1,
+                "created_at": updated_at,
+            }
+            self.record_engineer_case_event(normalized_case_id, event["event"], event)
+        return self.get_engineer_case(normalized_case_id, include_client_messages=False)
+
+    def save_workspace_account(self, account: dict[str, Any]) -> dict[str, Any]:
+        normalized = _normalize_workspace_account(account)
+        existing = self._workspace_accounts.get(normalized["account_id"])
+        if isinstance(existing, dict):
+            normalized["created_at"] = existing.get("created_at") or normalized["created_at"]
+            if not normalized["password_hash"]:
+                normalized["password_hash"] = str(existing.get("password_hash") or "")
+            if "availability" not in account:
+                normalized["availability"] = existing.get("availability") or "unavailable"
+                normalized["availability_reason"] = existing.get("availability_reason")
+                normalized["availability_updated_at"] = existing.get("availability_updated_at")
+            normalized["last_assigned_at"] = account.get("last_assigned_at", existing.get("last_assigned_at"))
+        if not normalized["password_hash"]:
+            raise ValueError("password_hash is required")
+        self._workspace_accounts[normalized["account_id"]] = copy.deepcopy(normalized)
+        return copy.deepcopy(normalized)
+
+    def get_workspace_account(self, account_id: str) -> dict[str, Any] | None:
+        account = self._workspace_accounts.get(str(account_id or "").strip())
+        return copy.deepcopy(account) if isinstance(account, dict) else None
+
+    def list_workspace_accounts(self) -> list[dict[str, Any]]:
+        accounts = [copy.deepcopy(item) for item in self._workspace_accounts.values()]
+        accounts.sort(key=lambda item: (str(item.get("display_name") or "").lower(), item["account_id"]))
+        return accounts
+
+    def set_engineer_availability(
+        self,
+        account_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        actor_id: str,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_account_id = str(account_id or "").strip()
+        normalized_availability = _normalize_engineer_availability(availability)
+        with self._assignment_lock:
+            account = self._workspace_accounts.get(normalized_account_id)
+            if not isinstance(account, dict) or account.get("role") != "engineer":
+                return None
+            previous_availability = account.get("availability")
+            previous_reason = account.get("availability_reason")
+            account.update(
+                {
+                    "availability": normalized_availability,
+                    "availability_reason": str(reason or "").strip() or None,
+                    "availability_updated_at": updated_at,
+                    "updated_at": updated_at,
+                }
+            )
+            self.record_workspace_audit_event(
+                "engineer_availability_changed",
+                actor_id=actor_id,
+                target_id=normalized_account_id,
+                payload={
+                    "previous_availability": previous_availability,
+                    "availability": normalized_availability,
+                    "previous_reason": previous_reason,
+                    "reason": account["availability_reason"],
+                },
+                created_at=updated_at,
+            )
+            return copy.deepcopy(account)
+
+    def record_workspace_audit_event(
+        self,
+        event_type: str,
+        *,
+        actor_id: str,
+        target_id: str | None,
+        payload: dict[str, Any],
+        created_at: str,
+    ) -> None:
+        self._workspace_audit_events.append(
+            {
+                "event_type": str(event_type or "workspace_event").strip() or "workspace_event",
+                "actor_id": str(actor_id or "system").strip() or "system",
+                "target_id": str(target_id or "").strip() or None,
+                "payload": copy.deepcopy(payload),
+                "created_at": created_at,
+            }
+        )
+
+    def list_workspace_audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 100), 1000))
+        return [copy.deepcopy(item) for item in reversed(self._workspace_audit_events[-safe_limit:])]
+
+    def begin_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        created_at: str,
+    ) -> dict[str, Any]:
+        normalized_key = (str(scope or "").strip(), str(idempotency_key or "").strip())
+        if not all(normalized_key):
+            raise ValueError("scope and idempotency_key are required")
+        with self._assignment_lock:
+            existing = self._idempotency_records.get(normalized_key)
+            if isinstance(existing, dict):
+                return {**copy.deepcopy(existing), "created": False}
+            record = {
+                "scope": normalized_key[0],
+                "idempotency_key": normalized_key[1],
+                "state": "processing",
+                "response_payload": None,
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+            self._idempotency_records[normalized_key] = record
+            return {**copy.deepcopy(record), "created": True}
+
+    def complete_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        response_payload: dict[str, Any],
+        updated_at: str,
+    ) -> None:
+        normalized_key = (str(scope or "").strip(), str(idempotency_key or "").strip())
+        with self._assignment_lock:
+            record = self._idempotency_records.get(normalized_key)
+            if not isinstance(record, dict):
+                raise ValueError("idempotency request was not started")
+            record.update(
+                {
+                    "state": "completed",
+                    "response_payload": copy.deepcopy(response_payload),
+                    "updated_at": updated_at,
+                }
+            )
+
+    def record_rollout_event(
+        self,
+        counter_key: str,
+        event_key: str,
+        *,
+        created_at: str,
+    ) -> tuple[int, bool]:
+        del created_at
+        normalized_counter_key = str(counter_key or "").strip()
+        normalized_event_key = str(event_key or "").strip()
+        if not normalized_counter_key or not normalized_event_key:
+            raise ValueError("counter_key and event_key are required")
+        key = (normalized_counter_key, normalized_event_key)
+        with self._assignment_lock:
+            if key in self._rollout_events:
+                return self._rollout_events[key], False
+            position = self._rollout_counters.get(normalized_counter_key, 0) + 1
+            self._rollout_counters[normalized_counter_key] = position
+            self._rollout_events[key] = position
+            return position, True
 
     def record_engineer_case_event(
         self,
@@ -2416,7 +2893,16 @@ class PostgresTicketRepository:
                             opened_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL,
                             closed_at TIMESTAMPTZ,
-                            assigned_engineer_id TEXT
+                            assigned_engineer_id TEXT,
+                            assignment_status TEXT NOT NULL DEFAULT 'pending',
+                            assigned_at TIMESTAMPTZ,
+                            sla_due_at TIMESTAMPTZ,
+                            assignment_attempt_count INTEGER NOT NULL DEFAULT 0,
+                            previous_assignees JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            last_assignment_reason TEXT,
+                            dispatch_status TEXT NOT NULL DEFAULT 'pending',
+                            assignment_updated_at TIMESTAMPTZ,
+                            assignment_version INTEGER NOT NULL DEFAULT 0
                         )
                         """
                     ).format(
@@ -2427,6 +2913,118 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS assigned_engineer_id TEXT").format(
                         self._table("support_engineer_cases")
+                    )
+                )
+                engineer_case_assignment_columns = (
+                    "assignment_status TEXT NOT NULL DEFAULT 'pending'",
+                    "assigned_at TIMESTAMPTZ",
+                    "sla_due_at TIMESTAMPTZ",
+                    "assignment_attempt_count INTEGER NOT NULL DEFAULT 0",
+                    "previous_assignees JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "last_assignment_reason TEXT",
+                    "dispatch_status TEXT NOT NULL DEFAULT 'pending'",
+                    "assignment_updated_at TIMESTAMPTZ",
+                    "assignment_version INTEGER NOT NULL DEFAULT 0",
+                )
+                for column_definition in engineer_case_assignment_columns:
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {}").format(
+                            self._table("support_engineer_cases"),
+                            sql.SQL(column_definition),
+                        )
+                    )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET assignment_status = CASE
+                                WHEN closed_at IS NOT NULL OR status = 'resolved' THEN 'resolved'
+                                WHEN assigned_engineer_id IS NOT NULL THEN 'assigned'
+                                ELSE 'pending'
+                            END,
+                            dispatch_status = CASE
+                                WHEN closed_at IS NOT NULL OR status = 'resolved' THEN 'resolved'
+                                WHEN assigned_engineer_id IS NOT NULL THEN 'assigned'
+                                ELSE 'pending'
+                            END
+                        WHERE assignment_version = 0
+                        """
+                    ).format(self._table("support_engineer_cases"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            account_id TEXT PRIMARY KEY,
+                            display_name TEXT NOT NULL,
+                            role TEXT NOT NULL,
+                            password_hash TEXT NOT NULL,
+                            active BOOLEAN NOT NULL DEFAULT TRUE,
+                            availability TEXT NOT NULL DEFAULT 'unavailable',
+                            availability_reason TEXT,
+                            availability_updated_at TIMESTAMPTZ,
+                            last_assigned_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(self._table("support_workspace_accounts"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id BIGSERIAL PRIMARY KEY,
+                            event_type TEXT NOT NULL,
+                            actor_id TEXT NOT NULL,
+                            target_id TEXT,
+                            payload JSONB NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(self._table("support_workspace_audit_events"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            scope TEXT NOT NULL,
+                            idempotency_key TEXT NOT NULL,
+                            state TEXT NOT NULL,
+                            response_payload JSONB,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            PRIMARY KEY (scope, idempotency_key)
+                        )
+                        """
+                    ).format(self._table("support_idempotency_records"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            counter_key TEXT PRIMARY KEY,
+                            current_value BIGINT NOT NULL DEFAULT 0,
+                            updated_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(self._table("support_rollout_counters"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            counter_key TEXT NOT NULL REFERENCES {}(counter_key) ON DELETE CASCADE,
+                            event_key TEXT NOT NULL,
+                            position BIGINT NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            PRIMARY KEY (counter_key, event_key),
+                            UNIQUE (counter_key, position)
+                        )
+                        """
+                    ).format(
+                        self._table("support_rollout_events"),
+                        self._table("support_rollout_counters"),
                     )
                 )
                 cur.execute(
@@ -3302,7 +3900,16 @@ class PostgresTicketRepository:
                 opened_at,
                 updated_at,
                 closed_at,
-                assigned_engineer_id
+                assigned_engineer_id,
+                assignment_status,
+                assigned_at,
+                sla_due_at,
+                assignment_attempt_count,
+                previous_assignees,
+                last_assignment_reason,
+                dispatch_status,
+                assignment_updated_at,
+                assignment_version
             FROM {}
             """
         ).format(self._table("support_engineer_cases"))
@@ -3370,6 +3977,23 @@ class PostgresTicketRepository:
             "updated_at": _to_iso(row[12]),
             "closed_at": _to_iso(row[13]) if row[13] is not None else None,
             "assigned_engineer_id": str(row[14] or "").strip() or None if len(row) > 14 else None,
+            "assignment_status": _normalize_assignment_status(
+                row[15] if len(row) > 15 else None,
+                assigned_engineer_id=row[14] if len(row) > 14 else None,
+            ),
+            "assigned_at": _to_iso(row[16]) if len(row) > 16 and row[16] is not None else None,
+            "sla_due_at": _to_iso(row[17]) if len(row) > 17 and row[17] is not None else None,
+            "assignment_attempt_count": _safe_non_negative_int(row[18] if len(row) > 18 else 0, 0),
+            "previous_assignees": _normalize_previous_assignees(row[19] if len(row) > 19 else []),
+            "last_assignment_reason": str(row[20] or "").strip() or None if len(row) > 20 else None,
+            "dispatch_status": _normalize_dispatch_status(
+                row[21] if len(row) > 21 else None,
+                assignment_status=row[15] if len(row) > 15 else None,
+            ),
+            "assignment_updated_at": (
+                _to_iso(row[22]) if len(row) > 22 and row[22] is not None else None
+            ),
+            "assignment_version": _safe_non_negative_int(row[23] if len(row) > 23 else 0, 0),
             "investigation_state": investigation_state,
             "messages": messages,
         }
@@ -4024,6 +4648,21 @@ class PostgresTicketRepository:
         engineer_handoff_packet = saved.get("engineer_handoff_packet") if isinstance(saved.get("engineer_handoff_packet"), dict) else None
         engineer_agent_state = saved.get("engineer_agent_state") if isinstance(saved.get("engineer_agent_state"), dict) else None
         assigned_engineer_id = str(saved.get("assigned_engineer_id") or "").strip() or None
+        assignment_status = _normalize_assignment_status(
+            saved.get("assignment_status"), assigned_engineer_id=assigned_engineer_id
+        )
+        if status == "resolved" or saved.get("closed_at") is not None:
+            assignment_status = "resolved"
+        assigned_at = saved.get("assigned_at")
+        sla_due_at = saved.get("sla_due_at")
+        assignment_attempt_count = _safe_non_negative_int(saved.get("assignment_attempt_count"), 0)
+        previous_assignees = _normalize_previous_assignees(saved.get("previous_assignees"))
+        last_assignment_reason = str(saved.get("last_assignment_reason") or "").strip() or None
+        dispatch_status = _normalize_dispatch_status(
+            saved.get("dispatch_status"), assignment_status=assignment_status
+        )
+        assignment_updated_at = saved.get("assignment_updated_at")
+        assignment_version = _safe_non_negative_int(saved.get("assignment_version"), 0)
         opened_at = saved.get("opened_at") or _utc_now()
         updated_at = saved.get("updated_at") or opened_at
         closed_at = saved.get("closed_at")
@@ -4049,9 +4688,21 @@ class PostgresTicketRepository:
                                 opened_at,
                                 updated_at,
                                 closed_at,
-                                assigned_engineer_id
+                                assigned_engineer_id,
+                                assignment_status,
+                                assigned_at,
+                                sla_due_at,
+                                assignment_attempt_count,
+                                previous_assignees,
+                                last_assignment_reason,
+                                dispatch_status,
+                                assignment_updated_at,
+                                assignment_version
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            )
                             ON CONFLICT (engineer_case_id) DO UPDATE SET
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 case_sequence = EXCLUDED.case_sequence,
@@ -4065,10 +4716,9 @@ class PostgresTicketRepository:
                                 engineer_agent_state = EXCLUDED.engineer_agent_state,
                                 updated_at = EXCLUDED.updated_at,
                                 closed_at = EXCLUDED.closed_at,
-                                assigned_engineer_id = COALESCE(
-                                    EXCLUDED.assigned_engineer_id,
-                                    support_engineer_cases.assigned_engineer_id
-                                )
+                                assigned_engineer_id = support_engineer_cases.assigned_engineer_id,
+                                assignment_status = support_engineer_cases.assignment_status,
+                                dispatch_status = support_engineer_cases.dispatch_status
                             """
                         ).format(self._table("support_engineer_cases")),
                         (
@@ -4087,6 +4737,15 @@ class PostgresTicketRepository:
                             updated_at,
                             closed_at,
                             assigned_engineer_id,
+                            assignment_status,
+                            assigned_at,
+                            sla_due_at,
+                            assignment_attempt_count,
+                            Json(previous_assignees),
+                            last_assignment_reason,
+                            dispatch_status,
+                            assignment_updated_at,
+                            assignment_version,
                         ),
                     )
                     for message in new_messages or []:
@@ -4154,6 +4813,526 @@ class PostgresTicketRepository:
                     return cur.rowcount > 0
 
         return self._run_with_connection_retry("claim_engineer_case", _operation)
+
+    def update_engineer_case_assignment(
+        self,
+        engineer_case_id: str,
+        *,
+        expected_version: int | None,
+        assignment_status: str,
+        assigned_engineer_id: str | None,
+        assigned_at: str | None,
+        sla_due_at: str | None,
+        reason: str,
+        updated_at: str,
+        actor: str,
+        event_type: str,
+        dispatch_status: str | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_case_id = str(engineer_case_id or "").strip()
+        normalized_status = _normalize_assignment_status(assignment_status)
+        normalized_engineer_id = str(assigned_engineer_id or "").strip() or None
+        if not normalized_case_id:
+            return None
+        if normalized_status == "assigned" and not normalized_engineer_id:
+            raise ValueError("assigned_engineer_id is required for assigned cases")
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT assignment_status, assigned_engineer_id,
+                                   assignment_version, assignment_attempt_count,
+                                   previous_assignees, assigned_at
+                            FROM {}
+                            WHERE engineer_case_id = %s
+                            FOR UPDATE
+                            """
+                        ).format(self._table("support_engineer_cases")),
+                        (normalized_case_id,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        return False
+                    current_version = _safe_non_negative_int(row[2], 0)
+                    if expected_version is not None and current_version != expected_version:
+                        return False
+                    previous_status = _normalize_assignment_status(
+                        row[0], assigned_engineer_id=row[1]
+                    )
+                    previous_engineer_id = str(row[1] or "").strip() or None
+                    previous_assignees = _normalize_previous_assignees(row[4])
+                    if (
+                        previous_engineer_id
+                        and previous_engineer_id != normalized_engineer_id
+                        and previous_engineer_id not in previous_assignees
+                    ):
+                        previous_assignees.append(previous_engineer_id)
+                    next_version = current_version + 1
+                    next_attempt_count = _safe_non_negative_int(row[3], 0) + (
+                        1 if normalized_status == "assigned" else 0
+                    )
+                    normalized_reason = str(reason or "").strip() or "assignment_update"
+                    normalized_event_type = str(event_type or "").strip() or "engineer_case_assignment_changed"
+                    normalized_actor = str(actor or "").strip() or "system"
+                    normalized_dispatch_status = _normalize_dispatch_status(
+                        dispatch_status, assignment_status=normalized_status
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET assignment_status = %s,
+                                assigned_engineer_id = %s,
+                                assigned_at = %s,
+                                sla_due_at = %s,
+                                assignment_attempt_count = %s,
+                                previous_assignees = %s,
+                                last_assignment_reason = %s,
+                                dispatch_status = %s,
+                                assignment_updated_at = %s,
+                                assignment_version = %s,
+                                updated_at = %s
+                            WHERE engineer_case_id = %s
+                              AND assignment_version = %s
+                            """
+                        ).format(self._table("support_engineer_cases")),
+                        (
+                            normalized_status,
+                            normalized_engineer_id,
+                            (
+                                assigned_at
+                                if normalized_status == "assigned"
+                                else row[5]
+                                if normalized_status == "resolved"
+                                else None
+                            ),
+                            sla_due_at if normalized_status == "assigned" else None,
+                            next_attempt_count,
+                            Json(previous_assignees),
+                            normalized_reason,
+                            normalized_dispatch_status,
+                            updated_at,
+                            next_version,
+                            updated_at,
+                            normalized_case_id,
+                            current_version,
+                        ),
+                    )
+                    if cur.rowcount != 1:
+                        return False
+                    event = {
+                        "event": normalized_event_type,
+                        "engineer_case_id": normalized_case_id,
+                        "actor": normalized_actor,
+                        "reason": normalized_reason,
+                        "previous_assignment_status": previous_status,
+                        "assignment_status": normalized_status,
+                        "previous_assigned_engineer_id": previous_engineer_id,
+                        "assigned_engineer_id": normalized_engineer_id,
+                        "assignment_version": next_version,
+                        "created_at": updated_at,
+                    }
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (engineer_case_id, event_type, payload, created_at)
+                            VALUES (%s, %s, %s, %s)
+                            """
+                        ).format(self._table("support_engineer_case_events")),
+                        (normalized_case_id, normalized_event_type, Json(event), updated_at),
+                    )
+                    return True
+
+        updated = self._run_with_connection_retry("update_engineer_case_assignment", _operation)
+        if not updated:
+            return None
+        return self.get_engineer_case(normalized_case_id, include_client_messages=False)
+
+    def save_workspace_account(self, account: dict[str, Any]) -> dict[str, Any]:
+        normalized = _normalize_workspace_account(account)
+        if not normalized["password_hash"]:
+            raise ValueError("password_hash is required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                account_id, display_name, role, password_hash, active,
+                                availability, availability_reason, availability_updated_at,
+                                last_assigned_at, created_at, updated_at
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (account_id) DO UPDATE SET
+                                display_name = EXCLUDED.display_name,
+                                role = EXCLUDED.role,
+                                password_hash = CASE
+                                    WHEN EXCLUDED.password_hash = '' THEN password_hash
+                                    ELSE EXCLUDED.password_hash
+                                END,
+                                active = EXCLUDED.active,
+                                last_assigned_at = COALESCE(
+                                    EXCLUDED.last_assigned_at,
+                                    last_assigned_at
+                                ),
+                                updated_at = EXCLUDED.updated_at
+                            RETURNING account_id, display_name, role, password_hash, active,
+                                      availability, availability_reason, availability_updated_at,
+                                      last_assigned_at, created_at, updated_at
+                            """
+                        ).format(self._table("support_workspace_accounts")),
+                        (
+                            normalized["account_id"],
+                            normalized["display_name"],
+                            normalized["role"],
+                            normalized["password_hash"],
+                            normalized["active"],
+                            normalized["availability"],
+                            normalized["availability_reason"],
+                            normalized["availability_updated_at"],
+                            normalized["last_assigned_at"],
+                            normalized["created_at"],
+                            normalized["updated_at"],
+                        ),
+                    )
+                    row = cur.fetchone()
+                    assert row is not None
+                    return _workspace_account_row_to_payload(row)
+
+        return self._run_with_connection_retry("save_workspace_account", _operation)
+
+    def get_workspace_account(self, account_id: str) -> dict[str, Any] | None:
+        normalized_account_id = str(account_id or "").strip()
+        if not normalized_account_id:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT account_id, display_name, role, password_hash, active,
+                               availability, availability_reason, availability_updated_at,
+                               last_assigned_at, created_at, updated_at
+                        FROM {}
+                        WHERE account_id = %s
+                        """
+                    ).format(self._table("support_workspace_accounts")),
+                    (normalized_account_id,),
+                )
+                row = cur.fetchone()
+                return _workspace_account_row_to_payload(row) if row is not None else None
+
+        return self._run_with_connection_retry("get_workspace_account", _operation)
+
+    def list_workspace_accounts(self) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT account_id, display_name, role, password_hash, active,
+                               availability, availability_reason, availability_updated_at,
+                               last_assigned_at, created_at, updated_at
+                        FROM {}
+                        ORDER BY LOWER(display_name), account_id
+                        """
+                    ).format(self._table("support_workspace_accounts"))
+                )
+                return [_workspace_account_row_to_payload(row) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry("list_workspace_accounts", _operation)
+
+    def set_engineer_availability(
+        self,
+        account_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        actor_id: str,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_account_id = str(account_id or "").strip()
+        normalized_availability = _normalize_engineer_availability(availability)
+        normalized_reason = str(reason or "").strip() or None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT availability, availability_reason
+                            FROM {}
+                            WHERE account_id = %s AND role = 'engineer'
+                            FOR UPDATE
+                            """
+                        ).format(self._table("support_workspace_accounts")),
+                        (normalized_account_id,),
+                    )
+                    previous = cur.fetchone()
+                    if previous is None:
+                        return None
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET availability = %s,
+                                availability_reason = %s,
+                                availability_updated_at = %s,
+                                updated_at = %s
+                            WHERE account_id = %s
+                            RETURNING account_id, display_name, role, password_hash, active,
+                                      availability, availability_reason, availability_updated_at,
+                                      last_assigned_at, created_at, updated_at
+                            """
+                        ).format(self._table("support_workspace_accounts")),
+                        (
+                            normalized_availability,
+                            normalized_reason,
+                            updated_at,
+                            updated_at,
+                            normalized_account_id,
+                        ),
+                    )
+                    row = cur.fetchone()
+                    audit_payload = {
+                        "previous_availability": _normalize_engineer_availability(previous[0]),
+                        "availability": normalized_availability,
+                        "previous_reason": str(previous[1] or "").strip() or None,
+                        "reason": normalized_reason,
+                    }
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (event_type, actor_id, target_id, payload, created_at)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """
+                        ).format(self._table("support_workspace_audit_events")),
+                        (
+                            "engineer_availability_changed",
+                            str(actor_id or "system").strip() or "system",
+                            normalized_account_id,
+                            Json(audit_payload),
+                            updated_at,
+                        ),
+                    )
+                    return _workspace_account_row_to_payload(row) if row is not None else None
+
+        return self._run_with_connection_retry("set_engineer_availability", _operation)
+
+    def record_workspace_audit_event(
+        self,
+        event_type: str,
+        *,
+        actor_id: str,
+        target_id: str | None,
+        payload: dict[str, Any],
+        created_at: str,
+    ) -> None:
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (event_type, actor_id, target_id, payload, created_at)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """
+                        ).format(self._table("support_workspace_audit_events")),
+                        (
+                            str(event_type or "workspace_event").strip() or "workspace_event",
+                            str(actor_id or "system").strip() or "system",
+                            str(target_id or "").strip() or None,
+                            Json(payload),
+                            created_at,
+                        ),
+                    )
+
+        self._run_with_connection_retry("record_workspace_audit_event", _operation)
+
+    def list_workspace_audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 100), 1000))
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT event_type, actor_id, target_id, payload, created_at
+                        FROM {}
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_workspace_audit_events")),
+                    (safe_limit,),
+                )
+                return [
+                    {
+                        "event_type": str(row[0]),
+                        "actor_id": str(row[1]),
+                        "target_id": str(row[2] or "").strip() or None,
+                        "payload": row[3] if isinstance(row[3], dict) else {},
+                        "created_at": _to_iso(row[4]),
+                    }
+                    for row in cur.fetchall()
+                ]
+
+        return self._run_with_connection_retry("list_workspace_audit_events", _operation)
+
+    def begin_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        created_at: str,
+    ) -> dict[str, Any]:
+        normalized_scope = str(scope or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+        if not normalized_scope or not normalized_key:
+            raise ValueError("scope and idempotency_key are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                scope, idempotency_key, state, response_payload,
+                                created_at, updated_at
+                            )
+                            VALUES (%s, %s, 'processing', NULL, %s, %s)
+                            ON CONFLICT (scope, idempotency_key) DO NOTHING
+                            RETURNING scope
+                            """
+                        ).format(self._table("support_idempotency_records")),
+                        (normalized_scope, normalized_key, created_at, created_at),
+                    )
+                    created = cur.fetchone() is not None
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT scope, idempotency_key, state, response_payload,
+                                   created_at, updated_at
+                            FROM {}
+                            WHERE scope = %s AND idempotency_key = %s
+                            """
+                        ).format(self._table("support_idempotency_records")),
+                        (normalized_scope, normalized_key),
+                    )
+                    row = cur.fetchone()
+                    assert row is not None
+                    return {
+                        "scope": str(row[0]),
+                        "idempotency_key": str(row[1]),
+                        "state": str(row[2]),
+                        "response_payload": row[3] if isinstance(row[3], dict) else None,
+                        "created_at": _to_iso(row[4]),
+                        "updated_at": _to_iso(row[5]),
+                        "created": created,
+                    }
+
+        return self._run_with_connection_retry("begin_idempotent_request", _operation)
+
+    def complete_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        response_payload: dict[str, Any],
+        updated_at: str,
+    ) -> None:
+        normalized_scope = str(scope or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET state = 'completed', response_payload = %s, updated_at = %s
+                            WHERE scope = %s AND idempotency_key = %s
+                            """
+                        ).format(self._table("support_idempotency_records")),
+                        (Json(response_payload), updated_at, normalized_scope, normalized_key),
+                    )
+                    if cur.rowcount != 1:
+                        raise ValueError("idempotency request was not started")
+
+        self._run_with_connection_retry("complete_idempotent_request", _operation)
+
+    def record_rollout_event(
+        self,
+        counter_key: str,
+        event_key: str,
+        *,
+        created_at: str,
+    ) -> tuple[int, bool]:
+        normalized_counter_key = str(counter_key or "").strip()
+        normalized_event_key = str(event_key or "").strip()
+        if not normalized_counter_key or not normalized_event_key:
+            raise ValueError("counter_key and event_key are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> tuple[int, bool]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT position
+                            FROM {}
+                            WHERE counter_key = %s AND event_key = %s
+                            """
+                        ).format(self._table("support_rollout_events")),
+                        (normalized_counter_key, normalized_event_key),
+                    )
+                    existing = cur.fetchone()
+                    if existing is not None:
+                        return int(existing[0]), False
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (counter_key, current_value, updated_at)
+                            VALUES (%s, 0, %s)
+                            ON CONFLICT (counter_key) DO NOTHING
+                            """
+                        ).format(self._table("support_rollout_counters")),
+                        (normalized_counter_key, created_at),
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET current_value = current_value + 1, updated_at = %s
+                            WHERE counter_key = %s
+                            RETURNING current_value
+                            """
+                        ).format(self._table("support_rollout_counters")),
+                        (created_at, normalized_counter_key),
+                    )
+                    row = cur.fetchone()
+                    assert row is not None
+                    position = int(row[0])
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (counter_key, event_key, position, created_at)
+                            VALUES (%s, %s, %s, %s)
+                            """
+                        ).format(self._table("support_rollout_events")),
+                        (normalized_counter_key, normalized_event_key, position, created_at),
+                    )
+                    return position, True
+
+        return self._run_with_connection_retry("record_rollout_event", _operation)
 
     def record_engineer_case_event(
         self,

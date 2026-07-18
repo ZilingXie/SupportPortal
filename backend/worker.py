@@ -35,6 +35,7 @@ from backend.services.engineer_cases import (
     close_case_context_active_investigation,
     derive_engineer_case_title,
 )
+from backend.services.engineer_assignment import EngineerAssignmentService
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
@@ -83,6 +84,8 @@ SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
 BILLING_REPLY_POLL_ENABLED_ENV = "BILLING_AUTOMATION_REPLY_POLL_ENABLED"
 BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
+ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV = "ENGINEER_ASSIGNMENT_POLLER_ENABLED"
+ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV = "ENGINEER_ASSIGNMENT_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_SUBJECT_TICKET_RE = re.compile(r"\bTicket\s+(TK-[A-Z0-9-]+)\b", re.IGNORECASE)
 
 
@@ -183,6 +186,19 @@ def _billing_reply_poll_max_messages_from_env() -> int:
     return _safe_positive_int(os.getenv(BILLING_REPLY_POLL_MAX_MESSAGES_ENV), 25)
 
 
+def _engineer_assignment_poller_enabled_from_env() -> bool:
+    return str(os.getenv(ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV) or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _engineer_assignment_poll_interval_from_env() -> float:
+    return _safe_positive_float(os.getenv(ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV), 60.0)
+
+
 def _install_signal_handlers() -> None:
     def _handle_signal(signum: int, _frame: Any) -> None:
         global SHUTTING_DOWN
@@ -209,6 +225,32 @@ def _run_billing_reply_poller(interval_seconds: float) -> None:
         while not SHUTTING_DOWN and time.time() < sleep_until:
             time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
     LOGGER.info("Billing reply poller stopped.")
+
+
+def _run_engineer_assignment_poller(interval_seconds: float) -> None:
+    LOGGER.info("Engineer assignment poller started with interval_seconds=%s.", interval_seconds)
+    service = EngineerAssignmentService(ticket_repository)
+    while not SHUTTING_DOWN:
+        try:
+            resolved = service.resolve_closed_cases()
+            unavailable_reassigned = service.reassign_unavailable_cases()
+            sla_reassigned = service.reassign_due_cases()
+            dispatched = service.dispatch_pending_cases()
+            if resolved or unavailable_reassigned or sla_reassigned or dispatched:
+                LOGGER.info(
+                    "Engineer assignment poller handled resolved=%s unavailable_reassigned=%s "
+                    "sla_reassigned=%s dispatched=%s.",
+                    len(resolved),
+                    len(unavailable_reassigned),
+                    len(sla_reassigned),
+                    len(dispatched),
+                )
+        except Exception:
+            LOGGER.exception("Engineer assignment poller failed")
+        sleep_until = time.time() + max(interval_seconds, 1.0)
+        while not SHUTTING_DOWN and time.time() < sleep_until:
+            time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
+    LOGGER.info("Engineer assignment poller stopped.")
 
 
 def _ticket_id_from_billing_reply_subject(subject: str) -> str:
@@ -452,6 +494,19 @@ def _start_billing_reply_poller_if_enabled() -> threading.Thread | None:
         target=_run_billing_reply_poller,
         args=(interval_seconds,),
         name="billing-reply-poller",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def _start_engineer_assignment_poller_if_enabled() -> threading.Thread | None:
+    if not _engineer_assignment_poller_enabled_from_env():
+        return None
+    thread = threading.Thread(
+        target=_run_engineer_assignment_poller,
+        args=(_engineer_assignment_poll_interval_from_env(),),
+        name="engineer-assignment-poller",
         daemon=True,
     )
     thread.start()
@@ -1943,6 +1998,7 @@ def run_worker() -> int:
         concurrency,
     )
     _start_billing_reply_poller_if_enabled()
+    _start_engineer_assignment_poller_if_enabled()
     if concurrency <= 1:
         _run_worker_consumer(task_types, 1)
         LOGGER.info("Worker stopped.")

@@ -1032,7 +1032,10 @@ def _build_internal_email(
                 "Please review and submit the handling result here:\n"
                 f"{normalized_response_link}"
                 if normalized_response_link
-                else "Please review and follow up as appropriate."
+                else (
+                    "Please review this request and reply directly to this email in Outlook. "
+                    "Your reply will be attached to the ticket for customer follow-up."
+                )
             ),
         ]
     )

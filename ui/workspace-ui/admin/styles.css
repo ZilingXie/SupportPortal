@@ -687,6 +687,28 @@ p {
   background: var(--surface-lowest);
 }
 
+.login-form,
+.admin-assignment-form {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-assignment-form {
+  grid-template-columns: minmax(110px, 0.8fr) minmax(140px, 1fr) auto;
+  align-items: center;
+}
+
+.admin-assignment-form select,
+.admin-assignment-form input {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--ghost-border);
+  border-radius: 12px;
+  background: var(--surface-lowest);
+  color: var(--ink);
+}
+
 .shift-form .btn {
   grid-column: 1 / -1;
 }
@@ -1321,6 +1343,17 @@ p {
 .admin-topbar-brand .material-symbols-outlined {
   font-size: 28px;
   color: var(--primary-container);
+}
+
+.admin-topbar-brand > div {
+  display: grid;
+  gap: 1px;
+}
+
+.admin-topbar-brand > div > span {
+  color: rgba(221, 229, 255, 0.68);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .admin-topbar-search {
@@ -2749,8 +2782,12 @@ p {
   /* Admin shell mobile */
   .admin-sidebar {
     width: 100%;
-    max-height: 200px;
+    min-height: 52px;
+    max-height: 52px;
     flex-shrink: 0;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .admin-body {
@@ -2762,12 +2799,55 @@ p {
   }
 
   .admin-topbar {
+    height: 56px;
     padding: 0 12px;
   }
 
   .admin-topbar-brand {
     font-size: 14px;
     gap: 6px;
+  }
+
+  .admin-topbar-brand > div > span,
+  .admin-topbar-avatar {
+    display: none;
+  }
+
+  .admin-topbar-actions {
+    gap: 2px;
+  }
+
+  .admin-topbar-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .admin-sidebar-nav {
+    flex: 0 0 auto;
+    padding: 0;
+  }
+
+  .admin-sidebar-nav ul {
+    display: flex;
+    min-width: max-content;
+  }
+
+  .admin-sidebar-nav a,
+  .admin-sidebar-nav a.is-active {
+    min-height: 52px;
+    margin: 0;
+    padding: 0 14px;
+    border-right: 0;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+
+  .admin-sidebar-nav a.is-active {
+    border-bottom-color: var(--primary-container);
+  }
+
+  .admin-sidebar-footer {
+    display: none;
   }
 
   .admin-main {

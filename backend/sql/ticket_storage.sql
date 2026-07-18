@@ -188,11 +188,105 @@ CREATE TABLE IF NOT EXISTS support_engineer_cases (
     opened_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     closed_at TIMESTAMPTZ,
-    assigned_engineer_id TEXT
+    assigned_engineer_id TEXT,
+    assignment_status TEXT NOT NULL DEFAULT 'pending',
+    assigned_at TIMESTAMPTZ,
+    sla_due_at TIMESTAMPTZ,
+    assignment_attempt_count INTEGER NOT NULL DEFAULT 0,
+    previous_assignees JSONB NOT NULL DEFAULT '[]'::jsonb,
+    last_assignment_reason TEXT,
+    dispatch_status TEXT NOT NULL DEFAULT 'pending',
+    assignment_updated_at TIMESTAMPTZ,
+    assignment_version INTEGER NOT NULL DEFAULT 0
 );
 
 ALTER TABLE support_engineer_cases
     ADD COLUMN IF NOT EXISTS assigned_engineer_id TEXT;
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS assignment_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS sla_due_at TIMESTAMPTZ;
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS assignment_attempt_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS previous_assignees JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS last_assignment_reason TEXT;
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS dispatch_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS assignment_updated_at TIMESTAMPTZ;
+ALTER TABLE support_engineer_cases
+    ADD COLUMN IF NOT EXISTS assignment_version INTEGER NOT NULL DEFAULT 0;
+
+UPDATE support_engineer_cases
+SET assignment_status = CASE
+        WHEN closed_at IS NOT NULL OR status = 'resolved' THEN 'resolved'
+        WHEN assigned_engineer_id IS NOT NULL THEN 'assigned'
+        ELSE 'pending'
+    END,
+    dispatch_status = CASE
+        WHEN closed_at IS NOT NULL OR status = 'resolved' THEN 'resolved'
+        WHEN assigned_engineer_id IS NOT NULL THEN 'assigned'
+        ELSE 'pending'
+    END
+WHERE assignment_version = 0;
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_cases_assignment_queue
+    ON support_engineer_cases (assignment_status, sla_due_at, updated_at);
+
+CREATE TABLE IF NOT EXISTS support_workspace_accounts (
+    account_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    availability TEXT NOT NULL DEFAULT 'unavailable',
+    availability_reason TEXT,
+    availability_updated_at TIMESTAMPTZ,
+    last_assigned_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_workspace_accounts_dispatch
+    ON support_workspace_accounts (role, active, availability, last_assigned_at, account_id);
+
+CREATE TABLE IF NOT EXISTS support_workspace_audit_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    target_id TEXT,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS support_idempotency_records (
+    scope TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    state TEXT NOT NULL,
+    response_payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (scope, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS support_rollout_counters (
+    counter_key TEXT PRIMARY KEY,
+    current_value BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_rollout_events (
+    counter_key TEXT NOT NULL REFERENCES support_rollout_counters(counter_key) ON DELETE CASCADE,
+    event_key TEXT NOT NULL,
+    position BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (counter_key, event_key),
+    UNIQUE (counter_key, position)
+);
 
 CREATE TABLE IF NOT EXISTS support_engineer_case_messages (
     id BIGSERIAL PRIMARY KEY,

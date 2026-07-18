@@ -6139,6 +6139,8 @@ class InvestigationFlowTests(unittest.TestCase):
         detail = self.client.get("/api/engineer/tickets/TK-INV-103B-1")
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "resolved")
+        self.assertEqual(ticket["assignment_status"], "resolved")
+        self.assertIsNone(ticket["sla_due_at"])
         self.assertIsNone(ticket["active_investigation"])
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         self.assertTrue(ticket["messages"][-1]["content"].startswith("Hi there,"))

@@ -1409,9 +1409,9 @@
       <h1>整体落地优化计划</h1>
       <ul class="hero-bullets" aria-label="Roadmap summary">
         <li><strong>项目定位：</strong>建设基于 agent 的工单系统，不把 AI 包装成完全替代真人的 support engineer。</li>
-        <li><strong>当前阶段：</strong>Billing 已进入 real Zendesk replay monitor；Assignment/Workspace 已落地 Engineer case 原子领取、assignee 持久化和 Admin active/resolved 同步视图；Routing、RAG/KG 继续以可审计试运行为优先级，Multi-Agent 降为低优先级保留计划。</li>
-        <li><strong>Phase 1/2/3 门禁：</strong>先把工单雏形、guardrail、dashboard 和 AgentRelay communication foundation 稳住，再扩大 AI 主动处理和自主调查。</li>
-        <li><strong>近期 POC：</strong>验证 billing route、邮件回执、engineer reply 通过/拒绝、dashboard 指标和真实 case 模拟。</li>
+        <li><strong>当前阶段：</strong>Phase 1 已完成，Phase 2 进入 9/1 Controlled Launch 实施与验证；正式入口是 <code>/workspace</code> 与 <code>/workspace/admin</code>。</li>
+        <li><strong>9/1 主链路：</strong>Billing automation、Not automated Engineer Case 切量、系统派单、3 小时 SLA、guardrail approve/final approve、Outlook reply 和 Admin 管理闭环。</li>
+        <li><strong>边界：</strong>Engineer multi-agent 与 AgentRelay 真实 case 集成不进入 9/1 交付主链路；旧 <code>/engineer</code> UI 是 legacy，但 <code>/api/engineer/*</code> 仍是 active backend contract。</li>
       </ul>
       <div class="hero-grid" id="heroMetrics"></div>
     </header>
@@ -1420,41 +1420,44 @@
       <header>
         <div>
           <div class="eyebrow"><span class="pulse"></span>总计划追踪</div>
-          <h2>Phase 1/2/3 阶段门禁</h2>
+          <h2>Phase 1 完成，Phase 2 进入 9/1 Controlled Launch</h2>
         </div>
-        <p>用三段门禁追踪落地：Phase 1 已把 AgentRelay 通信基础纳入地基；Phase 2 接真实证据工具；Phase 3 再扩大 governed agent-to-agent 自主调查。</p>
+        <p>Phase 2 的 P0、P1、P2 都属于 9/1 交付范围；优先级只决定实施顺序，不代表低优先级项目可以延期到 9/1 之后。</p>
       </header>
       <div class="phase-grid">
         <article class="phase-card">
-          <span class="phase-status doing">进行中</span>
+          <span class="phase-status">已完成</span>
           <h3>Phase 1：效率提升 + 工单系统雏形</h3>
           <ul class="phase-gate-list">
             <li>Zendesk 转发到内部系统，保留现有客户前端和渐进 AB test 出口。</li>
-            <li>billing 自动化 POC 先跑 invoice、account fraud / deactivate 等确定性 case。</li>
+            <li>Billing 自动化 POC 覆盖 detailed invoice 与 account suspension 等确定性 case。</li>
             <li>AI guardrail 检查真人回复的 conclusion、proof、next step，并支持通过/拒绝。</li>
             <li>Dashboard 展示 SLA、通过率、case 状态和人工审核结果。</li>
-            <li>准备 1% 小流量切流前的真实 case 回放和幂等验证。</li>
+            <li>客户入口、内部工单、guardrail、Dashboard 与 AgentRelay communication foundation 已形成 Phase 1 基线。</li>
             <li>AgentRelay communication foundation 已完成：A2A-shaped task relay、MCP tools、token auth、thread reuse、completion ownership 和 audit events。</li>
           </ul>
           <a class="phase-action" href="./roadmap/phase1.html" aria-label="打开 Phase 1 演示讲稿页">打开 Phase 1 演示讲稿 <span aria-hidden="true">-></span></a>
         </article>
         <article class="phase-card">
-          <span class="phase-status todo">下一阶段</span>
-          <h3>Phase 2：AI 主动处理 + 人 approve</h3>
+          <span class="phase-status doing">9/1 Controlled Launch</span>
+          <h3>Phase 2：Billing automation + Engineer Case 生产闭环</h3>
           <ul class="phase-gate-list">
-            <li>AI 先调查、生成 AI draft，人做 approve / revise / override。</li>
-            <li>通过 AgentRelay 接入 Billing / Log / R&D / Data Agent，把 artifact 带回原始 case thread，再进入 guardrail。</li>
-            <li>客户可见回复必须经过敏感信息 guardrail，内部证据不直接外泄。</li>
-            <li>逐步扩大 billing 之外的可自动化类型，质量低于门禁时回退人工。</li>
-            <li>小流量切流后统计覆盖率、误判率、Not automated 原因和客户反馈。</li>
-            <li>用质量指标决定哪些 case 可以从人工审核降级为抽查。</li>
+            <li><strong>P0：</strong>生产账号与 RBAC、Admin 创建账号、available/unavailable 管理及完整操作审计。</li>
+            <li><strong>P0：</strong>available engineer + round-robin 系统派单；manual claim 禁用，pending/assigned/resolved 原子更新并防重复派发。</li>
+            <li><strong>P0：</strong>assigned 后立即开始 3 小时 SLA；超时或 assignee unavailable 时转派给下一个 available engineer。</li>
+            <li><strong>P1：</strong>Client Ticket 与 Engineer Case 两种工单完全分层；Client status 不再充当 assignment status。</li>
+            <li><strong>P1：</strong>Account Not automated 只统计自身工单，每第 10 单创建 Engineer Case，验证后切到 100%。</li>
+            <li><strong>P1：</strong>Zendesk/external ID 幂等，避免重复 webhook 重复建单、派单或发送邮件。</li>
+            <li><strong>P2：</strong>完成 Admin metrics、action-specific 内部邮箱配置和真实 case 全量流转接入。</li>
+            <li>Billing 内部处理统一通过 Outlook reply；所有客户回复必须经过 guardrail 与 engineer final approve。</li>
           </ul>
         </article>
         <article class="phase-card">
-          <span class="phase-status blocked">长期方向</span>
-          <h3>Phase 3：governed agent-to-agent + 高自动化</h3>
+          <span class="phase-status blocked">与 9/1 隔离</span>
+          <h3>Phase 3：Engineer multi-agent + governed agent-to-agent</h3>
           <ul class="phase-gate-list">
-            <li>在 AgentRelay foundation 上扩大 Support agent 与研发、数据、日志 agent 的协作范围。</li>
+            <li>Engineer multi-agent 默认关闭，不影响 9/1 Workspace、派单、Billing 与 guardrail 主链路。</li>
+            <li>后续再在 AgentRelay foundation 上扩大 Support agent 与研发、数据、日志 agent 的协作范围。</li>
             <li>重点从“能通信”转向“能自主调查”：权限、证据质量、成本、endpoint/forum/hub 协作和审计协议必须达标。</li>
             <li>限制 retry、并发和 token 预算，避免 T1 无限追问造成成本失控。</li>
             <li>企业级合规审计先行：权限、历史记录、敏感信息、source of truth 都要可证明。</li>
@@ -1591,7 +1594,7 @@ flowchart TD
         <header class="opt-head">
           <span class="opt-priority opt-priority-medium">中优先级</span>
           <h3>P1：可观测与灰度门禁</h3>
-          <p>P0 安全洞补齐后，先把 route 质量量化，再调阈值或扩大 automation；没有指标就不进入 1% 切流。</p>
+          <p>P0 安全洞补齐后，先把 route 质量量化，再调阈值或扩大 automation；没有指标就不扩大 Controlled Launch 流量。</p>
         </header>
         <ol class="opt-list">
           <li class="opt-item">
@@ -1608,7 +1611,7 @@ flowchart TD
           <li class="opt-item">
             <p class="opt-id">routing-real-zendesk-replay</p>
             <div class="opt-body">
-              <p class="opt-label">扩展真实 Zendesk replay set：invoice request、account fraud/deactivate/company verification、technical handoff、非 billing、mixed-risk billing negative set 都要可离线重放，用 replay 指标决定是否继续扩大 automation。</p>
+              <p class="opt-label">扩展真实 Zendesk replay set：invoice request、account suspension、company verification、technical handoff、非 billing、mixed-risk billing negative set 都要可离线重放，用 replay 指标决定是否继续扩大 automation。</p>
               <div class="opt-meta">
                 <span class="tag">Evaluation</span>
                 <span class="tag">Replay</span>
@@ -1850,7 +1853,7 @@ flowchart TD
             points: [
               "必须保留工单界面和 admin dashboard，审计需要系统化抽样查看 case、SLA、通过率和操作历史。",
               "Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口；客户仍先进 Zendesk，内部通过 Zendesk webhook / N8n 转到 Roadmap 系统验证。",
-              "AB test 先做 shadow mode：真人照常处理，AI 同步模拟；再让 AI account 承接 1% 切流。"
+              "Not automated case 先按每第 10 单创建 Engineer Case，验证后在 9/1 前切到 100%。"
             ]
           },
           {
@@ -1875,7 +1878,7 @@ flowchart TD
             kicker: "Billing POC",
             title: "Billing 与 route 近期 POC",
             points: [
-              "先做 invoice / account fraud / deactivate / company verification 等 billing 小类，验证 route、字段收集、内部请求和客户回执闭环。",
+              "先做 invoice / account suspension / company verification 等 billing 小类，验证 route、字段收集、内部请求和客户回执闭环。",
               "agent 发邮件或内部请求后，要通过邮件回执/邮箱轮询继续流程；未收到回复时必须有 SLA 提醒和 fallback。",
               "dashboard 需要展示 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate。"
             ]
@@ -1902,7 +1905,7 @@ flowchart TD
             kicker: "Compliance",
             title: "合规、审计与权限",
             points: [
-              "WeCom 不适合作审计 source of truth，离职历史、权限、记录归档和客户数据治理都不可控。",
+              "第三方聊天工具不作为审计 source of truth，权限、记录归档和客户数据治理必须留在工单系统。",
               "工单系统必须能解释客户误发敏感信息时如何防泄露、谁能看、AI 如何使用、历史如何留存。",
               "权限动作也要有 guardrail，例如支持人员能改配置不代表可以随意改；超过安全阈值要进入审批。"
             ]
@@ -1983,46 +1986,46 @@ flowchart TD
       {
         id: "assignment-ui",
         short: "Assignment",
-        title: "Ticket assignment UI demo",
+        title: "Engineer Case assignment + Workspace",
         status: "doing",
-        thesis: "独立 /assignment 原型已从登录自动分配改为 welcome + explicit ready 三段式 demo；/workspace 已通过原子 claim API 持久化 Engineer case assignee，/workspace/admin 会同步区分 pending、investigating 和 resolved case；生产级排班、自动调度、SLA/transfer 状态机与完整审计仍未完成。",
+        thesis: "9/1 Controlled Launch 使用 `/workspace` 作为 Engineer Case 正式处理入口，`/workspace/admin` 作为账号、availability、派单、审计和指标入口。工程师不能领取工单：系统只从 Admin 标记 available 的 engineer 中按 round-robin 派单，assigned 后立即开始 3 小时 SLA；超时或 engineer unavailable 时自动转派。Client Ticket status 与 Engineer Case assignment status 完全分层。",
         done: [
-          { summary: "`/assignment` 已形成选择工程师、welcome readiness、显式领取 ticket、进入 workspace 的三段式原型。", prs: [413, 418, 448] },
-          { summary: "工程师 shift 编辑已前置到 welcome / Daily shift 卡片，in-shift、out-of-shift、下一段 shift 与显式领取状态会同步刷新。", prs: [459, 475] },
-          { summary: "关闭或 approve 当前 ticket 后不会自动连续领取，工程师需要再次通过 ready CTA 明确接下一单。", prs: [448] },
-          { summary: "`/workspace/admin` 现按 Active Ticket / Resolved Ticket 展示真实 Engineer case，并通过服务端 assignee 与 `/workspace` claim 流程同步 pending 和 investigating 状态。", prs: [461, 473, 476, 478] },
-          { summary: "Admin schedule 支持 engineer/day picker、空白日期新建或调整 shift，并与个人 assignment shift localStorage 隔离。", prs: [461, 473, 475] },
-          { summary: "Assignment UI 已完成多轮 polish：SLA 秒级展示、hover sidebar、brand/icon 对齐、shift form 防重叠和移动端布局。", prs: [451, 462, 465, 466, 467, 471] },
-          { summary: "`/workspace` 已作为验证入口接通：使用 assignment 风格的工程师选择、welcome readiness、UTC+8 ready gate，只自动打开真实 investigating engineer case，并复用 Engineer 端真实 case detail、Engineer AI、approve/revise/final approve、multi-agent toggle 和 API 数据流。", prs: [] }
+          { summary: "Workspace 账号、PBKDF2 password、signed token 与 Admin/Engineer RBAC 已接入；Admin 可创建账号。", prs: [] },
+          { summary: "Admin 可用 available/unavailable 开关管理 engineer availability，reason 可选，审计字段与 availability 变更 audit 已落地。", prs: [] },
+          { summary: "Engineer Case assignment_status 已独立为 pending/assigned/resolved；assigned_at、sla_due_at、previous assignees、attempt count、reason 与 version 已持久化。", prs: [] },
+          { summary: "available engineer + round-robin 系统派单已接入；派单立即开始 3 小时 SLA，SLA 到期或 engineer unavailable 会转派到下一个 available engineer。", prs: [] },
+          { summary: "派单更新使用 transaction、row lock 与 assignment_version compare-and-set，assignment event 与状态更新同事务写入。", prs: [] },
+          { summary: "`/workspace` 仅展示当前登录 engineer 已被系统派发的 Engineer Case，并保留处理、回复、approve 与 final approve 主链路。", prs: [] },
+          { summary: "`/workspace/admin` 已接入真实账号、availability、Engineer Case board、人工派单/转派、dispatch、SLA reassign、audit 与 metrics API。", prs: [] },
+          { summary: "manual claim 已禁用；旧 claim endpoint 返回 410，`/workspace` 不再调用 claim。", prs: [] },
+          { summary: "Client Ticket status 与 Engineer Case assignment status 已在 payload、Workspace 和 Admin 中分层；legacy `support_engineer_cases.status` 仅保留兼容。", prs: [] }
         ],
         review: [
-          "当前 demo 已从自动分配改为显式领取，welcome → ready → workspace 路线更贴近真实排班体验。",
-          "`/workspace` 目前会优先恢复当前工程师已领取的 investigating case，否则原子领取未分配 case；不会打开已分配给其他工程师或 resolved case。",
-          "Welcome 页 Daily shift 卡片现在就是排班调整入口，避免为了改 shift 先进入 workspace/sidebar。",
-          "Admin 页新增 Engineer overview、weekly schedule grid 和 engineer/day picker 提供 demo 排班可视化，admin-only shift 编辑不联动 /assignment 个人 shift。",
-          "Admin 自动读取 `/api/engineer/tickets?status=all`，未领取 active case 显示 pending，领取后显示 investigating 与 assignee，resolved case 独立归档展示。",
-          "Online/Offline 状态使用固定 mock 数据展示，不联动 /assignment 登录状态或 workspace 状态。",
-          "生产化最缺的是自动调度、完整 assignment audit 和 SLA/transfer 状态机，而不是更多 mock UI 控件。"
+          "系统派单替代人工领取后，assigned 同时表示已派发和 SLA 计时中；Admin 调整、availability 变更与 SLA reassign 必须维持原子状态更新、版本保护和审计。",
+          "两种工单必须严格分层：Client Ticket 使用 open/communicating/escalated/investigating/resolved；Engineer Case assignment 只使用 pending/assigned/resolved。",
+          "数据库暂时保留 `support_engineer_cases.status` 作为兼容层，9/1 前不向用户展示；不能直接全局改名破坏现有 `/api/engineer/*` contract。",
+          "对外统一称 Engineer Case。`/engineer` UI 是 legacy；`/api/engineer/*` 仍是 active backend contract，但 `/api/engineer/tickets/{id}/claim` 已停用。",
+          "其他 legacy 入口包括 `/login`、`/client2`、`/clienttest`、`/api/v1/auth/logout`、已移除的 `/assignment` prototype、`ui/archive/*` 与仅供历史兼容的 `/response`。"
         ],
         next: [
-          { id: "assign-data-model", status: "todo", label: "定义生产 Engineer Ticket 生命周期、状态机和队列持久化模型。", horizon: "Model" },
-          { id: "assign-shift-api", status: "todo", label: "实现真实登录/排班 API，shift schedule 持久化并统一 UTC+8。", horizon: "Model" },
-          { id: "assign-scheduler", status: "todo", label: "实现单 active case 分配器、first response 优先级、等待时间排序和无可用工程师回队列。", horizon: "Scheduler" },
-          { id: "assign-audit", status: "todo", label: "记录创建、入队、分配、SLA 开始、AI 草稿、批准、超时、转派和关闭事件。", horizon: "Audit" },
-          { id: "assign-real-ui", status: "doing", label: "基于 /workspace 验证入口继续收敛 demo readiness 与真实 Engineer Portal 工作台的生产迁移边界。", horizon: "Portal" },
-          { id: "assign-pilot", status: "todo", label: "小范围试点 Tier One，统计处理量、平均处理时长、超时、转派和有效回复比例。", horizon: "Pilot" }
+          { id: "assign-live-postgres", status: "doing", label: "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。", horizon: "Reliability" },
+          { id: "assign-auth-hardening", status: "doing", label: "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。", horizon: "Security" },
+          { id: "assign-rollout", status: "doing", label: "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。", horizon: "Rollout" },
+          { id: "assign-metrics", status: "doing", label: "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/availability reassign 与 engineer availability 指标。", horizon: "Metrics" },
+          { id: "assign-legacy-cleanup", status: "todo", label: "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。", horizon: "Cleanup" }
         ],
         sources: [
-          "docs/prompt_change_log.md",
-          "ui/assignment-ui/index.html",
-          "ui/assignment-ui/admin/index.html",
-          "ui/assignment-ui/app.js",
-          "ui/assignment-ui/styles.css",
           "ui/workspace-ui/index.html",
           "ui/workspace-ui/app.js",
+          "ui/workspace-ui/admin/app.js",
           "ui/workspace-ui/styles.css",
-          "backend/tests/test_assignment_ui_contract.py",
+          "backend/services/engineer_assignment.py",
+          "backend/services/workspace_auth.py",
+          "backend/repositories/ticket_repository.py",
+          "backend/tests/test_engineer_assignment.py",
+          "backend/tests/test_workspace_api.py",
           "backend/tests/test_workspace_ui_contract.py",
+          "backend/tests/test_workspace_admin_ui_contract.py",
           "docs/feature_list.md"
         ]
       },
@@ -2031,73 +2034,65 @@ flowchart TD
         short: "Billing",
         title: "Billing intake / ticket routing",
         status: "doing",
-        thesis: "Billing intake 已从确定性白名单升级为 semantic-first routing + full automation execution；会议后 Phase 1 收口为 Zendesk 转发/内部中转下的 billing POC，Zendesk webhook / N8n 内部转发、real Zendesk replay set、response link demo 闭环和 Outlook 回复轮询 + PDF 附件转发已完成。接下来 Billing 主要进入 monitor：持续观察 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk、internal_email_send_status、response token 使用和重复 external_id 风险，不直接迁移客户入口。",
+        thesis: "Phase 2 的 Billing 主链路覆盖 detailed invoice 与 account suspension：系统持续向客户收集必要字段，信息完整后发送 action-specific 内部邮件，内部处理人一律通过 Outlook reply 返回结果。`/account` 接收所有 ticket；Not automated case 先按每第 10 单创建 Engineer Case 验证，9/1 前切到 100%。external ID / ticket ID 幂等用于阻止重复 webhook 重复建单与重复发信。",
         done: [
           { summary: "Billing automation intake 已覆盖 `account_suspension`、`detailed_invoice` 和 `account_verification`，并能追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
-          { summary: "一次性 response link 闭环已完成：内部处理人提交结构化结果后写 internal resolution event，再由 AI 决定是否通知客户。", prs: [509, 510, 512] },
+          { summary: "Billing 正式内部处理流程已统一为 Outlook reply；新请求不再生成 response token/link，历史 `/response` 仅保留兼容。", prs: [] },
           { summary: "`/account` 已支持人工纠正完整 route tuple，并通过 Route errors、低置信汇总和 review/pass 视图分析误路由案例。", prs: [513, 515, 524, 526, 527] },
-          { summary: "Billing response link 闭环已确认完成：内部邮件携带一次性 `/response?token=...` 链接，页面只使用 billing_ticket_id 收集结构化处理结果。", prs: [509, 510, 512] },
+          { summary: "Account intake 已按 external ID、ticket ID 或 source link 建立幂等记录，已完成请求可安全 replay 原响应。", prs: [] },
           { summary: "Billing internal resolution event 已确认完成：提交后写 `billing_internal_resolution_submitted`，notify customer 时生成 `billing_response_ai` 客户跟进。", prs: [509, 512] },
           { summary: "Account Route errors 能力已确认完成：人工纠正保留 original / first corrected route tuple，并与低置信路由、review/pass 状态一起分析。", prs: [513, 515, 524, 526, 527] },
           { summary: "Account verification 字段收集已确认完成：Use Case section、Country+Address、个人开发者分支、可选 app_id 和内部邮件发送都已覆盖。", prs: [488] },
           { summary: "Billing Outlook 回复轮询已落地：worker 可读取 Inbox 中未读且标题含 `[Billing Request]` 的回复正文，将 PDF 附件转发到客户工单，并自动生成客户跟进后标记已读。", prs: [575] },
-          { summary: "real Zendesk replay set 已接入 Billing monitor：invoice request、account fraud / deactivate / company verification、非 billing、billing risky negative set 和 Not automated case 已纳入后续质量观察口径。", prs: [] }
+          { summary: "Not automated rollout counter 只统计 Not automated case，当前每第 10 单创建 Engineer Case，并支持 env 切换到 100%。", prs: [] },
+          { summary: "real Zendesk replay set 已接入 Billing monitor：invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 已纳入后续质量观察口径。", prs: [] }
         ],
         review: [
           "这是四条主线里最接近小流量试运行的一条，但会议后边界调整为：Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口。",
           "TK-ACC-C31612 修复已验证：semantic-first 路由 + gratitude 降级后，长正文末尾 thank you 不再误判为 small_talk。",
-          "Zendesk webhook / N8n 中转已完成为内部来源入口；real Zendesk replay set、response link demo 闭环与 Outlook 回复轮询都已落地，后续重点转为 monitor、人工审核和指标门禁，而不是继续迁移客户入口。",
-          "内部处理入口现在有两条：结构化结果优先走一次性 response link；直接回复 `[Billing Request]` 邮件时，worker 会读取正文并把 PDF 附件转发到客户工单，成功处理后才标记 Outlook 邮件已读。",
-          "白名单不要扩大过快；当前用 real Zendesk replay set 持续观察 invoice、account fraud / deactivate / company verification 的 route_accuracy，再决定是否进一步扩展。",
-          "Automated billing case 当前处理：`/account` semantic_first 命中 `route_family=billing_automation` 且 action 是 `detailed_invoice`、`account_suspension` 或 `account_verification` 时，`automation_status` 记为 `automation`；系统抽取必填字段，缺字段时只生成客户补充信息回复、不发内部邮件；字段齐全时生成客户 escalation reply、一次性 response link 和内部 billing 邮件，保存 redacted internal payload、token、send status，并把 assistant message、billing ticket、`ticket_created` event 和 dashboard/client sync 一起写入。"
+          "Zendesk webhook / N8n 中转已完成为内部来源入口；real Zendesk replay set 与 Outlook 回复轮询已落地，后续重点是 10% 到 100% 切量、人工审核和指标门禁。",
+          "内部处理入口只保留 Outlook reply 作为正式流程；worker 读取 `[Billing Request]` 回复正文并把 PDF 附件转发到客户工单，成功处理后才标记邮件已读。",
+          "白名单不要扩大过快；当前用 real Zendesk replay set 持续观察 invoice、account suspension、company verification 的 route_accuracy，再决定是否进一步扩展。",
+          "Automated billing case 当前处理：`/account` 命中 billing automation 后抽取必填字段；缺字段时继续向客户收集信息，字段齐全后发送内部邮件并等待 Outlook reply。客户可见回复仍受 guardrail 和人工最终确认约束。"
         ],
         next: [
-          { id: "billing-monitor-replay-quality", status: "doing", label: "Monitor real Zendesk replay set：持续看 invoice request、account fraud / deactivate / company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。", horizon: "Monitor" },
-          { id: "billing-monitor-automation-outcomes", status: "doing", label: "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、response token 使用、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。", horizon: "Monitor" },
-          { id: "billing-ai-account", status: "todo", label: "定义 AI account 试运行方式：shadow mode 下只模拟，1% 切流后由 AI account 接收/处理 billing case，并通过 Zendesk API 写 comment。", horizon: "Pilot" },
+          { id: "billing-monitor-replay-quality", status: "doing", label: "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。", horizon: "Monitor" },
+          { id: "billing-monitor-automation-outcomes", status: "doing", label: "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。", horizon: "Monitor" },
+          { id: "billing-not-automated-rollout", status: "doing", label: "Not automated case 先按每第 10 单创建 Engineer Case，验证系统派单与 Workspace 全链路；9/1 前切到 100%。", horizon: "Rollout" },
           { id: "billing-human-review", status: "todo", label: "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。", horizon: "Review" },
           { id: "billing-dashboard-metrics", status: "doing", label: "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。", horizon: "Metrics" },
-          { id: "billing-idempotency", status: "todo", label: "为 Zendesk/external_id 场景补幂等策略，避免重复 webhook 重复建单、重复发邮件或重复写入 automation 状态。", horizon: "Reliability" },
-          { id: "billing-pilot", status: "todo", label: "先做 shadow mode，再做 1% 切流；剩余 99% 保持真人流程，达到 route_accuracy 和安全门禁后再扩量。", horizon: "Pilot" },
+          { id: "billing-idempotency", status: "doing", label: "验证 Zendesk/external ID 幂等与异常恢复，确保重复 webhook 不重复建单、派单或发送内部邮件。", horizon: "Reliability" },
+          { id: "billing-recipient-env", status: "todo", label: "P2：正式测试前完成 action-specific 内部邮箱 env 配置与部署校验。", horizon: "Configuration" },
           { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" }
         ],
         architecture: {
-          title: "Billing Flow: Route -> Internal Response -> AI Follow-up",
-          summary: "Billing tab 新增这张架构图，用来固定 billing category 命中后的试运行闭环：Zendesk/N8n 只做内部中转；route 命中 billing 后，内部处理人可通过 response link 提交结构化结果，或直接回复 `[Billing Request]` 邮件；Outlook 回复轮询会读取正文、转发 PDF 附件，并触发客户跟进。",
+          title: "Billing Flow: Route -> Outlook Reply -> Customer Follow-up",
+          summary: "Billing 正式流程只使用 Outlook reply：字段完整后发内部邮件，worker 读取回复正文与 PDF 附件并继续客户工单。Not automated ticket 则按 10% 到 100% 的节奏创建并系统派发 Engineer Case。",
           mermaid: [
             "flowchart TD",
             "  Z[\"Zendesk webhook / N8n internal forward\"] --> I[\"Billing intake: content + external_id + comments + metadata\"]",
             "  I --> R[\"Support router\"]",
             "  R -->|scope_label=billing| B{\"billing category?\"}",
-            "  R -->|not billing| NB[\"normal support route / handoff\"]",
+            "  R -->|not automated| RC[\"Rollout counter: Not automated only\"]",
+            "  RC -->|every 10th now; 100% before 9/1| EC[\"Create Engineer Case\"]",
+            "  EC --> AS[\"System dispatch + 3h SLA\"]",
             "  B --> BA[\"Billing automation intake\"]",
             "  BA --> C{\"required info complete?\"}",
             "  C -->|no| Q[\"AI asks customer for missing fields\"]",
             "  C -->|yes| E[\"Internal email to billing owner/team\"]",
-            "  E --> L[\"https://support.stellarix.space/response?token=...\"]",
             "  E --> O[\"Outlook reply: subject contains [Billing Request]\"]",
-            "  L --> U[\"Unified response UI (billing_ticket_id only)\"]",
-            "  U --> F[\"Result: completed / refused / customer action required\"]",
             "  O --> P[\"Poll unread Inbox replies\"]",
             "  P --> D[\"Download non-inline PDF attachments (no OCR)\"]",
             "  D --> SA[\"Store PDF as ticket asset\"]",
             "  SA --> CR",
-            "  P --> CR",
-            "  F --> N{\"Notify customer?\"}",
-            "  N --> S[\"One-time submit\"]",
-            "  S --> V{\"token unused?\"}",
-            "  V -->|no| X[\"show already submitted / invalid link\"]",
-            "  V -->|yes| EV[\"write internal resolution event\"]",
-            "  EV --> A[\"AI reads event\"]",
-            "  A -->|notify=yes| CR[\"Generate customer follow-up\"]",
-            "  A -->|notify=no| IR[\"Internal-only resolved\"]",
+            "  P --> CR[\"Generate guarded customer follow-up\"]",
             "  CR -->|completed or refused| CL[\"Customer notified / close or await review\"]",
             "  CR -->|customer action required| WA[\"Ask customer for action / wait for reply\"]"
           ].join("\n"),
-          note: "表单字段固定为处理结果（已完成、拒绝处理、需要客户操作）、是否通知客户（是、否）和说明。已完成时说明可空；拒绝处理或需要客户操作时说明必填，避免 AI 在客户回复中编造原因或下一步。response link 当前不校验收件人/处理组、不设置过期时间，但必须一次性提交；提交后只写 internal resolution event，AI 再读取该 event 决定是否给客户回复。Outlook 回复轮询不启用 OCR：PDF 只作为客户工单附件转发，handler 成功后才标记邮件已读。"
+          note: "新 Billing 请求不生成 response token/link；`/response` 只服务历史兼容。Outlook 回复轮询不启用 OCR：PDF 只作为客户工单附件转发，handler 成功后才标记邮件已读。重复 intake 由幂等记录返回原结果或拒绝并发重复处理。"
         },
         sources: [
           "docs/prompt_change_log.md",
@@ -2126,7 +2121,7 @@ flowchart TD
         short: "Routing",
         title: "Routing rules",
         status: "doing",
-        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；会议后路由计划补上三类 case 的 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff。Phase 1 重点不是扩大 scope；real Zendesk replay set 已接入 Billing monitor，接下来用持续指标观察 billing route、风险负例、Not automated 原因和 1% 切流门禁。",
+        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；三类 case 的 rollout taxonomy 为 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff。Phase 2 用持续指标观察 billing route、风险负例与 Not automated 原因，并支撑 Not automated Engineer Case 从 10% 扩到 100%。",
         done: [
           { summary: "Routing tab 和架构图已独立维护，固定 deterministic fast path、LLM semantic router、policy gate、fallback 和 route contract 的边界。", prs: [474, 496, 518] },
           { summary: "LLM router 已升级为 semantic intent taxonomy 输出，并把 billing intent、evidence spans、risk flags 和 automation eligibility 纳入 route decision。", prs: [477] },
@@ -2160,12 +2155,12 @@ flowchart TD
           "TK-ACC-C31612 修复验证：长正文末尾 thank you 不再触发 small_talk，LLM semantic-first 可正确识别 billing intent；短纯感谢仍保持 controlled_response。",
         ],
         next: [
-          { id: "routing-real-zendesk-replay", status: "doing", label: "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account fraud / deactivate / company verification、非 billing、technical handoff 与 billing risky negative set。", horizon: "Monitor" },
+          { id: "routing-real-zendesk-replay", status: "doing", label: "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。", horizon: "Monitor" },
           { id: "routing-fallback-billing-risk-sniff", status: "todo", label: "P0：conservative fallback 前增加 billing-risk sniff；LLM 缺凭证、超时或低置信时，invoice wrong/refund/dispute/legal/restore access 不应默认进入 agora_technical/RAG。", horizon: "Safety" },
           { id: "routing-billing-review-customer-experience", status: "todo", label: "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。", horizon: "Customer Experience" },
           { id: "routing-rollout-taxonomy", status: "todo", label: "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。", horizon: "Contract" },
           { id: "routing-billing-risky-negatives", status: "todo", label: "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。", horizon: "Safety" },
-          { id: "routing-dashboard-metrics", status: "todo", label: "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 shadow mode 与 1% 切流判断。", horizon: "Metrics" },
+          { id: "routing-dashboard-metrics", status: "todo", label: "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。", horizon: "Metrics" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
           { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
         ],

@@ -37,14 +37,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         main.ticket_repository = self.original_repository
 
     def _create_invoice_ticket_with_response_token(self) -> tuple[dict[str, object], str]:
-        captured_payloads: list[dict[str, str]] = []
-
-        def fake_send(payload: dict[str, str]) -> dict[str, str]:
-            captured_payloads.append(payload)
-            return {"status": "sent", "reason": ""}
-
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.main.send_billing_internal_email", side_effect=fake_send
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
         ):
             response = self.client.post(
                 "/account",
@@ -60,12 +55,17 @@ class AccountIntakeApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertTrue(captured_payloads)
-        link_prefix = "https://support.stellarix.space/response?token="
-        body = captured_payloads[0]["body"]
-        self.assertIn(link_prefix, body)
-        raw_token = body.split(link_prefix, 1)[1].split()[0]
-        return response.json(), raw_token
+        payload = response.json()
+        raw_token = f"legacy-response-token-{payload['ticket_id']}"
+        self.repository.save_billing_response_token(
+            {
+                "token_hash": hash_billing_response_token(raw_token),
+                "billing_ticket_id": payload["billing_ticket_id"],
+                "created_at": "2026-07-18T00:00:00+00:00",
+                "used_at": None,
+            }
+        )
+        return payload, raw_token
 
     def _save_billing_ticket(
         self,
@@ -256,7 +256,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(str(payload["billing_ticket_id"] or "").startswith("BT-TK-ACC-"))
         self.assertNotIn("support_ticket_id", payload)
 
-    def test_billing_internal_email_includes_billing_ticket_id_and_response_link(self) -> None:
+    def test_billing_internal_email_uses_outlook_reply_without_response_link(self) -> None:
         captured_payloads: list[dict[str, str]] = []
 
         def fake_send(payload: dict[str, str]) -> dict[str, str]:
@@ -284,16 +284,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(captured_payloads)
         body = captured_payloads[0]["body"]
         self.assertIn(f"Billing Ticket ID: {payload['billing_ticket_id']}", body)
-        link_prefix = "https://support.stellarix.space/response?token="
-        self.assertIn(link_prefix, body)
+        self.assertIn("reply directly to this email in Outlook", body)
+        self.assertNotIn("/response?token=", body)
         self.assertNotIn("Available actions", body)
-
-        raw_token = body.split(link_prefix, 1)[1].split()[0]
-        saved_token = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
-        self.assertIsNotNone(saved_token)
-        assert saved_token is not None
-        self.assertEqual(saved_token["billing_ticket_id"], payload["billing_ticket_id"])
-        self.assertIsNone(saved_token.get("used_at"))
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
@@ -301,10 +294,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         stored_payload = bt["internal_email_payload"]
         self.assertIsInstance(stored_payload, dict)
         stored_body = stored_payload["body"]
-        self.assertNotIn(raw_token, stored_body)
-        self.assertIn("token=<redacted>", stored_body)
+        self.assertIn("reply directly to this email in Outlook", stored_body)
+        self.assertNotIn("/response?token=", stored_body)
 
-    def test_billing_response_token_is_invalidated_when_internal_email_fails(self) -> None:
+    def test_billing_outlook_reply_email_failure_records_failure_without_response_link(self) -> None:
         captured_payloads: list[dict[str, str]] = []
 
         def fake_send(payload: dict[str, str]) -> dict[str, str]:
@@ -332,21 +325,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["internal_email_send_status"], "failed")
         self.assertEqual(payload["internal_email_send_reason"], "boom")
         self.assertTrue(captured_payloads)
-        link_prefix = "https://support.stellarix.space/response?token="
         body = captured_payloads[0]["body"]
-        raw_token = body.split(link_prefix, 1)[1].split()[0]
-        saved_token = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
-        self.assertIsNotNone(saved_token)
-        assert saved_token is not None
-        self.assertEqual(saved_token["billing_ticket_id"], payload["billing_ticket_id"])
-        self.assertIsNotNone(saved_token.get("used_at"))
+        self.assertIn("reply directly to this email in Outlook", body)
+        self.assertNotIn("/response?token=", body)
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
         stored_body = bt["internal_email_payload"]["body"]
-        self.assertNotIn(raw_token, stored_body)
-        self.assertIn("token=<redacted>", stored_body)
+        self.assertNotIn("/response?token=", stored_body)
 
     def test_billing_response_lookup_returns_context_for_valid_token(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
@@ -580,10 +567,15 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertEqual(reply_response.status_code, 200, reply_response.text)
 
         self.assertTrue(captured_payloads)
-        raw_token = (
-            captured_payloads[0]["body"]
-            .split("https://support.stellarix.space/response?token=", 1)[1]
-            .split()[0]
+        self.assertIn("reply directly to this email in Outlook", captured_payloads[0]["body"])
+        raw_token = f"legacy-response-token-{create_payload['ticket_id']}"
+        self.repository.save_billing_response_token(
+            {
+                "token_hash": hash_billing_response_token(raw_token),
+                "billing_ticket_id": create_payload["billing_ticket_id"],
+                "created_at": "2026-07-18T00:00:00+00:00",
+                "used_at": None,
+            }
         )
         response = self.client.post(
             "/api/billing-response/submit",
@@ -813,10 +805,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(after_response_messages, before_response_messages)
 
     def test_billing_missing_fields_does_not_create_response_token(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.main.generate_billing_response_token",
-            return_value="unused-token",
-        ) as generate_mock, patch.object(
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
             self.repository,
             "save_billing_response_token",
             wraps=self.repository.save_billing_response_token,
@@ -839,7 +828,6 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIn("issue_date", payload["missing_fields"])
         self.assertIn("transaction_id", payload["missing_fields"])
         self.assertIn("amount", payload["missing_fields"])
-        generate_mock.assert_not_called()
         save_token_mock.assert_not_called()
         self.assertIsNone(
             self.repository.get_billing_response_token(hash_billing_response_token("unused-token"))
@@ -900,6 +888,60 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["route"], "web_search")
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["customer_reply"], None)
+
+    def test_every_tenth_not_automated_account_ticket_creates_pending_engineer_case(self) -> None:
+        responses = []
+        with patch.dict(
+            os.environ,
+            {"ACCOUNT_NOT_AUTOMATED_ENGINEER_ROLLOUT_PERCENT": "10"},
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            for index in range(1, 11):
+                response = self.client.post(
+                    "/account",
+                    json={
+                        "ticket_id": f"TK-ROLLOUT-{index:03d}",
+                        "external_id": f"zendesk-{index}",
+                        "title": "General support question",
+                        "question": "Can an engineer help me understand this product behavior?",
+                        "source": "api",
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                responses.append(response.json())
+
+        self.assertTrue(all(item["status"] == "not_automated" for item in responses))
+        self.assertTrue(all(item["engineer_case_id"] is None for item in responses[:9]))
+        self.assertEqual(responses[9]["rollout_position"], 10)
+        self.assertTrue(responses[9]["rollout_selected"])
+        self.assertEqual(responses[9]["engineer_case_id"], "TK-ROLLOUT-010-1")
+        engineer_case = self.repository.get_engineer_case("TK-ROLLOUT-010-1")
+        self.assertIsNotNone(engineer_case)
+        assert engineer_case is not None
+        self.assertEqual(engineer_case["assignment_status"], "pending")
+
+    def test_account_external_id_replay_does_not_recount_or_duplicate_case(self) -> None:
+        request = {
+            "ticket_id": "TK-IDEMPOTENT-001",
+            "external_id": "zendesk-idempotent-1",
+            "title": "General support question",
+            "question": "Can an engineer help me understand this product behavior?",
+            "source": "api",
+        }
+        with patch.dict(
+            os.environ,
+            {"ACCOUNT_NOT_AUTOMATED_ENGINEER_ROLLOUT_PERCENT": "100"},
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            first = self.client.post("/account", json=request)
+            second = self.client.post("/account", json=request)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertFalse(first.json().get("idempotent_replay", False))
+        self.assertTrue(second.json()["idempotent_replay"])
+        self.assertEqual(first.json()["ticket_id"], second.json()["ticket_id"])
+        self.assertEqual(first.json()["rollout_position"], 1)
+        self.assertEqual(second.json()["rollout_position"], 1)
+        self.assertEqual(len(self.repository.list_ticket_engineer_cases("TK-IDEMPOTENT-001")), 1)
 
     def test_account_intake_billing_review_stays_not_automated(self) -> None:
         decision = SupportRouteDecision(
@@ -2105,23 +2147,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(reply_payload["internal_email_send_reason"], "")
         self.assertTrue(captured_payloads)
         self.assertEqual(captured_payloads[0]["to"], "xieziling@agora.io")
-        link_prefix = "https://support.stellarix.space/response?token="
-        self.assertIn(link_prefix, captured_payloads[0]["body"])
-        raw_token = captured_payloads[0]["body"].split(link_prefix, 1)[1].split()[0]
-
-        token_record = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
-        self.assertIsNotNone(token_record)
-        assert token_record is not None
-        self.assertIsNone(token_record["used_at"])
+        self.assertIn("reply directly to this email in Outlook", captured_payloads[0]["body"])
+        self.assertNotIn("/response?token=", captured_payloads[0]["body"])
 
         bt = self.repository.get_billing_ticket(bt_id)
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["internal_email_send_status"], "sent")
-        self.assertIn("/response?token=<redacted>", bt["internal_email_payload"]["body"])
-        self.assertNotIn(raw_token, bt["internal_email_payload"]["body"])
+        self.assertNotIn("/response?token=", bt["internal_email_payload"]["body"])
 
-    def test_billing_automation_reply_invalidates_response_token_when_email_fails(self) -> None:
+    def test_billing_automation_reply_records_outlook_email_failure_without_response_token(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             create_response = self.client.post(
                 "/account",
@@ -2163,21 +2198,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(reply_payload["internal_email_send_status"], "failed")
         self.assertEqual(reply_payload["internal_email_send_reason"], "smtp down")
         self.assertTrue(captured_payloads)
-        link_prefix = "https://support.stellarix.space/response?token="
-        raw_token = captured_payloads[0]["body"].split(link_prefix, 1)[1].split()[0]
-
-        token_record = self.repository.get_billing_response_token(hash_billing_response_token(raw_token))
-        self.assertIsNotNone(token_record)
-        assert token_record is not None
-        self.assertIsNotNone(token_record["used_at"])
+        self.assertIn("reply directly to this email in Outlook", captured_payloads[0]["body"])
+        self.assertNotIn("/response?token=", captured_payloads[0]["body"])
 
         bt = self.repository.get_billing_ticket(bt_id)
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["internal_email_send_status"], "failed")
         self.assertEqual(bt["internal_email_send_reason"], "smtp down")
-        self.assertIn("/response?token=<redacted>", bt["internal_email_payload"]["body"])
-        self.assertNotIn(raw_token, bt["internal_email_payload"]["body"])
+        self.assertNotIn("/response?token=", bt["internal_email_payload"]["body"])
 
     def test_billing_automation_reply_404(self) -> None:
         response = self.client.post(

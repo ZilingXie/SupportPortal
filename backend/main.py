@@ -9,7 +9,7 @@ import os
 import re
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,8 +18,10 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from fastapi import (
     BackgroundTasks,
+    Depends,
     FastAPI,
     File,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -64,7 +66,6 @@ from backend.services.billing_response_flow import (
     BillingResolutionValidationError,
     build_billing_internal_resolution_event,
     build_customer_followup_from_resolution,
-    generate_billing_response_token,
     hash_billing_response_token,
     validate_billing_resolution_submission,
 )
@@ -84,6 +85,14 @@ from backend.services.engineer_agent import (
 from backend.services.engineer_guardrail_agent import (
     GUARDRAIL_VERSION,
     run_engineer_guardrail_final,
+)
+from backend.services.engineer_assignment import EngineerAssignmentService
+from backend.services.workspace_auth import (
+    WorkspacePrincipal,
+    create_workspace_access_token,
+    hash_workspace_password,
+    verify_workspace_access_token,
+    verify_workspace_password,
 )
 from backend.services.case_memory_ledger import build_case_memory_ledger_record_from_feedback
 from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
@@ -247,28 +256,14 @@ def _safe_float_env(name: str, default: float) -> float:
 
 ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
 INPUT_GUARDRAIL_ENABLED = _env_flag("INPUT_GUARDRAIL_ENABLED", default=False)
+ENGINEER_MULTI_AGENT_ENABLED = _env_flag("ENGINEER_MULTI_AGENT_ENABLED", default=False)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
 KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
 CLIENT_ACK_MAX_OUTPUT_TOKENS = _safe_int_env("CLIENT_ACK_MAX_OUTPUT_TOKENS", 32)
-BILLING_RESPONSE_PUBLIC_BASE_URL_ENV = "BILLING_RESPONSE_PUBLIC_BASE_URL"
-DEFAULT_BILLING_RESPONSE_PUBLIC_BASE_URL = "https://support.stellarix.space"
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _build_billing_response_link(raw_token: str) -> str:
-    base_url = (
-        os.getenv(BILLING_RESPONSE_PUBLIC_BASE_URL_ENV) or DEFAULT_BILLING_RESPONSE_PUBLIC_BASE_URL
-    ).strip().rstrip("/")
-    return f"{base_url}/response?token={urllib.parse.quote(raw_token, safe='')}"
-
-
-def _redact_billing_response_token(email_payload: dict[str, Any], raw_token: str) -> dict[str, Any]:
-    redacted = dict(email_payload)
-    redacted["body"] = str(redacted.get("body") or "").replace(raw_token, "<redacted>")
-    return redacted
 
 
 def _build_billing_internal_email_attempt(
@@ -293,36 +288,12 @@ def _build_billing_internal_email_attempt(
     collected_fields = dict(billing_result.collected_fields)
     internal_email_payload: dict[str, Any] | None = None
     internal_email_to_send: dict[str, Any] | None = None
-    billing_response_token_record: dict[str, Any] | None = None
     internal_email_send_status = "not_ready"
     internal_email_send_reason = "missing_required_fields"
 
     if billing_result.internal_email:
-        billing_response_raw_token = generate_billing_response_token()
-        billing_response_link = _build_billing_response_link(billing_response_raw_token)
-        billing_result = build_billing_automation_result(
-            action=action,
-            message=message,
-            ticket_id=ticket_id,
-            customer_email=customer_email,
-            requester=requester,
-            billing_ticket_id=billing_ticket_id,
-            response_link=billing_response_link,
-        )
-        customer_reply = billing_result.customer_reply
-        missing_fields = list(billing_result.missing_fields)
-        collected_fields = dict(billing_result.collected_fields)
         internal_email_to_send = dict(billing_result.internal_email or {})
-        internal_email_payload = _redact_billing_response_token(
-            internal_email_to_send,
-            billing_response_raw_token,
-        )
-        billing_response_token_record = {
-            "token_hash": hash_billing_response_token(billing_response_raw_token),
-            "billing_ticket_id": billing_ticket_id,
-            "created_at": now_iso(),
-            "used_at": None,
-        }
+        internal_email_payload = dict(internal_email_to_send)
         internal_email_send_status = "pending"
         internal_email_send_reason = ""
 
@@ -332,22 +303,19 @@ def _build_billing_internal_email_attempt(
         "collected_fields": collected_fields,
         "internal_email_payload": internal_email_payload,
         "internal_email_to_send": internal_email_to_send,
-        "billing_response_token_record": billing_response_token_record,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
     }
 
 
 async def _send_billing_internal_email_attempt(attempt: dict[str, Any]) -> tuple[str, str]:
-    token_record = attempt.get("billing_response_token_record")
     internal_email_to_send = attempt.get("internal_email_to_send")
-    if not token_record or not internal_email_to_send:
+    if not internal_email_to_send:
         return (
             str(attempt.get("internal_email_send_status") or "not_ready"),
             str(attempt.get("internal_email_send_reason") or "missing_required_fields"),
         )
 
-    await async_to_thread(ticket_repository.save_billing_response_token, token_record)
     try:
         email_send_result = await async_to_thread(send_billing_internal_email, internal_email_to_send)
         send_status = str(email_send_result.get("status") or "failed")
@@ -356,12 +324,6 @@ async def _send_billing_internal_email_attempt(attempt: dict[str, Any]) -> tuple
         send_status = "failed"
         send_reason = str(exc)
 
-    if send_status != "sent":
-        await async_to_thread(
-            ticket_repository.mark_billing_response_token_used,
-            token_record["token_hash"],
-            now_iso(),
-        )
     return send_status, send_reason
 
 
@@ -545,6 +507,29 @@ class EngineerCaseClaimRequest(BaseModel):
     engineer_id: str = Field(min_length=1, max_length=128)
 
 
+class WorkspaceLoginRequest(BaseModel):
+    account_id: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=512)
+
+
+class WorkspaceAccountCreateRequest(BaseModel):
+    account_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=160)
+    role: str = Field(pattern="^(admin|engineer)$")
+    password: str = Field(min_length=10, max_length=512)
+
+
+class EngineerAvailabilityUpdateRequest(BaseModel):
+    availability: str = Field(pattern="^(available|unavailable)$")
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class EngineerAdminAssignmentRequest(BaseModel):
+    engineer_id: str | None = Field(default=None, max_length=128)
+    expected_version: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class InvestigationConfirmationRequest(BaseModel):
     engineer_id: str = Field(default="Jack")
     decision: str = Field(pattern="^(approve|revise|final_approve)$")
@@ -667,6 +652,84 @@ hub = ConnectionHub()
 event_bus = AsyncRedisEventBus()
 task_queue = AsyncRedisTaskQueue()
 rag_service_client = RagServiceClient()
+
+
+def _engineer_assignment_service() -> EngineerAssignmentService:
+    return EngineerAssignmentService(
+        ticket_repository,
+        sla_hours=_safe_int_env("ENGINEER_ASSIGNMENT_SLA_HOURS", 3),
+    )
+
+
+def _public_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: copy.deepcopy(value)
+        for key, value in account.items()
+        if key != "password_hash"
+    }
+
+
+def _authorization_bearer_token(authorization: str | None) -> str:
+    value = str(authorization or "").strip()
+    if not value.lower().startswith("bearer "):
+        return ""
+    return value[7:].strip()
+
+
+def require_workspace_principal(
+    authorization: str | None = Header(default=None),
+) -> WorkspacePrincipal:
+    principal = verify_workspace_access_token(_authorization_bearer_token(authorization))
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Workspace authentication required")
+    account = ticket_repository.get_workspace_account(principal.account_id)
+    if (
+        not isinstance(account, dict)
+        or not bool(account.get("active", True))
+        or str(account.get("role") or "").strip().lower() != principal.role
+    ):
+        raise HTTPException(status_code=401, detail="Workspace account is inactive or changed")
+    return principal
+
+
+def require_workspace_admin(
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> WorkspacePrincipal:
+    if principal.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+    return principal
+
+
+def _bootstrap_workspace_admin() -> None:
+    account_id = str(os.getenv("WORKSPACE_BOOTSTRAP_ADMIN_ID") or "").strip()
+    password = str(os.getenv("WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD") or "")
+    if not account_id or not password:
+        return
+    if ticket_repository.get_workspace_account(account_id) is not None:
+        return
+    created_at = now_iso()
+    ticket_repository.save_workspace_account(
+        {
+            "account_id": account_id,
+            "display_name": str(
+                os.getenv("WORKSPACE_BOOTSTRAP_ADMIN_NAME") or account_id
+            ).strip()
+            or account_id,
+            "role": "admin",
+            "password_hash": hash_workspace_password(password),
+            "active": True,
+            "availability": "unavailable",
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+    )
+    ticket_repository.record_workspace_audit_event(
+        "workspace_account_bootstrapped",
+        actor_id="system",
+        target_id=account_id,
+        payload={"role": "admin"},
+        created_at=created_at,
+    )
 
 
 def _build_rag_answer_detail(*args: Any, **kwargs: Any) -> Any:
@@ -2589,6 +2652,7 @@ def startup_event() -> None:
         try:
             ticket_repository.initialize()
             LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
+            _bootstrap_workspace_admin()
             _initialize_asset_repository_with_fallback()
             return
         except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
@@ -2610,6 +2674,7 @@ def startup_event() -> None:
     fallback_repository = InMemoryTicketRepository()
     fallback_repository.initialize()
     ticket_repository = fallback_repository
+    _bootstrap_workspace_admin()
     LOGGER.warning("Falling back to in-memory ticket repository for this process.")
     _initialize_asset_repository_with_fallback()
 
@@ -2873,6 +2938,35 @@ def _intent_router_confidence_threshold() -> float:
         return 0.7
 
 
+def _account_not_automated_rollout_percent() -> int:
+    raw = str(os.getenv("ACCOUNT_NOT_AUTOMATED_ENGINEER_ROLLOUT_PERCENT") or "10").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 10
+    return max(0, min(value, 100))
+
+
+def _account_intake_idempotency_key(request: AccountIntakeRequest) -> str:
+    external_id = str(request.external_id or "").strip()
+    if external_id:
+        return f"external:{external_id}"
+    ticket_id = str(request.ticket_id or "").strip()
+    if ticket_id:
+        return f"ticket:{ticket_id}"
+    source_link = _extract_account_source_link(request.source)
+    return f"source:{source_link}" if source_link else ""
+
+
+def _rollout_position_is_selected(position: int, percent: int) -> bool:
+    if percent <= 0:
+        return False
+    if percent >= 100:
+        return True
+    interval = max(1, round(100 / percent))
+    return position % interval == 0
+
+
 def _is_low_route_confidence(ticket: dict[str, Any]) -> bool:
     try:
         confidence = float(ticket.get("route_confidence"))
@@ -2982,6 +3076,21 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         raise HTTPException(status_code=400, detail="question is required")
     if not title:
         title = derive_ticket_title(question)
+
+    request_started_at = now_iso()
+    idempotency_key = _account_intake_idempotency_key(request)
+    if idempotency_key:
+        idempotency_record = await async_to_thread(
+            ticket_repository.begin_idempotent_request,
+            "account_intake",
+            idempotency_key,
+            created_at=request_started_at,
+        )
+        if not idempotency_record.get("created"):
+            replay_payload = idempotency_record.get("response_payload")
+            if idempotency_record.get("state") == "completed" and isinstance(replay_payload, dict):
+                return {**replay_payload, "idempotent_replay": True}
+            raise HTTPException(status_code=409, detail="account intake request is already processing")
 
     ticket_id = str(request.ticket_id or "").strip() or f"TK-ACC-{uuid4().hex[:6].upper()}"
     billing_ticket_id = f"BT-{ticket_id}"
@@ -3107,7 +3216,53 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     }
     await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
 
-    if billing_email_attempt and billing_email_attempt.get("billing_response_token_record"):
+    rollout_position: int | None = None
+    rollout_selected = False
+    engineer_case_id: str | None = None
+    if response_status == "not_automated":
+        rollout_position, _ = await async_to_thread(
+            ticket_repository.record_rollout_event,
+            "account_not_automated_engineer_case",
+            idempotency_key or ticket_id,
+            created_at=timestamp,
+        )
+        rollout_selected = _rollout_position_is_selected(
+            rollout_position,
+            _account_not_automated_rollout_percent(),
+        )
+        if rollout_selected:
+            engineer_case_id = f"{ticket_id}-1"
+            engineer_case = build_new_engineer_case(
+                ticket,
+                engineer_case_id=engineer_case_id,
+                case_sequence=1,
+                title=title,
+                status=ticket["status"],
+                trigger_source="account_not_automated",
+                trigger_reason="account_not_automated_rollout",
+                now_value=timestamp,
+            )
+            engineer_case.update(
+                {
+                    "assignment_status": "pending",
+                    "dispatch_status": "pending",
+                    "assignment_version": 0,
+                    "assignment_attempt_count": 0,
+                    "previous_assignees": [],
+                }
+            )
+            await async_to_thread(
+                ticket_repository.save_engineer_case,
+                engineer_case,
+                new_messages=[],
+            )
+            await async_to_thread(
+                _engineer_assignment_service().dispatch_case,
+                engineer_case_id,
+                reason="account_not_automated_rollout",
+            )
+
+    if billing_email_attempt and billing_email_attempt.get("internal_email_to_send"):
         internal_email_send_status, internal_email_send_reason = await _send_billing_internal_email_attempt(
             billing_email_attempt
         )
@@ -3146,21 +3301,23 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "intent_router_failure_type": decision.intent_router_failure_type,
         "intent_router_failure_source": decision.intent_router_failure_source,
     }
+    event["engineer_case_id"] = engineer_case_id
+    event["rollout_position"] = rollout_position
+    event["rollout_selected"] = rollout_selected
     await async_to_thread(ticket_repository.record_event, ticket_id, event["event"], event)
-    await dispatch_event(["engineer", "dashboard"], event)
-    await dispatch_event(["client"], build_client_sync_event(ticket, event["event"], question[:200]))
-
-    return {
+    response_payload = {
         "status": response_status,
         "route": route or None,
         "ticket_id": ticket_id,
         "billing_ticket_id": billing_ticket_id,
+        "engineer_case_id": engineer_case_id,
+        "rollout_position": rollout_position,
+        "rollout_selected": rollout_selected,
         "customer_reply": customer_reply,
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
-        # Semantic routing fields.
         "semantic_intent": decision.semantic_intent or None,
         "route_family": decision.route_family,
         "automation_eligibility": decision.automation_eligibility or None,
@@ -3169,7 +3326,6 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "risk_flags": list(decision.risk_flags),
         "evidence_spans": list(decision.evidence_spans),
         "router_source": decision.router_source,
-        # Router audit fields
         "intent_router_attempted": decision.intent_router_attempted,
         "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
         "intent_router_model_confidence": decision.intent_router_model_confidence,
@@ -3177,6 +3333,18 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "intent_router_failure_type": decision.intent_router_failure_type,
         "intent_router_failure_source": decision.intent_router_failure_source,
     }
+    if idempotency_key:
+        await async_to_thread(
+            ticket_repository.complete_idempotent_request,
+            "account_intake",
+            idempotency_key,
+            response_payload=response_payload,
+            updated_at=now_iso(),
+        )
+    await dispatch_event(["engineer", "dashboard"], event)
+    await dispatch_event(["client"], build_client_sync_event(ticket, event["event"], question[:200]))
+
+    return response_payload
 
 
 def _load_billing_response_token(raw_token: str | None) -> tuple[str, dict[str, Any]]:
@@ -3808,7 +3976,7 @@ async def reply_to_billing_ticket(
         new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
         await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
         await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
-        if billing_email_attempt.get("billing_response_token_record"):
+        if billing_email_attempt.get("internal_email_to_send"):
             internal_email_send_status, internal_email_send_reason = await _send_billing_internal_email_attempt(
                 billing_email_attempt
             )
@@ -4737,6 +4905,358 @@ def get_dashboard_ticket_summary(ticket_id: str) -> dict[str, Any]:
     }
 
 
+@app.post("/api/workspace/auth/login")
+def workspace_login(request: WorkspaceLoginRequest) -> dict[str, Any]:
+    account = ticket_repository.get_workspace_account(request.account_id)
+    if (
+        not isinstance(account, dict)
+        or not bool(account.get("active", True))
+        or not verify_workspace_password(request.password, str(account.get("password_hash") or ""))
+    ):
+        raise HTTPException(status_code=401, detail="Invalid account or password")
+    token = create_workspace_access_token(account)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "account": _public_workspace_account(account),
+    }
+
+
+@app.get("/api/workspace/me")
+def workspace_me(
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    account = ticket_repository.get_workspace_account(principal.account_id)
+    assert account is not None
+    return {"account": _public_workspace_account(account)}
+
+
+@app.get("/api/workspace/cases")
+def list_workspace_cases(
+    assignment_status: str = Query(
+        default="all", pattern="^(all|pending|assigned|resolved)$"
+    ),
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    engineer_cases = ticket_repository.list_engineer_case_headers()
+    visible_cases = []
+    for engineer_case in engineer_cases:
+        case_assignment_status = str(engineer_case.get("assignment_status") or "pending")
+        if assignment_status != "all" and case_assignment_status != assignment_status:
+            continue
+        if principal.role == "engineer" and (
+            case_assignment_status != "assigned"
+            or str(engineer_case.get("assigned_engineer_id") or "").strip()
+            != principal.account_id
+        ):
+            continue
+        visible_cases.append(engineer_case)
+    visible_cases.sort(
+        key=lambda item: str(item.get("assignment_updated_at") or item.get("updated_at") or ""),
+        reverse=True,
+    )
+    return {"cases": visible_cases, "assignment_status_filter": assignment_status}
+
+
+@app.get("/api/workspace/cases/{engineer_case_id}")
+def get_workspace_case(
+    engineer_case_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    engineer_case = _resolve_engineer_case_payload(engineer_case_id)
+    if engineer_case is None:
+        raise HTTPException(status_code=404, detail="Engineer Case not found")
+    if principal.role == "engineer" and (
+        str(engineer_case.get("assignment_status") or "pending") != "assigned"
+        or str(engineer_case.get("assigned_engineer_id") or "").strip()
+        != principal.account_id
+    ):
+        raise HTTPException(status_code=403, detail="Engineer Case is not assigned to this account")
+    return get_ticket_detail(engineer_case_id)
+
+
+@app.get("/api/workspace/admin/accounts")
+def list_workspace_admin_accounts(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return {
+        "accounts": [
+            _public_workspace_account(account)
+            for account in ticket_repository.list_workspace_accounts()
+        ]
+    }
+
+
+@app.post("/api/workspace/admin/accounts", status_code=201)
+def create_workspace_admin_account(
+    request: WorkspaceAccountCreateRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    if ticket_repository.get_workspace_account(request.account_id) is not None:
+        raise HTTPException(status_code=409, detail="Workspace account already exists")
+    created_at = now_iso()
+    account = ticket_repository.save_workspace_account(
+        {
+            "account_id": request.account_id,
+            "display_name": request.display_name,
+            "role": request.role,
+            "password_hash": hash_workspace_password(request.password),
+            "active": True,
+            "availability": "unavailable",
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+    )
+    ticket_repository.record_workspace_audit_event(
+        "workspace_account_created",
+        actor_id=principal.account_id,
+        target_id=request.account_id,
+        payload={"role": request.role, "display_name": request.display_name},
+        created_at=created_at,
+    )
+    return {"account": _public_workspace_account(account)}
+
+
+@app.patch("/api/workspace/admin/engineers/{engineer_id}/availability")
+def update_workspace_engineer_availability(
+    engineer_id: str,
+    request: EngineerAvailabilityUpdateRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    updated_at = now_iso()
+    account = ticket_repository.set_engineer_availability(
+        engineer_id,
+        availability=request.availability,
+        reason=request.reason,
+        actor_id=principal.account_id,
+        updated_at=updated_at,
+    )
+    if account is None:
+        raise HTTPException(status_code=404, detail="Engineer account not found")
+    reassigned_cases = []
+    if request.availability == "unavailable":
+        reassigned_cases = _engineer_assignment_service().reassign_unavailable_engineer(engineer_id)
+    else:
+        reassigned_cases = _engineer_assignment_service().dispatch_pending_cases()
+    return {
+        "account": _public_workspace_account(account),
+        "assignment_updates": reassigned_cases,
+    }
+
+
+@app.post("/api/workspace/admin/cases/{engineer_case_id}/assignment")
+def update_workspace_admin_assignment(
+    engineer_case_id: str,
+    request: EngineerAdminAssignmentRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    assigned_engineer_id = str(request.engineer_id or "").strip() or None
+    if assigned_engineer_id:
+        account = ticket_repository.get_workspace_account(assigned_engineer_id)
+        if (
+            not isinstance(account, dict)
+            or account.get("role") != "engineer"
+            or not bool(account.get("active", True))
+            or account.get("availability") != "available"
+        ):
+            raise HTTPException(status_code=409, detail="Engineer is not available")
+    updated_at = datetime.now(timezone.utc)
+    engineer_case = ticket_repository.update_engineer_case_assignment(
+        engineer_case_id,
+        expected_version=request.expected_version,
+        assignment_status="assigned" if assigned_engineer_id else "pending",
+        assigned_engineer_id=assigned_engineer_id,
+        assigned_at=updated_at.isoformat() if assigned_engineer_id else None,
+        sla_due_at=(updated_at + timedelta(hours=3)).isoformat() if assigned_engineer_id else None,
+        reason=request.reason,
+        updated_at=updated_at.isoformat(),
+        actor=principal.account_id,
+        event_type="engineer_case_admin_reassigned",
+        dispatch_status="assigned" if assigned_engineer_id else "pending",
+    )
+    if engineer_case is None:
+        current = ticket_repository.get_engineer_case(
+            engineer_case_id, include_client_messages=False
+        )
+        if current is None:
+            raise HTTPException(status_code=404, detail="Engineer Case not found")
+        raise HTTPException(status_code=409, detail="Engineer Case assignment version changed")
+    return {"case": engineer_case}
+
+
+@app.post("/api/workspace/admin/dispatch")
+def dispatch_workspace_pending_cases(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    cases = _engineer_assignment_service().dispatch_pending_cases()
+    return {"cases": cases, "dispatched_count": len(cases)}
+
+
+@app.post("/api/workspace/admin/reassign-due")
+def reassign_workspace_due_cases(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    cases = _engineer_assignment_service().reassign_due_cases()
+    return {"cases": cases, "reassigned_count": len(cases)}
+
+
+@app.get("/api/workspace/admin/audit")
+def list_workspace_admin_audit(
+    limit: int = Query(default=100, ge=1, le=1000),
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    events = ticket_repository.list_workspace_audit_events(limit=limit)
+    for engineer_case in ticket_repository.list_engineer_case_headers():
+        engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip()
+        if not engineer_case_id:
+            continue
+        for event in ticket_repository.list_engineer_case_events(
+            engineer_case_id, limit=min(limit, 500)
+        ):
+            event_type = str(event.get("event_type") or "")
+            if "assign" not in event_type and "dispatch" not in event_type and "sla" not in event_type:
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            events.append(
+                {
+                    "event_type": event_type,
+                    "actor_id": str(payload.get("actor") or "system"),
+                    "target_id": engineer_case_id,
+                    "payload": payload,
+                    "created_at": str(event.get("created_at") or payload.get("created_at") or ""),
+                }
+            )
+    events.sort(key=lambda event: str(event.get("created_at") or ""), reverse=True)
+    return {"events": events[:limit]}
+
+
+@app.get("/api/workspace/admin/metrics")
+def get_workspace_admin_metrics(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    engineer_cases = ticket_repository.list_engineer_case_headers()
+    accounts = ticket_repository.list_workspace_accounts()
+    client_tickets = ticket_repository.list_tickets(include_messages=False)
+    billing_tickets = ticket_repository.list_billing_tickets(limit=10000)
+    assignment_counts = {"pending": 0, "assigned": 0, "resolved": 0}
+    client_status_counts = {
+        "open": 0,
+        "communicating": 0,
+        "escalated": 0,
+        "investigating": 0,
+        "resolved": 0,
+    }
+    overdue_count = 0
+    first_assignment_seconds: list[float] = []
+    resolution_seconds: list[float] = []
+    sla_reassign_count = 0
+    availability_reassign_count = 0
+    guardrail_reject_count = 0
+    now = datetime.now(timezone.utc)
+
+    def _metric_datetime(value: Any) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    for client_ticket in client_tickets:
+        client_status = normalize_ticket_status(client_ticket.get("status"))
+        if client_status in client_status_counts:
+            client_status_counts[client_status] += 1
+    for engineer_case in engineer_cases:
+        assignment_status = str(engineer_case.get("assignment_status") or "pending")
+        if assignment_status in assignment_counts:
+            assignment_counts[assignment_status] += 1
+        sla_due_at = _metric_datetime(engineer_case.get("sla_due_at"))
+        if assignment_status == "assigned" and sla_due_at and sla_due_at <= now:
+            overdue_count += 1
+        opened_at = _metric_datetime(engineer_case.get("opened_at"))
+        assigned_at = _metric_datetime(engineer_case.get("assigned_at"))
+        closed_at = _metric_datetime(engineer_case.get("closed_at"))
+        if opened_at and assigned_at and assigned_at >= opened_at:
+            first_assignment_seconds.append((assigned_at - opened_at).total_seconds())
+        if opened_at and closed_at and closed_at >= opened_at:
+            resolution_seconds.append((closed_at - opened_at).total_seconds())
+        for event in ticket_repository.list_engineer_case_events(
+            str(engineer_case.get("engineer_case_id") or ""), limit=500
+        ):
+            event_type = str(event.get("event_type") or "").lower()
+            sla_reassign_count += int(event_type == "engineer_case_sla_reassigned")
+            availability_reassign_count += int(
+                event_type == "engineer_case_availability_reassigned"
+            )
+            guardrail_reject_count += int(
+                "guardrail" in event_type and ("reject" in event_type or "fail" in event_type)
+            )
+    engineer_accounts = [account for account in accounts if account.get("role") == "engineer"]
+    billing_automation_count = sum(
+        1 for ticket in billing_tickets if ticket.get("automation_status") == "automation"
+    )
+    billing_not_automated_count = sum(
+        1 for ticket in billing_tickets if ticket.get("automation_status") == "not_automated"
+    )
+    return {
+        "client_tickets": {
+            **client_status_counts,
+            "total": len(client_tickets),
+            "not_automated": billing_not_automated_count,
+        },
+        "engineer_cases": {
+            **assignment_counts,
+            "total": len(engineer_cases),
+            "sla_overdue": overdue_count,
+            "dispatch_failed": sum(
+                1 for case in engineer_cases if case.get("dispatch_status") == "failed"
+            ),
+            "rollout_created": sum(
+                1
+                for case in engineer_cases
+                if case.get("trigger_source") == "account_not_automated"
+            ),
+            "average_first_assignment_seconds": (
+                round(sum(first_assignment_seconds) / len(first_assignment_seconds), 2)
+                if first_assignment_seconds
+                else None
+            ),
+            "average_resolution_seconds": (
+                round(sum(resolution_seconds) / len(resolution_seconds), 2)
+                if resolution_seconds
+                else None
+            ),
+            "sla_reassigned": sla_reassign_count,
+            "availability_reassigned": availability_reassign_count,
+        },
+        "engineers": {
+            "total": len(engineer_accounts),
+            "available": sum(
+                1 for account in engineer_accounts if account.get("availability") == "available"
+            ),
+            "unavailable": sum(
+                1 for account in engineer_accounts if account.get("availability") != "available"
+            ),
+        },
+        "billing": {
+            "total": len(billing_tickets),
+            "automation": billing_automation_count,
+            "not_automated": billing_not_automated_count,
+            "internal_email_failed": sum(
+                1
+                for ticket in billing_tickets
+                if str(ticket.get("internal_email_send_status") or "").lower() == "failed"
+            ),
+        },
+        "guardrail": {"rejected": guardrail_reject_count},
+        "generated_at": now.isoformat(),
+    }
+
+
 @app.get("/api/engineer/tickets")
 def list_tickets(
     status: str = Query(default="open", pattern="^(open|all|resolved|communicating|escalated|investigating)$"),
@@ -4824,50 +5344,15 @@ def get_ticket_detail(ticket_id: str, include_context: bool = Query(default=True
 @app.post("/api/engineer/tickets/{ticket_id}/claim")
 async def claim_engineer_ticket(
     ticket_id: str,
-    request: EngineerCaseClaimRequest,
+    _request: EngineerCaseClaimRequest,
 ) -> dict[str, Any]:
-    engineer_case = _resolve_engineer_case_payload(ticket_id)
-    if engineer_case is None:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    if normalize_ticket_status(engineer_case.get("status")) == RESOLVED_STATUS:
-        raise HTTPException(status_code=409, detail="Resolved tickets cannot be assigned")
-
-    engineer_case_id = str(
-        engineer_case.get("engineer_case_id") or engineer_case.get("ticket_id") or ticket_id
-    ).strip()
-    engineer_id = str(request.engineer_id or "").strip()
-    claimed_at = now_iso()
-    claimed = ticket_repository.claim_engineer_case(
-        engineer_case_id,
-        engineer_id,
-        updated_at=claimed_at,
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            f"Manual claim is disabled for Engineer Case {ticket_id}; "
+            "use system dispatch or the audited Workspace Admin assignment API"
+        ),
     )
-    if not claimed:
-        current = _resolve_engineer_case_payload(engineer_case_id)
-        assigned_engineer_id = str((current or {}).get("assigned_engineer_id") or "").strip()
-        detail = (
-            f"Ticket is already assigned to {assigned_engineer_id}"
-            if assigned_engineer_id
-            else "Ticket is no longer available for assignment"
-        )
-        raise HTTPException(status_code=409, detail=detail)
-
-    payload = {
-        "event": "engineer_case_claimed",
-        "ticket_id": engineer_case_id,
-        "engineer_case_id": engineer_case_id,
-        "client_ticket_id": str(engineer_case.get("client_ticket_id") or "").strip(),
-        "status": normalize_ticket_status(engineer_case.get("status")),
-        "assigned_engineer_id": engineer_id,
-        "created_at": claimed_at,
-    }
-    ticket_repository.record_engineer_case_event(
-        engineer_case_id,
-        payload["event"],
-        payload,
-    )
-    await dispatch_event(["engineer", "dashboard"], payload)
-    return payload
 
 
 @app.post("/api/engineer/tickets/{ticket_id}/multi-agent/run")
@@ -4875,6 +5360,8 @@ async def run_engineer_multi_agent_for_ticket(
     ticket_id: str,
     request: EngineerMultiAgentRunRequest,
 ) -> dict[str, Any]:
+    if not ENGINEER_MULTI_AGENT_ENABLED:
+        raise HTTPException(status_code=404, detail="Engineer multi-agent is not enabled")
     engineer_case_payload = _resolve_engineer_case_payload(ticket_id)
     if engineer_case_payload is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
@@ -5462,7 +5949,7 @@ async def post_investigation_message(
     engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
     case_context = build_engineer_case_context(ticket, engineer_case)
     timestamp = now_iso()
-    if request.multi_agent_enabled:
+    if request.multi_agent_enabled and ENGINEER_MULTI_AGENT_ENABLED:
         # Multi-agent workspace is active for this ticket: refresh the
         # Plan/Execute/Review state from the engineer note BEFORE the Engineer
         # AI turn so it reasons over the updated multi-agent state. The refresh
@@ -5982,6 +6469,12 @@ async def confirm_investigation_reply(
         new_messages=result.get("new_internal_messages"),
     )
     if request.decision == "final_approve":
+        resolved_assignment = _engineer_assignment_service().resolve_case(
+            str(engineer_case.get("engineer_case_id") or ticket_id),
+            actor=str(request.engineer_id or "engineer").strip() or "engineer",
+        )
+        if isinstance(resolved_assignment, dict):
+            engineer_case.update(resolved_assignment)
         auto_feedback = build_engineer_auto_hitl_feedback(
             client_ticket=ticket,
             engineer_case=engineer_case,
@@ -6399,6 +6892,33 @@ async def engineer_ws(websocket: WebSocket) -> None:
         await hub.disconnect("engineer", websocket)
 
 
+@app.websocket("/ws/workspace")
+async def workspace_ws(
+    websocket: WebSocket,
+    access_token: str = Query(default=""),
+) -> None:
+    principal = verify_workspace_access_token(access_token)
+    account = (
+        ticket_repository.get_workspace_account(principal.account_id)
+        if principal is not None
+        else None
+    )
+    if (
+        principal is None
+        or not isinstance(account, dict)
+        or not bool(account.get("active", True))
+        or str(account.get("role") or "").strip().lower() != principal.role
+    ):
+        await websocket.close(code=1008, reason="Workspace authentication required")
+        return
+    await hub.connect("engineer", websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await hub.disconnect("engineer", websocket)
+
+
 @app.websocket("/ws/dashboard")
 async def dashboard_ws(websocket: WebSocket) -> None:
     await hub.connect("dashboard", websocket)
@@ -6407,3 +6927,73 @@ async def dashboard_ws(websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         await hub.disconnect("dashboard", websocket)
+
+
+def _require_workspace_case_access(
+    engineer_case_id: str,
+    principal: WorkspacePrincipal,
+) -> dict[str, Any]:
+    engineer_case = _resolve_engineer_case_payload(engineer_case_id)
+    if engineer_case is None:
+        raise HTTPException(status_code=404, detail="Engineer Case not found")
+    if principal.role == "admin":
+        return engineer_case
+    if (
+        str(engineer_case.get("assignment_status") or "pending") != "assigned"
+        or str(engineer_case.get("assigned_engineer_id") or "").strip()
+        != principal.account_id
+    ):
+        raise HTTPException(status_code=403, detail="Engineer Case is not assigned to this account")
+    return engineer_case
+
+
+@app.get("/api/workspace/cases/{engineer_case_id}/feedback")
+def get_workspace_case_feedback(
+    engineer_case_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    _require_workspace_case_access(engineer_case_id, principal)
+    return list_engineer_hitl_feedback(engineer_case_id, limit=limit)
+
+
+@app.post("/api/workspace/cases/{engineer_case_id}/investigation/messages")
+async def post_workspace_case_message(
+    engineer_case_id: str,
+    request: InvestigationMessageRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    _require_workspace_case_access(engineer_case_id, principal)
+    secured_request = request.model_copy(
+        update={"engineer_id": principal.account_id, "multi_agent_enabled": False}
+    )
+    return await post_investigation_message(engineer_case_id, secured_request)
+
+
+@app.post("/api/workspace/cases/{engineer_case_id}/investigation/confirmation")
+async def confirm_workspace_case_reply(
+    engineer_case_id: str,
+    request: InvestigationConfirmationRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    _require_workspace_case_access(engineer_case_id, principal)
+    secured_request = request.model_copy(update={"engineer_id": principal.account_id})
+    return await confirm_investigation_reply(engineer_case_id, secured_request)
+
+
+@app.post("/api/workspace/cases/{engineer_case_id}/action")
+async def update_workspace_case_action(
+    engineer_case_id: str,
+    request: TicketActionRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    engineer_case = _require_workspace_case_access(engineer_case_id, principal)
+    client_ticket_id = str(
+        engineer_case.get("client_ticket_id")
+        or (engineer_case.get("client_ticket_ref") or {}).get("ticket_id")
+        or ""
+    ).strip()
+    if not client_ticket_id:
+        raise HTTPException(status_code=400, detail="Engineer Case has no Client Ticket")
+    secured_request = request.model_copy(update={"engineer_id": principal.account_id})
+    return await update_ticket(client_ticket_id, secured_request)

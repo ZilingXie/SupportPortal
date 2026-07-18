@@ -144,6 +144,40 @@ class WorkerResilienceTests(unittest.TestCase):
             "created_at": "2026-03-22T00:00:01+00:00",
         }
 
+    def test_assignment_poller_reassigns_due_cases_before_dispatching_pending_cases(self) -> None:
+        calls: list[str] = []
+
+        class _AssignmentService:
+            def resolve_closed_cases(self):
+                calls.append("resolve_closed")
+                return [{"engineer_case_id": "CASE-CLOSED"}]
+
+            def reassign_unavailable_cases(self):
+                calls.append("reassign_unavailable")
+                return [{"engineer_case_id": "CASE-UNAVAILABLE"}]
+
+            def reassign_due_cases(self):
+                calls.append("reassign_due")
+                return [{"engineer_case_id": "CASE-DUE"}]
+
+            def dispatch_pending_cases(self):
+                calls.append("dispatch_pending")
+                worker.SHUTTING_DOWN = True
+                return [{"engineer_case_id": "CASE-PENDING"}]
+
+        original_shutting_down = worker.SHUTTING_DOWN
+        worker.SHUTTING_DOWN = False
+        try:
+            with patch.object(worker, "EngineerAssignmentService", return_value=_AssignmentService()):
+                worker._run_engineer_assignment_poller(60.0)
+        finally:
+            worker.SHUTTING_DOWN = original_shutting_down
+
+        self.assertEqual(
+            calls,
+            ["resolve_closed", "reassign_unavailable", "reassign_due", "dispatch_pending"],
+        )
+
     def test_worker_rag_executor_uses_extended_timeout_and_recovery_window(self) -> None:
         detail = worker.RagTicketAnswerDetail(
             answer="Use joinChannel with a token.",
