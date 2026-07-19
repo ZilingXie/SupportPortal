@@ -3814,6 +3814,13 @@ p {
   font-size: 11px;
 }
 
+.admin-roster-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .admin-icon-btn {
   color: var(--ink-soft);
 }
@@ -3890,18 +3897,32 @@ p {
   text-transform: none;
 }
 
+.admin-week-time-column {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  grid-column: 1;
+  grid-row: 2 / span 96;
+  background: #f7faff;
+}
+
 .admin-week-time {
   position: sticky;
   left: 0;
   z-index: 4;
-  display: block;
+  align-self: start;
   grid-column: 1;
-  padding: 5px 10px 0 0;
-  background: #f7faff;
+  padding-right: 10px;
   color: var(--ink-muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  line-height: 12px;
   text-align: right;
+  transform: translateY(-50%);
+}
+
+.admin-week-time[data-hour="0"] {
+  z-index: 6;
 }
 
 .admin-week-day {

@@ -218,8 +218,10 @@
 12. `/workspace` 未登录页面采用轻量事务型登录壳：顶部只展示 `Workspace` 品牌，主区居中展示欢迎文案与单一登录卡，底部展示安全工作区信息；不得复用登录后的 rail 或工单工作区结构。
 13. `/workspace/admin` 未登录页面复用同一事务型登录壳，顶部品牌固定为 `Admin`，主区文案说明账号、派单、availability 与 SLA 管理范围；登录后的管理控制台结构不受此规则影响。
 14. `/workspace/admin` 登录后的 rail 在桌面默认使用 `96px` icon-only 状态，hover 或 focus-within 时展开到 `264px`；当前账号与 Logout 固定放在 rail footer，不再放入全局顶栏。
-15. `/workspace/admin` 的 Engineer Management 是班表工作面，不使用账号表单与 availability 卡片拼盘：页面主顺序固定为 `On Schedule Now`、`Weekly Schedule` 和右侧 shift inspector。
+15. `/workspace/admin` 将工程师状态管理与完整班表拆成相邻工作面：`Engineer Management` 固定展示 `On Schedule Now` 和全量 `Engineer Schedules` 名单；独立 `Schedule` tab 展示 `Weekly Schedule` 时间网格与右侧 shift inspector。
+   - Engineer Management 的每位工程师必须展示 on/off-schedule 与 availability，并提供 `Modify Schedule` 入口；入口切换到 `Schedule` tab 后直接打开对应 shift inspector。
    - `Weekly Schedule` 固定使用横轴 Monday-Sunday、纵轴 `00:00-24:00` 的时间网格，不得退回“工程师为行”的文本表格。
+   - 每个整点标签的文字基线必须与对应小时分隔线对齐；`00:00` 对齐网格内容顶部，后续整点按相同 48px 小时间距排列。
    - 班次按真实起止时间占据纵向区间；跨夜班次拆分到相邻两天，同日重叠班次必须并排显示且可分别操作。
    - 网格完整展开 24 小时高度，由页面主滚动条负责纵向浏览；网格内部仅在窄屏支持横向滚动，时间列在横向滚动时保持可见，且不得造成页面级横向溢出。
    - 班次块必须显示工程师身份、起止时间和 availability 文字状态，并可打开对应 shift inspector。

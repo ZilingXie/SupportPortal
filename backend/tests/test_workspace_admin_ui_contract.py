@@ -123,7 +123,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-setup-email-identity-1", html)
+        self.assertIn("20260719-admin-schedule-tab-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -211,6 +211,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "assignScheduleLanes",
             "renderWeeklyTimeGrid",
             "admin-week-grid",
+            "admin-week-time-column",
             "admin-week-shift",
             "repeat(96, 12px)",
             "#cae6ff",
@@ -220,6 +221,51 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("admin-roster-table", source + css)
         self.assertNotIn("#16262d", css)
         self.assertNotIn("#dff3f5", css)
+
+    def test_admin_schedule_is_a_separate_tab_with_engineer_edit_entry(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+
+        for marker in (
+            '["schedule", "calendar_month", "Schedule"]',
+            'adminSection === "schedule"',
+            "renderAdminSchedule()",
+            "Engineer Schedules",
+            "admin-roster-statuses",
+            'adminSection = "schedule"',
+            'globalThis.location.hash = "schedule"',
+            'scrollIntoView({ block: "nearest", inline: "center" })',
+        ):
+            self.assertIn(marker, source)
+
+        self.run_admin_app_script(
+            """
+            scheduleData = { timezone: "Asia/Shanghai", engineers: [
+              { account_id: "zac", email: "zac@example.com", display_name: "Zac", availability: "available", is_on_schedule_now: false, shifts: [] },
+            ] };
+            const management = renderAdminEngineerManagement();
+            const schedule = renderAdminSchedule();
+            if (management.includes("admin-week-grid")) throw new Error("weekly grid remained in Engineer Management");
+            if (!management.includes("Engineer Schedules") || !management.includes("off schedule") || !management.includes("Modify Zac schedule")) {
+              throw new Error("Engineer Management is missing schedule management access");
+            }
+            if (!schedule.includes("admin-week-grid") || !schedule.includes("Schedule Grid")) {
+              throw new Error("Schedule tab is missing the weekly grid");
+            }
+            selectedEngineerId = "zac";
+            if (!renderAdminSchedule().includes('aria-label="Modify shifts"')) {
+              throw new Error("Schedule tab did not open the selected engineer editor");
+            }
+            """
+        )
+
+    def test_admin_time_labels_align_to_hour_grid_boundaries(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="admin-week-time" data-hour="${hour}" style="grid-row:${row}"', source)
+        self.assertNotIn('style="grid-row:${row} / span 4"', source)
+        self.assertIn("transform: translateY(-50%)", css)
+        self.assertIn('.admin-week-time[data-hour="0"]', css)
 
     def test_admin_schedule_uses_page_scroll_and_sidebar_scrollbar_is_hidden(self) -> None:
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
