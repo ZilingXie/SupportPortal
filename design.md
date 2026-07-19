@@ -235,6 +235,8 @@
    - Workspace 与 Admin 登录表单统一使用 `Email` 标签；现有无 email 的 legacy 账号可继续通过原内部 ID 登录，但新邀请账号使用 email 登录。
 18. Admin 响应式 rail 规则固定为：`>= 901px` 支持 hover/focus 展开，`721px - 900px` 保持 icon-only，`<= 720px` 退化为顶部静态导航并显示必要标签与账户操作。
 19. Admin rail 不显示浏览器滚动条；内容超出时仍须保留滚轮、触控板、触摸与键盘滚动能力，移动端顶部导航同样隐藏滚动轨迹。
+   - Rail 的品牌、导航和 Logout 不得依赖远程图标字体才能识别。只有所需 Material Symbols glyph 完整加载并校验后才进入 icon-ready 状态；刷新、字体 pending、加载失败或状态异常时必须持续显示稳定的短标签 fallback，不能出现空白导航框。
+   - Rail 刷新或重渲染时，桌面与平板的 sidebar body 横向位置必须归零；active item 居中只允许调整移动端顶部导航自身的 `scrollLeft`，不得使用会把桌面 rail 内容卷出可视区域的 `scrollIntoView()`。
 20. `/workspace` 登录成功后必须先进入 Engineer Workspace 首页，不得自动打开已派发 case；只有工程师点击 `I'm ready to roll` 后，系统才检查并打开下一条 assigned Engineer Case。首页欢迎区保持紧凑，只展示 `Engineer workspace`、动态 `Welcome back, {name}` 与该准备按钮，不得重复展示 assignment 标题、说明文案或 schedule / availability 状态标签。
 21. Engineer Workspace 首页必须只读展示当前账号的 weekly schedule、当前是否命中 schedule、独立 availability 状态和 schedule timezone；排班编辑仍只允许在 `/workspace/admin` 完成。
 22. 个人 weekly schedule 使用 Monday-Sunday 的横向扫描布局：每天显示真实起止时间，无班次显示 `Off`，跨夜班次明确标记次日结束；窄屏允许区域内横向滚动，不得造成页面级横向溢出。
