@@ -3513,7 +3513,7 @@ p {
   min-height: 100vh;
   overflow: hidden;
   padding: 18px 14px;
-  background: #16262d;
+  background: #101a44;
   color: #f7fbff;
   transition: width 180ms ease, box-shadow 180ms ease;
 }
@@ -3550,8 +3550,8 @@ p {
   place-items: center;
   height: 44px;
   border-radius: 8px;
-  background: #e1f4f8;
-  color: #006875;
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .admin-rail-copy,
@@ -3617,12 +3617,12 @@ p {
 
 .admin-sidebar-nav a:hover,
 .admin-sidebar-nav a.is-active {
-  background: rgba(225, 244, 248, 0.12);
+  background: rgba(219, 234, 254, 0.13);
   color: #ffffff;
 }
 
 .admin-sidebar-nav a.is-active .material-symbols-outlined {
-  color: #7ad8e4;
+  color: #60a5fa;
 }
 
 .admin-rail-footer {
@@ -3647,8 +3647,8 @@ p {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: #d9eef2;
-  color: #005864;
+  background: #dbeafe;
+  color: #1d4ed8;
   font-size: 12px;
   font-weight: 800;
 }
@@ -3789,77 +3789,161 @@ p {
   color: var(--primary);
 }
 
-.admin-roster-table-wrap {
+.admin-week-grid-wrap {
+  width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   border-radius: 8px;
   background: var(--surface-lowest);
   box-shadow: 0 8px 28px rgba(23, 28, 33, 0.05);
+  scrollbar-gutter: stable;
 }
 
-.admin-roster-table {
+.admin-week-grid-wrap:focus-visible {
+  outline: 3px solid rgba(0, 100, 147, 0.24);
+  outline-offset: 3px;
+}
+
+.admin-week-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: 72px repeat(7, minmax(132px, 1fr));
+  grid-template-rows: 44px repeat(96, 12px);
   width: 100%;
-  min-width: 950px;
-  border-collapse: collapse;
-  table-layout: fixed;
+  min-width: 1040px;
+  isolation: isolate;
 }
 
-.admin-roster-table th,
-.admin-roster-table td {
-  padding: 13px 10px;
-  border-bottom: 1px solid var(--ghost-border);
-  text-align: left;
-  vertical-align: middle;
-  font-size: 12px;
-}
-
-.admin-roster-table th:first-child,
-.admin-roster-table td:first-child {
-  width: 176px;
-  padding-left: 18px;
-}
-
-.admin-roster-table th:last-child,
-.admin-roster-table td:last-child {
-  width: 60px;
-}
-
-.admin-roster-table th {
-  height: 46px;
-  background: var(--surface-container-low);
-  color: var(--ink-muted);
-  font-size: 11px;
+.admin-week-corner,
+.admin-week-day-heading {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  grid-row: 1;
+  background: #eaf3ff;
+  color: #4b5f70;
+  font-size: 10px;
+  font-weight: 800;
   text-transform: uppercase;
 }
 
-.admin-roster-table tbody tr:last-child td {
-  border-bottom: 0;
+.admin-week-corner {
+  left: 0;
+  z-index: 6;
+  grid-column: 1;
 }
 
-.admin-roster-table td:first-child strong,
-.admin-roster-table td:first-child small {
+.admin-week-day-heading {
+  border-left: 1px solid rgba(0, 100, 147, 0.11);
+  color: #244966;
+  font-size: 11px;
+  text-transform: none;
+}
+
+.admin-week-time {
+  position: sticky;
+  left: 0;
+  z-index: 4;
   display: block;
-}
-
-.admin-roster-table td:first-child small {
-  margin-top: 3px;
+  grid-column: 1;
+  padding: 5px 10px 0 0;
+  background: #f7faff;
   color: var(--ink-muted);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
-.admin-shift-chip {
-  display: inline-block;
-  padding: 5px 7px;
+.admin-week-day {
+  z-index: 0;
+  border-left: 1px solid rgba(0, 100, 147, 0.11);
+  background-color: #ffffff;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 47px,
+    rgba(0, 100, 147, 0.12) 47px,
+    rgba(0, 100, 147, 0.12) 48px
+  );
+}
+
+.admin-week-day:nth-of-type(even) {
+  background-color: #fafdff;
+}
+
+.admin-week-shift {
+  z-index: 2;
+  align-self: stretch;
+  justify-self: start;
+  width: calc((100% / var(--lane-count)) - 6px);
+  min-width: 0;
+  margin: 2px 3px 2px calc((100% / var(--lane-count)) * var(--lane) + 3px);
+  overflow: hidden;
+  padding: 6px 7px;
+  border: 0;
+  border-left: 3px solid #006493;
   border-radius: 6px;
-  background: #dff3f5;
-  color: #005d68;
-  font-size: 10px;
-  font-weight: 700;
+  background: #cae6ff;
+  color: #00344e;
+  box-shadow: 0 2px 8px rgba(0, 74, 112, 0.14);
+  text-align: left;
+}
+
+.admin-week-shift:hover,
+.admin-week-shift:focus-visible {
+  z-index: 3;
+  background: #b5dcfb;
+  box-shadow: 0 5px 14px rgba(0, 74, 112, 0.22);
+}
+
+.admin-week-shift:focus-visible {
+  outline: 3px solid rgba(0, 100, 147, 0.32);
+  outline-offset: 1px;
+}
+
+.admin-week-shift.is-unavailable {
+  border-left-color: #4c56af;
+  background: #e0e0ff;
+  color: #303a87;
+}
+
+.admin-week-shift strong,
+.admin-week-shift span,
+.admin-week-shift small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.admin-day-off {
-  color: var(--ink-muted);
+.admin-week-shift strong {
   font-size: 11px;
+  line-height: 1.25;
+}
+
+.admin-week-shift span,
+.admin-week-shift small {
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.admin-week-shift small {
+  margin-top: 2px;
+  opacity: 0.74;
+}
+
+.admin-week-empty {
+  z-index: 1;
+  align-self: start;
+  grid-column: 2 / -1;
+  grid-row: 2 / span 8;
+  margin: 20px;
+  padding: 12px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .admin-empty-state {
@@ -4017,8 +4101,8 @@ p {
   gap: 12px;
   padding: 18px;
   border-radius: 8px;
-  background: #dff3f5;
-  color: #004f59;
+  background: #cae6ff;
+  color: #00344e;
 }
 
 .admin-invite-success p {
