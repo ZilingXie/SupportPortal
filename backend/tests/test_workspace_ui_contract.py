@@ -122,7 +122,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-setup-email-identity-1", html)
+        self.assertIn("20260719-workspace-welcome-compact-1", html)
         self.assertIn(".workspace-login-header", css)
         self.assertIn(".workspace-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -162,8 +162,31 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertIn("saveWorkspaceActive(false)", login_source)
         self.assertIn("await loadWorkspaceSchedule()", login_source)
         self.assertNotIn("readyToRoll()", login_source)
-        self.assertIn("Ready to roll", source)
+        self.assertIn("I'm ready to roll", source)
         self.assertIn('fetchJson("/api/workspace/cases?assignment_status=assigned")', source)
+
+    def test_workspace_home_welcome_is_compact(self) -> None:
+        source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+        html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
+
+        welcome_start = source.index("function renderWelcomeViewHtml")
+        welcome_end = source.index("function renderWelcome()", welcome_start)
+        welcome_source = source[welcome_start:welcome_end]
+        for marker in (
+            "Engineer workspace",
+            "Welcome back, ${escapeHtml(engineer.name)}",
+            "I'm ready to roll",
+            "workspace-home-copy",
+            "20260719-workspace-welcome-compact-1",
+        ):
+            self.assertIn(marker, welcome_source + html)
+        for removed_marker in (
+            "Assignment overview",
+            "Real case workspace",
+            "Review today&rsquo;s operating context",
+            "workspace-status-strip",
+        ):
+            self.assertNotIn(removed_marker, welcome_source)
 
     def test_workspace_home_renders_personal_weekly_schedule(self) -> None:
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")

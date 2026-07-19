@@ -2810,37 +2810,31 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .workspace-home-hero {
-  align-content: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
   background: rgba(255, 255, 255, 0.74);
   border: 1px solid var(--ghost-border);
   box-shadow: 0 12px 34px rgba(23, 28, 33, 0.05);
   backdrop-filter: none;
-  padding: clamp(16px, 2vw, 22px);
+  padding: clamp(16px, 2vw, 20px) clamp(18px, 2.4vw, 28px);
 }
 
-.workspace-home-intro {
+.workspace-home-copy {
   display: grid;
-  gap: 14px;
-  max-width: 880px;
+  gap: 6px;
+  min-width: 0;
 }
 
-.workspace-home-intro h1 {
+.workspace-home-copy h1 {
   margin: 0;
-  font-size: clamp(1.2rem, 2.5vw, 2.4rem);
-  line-height: 1.06;
+  font-size: clamp(1.25rem, 2.2vw, 2rem);
+  line-height: 1.15;
 }
 
-.workspace-home-intro p {
-  margin: 0;
-  max-width: 720px;
-  color: #44546a;
-  font-size: 1rem;
-  line-height: 1.7;
-}
-
-.workspace-home-intro .workspace-status-strip {
-  justify-content: flex-start;
-  margin-top: 4px;
+.workspace-home-hero .workspace-ready-btn {
+  min-height: 44px;
+  white-space: nowrap;
 }
 
 .workspace-home-layout {
@@ -3680,6 +3674,16 @@ html.material-symbols-pending .material-symbols-outlined {
   .workspace-entry-intro {
     min-height: auto;
     gap: 44px;
+  }
+
+  .workspace-home-hero {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 14px;
+  }
+
+  .workspace-home-hero .workspace-ready-btn {
+    width: fit-content;
   }
 
   .workspace-welcome-top,

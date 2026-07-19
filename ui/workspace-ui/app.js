@@ -2732,34 +2732,15 @@ function renderWelcomeViewHtml() {
   return `
     <section class="workspace-welcome-view">
       <header class="workspace-welcome-hero workspace-home-hero">
-        <div class="workspace-welcome-top">
-          <div class="workspace-brand-lockup">
-            <span class="workspace-brand-icon material-symbols-outlined" aria-hidden="true">bolt</span>
-            <div>
-              <p class="workspace-eyebrow">Real case workspace</p>
-              <strong>Assignment overview</strong>
-            </div>
-          </div>
-          <button
-            class="btn btn-primary workspace-ready-btn"
-            type="button"
-            data-action="ready-to-roll"
-          >
-            Ready to roll
-            <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
-          </button>
-        </div>
-        <div class="workspace-home-intro">
+        <div class="workspace-home-copy">
           <p class="workspace-eyebrow">Engineer workspace</p>
           <h1>Welcome back, ${escapeHtml(engineer.name)}</h1>
-          <p>Review today&rsquo;s operating context, then open the next Engineer Case assigned by the system.</p>
-          <div class="workspace-status-strip">
-            <span class="status-pill ${isOnSchedule ? "is-success" : "is-muted"}">${isOnSchedule ? "On schedule" : "Off schedule"}</span>
-            <span class="status-pill ${isAvailable ? "is-success" : "is-muted"}">${isAvailable ? "Available" : "Unavailable"}</span>
-            <span class="status-pill is-muted">Managed by Workspace Admin</span>
-            <span class="status-pill is-muted">${escapeHtml(scheduleTimezone)}</span>
-          </div>
         </div>
+        <button
+          class="btn btn-primary workspace-ready-btn"
+          type="button"
+          data-action="ready-to-roll"
+        >I'm ready to roll</button>
       </header>
       <section class="workspace-home-layout">
         <article class="workspace-info-panel workspace-shift-readiness-panel">
