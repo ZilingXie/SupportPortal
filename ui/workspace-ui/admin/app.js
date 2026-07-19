@@ -123,28 +123,40 @@ function renderLogin() {
   root.innerHTML = `
     <section class="login-view">
       <aside class="login-intro">
-        <p class="eyebrow">SupportPortal</p>
-        <h1>Workspace Admin</h1>
-        <p>Manage accounts, engineer availability, system assignment, SLA, and audit history.</p>
-        <a class="btn btn-ghost" href="/workspace">Engineer Workspace</a>
+        <div class="admin-login-copy">
+          <p class="admin-login-badge">Agora internal platform</p>
+          <h1>Controlled workspace operations for technical support teams.</h1>
+          <p class="admin-login-intro-copy">Manage engineer access, availability, system assignment, SLA health, and audit history in one operational workspace.</p>
+        </div>
+        <div class="admin-login-highlights" aria-label="Workspace Admin access details">
+          <section class="admin-login-highlight">
+            <p class="eyebrow">Designed for</p>
+            <strong>Account control, dispatch oversight, and measurable SLA health</strong>
+          </section>
+          <section class="admin-login-highlight is-accented">
+            <p class="eyebrow">Access model</p>
+            <strong>Use your Admin credentials to continue</strong>
+          </section>
+        </div>
       </aside>
-      <section class="login-card panel-card">
+      <section class="login-card">
         <div class="login-card-head">
-          <p class="eyebrow">Admin account</p>
           <h2>Sign in</h2>
+          <p>Enter your Admin credentials to manage Engineer Workspace operations.</p>
         </div>
         <form class="login-form" data-admin-login-form>
           <label class="field">
             <span>Account ID</span>
-            <input name="account_id" autocomplete="username" required maxlength="128" />
+            <input name="account_id" autocomplete="username" placeholder="admin name" required maxlength="128" />
           </label>
           <label class="field">
             <span>Password</span>
             <input name="password" type="password" autocomplete="current-password" required maxlength="512" />
           </label>
           <p class="login-error" data-login-error role="alert"></p>
-          <button class="btn btn-primary" type="submit">Sign in</button>
+          <button class="btn btn-primary" type="submit">Sign in to Admin Workspace</button>
         </form>
+        <p class="admin-login-note">Need the case workspace? <a href="/workspace">Go to Engineer Workspace.</a></p>
       </section>
     </section>
   `;

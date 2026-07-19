@@ -102,6 +102,24 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn(".admin-shell", css)
         self.assertIn(".admin-assignment-form", css)
 
+    def test_workspace_admin_login_uses_unified_admin_entry_contract(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        html = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+
+        for marker in (
+            "Agora internal platform",
+            "Controlled workspace operations for technical support teams.",
+            "Sign in to Admin Workspace",
+            "admin-login-highlights",
+            'name="account_id"',
+            'name="password"',
+        ):
+            self.assertIn(marker, source)
+        self.assertIn("20260719-workspace-login-refresh-1", html)
+        self.assertIn("grid-template-columns: minmax(0, 1.35fr) minmax(400px, 1fr)", css)
+        self.assertIn("@media (max-width: 560px)", css)
+
 
 if __name__ == "__main__":
     unittest.main()

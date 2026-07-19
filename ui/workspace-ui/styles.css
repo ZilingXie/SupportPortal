@@ -3920,3 +3920,241 @@ html.material-symbols-pending .material-symbols-outlined {
     padding-right: 5px;
   }
 }
+
+/* Shared visual direction for the Engineer and Admin workspace sign-in surfaces. */
+.screen-login.workspace-entry-screen {
+  min-height: 100svh;
+  padding: clamp(24px, 4vw, 56px);
+  background: #f4f6f8;
+}
+
+.workspace-entry-root {
+  min-height: 0;
+}
+
+.workspace-entry-view {
+  width: min(1440px, 100%);
+  min-height: min(760px, calc(100svh - clamp(48px, 8vw, 112px)));
+  margin: auto;
+  padding: 0;
+  grid-template-columns: minmax(0, 1.35fr) minmax(400px, 1fr);
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(110, 120, 130, 0.14);
+  border-radius: 30px;
+  background: var(--surface-lowest);
+  box-shadow: 0 24px 56px rgba(23, 28, 33, 0.08);
+  animation: workspace-login-enter 420ms ease-out both;
+}
+
+.workspace-entry-intro,
+.workspace-selector-panel {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.workspace-entry-intro {
+  justify-content: space-between;
+  gap: 32px;
+  padding: clamp(36px, 3.5vw, 48px);
+  background: #f7f9fb;
+}
+
+.workspace-login-copy {
+  display: grid;
+  justify-items: start;
+  gap: 24px;
+}
+
+.workspace-login-badge {
+  margin: 0;
+  padding: 9px 18px;
+  border: 1px solid rgba(0, 176, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(202, 230, 255, 0.36);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.workspace-entry-intro h1 {
+  max-width: 16ch;
+  font-family: "Manrope", sans-serif;
+  font-size: clamp(38px, 3.6vw, 54px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.workspace-intro-copy {
+  max-width: 38rem;
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.workspace-login-highlights {
+  display: grid;
+  gap: 14px;
+}
+
+.workspace-login-highlight {
+  display: grid;
+  gap: 10px;
+  padding: 20px 24px;
+  border: 1px solid rgba(110, 120, 130, 0.14);
+  border-radius: 18px;
+  background: var(--surface-lowest);
+  box-shadow: 0 7px 18px rgba(23, 28, 33, 0.05);
+}
+
+.workspace-login-highlight.is-accented {
+  border-color: rgba(0, 176, 255, 0.16);
+  background: rgba(202, 230, 255, 0.34);
+}
+
+.workspace-login-highlight strong {
+  font-family: "Manrope", sans-serif;
+  font-size: clamp(17px, 1.45vw, 22px);
+  line-height: 1.35;
+}
+
+.workspace-selector-panel {
+  align-content: center;
+  gap: 32px;
+  padding: clamp(44px, 6vw, 92px);
+  border-left: 1px solid rgba(110, 120, 130, 0.14);
+  background: var(--surface-lowest);
+}
+
+.workspace-panel-head {
+  display: grid;
+  gap: 16px;
+}
+
+.workspace-panel-head h2 {
+  font-family: "Manrope", sans-serif;
+  font-size: clamp(34px, 3vw, 44px);
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.workspace-panel-head p:last-child {
+  max-width: 32rem;
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.workspace-login-form {
+  gap: 20px;
+}
+
+.workspace-login-form .field {
+  gap: 10px;
+}
+
+.workspace-login-form .field span {
+  color: var(--ink);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.workspace-login-form .field input {
+  height: 58px;
+  border-radius: 12px;
+  background: var(--surface-lowest);
+  box-shadow: 0 2px 5px rgba(23, 28, 33, 0.05);
+}
+
+.workspace-login-form .login-error:empty {
+  min-height: 0;
+}
+
+.workspace-entry-cta {
+  min-height: 56px;
+  border-radius: 12px;
+  font-size: 16px;
+}
+
+.workspace-login-note {
+  margin: 0;
+  padding: 18px 20px;
+  border: 1px solid rgba(110, 120, 130, 0.14);
+  border-radius: 18px;
+  background: #f7f9fb;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+@keyframes workspace-login-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 900px) {
+  .screen-login.workspace-entry-screen {
+    padding: 20px;
+  }
+
+  .workspace-entry-view {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .workspace-entry-intro {
+    gap: 36px;
+    padding: 40px;
+  }
+
+  .workspace-selector-panel {
+    padding: 40px;
+    border-top: 1px solid rgba(110, 120, 130, 0.14);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .screen-login.workspace-entry-screen {
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  .workspace-entry-view {
+    border-radius: 20px;
+  }
+
+  .workspace-entry-intro,
+  .workspace-selector-panel {
+    padding: 28px 22px;
+  }
+
+  .workspace-entry-intro h1 {
+    font-size: 34px;
+  }
+
+  .workspace-login-copy {
+    gap: 24px;
+  }
+
+  .workspace-login-highlight {
+    padding: 20px;
+  }
+
+  .workspace-panel-head h2 {
+    font-size: 32px;
+  }
+}
