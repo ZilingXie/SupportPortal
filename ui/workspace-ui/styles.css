@@ -427,18 +427,53 @@ html.material-symbols-pending .material-symbols-outlined {
   width: 100%;
   min-width: 0;
   margin-left: 0;
-  padding: 20px 28px 34px;
+  padding: 0 28px 34px;
 }
 
 .workspace-utility-bar {
   position: sticky;
-  top: 12px;
+  top: 0;
   z-index: 24;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  width: auto;
+  min-height: 76px;
+  margin: 0 -28px 18px;
+  padding: 10px 28px;
+  border-bottom: 1px solid var(--ghost-border);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 28px rgba(23, 28, 33, 0.06);
+  backdrop-filter: blur(18px);
+}
+
+.workspace-topbar-brand {
   display: flex;
-  justify-content: flex-end;
-  width: min(1560px, 100%);
-  min-height: 54px;
-  margin: 0 auto 12px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.workspace-topbar-brand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: var(--secondary);
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(76, 86, 175, 0.18);
+}
+
+.workspace-topbar-brand strong {
+  overflow: hidden;
+  font-family: "Manrope", sans-serif;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-account-controls {
@@ -2375,7 +2410,12 @@ html.material-symbols-pending .material-symbols-outlined {
 
 @media (max-width: 900px) {
   .engineer-shell {
-    padding: 20px 18px 30px;
+    padding: 0 18px 30px;
+  }
+
+  .workspace-utility-bar {
+    margin-inline: -18px;
+    padding-inline: 18px;
   }
 
   .engineer-topbar {
@@ -3656,13 +3696,27 @@ html.material-symbols-pending .material-symbols-outlined {
 
 @media (max-width: 520px) {
   .engineer-shell {
-    padding: 12px 14px 24px;
+    padding: 0 14px 24px;
   }
 
   .workspace-utility-bar {
-    min-height: 58px;
-    margin-bottom: 10px;
-    padding-block: 4px;
+    gap: 10px;
+    min-height: 68px;
+    margin: 0 -14px 14px;
+    padding: 8px 14px;
+  }
+
+  .workspace-topbar-brand {
+    gap: 8px;
+  }
+
+  .workspace-topbar-brand-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .workspace-topbar-brand strong {
+    font-size: 15px;
   }
 
   .workspace-account-controls {
@@ -3697,6 +3751,16 @@ html.material-symbols-pending .material-symbols-outlined {
     width: 46px;
     height: 46px;
     border-radius: 14px;
+  }
+}
+
+@media (max-width: 360px) {
+  .workspace-topbar-brand strong {
+    display: none;
+  }
+
+  .workspace-account-controls .user-name {
+    max-width: 96px;
   }
 }
 
