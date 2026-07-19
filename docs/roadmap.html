@@ -451,6 +451,27 @@
       box-shadow: 0 12px 30px rgba(31, 45, 38, 0.1);
     }
 
+    .phase-filter-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 0 14px;
+      border: 1px solid var(--ink);
+      border-radius: 999px;
+      background: var(--ink);
+      color: var(--paper-soft);
+      font-size: 13px;
+      font-weight: 850;
+      text-decoration: none;
+      transition: transform 160ms ease, background 160ms ease;
+    }
+
+    .phase-filter-link:hover {
+      transform: translateY(-1px);
+      background: var(--blueprint);
+    }
+
     .review-list {
       list-style: none;
       display: grid;
@@ -1451,6 +1472,7 @@
             <li><strong>P2：</strong>完成 Admin metrics、action-specific 内部邮箱配置和真实 case 全量流转接入。</li>
             <li>Billing 内部处理统一通过 Outlook reply；所有客户回复必须经过 guardrail 与 engineer final approve。</li>
           </ul>
+          <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-></span></a>
         </article>
         <article class="phase-card">
           <span class="phase-status blocked">与 9/1 隔离</span>
@@ -1468,6 +1490,7 @@
     </section>
 
     <nav class="toolbar" aria-label="Roadmap filters">
+      <a class="phase-filter-link" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">Phase 2 <span aria-hidden="true">-></span></a>
       <div class="filter" id="laneFilters"></div>
       <input id="searchInput" class="search" type="search" placeholder="搜索任务、来源或计划">
     </nav>
