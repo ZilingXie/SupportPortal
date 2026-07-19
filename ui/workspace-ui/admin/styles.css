@@ -3500,6 +3500,8 @@ p {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
   min-height: 100vh;
+  max-height: none;
+  overflow: visible;
   background: var(--surface);
 }
 
@@ -3824,14 +3826,12 @@ p {
 
 .admin-week-grid-wrap {
   width: 100%;
-  height: min(70vh, 720px);
-  min-height: 420px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   border-radius: 8px;
   background: var(--surface-lowest);
   box-shadow: 0 8px 28px rgba(23, 28, 33, 0.05);
   scrollbar-color: rgba(0, 100, 147, 0.32) transparent;
-  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
