@@ -4167,3 +4167,276 @@ html.material-symbols-pending .material-symbols-outlined {
     font-size: 16px;
   }
 }
+
+/* Transactional sign-in shell based on the approved Workspace reference. */
+.screen-login.workspace-entry-screen {
+  display: block;
+  min-height: 100svh;
+  padding: 0;
+  overflow: visible;
+  background: var(--surface);
+}
+
+.workspace-entry-root {
+  width: 100%;
+  min-height: 100svh;
+}
+
+.workspace-login-page {
+  display: grid;
+  grid-template-rows: 80px minmax(0, 1fr) auto;
+  min-height: 100svh;
+  background: var(--surface);
+  animation: workspace-login-enter 360ms ease-out both;
+}
+
+.workspace-login-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 30px;
+  background: var(--surface-bright);
+}
+
+.workspace-login-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--primary);
+}
+
+.workspace-login-brand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: var(--secondary);
+  color: var(--surface-lowest);
+  font-size: 24px;
+  box-shadow: 0 8px 24px rgba(52, 61, 150, 0.14);
+}
+
+.workspace-login-brand strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.workspace-login-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 52px 20px;
+  background: rgba(214, 218, 225, 0.34);
+}
+
+.workspace-login-content {
+  width: min(560px, 100%);
+}
+
+.workspace-login-heading {
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.workspace-login-heading h1 {
+  margin: 0 0 12px;
+  font-family: "Manrope", sans-serif;
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.workspace-login-heading p {
+  max-width: 440px;
+  margin: 0 auto;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.workspace-login-card {
+  padding: 34px;
+  border: 1px solid rgba(110, 120, 130, 0.12);
+  border-radius: 8px;
+  background: var(--surface-lowest);
+  box-shadow: 0 8px 24px rgba(0, 7, 103, 0.05);
+}
+
+.workspace-login-form {
+  display: grid;
+  gap: 24px;
+}
+
+.workspace-login-field {
+  display: grid;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.workspace-login-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.workspace-login-input-wrap > .material-symbols-outlined {
+  position: absolute;
+  left: 14px;
+  z-index: 1;
+  color: var(--ink-muted);
+  font-size: 19px;
+  pointer-events: none;
+}
+
+.workspace-login-input-wrap input {
+  width: 100%;
+  height: 52px;
+  padding: 0 16px 0 44px;
+  border: 1px solid rgba(110, 120, 130, 0.2);
+  border-radius: 6px;
+  background: var(--surface-container-low);
+  color: var(--ink);
+  font-size: 14px;
+  box-shadow: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.workspace-login-input-wrap input::placeholder {
+  color: #9aa6b2;
+}
+
+.workspace-login-input-wrap input:focus {
+  outline: none;
+  border-color: rgba(0, 176, 255, 0.72);
+  background: var(--surface-lowest);
+  box-shadow: 0 0 0 3px rgba(0, 176, 255, 0.14);
+}
+
+.workspace-login-error {
+  min-height: 0;
+  margin: -8px 0;
+  font-size: 13px;
+}
+
+.workspace-login-error:not(:empty) {
+  min-height: 20px;
+}
+
+.workspace-login-form .workspace-entry-cta {
+  min-height: 56px;
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.workspace-login-form .workspace-entry-cta .material-symbols-outlined {
+  font-size: 19px;
+}
+
+.workspace-login-form .workspace-entry-cta:hover:not(:disabled) {
+  box-shadow: 0 16px 32px rgba(0, 100, 147, 0.22);
+}
+
+.workspace-login-orbit {
+  display: flex;
+  justify-content: center;
+  margin-top: 32px;
+  color: var(--secondary);
+  opacity: 0.42;
+}
+
+.workspace-login-orbit .material-symbols-outlined {
+  font-size: 34px;
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24;
+}
+
+.workspace-login-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 84px;
+  padding: 20px 40px;
+  background: var(--surface-bright);
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+
+.workspace-login-footer > strong {
+  color: var(--secondary);
+  font-family: "Manrope", sans-serif;
+  font-weight: 700;
+}
+
+.workspace-login-footer nav {
+  display: flex;
+  gap: 28px;
+}
+
+.workspace-login-footer a {
+  transition: color 160ms ease;
+}
+
+.workspace-login-footer a:hover,
+.workspace-login-footer a:focus-visible {
+  color: var(--primary);
+}
+
+@media (max-width: 640px) {
+  .workspace-login-page {
+    grid-template-rows: 68px minmax(0, 1fr) auto;
+  }
+
+  .workspace-login-header {
+    padding: 12px 18px;
+  }
+
+  .workspace-login-brand-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 21px;
+  }
+
+  .workspace-login-brand strong {
+    font-size: 21px;
+  }
+
+  .workspace-login-main {
+    align-items: flex-start;
+    padding: 44px 16px;
+  }
+
+  .workspace-login-heading {
+    margin-bottom: 26px;
+  }
+
+  .workspace-login-heading h1 {
+    font-size: 30px;
+  }
+
+  .workspace-login-heading p {
+    font-size: 15px;
+  }
+
+  .workspace-login-card {
+    padding: 24px;
+  }
+
+  .workspace-login-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 22px 20px;
+    font-size: 13px;
+  }
+
+  .workspace-login-footer nav {
+    flex-wrap: wrap;
+    gap: 12px 22px;
+  }
+}
