@@ -214,6 +214,7 @@
 9. assignment status 只能读取后端 `assignment_status`，不得根据 Client Ticket status 或 `assigned_engineer_id` 是否为空在前端推导。
 10. engineer availability 由 `/workspace/admin` 的 `available / unavailable` 控件管理；Engineer Workspace 只读展示 availability，不提供本地 shift 或 availability 写入。
 11. Engineer Case 的 SLA 使用后端 `assigned_at / sla_due_at`，不得使用浏览器本地时间或 localStorage 创建 SLA 起点。
+12. `/workspace` 未登录页面采用轻量事务型登录壳：顶部只展示 `Workspace` 品牌，主区居中展示欢迎文案与单一登录卡，底部展示安全工作区信息；不得复用登录后的 rail 或工单工作区结构。
 
 ### 6.3 Ticket Dashboard (`/dashboard`)
 1. 固定 KPI 名称：

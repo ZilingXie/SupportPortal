@@ -105,23 +105,25 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertNotIn("supportportal_workspace_daily_shift", source)
         self.assertNotIn("Choose a demo engineer", source)
 
-    def test_workspace_login_uses_unified_engineer_entry_contract(self) -> None:
+    def test_workspace_login_uses_transactional_entry_contract(self) -> None:
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
         html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
 
         for marker in (
-            "Agora internal platform",
-            "Focused case operations for technical support engineers.",
-            "Sign in to Engineer Workspace",
-            "workspace-login-highlights",
+            '<strong>Workspace</strong>',
+            "Welcome Back",
+            "A focused workspace for support engineers to investigate and resolve assigned cases.",
+            "workspace-login-card",
+            "Secure Engineer Workspace",
             'name="account_id"',
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-workspace-login-font-scale-1", html)
-        self.assertIn("grid-template-columns: minmax(0, 1.35fr) minmax(400px, 1fr)", css)
-        self.assertIn("@media (max-width: 560px)", css)
+        self.assertIn("20260719-workspace-login-stitch-1", html)
+        self.assertIn(".workspace-login-header", css)
+        self.assertIn(".workspace-login-footer", css)
+        self.assertIn("@media (max-width: 640px)", css)
 
     def test_workspace_disables_multi_agent_from_controlled_launch_main_flow(self) -> None:
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")

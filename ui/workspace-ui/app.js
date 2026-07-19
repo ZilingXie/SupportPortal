@@ -2727,47 +2727,55 @@ function renderLogin() {
   }
   refreshWorkspaceSessionState();
   workspaceRootEl.innerHTML = `
-    <section class="workspace-entry-view">
-      <aside class="workspace-entry-intro">
-        <div class="workspace-login-copy">
-          <p class="workspace-login-badge">Agora internal platform</p>
-          <h1>Focused case operations for technical support engineers.</h1>
-          <p class="workspace-intro-copy">
-            Review assigned Engineer Cases, investigate with evidence, and move customer issues toward resolution in one controlled workspace.
-          </p>
+    <section class="workspace-login-page">
+      <header class="workspace-login-header">
+        <div class="workspace-login-brand" aria-label="Workspace">
+          <span class="workspace-login-brand-icon material-symbols-outlined" aria-hidden="true">ac_unit</span>
+          <strong>Workspace</strong>
         </div>
-        <div class="workspace-login-highlights" aria-label="Engineer Workspace access details">
-          <section class="workspace-login-highlight">
-            <p class="workspace-eyebrow">Designed for</p>
-            <strong>Assigned cases, guided investigation, and clear handoff</strong>
+      </header>
+      <main class="workspace-login-main">
+        <div class="workspace-login-content">
+          <header class="workspace-login-heading">
+            <h1>Welcome Back</h1>
+            <p>A focused workspace for support engineers to investigate and resolve assigned cases.</p>
+          </header>
+          <section class="workspace-login-card" aria-label="Workspace sign in">
+            <form id="workspace-login-form" class="workspace-login-form">
+              <label class="workspace-login-field">
+                <span>Account ID</span>
+                <span class="workspace-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">person</span>
+                  <input name="account_id" type="text" autocomplete="username" placeholder="name" required maxlength="128" />
+                </span>
+              </label>
+              <label class="workspace-login-field">
+                <span>Password</span>
+                <span class="workspace-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">lock</span>
+                  <input name="password" type="password" autocomplete="current-password" placeholder="Password" required maxlength="512" />
+                </span>
+              </label>
+              <p id="workspace-login-error" class="login-error workspace-login-error" role="alert"></p>
+              <button class="btn btn-primary workspace-entry-cta" type="submit">
+                <span>Sign In</span>
+                <span class="material-symbols-outlined" aria-hidden="true">login</span>
+              </button>
+            </form>
           </section>
-          <section class="workspace-login-highlight is-accented">
-            <p class="workspace-eyebrow">Access model</p>
-            <strong>Use your Workspace credentials to continue</strong>
-          </section>
+          <div class="workspace-login-orbit" aria-hidden="true">
+            <span class="material-symbols-outlined">data_usage</span>
+          </div>
         </div>
-      </aside>
-      <section class="workspace-selector-panel">
-        <div class="workspace-panel-head">
-          <h2>Sign in</h2>
-          <p>Enter your work credentials to access assigned Engineer Cases and investigation tools.</p>
-        </div>
-        <form id="workspace-login-form" class="workspace-login-form">
-          <label class="field">
-            <span>Account ID</span>
-            <input name="account_id" type="text" autocomplete="username" placeholder="name" required maxlength="128" />
-          </label>
-          <label class="field">
-            <span>Password</span>
-            <input name="password" type="password" autocomplete="current-password" required maxlength="512" />
-          </label>
-          <p id="workspace-login-error" class="login-error" role="alert"></p>
-          <button class="btn btn-primary workspace-entry-cta" type="submit">
-            Sign in to Engineer Workspace
-          </button>
-        </form>
-        <p class="workspace-login-note">Don't have an account? Contact your Workspace administrator.</p>
-      </section>
+      </main>
+      <footer class="workspace-login-footer">
+        <strong>&copy; 2026 SupportPortal. Secure Engineer Workspace.</strong>
+        <nav aria-label="Workspace resources">
+          <span>Security Policy</span>
+          <a href="https://status.agora.io/" target="_blank" rel="noopener noreferrer">System Status</a>
+          <span>Help Desk</span>
+        </nav>
+      </footer>
     </section>
   `;
 }
