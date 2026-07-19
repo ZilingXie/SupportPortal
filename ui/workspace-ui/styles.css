@@ -3149,6 +3149,100 @@ html.material-symbols-pending .material-symbols-outlined {
   align-items: stretch;
 }
 
+.workspace-personal-schedule {
+  overflow: hidden;
+}
+
+.workspace-schedule-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.workspace-schedule-heading > .material-symbols-outlined {
+  color: var(--secondary);
+  font-size: 30px;
+}
+
+.workspace-schedule-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(112px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 8px;
+  scrollbar-width: thin;
+}
+
+.workspace-schedule-day {
+  min-height: 116px;
+  display: grid;
+  align-content: space-between;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--surface-container);
+  color: var(--ink-soft);
+  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.workspace-schedule-day.has-shift {
+  background: var(--primary-fixed);
+  color: var(--ink);
+}
+
+.workspace-schedule-day.is-today {
+  box-shadow: inset 0 0 0 2px var(--secondary);
+}
+
+.workspace-schedule-day:hover {
+  background: var(--surface-container-high);
+  transform: translateY(-2px);
+}
+
+.workspace-schedule-day.has-shift:hover {
+  background: #b8dcff;
+}
+
+.workspace-schedule-day-name,
+.workspace-schedule-day span:last-child {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.workspace-schedule-day-name {
+  text-transform: uppercase;
+}
+
+.workspace-schedule-day strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.workspace-schedule-feedback {
+  min-height: 116px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 8px;
+  background: var(--surface-container);
+  color: var(--ink-muted);
+  font-weight: 700;
+}
+
+.workspace-schedule-feedback .material-symbols-outlined {
+  animation: workspace-schedule-spin 900ms linear infinite;
+}
+
+.workspace-schedule-feedback.is-error {
+  color: var(--danger);
+}
+
+.workspace-schedule-feedback.is-error .material-symbols-outlined {
+  animation: none;
+}
+
 .workspace-home-layout .workspace-info-panel {
   display: grid;
   gap: 18px;
@@ -3780,6 +3874,10 @@ html.material-symbols-pending .material-symbols-outlined {
   to {
     transform: translateX(125%);
   }
+}
+
+@keyframes workspace-schedule-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 900px) {

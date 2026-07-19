@@ -727,6 +727,24 @@ def _workspace_schedule_payload() -> dict[str, Any]:
     return {"timezone": WORKSPACE_SCHEDULE_TIMEZONE, "engineers": engineers}
 
 
+def _workspace_personal_schedule_payload(principal: WorkspacePrincipal) -> dict[str, Any]:
+    schedule_payload = _workspace_schedule_payload()
+    engineer = next(
+        (
+            item
+            for item in schedule_payload["engineers"]
+            if str(item.get("account_id") or "").strip() == principal.account_id
+        ),
+        None,
+    )
+    if engineer is None:
+        raise HTTPException(status_code=404, detail="Engineer schedule not found")
+    return {
+        "timezone": schedule_payload["timezone"],
+        "engineer": engineer,
+    }
+
+
 def _public_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
     return {
         key: copy.deepcopy(value)
@@ -5051,6 +5069,13 @@ def list_workspace_admin_accounts(
             for account in ticket_repository.list_workspace_accounts()
         ]
     }
+
+
+@app.get("/api/workspace/schedule")
+def get_workspace_personal_schedule(
+    principal: WorkspacePrincipal = Depends(require_workspace_principal),
+) -> dict[str, Any]:
+    return _workspace_personal_schedule_payload(principal)
 
 
 @app.post("/api/workspace/admin/accounts")

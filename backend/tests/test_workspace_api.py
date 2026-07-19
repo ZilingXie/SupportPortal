@@ -223,6 +223,33 @@ class WorkspaceApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
 
+    def test_engineer_reads_only_personal_schedule(self) -> None:
+        headers = self._admin_headers()
+        self._seed_engineer("Maya")
+        self._seed_engineer("Leo")
+        for engineer_id, weekday in (("Maya", 0), ("Leo", 2)):
+            response = self.client.put(
+                f"/api/workspace/admin/engineers/{engineer_id}/schedule",
+                headers=headers,
+                json={"shifts": [{"weekday": weekday, "start": "09:00", "end": "17:00"}]},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+
+        engineer_token = self._login("Maya", "engineer-password-1")
+        response = self.client.get(
+            "/api/workspace/schedule",
+            headers={"Authorization": f"Bearer {engineer_token}"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["timezone"], "Asia/Shanghai")
+        self.assertEqual(response.json()["engineer"]["account_id"], "Maya")
+        self.assertEqual(
+            response.json()["engineer"]["shifts"],
+            [{"weekday": 0, "start": "09:00", "end": "17:00"}],
+        )
+        self.assertNotIn("password_hash", response.json()["engineer"])
+
     def test_engineer_cannot_access_another_engineers_case_mutations(self) -> None:
         self._seed_case()
         now = "2026-07-18T00:00:00+00:00"

@@ -8,6 +8,7 @@ const WORKSPACE_CASE_SLA_MS = 3 * 60 * 60 * 1000;
 const AGORA_STATUS_PAGE_URL = "https://status.agora.io/";
 const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";
 const SERVICE_EVENTS_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const WORKSPACE_SCHEDULE_ENDPOINT = "/api/workspace/schedule";
 const ENGINEER_MULTI_AGENT_ENABLED = false;
 const DEMO_ENGINEERS = [
   { id: "Jack", name: "Jack", role: "Tier One Engineer", initials: "J" },
@@ -152,6 +153,8 @@ let readyTransitionActive = false;
 let workspaceSlaCountdownTimer = null;
 let workspaceRealtimeStatusText = "Realtime: connecting...";
 let workspaceServiceEventsState = buildDefaultWorkspaceServiceEventsState();
+let workspaceScheduleState = buildDefaultWorkspaceScheduleState();
+let workspaceScheduleLoadPromise = null;
 
 const ENGINEER_POOL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];
 const POOL_STATUS_RANK = {
@@ -239,6 +242,77 @@ function buildDefaultWorkspaceServiceEventsState() {
   };
 }
 
+function buildDefaultWorkspaceScheduleState() {
+  return {
+    loadState: "idle",
+    timezone: "Asia/Shanghai",
+    engineer: null,
+  };
+}
+
+function normalizeWorkspaceSchedulePayload(payload) {
+  const engineer = payload?.engineer && typeof payload.engineer === "object" ? payload.engineer : null;
+  const shifts = Array.isArray(engineer?.shifts)
+    ? engineer.shifts
+        .map((shift) => ({
+          weekday: Number(shift?.weekday),
+          start: String(shift?.start || "").trim(),
+          end: String(shift?.end || "").trim(),
+        }))
+        .filter(
+          (shift) =>
+            Number.isInteger(shift.weekday) &&
+            shift.weekday >= 0 &&
+            shift.weekday <= 6 &&
+            /^\d{2}:\d{2}$/.test(shift.start) &&
+            /^\d{2}:\d{2}$/.test(shift.end)
+        )
+    : [];
+  return {
+    loadState: "ready",
+    timezone: String(payload?.timezone || "Asia/Shanghai").trim() || "Asia/Shanghai",
+    engineer: engineer ? { ...engineer, shifts } : null,
+  };
+}
+
+async function loadWorkspaceSchedule() {
+  if (!getSelectedEngineer()) {
+    return;
+  }
+  if (workspaceScheduleLoadPromise) {
+    return workspaceScheduleLoadPromise;
+  }
+  workspaceScheduleState = { ...workspaceScheduleState, loadState: "loading" };
+  renderWorkspaceHomeIfVisible();
+  const activePromise = (async () => {
+    try {
+      const payload = await fetchJson(WORKSPACE_SCHEDULE_ENDPOINT);
+      workspaceScheduleState = normalizeWorkspaceSchedulePayload(payload);
+      if (workspaceScheduleState.engineer) {
+        workspaceAccount = { ...workspaceAccount, ...workspaceScheduleState.engineer };
+        writeStorage(WORKSPACE_ACCOUNT_KEY, workspaceAccount);
+      }
+    } catch {
+      workspaceScheduleState = { ...buildDefaultWorkspaceScheduleState(), loadState: "error" };
+    }
+    renderWorkspaceHomeIfVisible();
+  })();
+  workspaceScheduleLoadPromise = activePromise;
+  try {
+    return await activePromise;
+  } finally {
+    if (workspaceScheduleLoadPromise === activePromise) {
+      workspaceScheduleLoadPromise = null;
+    }
+  }
+}
+
+function renderWorkspaceHomeIfVisible() {
+  if (routeState.view === "pool" && getSelectedEngineer() && workspaceRegionEl) {
+    workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
+  }
+}
+
 function normalizeWorkspaceServiceEventItem(item, index) {
   const title = normalizeSingleLineText(item?.title);
   return {
@@ -299,9 +373,7 @@ async function fetchWorkspaceServiceEvents(requestedAtMs) {
     return;
   }
   workspaceServiceEventsState = nextState;
-  if (routeState.view === "pool" && getSelectedEngineer() && workspaceRegionEl) {
-    workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
-  }
+  renderWorkspaceHomeIfVisible();
 }
 
 function ensureWorkspaceServiceEventsLoaded() {
@@ -366,24 +438,50 @@ function utc8Now() {
   return new Date(Date.now() + UTC8_OFFSET_MS);
 }
 
-function formatUtc8Time(date = utc8Now()) {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  const hour = String(date.getUTCHours()).padStart(2, "0");
-  const minute = String(date.getUTCMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day} ${hour}:${minute} UTC+8`;
-}
-
 function isInShift(now = utc8Now()) {
   void now;
   refreshWorkspaceSessionState();
   return String(workspaceAccount?.availability || "").toLowerCase() === "available";
 }
 
-function nextShiftInfo() {
-  refreshWorkspaceSessionState();
-  return isInShift() ? "Available for system dispatch" : "Unavailable for new assignments";
+const WORKSPACE_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function currentWorkspaceWeekday() {
+  const sundayFirstDay = utc8Now().getUTCDay();
+  return (sundayFirstDay + 6) % 7;
+}
+
+function renderPersonalScheduleHtml() {
+  const state = workspaceScheduleState || buildDefaultWorkspaceScheduleState();
+  if (state.loadState === "loading" || state.loadState === "idle") {
+    return `<div class="workspace-schedule-feedback"><span class="material-symbols-outlined" aria-hidden="true">progress_activity</span><span>Loading your schedule...</span></div>`;
+  }
+  if (state.loadState === "error") {
+    return `<div class="workspace-schedule-feedback is-error"><span class="material-symbols-outlined" aria-hidden="true">error</span><span>Your schedule is temporarily unavailable.</span></div>`;
+  }
+
+  const shiftsByWeekday = new Map(
+    (state.engineer?.shifts || []).map((shift) => [Number(shift.weekday), shift])
+  );
+  const today = currentWorkspaceWeekday();
+  return `
+    <div class="workspace-schedule-week" role="list" aria-label="Personal weekly schedule">
+      ${WORKSPACE_WEEKDAYS.map((day, weekday) => {
+        const shift = shiftsByWeekday.get(weekday);
+        const overnight = shift && shift.end <= shift.start;
+        return `
+          <article class="workspace-schedule-day ${weekday === today ? "is-today" : ""} ${shift ? "has-shift" : "is-off"}" role="listitem">
+            <span class="workspace-schedule-day-name">${escapeHtml(day.slice(0, 3))}</span>
+            ${
+              shift
+                ? `<strong>${escapeHtml(shift.start)} - ${escapeHtml(shift.end)}</strong><span>${overnight ? "Ends next day" : "Scheduled"}</span>`
+                : `<strong>Off</strong><span>No shift</span>`
+            }
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function saveWorkspaceActive(value) {
@@ -2785,7 +2883,9 @@ function renderWelcomeViewHtml() {
   if (!engineer) {
     return "";
   }
-  const inShift = isInShift();
+  const isAvailable = isInShift();
+  const isOnSchedule = Boolean(workspaceScheduleState.engineer?.is_on_schedule_now);
+  const scheduleTimezone = workspaceScheduleState.timezone || "Asia/Shanghai";
   return `
     <section class="workspace-welcome-view">
       <header class="workspace-welcome-hero workspace-home-hero">
@@ -2802,7 +2902,7 @@ function renderWelcomeViewHtml() {
             type="button"
             data-action="ready-to-roll"
           >
-            Open assigned case
+            Ready to roll
             <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
           </button>
         </div>
@@ -2811,9 +2911,10 @@ function renderWelcomeViewHtml() {
           <h1>Welcome back, ${escapeHtml(engineer.name)}</h1>
           <p>Review today&rsquo;s operating context, then open the next Engineer Case assigned by the system.</p>
           <div class="workspace-status-strip">
-            <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "Available" : "Unavailable"}</span>
+            <span class="status-pill ${isOnSchedule ? "is-success" : "is-muted"}">${isOnSchedule ? "On schedule" : "Off schedule"}</span>
+            <span class="status-pill ${isAvailable ? "is-success" : "is-muted"}">${isAvailable ? "Available" : "Unavailable"}</span>
             <span class="status-pill is-muted">Managed by Workspace Admin</span>
-            <span class="status-pill is-muted">${escapeHtml(formatUtc8Time())}</span>
+            <span class="status-pill is-muted">${escapeHtml(scheduleTimezone)}</span>
           </div>
         </div>
       </header>
@@ -2821,13 +2922,24 @@ function renderWelcomeViewHtml() {
         <article class="workspace-info-panel workspace-shift-readiness-panel">
           <div class="workspace-panel-heading">
             <p class="ticket-kicker">System dispatch</p>
-            <h2>${escapeHtml(nextShiftInfo())}</h2>
-            <p>This workspace only opens Engineer Cases already assigned to this account.</p>
+            <h2>${isOnSchedule ? "You are on schedule now" : "You are currently off schedule"}</h2>
+            <p>Availability is managed separately by Workspace Admin and is currently ${isAvailable ? "available" : "unavailable"}.</p>
           </div>
           <div class="workspace-shift-readiness-body">
-            <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "Available" : "Unavailable"}</span>
+            <span class="status-pill ${isAvailable ? "is-success" : "is-muted"}">${isAvailable ? "Available" : "Unavailable"}</span>
           </div>
         </article>
+        <section class="workspace-info-panel workspace-personal-schedule" aria-labelledby="workspace-personal-schedule-title">
+          <div class="workspace-panel-heading workspace-schedule-heading">
+            <div>
+              <p class="ticket-kicker">My schedule</p>
+              <h2 id="workspace-personal-schedule-title">This week</h2>
+              <p>Read-only schedule in ${escapeHtml(scheduleTimezone)}. Changes are managed by Workspace Admin.</p>
+            </div>
+            <span class="material-symbols-outlined" aria-hidden="true">calendar_month</span>
+          </div>
+          ${renderPersonalScheduleHtml()}
+        </section>
         <section class="workspace-home-status-grid" aria-label="Known issues and service status">
           <article class="workspace-info-panel workspace-known-issues-panel">
             <div class="workspace-panel-heading">
@@ -2957,6 +3069,9 @@ function renderReadinessInsteadOfPool() {
       workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
     }
     ensureWorkspaceServiceEventsLoaded();
+    if (workspaceScheduleState.loadState === "idle") {
+      void loadWorkspaceSchedule();
+    }
   } else {
     toggleScreens();
     renderLogin();
@@ -6043,9 +6158,11 @@ async function handleLoginSubmit(event) {
   selectedEngineerId = String(account.account_id || accountId);
   workspaceAccount = account;
   workspaceAccessToken = accessToken;
-  saveWorkspaceActive(true);
+  saveWorkspaceActive(false);
+  workspaceScheduleState = buildDefaultWorkspaceScheduleState();
+  workspaceScheduleLoadPromise = null;
   resetWorkspaceBoardState();
-  await readyToRoll();
+  await loadWorkspaceSchedule();
 }
 
 function resetWorkspaceBoardState() {
@@ -6082,6 +6199,8 @@ function signOut() {
   selectedEngineerCandidate = "";
   workspaceAccount = null;
   workspaceAccessToken = "";
+  workspaceScheduleState = buildDefaultWorkspaceScheduleState();
+  workspaceScheduleLoadPromise = null;
   resetWorkspaceBoardState();
   toggleScreens();
   renderLogin();
