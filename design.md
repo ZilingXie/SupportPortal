@@ -10,6 +10,7 @@
 3. 当前强制适用范围：
    - `/client`
    - `/engineer`
+   - `/workspace/admin`
    - `/dashboard`
    - `/dashboard/rag/`
 
@@ -216,6 +217,11 @@
 11. Engineer Case 的 SLA 使用后端 `assigned_at / sla_due_at`，不得使用浏览器本地时间或 localStorage 创建 SLA 起点。
 12. `/workspace` 未登录页面采用轻量事务型登录壳：顶部只展示 `Workspace` 品牌，主区居中展示欢迎文案与单一登录卡，底部展示安全工作区信息；不得复用登录后的 rail 或工单工作区结构。
 13. `/workspace/admin` 未登录页面复用同一事务型登录壳，顶部品牌固定为 `Admin`，主区文案说明账号、派单、availability 与 SLA 管理范围；登录后的管理控制台结构不受此规则影响。
+14. `/workspace/admin` 登录后的 rail 在桌面默认使用 `96px` icon-only 状态，hover 或 focus-within 时展开到 `264px`；当前账号与 Logout 固定放在 rail footer，不再放入全局顶栏。
+15. `/workspace/admin` 的 Engineer Management 是班表工作面，不使用账号表单与 availability 卡片拼盘：页面主顺序固定为 `On Schedule Now`、`Weekly Schedule` 和右侧 shift inspector。
+16. `On Schedule Now` 只表达当前时间命中数据库 schedule，不能命名为 `Online Engineers`，也不能推导浏览器连接或 presence；availability 必须作为独立文字状态展示。
+17. 新账号创建使用独立邀请任务页：Engineer Management 只保留 `New Account` 命令，邀请页收集 email 与冻结角色，并覆盖 sending / success / error 状态。
+18. Admin 响应式 rail 规则固定为：`>= 901px` 支持 hover/focus 展开，`721px - 900px` 保持 icon-only，`<= 720px` 退化为顶部静态导航并显示必要标签与账户操作。
 
 ### 6.3 Ticket Dashboard (`/dashboard`)
 1. 固定 KPI 名称：

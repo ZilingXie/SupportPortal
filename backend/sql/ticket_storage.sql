@@ -239,6 +239,7 @@ CREATE INDEX IF NOT EXISTS idx_support_engineer_cases_assignment_queue
 
 CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     account_id TEXT PRIMARY KEY,
+    email TEXT,
     display_name TEXT NOT NULL,
     role TEXT NOT NULL,
     password_hash TEXT NOT NULL,
@@ -251,8 +252,44 @@ CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+ALTER TABLE support_workspace_accounts
+    ADD COLUMN IF NOT EXISTS email TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_workspace_accounts_email_unique
+    ON support_workspace_accounts (LOWER(email)) WHERE email IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_support_workspace_accounts_dispatch
     ON support_workspace_accounts (role, active, availability, last_assigned_at, account_id);
+
+CREATE TABLE IF NOT EXISTS support_workspace_account_invitations (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_by TEXT NOT NULL,
+    delivery_status TEXT NOT NULL DEFAULT 'pending',
+    delivery_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    used_by_account_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_workspace_invitations_email
+    ON support_workspace_account_invitations (LOWER(email), expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS support_engineer_schedules (
+    engineer_id TEXT NOT NULL,
+    weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+    start_minute SMALLINT NOT NULL CHECK (start_minute BETWEEN 0 AND 1439),
+    end_minute SMALLINT NOT NULL CHECK (end_minute BETWEEN 0 AND 1439),
+    timezone TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (engineer_id, weekday),
+    CHECK (start_minute <> end_minute)
+);
 
 CREATE TABLE IF NOT EXISTS support_workspace_audit_events (
     id BIGSERIAL PRIMARY KEY,

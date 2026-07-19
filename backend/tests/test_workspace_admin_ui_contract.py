@@ -53,10 +53,14 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "/api/workspace/admin/audit",
             "/api/workspace/admin/dispatch",
             "/api/workspace/admin/reassign-due",
+            "/api/workspace/admin/invitations",
+            "/api/workspace/admin/engineer-schedules",
             "/api/workspace/cases?assignment_status=all",
-            "data-create-account-form",
-            "data-availability-form",
+            "data-invitation-form",
+            "data-schedule-form",
             "data-assignment-form",
+            "On Schedule Now",
+            "Weekly Schedule",
         ):
             self.assertIn(marker, source)
         self.assertNotIn("supportportal_assignment_admin_schedule", source)
@@ -117,10 +121,30 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-admin-login-stitch-1", html)
+        self.assertIn("20260719-admin-schedule-invite-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
+
+    def test_admin_shell_uses_collapsed_rail_and_footer_account_controls(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("admin-rail-footer", source)
+        self.assertIn("admin-user-chip", source)
+        self.assertIn("admin-logout-btn", source)
+        self.assertNotIn("admin-topbar-btn", source)
+        self.assertIn("grid-template-columns: 96px minmax(0, 1fr)", css)
+        self.assertIn("width: 264px", css)
+
+    def test_workspace_setup_page_uses_one_time_invitation_api(self) -> None:
+        source = Path("ui/workspace-ui/setup/app.js").read_text(encoding="utf-8")
+        html = Path("ui/workspace-ui/setup/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("/api/workspace/invitations/complete", source)
+        self.assertIn("/api/workspace/invitations/${encodeURIComponent(token)}", source)
+        self.assertIn('name="confirm_password"', source)
+        self.assertIn('id="workspace-setup-root"', html)
 
 
 if __name__ == "__main__":

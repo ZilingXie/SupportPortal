@@ -87,6 +87,13 @@ from backend.services.engineer_guardrail_agent import (
     run_engineer_guardrail_final,
 )
 from backend.services.engineer_assignment import EngineerAssignmentService
+from backend.services.workspace_invitations import WorkspaceInvitationService
+from backend.services.workspace_schedules import (
+    WORKSPACE_SCHEDULE_TIMEZONE,
+    minutes_to_time,
+    on_schedule_engineer_ids,
+    time_to_minutes,
+)
 from backend.services.workspace_auth import (
     WorkspacePrincipal,
     create_workspace_access_token,
@@ -519,6 +526,33 @@ class WorkspaceAccountCreateRequest(BaseModel):
     password: str = Field(min_length=10, max_length=512)
 
 
+class WorkspaceInvitationCreateRequest(BaseModel):
+    email: str = Field(
+        min_length=3,
+        max_length=320,
+        pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$",
+    )
+    role: str = Field(pattern="^(admin|engineer)$")
+
+
+class WorkspaceInvitationCompleteRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=512)
+    account_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=160)
+    password: str = Field(min_length=10, max_length=512)
+    confirm_password: str = Field(min_length=10, max_length=512)
+
+
+class EngineerScheduleShiftRequest(BaseModel):
+    weekday: int = Field(ge=0, le=6)
+    start: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class EngineerScheduleUpdateRequest(BaseModel):
+    shifts: list[EngineerScheduleShiftRequest] = Field(max_length=7)
+
+
 class EngineerAvailabilityUpdateRequest(BaseModel):
     availability: str = Field(pattern="^(available|unavailable)$")
     reason: str | None = Field(default=None, max_length=500)
@@ -659,6 +693,38 @@ def _engineer_assignment_service() -> EngineerAssignmentService:
         ticket_repository,
         sla_hours=_safe_int_env("ENGINEER_ASSIGNMENT_SLA_HOURS", 3),
     )
+
+
+def _workspace_invitation_service() -> WorkspaceInvitationService:
+    return WorkspaceInvitationService(ticket_repository)
+
+
+def _workspace_schedule_payload() -> dict[str, Any]:
+    schedules = ticket_repository.list_engineer_schedules()
+    on_schedule = on_schedule_engineer_ids(schedules)
+    shifts_by_engineer: dict[str, list[dict[str, Any]]] = {}
+    for shift in schedules:
+        engineer_id = str(shift.get("engineer_id") or "").strip()
+        shifts_by_engineer.setdefault(engineer_id, []).append(
+            {
+                "weekday": int(shift["weekday"]),
+                "start": minutes_to_time(int(shift["start_minute"])),
+                "end": minutes_to_time(int(shift["end_minute"])),
+            }
+        )
+    engineers = []
+    for account in ticket_repository.list_workspace_accounts():
+        if account.get("role") != "engineer" or not bool(account.get("active", True)):
+            continue
+        engineer_id = str(account.get("account_id") or "").strip()
+        engineers.append(
+            {
+                **_public_workspace_account(account),
+                "is_on_schedule_now": engineer_id in on_schedule,
+                "shifts": shifts_by_engineer.get(engineer_id, []),
+            }
+        )
+    return {"timezone": WORKSPACE_SCHEDULE_TIMEZONE, "engineers": engineers}
 
 
 def _public_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
@@ -4987,34 +5053,108 @@ def list_workspace_admin_accounts(
     }
 
 
-@app.post("/api/workspace/admin/accounts", status_code=201)
-def create_workspace_admin_account(
-    request: WorkspaceAccountCreateRequest,
+@app.post("/api/workspace/admin/accounts")
+def create_workspace_admin_account_retired(
+    _request: WorkspaceAccountCreateRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> None:
+    raise HTTPException(status_code=410, detail="Use the workspace invitation flow")
+
+
+@app.post("/api/workspace/admin/invitations", status_code=201)
+def create_workspace_invitation(
+    request: WorkspaceInvitationCreateRequest,
     principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    if ticket_repository.get_workspace_account(request.account_id) is not None:
-        raise HTTPException(status_code=409, detail="Workspace account already exists")
-    created_at = now_iso()
-    account = ticket_repository.save_workspace_account(
-        {
-            "account_id": request.account_id,
-            "display_name": request.display_name,
-            "role": request.role,
-            "password_hash": hash_workspace_password(request.password),
-            "active": True,
-            "availability": "unavailable",
-            "created_at": created_at,
-            "updated_at": created_at,
-        }
-    )
-    ticket_repository.record_workspace_audit_event(
-        "workspace_account_created",
-        actor_id=principal.account_id,
-        target_id=request.account_id,
-        payload={"role": request.role, "display_name": request.display_name},
-        created_at=created_at,
-    )
+    try:
+        invitation = _workspace_invitation_service().create(
+            email=request.email,
+            role=request.role,
+            created_by=principal.account_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"invitation": invitation}
+
+
+@app.get("/api/workspace/invitations/{token}")
+def inspect_workspace_invitation(token: str) -> dict[str, Any]:
+    try:
+        invitation = _workspace_invitation_service().inspect(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Invitation is invalid, expired, or already used") from exc
+    return {"invitation": invitation}
+
+
+@app.post("/api/workspace/invitations/complete", status_code=201)
+def complete_workspace_invitation(
+    request: WorkspaceInvitationCompleteRequest,
+) -> dict[str, Any]:
+    if request.password != request.confirm_password:
+        raise HTTPException(status_code=422, detail="Passwords do not match")
+    if not request.account_id.strip() or not request.display_name.strip():
+        raise HTTPException(status_code=422, detail="Account ID and display name are required")
+    try:
+        account = _workspace_invitation_service().complete(
+            raw_token=request.token,
+            account_id=request.account_id.strip(),
+            display_name=request.display_name.strip(),
+            password=request.password,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "account" in message else 410
+        raise HTTPException(status_code=status_code, detail=message) from exc
     return {"account": _public_workspace_account(account)}
+
+
+@app.get("/api/workspace/admin/engineer-schedules")
+def list_workspace_engineer_schedules(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return _workspace_schedule_payload()
+
+
+@app.put("/api/workspace/admin/engineers/{engineer_id}/schedule")
+def replace_workspace_engineer_schedule(
+    engineer_id: str,
+    request: EngineerScheduleUpdateRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    weekdays = [shift.weekday for shift in request.shifts]
+    if len(weekdays) != len(set(weekdays)):
+        raise HTTPException(status_code=422, detail="Each weekday can have only one shift")
+    normalized_shifts = []
+    for shift in request.shifts:
+        start_minute = time_to_minutes(shift.start)
+        end_minute = time_to_minutes(shift.end)
+        if start_minute == end_minute:
+            raise HTTPException(status_code=422, detail="Shift start and end must differ")
+        normalized_shifts.append(
+            {
+                "weekday": shift.weekday,
+                "start_minute": start_minute,
+                "end_minute": end_minute,
+            }
+        )
+    updated_at = now_iso()
+    schedule = ticket_repository.replace_engineer_schedule(
+        engineer_id,
+        timezone_name=WORKSPACE_SCHEDULE_TIMEZONE,
+        shifts=normalized_shifts,
+        actor_id=principal.account_id,
+        updated_at=updated_at,
+    )
+    if schedule is None:
+        raise HTTPException(status_code=404, detail="Engineer account not found")
+    reassigned = _engineer_assignment_service().reassign_unavailable_cases()
+    dispatched = _engineer_assignment_service().dispatch_pending_cases()
+    return {
+        **_workspace_schedule_payload(),
+        "assignment_updates": reassigned + dispatched,
+    }
 
 
 @app.patch("/api/workspace/admin/engineers/{engineer_id}/availability")
@@ -5053,13 +5193,15 @@ def update_workspace_admin_assignment(
     assigned_engineer_id = str(request.engineer_id or "").strip() or None
     if assigned_engineer_id:
         account = ticket_repository.get_workspace_account(assigned_engineer_id)
+        on_schedule = on_schedule_engineer_ids(ticket_repository.list_engineer_schedules())
         if (
             not isinstance(account, dict)
             or account.get("role") != "engineer"
             or not bool(account.get("active", True))
             or account.get("availability") != "available"
+            or assigned_engineer_id not in on_schedule
         ):
-            raise HTTPException(status_code=409, detail="Engineer is not available")
+            raise HTTPException(status_code=409, detail="Engineer is not on schedule and available")
     updated_at = datetime.now(timezone.utc)
     engineer_case = ticket_repository.update_engineer_case_assignment(
         engineer_case_id,
@@ -5151,6 +5293,7 @@ def get_workspace_admin_metrics(
     resolution_seconds: list[float] = []
     sla_reassign_count = 0
     availability_reassign_count = 0
+    schedule_reassign_count = 0
     guardrail_reject_count = 0
     now = datetime.now(timezone.utc)
 
@@ -5192,10 +5335,20 @@ def get_workspace_admin_metrics(
             availability_reassign_count += int(
                 event_type == "engineer_case_availability_reassigned"
             )
+            schedule_reassign_count += int(
+                event_type == "engineer_case_schedule_reassigned"
+            )
             guardrail_reject_count += int(
                 "guardrail" in event_type and ("reject" in event_type or "fail" in event_type)
             )
     engineer_accounts = [account for account in accounts if account.get("role") == "engineer"]
+    active_engineer_ids = {
+        str(account.get("account_id") or "").strip()
+        for account in engineer_accounts
+        if bool(account.get("active", True))
+    }
+    on_schedule = on_schedule_engineer_ids(ticket_repository.list_engineer_schedules(), now)
+    on_schedule.intersection_update(active_engineer_ids)
     billing_automation_count = sum(
         1 for ticket in billing_tickets if ticket.get("automation_status") == "automation"
     )
@@ -5232,6 +5385,7 @@ def get_workspace_admin_metrics(
             ),
             "sla_reassigned": sla_reassign_count,
             "availability_reassigned": availability_reassign_count,
+            "schedule_reassigned": schedule_reassign_count,
         },
         "engineers": {
             "total": len(engineer_accounts),
@@ -5240,6 +5394,13 @@ def get_workspace_admin_metrics(
             ),
             "unavailable": sum(
                 1 for account in engineer_accounts if account.get("availability") != "available"
+            ),
+            "on_schedule": len(on_schedule),
+            "dispatch_eligible": sum(
+                1
+                for account in engineer_accounts
+                if account.get("availability") == "available"
+                and str(account.get("account_id") or "").strip() in on_schedule
             ),
         },
         "billing": {

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 os.environ.setdefault("WORKSPACE_AUTH_SECRET", "workspace-api-test-secret")
@@ -77,18 +80,65 @@ class WorkspaceApiTests(unittest.TestCase):
             }
         )
 
-    def test_admin_creates_engineer_and_availability_change_is_audited(self) -> None:
-        headers = self._admin_headers()
-        created = self.client.post(
-            "/api/workspace/admin/accounts",
+    def _seed_engineer(self, account_id: str = "Maya") -> None:
+        now = "2026-07-18T00:00:00+00:00"
+        self.repository.save_workspace_account(
+            {
+                "account_id": account_id,
+                "display_name": account_id,
+                "role": "engineer",
+                "password_hash": hash_workspace_password("engineer-password-1"),
+                "availability": "unavailable",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
+    def _set_schedule_now(self, account_id: str, headers: dict[str, str]) -> None:
+        local_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        start_minute = local_now.hour * 60 + local_now.minute
+        end_minute = (start_minute + 2) % 1440
+        response = self.client.put(
+            f"/api/workspace/admin/engineers/{account_id}/schedule",
             headers=headers,
             json={
-                "account_id": "Maya",
-                "display_name": "Maya",
-                "role": "engineer",
-                "password": "engineer-password-1",
+                "shifts": [
+                    {
+                        "weekday": local_now.weekday(),
+                        "start": f"{start_minute // 60:02d}:{start_minute % 60:02d}",
+                        "end": f"{end_minute // 60:02d}:{end_minute % 60:02d}",
+                    }
+                ]
             },
         )
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_admin_invites_engineer_and_setup_link_creates_account(self) -> None:
+        headers = self._admin_headers()
+        sent_mail: dict[str, str] = {}
+        with patch(
+            "backend.services.workspace_invitations.send_graph_mail",
+            side_effect=lambda **kwargs: sent_mail.update(kwargs),
+        ):
+            invited = self.client.post(
+                "/api/workspace/admin/invitations",
+                headers=headers,
+                json={"email": "Maya@Example.com", "role": "engineer"},
+            )
+        token_match = re.search(r"[?&]token=([^\s]+)", sent_mail.get("body", ""))
+        self.assertIsNotNone(token_match)
+        assert token_match is not None
+        setup = self.client.post(
+            "/api/workspace/invitations/complete",
+            json={
+                "token": token_match.group(1),
+                "account_id": "Maya",
+                "display_name": "Maya",
+                "password": "engineer-password-1",
+                "confirm_password": "engineer-password-1",
+            },
+        )
+        self._set_schedule_now("Maya", headers)
         available = self.client.patch(
             "/api/workspace/admin/engineers/Maya/availability",
             headers=headers,
@@ -96,27 +146,36 @@ class WorkspaceApiTests(unittest.TestCase):
         )
         audit = self.client.get("/api/workspace/admin/audit", headers=headers)
 
-        self.assertEqual(created.status_code, 201, created.text)
-        self.assertNotIn("password_hash", created.json()["account"])
+        self.assertEqual(invited.status_code, 201, invited.text)
+        self.assertEqual(invited.json()["invitation"]["email"], "maya@example.com")
+        self.assertEqual(setup.status_code, 201, setup.text)
+        self.assertNotIn("password_hash", setup.json()["account"])
         self.assertEqual(available.status_code, 200, available.text)
         self.assertEqual(available.json()["account"]["availability"], "available")
         self.assertTrue(
             any(event["event_type"] == "engineer_availability_changed" for event in audit.json()["events"])
         )
 
+    def test_direct_admin_account_creation_is_retired(self) -> None:
+        response = self.client.post(
+            "/api/workspace/admin/accounts",
+            headers=self._admin_headers(),
+            json={
+                "account_id": "legacy",
+                "display_name": "Legacy",
+                "role": "engineer",
+                "password": "legacy-password",
+            },
+        )
+
+        self.assertEqual(response.status_code, 410, response.text)
+        self.assertIn("invitation", response.json()["detail"].lower())
+
     def test_engineer_only_sees_cases_assigned_by_system(self) -> None:
         self._seed_case()
         headers = self._admin_headers()
-        self.client.post(
-            "/api/workspace/admin/accounts",
-            headers=headers,
-            json={
-                "account_id": "Maya",
-                "display_name": "Maya",
-                "role": "engineer",
-                "password": "engineer-password-1",
-            },
-        )
+        self._seed_engineer()
+        self._set_schedule_now("Maya", headers)
         availability = self.client.patch(
             "/api/workspace/admin/engineers/Maya/availability",
             headers=headers,

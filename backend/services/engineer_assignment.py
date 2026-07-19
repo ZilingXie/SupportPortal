@@ -4,6 +4,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
+from backend.services.workspace_schedules import on_schedule_engineer_ids
+
 
 ASSIGNMENT_PENDING = "pending"
 ASSIGNMENT_ASSIGNED = "assigned"
@@ -22,6 +24,8 @@ class EngineerAssignmentRepository(Protocol):
     def list_engineer_case_headers(self) -> list[dict[str, Any]]: ...
 
     def list_workspace_accounts(self) -> list[dict[str, Any]]: ...
+
+    def list_engineer_schedules(self) -> list[dict[str, Any]]: ...
 
     def save_workspace_account(self, account: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -92,20 +96,25 @@ class EngineerAssignmentService:
             now = self.now_provider().astimezone(timezone.utc)
             now_iso = now.isoformat()
             current_engineer_id = str(engineer_case.get("assigned_engineer_id") or "").strip()
-            available = [
+            on_schedule = on_schedule_engineer_ids(
+                self.repository.list_engineer_schedules(),
+                now,
+            )
+            eligible = [
                 account
                 for account in self.repository.list_workspace_accounts()
                 if str(account.get("role") or "").strip().lower() == "engineer"
                 and bool(account.get("active", True))
                 and str(account.get("availability") or "").strip().lower() == "available"
+                and str(account.get("account_id") or "").strip() in on_schedule
             ]
             candidates = [
                 account
-                for account in available
+                for account in eligible
                 if str(account.get("account_id") or "").strip() != current_engineer_id
             ]
             if not candidates and not current_engineer_id:
-                candidates = available
+                candidates = eligible
             candidates.sort(
                 key=lambda account: (
                     _parse_datetime(account.get("last_assigned_at")) or datetime.min.replace(tzinfo=timezone.utc),
@@ -127,10 +136,18 @@ class EngineerAssignmentService:
                     assigned_engineer_id=None,
                     assigned_at=None,
                     sla_due_at=None,
-                    reason="no_available_engineer",
+                    reason=(
+                        "engineer_off_schedule"
+                        if reason == "engineer_off_schedule"
+                        else "no_available_engineer"
+                    ),
                     updated_at=now_iso,
                     actor=actor,
-                    event_type="engineer_case_dispatch_pending",
+                    event_type=(
+                        "engineer_case_schedule_reassigned"
+                        if reason == "engineer_off_schedule"
+                        else "engineer_case_dispatch_pending"
+                    ),
                     dispatch_status="pending",
                 )
 
@@ -146,6 +163,8 @@ class EngineerAssignmentService:
                 event_type = "engineer_case_sla_reassigned"
             elif reason == "engineer_unavailable":
                 event_type = "engineer_case_availability_reassigned"
+            elif reason == "engineer_off_schedule":
+                event_type = "engineer_case_schedule_reassigned"
             updated = self.repository.update_engineer_case_assignment(
                 engineer_case_id,
                 expected_version=expected_version,
@@ -198,6 +217,11 @@ class EngineerAssignmentService:
         return results
 
     def reassign_unavailable_cases(self) -> list[dict[str, Any]]:
+        now = self.now_provider().astimezone(timezone.utc)
+        on_schedule = on_schedule_engineer_ids(
+            self.repository.list_engineer_schedules(),
+            now,
+        )
         accounts = {
             str(account.get("account_id") or "").strip(): account
             for account in self.repository.list_workspace_accounts()
@@ -209,15 +233,16 @@ class EngineerAssignmentService:
                 continue
             engineer_id = str(engineer_case.get("assigned_engineer_id") or "").strip()
             account = accounts.get(engineer_id)
-            if (
+            account_is_available = (
                 isinstance(account, dict)
                 and bool(account.get("active", True))
                 and str(account.get("availability") or "").strip().lower() == "available"
-            ):
+            )
+            if account_is_available and engineer_id in on_schedule:
                 continue
             updated = self.dispatch_case(
                 str(engineer_case.get("engineer_case_id") or ""),
-                reason="engineer_unavailable",
+                reason="engineer_off_schedule" if account_is_available else "engineer_unavailable",
             )
             if updated is not None:
                 results.append(updated)
