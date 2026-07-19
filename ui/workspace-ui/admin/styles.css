@@ -3703,6 +3703,32 @@ p {
   flex: 0 0 auto;
 }
 
+.admin-new-account-btn {
+  gap: 10px;
+  min-width: 180px;
+  min-height: 52px;
+  padding: 0 22px;
+  border-radius: 14px;
+  background: var(--primary);
+  box-shadow: none;
+  color: var(--surface-lowest);
+  font-size: 16px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.admin-new-account-btn .material-symbols-outlined {
+  font-size: 28px;
+  font-weight: 300;
+}
+
+.admin-new-account-btn:hover,
+.admin-new-account-btn:focus-visible {
+  background: #0078b3;
+  color: var(--surface-lowest);
+  text-decoration: none;
+}
+
 .admin-eyebrow {
   margin: 0 0 5px;
   color: var(--primary);
@@ -4072,6 +4098,13 @@ p {
   color: var(--ink-soft);
   font-size: 12px;
   font-weight: 700;
+  text-decoration: none;
+}
+
+.admin-back-link:hover,
+.admin-back-link:focus-visible,
+.admin-back-link:visited {
+  text-decoration: none;
 }
 
 .admin-invite-page .admin-main-header {

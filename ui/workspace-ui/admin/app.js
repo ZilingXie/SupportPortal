@@ -434,8 +434,8 @@ function renderAdminEngineerManagement() {
   return `
     <header class="admin-main-header admin-management-header">
       <div><h1>Engineer Management</h1><p>Manage weekly coverage and dispatch eligibility.</p></div>
-      <a class="btn btn-primary" href="#new-account" data-section="new-account">
-        <span class="material-symbols-outlined" aria-hidden="true">person_add</span><span>New Account</span>
+      <a class="btn btn-primary admin-new-account-btn" href="#new-account" data-section="new-account">
+        <span class="material-symbols-outlined" aria-hidden="true">add</span><span>New Account</span>
       </a>
     </header>
     <section class="admin-roster-section" aria-labelledby="on-schedule-title">
