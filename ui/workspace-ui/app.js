@@ -2729,35 +2729,33 @@ function renderLogin() {
   workspaceRootEl.innerHTML = `
     <section class="workspace-entry-view">
       <aside class="workspace-entry-intro">
-        <div class="workspace-brand-lockup">
-          <span class="workspace-brand-icon material-symbols-outlined" aria-hidden="true">assignment_ind</span>
-          <div>
-            <p class="workspace-eyebrow">SupportPortal Workspace</p>
-            <strong>Engineer Case Workspace</strong>
-          </div>
-        </div>
-        <div>
-          <h1>Work the Engineer Cases assigned to you.</h1>
+        <div class="workspace-login-copy">
+          <p class="workspace-login-badge">Agora internal platform</p>
+          <h1>Focused case operations for technical support engineers.</h1>
           <p class="workspace-intro-copy">
-            Sign in with your Workspace account. System dispatch controls assignment and starts the three-hour SLA.
+            Review assigned Engineer Cases, investigate with evidence, and move customer issues toward resolution in one controlled workspace.
           </p>
         </div>
-        <ul class="workspace-policy-list" aria-label="Workspace policy">
-          <li><span class="material-symbols-outlined" aria-hidden="true">assignment_ind</span><span>Engineer Cases are assigned by the system; manual claim is disabled.</span></li>
-          <li><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span>The SLA starts immediately when a case is assigned.</span></li>
-          <li><span class="material-symbols-outlined" aria-hidden="true">fact_check</span><span>Replies continue through guardrail, approve, and final approve.</span></li>
-        </ul>
+        <div class="workspace-login-highlights" aria-label="Engineer Workspace access details">
+          <section class="workspace-login-highlight">
+            <p class="workspace-eyebrow">Designed for</p>
+            <strong>Assigned cases, guided investigation, and clear handoff</strong>
+          </section>
+          <section class="workspace-login-highlight is-accented">
+            <p class="workspace-eyebrow">Access model</p>
+            <strong>Use your Workspace credentials to continue</strong>
+          </section>
+        </div>
       </aside>
       <section class="workspace-selector-panel">
         <div class="workspace-panel-head">
-          <p class="workspace-eyebrow">Workspace account</p>
-          <h2>Engineer login</h2>
-          <p>Use the account created by Workspace Admin.</p>
+          <h2>Sign in</h2>
+          <p>Enter your work credentials to access assigned Engineer Cases and investigation tools.</p>
         </div>
         <form id="workspace-login-form" class="workspace-login-form">
           <label class="field">
             <span>Account ID</span>
-            <input name="account_id" type="text" autocomplete="username" required maxlength="128" />
+            <input name="account_id" type="text" autocomplete="username" placeholder="name" required maxlength="128" />
           </label>
           <label class="field">
             <span>Password</span>
@@ -2765,10 +2763,10 @@ function renderLogin() {
           </label>
           <p id="workspace-login-error" class="login-error" role="alert"></p>
           <button class="btn btn-primary workspace-entry-cta" type="submit">
-            Sign in
-            <span class="material-symbols-outlined" aria-hidden="true">login</span>
+            Sign in to Engineer Workspace
           </button>
         </form>
+        <p class="workspace-login-note">Don't have an account? Contact your Workspace administrator.</p>
       </section>
     </section>
   `;
