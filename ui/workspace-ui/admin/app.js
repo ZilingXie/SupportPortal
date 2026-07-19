@@ -214,7 +214,7 @@ function renderAdminShell(content) {
     <section class="admin-shell">
       <aside class="admin-sidebar">
         <a class="admin-rail-brand" href="#overview" data-section="overview" aria-label="Admin overview">
-          <span class="admin-rail-brand-icon material-symbols-outlined admin-rail-symbol" data-fallback="AD" aria-hidden="true">admin_panel_settings</span>
+          <span class="admin-rail-brand-icon admin-rail-symbol-wrap" aria-hidden="true"><span class="material-symbols-outlined admin-rail-glyph">admin_panel_settings</span><span class="admin-rail-fallback">AD</span></span>
           <span class="admin-rail-copy"><strong>Admin</strong><small>Dispatch control</small></span>
         </a>
         <div class="admin-sidebar-body">
@@ -223,7 +223,7 @@ function renderAdminShell(content) {
               .map(
                 ([id, icon, label, fallback]) => `
                   <li><a href="#${id}" data-section="${id}" class="${activeNavSection === id ? "is-active" : ""}" title="${escapeHtml(label)}">
-                    <span class="material-symbols-outlined admin-rail-symbol" data-fallback="${fallback}" aria-hidden="true">${icon}</span>
+                    <span class="admin-rail-symbol-wrap" aria-hidden="true"><span class="material-symbols-outlined admin-rail-glyph">${icon}</span><span class="admin-rail-fallback">${fallback}</span></span>
                     <span class="admin-rail-label">${escapeHtml(label)}</span>
                   </a></li>`
               )
@@ -236,7 +236,7 @@ function renderAdminShell(content) {
             <span class="admin-user-meta"><strong>${escapeHtml(accountName)}</strong><small>Administrator</small></span>
           </div>
           <button class="admin-logout-btn" type="button" data-action="sign-out" title="Sign out" aria-label="Sign out">
-            <span class="material-symbols-outlined admin-rail-symbol" data-fallback="LO" aria-hidden="true">logout</span>
+            <span class="admin-rail-symbol-wrap" aria-hidden="true"><span class="material-symbols-outlined admin-rail-glyph">logout</span><span class="admin-rail-fallback">LO</span></span>
           </button>
         </footer>
       </aside>
@@ -648,6 +648,19 @@ function renderAudit() {
   `;
 }
 
+function syncAdminRailScrollPosition() {
+  const sidebarBody = root.querySelector(".admin-sidebar-body");
+  const activeLink = root.querySelector(".admin-sidebar-nav a.is-active");
+  if (!sidebarBody || !activeLink) return;
+  const isMobileRail = globalThis.matchMedia?.("(max-width: 720px)")?.matches === true;
+  if (!isMobileRail) {
+    sidebarBody.scrollLeft = 0;
+    return;
+  }
+  const centeredLeft = activeLink.offsetLeft - (sidebarBody.clientWidth - activeLink.offsetWidth) / 2;
+  sidebarBody.scrollLeft = Math.max(0, Math.min(centeredLeft, sidebarBody.scrollWidth - sidebarBody.clientWidth));
+}
+
 function renderAdmin() {
   if (!isAdminAuthenticated()) {
     renderLogin();
@@ -669,7 +682,7 @@ function renderAdmin() {
     ? renderAudit()
     : renderOverview();
   root.innerHTML = renderAdminShell(content);
-  root.querySelector(".admin-sidebar-nav a.is-active")?.scrollIntoView({ block: "nearest", inline: "center" });
+  syncAdminRailScrollPosition();
 }
 
 async function loadAdminData() {

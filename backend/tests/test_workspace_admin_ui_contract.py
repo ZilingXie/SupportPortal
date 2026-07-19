@@ -172,7 +172,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-admin-schedule-pills-1", html)
+        self.assertIn("20260719-admin-rail-refresh-fallback-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -188,10 +188,34 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("admin-topbar-btn", source)
         self.assertIn("grid-template-columns: 96px minmax(0, 1fr)", css)
         self.assertIn("width: 264px", css)
-        self.assertIn('data-fallback="AD"', source)
-        self.assertIn('data-fallback="LO"', source)
+        self.assertIn('class="admin-rail-fallback">AD</span>', source)
+        self.assertIn('class="admin-rail-fallback">LO</span>', source)
         self.assertIn("material-symbols-failed", html)
-        self.assertIn("html.material-symbols-failed .admin-sidebar .admin-rail-symbol", css)
+        self.assertIn("material-symbols-ready", html)
+        self.assertIn("document.fonts.check(fontSpec, railGlyphs)", html)
+        self.assertIn('html:not(.material-symbols-ready) .admin-sidebar .admin-rail-glyph', css)
+        self.assertIn('html.material-symbols-ready .admin-sidebar .admin-rail-fallback', css)
+        self.assertIn("syncAdminRailScrollPosition", source)
+        self.assertNotIn('scrollIntoView({ block: "nearest", inline: "center" })', source)
+
+        self.run_admin_app_script(
+            """
+            const sidebarBody = { scrollLeft: 73, clientWidth: 68, scrollWidth: 236 };
+            const activeLink = { offsetLeft: 104, offsetWidth: 44 };
+            root.querySelector = (selector) => selector === ".admin-sidebar-body" ? sidebarBody : activeLink;
+            globalThis.matchMedia = () => ({ matches: false });
+            syncAdminRailScrollPosition();
+            if (sidebarBody.scrollLeft !== 0) throw new Error("desktop rail retained a hidden horizontal offset");
+
+            sidebarBody.clientWidth = 300;
+            sidebarBody.scrollWidth = 720;
+            activeLink.offsetLeft = 430;
+            activeLink.offsetWidth = 120;
+            globalThis.matchMedia = () => ({ matches: true });
+            syncAdminRailScrollPosition();
+            if (sidebarBody.scrollLeft !== 340) throw new Error("mobile active navigation was not centered within its own scroller");
+            """
+        )
 
     def test_admin_account_entry_uses_simple_blue_button_and_plain_back_link(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
@@ -294,7 +318,6 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "admin-roster-statuses",
             'adminSection = "schedule"',
             'globalThis.location.hash = "schedule"',
-            'scrollIntoView({ block: "nearest", inline: "center" })',
         ):
             self.assertIn(marker, source)
 
