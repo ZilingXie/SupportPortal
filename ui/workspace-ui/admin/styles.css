@@ -2181,6 +2181,10 @@ p {
   min-width: 880px;
 }
 
+.admin-case-table th {
+  padding-block: 12px;
+}
+
 .admin-case-table th:first-child,
 .admin-case-table td:first-child {
   padding-left: 22px;
