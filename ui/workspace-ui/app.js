@@ -1,6 +1,6 @@
-const WORKSPACE_AUTH_KEY = "supportportal_workspace_selected_engineer";
-const WORKSPACE_ACCESS_TOKEN_KEY = "supportportal_workspace_access_token";
-const WORKSPACE_ACCOUNT_KEY = "supportportal_workspace_account";
+const WORKSPACE_AUTH_KEY = "supportportal_engineer_workspace_selected_engineer";
+const WORKSPACE_ACCESS_TOKEN_KEY = "supportportal_engineer_workspace_access_token";
+const WORKSPACE_ACCOUNT_KEY = "supportportal_engineer_workspace_account";
 const WORKSPACE_ACTIVE_KEY = "supportportal_workspace_active";
 const WORKSPACE_BREAK_AFTER_CASE_KEY = "supportportal_workspace_break_after_case";
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -393,6 +393,10 @@ function normalizeEngineerId(value) {
   return String(value || "").trim();
 }
 
+function isEngineerAccount(account) {
+  return String(account?.role || "").trim().toLowerCase() === "engineer";
+}
+
 function refreshWorkspaceSessionState() {
   const storedEngineerId = normalizeEngineerId(readStorage(WORKSPACE_AUTH_KEY, ""));
   const storedAccount = readStorage(WORKSPACE_ACCOUNT_KEY, null);
@@ -415,7 +419,7 @@ function currentEngineerId() {
 
 function getSelectedEngineer() {
   const engineerId = getSelectedEngineerId();
-  if (!engineerId || !workspaceAccount) {
+  if (!engineerId || !isEngineerAccount(workspaceAccount)) {
     return null;
   }
   const displayName = String(workspaceAccount.display_name || engineerId).trim() || engineerId;
@@ -2562,7 +2566,11 @@ function applyLocalTicketPatch(ticketId, patch) {
 
 function isAuthenticated() {
   refreshWorkspaceSessionState();
-  return Boolean(selectedEngineerId && workspaceAccount && workspaceAccessToken);
+  return Boolean(
+    selectedEngineerId &&
+      workspaceAccessToken &&
+      isEngineerAccount(workspaceAccount)
+  );
 }
 
 function toggleScreens() {
@@ -5970,6 +5978,9 @@ async function handleLoginSubmit(event) {
   const accessToken = String(payload?.access_token || "").trim();
   if (!account || !accessToken) {
     throw new Error("Workspace login returned an invalid session");
+  }
+  if (!isEngineerAccount(account)) {
+    throw new Error("Engineer role required");
   }
   writeStorage(WORKSPACE_AUTH_KEY, String(account.account_id || email));
   writeStorage(WORKSPACE_ACCOUNT_KEY, account);

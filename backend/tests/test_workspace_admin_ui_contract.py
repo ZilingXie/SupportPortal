@@ -14,11 +14,16 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               const fs = require("fs");
               const vm = require("vm");
               const root = {{ innerHTML: "", addEventListener() {{}}, querySelector() {{ return null; }} }};
+              const storage = new Map();
               const sandbox = {{
                 console, Headers,
                 window: {{ location: {{ pathname: "/workspace/admin/" }} }},
                 document: {{ getElementById() {{ return root; }} }},
-                localStorage: {{ getItem() {{ return null; }}, setItem() {{}}, removeItem() {{}} }},
+                localStorage: {{
+                  getItem(key) {{ return storage.has(key) ? storage.get(key) : null; }},
+                  setItem(key, value) {{ storage.set(key, String(value)); }},
+                  removeItem(key) {{ storage.delete(key); }},
+                }},
                 fetch: async () => ({{ ok: true, status: 200, json: async () => ({{ cases: [] }}) }}),
                 FormData: function FormData() {{ return {{ get() {{ return ""; }}, entries() {{ return []; }} }}; }},
               }};
@@ -65,6 +70,50 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             self.assertIn(marker, source)
         self.assertNotIn("supportportal_assignment_admin_schedule", source)
         self.assertNotIn('/api/engineer/tickets?status=all', source)
+
+    def test_admin_session_is_role_gated_and_preserves_engineer_storage(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        for marker in (
+            "supportportal_admin_workspace_access_token",
+            "supportportal_admin_workspace_account",
+            "supportportal_admin_workspace_account_id",
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("supportportal_engineer_workspace_", source)
+        self.assertNotIn('"supportportal_workspace_access_token"', source)
+
+        self.run_admin_app_script(
+            """
+            accessToken = "engineer-token";
+            currentAccount = { account_id: "Zac", display_name: "Zac", role: "engineer" };
+            if (isAdminAuthenticated()) {
+              throw new Error("admin accepted an engineer session");
+            }
+            renderAdmin();
+            if (!root.innerHTML.includes("admin-login-page")) {
+              throw new Error("admin did not show its login page for an engineer session");
+            }
+
+            accessToken = "admin-token";
+            currentAccount = { account_id: "Admin", display_name: "Admin", role: "admin" };
+            if (!isAdminAuthenticated()) {
+              throw new Error("admin rejected a valid admin session");
+            }
+
+            localStorage.setItem(WORKSPACE_ACCESS_TOKEN_KEY, JSON.stringify("admin-token"));
+            localStorage.setItem(WORKSPACE_ACCOUNT_KEY, JSON.stringify({
+              account_id: "Admin", display_name: "Admin", role: "admin"
+            }));
+            localStorage.setItem("supportportal_engineer_workspace_access_token", JSON.stringify("engineer-token"));
+            signOut({ render: false });
+            if (localStorage.getItem(WORKSPACE_ACCESS_TOKEN_KEY) !== null) {
+              throw new Error("admin logout did not clear the admin session");
+            }
+            if (localStorage.getItem("supportportal_engineer_workspace_access_token") === null) {
+              throw new Error("admin logout cleared the engineer session");
+            }
+            """
+        )
 
     def test_admin_status_mapping_uses_assignment_status_not_client_status_or_assignee(self) -> None:
         self.run_admin_app_script(
@@ -123,7 +172,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-admin-half-hour-schedule-1", html)
+        self.assertIn("20260719-workspace-auth-isolation-2", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

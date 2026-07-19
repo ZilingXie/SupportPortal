@@ -93,8 +93,11 @@ class WorkspaceUiContractTests(unittest.TestCase):
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
         self.assertIn('fetchJson("/api/workspace/auth/login"', source)
         self.assertIn('fetchJson("/api/workspace/cases?assignment_status=assigned")', source)
-        self.assertIn("supportportal_workspace_access_token", source)
-        self.assertIn("supportportal_workspace_account", source)
+        self.assertIn("supportportal_engineer_workspace_access_token", source)
+        self.assertIn("supportportal_engineer_workspace_account", source)
+        self.assertIn("supportportal_engineer_workspace_selected_engineer", source)
+        self.assertNotIn("supportportal_admin_workspace_", source)
+        self.assertNotIn('"supportportal_workspace_access_token"', source)
         self.assertIn("assignment_status", source)
         self.assertIn("sla_due_at", source)
         self.assertIn("response.status === 401 && storedToken", source)
@@ -104,6 +107,65 @@ class WorkspaceUiContractTests(unittest.TestCase):
         self.assertNotIn("/api/engineer", source)
         self.assertNotIn("supportportal_workspace_daily_shift", source)
         self.assertNotIn("Choose a demo engineer", source)
+
+    def test_workspace_rejects_admin_session_and_preserves_admin_storage(self) -> None:
+        self.run_workspace_app_script(
+            """
+            localStorage.setItem(WORKSPACE_AUTH_KEY, JSON.stringify("Admin"));
+            localStorage.setItem(WORKSPACE_ACCESS_TOKEN_KEY, JSON.stringify("admin-token"));
+            localStorage.setItem(WORKSPACE_ACCOUNT_KEY, JSON.stringify({
+              account_id: "Admin", display_name: "Admin", role: "admin"
+            }));
+            localStorage.setItem("supportportal_admin_workspace_access_token", JSON.stringify("admin-token"));
+            refreshWorkspaceSessionState();
+
+            if (isAuthenticated() || getSelectedEngineer() !== null) {
+              throw new Error("workspace accepted an admin session as an engineer");
+            }
+            toggleScreens();
+            if (document.getElementById("login-screen").classList.contains("hidden")) {
+              throw new Error("workspace did not show its login screen for an admin session");
+            }
+
+            signOut();
+            if (localStorage.getItem("supportportal_admin_workspace_access_token") === null) {
+              throw new Error("workspace logout cleared the admin session");
+            }
+
+            localStorage.setItem(WORKSPACE_AUTH_KEY, JSON.stringify("Zac"));
+            localStorage.setItem(WORKSPACE_ACCESS_TOKEN_KEY, JSON.stringify("engineer-token"));
+            localStorage.setItem(WORKSPACE_ACCOUNT_KEY, JSON.stringify({
+              account_id: "Zac", display_name: "Zac", role: "engineer"
+            }));
+            if (!isAuthenticated()) {
+              throw new Error("workspace rejected a valid engineer session");
+            }
+            """
+        )
+
+    def test_workspace_login_rejects_admin_role_before_persisting(self) -> None:
+        self.run_workspace_app_script(
+            """
+            window.__fetchResponses.push({
+              access_token: "admin-token",
+              account: { account_id: "Admin", display_name: "Admin", role: "admin" }
+            });
+            const form = {
+              __formData: { email: "admin@example.com", password: "password" },
+              querySelector() { return null; }
+            };
+            let rejected = false;
+            try {
+              await handleLoginSubmit({ preventDefault() {}, target: form });
+            } catch (error) {
+              rejected = error.message === "Engineer role required";
+            }
+            if (!rejected) throw new Error("workspace login accepted an admin account");
+            if (localStorage.getItem(WORKSPACE_ACCESS_TOKEN_KEY) !== null) {
+              throw new Error("workspace persisted the rejected admin token");
+            }
+            """
+        )
 
     def test_workspace_login_uses_transactional_entry_contract(self) -> None:
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
@@ -122,7 +184,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-workspace-welcome-compact-1", html)
+        self.assertIn("20260719-workspace-auth-isolation-1", html)
         self.assertIn(".workspace-login-header", css)
         self.assertIn(".workspace-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -177,7 +239,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
             "Welcome back, ${escapeHtml(engineer.name)}",
             "I'm ready to roll",
             "workspace-home-copy",
-            "20260719-workspace-welcome-compact-1",
+            "20260719-workspace-auth-isolation-1",
         ):
             self.assertIn(marker, welcome_source + html)
         for removed_marker in (

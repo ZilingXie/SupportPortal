@@ -1,6 +1,6 @@
-const WORKSPACE_ACCESS_TOKEN_KEY = "supportportal_workspace_access_token";
-const WORKSPACE_ACCOUNT_KEY = "supportportal_workspace_account";
-const WORKSPACE_AUTH_KEY = "supportportal_workspace_selected_engineer";
+const WORKSPACE_ACCESS_TOKEN_KEY = "supportportal_admin_workspace_access_token";
+const WORKSPACE_ACCOUNT_KEY = "supportportal_admin_workspace_account";
+const WORKSPACE_AUTH_KEY = "supportportal_admin_workspace_account_id";
 
 const root = document.getElementById("workspace-admin-root");
 
