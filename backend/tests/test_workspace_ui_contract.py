@@ -120,10 +120,38 @@ class WorkspaceUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-workspace-login-stitch-1", html)
+        self.assertIn("20260719-workspace-ready-schedule-1", html)
         self.assertIn(".workspace-login-header", css)
         self.assertIn(".workspace-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
+
+    def test_workspace_login_stops_at_home_until_engineer_is_ready(self) -> None:
+        source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+
+        login_start = source.index("async function handleLoginSubmit")
+        login_end = source.index("function resetWorkspaceBoardState", login_start)
+        login_source = source[login_start:login_end]
+        self.assertIn("saveWorkspaceActive(false)", login_source)
+        self.assertIn("await loadWorkspaceSchedule()", login_source)
+        self.assertNotIn("readyToRoll()", login_source)
+        self.assertIn("Ready to roll", source)
+        self.assertIn('fetchJson("/api/workspace/cases?assignment_status=assigned")', source)
+
+    def test_workspace_home_renders_personal_weekly_schedule(self) -> None:
+        source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        for marker in (
+            'const WORKSPACE_SCHEDULE_ENDPOINT = "/api/workspace/schedule"',
+            "renderPersonalScheduleHtml",
+            "Personal weekly schedule",
+            "Monday",
+            "Ends next day",
+            "workspace-personal-schedule",
+            "workspace-schedule-week",
+            "repeat(7, minmax(112px, 1fr))",
+        ):
+            self.assertIn(marker, source + css)
 
     def test_workspace_disables_multi_agent_from_controlled_launch_main_flow(self) -> None:
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")

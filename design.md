@@ -228,6 +228,9 @@
 17. 新账号创建使用独立邀请任务页：Engineer Management 只保留 `New Account` 命令，邀请页收集 email 与冻结角色，并覆盖 sending / success / error 状态。
 18. Admin 响应式 rail 规则固定为：`>= 901px` 支持 hover/focus 展开，`721px - 900px` 保持 icon-only，`<= 720px` 退化为顶部静态导航并显示必要标签与账户操作。
 19. Admin rail 不显示浏览器滚动条；内容超出时仍须保留滚轮、触控板、触摸与键盘滚动能力，移动端顶部导航同样隐藏滚动轨迹。
+20. `/workspace` 登录成功后必须先进入 Engineer Workspace 首页，不得自动打开已派发 case；只有工程师点击 `Ready to roll` 后，系统才检查并打开下一条 assigned Engineer Case。
+21. Engineer Workspace 首页必须只读展示当前账号的 weekly schedule、当前是否命中 schedule、独立 availability 状态和 schedule timezone；排班编辑仍只允许在 `/workspace/admin` 完成。
+22. 个人 weekly schedule 使用 Monday-Sunday 的横向扫描布局：每天显示真实起止时间，无班次显示 `Off`，跨夜班次明确标记次日结束；窄屏允许区域内横向滚动，不得造成页面级横向溢出。
 
 ### 6.3 Ticket Dashboard (`/dashboard`)
 1. 固定 KPI 名称：

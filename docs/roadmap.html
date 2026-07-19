@@ -2011,7 +2011,7 @@ flowchart TD
         short: "Assignment",
         title: "Engineer Case assignment + Workspace",
         status: "doing",
-        thesis: "9/1 Controlled Launch 使用 `/workspace` 作为 Engineer Case 正式处理入口，`/workspace/admin` 作为邮件邀请、weekly schedule、availability、派单、审计和指标入口。工程师不能领取工单：系统只从当前 on-schedule 且 available 的 engineer 中按 round-robin 派单，assigned 后立即开始 3 小时 SLA；超时、engineer unavailable 或离开 schedule 时自动转派。Client Ticket status 与 Engineer Case assignment status 完全分层。",
+        thesis: "9/1 Controlled Launch 使用 `/workspace` 作为 Engineer Case 正式处理入口，工程师登录后先查看个人 weekly schedule，并仅在点击 Ready to roll 后进入 assigned case；`/workspace/admin` 作为邮件邀请、weekly schedule、availability、派单、审计和指标入口。工程师不能领取工单：系统只从当前 on-schedule 且 available 的 engineer 中按 round-robin 派单，assigned 后立即开始 3 小时 SLA；超时、engineer unavailable 或离开 schedule 时自动转派。Client Ticket status 与 Engineer Case assignment status 完全分层。",
         done: [
           { summary: "Workspace 账号、PBKDF2 password、signed token 与 Admin/Engineer RBAC 已接入；Admin 通过 Graph 邮件邀请和一次性 setup link 创建账号。", prs: [] },
           { summary: "Admin 可用 available/unavailable 开关管理 engineer availability，reason 可选，审计字段与 availability 变更 audit 已落地。", prs: [] },
@@ -2020,6 +2020,7 @@ flowchart TD
           { summary: "on-schedule + available engineer 的 round-robin 系统派单已接入；派单立即开始 3 小时 SLA，SLA 到期、engineer unavailable 或离开 schedule 会转派到下一个合格 engineer。", prs: [] },
           { summary: "派单更新使用 transaction、row lock 与 assignment_version compare-and-set，assignment event 与状态更新同事务写入。", prs: [] },
           { summary: "`/workspace` 仅展示当前登录 engineer 已被系统派发的 Engineer Case，并保留处理、回复、approve 与 final approve 主链路。", prs: [] },
+          { summary: "`/workspace` 登录后先展示个人 weekly schedule 和独立 availability 状态，工程师点击 Ready to roll 后才进入 assigned case。", prs: [] },
           { summary: "`/workspace/admin` 已接入真实账号、availability、Engineer Case board、人工派单/转派、dispatch、SLA reassign、audit 与 metrics API。", prs: [] },
           { summary: "manual claim 已禁用；旧 claim endpoint 返回 410，`/workspace` 不再调用 claim。", prs: [] },
           { summary: "Client Ticket status 与 Engineer Case assignment status 已在 payload、Workspace 和 Admin 中分层；legacy `support_engineer_cases.status` 仅保留兼容。", prs: [] }
