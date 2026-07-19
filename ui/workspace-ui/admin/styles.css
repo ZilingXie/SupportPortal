@@ -81,19 +81,33 @@ html.material-symbols-pending .material-symbols-outlined {
   visibility: hidden;
 }
 
-html.material-symbols-pending .admin-sidebar .admin-rail-symbol,
-html.material-symbols-failed .admin-sidebar .admin-rail-symbol {
-  visibility: visible;
-  font-size: 0;
+.admin-rail-symbol-wrap {
+  position: relative;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
 }
 
-html.material-symbols-pending .admin-sidebar .admin-rail-symbol::before,
-html.material-symbols-failed .admin-sidebar .admin-rail-symbol::before {
-  content: attr(data-fallback);
+.admin-rail-glyph,
+.admin-rail-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.admin-rail-fallback {
   font-family: "Inter", sans-serif;
   font-size: 10px;
   font-weight: 800;
+  line-height: 1;
   letter-spacing: 0;
+}
+
+html:not(.material-symbols-ready) .admin-sidebar .admin-rail-glyph,
+html.material-symbols-ready .admin-sidebar .admin-rail-fallback {
+  visibility: hidden;
 }
 
 .assignment-app {
@@ -3555,17 +3569,7 @@ p {
   padding: 0 9px;
 }
 
-.admin-rail-brand-icon,
-.admin-sidebar-nav .material-symbols-outlined {
-  flex: 0 0 44px;
-  width: 44px;
-  text-align: center;
-}
-
 .admin-rail-brand-icon {
-  display: grid;
-  place-items: center;
-  height: 44px;
   border-radius: 8px;
   background: #dbeafe;
   color: #1d4ed8;
@@ -3645,7 +3649,7 @@ p {
   color: #ffffff;
 }
 
-.admin-sidebar-nav a.is-active .material-symbols-outlined {
+.admin-sidebar-nav a.is-active .admin-rail-symbol-wrap {
   color: #60a5fa;
 }
 

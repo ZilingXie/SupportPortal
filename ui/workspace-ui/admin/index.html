@@ -23,11 +23,13 @@
           settled = true;
           document.documentElement.classList.remove("material-symbols-pending");
           document.documentElement.classList.remove("material-symbols-failed");
+          document.documentElement.classList.add("material-symbols-ready");
         };
         const markIconsFailed = () => {
           if (settled) return;
           settled = true;
           document.documentElement.classList.remove("material-symbols-pending");
+          document.documentElement.classList.remove("material-symbols-ready");
           document.documentElement.classList.add("material-symbols-failed");
         };
         const stylesheet = document.getElementById("material-symbols-font-stylesheet");
@@ -37,9 +39,16 @@
         }
         const timer = window.setTimeout(markIconsFailed, 2500);
         const waitForIcons = () => {
+          const fontSpec = '24px "Material Symbols Outlined"';
+          const railGlyphs = "admin_panel_settings dashboard groups calendar_month confirmation_number task_alt history logout";
           document.fonts
-            .load('24px "Material Symbols Outlined"')
-            .then(markIconsReady)
+            .load(fontSpec, railGlyphs)
+            .then((faces) => {
+              if (!faces.length || !document.fonts.check(fontSpec, railGlyphs)) {
+                throw new Error("Material Symbols rail glyphs are unavailable");
+              }
+              markIconsReady();
+            })
             .catch(markIconsFailed)
             .finally(() => window.clearTimeout(timer));
         };
@@ -50,7 +59,7 @@
         }
       })();
     </script>
-    <link rel="stylesheet" href="./styles.css?v=20260719-admin-schedule-pills-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260719-admin-rail-refresh-fallback-1" />
   </head>
   <body>
     <main
@@ -60,6 +69,6 @@
       aria-live="polite"
     >
     </main>
-    <script src="./app.js?v=20260719-admin-schedule-pills-1"></script>
+    <script src="./app.js?v=20260719-admin-rail-refresh-fallback-1"></script>
   </body>
 </html>
