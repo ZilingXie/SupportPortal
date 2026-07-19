@@ -181,6 +181,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn(".admin-shell", css)
         self.assertIn(".admin-case-tabs", css)
         self.assertIn(".admin-case-table", css)
+        self.assertIn(".admin-case-table th {\n  padding-block: 12px;", css)
 
     def test_workspace_admin_login_uses_transactional_entry_contract(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
@@ -199,7 +200,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-admin-case-tabs-rail-refresh-1", html)
+        self.assertIn("20260719-admin-case-header-spacing-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
