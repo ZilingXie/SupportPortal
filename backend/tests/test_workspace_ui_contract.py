@@ -120,7 +120,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-workspace-no-sidebar-1", html)
+        self.assertIn("20260719-workspace-topbar-1", html)
         self.assertIn(".workspace-login-header", css)
         self.assertIn(".workspace-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -132,13 +132,19 @@ class WorkspaceUiContractTests(unittest.TestCase):
 
         for marker in (
             'class="workspace-utility-bar"',
+            'class="workspace-topbar-brand"',
+            'class="workspace-topbar-brand-icon material-symbols-outlined"',
+            ">workspaces</span>",
+            "<strong>Workspace</strong>",
             'id="header-user-controls"',
             'class="header-user-controls workspace-account-controls"',
             'title="Logout"',
             'aria-label="Logout"',
             ".workspace-utility-bar",
+            ".workspace-topbar-brand",
+            ".workspace-topbar-brand-icon",
             ".workspace-account-controls",
-            "justify-content: flex-end",
+            "grid-template-columns: minmax(0, 1fr) auto",
         ):
             self.assertIn(marker, source + html + css)
         self.assertNotIn("workspace-assignment-sidebar", html)
