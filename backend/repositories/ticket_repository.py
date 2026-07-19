@@ -3301,7 +3301,7 @@ class PostgresTicketRepository:
                             engineer_id TEXT NOT NULL,
                             weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
                             start_minute SMALLINT NOT NULL CHECK (start_minute BETWEEN 0 AND 1439),
-                            end_minute SMALLINT NOT NULL CHECK (end_minute BETWEEN 0 AND 1439),
+                            end_minute SMALLINT NOT NULL CHECK (end_minute BETWEEN 0 AND 1440),
                             timezone TEXT NOT NULL,
                             updated_by TEXT NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL,
@@ -3311,6 +3311,60 @@ class PostgresTicketRepository:
                         """
                     ).format(self._table("support_engineer_schedules"))
                 )
+                legacy_end_constraint = "support_engineer_schedules_end_minute_check"
+                end_range_constraint = "support_engineer_schedules_end_minute_range_check"
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+                        self._table("support_engineer_schedules"),
+                        sql.Identifier(legacy_end_constraint),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("UPDATE {} SET end_minute = 1440 WHERE end_minute = 1439").format(
+                        self._table("support_engineer_schedules")
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT engineer_id, weekday, start_minute, end_minute
+                        FROM {}
+                        WHERE MOD(start_minute, 30) <> 0
+                           OR (end_minute <> 1440 AND MOD(end_minute, 30) <> 0)
+                        ORDER BY engineer_id, weekday
+                        """
+                    ).format(self._table("support_engineer_schedules"))
+                )
+                off_grid_shifts = cur.fetchall()
+                if off_grid_shifts:
+                    details = ", ".join(
+                        f"{row[0]} weekday={row[1]} {row[2]}-{row[3]}"
+                        for row in off_grid_shifts
+                    )
+                    raise RuntimeError(
+                        "Engineer schedules contain non-half-hour legacy values: " + details
+                    )
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM pg_constraint constraint_row
+                    JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid
+                    JOIN pg_namespace schema_row ON schema_row.oid = table_row.relnamespace
+                    WHERE schema_row.nspname = %s
+                      AND table_row.relname = %s
+                      AND constraint_row.conname = %s
+                    """,
+                    (self._schema, "support_engineer_schedules", end_range_constraint),
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        sql.SQL(
+                            "ALTER TABLE {} ADD CONSTRAINT {} CHECK (end_minute BETWEEN 0 AND 1440)"
+                        ).format(
+                            self._table("support_engineer_schedules"),
+                            sql.Identifier(end_range_constraint),
+                        )
+                    )
                 cur.execute(
                     sql.SQL(
                         """

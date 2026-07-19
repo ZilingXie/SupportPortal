@@ -43,7 +43,7 @@ def minutes_to_time(value: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def time_to_minutes(value: str) -> int:
+def time_to_minutes(value: str, *, allow_24: bool = False) -> int:
     parts = str(value or "").strip().split(":")
     if len(parts) != 2:
         raise ValueError("time must use HH:MM")
@@ -51,6 +51,8 @@ def time_to_minutes(value: str) -> int:
         hour, minute = (int(part) for part in parts)
     except ValueError as exc:
         raise ValueError("time must use HH:MM") from exc
+    if allow_24 and hour == 24 and minute == 0:
+        return 24 * 60
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
         raise ValueError("time must use HH:MM")
     return hour * 60 + minute

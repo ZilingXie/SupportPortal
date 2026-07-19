@@ -96,8 +96,8 @@ class WorkspaceApiTests(unittest.TestCase):
 
     def _set_schedule_now(self, account_id: str, headers: dict[str, str]) -> None:
         local_now = datetime.now(ZoneInfo("Asia/Shanghai"))
-        start_minute = local_now.hour * 60 + local_now.minute
-        end_minute = (start_minute + 2) % 1440
+        start_minute = ((local_now.hour * 60 + local_now.minute) // 30) * 30
+        end_minute = (start_minute + 30) % 1440
         response = self.client.put(
             f"/api/workspace/admin/engineers/{account_id}/schedule",
             headers=headers,
@@ -252,6 +252,37 @@ class WorkspaceApiTests(unittest.TestCase):
             [{"weekday": 0, "start": "09:00", "end": "17:00"}],
         )
         self.assertNotIn("password_hash", response.json()["engineer"])
+
+    def test_admin_schedule_accepts_half_hour_and_24_hour_end(self) -> None:
+        self._seed_engineer("Maya")
+        response = self.client.put(
+            "/api/workspace/admin/engineers/Maya/schedule",
+            headers=self._admin_headers(),
+            json={"shifts": [{"weekday": 0, "start": "00:00", "end": "24:00"}]},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        engineer = next(item for item in response.json()["engineers"] if item["account_id"] == "Maya")
+        self.assertEqual(engineer["shifts"], [{"weekday": 0, "start": "00:00", "end": "24:00"}])
+
+    def test_admin_schedule_rejects_non_half_hour_values(self) -> None:
+        self._seed_engineer("Maya")
+        headers = self._admin_headers()
+        invalid_shifts = [
+            {"weekday": 0, "start": "09:15", "end": "17:30"},
+            {"weekday": 0, "start": "24:00", "end": "17:30"},
+            {"weekday": 0, "start": "09:00", "end": "17:45"},
+            {"weekday": 0, "start": "09:00", "end": "24:30"},
+        ]
+
+        for shift in invalid_shifts:
+            with self.subTest(shift=shift):
+                response = self.client.put(
+                    "/api/workspace/admin/engineers/Maya/schedule",
+                    headers=headers,
+                    json={"shifts": [shift]},
+                )
+                self.assertEqual(response.status_code, 422, response.text)
 
     def test_engineer_cannot_access_another_engineers_case_mutations(self) -> None:
         self._seed_case()
