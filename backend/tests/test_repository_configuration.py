@@ -233,7 +233,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIn(
             "INSERT INTO {} AS existing_account (\n"
-            "                                account_id, display_name, role, password_hash, active",
+            "                                account_id, email, display_name, role, password_hash, active",
             repo_source,
         )
         self.assertIn("THEN existing_account.password_hash", repo_source)
@@ -1970,6 +1970,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "previous_assignees JSONB NOT NULL DEFAULT '[]'::jsonb",
             "assignment_version INTEGER NOT NULL DEFAULT 0",
             "CREATE TABLE IF NOT EXISTS support_workspace_accounts",
+            "CREATE TABLE IF NOT EXISTS support_workspace_account_invitations",
+            "CREATE TABLE IF NOT EXISTS support_engineer_schedules",
+            "idx_support_workspace_accounts_email_unique",
             "CREATE TABLE IF NOT EXISTS support_workspace_audit_events",
             "CREATE TABLE IF NOT EXISTS support_idempotency_records",
             "CREATE TABLE IF NOT EXISTS support_rollout_counters",
@@ -1984,6 +1987,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "assigned_engineer_id = support_engineer_cases.assigned_engineer_id",
             "assignment_status = support_engineer_cases.assignment_status",
             "def set_engineer_availability",
+            "def create_workspace_invitation",
+            "def replace_engineer_schedule",
             "def begin_idempotent_request",
             "def record_rollout_event",
         ):

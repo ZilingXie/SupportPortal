@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
+from backend.services.graph_mail import (
+    acquire_graph_access_token,
+    load_graph_mail_config,
+    send_graph_mail_with_token,
+)
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, resolve_model_profile
 
@@ -371,57 +376,26 @@ def record_billing_request_reply(reply: BillingRequestReply, *, record_path: str
 
 
 def _load_graph_mail_config() -> dict[str, str]:
-    token_cache = _clean_text(os.getenv(BILLING_GRAPH_TOKEN_CACHE_ENV)) or DEFAULT_BILLING_GRAPH_TOKEN_CACHE
+    config = load_graph_mail_config()
     return {
-        BILLING_GRAPH_TENANT_ID_ENV: _clean_text(os.getenv(BILLING_GRAPH_TENANT_ID_ENV))
-        or DEFAULT_BILLING_GRAPH_TENANT_ID,
-        BILLING_GRAPH_CLIENT_ID_ENV: _clean_text(os.getenv(BILLING_GRAPH_CLIENT_ID_ENV))
-        or DEFAULT_BILLING_GRAPH_CLIENT_ID,
-        BILLING_GRAPH_CLIENT_SECRET_ENV: _clean_text(os.getenv(BILLING_GRAPH_CLIENT_SECRET_ENV)),
-        BILLING_GRAPH_USERNAME_ENV: _clean_text(os.getenv(BILLING_GRAPH_USERNAME_ENV))
-        or DEFAULT_BILLING_GRAPH_USERNAME,
-        BILLING_GRAPH_TOKEN_CACHE_ENV: token_cache,
+        BILLING_GRAPH_TENANT_ID_ENV: config["tenant_id"],
+        BILLING_GRAPH_CLIENT_ID_ENV: config["client_id"],
+        BILLING_GRAPH_CLIENT_SECRET_ENV: config["client_secret"],
+        BILLING_GRAPH_USERNAME_ENV: config["username"],
+        BILLING_GRAPH_TOKEN_CACHE_ENV: config["token_cache"],
     }
 
 
 def _acquire_graph_access_token(graph_config: dict[str, str]) -> str:
-    cache_path = Path(graph_config[BILLING_GRAPH_TOKEN_CACHE_ENV]).expanduser()
-    token_cache = _read_graph_token_cache(cache_path)
-    cached_access_token, expires_at = _cached_graph_access_token(token_cache)
-    if cached_access_token and expires_at > int(time.time()) + 60:
-        return cached_access_token
-
-    refresh_token = _cached_graph_refresh_token(token_cache)
-    if not refresh_token:
-        raise ValueError(f"missing refresh_token in {BILLING_GRAPH_TOKEN_CACHE_ENV}")
-
-    tenant_id = graph_config[BILLING_GRAPH_TENANT_ID_ENV]
-    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-    form = {
-        "client_id": graph_config[BILLING_GRAPH_CLIENT_ID_ENV],
-        "client_secret": graph_config[BILLING_GRAPH_CLIENT_SECRET_ENV],
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "scope": "User.Read User.ReadBasic.All Mail.ReadWrite Mail.Send MailboxSettings.Read offline_access",
-    }
-    response_payload = _post_form_json(token_url, form)
-    access_token = _clean_text(response_payload.get("access_token"))
-    if not access_token:
-        raise RuntimeError("Microsoft Graph token refresh did not return access_token")
-
-    new_refresh_token = _clean_text(response_payload.get("refresh_token")) or refresh_token
-    expires_in = _safe_int(response_payload.get("expires_in"), 3600)
-    _write_graph_token_cache(
-        cache_path,
+    return acquire_graph_access_token(
         {
-            **token_cache,
-            "access_token": access_token,
-            "refresh_token": new_refresh_token,
-            "expires_at": int(time.time()) + expires_in,
+            "tenant_id": graph_config[BILLING_GRAPH_TENANT_ID_ENV],
+            "client_id": graph_config[BILLING_GRAPH_CLIENT_ID_ENV],
+            "client_secret": graph_config[BILLING_GRAPH_CLIENT_SECRET_ENV],
             "username": graph_config[BILLING_GRAPH_USERNAME_ENV],
-        },
+            "token_cache": graph_config[BILLING_GRAPH_TOKEN_CACHE_ENV],
+        }
     )
-    return access_token
 
 
 def _cached_graph_access_token(token_cache: dict[str, Any]) -> tuple[str, int]:
@@ -493,35 +467,12 @@ def _post_form_json(url: str, form: dict[str, str]) -> dict[str, Any]:
 
 
 def _send_graph_mail(*, access_token: str, to_address: str, subject: str, body: str) -> None:
-    graph_payload = {
-        "message": {
-            "subject": subject,
-            "body": {
-                "contentType": "Text",
-                "content": body,
-            },
-            "toRecipients": [
-                {
-                    "emailAddress": {
-                        "address": to_address,
-                    },
-                },
-            ],
-        },
-        "saveToSentItems": True,
-    }
-    request = urllib.request.Request(
-        GRAPH_SENDMAIL_URL,
-        data=json.dumps(graph_payload).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
+    send_graph_mail_with_token(
+        access_token=access_token,
+        to_address=to_address,
+        subject=subject,
+        body=body,
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        if response.status not in {200, 202}:
-            raise RuntimeError(f"Microsoft Graph sendMail returned HTTP {response.status}")
 
 
 def _list_unread_inbox_messages(*, access_token: str, max_messages: int) -> list[dict[str, Any]]:

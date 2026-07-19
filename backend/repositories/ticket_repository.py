@@ -141,6 +141,7 @@ def _normalize_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
     now = account.get("updated_at") or account.get("created_at") or _utc_now()
     return {
         "account_id": account_id,
+        "email": str(account.get("email") or "").strip().lower() or None,
         "display_name": str(account.get("display_name") or account_id).strip() or account_id,
         "role": _normalize_workspace_role(account.get("role")),
         "password_hash": str(account.get("password_hash") or "").strip(),
@@ -157,16 +158,46 @@ def _normalize_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
 def _workspace_account_row_to_payload(row: tuple[Any, ...]) -> dict[str, Any]:
     return {
         "account_id": str(row[0]),
-        "display_name": str(row[1]),
+        "email": str(row[1] or "").strip().lower() or None,
+        "display_name": str(row[2]),
+        "role": _normalize_workspace_role(row[3]),
+        "password_hash": str(row[4] or ""),
+        "active": bool(row[5]),
+        "availability": _normalize_engineer_availability(row[6]),
+        "availability_reason": str(row[7] or "").strip() or None,
+        "availability_updated_at": _to_iso(row[8]) if row[8] is not None else None,
+        "last_assigned_at": _to_iso(row[9]) if row[9] is not None else None,
+        "created_at": _to_iso(row[10]),
+        "updated_at": _to_iso(row[11]),
+    }
+
+
+def _workspace_invitation_row_to_payload(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": str(row[0]),
+        "email": str(row[1]).strip().lower(),
         "role": _normalize_workspace_role(row[2]),
-        "password_hash": str(row[3] or ""),
-        "active": bool(row[4]),
-        "availability": _normalize_engineer_availability(row[5]),
-        "availability_reason": str(row[6] or "").strip() or None,
-        "availability_updated_at": _to_iso(row[7]) if row[7] is not None else None,
-        "last_assigned_at": _to_iso(row[8]) if row[8] is not None else None,
-        "created_at": _to_iso(row[9]),
-        "updated_at": _to_iso(row[10]),
+        "token_hash": str(row[3]),
+        "created_by": str(row[4]),
+        "delivery_status": str(row[5]),
+        "delivery_error": str(row[6] or "").strip() or None,
+        "created_at": _to_iso(row[7]),
+        "updated_at": _to_iso(row[8]),
+        "expires_at": _to_iso(row[9]),
+        "used_at": _to_iso(row[10]) if row[10] is not None else None,
+        "used_by_account_id": str(row[11] or "").strip() or None,
+    }
+
+
+def _engineer_schedule_row_to_payload(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "engineer_id": str(row[0]),
+        "weekday": int(row[1]),
+        "start_minute": int(row[2]),
+        "end_minute": int(row[3]),
+        "timezone": str(row[4]),
+        "updated_by": str(row[5]),
+        "updated_at": _to_iso(row[6]),
     }
 
 
@@ -864,6 +895,50 @@ class TicketRepository(Protocol):
     def list_workspace_accounts(self) -> list[dict[str, Any]]:
         ...
 
+    def get_workspace_account_by_email(self, email: str) -> dict[str, Any] | None:
+        ...
+
+    def create_workspace_invitation(self, invitation: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def get_workspace_invitation(self, token_hash: str) -> dict[str, Any] | None:
+        ...
+
+    def set_workspace_invitation_delivery(
+        self,
+        invitation_id: str,
+        *,
+        status: str,
+        error: str | None,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def complete_workspace_invitation(
+        self,
+        token_hash: str,
+        *,
+        account_id: str,
+        display_name: str,
+        password_hash: str,
+        completed_at: str,
+    ) -> dict[str, Any]:
+        ...
+
+    def list_engineer_schedules(self) -> list[dict[str, Any]]:
+        ...
+
+    def replace_engineer_schedule(
+        self,
+        engineer_id: str,
+        *,
+        timezone_name: str,
+        shifts: list[dict[str, Any]],
+        actor_id: str,
+        updated_at: str,
+    ) -> list[dict[str, Any]] | None:
+        ...
+
     def set_engineer_availability(
         self,
         account_id: str,
@@ -1102,6 +1177,8 @@ class InMemoryTicketRepository:
         self._billing_route_corrections: dict[str, dict[str, Any]] = {}
         self._assignment_lock = threading.RLock()
         self._workspace_accounts: dict[str, dict[str, Any]] = {}
+        self._workspace_invitations: dict[str, dict[str, Any]] = {}
+        self._engineer_schedules: dict[tuple[str, int], dict[str, Any]] = {}
         self._workspace_audit_events: list[dict[str, Any]] = []
         self._idempotency_records: dict[tuple[str, str], dict[str, Any]] = {}
         self._rollout_counters: dict[str, int] = {}
@@ -1614,6 +1691,8 @@ class InMemoryTicketRepository:
         existing = self._workspace_accounts.get(normalized["account_id"])
         if isinstance(existing, dict):
             normalized["created_at"] = existing.get("created_at") or normalized["created_at"]
+            if "email" not in account:
+                normalized["email"] = existing.get("email")
             if not normalized["password_hash"]:
                 normalized["password_hash"] = str(existing.get("password_hash") or "")
             if "availability" not in account:
@@ -1634,6 +1713,169 @@ class InMemoryTicketRepository:
         accounts = [copy.deepcopy(item) for item in self._workspace_accounts.values()]
         accounts.sort(key=lambda item: (str(item.get("display_name") or "").lower(), item["account_id"]))
         return accounts
+
+    def get_workspace_account_by_email(self, email: str) -> dict[str, Any] | None:
+        normalized_email = str(email or "").strip().lower()
+        for account in self._workspace_accounts.values():
+            if str(account.get("email") or "").strip().lower() == normalized_email:
+                return copy.deepcopy(account)
+        return None
+
+    def create_workspace_invitation(self, invitation: dict[str, Any]) -> dict[str, Any]:
+        normalized = copy.deepcopy(invitation)
+        normalized["id"] = str(normalized.get("id") or uuid4())
+        normalized["email"] = str(normalized.get("email") or "").strip().lower()
+        normalized["role"] = _normalize_workspace_role(normalized.get("role"))
+        normalized["delivery_status"] = "pending"
+        normalized["delivery_error"] = None
+        normalized["used_at"] = None
+        normalized["used_by_account_id"] = None
+        if not normalized["email"] or not str(normalized.get("token_hash") or "").strip():
+            raise ValueError("email and token_hash are required")
+        now = datetime.fromisoformat(_to_iso(normalized["created_at"]).replace("Z", "+00:00"))
+        with self._assignment_lock:
+            if self.get_workspace_account_by_email(normalized["email"]):
+                raise ValueError("workspace account email already exists")
+            for existing in self._workspace_invitations.values():
+                expires_at = datetime.fromisoformat(_to_iso(existing["expires_at"]).replace("Z", "+00:00"))
+                if (
+                    existing["email"] == normalized["email"]
+                    and existing.get("delivery_status") in {"pending", "sent"}
+                    and not existing.get("used_at")
+                    and expires_at > now
+                ):
+                    raise ValueError("active workspace invitation already exists")
+            self._workspace_invitations[normalized["id"]] = normalized
+        return copy.deepcopy(normalized)
+
+    def get_workspace_invitation(self, token_hash: str) -> dict[str, Any] | None:
+        normalized_hash = str(token_hash or "").strip()
+        for invitation in self._workspace_invitations.values():
+            if invitation.get("token_hash") == normalized_hash:
+                return copy.deepcopy(invitation)
+        return None
+
+    def set_workspace_invitation_delivery(
+        self,
+        invitation_id: str,
+        *,
+        status: str,
+        error: str | None,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        if status not in {"sent", "failed"}:
+            raise ValueError("invalid invitation delivery status")
+        with self._assignment_lock:
+            invitation = self._workspace_invitations.get(str(invitation_id or "").strip())
+            if invitation is None:
+                return None
+            invitation.update(
+                {
+                    "delivery_status": status,
+                    "delivery_error": str(error or "").strip() or None,
+                    "updated_at": updated_at,
+                }
+            )
+            return copy.deepcopy(invitation)
+
+    def complete_workspace_invitation(
+        self,
+        token_hash: str,
+        *,
+        account_id: str,
+        display_name: str,
+        password_hash: str,
+        completed_at: str,
+    ) -> dict[str, Any]:
+        normalized_account_id = str(account_id or "").strip()
+        with self._assignment_lock:
+            invitation = next(
+                (
+                    item
+                    for item in self._workspace_invitations.values()
+                    if item.get("token_hash") == str(token_hash or "").strip()
+                ),
+                None,
+            )
+            if invitation is None:
+                raise ValueError("invitation unavailable")
+            completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+            expires = datetime.fromisoformat(_to_iso(invitation["expires_at"]).replace("Z", "+00:00"))
+            if invitation.get("delivery_status") != "sent" or invitation.get("used_at") or expires <= completed:
+                raise ValueError("invitation unavailable")
+            if normalized_account_id in self._workspace_accounts:
+                raise ValueError("workspace account already exists")
+            if self.get_workspace_account_by_email(invitation["email"]):
+                raise ValueError("workspace account email already exists")
+            account = self.save_workspace_account(
+                {
+                    "account_id": normalized_account_id,
+                    "email": invitation["email"],
+                    "display_name": display_name,
+                    "role": invitation["role"],
+                    "password_hash": password_hash,
+                    "active": True,
+                    "availability": "unavailable",
+                    "created_at": completed_at,
+                    "updated_at": completed_at,
+                }
+            )
+            invitation["used_at"] = completed_at
+            invitation["used_by_account_id"] = normalized_account_id
+            invitation["updated_at"] = completed_at
+            self.record_workspace_audit_event(
+                "workspace_invitation_completed",
+                actor_id=normalized_account_id,
+                target_id=normalized_account_id,
+                payload={"email": invitation["email"], "role": invitation["role"]},
+                created_at=completed_at,
+            )
+            return account
+
+    def list_engineer_schedules(self) -> list[dict[str, Any]]:
+        schedules = [copy.deepcopy(item) for item in self._engineer_schedules.values()]
+        schedules.sort(key=lambda item: (item["engineer_id"], item["weekday"]))
+        return schedules
+
+    def replace_engineer_schedule(
+        self,
+        engineer_id: str,
+        *,
+        timezone_name: str,
+        shifts: list[dict[str, Any]],
+        actor_id: str,
+        updated_at: str,
+    ) -> list[dict[str, Any]] | None:
+        normalized_engineer_id = str(engineer_id or "").strip()
+        with self._assignment_lock:
+            account = self._workspace_accounts.get(normalized_engineer_id)
+            if not isinstance(account, dict) or account.get("role") != "engineer":
+                return None
+            for key in [key for key in self._engineer_schedules if key[0] == normalized_engineer_id]:
+                del self._engineer_schedules[key]
+            for shift in shifts:
+                weekday = int(shift["weekday"])
+                self._engineer_schedules[(normalized_engineer_id, weekday)] = {
+                    "engineer_id": normalized_engineer_id,
+                    "weekday": weekday,
+                    "start_minute": int(shift["start_minute"]),
+                    "end_minute": int(shift["end_minute"]),
+                    "timezone": timezone_name,
+                    "updated_by": actor_id,
+                    "updated_at": updated_at,
+                }
+            self.record_workspace_audit_event(
+                "engineer_schedule_changed",
+                actor_id=actor_id,
+                target_id=normalized_engineer_id,
+                payload={"timezone": timezone_name, "shift_count": len(shifts)},
+                created_at=updated_at,
+            )
+            return [
+                item
+                for item in self.list_engineer_schedules()
+                if item["engineer_id"] == normalized_engineer_id
+            ]
 
     def set_engineer_availability(
         self,
@@ -2998,6 +3240,7 @@ class PostgresTicketRepository:
                         """
                         CREATE TABLE IF NOT EXISTS {} (
                             account_id TEXT PRIMARY KEY,
+                            email TEXT,
                             display_name TEXT NOT NULL,
                             role TEXT NOT NULL,
                             password_hash TEXT NOT NULL,
@@ -3011,6 +3254,64 @@ class PostgresTicketRepository:
                         )
                         """
                     ).format(self._table("support_workspace_accounts"))
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS email TEXT").format(
+                        self._table("support_workspace_accounts")
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (LOWER(email)) WHERE email IS NOT NULL"
+                    ).format(
+                        sql.Identifier("idx_support_workspace_accounts_email_unique"),
+                        self._table("support_workspace_accounts"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id TEXT PRIMARY KEY,
+                            email TEXT NOT NULL,
+                            role TEXT NOT NULL,
+                            token_hash TEXT NOT NULL UNIQUE,
+                            created_by TEXT NOT NULL,
+                            delivery_status TEXT NOT NULL DEFAULT 'pending',
+                            delivery_error TEXT,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            expires_at TIMESTAMPTZ NOT NULL,
+                            used_at TIMESTAMPTZ,
+                            used_by_account_id TEXT
+                        )
+                        """
+                    ).format(self._table("support_workspace_account_invitations"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (LOWER(email), expires_at DESC)"
+                    ).format(
+                        sql.Identifier("idx_support_workspace_invitations_email"),
+                        self._table("support_workspace_account_invitations"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            engineer_id TEXT NOT NULL,
+                            weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+                            start_minute SMALLINT NOT NULL CHECK (start_minute BETWEEN 0 AND 1439),
+                            end_minute SMALLINT NOT NULL CHECK (end_minute BETWEEN 0 AND 1439),
+                            timezone TEXT NOT NULL,
+                            updated_by TEXT NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            PRIMARY KEY (engineer_id, weekday),
+                            CHECK (start_minute <> end_minute)
+                        )
+                        """
+                    ).format(self._table("support_engineer_schedules"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -5007,12 +5308,13 @@ class PostgresTicketRepository:
                         sql.SQL(
                             """
                             INSERT INTO {} AS existing_account (
-                                account_id, display_name, role, password_hash, active,
+                                account_id, email, display_name, role, password_hash, active,
                                 availability, availability_reason, availability_updated_at,
                                 last_assigned_at, created_at, updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (account_id) DO UPDATE SET
+                                email = COALESCE(EXCLUDED.email, existing_account.email),
                                 display_name = EXCLUDED.display_name,
                                 role = EXCLUDED.role,
                                 password_hash = CASE
@@ -5025,13 +5327,14 @@ class PostgresTicketRepository:
                                     existing_account.last_assigned_at
                                 ),
                                 updated_at = EXCLUDED.updated_at
-                            RETURNING account_id, display_name, role, password_hash, active,
+                            RETURNING account_id, email, display_name, role, password_hash, active,
                                       availability, availability_reason, availability_updated_at,
                                       last_assigned_at, created_at, updated_at
                             """
                         ).format(self._table("support_workspace_accounts")),
                         (
                             normalized["account_id"],
+                            normalized["email"],
                             normalized["display_name"],
                             normalized["role"],
                             normalized["password_hash"],
@@ -5060,7 +5363,7 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         """
-                        SELECT account_id, display_name, role, password_hash, active,
+                        SELECT account_id, email, display_name, role, password_hash, active,
                                availability, availability_reason, availability_updated_at,
                                last_assigned_at, created_at, updated_at
                         FROM {}
@@ -5080,7 +5383,7 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         """
-                        SELECT account_id, display_name, role, password_hash, active,
+                        SELECT account_id, email, display_name, role, password_hash, active,
                                availability, availability_reason, availability_updated_at,
                                last_assigned_at, created_at, updated_at
                         FROM {}
@@ -5091,6 +5394,352 @@ class PostgresTicketRepository:
                 return [_workspace_account_row_to_payload(row) for row in cur.fetchall()]
 
         return self._run_with_connection_retry("list_workspace_accounts", _operation)
+
+    def get_workspace_account_by_email(self, email: str) -> dict[str, Any] | None:
+        normalized_email = str(email or "").strip().lower()
+        if not normalized_email:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT account_id, email, display_name, role, password_hash, active,
+                               availability, availability_reason, availability_updated_at,
+                               last_assigned_at, created_at, updated_at
+                        FROM {}
+                        WHERE LOWER(email) = %s
+                        """
+                    ).format(self._table("support_workspace_accounts")),
+                    (normalized_email,),
+                )
+                row = cur.fetchone()
+                return _workspace_account_row_to_payload(row) if row is not None else None
+
+        return self._run_with_connection_retry("get_workspace_account_by_email", _operation)
+
+    def create_workspace_invitation(self, invitation: dict[str, Any]) -> dict[str, Any]:
+        normalized_email = str(invitation.get("email") or "").strip().lower()
+        normalized_role = _normalize_workspace_role(invitation.get("role"))
+        invitation_id = str(invitation.get("id") or uuid4())
+        token_hash = str(invitation.get("token_hash") or "").strip()
+        created_at = _to_iso(invitation.get("created_at") or _utc_now())
+        expires_at = _to_iso(invitation.get("expires_at") or created_at)
+        if not normalized_email or not token_hash:
+            raise ValueError("email and token_hash are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                        (f"workspace-invitation:{normalized_email}",),
+                    )
+                    cur.execute(
+                        sql.SQL("SELECT 1 FROM {} WHERE LOWER(email) = %s").format(
+                            self._table("support_workspace_accounts")
+                        ),
+                        (normalized_email,),
+                    )
+                    if cur.fetchone() is not None:
+                        raise ValueError("workspace account email already exists")
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT 1 FROM {}
+                            WHERE LOWER(email) = %s
+                              AND delivery_status IN ('pending', 'sent')
+                              AND used_at IS NULL
+                              AND expires_at > %s
+                            FOR UPDATE
+                            """
+                        ).format(self._table("support_workspace_account_invitations")),
+                        (normalized_email, created_at),
+                    )
+                    if cur.fetchone() is not None:
+                        raise ValueError("active workspace invitation already exists")
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                id, email, role, token_hash, created_by, delivery_status,
+                                delivery_error, created_at, updated_at, expires_at,
+                                used_at, used_by_account_id
+                            )
+                            VALUES (%s, %s, %s, %s, %s, 'pending', NULL, %s, %s, %s, NULL, NULL)
+                            RETURNING id, email, role, token_hash, created_by, delivery_status,
+                                      delivery_error, created_at, updated_at, expires_at,
+                                      used_at, used_by_account_id
+                            """
+                        ).format(self._table("support_workspace_account_invitations")),
+                        (
+                            invitation_id,
+                            normalized_email,
+                            normalized_role,
+                            token_hash,
+                            str(invitation.get("created_by") or "system").strip() or "system",
+                            created_at,
+                            created_at,
+                            expires_at,
+                        ),
+                    )
+                    row = cur.fetchone()
+                    assert row is not None
+                    return _workspace_invitation_row_to_payload(row)
+
+        return self._run_with_connection_retry("create_workspace_invitation", _operation)
+
+    def get_workspace_invitation(self, token_hash: str) -> dict[str, Any] | None:
+        normalized_hash = str(token_hash or "").strip()
+        if not normalized_hash:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT id, email, role, token_hash, created_by, delivery_status,
+                               delivery_error, created_at, updated_at, expires_at,
+                               used_at, used_by_account_id
+                        FROM {}
+                        WHERE token_hash = %s
+                        """
+                    ).format(self._table("support_workspace_account_invitations")),
+                    (normalized_hash,),
+                )
+                row = cur.fetchone()
+                return _workspace_invitation_row_to_payload(row) if row is not None else None
+
+        return self._run_with_connection_retry("get_workspace_invitation", _operation)
+
+    def set_workspace_invitation_delivery(
+        self,
+        invitation_id: str,
+        *,
+        status: str,
+        error: str | None,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        if status not in {"sent", "failed"}:
+            raise ValueError("invalid invitation delivery status")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET delivery_status = %s, delivery_error = %s, updated_at = %s
+                            WHERE id = %s AND delivery_status = 'pending'
+                            RETURNING id, email, role, token_hash, created_by, delivery_status,
+                                      delivery_error, created_at, updated_at, expires_at,
+                                      used_at, used_by_account_id
+                            """
+                        ).format(self._table("support_workspace_account_invitations")),
+                        (status, str(error or "").strip() or None, updated_at, invitation_id),
+                    )
+                    row = cur.fetchone()
+                    return _workspace_invitation_row_to_payload(row) if row is not None else None
+
+        return self._run_with_connection_retry("set_workspace_invitation_delivery", _operation)
+
+    def complete_workspace_invitation(
+        self,
+        token_hash: str,
+        *,
+        account_id: str,
+        display_name: str,
+        password_hash: str,
+        completed_at: str,
+    ) -> dict[str, Any]:
+        normalized_account_id = str(account_id or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            SELECT id, email, role, token_hash, created_by, delivery_status,
+                                   delivery_error, created_at, updated_at, expires_at,
+                                   used_at, used_by_account_id
+                            FROM {}
+                            WHERE token_hash = %s
+                            FOR UPDATE
+                            """
+                        ).format(self._table("support_workspace_account_invitations")),
+                        (str(token_hash or "").strip(),),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise ValueError("invitation unavailable")
+                    invitation = _workspace_invitation_row_to_payload(row)
+                    expires_at = datetime.fromisoformat(invitation["expires_at"].replace("Z", "+00:00"))
+                    completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+                    if (
+                        invitation["delivery_status"] != "sent"
+                        or invitation["used_at"] is not None
+                        or expires_at <= completed
+                    ):
+                        raise ValueError("invitation unavailable")
+                    cur.execute(
+                        sql.SQL("SELECT 1 FROM {} WHERE account_id = %s OR LOWER(email) = %s").format(
+                            self._table("support_workspace_accounts")
+                        ),
+                        (normalized_account_id, invitation["email"]),
+                    )
+                    if cur.fetchone() is not None:
+                        raise ValueError("workspace account already exists")
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                account_id, email, display_name, role, password_hash, active,
+                                availability, created_at, updated_at
+                            )
+                            VALUES (%s, %s, %s, %s, %s, TRUE, 'unavailable', %s, %s)
+                            RETURNING account_id, email, display_name, role, password_hash, active,
+                                      availability, availability_reason, availability_updated_at,
+                                      last_assigned_at, created_at, updated_at
+                            """
+                        ).format(self._table("support_workspace_accounts")),
+                        (
+                            normalized_account_id,
+                            invitation["email"],
+                            str(display_name or normalized_account_id).strip() or normalized_account_id,
+                            invitation["role"],
+                            password_hash,
+                            completed_at,
+                            completed_at,
+                        ),
+                    )
+                    account_row = cur.fetchone()
+                    assert account_row is not None
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET used_at = %s, used_by_account_id = %s, updated_at = %s
+                            WHERE id = %s AND used_at IS NULL
+                            """
+                        ).format(self._table("support_workspace_account_invitations")),
+                        (completed_at, normalized_account_id, completed_at, invitation["id"]),
+                    )
+                    if cur.rowcount != 1:
+                        raise ValueError("invitation unavailable")
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (event_type, actor_id, target_id, payload, created_at)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """
+                        ).format(self._table("support_workspace_audit_events")),
+                        (
+                            "workspace_invitation_completed",
+                            normalized_account_id,
+                            normalized_account_id,
+                            Json({"email": invitation["email"], "role": invitation["role"]}),
+                            completed_at,
+                        ),
+                    )
+                    return _workspace_account_row_to_payload(account_row)
+
+        return self._run_with_connection_retry("complete_workspace_invitation", _operation)
+
+    def list_engineer_schedules(self) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT engineer_id, weekday, start_minute, end_minute,
+                               timezone, updated_by, updated_at
+                        FROM {}
+                        ORDER BY engineer_id, weekday
+                        """
+                    ).format(self._table("support_engineer_schedules"))
+                )
+                return [_engineer_schedule_row_to_payload(row) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry("list_engineer_schedules", _operation)
+
+    def replace_engineer_schedule(
+        self,
+        engineer_id: str,
+        *,
+        timezone_name: str,
+        shifts: list[dict[str, Any]],
+        actor_id: str,
+        updated_at: str,
+    ) -> list[dict[str, Any]] | None:
+        normalized_engineer_id = str(engineer_id or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL("SELECT 1 FROM {} WHERE account_id = %s AND role = 'engineer'").format(
+                            self._table("support_workspace_accounts")
+                        ),
+                        (normalized_engineer_id,),
+                    )
+                    if cur.fetchone() is None:
+                        return False
+                    cur.execute(
+                        sql.SQL("DELETE FROM {} WHERE engineer_id = %s").format(
+                            self._table("support_engineer_schedules")
+                        ),
+                        (normalized_engineer_id,),
+                    )
+                    for shift in shifts:
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    engineer_id, weekday, start_minute, end_minute,
+                                    timezone, updated_by, updated_at
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                """
+                            ).format(self._table("support_engineer_schedules")),
+                            (
+                                normalized_engineer_id,
+                                int(shift["weekday"]),
+                                int(shift["start_minute"]),
+                                int(shift["end_minute"]),
+                                timezone_name,
+                                actor_id,
+                                updated_at,
+                            ),
+                        )
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (event_type, actor_id, target_id, payload, created_at)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """
+                        ).format(self._table("support_workspace_audit_events")),
+                        (
+                            "engineer_schedule_changed",
+                            actor_id,
+                            normalized_engineer_id,
+                            Json({"timezone": timezone_name, "shift_count": len(shifts)}),
+                            updated_at,
+                        ),
+                    )
+                    return True
+
+        updated = self._run_with_connection_retry("replace_engineer_schedule", _operation)
+        if not updated:
+            return None
+        return [
+            item
+            for item in self.list_engineer_schedules()
+            if item["engineer_id"] == normalized_engineer_id
+        ]
 
     def set_engineer_availability(
         self,
@@ -5131,7 +5780,7 @@ class PostgresTicketRepository:
                                 availability_updated_at = %s,
                                 updated_at = %s
                             WHERE account_id = %s
-                            RETURNING account_id, display_name, role, password_hash, active,
+                            RETURNING account_id, email, display_name, role, password_hash, active,
                                       availability, availability_reason, availability_updated_at,
                                       last_assigned_at, created_at, updated_at
                             """

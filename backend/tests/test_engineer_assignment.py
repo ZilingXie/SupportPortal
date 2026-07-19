@@ -197,6 +197,14 @@ class EngineerAssignmentServiceTests(unittest.TestCase):
                 }
             )
         self.now = datetime(2026, 7, 18, 1, 0, tzinfo=timezone.utc)
+        for account_id in ("Jack", "Maya"):
+            self.repository.replace_engineer_schedule(
+                account_id,
+                timezone_name="Asia/Shanghai",
+                shifts=[{"weekday": 5, "start_minute": 480, "end_minute": 1080}],
+                actor_id="admin-1",
+                updated_at="2026-07-18T00:30:00+00:00",
+            )
         self.service = EngineerAssignmentService(
             self.repository,
             now_provider=lambda: self.now,
@@ -252,6 +260,40 @@ class EngineerAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(len(reassigned), 1)
         self.assertEqual(reassigned[0]["assigned_engineer_id"], "Maya")
         self.assertEqual(reassigned[0]["last_assignment_reason"], "engineer_unavailable")
+
+    def test_engineer_without_schedule_is_not_eligible_for_dispatch(self) -> None:
+        for account_id in ("Jack", "Maya"):
+            self.repository.replace_engineer_schedule(
+                account_id,
+                timezone_name="Asia/Shanghai",
+                shifts=[],
+                actor_id="admin-1",
+                updated_at="2026-07-18T00:45:00+00:00",
+            )
+
+        pending = self.service.dispatch_case("TK-DISPATCH-001-1")
+
+        assert pending is not None
+        self.assertEqual(pending["assignment_status"], "pending")
+        self.assertIsNone(pending["assigned_engineer_id"])
+
+    def test_worker_reassigns_case_when_shift_ends(self) -> None:
+        assigned = self.service.dispatch_case("TK-DISPATCH-001-1")
+        assert assigned is not None
+        self.assertEqual(assigned["assigned_engineer_id"], "Jack")
+        self.repository.replace_engineer_schedule(
+            "Jack",
+            timezone_name="Asia/Shanghai",
+            shifts=[],
+            actor_id="admin-1",
+            updated_at="2026-07-18T01:01:00+00:00",
+        )
+
+        reassigned = self.service.reassign_unavailable_cases()
+
+        self.assertEqual(len(reassigned), 1)
+        self.assertEqual(reassigned[0]["assigned_engineer_id"], "Maya")
+        self.assertEqual(reassigned[0]["last_assignment_reason"], "engineer_off_schedule")
 
     def test_worker_reconciliation_resolves_closed_case_assignment(self) -> None:
         assigned = self.service.dispatch_case("TK-DISPATCH-001-1")
