@@ -17,30 +17,40 @@
     />
     <script>
       (() => {
-        const revealIcons = () => {
+        let settled = false;
+        const markIconsReady = () => {
+          if (settled) return;
+          settled = true;
           document.documentElement.classList.remove("material-symbols-pending");
+          document.documentElement.classList.remove("material-symbols-failed");
+        };
+        const markIconsFailed = () => {
+          if (settled) return;
+          settled = true;
+          document.documentElement.classList.remove("material-symbols-pending");
+          document.documentElement.classList.add("material-symbols-failed");
         };
         const stylesheet = document.getElementById("material-symbols-font-stylesheet");
         if (!stylesheet || !document.fonts || typeof document.fonts.load !== "function") {
-          revealIcons();
+          markIconsFailed();
           return;
         }
-        const timer = window.setTimeout(revealIcons, 2500);
+        const timer = window.setTimeout(markIconsFailed, 2500);
         const waitForIcons = () => {
           document.fonts
             .load('24px "Material Symbols Outlined"')
-            .then(revealIcons)
-            .catch(revealIcons)
+            .then(markIconsReady)
+            .catch(markIconsFailed)
             .finally(() => window.clearTimeout(timer));
         };
         stylesheet.addEventListener("load", waitForIcons, { once: true });
-        stylesheet.addEventListener("error", revealIcons, { once: true });
+        stylesheet.addEventListener("error", markIconsFailed, { once: true });
         if (stylesheet.sheet) {
           waitForIcons();
         }
       })();
     </script>
-    <link rel="stylesheet" href="./styles.css?v=20260719-workspace-auth-isolation-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260719-workspace-auth-isolation-2" />
   </head>
   <body>
     <main
@@ -50,6 +60,6 @@
       aria-live="polite"
     >
     </main>
-    <script src="./app.js?v=20260719-workspace-auth-isolation-1"></script>
+    <script src="./app.js?v=20260719-workspace-auth-isolation-2"></script>
   </body>
 </html>

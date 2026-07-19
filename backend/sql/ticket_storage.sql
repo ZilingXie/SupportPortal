@@ -283,13 +283,53 @@ CREATE TABLE IF NOT EXISTS support_engineer_schedules (
     engineer_id TEXT NOT NULL,
     weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
     start_minute SMALLINT NOT NULL CHECK (start_minute BETWEEN 0 AND 1439),
-    end_minute SMALLINT NOT NULL CHECK (end_minute BETWEEN 0 AND 1439),
+    end_minute SMALLINT NOT NULL CHECK (end_minute BETWEEN 0 AND 1440),
     timezone TEXT NOT NULL,
     updated_by TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (engineer_id, weekday),
     CHECK (start_minute <> end_minute)
 );
+
+ALTER TABLE support_engineer_schedules
+    DROP CONSTRAINT IF EXISTS support_engineer_schedules_end_minute_check;
+
+UPDATE support_engineer_schedules
+SET end_minute = 1440
+WHERE end_minute = 1439;
+
+DO $$
+DECLARE
+    off_grid_shifts TEXT;
+BEGIN
+    SELECT STRING_AGG(
+        engineer_id || ' weekday=' || weekday || ' ' || start_minute || '-' || end_minute,
+        ', ' ORDER BY engineer_id, weekday
+    )
+    INTO off_grid_shifts
+    FROM support_engineer_schedules
+    WHERE MOD(start_minute, 30) <> 0
+       OR (end_minute <> 1440 AND MOD(end_minute, 30) <> 0);
+
+    IF off_grid_shifts IS NOT NULL THEN
+        RAISE EXCEPTION 'Engineer schedules contain non-half-hour legacy values: %', off_grid_shifts;
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'support_engineer_schedules_end_minute_range_check'
+          AND conrelid = 'support_engineer_schedules'::regclass
+    ) THEN
+        ALTER TABLE support_engineer_schedules
+            ADD CONSTRAINT support_engineer_schedules_end_minute_range_check
+            CHECK (end_minute BETWEEN 0 AND 1440);
+    END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS support_workspace_audit_events (
     id BIGSERIAL PRIMARY KEY,

@@ -548,8 +548,8 @@ class WorkspaceInvitationCompleteRequest(BaseModel):
 
 class EngineerScheduleShiftRequest(BaseModel):
     weekday: int = Field(ge=0, le=6)
-    start: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    end: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    start: str = Field(pattern=r"^([01]\d|2[0-3]):(00|30)$")
+    end: str = Field(pattern=r"^(([01]\d|2[0-3]):(00|30)|24:00)$")
 
 
 class EngineerScheduleUpdateRequest(BaseModel):
@@ -5159,7 +5159,7 @@ def replace_workspace_engineer_schedule(
     normalized_shifts = []
     for shift in request.shifts:
         start_minute = time_to_minutes(shift.start)
-        end_minute = time_to_minutes(shift.end)
+        end_minute = time_to_minutes(shift.end, allow_24=True)
         if start_minute == end_minute:
             raise HTTPException(status_code=422, detail="Shift start and end must differ")
         normalized_shifts.append(

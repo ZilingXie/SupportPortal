@@ -172,13 +172,14 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-workspace-auth-isolation-1", html)
+        self.assertIn("20260719-workspace-auth-isolation-2", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
 
     def test_admin_shell_uses_collapsed_rail_and_footer_account_controls(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        html = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
 
         self.assertIn("admin-rail-footer", source)
@@ -187,6 +188,10 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("admin-topbar-btn", source)
         self.assertIn("grid-template-columns: 96px minmax(0, 1fr)", css)
         self.assertIn("width: 264px", css)
+        self.assertIn('data-fallback="AD"', source)
+        self.assertIn('data-fallback="LO"', source)
+        self.assertIn("material-symbols-failed", html)
+        self.assertIn("html.material-symbols-failed .admin-sidebar .admin-rail-symbol", css)
 
     def test_admin_account_entry_uses_simple_blue_button_and_plain_back_link(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
@@ -250,7 +255,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             """
         )
 
-    def test_admin_weekly_schedule_uses_blue_time_grid(self) -> None:
+    def test_admin_weekly_schedule_uses_blue_half_hour_name_slots(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
 
@@ -258,15 +263,18 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "timeStringToMinutes",
             "buildScheduleSegments",
             "assignScheduleLanes",
+            "buildScheduleSlots",
             "renderWeeklyTimeGrid",
             "admin-week-grid",
             "admin-week-time-column",
-            "admin-week-shift",
-            "repeat(96, 12px)",
+            "admin-week-slot",
+            "repeat(48, 26px)",
             "#cae6ff",
-            "#101a44",
+            "#00344e",
         ):
             self.assertIn(marker, source + css)
+        self.assertNotIn("admin-week-shift", source + css)
+        self.assertNotIn("repeat(96, 12px)", css)
         self.assertNotIn("admin-roster-table", source + css)
         self.assertNotIn("#16262d", css)
         self.assertNotIn("#dff3f5", css)
@@ -275,7 +283,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
 
         for marker in (
-            '["schedule", "calendar_month", "Schedule"]',
+            '["schedule", "calendar_month", "Schedule", "SC"]',
             'adminSection === "schedule"',
             "renderAdminSchedule()",
             "Engineer Schedules",
@@ -307,14 +315,132 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             """
         )
 
-    def test_admin_time_labels_align_to_hour_grid_boundaries(self) -> None:
+    def test_admin_time_labels_share_the_first_half_hour_slot_center(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
 
         self.assertIn('class="admin-week-time" data-hour="${hour}" style="grid-row:${row}"', source)
-        self.assertNotIn('style="grid-row:${row} / span 4"', source)
-        self.assertIn("transform: translateY(-50%)", css)
-        self.assertIn('.admin-week-time[data-hour="0"]', css)
+        self.assertIn('style="grid-column:${slot.weekday + 2};grid-row:${row};', source)
+        self.assertIn("const row = 2 + hour * 2", source)
+        self.assertIn("const row = 2 + Math.floor(slot.slotStart / 30)", source)
+        self.assertIn("align-self: center", css)
+        self.assertNotIn("transform: translateY(-50%)", css)
+
+    def test_admin_schedule_editor_uses_finite_half_hour_selects(self) -> None:
+        self.run_admin_app_script(
+            """
+            scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
+            const html = renderScheduleEditor({
+              account_id: "zac", display_name: "Zac", availability: "unavailable",
+              availability_reason: "break", shifts: [{ weekday: 0, start: "00:00", end: "24:00" }],
+            }, ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
+            if (html.includes('type="time"') || html.includes('name="availability"') || html.includes('name="reason"')) {
+              throw new Error("schedule editor still contains removed controls");
+            }
+            if (!html.includes('name="start_hour_0"') || !html.includes('name="end_hour_0"') || !html.includes('value="24" selected')) {
+              throw new Error("finite hour controls or 24:00 selection are missing");
+            }
+            if (!html.includes('name="start_minute_0"') || !html.includes('value="30"')) {
+              throw new Error("half-hour minute controls are missing");
+            }
+            if (!html.includes('data-end-minute="0"') || !html.includes('disabled')) {
+              throw new Error("24:00 did not lock its minute to 00");
+            }
+            """
+        )
+
+    def test_admin_schedule_save_is_immediate_deduplicated_and_schedule_only(self) -> None:
+        self.run_admin_app_script(
+            """
+            let requestCount = 0;
+            let requestUrl = "";
+            let requestBody = null;
+            let resolveRequest;
+            FormData = function FormData() { return { get(name) {
+              const values = { day_0: "on", start_hour_0: "09", start_minute_0: "00", end_hour_0: "17", end_minute_0: "30" };
+              return values[name] || "";
+            } }; };
+            fetchJson = (url, options) => {
+              requestCount += 1;
+              requestUrl = url;
+              requestBody = JSON.parse(options.body);
+              return new Promise((resolve) => { resolveRequest = resolve; });
+            };
+            const attributes = new Map();
+            const submit = { disabled: false, innerHTML: "save" };
+            const errorNode = { textContent: "old" };
+            const form = {
+              dataset: { engineerId: "zac" },
+              querySelector(selector) { return selector.includes("submit") ? submit : errorNode; },
+              setAttribute(name, value) { attributes.set(name, value); },
+              removeAttribute(name) { attributes.delete(name); },
+            };
+            const pending = handleScheduleUpdate(form);
+            if (!submit.disabled || !submit.innerHTML.includes("Saving schedule...") || form.dataset.submitting !== "true") {
+              throw new Error("first save did not enter loading state immediately");
+            }
+            await handleScheduleUpdate(form);
+            if (requestCount !== 1 || !requestUrl.endsWith("/schedule") || requestUrl.includes("availability")) {
+              throw new Error("save did not issue exactly one schedule request");
+            }
+            if (JSON.stringify(requestBody.shifts) !== JSON.stringify([{ weekday: 0, start: "09:00", end: "17:30" }])) {
+              throw new Error("save payload did not preserve half-hour values");
+            }
+            resolveRequest({ timezone: "Asia/Shanghai", engineers: [] });
+            await pending;
+            if (scheduleNotice !== "Schedule saved" || requestCount !== 1) throw new Error("save success was not retained");
+            """
+        )
+
+    def test_admin_schedule_save_restores_editor_after_failure(self) -> None:
+        self.run_admin_app_script(
+            """
+            FormData = function FormData() { return { get() { return ""; } }; };
+            fetchJson = async () => { throw new Error("schedule unavailable"); };
+            const attributes = new Map();
+            const submit = { disabled: false, innerHTML: "save" };
+            const errorNode = { textContent: "" };
+            const form = {
+              dataset: { engineerId: "zac" },
+              querySelector(selector) { return selector.includes("submit") ? submit : errorNode; },
+              setAttribute(name, value) { attributes.set(name, value); },
+              removeAttribute(name) { attributes.delete(name); },
+            };
+            await handleScheduleUpdate(form);
+            if (submit.disabled || submit.innerHTML !== "save" || form.dataset.submitting || attributes.has("aria-busy")) {
+              throw new Error("failed save did not restore the editor");
+            }
+            if (errorNode.textContent !== "schedule unavailable") throw new Error("save error was not visible");
+            """
+        )
+
+    def test_admin_availability_is_a_separate_reasonless_toggle(self) -> None:
+        self.run_admin_app_script(
+            """
+            let requestUrl = "";
+            let requestBody = null;
+            scheduleData = { timezone: "Asia/Shanghai", engineers: [
+              { account_id: "zac", display_name: "Zac", availability: "unavailable", availability_reason: "break", shifts: [] },
+            ] };
+            accounts = [{ account_id: "zac", role: "engineer", availability: "unavailable", availability_reason: "break" }];
+            fetchJson = async (url, options) => {
+              requestUrl = url;
+              requestBody = JSON.parse(options.body);
+              return { account: { account_id: "zac", availability: "available", availability_reason: null } };
+            };
+            const button = {
+              dataset: { engineerId: "zac", nextAvailability: "available" }, textContent: "unavailable", disabled: false,
+              setAttribute() {},
+            };
+            await handleAvailabilityToggle(button);
+            if (!requestUrl.endsWith("/availability") || requestBody.reason !== null || requestBody.availability !== "available") {
+              throw new Error("availability toggle did not use the reasonless PATCH contract");
+            }
+            if (scheduleData.engineers[0].availability !== "available" || scheduleData.engineers[0].availability_reason !== null) {
+              throw new Error("availability response did not update local state");
+            }
+            """
+        )
 
     def test_admin_schedule_uses_page_scroll_and_sidebar_scrollbar_is_hidden(self) -> None:
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
@@ -353,6 +479,20 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             }
             if (!zacMonday || !mayaMonday || zacMonday.lane === mayaMonday.lane || zacMonday.laneCount < 2 || mayaMonday.laneCount < 2) {
               throw new Error("overlapping Monday shifts were not assigned separate lanes");
+            }
+            const slots = buildScheduleSlots(engineers);
+            const mondayTen = slots.filter((slot) => slot.weekday === 0 && slot.slotStart === 600);
+            if (mondayTen.length !== 2 || mondayTen[0].lane === mondayTen[1].lane || mondayTen.some((slot) => slot.laneCount !== 2)) {
+              throw new Error("overlapping engineers were not retained side by side in the same half-hour slot");
+            }
+            const zacMondaySlots = slots.filter((slot) => slot.engineer.account_id === "zac" && slot.weekday === 0 && slot.slotStart >= 540);
+            if (zacMondaySlots.length !== 16) throw new Error("09:00-17:00 did not produce sixteen half-hour slots");
+            const grid = renderWeeklyTimeGrid(engineers, ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
+            if ((grid.match(/class="admin-week-slot"/g) || []).length !== slots.length) {
+              throw new Error("the grid did not render one name block per schedule slot");
+            }
+            if (!grid.includes("<span>Zac</span>") || !grid.includes("<span>Maya</span>")) {
+              throw new Error("schedule slots did not render engineer names");
             }
             """
         )

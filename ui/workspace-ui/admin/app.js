@@ -14,6 +14,7 @@ let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let selectedEngineerId = "";
 let invitationResult = null;
+let scheduleNotice = null;
 let loading = false;
 let loadError = "";
 
@@ -200,12 +201,12 @@ function renderLogin() {
 
 function renderAdminShell(content) {
   const navItems = [
-    ["overview", "dashboard", "Operations Overview"],
-    ["engineers", "groups", "Engineer Management"],
-    ["schedule", "calendar_month", "Schedule"],
-    ["active-tickets", "confirmation_number", "Active Engineer Cases"],
-    ["resolved-tickets", "task_alt", "Resolved Engineer Cases"],
-    ["audit", "history", "Audit"],
+    ["overview", "dashboard", "Operations Overview", "OV"],
+    ["engineers", "groups", "Engineer Management", "EN"],
+    ["schedule", "calendar_month", "Schedule", "SC"],
+    ["active-tickets", "confirmation_number", "Active Engineer Cases", "AC"],
+    ["resolved-tickets", "task_alt", "Resolved Engineer Cases", "RC"],
+    ["audit", "history", "Audit", "AU"],
   ];
   const activeNavSection = adminSection === "new-account" ? "engineers" : adminSection;
   const accountName = String(currentAccount?.display_name || currentAccount?.account_id || "Admin");
@@ -213,16 +214,16 @@ function renderAdminShell(content) {
     <section class="admin-shell">
       <aside class="admin-sidebar">
         <a class="admin-rail-brand" href="#overview" data-section="overview" aria-label="Admin overview">
-          <span class="admin-rail-brand-icon material-symbols-outlined" aria-hidden="true">admin_panel_settings</span>
+          <span class="admin-rail-brand-icon material-symbols-outlined admin-rail-symbol" data-fallback="AD" aria-hidden="true">admin_panel_settings</span>
           <span class="admin-rail-copy"><strong>Admin</strong><small>Dispatch control</small></span>
         </a>
         <div class="admin-sidebar-body">
           <nav class="admin-sidebar-nav" aria-label="Admin sections"><ul>
             ${navItems
               .map(
-                ([id, icon, label]) => `
+                ([id, icon, label, fallback]) => `
                   <li><a href="#${id}" data-section="${id}" class="${activeNavSection === id ? "is-active" : ""}" title="${escapeHtml(label)}">
-                    <span class="material-symbols-outlined" aria-hidden="true">${icon}</span>
+                    <span class="material-symbols-outlined admin-rail-symbol" data-fallback="${fallback}" aria-hidden="true">${icon}</span>
                     <span class="admin-rail-label">${escapeHtml(label)}</span>
                   </a></li>`
               )
@@ -235,7 +236,7 @@ function renderAdminShell(content) {
             <span class="admin-user-meta"><strong>${escapeHtml(accountName)}</strong><small>Administrator</small></span>
           </div>
           <button class="admin-logout-btn" type="button" data-action="sign-out" title="Sign out" aria-label="Sign out">
-            <span class="material-symbols-outlined" aria-hidden="true">logout</span>
+            <span class="material-symbols-outlined admin-rail-symbol" data-fallback="LO" aria-hidden="true">logout</span>
           </button>
         </footer>
       </aside>
@@ -319,11 +320,12 @@ function renderCompactEngineers() {
     .join("");
 }
 
-function timeStringToMinutes(value) {
+function timeStringToMinutes(value, options = {}) {
   const match = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
   if (!match) return null;
   const hours = Number(match[1]);
   const minutes = Number(match[2]);
+  if (options.allow24 && hours === 24 && minutes === 0) return 24 * 60;
   if (hours > 23 || minutes > 59) return null;
   return hours * 60 + minutes;
 }
@@ -334,7 +336,7 @@ function buildScheduleSegments(engineers) {
     (engineer.shifts || []).forEach((shift) => {
       const weekday = Number(shift.weekday);
       const startMinute = timeStringToMinutes(shift.start);
-      const endMinute = timeStringToMinutes(shift.end);
+      const endMinute = timeStringToMinutes(shift.end, { allow24: true });
       if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6 || startMinute === null || endMinute === null || startMinute === endMinute) {
         return;
       }
@@ -390,27 +392,41 @@ function assignScheduleLanes(segments) {
   return withLanes;
 }
 
+function buildScheduleSlots(engineers) {
+  return assignScheduleLanes(buildScheduleSegments(engineers)).flatMap((segment) => {
+    const slots = [];
+    const firstSlot = Math.floor(segment.startMinute / 30) * 30;
+    for (let slotStart = firstSlot; slotStart < segment.endMinute; slotStart += 30) {
+      const slotEnd = Math.min(slotStart + 30, 24 * 60);
+      if (slotEnd <= segment.startMinute) continue;
+      slots.push({ ...segment, slotStart, slotEnd });
+    }
+    return slots;
+  });
+}
+
 function renderWeeklyTimeGrid(engineers, days) {
-  const segments = assignScheduleLanes(buildScheduleSegments(engineers));
+  const slots = buildScheduleSlots(engineers);
   const hourLabels = Array.from({ length: 24 }, (_, hour) => {
-    const row = 2 + hour * 4;
+    const row = 2 + hour * 2;
     return `<span class="admin-week-time" data-hour="${hour}" style="grid-row:${row}">${String(hour).padStart(2, "0")}:00</span>`;
   }).join("");
   const dayColumns = days
-    .map((day, weekday) => `<div class="admin-week-day" role="gridcell" aria-label="${escapeHtml(day)}" style="grid-column:${weekday + 2};grid-row:2 / span 96"></div>`)
+    .map((day, weekday) => `<div class="admin-week-day" aria-hidden="true" style="grid-column:${weekday + 2};grid-row:2 / span 48"></div>`)
     .join("");
-  const shiftBlocks = segments
-    .map((segment) => {
-      const startRow = 2 + Math.floor(segment.startMinute / 15);
-      const rowSpan = Math.max(1, Math.ceil(segment.endMinute / 15) - Math.floor(segment.startMinute / 15));
-      const unavailable = segment.engineer.availability !== "available";
-      return `<button class="admin-week-shift${unavailable ? " is-unavailable" : ""}" type="button" role="gridcell"
-        data-action="edit-schedule" data-engineer-id="${escapeHtml(segment.engineer.account_id)}"
-        style="grid-column:${segment.weekday + 2};grid-row:${startRow} / span ${rowSpan};--lane:${segment.lane};--lane-count:${segment.laneCount}"
-        aria-label="Modify ${escapeHtml(segment.engineer.display_name)} shifts, ${escapeHtml(days[segment.weekday])} ${escapeHtml(segment.label)}, ${escapeHtml(segment.engineer.availability)}${segment.label === segment.fullLabel ? "" : `, overnight ${escapeHtml(segment.fullLabel)}`}">
-        <strong>${escapeHtml(segment.engineer.display_name)}</strong>
-        <span>${escapeHtml(segment.label)}</span>
-        <small>${escapeHtml(segment.engineer.availability)}</small>
+  const scheduleSlots = slots
+    .map((slot) => {
+      const row = 2 + Math.floor(slot.slotStart / 30);
+      const startHour = String(Math.floor(slot.slotStart / 60)).padStart(2, "0");
+      const startMinute = String(slot.slotStart % 60).padStart(2, "0");
+      const endHour = String(Math.floor(slot.slotEnd / 60)).padStart(2, "0");
+      const endMinute = String(slot.slotEnd % 60).padStart(2, "0");
+      const slotLabel = `${startHour}:${startMinute}-${endHour}:${endMinute}`;
+      return `<button class="admin-week-slot" type="button" role="gridcell"
+        data-action="edit-schedule" data-engineer-id="${escapeHtml(slot.engineer.account_id)}"
+        style="grid-column:${slot.weekday + 2};grid-row:${row};--lane:${slot.lane};--lane-count:${slot.laneCount}"
+        aria-label="Modify ${escapeHtml(slot.engineer.display_name)} schedule, ${escapeHtml(days[slot.weekday])} ${escapeHtml(slotLabel)}">
+        <span>${escapeHtml(slot.engineer.display_name)}</span>
       </button>`;
     })
     .join("");
@@ -422,8 +438,8 @@ function renderWeeklyTimeGrid(engineers, days) {
         <div class="admin-week-time-column" aria-hidden="true"></div>
         ${hourLabels}
         ${dayColumns}
-        ${shiftBlocks}
-        ${segments.length ? "" : `<p class="admin-week-empty">No shifts scheduled.</p>`}
+        ${scheduleSlots}
+        ${slots.length ? "" : `<p class="admin-week-empty">No shifts scheduled.</p>`}
       </div>
     </div>`;
 }
@@ -467,7 +483,7 @@ function renderAdminEngineerManagement() {
             <span class="admin-roster-copy"><strong>${escapeHtml(engineer.display_name)}</strong><small>${escapeHtml(engineer.email || engineer.account_id)}</small></span>
             <span class="admin-roster-statuses">
               ${statusPill(engineer.is_on_schedule_now ? "on_schedule" : "off_schedule")}
-              ${statusPill(engineer.availability)}
+              <button class="admin-availability-toggle ${engineer.availability === "available" ? "is-available" : ""}" type="button" role="switch" aria-checked="${engineer.availability === "available"}" data-action="toggle-availability" data-engineer-id="${escapeHtml(engineer.account_id)}" data-next-availability="${engineer.availability === "available" ? "unavailable" : "available"}">${escapeHtml(engineer.availability)}</button>
             </span>
             <button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify schedule" aria-label="Modify ${escapeHtml(engineer.display_name)} schedule">
               <span class="material-symbols-outlined" aria-hidden="true">edit_calendar</span>
@@ -486,6 +502,7 @@ function renderAdminSchedule() {
     <header class="admin-main-header">
       <div><h1>Weekly Schedule</h1><p>Review coverage and modify engineer shifts.</p></div>
     </header>
+    ${scheduleNotice ? `<p class="admin-schedule-notice" role="status">${escapeHtml(scheduleNotice)}</p>` : ""}
     <section class="admin-weekly-section" aria-labelledby="weekly-schedule-title">
       <header class="admin-section-heading">
         <div><p class="admin-eyebrow">${escapeHtml(scheduleData.timezone || "Asia/Shanghai")}</p><h2 id="weekly-schedule-title">Schedule Grid</h2></div>
@@ -498,6 +515,19 @@ function renderAdminSchedule() {
 
 function renderScheduleEditor(engineer, days) {
   const shifts = new Map((engineer.shifts || []).map((shift) => [Number(shift.weekday), shift]));
+  const hourOptions = (selected, allow24 = false) => Array.from({ length: allow24 ? 25 : 24 }, (_, hour) => {
+    const value = String(hour).padStart(2, "0");
+    return `<option value="${value}" ${value === selected ? "selected" : ""}>${value}</option>`;
+  }).join("");
+  const minuteOptions = (selected) => ["00", "30"].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${value}</option>`).join("");
+  const timeParts = (value, fallback, allow24 = false) => {
+    const normalized = value === "23:59" && allow24 ? "24:00" : String(value || fallback);
+    const [hour, minute] = normalized.split(":");
+    return {
+      hour: allow24 && hour === "24" ? "24" : /^(?:[01]\d|2[0-3])$/.test(hour) ? hour : fallback.slice(0, 2),
+      minute: minute === "30" ? "30" : "00",
+    };
+  };
   return `
     <div class="admin-editor-backdrop" data-action="close-schedule-editor"></div>
     <aside class="admin-schedule-editor" aria-label="Modify shifts" role="dialog" aria-modal="true">
@@ -508,19 +538,17 @@ function renderScheduleEditor(engineer, days) {
         <div class="admin-shift-fields">
           ${days.map((day, weekday) => {
             const shift = shifts.get(weekday);
+            const start = timeParts(shift?.start, "09:00");
+            const end = timeParts(shift?.end, "18:00", true);
             return `<fieldset class="admin-shift-row">
               <label class="admin-shift-toggle"><input type="checkbox" name="day_${weekday}" ${shift ? "checked" : ""} /><span>${day}</span></label>
-              <label><span>Start</span><input type="time" name="start_${weekday}" value="${escapeHtml(shift?.start || "09:00")}" /></label>
-              <label><span>End</span><input type="time" name="end_${weekday}" value="${escapeHtml(shift?.end || "18:00")}" /></label>
+              <label><span>Start</span><span class="admin-time-selects"><select name="start_hour_${weekday}" aria-label="${day} start hour">${hourOptions(start.hour)}</select><select name="start_minute_${weekday}" aria-label="${day} start minute">${minuteOptions(start.minute)}</select></span></label>
+              <label><span>End</span><span class="admin-time-selects"><select name="end_hour_${weekday}" data-end-hour="${weekday}" aria-label="${day} end hour">${hourOptions(end.hour, true)}</select><select name="end_minute_${weekday}" data-end-minute="${weekday}" aria-label="${day} end minute" ${end.hour === "24" ? "disabled" : ""}>${minuteOptions(end.hour === "24" ? "00" : end.minute)}</select></span></label>
             </fieldset>`;
           }).join("")}
         </div>
-        <div class="admin-availability-fields">
-          <label class="field"><span>Availability</span><select name="availability"><option value="available" ${engineer.availability === "available" ? "selected" : ""}>Available</option><option value="unavailable" ${engineer.availability !== "available" ? "selected" : ""}>Unavailable</option></select></label>
-          <label class="field"><span>Reason</span><input name="reason" maxlength="500" value="${escapeHtml(engineer.availability_reason || "")}" /></label>
-        </div>
         <p class="login-error" data-schedule-error role="alert"></p>
-        <footer><button class="btn btn-ghost" type="button" data-action="close-schedule-editor">Cancel</button><button class="btn btn-primary" type="submit">Save Schedule</button></footer>
+        <footer><button class="btn btn-ghost" type="button" data-action="close-schedule-editor">Cancel</button><button class="btn btn-primary" type="submit" data-schedule-submit><span class="material-symbols-outlined" aria-hidden="true">save</span><span>Save Schedule</span></button></footer>
       </form>
     </aside>`;
 }
@@ -739,39 +767,80 @@ async function handleInvitation(form) {
 }
 
 async function handleScheduleUpdate(form) {
+  if (form.dataset.submitting === "true") return;
   const data = new FormData(form);
   const engineerId = form.dataset.engineerId;
   const shifts = [];
   for (let weekday = 0; weekday < 7; weekday += 1) {
     if (!data.get(`day_${weekday}`)) continue;
+    const startHour = String(data.get(`start_hour_${weekday}`) || "00");
+    const startMinute = String(data.get(`start_minute_${weekday}`) || "00");
+    const endHour = String(data.get(`end_hour_${weekday}`) || "00");
+    const endMinute = endHour === "24" ? "00" : String(data.get(`end_minute_${weekday}`) || "00");
     shifts.push({
       weekday,
-      start: String(data.get(`start_${weekday}`) || ""),
-      end: String(data.get(`end_${weekday}`) || ""),
+      start: `${startHour}:${startMinute}`,
+      end: `${endHour}:${endMinute}`,
     });
   }
-  const submit = form.querySelector('button[type="submit"]');
+  const submit = form.querySelector("[data-schedule-submit]");
+  const errorNode = form.querySelector("[data-schedule-error]");
+  const originalSubmitMarkup = submit.innerHTML;
+  form.dataset.submitting = "true";
+  form.setAttribute("aria-busy", "true");
   submit.disabled = true;
-  form.querySelector("[data-schedule-error]").textContent = "";
+  submit.innerHTML = `<span class="material-symbols-outlined admin-invite-spinner" aria-hidden="true">progress_activity</span><span aria-live="polite">Saving schedule...</span>`;
+  errorNode.textContent = "";
   try {
-    await fetchJson(`/api/workspace/admin/engineers/${encodeURIComponent(engineerId)}/availability`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        availability: String(data.get("availability") || "unavailable"),
-        reason: String(data.get("reason") || "").trim() || null,
-      }),
-    });
-    await fetchJson(`/api/workspace/admin/engineers/${encodeURIComponent(engineerId)}/schedule`, {
+    const payload = await fetchJson(`/api/workspace/admin/engineers/${encodeURIComponent(engineerId)}/schedule`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shifts }),
     });
+    scheduleData = {
+      timezone: payload.timezone || scheduleData.timezone,
+      engineers: Array.isArray(payload.engineers) ? payload.engineers : scheduleData.engineers,
+    };
     selectedEngineerId = "";
-    await loadAdminData();
+    scheduleNotice = "Schedule saved";
+    renderAdmin();
   } catch (error) {
-    form.querySelector("[data-schedule-error]").textContent = error.message;
+    errorNode.textContent = error.message;
+    delete form.dataset.submitting;
+    form.removeAttribute("aria-busy");
+    submit.innerHTML = originalSubmitMarkup;
     submit.disabled = false;
+  }
+}
+
+async function handleAvailabilityToggle(button) {
+  if (button.dataset.submitting === "true") return;
+  const engineerId = button.dataset.engineerId || "";
+  const nextAvailability = button.dataset.nextAvailability || "unavailable";
+  button.dataset.submitting = "true";
+  button.setAttribute("aria-busy", "true");
+  button.disabled = true;
+  button.textContent = "Updating...";
+  try {
+    const payload = await fetchJson(`/api/workspace/admin/engineers/${encodeURIComponent(engineerId)}/availability`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ availability: nextAvailability, reason: null }),
+    });
+    const updatedAccount = payload.account;
+    scheduleData = {
+      ...scheduleData,
+      engineers: scheduleEngineers().map((engineer) =>
+        engineer.account_id === engineerId
+          ? { ...engineer, availability: updatedAccount.availability, availability_reason: null }
+          : engineer
+      ),
+    };
+    accounts = accounts.map((account) => account.account_id === engineerId ? { ...account, ...updatedAccount } : account);
+    renderAdmin();
+  } catch (error) {
+    loadError = error.message;
+    renderAdmin();
   }
 }
 
@@ -781,6 +850,7 @@ root.addEventListener("click", (event) => {
     event.preventDefault();
     adminSection = sectionLink.dataset.section;
     selectedEngineerId = "";
+    if (adminSection !== "schedule") scheduleNotice = null;
     if (adminSection !== "new-account") invitationResult = null;
     if (globalThis.location) globalThis.location.hash = adminSection;
     renderAdmin();
@@ -792,8 +862,11 @@ root.addEventListener("click", (event) => {
   } else if (action === "edit-schedule") {
     adminSection = "schedule";
     selectedEngineerId = event.target.closest("[data-engineer-id]")?.dataset.engineerId || "";
+    scheduleNotice = null;
     if (globalThis.location) globalThis.location.hash = "schedule";
     renderAdmin();
+  } else if (action === "toggle-availability") {
+    handleAvailabilityToggle(event.target.closest("[data-engineer-id]"));
   } else if (action === "close-schedule-editor") {
     selectedEngineerId = "";
     renderAdmin();
@@ -812,6 +885,17 @@ root.addEventListener("click", (event) => {
   }
 });
 
+root.addEventListener("change", (event) => {
+  const endHour = event.target.closest("[data-end-hour]");
+  if (!endHour) return;
+  const weekday = endHour.dataset.endHour;
+  const minuteSelect = root.querySelector(`[data-end-minute="${weekday}"]`);
+  if (!minuteSelect) return;
+  const isEndOfDay = endHour.value === "24";
+  if (isEndOfDay) minuteSelect.value = "00";
+  minuteSelect.disabled = isEndOfDay;
+});
+
 root.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
@@ -827,19 +911,6 @@ root.addEventListener("submit", (event) => {
   }
   if (form.matches("[data-schedule-form]")) {
     handleScheduleUpdate(form);
-    return;
-  }
-  if (form.matches("[data-availability-form]")) {
-    const data = new FormData(form);
-    const engineerId = form.dataset.engineerId;
-    fetchJson(`/api/workspace/admin/engineers/${encodeURIComponent(engineerId)}/availability`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(data.entries())),
-    }).then(loadAdminData).catch((error) => {
-      loadError = error.message;
-      renderAdmin();
-    });
     return;
   }
   if (form.matches("[data-assignment-form]")) {

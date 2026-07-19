@@ -219,12 +219,14 @@
 13. `/workspace/admin` 未登录页面复用同一事务型登录壳，顶部品牌固定为 `Admin`，主区文案说明账号、派单、availability 与 SLA 管理范围；登录后的管理控制台结构不受此规则影响。
 14. `/workspace/admin` 登录后的 rail 在桌面默认使用 `96px` icon-only 状态，hover 或 focus-within 时展开到 `264px`；当前账号与 Logout 固定放在 rail footer，不再放入全局顶栏。
 15. `/workspace/admin` 将工程师状态管理与完整班表拆成相邻工作面：`Engineer Management` 固定展示 `On Schedule Now` 和全量 `Engineer Schedules` 名单；独立 `Schedule` tab 展示 `Weekly Schedule` 时间网格与右侧 shift inspector。
-   - Engineer Management 的每位工程师必须展示 on/off-schedule 与 availability，并提供 `Modify Schedule` 入口；入口切换到 `Schedule` tab 后直接打开对应 shift inspector。
-   - `Weekly Schedule` 固定使用横轴 Monday-Sunday、纵轴 `00:00-24:00` 的时间网格，不得退回“工程师为行”的文本表格。
-   - 每个整点标签的文字基线必须与对应小时分隔线对齐；`00:00` 对齐网格内容顶部，后续整点按相同 48px 小时间距排列。
-   - 班次按真实起止时间占据纵向区间；跨夜班次拆分到相邻两天，同日重叠班次必须并排显示且可分别操作。
+   - Engineer Management 的每位工程师必须展示 on/off-schedule 与 availability，并提供 `Modify Schedule` 入口；入口切换到 `Schedule` tab 后直接打开对应 shift inspector。Availability 使用独立开关管理，Schedule inspector 不展示 Availability 或 Reason 字段。
+   - `Weekly Schedule` 固定使用横轴 Monday-Sunday、纵轴 `00:00-24:00` 的时间网格，不得退回“工程师为行”的文本表格；每小时横向拆成两个固定 30 分钟 slot。
+   - 每个整点标签与对应 `:00-:30` slot 垂直居中，时间标签与姓名块必须来自同一 CSS grid row，不得再用 transform 修补坐标。
+   - 班次按 30 分钟 slot 逐格显示工程师姓名，不使用跨多个格子的连续填充块；跨夜班次拆分到相邻两天，同一 slot 的重叠工程师必须横向并排且可分别操作。
+   - Schedule inspector 使用有限的小时与分钟选择器：Start hour 为 `00-23`，End hour 为 `00-24`，分钟仅 `00/30`，`24` 仅能搭配 `00`；不得使用循环滚动的原生 time picker。
+   - Schedule 保存必须在首次提交时立即显示 `Saving schedule...`、锁定重复提交并通过单一 schedule 请求完成；成功和失败都必须提供可见反馈，保存期间不得清空 Admin rail。
    - 网格完整展开 24 小时高度，由页面主滚动条负责纵向浏览；网格内部仅在窄屏支持横向滚动，时间列在横向滚动时保持可见，且不得造成页面级横向溢出。
-   - 班次块必须显示工程师身份、起止时间和 availability 文字状态，并可打开对应 shift inspector。
+   - 每个在班半小时格只显示工程师姓名；完整日期与半小时范围通过可访问名称提供，availability 仅在 Engineer Management 展示，点击姓名格可打开对应 shift inspector。
    - Admin 工作面的品牌与交互主色继续使用 `primary / primary-fixed / secondary` 蓝色体系；不得以青绿或绿色替代导航、班次、头像和成功反馈的主色。
 16. `On Schedule Now` 只表达当前时间命中数据库 schedule，不能命名为 `Online Engineers`，也不能推导浏览器连接或 presence；availability 必须作为独立文字状态展示。
 17. 新账号创建使用独立邀请任务页：Engineer Management 只保留 `New Account` 命令，邀请页收集 email 与冻结角色，并覆盖 sending / success / error 状态。
