@@ -121,43 +121,55 @@ function statusPill(status) {
 
 function renderLogin() {
   root.innerHTML = `
-    <section class="login-view">
-      <aside class="login-intro">
-        <div class="admin-login-copy">
-          <p class="admin-login-badge">Agora internal platform</p>
-          <h1>Controlled workspace operations for technical support teams.</h1>
-          <p class="admin-login-intro-copy">Manage engineer access, availability, system assignment, SLA health, and audit history in one operational workspace.</p>
+    <section class="admin-login-page">
+      <header class="admin-login-header">
+        <div class="admin-login-brand" aria-label="Admin">
+          <span class="admin-login-brand-icon material-symbols-outlined" aria-hidden="true">ac_unit</span>
+          <strong>Admin</strong>
         </div>
-        <div class="admin-login-highlights" aria-label="Workspace Admin access details">
-          <section class="admin-login-highlight">
-            <p class="eyebrow">Designed for</p>
-            <strong>Account control, dispatch oversight, and measurable SLA health</strong>
+      </header>
+      <main class="admin-login-main">
+        <div class="admin-login-content">
+          <header class="admin-login-heading">
+            <h1>Welcome Back</h1>
+            <p>An administrative workspace for managing engineer access, assignments, availability, and SLA health.</p>
+          </header>
+          <section class="admin-login-card" aria-label="Admin sign in">
+            <form class="admin-login-form" data-admin-login-form>
+              <label class="admin-login-field">
+                <span>Account ID</span>
+                <span class="admin-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">person</span>
+                  <input name="account_id" autocomplete="username" placeholder="admin name" required maxlength="128" />
+                </span>
+              </label>
+              <label class="admin-login-field">
+                <span>Password</span>
+                <span class="admin-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">lock</span>
+                  <input name="password" type="password" autocomplete="current-password" placeholder="Password" required maxlength="512" />
+                </span>
+              </label>
+              <p class="login-error admin-login-error" data-login-error role="alert"></p>
+              <button class="btn btn-primary admin-login-submit" type="submit">
+                <span>Sign In</span>
+                <span class="material-symbols-outlined" aria-hidden="true">login</span>
+              </button>
+            </form>
           </section>
-          <section class="admin-login-highlight is-accented">
-            <p class="eyebrow">Access model</p>
-            <strong>Use your Admin credentials to continue</strong>
-          </section>
+          <div class="admin-login-orbit" aria-hidden="true">
+            <span class="material-symbols-outlined">data_usage</span>
+          </div>
         </div>
-      </aside>
-      <section class="login-card">
-        <div class="login-card-head">
-          <h2>Sign in</h2>
-          <p>Enter your Admin credentials to manage Engineer Workspace operations.</p>
-        </div>
-        <form class="login-form" data-admin-login-form>
-          <label class="field">
-            <span>Account ID</span>
-            <input name="account_id" autocomplete="username" placeholder="admin name" required maxlength="128" />
-          </label>
-          <label class="field">
-            <span>Password</span>
-            <input name="password" type="password" autocomplete="current-password" required maxlength="512" />
-          </label>
-          <p class="login-error" data-login-error role="alert"></p>
-          <button class="btn btn-primary" type="submit">Sign in to Admin Workspace</button>
-        </form>
-        <p class="admin-login-note">Need the case workspace? <a href="/workspace">Go to Engineer Workspace.</a></p>
-      </section>
+      </main>
+      <footer class="admin-login-footer">
+        <strong>&copy; 2026 SupportPortal. Secure Admin Workspace.</strong>
+        <nav aria-label="Admin resources">
+          <span>Security Policy</span>
+          <a href="https://status.agora.io/" target="_blank" rel="noopener noreferrer">System Status</a>
+          <span>Help Desk</span>
+        </nav>
+      </footer>
     </section>
   `;
 }
