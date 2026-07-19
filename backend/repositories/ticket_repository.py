@@ -918,7 +918,6 @@ class TicketRepository(Protocol):
         self,
         token_hash: str,
         *,
-        account_id: str,
         display_name: str,
         password_hash: str,
         completed_at: str,
@@ -1782,12 +1781,10 @@ class InMemoryTicketRepository:
         self,
         token_hash: str,
         *,
-        account_id: str,
         display_name: str,
         password_hash: str,
         completed_at: str,
     ) -> dict[str, Any]:
-        normalized_account_id = str(account_id or "").strip()
         with self._assignment_lock:
             invitation = next(
                 (
@@ -1803,6 +1800,7 @@ class InMemoryTicketRepository:
             expires = datetime.fromisoformat(_to_iso(invitation["expires_at"]).replace("Z", "+00:00"))
             if invitation.get("delivery_status") != "sent" or invitation.get("used_at") or expires <= completed:
                 raise ValueError("invitation unavailable")
+            normalized_account_id = str(invitation["email"] or "").strip().lower()
             if normalized_account_id in self._workspace_accounts:
                 raise ValueError("workspace account already exists")
             if self.get_workspace_account_by_email(invitation["email"]):
@@ -5550,13 +5548,10 @@ class PostgresTicketRepository:
         self,
         token_hash: str,
         *,
-        account_id: str,
         display_name: str,
         password_hash: str,
         completed_at: str,
     ) -> dict[str, Any]:
-        normalized_account_id = str(account_id or "").strip()
-
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction():
                 with conn.cursor() as cur:
@@ -5585,6 +5580,7 @@ class PostgresTicketRepository:
                         or expires_at <= completed
                     ):
                         raise ValueError("invitation unavailable")
+                    normalized_account_id = str(invitation["email"] or "").strip().lower()
                     cur.execute(
                         sql.SQL("SELECT 1 FROM {} WHERE account_id = %s OR LOWER(email) = %s").format(
                             self._table("support_workspace_accounts")

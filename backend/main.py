@@ -32,7 +32,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 import psycopg
 
 from backend.repositories.ticket_repository import (
@@ -515,7 +515,11 @@ class EngineerCaseClaimRequest(BaseModel):
 
 
 class WorkspaceLoginRequest(BaseModel):
-    account_id: str = Field(min_length=1, max_length=128)
+    email: str = Field(
+        min_length=1,
+        max_length=320,
+        validation_alias=AliasChoices("email", "account_id"),
+    )
     password: str = Field(min_length=1, max_length=512)
 
 
@@ -537,7 +541,6 @@ class WorkspaceInvitationCreateRequest(BaseModel):
 
 class WorkspaceInvitationCompleteRequest(BaseModel):
     token: str = Field(min_length=16, max_length=512)
-    account_id: str = Field(min_length=1, max_length=128)
     display_name: str = Field(min_length=1, max_length=160)
     password: str = Field(min_length=10, max_length=512)
     confirm_password: str = Field(min_length=10, max_length=512)
@@ -4991,13 +4994,16 @@ def get_dashboard_ticket_summary(ticket_id: str) -> dict[str, Any]:
 
 @app.post("/api/workspace/auth/login")
 def workspace_login(request: WorkspaceLoginRequest) -> dict[str, Any]:
-    account = ticket_repository.get_workspace_account(request.account_id)
+    identity = request.email.strip()
+    account = ticket_repository.get_workspace_account_by_email(identity)
+    if account is None:
+        account = ticket_repository.get_workspace_account(identity)
     if (
         not isinstance(account, dict)
         or not bool(account.get("active", True))
         or not verify_workspace_password(request.password, str(account.get("password_hash") or ""))
     ):
-        raise HTTPException(status_code=401, detail="Invalid account or password")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_workspace_access_token(account)
     return {
         "access_token": token,
@@ -5119,12 +5125,11 @@ def complete_workspace_invitation(
 ) -> dict[str, Any]:
     if request.password != request.confirm_password:
         raise HTTPException(status_code=422, detail="Passwords do not match")
-    if not request.account_id.strip() or not request.display_name.strip():
-        raise HTTPException(status_code=422, detail="Account ID and display name are required")
+    if not request.display_name.strip():
+        raise HTTPException(status_code=422, detail="Display name is required")
     try:
         account = _workspace_invitation_service().complete(
             raw_token=request.token,
-            account_id=request.account_id.strip(),
             display_name=request.display_name.strip(),
             password=request.password,
         )

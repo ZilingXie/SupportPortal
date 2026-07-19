@@ -40,10 +40,10 @@ class WorkspaceApiTests(unittest.TestCase):
     def tearDown(self) -> None:
         main.ticket_repository = self.original_repository
 
-    def _login(self, account_id: str, password: str) -> str:
+    def _login(self, email: str, password: str) -> str:
         response = self.client.post(
             "/api/workspace/auth/login",
-            json={"account_id": account_id, "password": password},
+            json={"email": email, "password": password},
         )
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["access_token"]
@@ -132,15 +132,15 @@ class WorkspaceApiTests(unittest.TestCase):
             "/api/workspace/invitations/complete",
             json={
                 "token": token_match.group(1),
-                "account_id": "Maya",
+                "account_id": "client-controlled-value",
                 "display_name": "Maya",
                 "password": "engineer-password-1",
                 "confirm_password": "engineer-password-1",
             },
         )
-        self._set_schedule_now("Maya", headers)
+        self._set_schedule_now("maya@example.com", headers)
         available = self.client.patch(
-            "/api/workspace/admin/engineers/Maya/availability",
+            "/api/workspace/admin/engineers/maya@example.com/availability",
             headers=headers,
             json={"availability": "available", "reason": "on shift"},
         )
@@ -150,6 +150,9 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(invited.json()["invitation"]["email"], "maya@example.com")
         self.assertEqual(setup.status_code, 201, setup.text)
         self.assertNotIn("password_hash", setup.json()["account"])
+        self.assertEqual(setup.json()["account"]["account_id"], "maya@example.com")
+        self.assertEqual(setup.json()["account"]["email"], "maya@example.com")
+        self._login("maya@example.com", "engineer-password-1")
         self.assertEqual(available.status_code, 200, available.text)
         self.assertEqual(available.json()["account"]["availability"], "available")
         self.assertTrue(

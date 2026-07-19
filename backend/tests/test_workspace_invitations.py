@@ -38,17 +38,17 @@ class WorkspaceInvitationServiceTests(unittest.TestCase):
         inspected = self.service.inspect(raw_token)
         account = self.service.complete(
             raw_token=raw_token,
-            account_id="new-admin",
             display_name="New Admin",
             password="new-admin-password",
         )
 
         self.assertEqual(inspected["role"], "admin")
         self.assertEqual(account["role"], "admin")
+        self.assertEqual(account["account_id"], "new.engineer@example.com")
+        self.assertEqual(account["email"], "new.engineer@example.com")
         with self.assertRaisesRegex(ValueError, "invitation unavailable"):
             self.service.complete(
                 raw_token=raw_token,
-                account_id="another-admin",
                 display_name="Another Admin",
                 password="another-password",
             )

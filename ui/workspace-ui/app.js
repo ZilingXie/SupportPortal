@@ -2684,10 +2684,10 @@ function renderLogin() {
           <section class="workspace-login-card" aria-label="Workspace sign in">
             <form id="workspace-login-form" class="workspace-login-form">
               <label class="workspace-login-field">
-                <span>Account ID</span>
+                <span>Email</span>
                 <span class="workspace-login-input-wrap">
                   <span class="material-symbols-outlined" aria-hidden="true">person</span>
-                  <input name="account_id" type="text" autocomplete="username" placeholder="name" required maxlength="128" />
+                  <input name="email" type="text" autocomplete="username" placeholder="name@company.com" required maxlength="320" />
                 </span>
               </label>
               <label class="workspace-login-field">
@@ -5974,7 +5974,7 @@ async function handleLoginSubmit(event) {
   event?.preventDefault?.();
   const form = event?.target;
   const formData = new FormData(form);
-  const accountId = String(formData.get("account_id") || "").trim();
+  const email = String(formData.get("email") || "").trim();
   const password = String(formData.get("password") || "");
   const errorEl = form?.querySelector?.("#workspace-login-error");
   if (errorEl) {
@@ -5983,17 +5983,17 @@ async function handleLoginSubmit(event) {
   const payload = await fetchJson("/api/workspace/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ account_id: accountId, password }),
+    body: JSON.stringify({ email, password }),
   });
   const account = payload?.account;
   const accessToken = String(payload?.access_token || "").trim();
   if (!account || !accessToken) {
     throw new Error("Workspace login returned an invalid session");
   }
-  writeStorage(WORKSPACE_AUTH_KEY, String(account.account_id || accountId));
+  writeStorage(WORKSPACE_AUTH_KEY, String(account.account_id || email));
   writeStorage(WORKSPACE_ACCOUNT_KEY, account);
   writeStorage(WORKSPACE_ACCESS_TOKEN_KEY, accessToken);
-  selectedEngineerId = String(account.account_id || accountId);
+  selectedEngineerId = String(account.account_id || email);
   workspaceAccount = account;
   workspaceAccessToken = accessToken;
   saveWorkspaceActive(false);

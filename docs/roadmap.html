@@ -2013,7 +2013,7 @@ flowchart TD
         status: "doing",
         thesis: "9/1 Controlled Launch 使用 `/workspace` 作为 Engineer Case 正式处理入口，工程师登录后先查看个人 weekly schedule，并仅在点击 Ready to roll 后进入 assigned case；`/workspace/admin` 作为邮件邀请、weekly schedule、availability、派单、审计和指标入口。工程师不能领取工单：系统只从当前 on-schedule 且 available 的 engineer 中按 round-robin 派单，assigned 后立即开始 3 小时 SLA；超时、engineer unavailable 或离开 schedule 时自动转派。Client Ticket status 与 Engineer Case assignment status 完全分层。",
         done: [
-          { summary: "Workspace 账号、PBKDF2 password、signed token 与 Admin/Engineer RBAC 已接入；Admin 通过 Graph 邮件邀请和一次性 setup link 创建账号。", prs: [] },
+          { summary: "Workspace 账号、PBKDF2 password、signed token 与 Admin/Engineer RBAC 已接入；Admin 通过 Graph 邮件邀请和一次性 setup link 创建账号，邀请邮箱被锁定为登录身份。", prs: [] },
           { summary: "Admin 可用 available/unavailable 开关管理 engineer availability，reason 可选，审计字段与 availability 变更 audit 已落地。", prs: [] },
           { summary: "Admin 可持久化编辑 Asia/Shanghai weekly schedule；单日单班段支持跨夜，离开 schedule 的未完成 case 会自动转派或回到 pending。", prs: [] },
           { summary: "Engineer Case assignment_status 已独立为 pending/assigned/resolved；assigned_at、sla_due_at、previous assignees、attempt count、reason 与 version 已持久化。", prs: [] },

@@ -117,11 +117,13 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "An administrative workspace for managing engineer access, assignments, availability, and SLA health.",
             "admin-login-card",
             "Secure Admin Workspace",
-            'name="account_id"',
+            '<span>Email</span>',
+            'name="email"',
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-admin-invitation-feedback-1", html)
+        self.assertNotIn("Account ID", source)
+        self.assertIn("20260719-setup-email-identity-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -266,7 +268,13 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
 
         self.assertIn("/api/workspace/invitations/complete", source)
         self.assertIn("/api/workspace/invitations/${encodeURIComponent(token)}", source)
+        self.assertIn('<span>Email</span>', source)
+        self.assertIn('name="email"', source)
+        self.assertIn('readonly aria-readonly="true"', source)
+        self.assertNotIn('name="account_id"', source)
+        self.assertNotIn("account_id:", source)
         self.assertIn('name="confirm_password"', source)
+        self.assertIn("20260719-setup-email-identity-1", html)
         self.assertIn('id="workspace-setup-root"', html)
 
 

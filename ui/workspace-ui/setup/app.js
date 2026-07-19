@@ -48,7 +48,7 @@ function renderForm() {
     <section class="setup-content">
       <header><p class="setup-eyebrow">${escapeHtml(invitation.role.toUpperCase())} INVITATION</p><h1>Set up your account</h1><p>${escapeHtml(invitation.email)}</p></header>
       <form class="setup-form" data-setup-form>
-        <label><span>Account ID</span><input name="account_id" autocomplete="username" required maxlength="128" /></label>
+        <label><span>Email</span><input name="email" type="email" value="${escapeHtml(invitation.email)}" autocomplete="username" readonly aria-readonly="true" /></label>
         <label><span>Display name</span><input name="display_name" autocomplete="name" required maxlength="160" /></label>
         <label><span>Password</span><input name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="512" /></label>
         <label><span>Confirm password</span><input name="confirm_password" type="password" autocomplete="new-password" required minlength="10" maxlength="512" /></label>
@@ -79,7 +79,6 @@ root.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         token,
-        account_id: String(data.get("account_id") || "").trim(),
         display_name: String(data.get("display_name") || "").trim(),
         password: String(data.get("password") || ""),
         confirm_password: String(data.get("confirm_password") || ""),
