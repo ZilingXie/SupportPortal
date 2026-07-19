@@ -53,7 +53,7 @@
 - Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
 - `/workspace` 是正式 Engineer Case 处理入口，工程师登录后可查看个人 weekly schedule，并在点击 Ready to roll 后处理系统派发给自己的 case。
-- `/workspace/admin` 可通过真实邮件邀请创建 Admin/Engineer 账号，并由一次性 setup link 完成账号设置。
+- `/workspace/admin` 可通过真实邮件邀请创建 Admin/Engineer 账号，一次性 setup link 将邀请邮箱锁定为不可修改的登录身份。
 - `/workspace/admin` 可持久化管理 Engineer weekly schedule 和 available/unavailable 状态。
 - Engineer Case 使用 on-schedule 且 available 的 engineer 进行 round-robin 自动派单，派单后立即开始 3 小时 SLA。
 - Engineer unavailable、离开 schedule 或 3 小时 SLA 到期时，系统会把未完成 Engineer Case 自动派给下一个合格 engineer。

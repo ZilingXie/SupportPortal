@@ -116,11 +116,13 @@ class WorkspaceUiContractTests(unittest.TestCase):
             "A focused workspace for support engineers to investigate and resolve assigned cases.",
             "workspace-login-card",
             "Secure Engineer Workspace",
-            'name="account_id"',
+            '<span>Email</span>',
+            'name="email"',
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-workspace-topbar-1", html)
+        self.assertNotIn("Account ID", source)
+        self.assertIn("20260719-setup-email-identity-1", html)
         self.assertIn(".workspace-login-header", css)
         self.assertIn(".workspace-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

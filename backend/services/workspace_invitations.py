@@ -114,14 +114,12 @@ class WorkspaceInvitationService:
         self,
         *,
         raw_token: str,
-        account_id: str,
         display_name: str,
         password: str,
     ) -> dict[str, Any]:
         completed_at = self.now_provider().astimezone(timezone.utc).isoformat()
         return self.repository.complete_workspace_invitation(
             token_hash(raw_token),
-            account_id=account_id,
             display_name=display_name,
             password_hash=hash_workspace_password(password),
             completed_at=completed_at,

@@ -161,10 +161,10 @@ function renderLogin() {
           <section class="admin-login-card" aria-label="Admin sign in">
             <form class="admin-login-form" data-admin-login-form>
               <label class="admin-login-field">
-                <span>Account ID</span>
+                <span>Email</span>
                 <span class="admin-login-input-wrap">
                   <span class="material-symbols-outlined" aria-hidden="true">person</span>
-                  <input name="account_id" autocomplete="username" placeholder="admin name" required maxlength="128" />
+                  <input name="email" autocomplete="username" placeholder="name@company.com" required maxlength="320" />
                 </span>
               </label>
               <label class="admin-login-field">
@@ -447,7 +447,7 @@ function renderAdminEngineerManagement() {
         ${onSchedule.length ? onSchedule.map((engineer) => `
           <article class="admin-roster-person">
             <span class="admin-user-avatar">${escapeHtml(engineerInitials(engineer))}</span>
-            <span class="admin-roster-copy"><strong>${escapeHtml(engineer.display_name)}</strong><small>${escapeHtml(engineer.account_id)}</small></span>
+            <span class="admin-roster-copy"><strong>${escapeHtml(engineer.display_name)}</strong><small>${escapeHtml(engineer.email || engineer.account_id)}</small></span>
             ${statusPill(engineer.availability)}
             <button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify shifts" aria-label="Modify ${escapeHtml(engineer.display_name)} shifts">
               <span class="material-symbols-outlined" aria-hidden="true">edit_calendar</span>
@@ -658,7 +658,7 @@ async function handleAdminLogin(form) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      account_id: String(data.get("account_id") || "").trim(),
+      email: String(data.get("email") || "").trim(),
       password: String(data.get("password") || ""),
     }),
   });

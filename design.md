@@ -226,6 +226,9 @@
    - Admin 工作面的品牌与交互主色继续使用 `primary / primary-fixed / secondary` 蓝色体系；不得以青绿或绿色替代导航、班次、头像和成功反馈的主色。
 16. `On Schedule Now` 只表达当前时间命中数据库 schedule，不能命名为 `Online Engineers`，也不能推导浏览器连接或 presence；availability 必须作为独立文字状态展示。
 17. 新账号创建使用独立邀请任务页：Engineer Management 只保留 `New Account` 命令，邀请页收集 email 与冻结角色，并覆盖 sending / success / error 状态。
+   - setup 页面将邀请 email 作为唯一账号身份，Email 输入框由已校验的邀请记录自动填充并保持只读；页面和登录表单不得再向用户展示 `Account ID`。
+   - setup 提交不得接受客户端另行指定账号身份；后端必须使用邀请记录中的规范化 email 创建账号。数据库内部可继续保留 `account_id` 作为兼容主键。
+   - Workspace 与 Admin 登录表单统一使用 `Email` 标签；现有无 email 的 legacy 账号可继续通过原内部 ID 登录，但新邀请账号使用 email 登录。
 18. Admin 响应式 rail 规则固定为：`>= 901px` 支持 hover/focus 展开，`721px - 900px` 保持 icon-only，`<= 720px` 退化为顶部静态导航并显示必要标签与账户操作。
 19. Admin rail 不显示浏览器滚动条；内容超出时仍须保留滚轮、触控板、触摸与键盘滚动能力，移动端顶部导航同样隐藏滚动轨迹。
 20. `/workspace` 登录成功后必须先进入 Engineer Workspace 首页，不得自动打开已派发 case；只有工程师点击 `Ready to roll` 后，系统才检查并打开下一条 assigned Engineer Case。
