@@ -2015,7 +2015,7 @@ flowchart TD
         done: [
           { summary: "Workspace 账号、PBKDF2 password、signed token 与 Admin/Engineer RBAC 已接入；Admin 通过 Graph 邮件邀请和一次性 setup link 创建账号，邀请邮箱被锁定为登录身份。", prs: [] },
           { summary: "Admin 可用 available/unavailable 开关管理 engineer availability，reason 可选，审计字段与 availability 变更 audit 已落地。", prs: [] },
-          { summary: "Admin 可持久化编辑 Asia/Shanghai weekly schedule；单日单班段支持跨夜，离开 schedule 的未完成 case 会自动转派或回到 pending。", prs: [] },
+          { summary: "Admin 可在独立 Schedule tab 持久化编辑 Asia/Shanghai weekly schedule，并从 Engineer Management 查看当前覆盖及进入班表编辑；单日单班段支持跨夜，离开 schedule 的未完成 case 会自动转派或回到 pending。", prs: [] },
           { summary: "Engineer Case assignment_status 已独立为 pending/assigned/resolved；assigned_at、sla_due_at、previous assignees、attempt count、reason 与 version 已持久化。", prs: [] },
           { summary: "on-schedule + available engineer 的 round-robin 系统派单已接入；派单立即开始 3 小时 SLA，SLA 到期、engineer unavailable 或离开 schedule 会转派到下一个合格 engineer。", prs: [] },
           { summary: "派单更新使用 transaction、row lock 与 assignment_version compare-and-set，assignment event 与状态更新同事务写入。", prs: [] },

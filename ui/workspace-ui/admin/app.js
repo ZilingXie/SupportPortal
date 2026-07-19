@@ -19,7 +19,7 @@ let loadError = "";
 
 function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
-  return ["overview", "engineers", "new-account", "active-tickets", "resolved-tickets", "audit"].includes(section)
+  return ["overview", "engineers", "schedule", "new-account", "active-tickets", "resolved-tickets", "audit"].includes(section)
     ? section
     : "overview";
 }
@@ -135,7 +135,7 @@ function formatDateTime(value) {
 
 function statusPill(status) {
   const label = String(status || "unknown").replaceAll("_", " ");
-  const tone = status === "assigned" || status === "available"
+  const tone = status === "assigned" || status === "available" || status === "on_schedule"
     ? "is-active"
     : status === "resolved"
     ? "is-available"
@@ -202,6 +202,7 @@ function renderAdminShell(content) {
   const navItems = [
     ["overview", "dashboard", "Operations Overview"],
     ["engineers", "groups", "Engineer Management"],
+    ["schedule", "calendar_month", "Schedule"],
     ["active-tickets", "confirmation_number", "Active Engineer Cases"],
     ["resolved-tickets", "task_alt", "Resolved Engineer Cases"],
     ["audit", "history", "Audit"],
@@ -393,7 +394,7 @@ function renderWeeklyTimeGrid(engineers, days) {
   const segments = assignScheduleLanes(buildScheduleSegments(engineers));
   const hourLabels = Array.from({ length: 24 }, (_, hour) => {
     const row = 2 + hour * 4;
-    return `<span class="admin-week-time" style="grid-row:${row} / span 4">${String(hour).padStart(2, "0")}:00</span>`;
+    return `<span class="admin-week-time" data-hour="${hour}" style="grid-row:${row}">${String(hour).padStart(2, "0")}:00</span>`;
   }).join("");
   const dayColumns = days
     .map((day, weekday) => `<div class="admin-week-day" role="gridcell" aria-label="${escapeHtml(day)}" style="grid-column:${weekday + 2};grid-row:2 / span 96"></div>`)
@@ -418,6 +419,7 @@ function renderWeeklyTimeGrid(engineers, days) {
       <div class="admin-week-grid" role="grid">
         <div class="admin-week-corner" aria-hidden="true">TIME</div>
         ${days.map((day, weekday) => `<div class="admin-week-day-heading" role="columnheader" style="grid-column:${weekday + 2}">${escapeHtml(day)}</div>`).join("")}
+        <div class="admin-week-time-column" aria-hidden="true"></div>
         ${hourLabels}
         ${dayColumns}
         ${shiftBlocks}
@@ -429,11 +431,9 @@ function renderWeeklyTimeGrid(engineers, days) {
 function renderAdminEngineerManagement() {
   const engineers = scheduleEngineers();
   const onSchedule = engineers.filter((engineer) => engineer.is_on_schedule_now);
-  const selected = engineers.find((engineer) => engineer.account_id === selectedEngineerId);
-  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   return `
     <header class="admin-main-header admin-management-header">
-      <div><h1>Engineer Management</h1><p>Manage weekly coverage and dispatch eligibility.</p></div>
+      <div><h1>Engineer Management</h1><p>Monitor current coverage and update engineer schedules.</p></div>
       <a class="btn btn-primary admin-new-account-btn" href="#new-account" data-section="new-account">
         <span class="material-symbols-outlined" aria-hidden="true">add</span><span>New Account</span>
       </a>
@@ -449,15 +449,46 @@ function renderAdminEngineerManagement() {
             <span class="admin-user-avatar">${escapeHtml(engineerInitials(engineer))}</span>
             <span class="admin-roster-copy"><strong>${escapeHtml(engineer.display_name)}</strong><small>${escapeHtml(engineer.email || engineer.account_id)}</small></span>
             ${statusPill(engineer.availability)}
-            <button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify shifts" aria-label="Modify ${escapeHtml(engineer.display_name)} shifts">
+            <button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify schedule" aria-label="Modify ${escapeHtml(engineer.display_name)} schedule">
               <span class="material-symbols-outlined" aria-hidden="true">edit_calendar</span>
             </button>
           </article>`).join("") : `<p class="admin-empty-state">No engineers are scheduled for the current time.</p>`}
       </div>
     </section>
+    <section class="admin-roster-section" aria-labelledby="engineer-schedules-title">
+      <header class="admin-section-heading">
+        <div><p class="admin-eyebrow">${escapeHtml(scheduleData.timezone || "Asia/Shanghai")}</p><h2 id="engineer-schedules-title">Engineer Schedules</h2></div>
+        <span class="admin-count">${engineers.length}</span>
+      </header>
+      <div class="admin-roster-list">
+        ${engineers.length ? engineers.map((engineer) => `
+          <article class="admin-roster-person">
+            <span class="admin-user-avatar">${escapeHtml(engineerInitials(engineer))}</span>
+            <span class="admin-roster-copy"><strong>${escapeHtml(engineer.display_name)}</strong><small>${escapeHtml(engineer.email || engineer.account_id)}</small></span>
+            <span class="admin-roster-statuses">
+              ${statusPill(engineer.is_on_schedule_now ? "on_schedule" : "off_schedule")}
+              ${statusPill(engineer.availability)}
+            </span>
+            <button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify schedule" aria-label="Modify ${escapeHtml(engineer.display_name)} schedule">
+              <span class="material-symbols-outlined" aria-hidden="true">edit_calendar</span>
+            </button>
+          </article>`).join("") : `<p class="admin-empty-state">No active engineer accounts.</p>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminSchedule() {
+  const engineers = scheduleEngineers();
+  const selected = engineers.find((engineer) => engineer.account_id === selectedEngineerId);
+  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  return `
+    <header class="admin-main-header">
+      <div><h1>Weekly Schedule</h1><p>Review coverage and modify engineer shifts.</p></div>
+    </header>
     <section class="admin-weekly-section" aria-labelledby="weekly-schedule-title">
       <header class="admin-section-heading">
-        <div><p class="admin-eyebrow">${escapeHtml(scheduleData.timezone || "Asia/Shanghai")}</p><h2 id="weekly-schedule-title">Weekly Schedule</h2></div>
+        <div><p class="admin-eyebrow">${escapeHtml(scheduleData.timezone || "Asia/Shanghai")}</p><h2 id="weekly-schedule-title">Schedule Grid</h2></div>
       </header>
       ${renderWeeklyTimeGrid(engineers, days)}
     </section>
@@ -600,6 +631,8 @@ function renderAdmin() {
   }
   const content = adminSection === "engineers"
     ? renderAdminEngineerManagement()
+    : adminSection === "schedule"
+    ? renderAdminSchedule()
     : adminSection === "new-account"
     ? renderAdminNewAccount()
     : adminSection === "active-tickets" || adminSection === "resolved-tickets"
@@ -608,6 +641,7 @@ function renderAdmin() {
     ? renderAudit()
     : renderOverview();
   root.innerHTML = renderAdminShell(content);
+  root.querySelector(".admin-sidebar-nav a.is-active")?.scrollIntoView({ block: "nearest", inline: "center" });
 }
 
 async function loadAdminData() {
@@ -756,7 +790,9 @@ root.addEventListener("click", (event) => {
   if (action === "sign-out") {
     signOut();
   } else if (action === "edit-schedule") {
+    adminSection = "schedule";
     selectedEngineerId = event.target.closest("[data-engineer-id]")?.dataset.engineerId || "";
+    if (globalThis.location) globalThis.location.hash = "schedule";
     renderAdmin();
   } else if (action === "close-schedule-editor") {
     selectedEngineerId = "";
@@ -824,8 +860,9 @@ root.addEventListener("submit", (event) => {
 });
 
 window.addEventListener?.("hashchange", () => {
-  adminSection = sectionFromHash();
-  selectedEngineerId = "";
+  const nextSection = sectionFromHash();
+  if (nextSection !== adminSection) selectedEngineerId = "";
+  adminSection = nextSection;
   renderAdmin();
 });
 
