@@ -121,7 +121,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-admin-page-scroll-1", html)
+        self.assertIn("20260719-admin-invitation-feedback-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -147,6 +147,57 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn("background: var(--primary)", css)
         self.assertIn(".admin-back-link:visited", css)
         self.assertIn("text-decoration: none", css)
+
+    def test_admin_invitation_submit_has_immediate_feedback_and_deduplicates_requests(self) -> None:
+        self.run_admin_app_script(
+            """
+            let requestCount = 0;
+            let resolveRequest;
+            fetchJson = () => {
+              requestCount += 1;
+              return new Promise((resolve) => { resolveRequest = resolve; });
+            };
+            const attributes = new Map();
+            const submit = { disabled: false, innerHTML: "original markup" };
+            const errorNode = { textContent: "old error" };
+            const form = {
+              dataset: {},
+              querySelector(selector) { return selector.includes("submit") ? submit : errorNode; },
+              setAttribute(name, value) { attributes.set(name, value); },
+              removeAttribute(name) { attributes.delete(name); },
+            };
+            const pending = handleInvitation(form);
+            if (!submit.disabled || !submit.innerHTML.includes("Sending invitation...") || form.dataset.submitting !== "true") {
+              throw new Error("first click did not enter the sending state immediately");
+            }
+            await handleInvitation(form);
+            if (requestCount !== 1) throw new Error("duplicate click created another invitation request");
+            resolveRequest({ invitation: { email: "test@example.com", expires_at: "2026-07-20T00:00:00Z" } });
+            await pending;
+            if (requestCount !== 1) throw new Error("invitation request count changed after completion");
+            """
+        )
+
+    def test_admin_invitation_submit_restores_retry_state_after_failure(self) -> None:
+        self.run_admin_app_script(
+            """
+            fetchJson = async () => { throw new Error("mail service unavailable"); };
+            const attributes = new Map();
+            const submit = { disabled: false, innerHTML: "original markup" };
+            const errorNode = { textContent: "" };
+            const form = {
+              dataset: {},
+              querySelector(selector) { return selector.includes("submit") ? submit : errorNode; },
+              setAttribute(name, value) { attributes.set(name, value); },
+              removeAttribute(name) { attributes.delete(name); },
+            };
+            await handleInvitation(form);
+            if (submit.disabled || submit.innerHTML !== "original markup" || form.dataset.submitting || attributes.has("aria-busy")) {
+              throw new Error("failed invitation did not restore the retry state");
+            }
+            if (errorNode.textContent !== "mail service unavailable") throw new Error("invitation error was not displayed");
+            """
+        )
 
     def test_admin_weekly_schedule_uses_blue_time_grid(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")

@@ -504,7 +504,7 @@ function renderAdminNewAccount() {
           <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required maxlength="320" placeholder="name@company.com" /></label>
           <label class="field"><span>Role</span><select name="role"><option value="engineer">Engineer</option><option value="admin">Admin</option></select></label>
           <p class="login-error" data-invitation-error role="alert"></p>
-          <button class="btn btn-primary" type="submit"><span class="material-symbols-outlined" aria-hidden="true">send</span><span>Send Invitation Email</span></button>
+          <button class="btn btn-primary" type="submit" data-invitation-submit><span class="material-symbols-outlined" aria-hidden="true">send</span><span aria-live="polite">Send Invitation Email</span></button>
         </form>
         ${invitationResult ? `<aside class="admin-invite-success" role="status"><span class="material-symbols-outlined" aria-hidden="true">mark_email_read</span><div><strong>Invitation sent</strong><p>${escapeHtml(invitationResult.email)} can use the setup link until ${escapeHtml(formatDateTime(invitationResult.expires_at))}.</p></div></aside>` : ""}
       </div>
@@ -674,10 +674,16 @@ async function handleAdminLogin(form) {
 }
 
 async function handleInvitation(form) {
+  if (form.dataset.submitting === "true") return;
   const data = new FormData(form);
   const submit = form.querySelector('button[type="submit"]');
+  const errorNode = form.querySelector("[data-invitation-error]");
+  const originalSubmitMarkup = submit.innerHTML;
+  form.dataset.submitting = "true";
+  form.setAttribute("aria-busy", "true");
   submit.disabled = true;
-  form.querySelector("[data-invitation-error]").textContent = "";
+  submit.innerHTML = `<span class="material-symbols-outlined admin-invite-spinner" aria-hidden="true">progress_activity</span><span aria-live="polite">Sending invitation...</span>`;
+  errorNode.textContent = "";
   try {
     const payload = await fetchJson("/api/workspace/admin/invitations", {
       method: "POST",
@@ -690,7 +696,10 @@ async function handleInvitation(form) {
     invitationResult = payload.invitation;
     renderAdmin();
   } catch (error) {
-    form.querySelector("[data-invitation-error]").textContent = error.message;
+    errorNode.textContent = error.message;
+    delete form.dataset.submitting;
+    form.removeAttribute("aria-busy");
+    submit.innerHTML = originalSubmitMarkup;
     submit.disabled = false;
   }
 }
