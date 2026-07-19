@@ -100,8 +100,6 @@ const wsStatusEl = document.getElementById("ws-status");
 const workspaceRegionEl = document.getElementById("workspace-region");
 const workspaceTitleEl = document.getElementById("workspace-title");
 const workspaceSubtitleEl = document.getElementById("workspace-subtitle");
-const railNavEl = document.getElementById("rail-nav");
-const workspaceAssignmentSidebarEl = document.getElementById("workspace-assignment-sidebar");
 
 let tickets = [];
 let boardLoading = false;
@@ -1010,14 +1008,14 @@ function UserProfileChip({ username, role }) {
   `;
 }
 
-function ChangeEngineerButton({ loading = false } = {}) {
+function LogoutButton({ loading = false } = {}) {
   return `
     <button
       id="logout-btn"
       class="logout-icon-btn"
       type="button"
-      title="Change engineer"
-      aria-label="Change engineer"
+      title="Logout"
+      aria-label="Logout"
       ${loading ? "disabled" : ""}
     >
       <svg class="logout-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1050,117 +1048,12 @@ function renderHeaderUserControls() {
   const engineer = getSelectedEngineer() || getCandidateEngineer();
   controlsEl.innerHTML = [
     UserProfileChip({ username: engineer.name, role: "ENGINEER" }),
-    ChangeEngineerButton({ loading: changeEngineerLoading }),
+    LogoutButton({ loading: changeEngineerLoading }),
   ].join("");
   const logoutBtn = document.getElementById("logout-btn");
   logoutBtn?.addEventListener("click", () => {
     handleChangeEngineerClick();
   });
-}
-
-function renderWorkspaceAssignmentSidebarHtml() {
-  refreshWorkspaceSessionState();
-  const engineer = getSelectedEngineer() || getCandidateEngineer();
-  const inShift = isInShift();
-  const activeTicketId = selectedTicketId || engineerCaseRouteId(selectedTicket);
-  const activeTicketTitle = selectedTicket
-    ? String(selectedTicket.title || selectedTicket.subject || "Current engineer case")
-    : activeTicketId
-    ? "Loading assigned case"
-    : "No active Engineer Case";
-  const investigatingCount = tickets.filter(
-    (ticket) => String(ticket?.assignment_status || "").toLowerCase() === "assigned"
-  ).length;
-  const sla = workspaceTicketSlaState(selectedTicket);
-  const assignable = Boolean(inShift && !activeTicketId);
-  const assignmentSummary = activeTicketId
-    ? `${activeTicketId} is locked until this case is completed.`
-    : "Open the next Engineer Case already assigned by the system.";
-
-  return `
-    <div class="sidebar-inner">
-      <div class="rail-brand">
-        <div class="rail-brand-icon">
-          <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
-        </div>
-        <div class="rail-brand-copy">
-          <span class="rail-brand-title">Concierge AI</span>
-          <span class="rail-brand-subtitle">Assignment Command</span>
-        </div>
-      </div>
-
-      <div class="rail-compact-stack" aria-hidden="true">
-        <span class="engineer-avatar mono rail-compact-avatar">${escapeHtml(engineer.initials)}</span>
-        <span class="rail-compact-status ${inShift ? "is-success" : "is-muted"}">
-          <span class="material-symbols-outlined" aria-hidden="true">schedule</span>
-        </span>
-        <span class="rail-compact-status ${activeTicketId ? "is-warning" : "is-success"}">
-          <span class="material-symbols-outlined" aria-hidden="true">${activeTicketId ? "confirmation_number" : "task_alt"}</span>
-        </span>
-      </div>
-
-      <div class="workspace-sidebar-scroll">
-      <section class="engineer-context-card panel-card">
-        <div class="sidebar-profile">
-          <span class="engineer-avatar mono" aria-hidden="true">${escapeHtml(engineer.initials)}</span>
-          <div>
-            <p class="eyebrow">Engineer context</p>
-            <h2>${escapeHtml(engineer.name)}</h2>
-            <p>${escapeHtml(engineer.role)}</p>
-          </div>
-        </div>
-        <div class="status-pills">
-          <span class="status-pill ${inShift ? "is-success" : "is-muted"}">${inShift ? "Available" : "Unavailable"}</span>
-          <span class="status-pill ${assignable ? "is-success" : "is-warning"}">${assignable ? "Ready for dispatch" : "Assignment active"}</span>
-        </div>
-      </section>
-
-      <section class="context-panel panel-card">
-        <div class="panel-head">
-          <p class="eyebrow">Availability</p>
-          <h3>${inShift ? "Available" : "Unavailable"}</h3>
-          <p>Managed by Workspace Admin</p>
-        </div>
-      </section>
-
-      <section class="context-panel panel-card">
-        <div class="panel-head">
-          <p class="eyebrow">Assignment</p>
-          <h3>${activeTicketId ? "One active case" : "No active Engineer Case"}</h3>
-          <p>${escapeHtml(assignmentSummary)}</p>
-        </div>
-        <div class="sidebar-metrics">
-          <span><strong>${escapeHtml(String(investigatingCount))}</strong> assigned</span>
-          <span><strong>3h</strong> SLA</span>
-          <span><strong class="current-ticket-sla ${escapeHtml(sla.className)}" data-sla-countdown>${escapeHtml(
-            getWorkspaceSlaCountdownLabel(sla)
-          )}</strong></span>
-        </div>
-      </section>
-
-      <section class="context-panel panel-card">
-        <div class="panel-head">
-          <p class="eyebrow">Current case</p>
-          <h3>${escapeHtml(activeTicketId || "Waiting")}</h3>
-          <p>${escapeHtml(activeTicketTitle)}</p>
-        </div>
-      </section>
-      </div>
-
-      <div class="rail-footer workspace-sidebar-footer">
-        <div id="header-user-controls" class="header-user-controls rail-user-controls"></div>
-      </div>
-    </div>
-  `;
-}
-
-function renderWorkspaceAssignmentSidebar() {
-  if (!workspaceAssignmentSidebarEl) {
-    return;
-  }
-  workspaceAssignmentSidebarEl.classList.remove("hidden");
-  workspaceAssignmentSidebarEl.innerHTML = renderWorkspaceAssignmentSidebarHtml();
-  renderHeaderUserControls();
 }
 
 function parseRoute() {
@@ -1224,56 +1117,10 @@ function setSelectedPoolStatus(value, { render = true } = {}) {
   return selectedPoolStatus;
 }
 
-function renderRailNav() {
-  if (!railNavEl) {
-    return;
-  }
-
-  railNavEl.innerHTML = `
-    ${ENGINEER_POOL_STATUSES.map((status) => {
-      const isActive = selectedPoolStatus === status;
-      const icon =
-        status === "investigating"
-          ? "troubleshoot"
-          : status === "escalated"
-          ? "notification_important"
-          : status === "communicating"
-          ? "forum"
-          : "task_alt";
-      return `
-      <button
-        class="rail-nav-item ${isActive ? "is-active" : ""}"
-        type="button"
-        data-nav-status="${escapeHtml(status)}"
-        aria-pressed="${isActive ? "true" : "false"}"
-      >
-        <span class="material-symbols-outlined" aria-hidden="true">${icon}</span>
-        <span class="rail-nav-label">${escapeHtml(statusLabel(status))}</span>
-      </button>
-    `;
-    }).join("")}
-  `;
-}
-
-function setWorkspaceShellMode(mode) {
-  const isDetailMode = mode === "detail";
-  const isPreparingMode = mode === "preparing";
-  const hidesSidebar = isDetailMode || isPreparingMode;
-  engineerScreenEl?.classList.toggle("workspace-detail-mode", isDetailMode);
-  engineerScreenEl?.classList.toggle("workspace-preparing-mode", isPreparingMode);
-  engineerScreenEl?.classList.toggle("workspace-home-mode", !hidesSidebar);
-  if (workspaceAssignmentSidebarEl) {
-    workspaceAssignmentSidebarEl.classList.toggle("hidden", hidesSidebar);
-    if (hidesSidebar) {
-      workspaceAssignmentSidebarEl.innerHTML = "";
-    }
-  }
-}
-
-function showWorkspaceShell(mode = "home") {
+function showWorkspaceShell() {
   loginScreenEl?.classList.add("hidden");
   engineerScreenEl?.classList.remove("hidden");
-  setWorkspaceShellMode(mode);
+  renderHeaderUserControls();
 }
 
 function renderWorkspaceChrome() {
@@ -1281,7 +1128,6 @@ function renderWorkspaceChrome() {
     isEngineerVisibleStatus(workspaceClientStatus(ticket))
   );
   if (routeState.view === "detail" && routeState.ticketId) {
-    setWorkspaceShellMode("detail");
     const detailStatus = selectedTicket
       ? statusLabel(workspaceClientStatus(selectedTicket))
       : "Loading ticket context...";
@@ -1296,7 +1142,6 @@ function renderWorkspaceChrome() {
       filterControlsEl.innerHTML = "";
     }
   } else {
-    setWorkspaceShellMode("home");
     if (workspaceTitleEl) {
       workspaceTitleEl.textContent = "Engineer Command Center";
     }
@@ -1307,9 +1152,7 @@ function renderWorkspaceChrome() {
     renderFilterControls();
   }
 
-  if (routeState.view !== "detail") {
-    renderWorkspaceAssignmentSidebar();
-  }
+  renderHeaderUserControls();
 }
 
 function formatMultiline(value) {
@@ -2727,7 +2570,7 @@ function toggleScreens() {
   loginScreenEl?.classList.toggle("hidden", authed);
   engineerScreenEl?.classList.toggle("hidden", !authed);
   if (authed) {
-    setWorkspaceShellMode(routeState.view === "detail" && routeState.ticketId ? "detail" : "home");
+    renderHeaderUserControls();
   }
 }
 
@@ -2999,7 +2842,7 @@ function renderWorkspacePreparingLoadingHtml(message = "Preparing the real case 
 function renderReadyLoading() {
   const engineer = getSelectedEngineer();
   if (engineer) {
-    showWorkspaceShell("preparing");
+    showWorkspaceShell();
     filterControlsEl?.classList.add("hidden");
     if (filterControlsEl) {
       filterControlsEl.innerHTML = "";
@@ -3022,8 +2865,7 @@ function renderNoInvestigatingCase(message = "No Engineer Case is currently assi
   }
   saveWorkspaceActive(false);
   if (engineer) {
-    showWorkspaceShell("home");
-    renderWorkspaceAssignmentSidebar();
+    showWorkspaceShell();
   } else {
     toggleScreens();
   }
@@ -3062,9 +2904,8 @@ function renderReadinessInsteadOfPool() {
     workspaceRegionEl.innerHTML = "";
   }
   if (getSelectedEngineer()) {
-    showWorkspaceShell("home");
+    showWorkspaceShell();
     filterControlsEl?.classList.add("hidden");
-    renderWorkspaceAssignmentSidebar();
     if (workspaceRegionEl) {
       workspaceRegionEl.innerHTML = renderWelcomeViewHtml();
     }
@@ -4939,9 +4780,6 @@ function getWorkspaceSlaCountdownNodes() {
   if (workspaceRegionEl && typeof workspaceRegionEl.querySelectorAll === "function") {
     nodes.push(...Array.from(workspaceRegionEl.querySelectorAll("[data-sla-countdown]")));
   }
-  if (workspaceAssignmentSidebarEl && typeof workspaceAssignmentSidebarEl.querySelectorAll === "function") {
-    nodes.push(...Array.from(workspaceAssignmentSidebarEl.querySelectorAll("[data-sla-countdown]")));
-  }
   return nodes;
 }
 
@@ -6325,22 +6163,6 @@ workspaceRegionEl?.addEventListener("change", (event) => {
   handleDetailChange(event).catch((error) => {
     window.alert(`Operation failed: ${error.message}`);
   });
-});
-railNavEl?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-nav-action]");
-  const statusButton = event.target.closest("[data-nav-status]");
-  if (statusButton) {
-    setSelectedPoolStatus(String(statusButton.dataset.navStatus || "investigating"), { render: false });
-    navigate("/tickets");
-    return;
-  }
-  if (!button) {
-    return;
-  }
-  const action = String(button.dataset.navAction || "").trim();
-  if (action === "go-detail" && selectedTicketId) {
-    navigate(`/tickets/${encodeURIComponent(selectedTicketId)}`);
-  }
 });
 window.addEventListener("hashchange", () => {
   if (!isAuthenticated()) {

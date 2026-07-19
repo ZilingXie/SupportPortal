@@ -231,6 +231,7 @@
 20. `/workspace` 登录成功后必须先进入 Engineer Workspace 首页，不得自动打开已派发 case；只有工程师点击 `Ready to roll` 后，系统才检查并打开下一条 assigned Engineer Case。
 21. Engineer Workspace 首页必须只读展示当前账号的 weekly schedule、当前是否命中 schedule、独立 availability 状态和 schedule timezone；排班编辑仍只允许在 `/workspace/admin` 完成。
 22. 个人 weekly schedule 使用 Monday-Sunday 的横向扫描布局：每天显示真实起止时间，无班次显示 `Off`，跨夜班次明确标记次日结束；窄屏允许区域内横向滚动，不得造成页面级横向溢出。
+23. `/workspace` 登录后的 Ready 首页、准备态和 Engineer Case 详情统一使用无侧栏的单工作面；当前用户与 Logout 固定放在主 shell 右上角，移动端保留头像、用户名与 Logout，不得退回 rail 或抽屉。
 
 ### 6.3 Ticket Dashboard (`/dashboard`)
 1. 固定 KPI 名称：

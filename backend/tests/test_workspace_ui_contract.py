@@ -120,10 +120,30 @@ class WorkspaceUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-workspace-ready-schedule-1", html)
+        self.assertIn("20260719-workspace-no-sidebar-1", html)
         self.assertIn(".workspace-login-header", css)
         self.assertIn(".workspace-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
+
+    def test_workspace_uses_top_right_account_controls_without_sidebar(self) -> None:
+        source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
+        html = Path("ui/workspace-ui/index.html").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/styles.css").read_text(encoding="utf-8")
+
+        for marker in (
+            'class="workspace-utility-bar"',
+            'id="header-user-controls"',
+            'class="header-user-controls workspace-account-controls"',
+            'title="Logout"',
+            'aria-label="Logout"',
+            ".workspace-utility-bar",
+            ".workspace-account-controls",
+            "justify-content: flex-end",
+        ):
+            self.assertIn(marker, source + html + css)
+        self.assertNotIn("workspace-assignment-sidebar", html)
+        self.assertNotIn("renderWorkspaceAssignmentSidebar", source)
+        self.assertNotIn("workspaceAssignmentSidebarEl", source)
 
     def test_workspace_login_stops_at_home_until_engineer_is_ready(self) -> None:
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")

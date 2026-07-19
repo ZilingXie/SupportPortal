@@ -41,7 +41,7 @@
       })();
     </script>
     <link rel="stylesheet" href="/shared-ui/composer.css?v=20260519-json-codeblock-1" />
-    <link rel="stylesheet" href="./styles.css?v=20260719-workspace-ready-schedule-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260719-workspace-no-sidebar-1" />
   </head>
   <body>
     <main class="workspace-app engineer-app">
@@ -57,15 +57,10 @@
       </section>
 
       <section id="engineer-screen" class="screen screen-engineer hidden">
-        <aside
-          id="workspace-assignment-sidebar"
-          class="engineer-rail assignment-sidebar workspace-assignment-sidebar"
-          aria-label="Engineer context"
-        >
-          <noscript>Workspace assignment context requires JavaScript.</noscript>
-        </aside>
-
         <div class="engineer-shell problem-workspace">
+          <header class="workspace-utility-bar" aria-label="Workspace account controls">
+            <div id="header-user-controls" class="header-user-controls workspace-account-controls"></div>
+          </header>
           <main class="workspace-region">
             <div id="filter-controls" class="filter-controls"></div>
             <div id="workspace-region" class="workspace-content" aria-live="polite"></div>
@@ -75,6 +70,6 @@
     </main>
 
     <script src="/shared-ui/composer.js?v=20260519-json-codeblock-1"></script>
-    <script src="./app.js?v=20260719-workspace-ready-schedule-1"></script>
+    <script src="./app.js?v=20260719-workspace-no-sidebar-1"></script>
   </body>
 </html>

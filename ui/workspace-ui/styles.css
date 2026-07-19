@@ -414,205 +414,36 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .screen-engineer {
-  display: flex;
+  display: block;
   min-height: 100vh;
 }
 
-.engineer-rail {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  width: 96px;
-  min-height: 100vh;
-  padding: 26px 14px 22px;
-  background: linear-gradient(180deg, #1a237e 0%, #171b55 100%);
-  box-shadow: 18px 0 44px rgba(23, 28, 33, 0.12);
-  transition: width 220ms ease;
-}
-
-.engineer-rail:hover {
-  width: 264px;
-}
-
-.rail-brand {
-  overflow: hidden;
-  margin-bottom: 28px;
-}
-
-.rail-brand-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  opacity: 0;
-  max-width: 0;
-  overflow: hidden;
-  transition:
-    opacity 180ms ease,
-    max-width 220ms ease;
-}
-
-.engineer-rail:hover .rail-brand-copy,
-.engineer-rail:hover .rail-nav-label {
-  opacity: 1;
-  max-width: 180px;
-}
-
-.rail-brand-title,
-.rail-nav-label,
 .realtime-value {
   display: inline-block;
   white-space: nowrap;
 }
 
-.rail-brand-title {
-  color: rgba(255, 255, 255, 0.96);
-  font-family: "Manrope", sans-serif;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-}
-
-.rail-brand-subtitle {
-  color: rgba(141, 205, 255, 0.92);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.rail-nav {
-  display: grid;
-  gap: 8px;
-}
-
-.rail-footer {
-  display: grid;
-  gap: 12px;
-  justify-items: center;
-  margin-top: auto;
-  padding-top: 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.engineer-rail:hover .rail-footer {
-  justify-items: stretch;
-}
-
-.rail-status-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 52px;
-  height: 52px;
-  gap: 0;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.08);
-  transition:
-    background-color 160ms ease,
-    border-color 160ms ease,
-    width 220ms ease,
-    padding-inline 220ms ease,
-    justify-content 220ms ease;
-}
-
-.engineer-rail:hover .rail-status-card {
-  width: 100%;
-  justify-content: flex-start;
-  gap: 12px;
-  padding-inline: 14px;
-}
-
-.rail-status-icon {
-  flex-shrink: 0;
-  display: block;
-  line-height: 1;
-  color: #7fd1ff;
-}
-
-.realtime-icon {
-  width: 20px;
-  height: 20px;
-}
-
-.rail-footer-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  opacity: 0;
-  max-width: 0;
-  overflow: hidden;
-  transition:
-    opacity 180ms ease,
-    max-width 220ms ease;
-}
-
-.engineer-rail:hover .rail-footer-copy {
-  opacity: 1;
-  max-width: 180px;
-}
-
-.rail-nav-item {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  min-height: 52px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 18px;
-  color: rgba(221, 229, 255, 0.74);
-  background: transparent;
-  text-align: left;
-  transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    padding-inline 220ms ease;
-}
-
-.engineer-rail:hover .rail-nav-item {
-  justify-content: flex-start;
-  padding-inline: 16px;
-}
-
-.rail-nav-item .material-symbols-outlined {
-  flex-shrink: 0;
-}
-
-.rail-nav-item:hover {
-  color: rgba(255, 255, 255, 0.96);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.rail-nav-item.is-active {
-  color: #7fd1ff;
-  background: rgba(0, 176, 255, 0.14);
-  box-shadow: inset 3px 0 0 #52ccff;
-}
-
-.rail-nav-label {
-  overflow: hidden;
-  min-width: 0;
-  opacity: 0;
-  max-width: 0;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  transition:
-    opacity 180ms ease,
-    max-width 220ms ease;
-}
-
 .engineer-shell {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  margin-left: 96px;
-  padding: 28px 28px 34px;
+  margin-left: 0;
+  padding: 20px 28px 34px;
+}
+
+.workspace-utility-bar {
+  position: sticky;
+  top: 12px;
+  z-index: 24;
+  display: flex;
+  justify-content: flex-end;
+  width: min(1560px, 100%);
+  min-height: 54px;
+  margin: 0 auto 12px;
+}
+
+.workspace-account-controls {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
 }
 
 .engineer-topbar,
@@ -682,28 +513,6 @@ html.material-symbols-pending .material-symbols-outlined {
   letter-spacing: -0.02em;
 }
 
-.rail-footer .realtime-label {
-  color: rgba(168, 186, 255, 0.78);
-}
-
-.rail-footer .realtime-value {
-  color: rgba(255, 255, 255, 0.96);
-  font-size: 13px;
-}
-
-.rail-user-controls {
-  display: grid;
-  grid-template-columns: auto;
-  gap: 10px;
-  align-items: center;
-  justify-content: center;
-}
-
-.engineer-rail:hover .rail-user-controls {
-  grid-template-columns: minmax(0, 1fr) auto;
-  justify-content: stretch;
-}
-
 .user-profile-chip {
   display: flex;
   align-items: center;
@@ -760,59 +569,6 @@ html.material-symbols-pending .material-symbols-outlined {
   color: var(--ink-muted);
 }
 
-.engineer-rail .user-profile-chip {
-  display: none;
-  min-width: 0;
-  justify-content: center;
-  gap: 0;
-  padding: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-.engineer-rail .user-avatar {
-  color: rgba(255, 255, 255, 0.96);
-  background: linear-gradient(135deg, rgba(202, 230, 255, 0.16), rgba(0, 176, 255, 0.22));
-}
-
-.engineer-rail .user-meta {
-  min-width: 0;
-  opacity: 0;
-  max-width: 0;
-  overflow: hidden;
-  transition:
-    opacity 180ms ease,
-    max-width 220ms ease;
-}
-
-.engineer-rail:hover .user-profile-chip {
-  display: flex;
-  justify-content: flex-start;
-  gap: 12px;
-  padding: 8px 10px 8px 8px;
-}
-
-.engineer-rail:hover .user-meta {
-  opacity: 1;
-  max-width: 140px;
-}
-
-.engineer-rail .user-name {
-  color: rgba(255, 255, 255, 0.96);
-}
-
-.engineer-rail .user-role-engineer {
-  color: #8dcdff;
-}
-
-.engineer-rail .user-role-admin {
-  color: #ffd0c8;
-}
-
-.engineer-rail .user-role-operator {
-  color: rgba(221, 229, 255, 0.78);
-}
-
 .logout-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -834,19 +590,6 @@ html.material-symbols-pending .material-symbols-outlined {
   color: var(--ink);
   background: rgba(239, 244, 251, 1);
   transform: translateY(-1px);
-}
-
-.engineer-rail .logout-icon-btn {
-  width: 52px;
-  height: 52px;
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.86);
-}
-
-.engineer-rail .logout-icon-btn:hover:not(:disabled) {
-  color: rgba(255, 255, 255, 0.98);
-  background: rgba(255, 255, 255, 0.14);
 }
 
 .logout-icon {
@@ -2631,81 +2374,7 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 @media (max-width: 900px) {
-  .screen-engineer {
-    display: block;
-  }
-
-  .engineer-rail {
-    position: sticky;
-    width: 100%;
-    min-height: auto;
-    padding: 18px 18px 14px;
-  }
-
-  .engineer-rail:hover {
-    width: 100%;
-  }
-
-  .rail-brand-copy,
-  .rail-nav-label,
-  .engineer-rail:hover .rail-brand-copy,
-  .engineer-rail:hover .rail-nav-label {
-    opacity: 1;
-    max-width: none;
-  }
-
-  .rail-nav {
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(168px, 1fr);
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
-
-  .rail-footer {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 12px;
-    padding-top: 14px;
-  }
-
-  .rail-status-card,
-  .engineer-rail:hover .rail-status-card {
-    justify-content: flex-start;
-    gap: 12px;
-    padding-inline: 14px;
-  }
-
-  .rail-footer-copy,
-  .engineer-rail:hover .rail-footer-copy,
-  .engineer-rail .user-meta,
-  .engineer-rail:hover .user-meta {
-    opacity: 1;
-    max-width: none;
-  }
-
-  .rail-nav-item,
-  .engineer-rail:hover .rail-nav-item {
-    justify-content: flex-start;
-    padding-inline: 16px;
-  }
-
-  .rail-user-controls {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-  }
-
-  .engineer-rail .user-profile-chip,
-  .engineer-rail:hover .user-profile-chip {
-    display: flex;
-    justify-content: flex-start;
-    gap: 12px;
-    padding: 8px 10px 8px 8px;
-  }
-
   .engineer-shell {
-    margin-left: 0;
     padding: 20px 18px 30px;
   }
 
@@ -2714,7 +2383,7 @@ html.material-symbols-pending .material-symbols-outlined {
   }
 
   .header-user-controls {
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
 }
 
@@ -2753,14 +2422,6 @@ html.material-symbols-pending .material-symbols-outlined {
 
   .pool-view-toggle-btn {
     flex: 1 1 0;
-  }
-
-  .rail-footer {
-    grid-template-columns: 1fr;
-  }
-
-  .rail-user-controls {
-    justify-content: flex-start;
   }
 
   .ticket-row-secondary {
@@ -3799,22 +3460,6 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .engineer-shell.problem-workspace {
-  margin-left: var(--workspace-sidebar-collapsed-width);
-}
-
-.screen-engineer.workspace-detail-mode .workspace-assignment-sidebar {
-  display: none;
-}
-
-.screen-engineer.workspace-preparing-mode .workspace-assignment-sidebar {
-  display: none;
-}
-
-.screen-engineer.workspace-detail-mode .engineer-shell.problem-workspace {
-  margin-left: 0;
-}
-
-.screen-engineer.workspace-preparing-mode .engineer-shell.problem-workspace {
   margin-left: 0;
 }
 
@@ -4010,12 +3655,48 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 @media (max-width: 520px) {
-  .workspace-assignment-sidebar .user-meta {
-    display: none;
+  .engineer-shell {
+    padding: 12px 14px 24px;
   }
 
-  .workspace-assignment-sidebar .user-profile-chip {
-    padding-right: 5px;
+  .workspace-utility-bar {
+    min-height: 58px;
+    margin-bottom: 10px;
+    padding-block: 4px;
+  }
+
+  .workspace-account-controls {
+    gap: 8px;
+  }
+
+  .workspace-account-controls .user-profile-chip {
+    min-width: 0;
+    min-height: 48px;
+    gap: 8px;
+    padding: 6px 9px 6px 6px;
+  }
+
+  .workspace-account-controls .user-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .workspace-account-controls .user-name {
+    max-width: 132px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .workspace-account-controls .user-role {
+    font-size: 10px;
+  }
+
+  .workspace-account-controls .logout-icon-btn {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
   }
 }
 
