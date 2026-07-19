@@ -221,7 +221,7 @@
 15. `/workspace/admin` 的 Engineer Management 是班表工作面，不使用账号表单与 availability 卡片拼盘：页面主顺序固定为 `On Schedule Now`、`Weekly Schedule` 和右侧 shift inspector。
    - `Weekly Schedule` 固定使用横轴 Monday-Sunday、纵轴 `00:00-24:00` 的时间网格，不得退回“工程师为行”的文本表格。
    - 班次按真实起止时间占据纵向区间；跨夜班次拆分到相邻两天，同日重叠班次必须并排显示且可分别操作。
-   - 网格使用固定响应式可视高度并在内部支持纵向与横向滚动，确保 24 小时班表完整可达；日期表头在纵向滚动时保持可见，时间列在横向滚动时保持可见，且不得造成页面级横向溢出。
+   - 网格完整展开 24 小时高度，由页面主滚动条负责纵向浏览；网格内部仅在窄屏支持横向滚动，时间列在横向滚动时保持可见，且不得造成页面级横向溢出。
    - 班次块必须显示工程师身份、起止时间和 availability 文字状态，并可打开对应 shift inspector。
    - Admin 工作面的品牌与交互主色继续使用 `primary / primary-fixed / secondary` 蓝色体系；不得以青绿或绿色替代导航、班次、头像和成功反馈的主色。
 16. `On Schedule Now` 只表达当前时间命中数据库 schedule，不能命名为 `Online Engineers`，也不能推导浏览器连接或 presence；availability 必须作为独立文字状态展示。

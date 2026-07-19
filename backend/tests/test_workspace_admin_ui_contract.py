@@ -121,7 +121,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-admin-schedule-scroll-1", html)
+        self.assertIn("20260719-admin-page-scroll-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -168,12 +168,14 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("#16262d", css)
         self.assertNotIn("#dff3f5", css)
 
-    def test_admin_schedule_scrolls_vertically_and_sidebar_scrollbar_is_hidden(self) -> None:
+    def test_admin_schedule_uses_page_scroll_and_sidebar_scrollbar_is_hidden(self) -> None:
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
 
-        self.assertIn("height: min(70vh, 720px)", css)
-        self.assertIn("overflow: auto", css)
-        self.assertIn(".admin-week-grid-wrap::-webkit-scrollbar", css)
+        self.assertIn("max-height: none", css)
+        self.assertIn("overflow: visible", css)
+        self.assertIn("overflow-x: auto", css)
+        self.assertIn("overflow-y: visible", css)
+        self.assertNotIn("height: min(70vh, 720px)", css)
         self.assertIn(".admin-sidebar-body::-webkit-scrollbar", css)
         self.assertIn("scrollbar-width: none", css)
 
