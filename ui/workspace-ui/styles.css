@@ -3976,7 +3976,7 @@ html.material-symbols-pending .material-symbols-outlined {
   border-radius: 999px;
   background: rgba(202, 230, 255, 0.36);
   color: var(--primary);
-  font-size: 12px;
+  font-size: 6px;
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -3985,7 +3985,7 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-entry-intro h1 {
   max-width: 16ch;
   font-family: "Manrope", sans-serif;
-  font-size: clamp(38px, 3.6vw, 54px);
+  font-size: clamp(19px, 1.8vw, 27px);
   font-weight: 800;
   line-height: 1.08;
   letter-spacing: 0;
@@ -3994,7 +3994,7 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-intro-copy {
   max-width: 38rem;
   margin: 0;
-  font-size: 17px;
+  font-size: 8.5px;
   line-height: 1.65;
 }
 
@@ -4020,8 +4020,12 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .workspace-login-highlight strong {
   font-family: "Manrope", sans-serif;
-  font-size: clamp(17px, 1.45vw, 22px);
+  font-size: clamp(8.5px, 0.725vw, 11px);
   line-height: 1.35;
+}
+
+.workspace-login-highlight .workspace-eyebrow {
+  font-size: 6px;
 }
 
 .workspace-selector-panel {
@@ -4039,7 +4043,7 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .workspace-panel-head h2 {
   font-family: "Manrope", sans-serif;
-  font-size: clamp(34px, 3vw, 44px);
+  font-size: clamp(17px, 1.5vw, 22px);
   font-weight: 800;
   line-height: 1.1;
 }
@@ -4047,7 +4051,7 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-panel-head p:last-child {
   max-width: 32rem;
   margin: 0;
-  font-size: 16px;
+  font-size: 8px;
   line-height: 1.65;
 }
 
@@ -4061,16 +4065,21 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .workspace-login-form .field span {
   color: var(--ink);
-  font-size: 14px;
+  font-size: 7px;
   letter-spacing: 0;
   text-transform: none;
 }
 
 .workspace-login-form .field input {
   height: 58px;
+  font-size: 8px;
   border-radius: 12px;
   background: var(--surface-lowest);
   box-shadow: 0 2px 5px rgba(23, 28, 33, 0.05);
+}
+
+.workspace-login-form .login-error {
+  font-size: 6.5px;
 }
 
 .workspace-login-form .login-error:empty {
@@ -4080,7 +4089,7 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-entry-cta {
   min-height: 56px;
   border-radius: 12px;
-  font-size: 16px;
+  font-size: 8px;
 }
 
 .workspace-login-note {
@@ -4090,7 +4099,7 @@ html.material-symbols-pending .material-symbols-outlined {
   border-radius: 18px;
   background: #f7f9fb;
   color: var(--ink-soft);
-  font-size: 14px;
+  font-size: 7px;
   line-height: 1.5;
 }
 
@@ -4143,7 +4152,7 @@ html.material-symbols-pending .material-symbols-outlined {
   }
 
   .workspace-entry-intro h1 {
-    font-size: 34px;
+    font-size: 17px;
   }
 
   .workspace-login-copy {
@@ -4155,6 +4164,6 @@ html.material-symbols-pending .material-symbols-outlined {
   }
 
   .workspace-panel-head h2 {
-    font-size: 32px;
+    font-size: 16px;
   }
 }

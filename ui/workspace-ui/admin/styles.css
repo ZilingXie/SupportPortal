@@ -1190,7 +1190,7 @@ p {
   border-radius: 999px;
   background: rgba(202, 230, 255, 0.36);
   color: var(--primary);
-  font-size: 12px;
+  font-size: 6px;
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -1199,7 +1199,7 @@ p {
 .login-intro h1 {
   max-width: 16ch;
   margin: 0;
-  font-size: clamp(38px, 3.6vw, 54px);
+  font-size: clamp(19px, 1.8vw, 27px);
   line-height: 1.08;
   letter-spacing: 0;
 }
@@ -1207,7 +1207,7 @@ p {
 .admin-login-intro-copy {
   max-width: 38rem;
   color: var(--ink-soft);
-  font-size: 17px;
+  font-size: 8.5px;
   line-height: 1.65;
 }
 
@@ -1235,8 +1235,12 @@ p {
 
 .admin-login-highlight strong {
   font-family: "Manrope", sans-serif;
-  font-size: clamp(17px, 1.45vw, 22px);
+  font-size: clamp(8.5px, 0.725vw, 11px);
   line-height: 1.35;
+}
+
+.admin-login-highlight .eyebrow {
+  font-size: 6px;
 }
 
 .login-card {
@@ -1255,7 +1259,7 @@ p {
 }
 
 .login-card h2 {
-  font-size: clamp(34px, 3vw, 44px);
+  font-size: clamp(17px, 1.5vw, 22px);
   line-height: 1.1;
   letter-spacing: 0;
 }
@@ -1263,7 +1267,7 @@ p {
 .login-card-head p {
   max-width: 32rem;
   color: var(--ink-soft);
-  font-size: 16px;
+  font-size: 8px;
   line-height: 1.65;
 }
 
@@ -1278,7 +1282,7 @@ p {
 
 .login-form .field span {
   color: var(--ink);
-  font-size: 14px;
+  font-size: 7px;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
@@ -1286,10 +1290,15 @@ p {
 
 .login-form .field input {
   min-height: 58px;
+  font-size: 8px;
   padding: 0 16px;
   border-radius: 12px;
   background: var(--surface-lowest);
   box-shadow: 0 2px 5px rgba(23, 28, 33, 0.05);
+}
+
+.login-form .login-error {
+  font-size: 6.5px;
 }
 
 .login-form .login-error:empty {
@@ -1299,7 +1308,7 @@ p {
 .login-form .btn-primary {
   min-height: 56px;
   border-radius: 12px;
-  font-size: 16px;
+  font-size: 8px;
 }
 
 .admin-login-note {
@@ -1309,7 +1318,7 @@ p {
   border-radius: 18px;
   background: #f7f9fb;
   color: var(--ink-soft);
-  font-size: 14px;
+  font-size: 7px;
   line-height: 1.5;
 }
 
@@ -1371,7 +1380,7 @@ p {
   }
 
   .login-intro h1 {
-    font-size: 34px;
+    font-size: 17px;
   }
 
   .admin-login-copy {
@@ -1383,7 +1392,7 @@ p {
   }
 
   .login-card h2 {
-    font-size: 32px;
+    font-size: 16px;
   }
 }
 

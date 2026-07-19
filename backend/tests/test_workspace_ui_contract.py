@@ -119,7 +119,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-workspace-login-refresh-1", html)
+        self.assertIn("20260719-workspace-login-font-scale-1", html)
         self.assertIn("grid-template-columns: minmax(0, 1.35fr) minmax(400px, 1fr)", css)
         self.assertIn("@media (max-width: 560px)", css)
 
