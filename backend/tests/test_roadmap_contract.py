@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import re
 import unittest
 
 
@@ -10,6 +11,7 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 
 ROADMAP_PATH = Path("docs/roadmap.html")
 PHASE1_PATH = Path("docs/roadmap/phase1.html")
+PHASE2_PATH = Path("docs/roadmap/phase2.html")
 PHASE1_VIDEO_DIR = Path("docs/roadmap/phase1_video")
 PHASE1_VIDEO_SCRIPT_PATH = PHASE1_VIDEO_DIR / "video_script.md"
 PHASE1_VIDEO_SCRIPT_CN_PATH = PHASE1_VIDEO_DIR / "video_script_cn.md"
@@ -19,6 +21,52 @@ QBR_COMPAT_PATH = Path("docs/qbr_plan.html")
 
 
 class RoadmapContractTests(unittest.TestCase):
+    def test_phase2_delivery_page_is_linked_and_categorizes_endpoints(self) -> None:
+        roadmap_source = ROADMAP_PATH.read_text(encoding="utf-8")
+        phase2_source = PHASE2_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('href="./roadmap/phase2.html"', roadmap_source)
+        self.assertIn("打开 Phase 2 交付记录", roadmap_source)
+        for term in (
+            "Phase 2 Delivery Record",
+            "Phase 2 改动",
+            "功能与 endpoint 分类",
+            "Access &amp; RBAC",
+            "Assignment",
+            "Billing",
+            "Reliability",
+            "Active UI",
+            "Workspace auth",
+            "Engineer backend",
+            "Manual claim",
+            "Legacy UI",
+            "/workspace/admin",
+            "/api/workspace/admin/metrics",
+            "/api/engineer/*",
+            "/api/engineer/tickets/{id}/claim",
+            "PR #609",
+            "PR #610",
+            "PR #611",
+            "PR #612",
+            "./phase2/workspace-admin.jpg",
+        ):
+            with self.subTest(term=term):
+                self.assertIn(term, phase2_source)
+
+        delivery_rows = re.findall(
+            r'<article class="delivery-row".*?</article>', phase2_source, flags=re.DOTALL
+        )
+        endpoint_body = re.search(
+            r'<tbody id="endpointRows">(.*?)</tbody>', phase2_source, flags=re.DOTALL
+        )
+        self.assertGreaterEqual(len(delivery_rows), 10)
+        self.assertTrue(all('class="pr-link"' in row for row in delivery_rows))
+        self.assertIsNotNone(endpoint_body)
+        assert endpoint_body is not None
+        endpoint_rows = re.findall(r"<tr>.*?</tr>", endpoint_body.group(1), flags=re.DOTALL)
+        self.assertGreaterEqual(len(endpoint_rows), 15)
+        self.assertTrue(all('class="pr-link"' in row for row in endpoint_rows))
+
     def test_phase1_talk_track_page_is_linked_from_roadmap(self) -> None:
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")
         phase1_source = PHASE1_PATH.read_text(encoding="utf-8")
@@ -326,6 +374,8 @@ class RoadmapContractTests(unittest.TestCase):
             checks = [
                 ("/roadmap.html", "整体落地优化计划"),
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
+                ("/roadmap/phase2.html", "Phase 2 Delivery Record"),
+                ("/roadmap/phase2/workspace-admin.jpg", "JPEG"),
                 ("/roadmap/phase1_video/video_script.md", "SupportPortal Phase 1 3-minute video script"),
                 ("/roadmap/phase1_video/video_script_cn.md", "SupportPortal Phase 1 视频分镜说明"),
                 ("/roadmap/phase1_video/storyboard.md", "SupportPortal Phase 1 3-minute video storyboard"),
@@ -340,6 +390,9 @@ class RoadmapContractTests(unittest.TestCase):
                     if path.endswith(".png"):
                         self.assertIn("image/png", response.headers["content-type"])
                         self.assertTrue(response.content.startswith(b"\x89PNG"))
+                    elif path.endswith(".jpg"):
+                        self.assertIn("image/jpeg", response.headers["content-type"])
+                        self.assertTrue(response.content.startswith(b"\xff\xd8\xff"))
                     else:
                         self.assertIn(marker, response.text)
         finally:
