@@ -3985,19 +3985,19 @@ p {
   z-index: 2;
   align-self: center;
   justify-self: start;
-  width: calc((100% / var(--lane-count)) - 8px);
+  width: max-content;
+  max-width: calc((100% / var(--lane-count)) - 8px);
   height: 20px;
-  min-width: 0;
+  min-width: 52px;
   margin-left: calc((100% / var(--lane-count)) * var(--lane) + 4px);
   overflow: hidden;
-  padding: 0 6px;
+  padding: 0 10px;
   border: 1px solid rgba(0, 100, 147, 0.24);
-  border-left: 2px solid #006493;
-  border-radius: 4px;
+  border-radius: 999px;
   background: #eaf3ff;
   color: #00344e;
-  box-shadow: 0 1px 3px rgba(0, 74, 112, 0.1);
-  text-align: left;
+  box-shadow: inset 3px 0 0 #006493, 0 1px 3px rgba(0, 74, 112, 0.1);
+  text-align: center;
 }
 
 .admin-week-slot:hover,

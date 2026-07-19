@@ -172,7 +172,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-workspace-auth-isolation-2", html)
+        self.assertIn("20260719-admin-schedule-pills-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -278,6 +278,10 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("admin-roster-table", source + css)
         self.assertNotIn("#16262d", css)
         self.assertNotIn("#dff3f5", css)
+        self.assertIn("width: max-content", css)
+        self.assertIn("max-width: calc((100% / var(--lane-count)) - 8px)", css)
+        self.assertIn("border-radius: 999px", css)
+        self.assertNotIn("\n  width: calc((100% / var(--lane-count)) - 8px)", css)
 
     def test_admin_schedule_is_a_separate_tab_with_engineer_edit_entry(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
