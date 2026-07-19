@@ -226,7 +226,7 @@
    - Schedule inspector 使用有限的小时与分钟选择器：Start hour 为 `00-23`，End hour 为 `00-24`，分钟仅 `00/30`，`24` 仅能搭配 `00`；不得使用循环滚动的原生 time picker。
    - Schedule 保存必须在首次提交时立即显示 `Saving schedule...`、锁定重复提交并通过单一 schedule 请求完成；成功和失败都必须提供可见反馈，保存期间不得清空 Admin rail。
    - 网格完整展开 24 小时高度，由页面主滚动条负责纵向浏览；网格内部仅在窄屏支持横向滚动，时间列在横向滚动时保持可见，且不得造成页面级横向溢出。
-   - 每个在班半小时格只显示工程师姓名；完整日期与半小时范围通过可访问名称提供，availability 仅在 Engineer Management 展示，点击姓名格可打开对应 shift inspector。
+   - 每个在班半小时格只显示工程师姓名，并使用按内容收缩的蓝色胶囊，不得横向铺满整个 slot 或 overlap lane；胶囊必须限制在所属 lane 内，长姓名使用省略号。完整日期与半小时范围通过可访问名称提供，availability 仅在 Engineer Management 展示，点击姓名胶囊可打开对应 shift inspector。
    - Admin 工作面的品牌与交互主色继续使用 `primary / primary-fixed / secondary` 蓝色体系；不得以青绿或绿色替代导航、班次、头像和成功反馈的主色。
 16. `On Schedule Now` 只表达当前时间命中数据库 schedule，不能命名为 `Online Engineers`，也不能推导浏览器连接或 presence；availability 必须作为独立文字状态展示。
 17. 新账号创建使用独立邀请任务页：Engineer Management 只保留 `New Account` 命令，邀请页收集 email 与冻结角色，并覆盖 sending / success / error 状态。
