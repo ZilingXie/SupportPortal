@@ -4150,6 +4150,16 @@ p {
   box-shadow: 0 8px 28px rgba(23, 28, 33, 0.05);
 }
 
+.admin-invite-form .btn:disabled {
+  cursor: wait;
+  opacity: 0.86;
+  transform: none;
+}
+
+.admin-invite-spinner {
+  animation: admin-invite-spin 800ms linear infinite;
+}
+
 .admin-invite-success {
   display: grid;
   grid-template-columns: 44px 1fr;
@@ -4184,6 +4194,10 @@ p {
 @keyframes admin-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes admin-invite-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (min-width: 721px) and (max-width: 900px) {
@@ -4303,5 +4317,9 @@ p {
   .admin-schedule-editor {
     animation: none;
     transition: none;
+  }
+
+  .admin-invite-spinner {
+    animation: none;
   }
 }
