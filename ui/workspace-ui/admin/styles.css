@@ -702,26 +702,9 @@ p {
   background: var(--surface-lowest);
 }
 
-.login-form,
-.admin-assignment-form {
+.login-form {
   display: grid;
   gap: 12px;
-}
-
-.admin-assignment-form {
-  grid-template-columns: minmax(110px, 0.8fr) minmax(140px, 1fr) auto;
-  align-items: center;
-}
-
-.admin-assignment-form select,
-.admin-assignment-form input {
-  width: 100%;
-  min-height: 42px;
-  padding: 8px 12px;
-  border: 1px solid var(--ghost-border);
-  border-radius: 12px;
-  background: var(--surface-lowest);
-  color: var(--ink);
 }
 
 .shift-form .btn {
@@ -2125,6 +2108,116 @@ p {
 
 .admin-work-table tr:hover td {
   background: rgba(239, 244, 251, 0.42);
+}
+
+.admin-case-header {
+  margin-bottom: 20px;
+}
+
+.admin-case-tabs {
+  display: flex;
+  gap: 6px;
+  width: max-content;
+  max-width: 100%;
+  margin-bottom: 18px;
+  padding: 4px;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: var(--surface-container-low);
+  scrollbar-width: none;
+}
+
+.admin-case-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.admin-case-tabs a {
+  min-height: 40px;
+  padding: 10px 16px;
+  border-radius: 7px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.admin-case-tabs a:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.admin-case-tabs a.is-active {
+  color: var(--primary);
+  background: var(--surface-lowest);
+  box-shadow: 0 2px 8px rgba(23, 28, 33, 0.08);
+}
+
+.admin-case-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-case-table {
+  min-width: 760px;
+  animation: admin-case-table-in 160ms ease-out;
+}
+
+.admin-case-table.has-assignee {
+  min-width: 880px;
+}
+
+.admin-case-table th:first-child,
+.admin-case-table td:first-child {
+  padding-left: 22px;
+}
+
+.admin-case-table th:last-child,
+.admin-case-table td:last-child {
+  padding-right: 22px;
+}
+
+.admin-case-table td {
+  height: 64px;
+}
+
+.admin-case-id {
+  color: var(--primary);
+  font-family: "SFMono-Regular", "SF Mono", "Roboto Mono", Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.admin-case-subject {
+  display: block;
+  min-width: 220px;
+  max-width: 420px;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-case-assignee {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.admin-case-empty,
+.admin-case-empty-row {
+  color: var(--ink-muted);
+}
+
+.admin-case-empty-row {
+  height: 120px !important;
+  text-align: center;
+}
+
+@keyframes admin-case-table-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .admin-work-engineer {
@@ -4287,6 +4380,10 @@ p {
 
   .admin-shell {
     display: block;
+  }
+
+  .admin-case-tabs {
+    width: 100%;
   }
 
   .admin-sidebar,

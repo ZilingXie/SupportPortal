@@ -63,7 +63,6 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "/api/workspace/cases?assignment_status=all",
             "data-invitation-form",
             "data-schedule-form",
-            "data-assignment-form",
             "On Schedule Now",
             "Weekly Schedule",
         ):
@@ -138,13 +137,40 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             """
         )
 
-    def test_admin_board_displays_client_and_assignment_status_separately(self) -> None:
+    def test_admin_case_tabs_use_assignment_status_and_exact_columns(self) -> None:
+        self.run_admin_app_script(
+            """
+            adminTickets = [
+              normalizeAdminTicket({ engineer_case_id: "CASE-P", title: "Pending subject", client_status: "open", assignment_status: "pending", requester: "Pat" }),
+              normalizeAdminTicket({ engineer_case_id: "CASE-A", title: "Assigned subject", client_status: "investigating", assignment_status: "assigned", requester: "Ari", assigned_engineer_id: "Maya" }),
+              normalizeAdminTicket({ engineer_case_id: "CASE-R", title: "Resolved subject", client_status: "resolved", assignment_status: "resolved", requester: "Ren", assigned_engineer_id: "Leo" }),
+            ];
+
+            const pendingHtml = renderAdminTicketBoard("pending-assignment");
+            const pendingHead = pendingHtml.match(/<thead><tr>(.*?)<\\/tr><\\/thead>/s)?.[1] || "";
+            if (!pendingHtml.includes("CASE-P") || pendingHtml.includes("CASE-A") || pendingHtml.includes("CASE-R")) {
+              throw new Error("Pending Assignment tab did not filter by assignment_status");
+            }
+            if (pendingHead !== "<th>ID</th><th>Subject</th><th>Status</th><th>Requester</th><th>Priority</th>") {
+              throw new Error(`Pending Assignment columns are incorrect: ${pendingHead}`);
+            }
+
+            for (const [section, expectedId, unexpectedId] of [["assigned", "CASE-A", "CASE-R"], ["resolved", "CASE-R", "CASE-A"]]) {
+              const html = renderAdminTicketBoard(section);
+              const head = html.match(/<thead><tr>(.*?)<\\/tr><\\/thead>/s)?.[1] || "";
+              if (!html.includes(expectedId) || html.includes(unexpectedId) || html.includes("CASE-P")) {
+                throw new Error(`${section} tab did not filter by assignment_status`);
+              }
+              if (head !== "<th>ID</th><th>Subject</th><th>Status</th><th>Requester</th><th>Priority</th><th>Assignee</th>") {
+                throw new Error(`${section} columns are incorrect: ${head}`);
+              }
+            }
+            """
+        )
+
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
-        self.assertIn("Client status", source)
-        self.assertIn("Assignment", source)
-        self.assertIn("assignmentVersion", source)
-        self.assertIn("expected_version", source)
-        self.assertIn("SLA", source)
+        self.assertNotIn("data-assignment-form", source)
+        self.assertNotIn("Admin adjustment", source)
 
     def test_workspace_admin_assets_are_self_contained(self) -> None:
         html = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
@@ -153,7 +179,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
         self.assertIn(".admin-shell", css)
-        self.assertIn(".admin-assignment-form", css)
+        self.assertIn(".admin-case-tabs", css)
+        self.assertIn(".admin-case-table", css)
 
     def test_workspace_admin_login_uses_transactional_entry_contract(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
@@ -172,7 +199,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-admin-schedule-pills-1", html)
+        self.assertIn("20260719-admin-case-tabs-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

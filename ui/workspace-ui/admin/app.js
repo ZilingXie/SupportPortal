@@ -20,7 +20,7 @@ let loadError = "";
 
 function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
-  return ["overview", "engineers", "schedule", "new-account", "active-tickets", "resolved-tickets", "audit"].includes(section)
+  return ["overview", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(section)
     ? section
     : "overview";
 }
@@ -91,12 +91,6 @@ function scheduleEngineers() {
   return Array.isArray(scheduleData?.engineers) ? scheduleData.engineers : [];
 }
 
-function assignableEngineerAccounts() {
-  return scheduleEngineers().filter(
-    (engineer) => engineer.is_on_schedule_now && engineer.availability === "available"
-  );
-}
-
 function engineerInitials(engineer) {
   return String(engineer?.display_name || engineer?.account_id || "E").slice(0, 2).toUpperCase();
 }
@@ -105,7 +99,6 @@ function normalizeAdminTicket(ticket) {
   const assignmentStatus = String(ticket?.assignment_status || "pending").trim().toLowerCase();
   return {
     id: String(ticket?.engineer_case_id || ticket?.ticket_id || "").trim(),
-    clientTicket: String(ticket?.client_ticket_id || ticket?.client_ticket_ref?.ticket_id || "").trim(),
     title: String(ticket?.title || ticket?.subject || "Untitled Engineer Case").trim(),
     clientStatus: String(
       ticket?.client_status || ticket?.client_ticket_ref?.status || "open"
@@ -113,12 +106,9 @@ function normalizeAdminTicket(ticket) {
     assignmentStatus: ["pending", "assigned", "resolved"].includes(assignmentStatus)
       ? assignmentStatus
       : "pending",
+    requester: String(ticket?.requester || ticket?.customer_id || "").trim(),
+    priority: String(ticket?.priority || ticket?.client_ticket_ref?.priority || "").trim().toLowerCase(),
     assignedEngineerId: String(ticket?.assigned_engineer_id || "").trim(),
-    assignmentVersion: Number(ticket?.assignment_version || 0),
-    assignedAt: String(ticket?.assigned_at || "").trim(),
-    slaDueAt: String(ticket?.sla_due_at || "").trim(),
-    dispatchStatus: String(ticket?.dispatch_status || "pending").trim().toLowerCase(),
-    updatedAt: String(ticket?.assignment_updated_at || ticket?.updated_at || "").trim(),
   };
 }
 
@@ -204,8 +194,9 @@ function renderAdminShell(content) {
     ["overview", "dashboard", "Operations Overview", "OV"],
     ["engineers", "groups", "Engineer Management", "EN"],
     ["schedule", "calendar_month", "Schedule", "SC"],
-    ["active-tickets", "confirmation_number", "Active Engineer Cases", "AC"],
-    ["resolved-tickets", "task_alt", "Resolved Engineer Cases", "RC"],
+    ["pending-assignment", "pending_actions", "Pending Assignment", "PA"],
+    ["assigned", "assignment_ind", "Assigned", "AS"],
+    ["resolved", "task_alt", "Resolved", "RS"],
     ["audit", "history", "Audit", "AU"],
   ];
   const activeNavSection = adminSection === "new-account" ? "engineers" : adminSection;
@@ -571,16 +562,23 @@ function renderAdminNewAccount() {
 }
 
 function renderAdminTicketBoard(section = adminSection) {
-  const targetStatus = section === "resolved-tickets" ? "resolved" : null;
-  const cases = adminTickets.filter((ticket) =>
-    targetStatus ? ticket.assignmentStatus === targetStatus : ticket.assignmentStatus !== "resolved"
-  );
-  const engineers = assignableEngineerAccounts();
+  const tabs = [
+    { section: "pending-assignment", status: "pending", label: "Pending Assignment" },
+    { section: "assigned", status: "assigned", label: "Assigned" },
+    { section: "resolved", status: "resolved", label: "Resolved" },
+  ];
+  const activeTab = tabs.find((tab) => tab.section === section) || tabs[0];
+  const cases = adminTickets.filter((ticket) => ticket.assignmentStatus === activeTab.status);
+  const showAssignee = activeTab.status !== "pending";
+  const columnCount = showAssignee ? 6 : 5;
   return `
-    <header class="admin-main-header"><div><h1>${targetStatus ? "Resolved" : "Active"} Engineer Cases</h1><p>Client Ticket status and Engineer Case assignment status are shown separately.</p></div></header>
-    <section class="admin-pool-panel panel-card">
-      <table class="admin-work-table">
-        <thead><tr><th>Engineer Case</th><th>Client Ticket</th><th>Client status</th><th>Assignment</th><th>Assignee / SLA</th><th>Admin adjustment</th></tr></thead>
+    <header class="admin-main-header admin-case-header"><div><p class="admin-eyebrow">ENGINEER CASES</p><h1>${activeTab.label}</h1><p>Cases grouped by assignment status, with client ticket status shown independently.</p></div></header>
+    <nav class="admin-case-tabs" aria-label="Engineer Case assignment status">
+      ${tabs.map((tab) => `<a href="#${tab.section}" data-section="${tab.section}" class="${tab.section === activeTab.section ? "is-active" : ""}" ${tab.section === activeTab.section ? 'aria-current="page"' : ""}>${tab.label}</a>`).join("")}
+    </nav>
+    <section class="admin-pool-panel admin-case-table-wrap" aria-label="${activeTab.label} cases">
+      <table class="admin-work-table admin-case-table ${showAssignee ? "has-assignee" : ""}">
+        <thead><tr><th>ID</th><th>Subject</th><th>Status</th><th>Requester</th><th>Priority</th>${showAssignee ? "<th>Assignee</th>" : ""}</tr></thead>
         <tbody>
           ${
             cases.length
@@ -588,36 +586,16 @@ function renderAdminTicketBoard(section = adminSection) {
                   .map(
                     (ticket) => `
                       <tr>
-                        <td><strong>${escapeHtml(ticket.id)}</strong><span class="admin-work-ticket">${escapeHtml(ticket.title)}</span></td>
-                        <td>${escapeHtml(ticket.clientTicket || "-")}</td>
+                        <td><strong class="admin-case-id">${escapeHtml(ticket.id)}</strong></td>
+                        <td><span class="admin-case-subject">${escapeHtml(ticket.title)}</span></td>
                         <td>${statusPill(ticket.clientStatus)}</td>
-                        <td>${statusPill(ticket.assignmentStatus)}</td>
-                        <td>${escapeHtml(ticket.assignedEngineerId || "-")}<span class="admin-work-ticket">SLA ${escapeHtml(
-                          formatDateTime(ticket.slaDueAt)
-                        )}</span></td>
-                        <td>
-                          ${
-                            ticket.assignmentStatus === "resolved"
-                              ? "-"
-                              : `<form class="admin-assignment-form" data-assignment-form data-case-id="${escapeHtml(
-                                  ticket.id
-                                )}" data-version="${ticket.assignmentVersion}">
-                                  <select name="engineer_id"><option value="">Pending</option>${engineers
-                                    .map(
-                                      (engineer) => `<option value="${escapeHtml(engineer.account_id)}" ${
-                                        engineer.account_id === ticket.assignedEngineerId ? "selected" : ""
-                                      }>${escapeHtml(engineer.display_name)}</option>`
-                                    )
-                                    .join("")}</select>
-                                  <input name="reason" value="admin_adjustment" required maxlength="500" aria-label="Assignment reason" />
-                                  <button class="btn btn-ghost" type="submit">Save</button>
-                                </form>`
-                          }
-                        </td>
+                        <td>${escapeHtml(ticket.requester || "—")}</td>
+                        <td>${ticket.priority ? `<span class="admin-priority-pill">${escapeHtml(ticket.priority)}</span>` : '<span class="admin-case-empty">—</span>'}</td>
+                        ${showAssignee ? `<td><span class="admin-case-assignee">${escapeHtml(ticket.assignedEngineerId || "—")}</span></td>` : ""}
                       </tr>`
                   )
                   .join("")
-              : `<tr><td colspan="6">No Engineer Cases in this view.</td></tr>`
+              : `<tr><td class="admin-case-empty-row" colspan="${columnCount}">No ${activeTab.label.toLowerCase()} cases.</td></tr>`
           }
         </tbody>
       </table>
@@ -663,7 +641,7 @@ function renderAdmin() {
     ? renderAdminSchedule()
     : adminSection === "new-account"
     ? renderAdminNewAccount()
-    : adminSection === "active-tickets" || adminSection === "resolved-tickets"
+    : adminSection === "pending-assignment" || adminSection === "assigned" || adminSection === "resolved"
     ? renderAdminTicketBoard(adminSection)
     : adminSection === "audit"
     ? renderAudit()
@@ -912,21 +890,6 @@ root.addEventListener("submit", (event) => {
   if (form.matches("[data-schedule-form]")) {
     handleScheduleUpdate(form);
     return;
-  }
-  if (form.matches("[data-assignment-form]")) {
-    const data = new FormData(form);
-    fetchJson(`/api/workspace/admin/cases/${encodeURIComponent(form.dataset.caseId)}/assignment`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        engineer_id: String(data.get("engineer_id") || "").trim() || null,
-        expected_version: Number(form.dataset.version || 0),
-        reason: String(data.get("reason") || "admin_adjustment").trim(),
-      }),
-    }).then(loadAdminData).catch((error) => {
-      loadError = error.message;
-      renderAdmin();
-    });
   }
 });
 

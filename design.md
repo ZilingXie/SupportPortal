@@ -240,6 +240,11 @@
 22. 个人 weekly schedule 使用 Monday-Sunday 的横向扫描布局：每天显示真实起止时间，无班次显示 `Off`，跨夜班次明确标记次日结束；窄屏允许区域内横向滚动，不得造成页面级横向溢出。
 23. `/workspace` 登录后的 Ready 首页、准备态和 Engineer Case 详情统一使用无侧栏的单工作面与 sticky 顶部栏：左侧固定展示 Workspace icon/品牌，右侧展示当前用户与 Logout；移动端保留 icon、用户名和 Logout，不得退回 rail、抽屉或悬浮在内容上的账户控件。
 24. `/workspace` 与 `/workspace/admin` 必须使用独立的浏览器会话存储命名空间；Engineer 入口只接受 `role === "engineer"`，Admin 入口只接受 `role === "admin"`。角色不匹配时必须显示对应入口的登录页，Logout 与 401 清理不得影响另一入口的登录状态。
+25. `/workspace/admin` 的 Engineer Case 工作面固定使用 `Pending Assignment`、`Assigned`、`Resolved` 三个 assignment tab，并直接按后端 `assignment_status` 分组：
+   - `Pending Assignment` 列为 `ID / Subject / Status / Requester / Priority`。
+   - `Assigned` 与 `Resolved` 列为 `ID / Subject / Status / Requester / Priority / Assignee`。
+   - `Status` 表达 Client Ticket status；当前 assignment status 由选中的 tab 表达，不再重复为表格列。
+   - 未提供 Priority 时显示明确空值，不得在前端推导或伪造优先级。
 
 ### 6.3 Ticket Dashboard (`/dashboard`)
 1. 固定 KPI 名称：
