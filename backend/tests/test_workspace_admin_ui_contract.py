@@ -121,7 +121,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-admin-schedule-time-grid-1", html)
+        self.assertIn("20260719-admin-account-button-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -136,6 +136,17 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("admin-topbar-btn", source)
         self.assertIn("grid-template-columns: 96px minmax(0, 1fr)", css)
         self.assertIn("width: 264px", css)
+
+    def test_admin_account_entry_uses_simple_blue_button_and_plain_back_link(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="btn btn-primary admin-new-account-btn"', source)
+        self.assertIn('aria-hidden="true">add</span><span>New Account</span>', source)
+        self.assertIn(".admin-new-account-btn", css)
+        self.assertIn("background: var(--primary)", css)
+        self.assertIn(".admin-back-link:visited", css)
+        self.assertIn("text-decoration: none", css)
 
     def test_admin_weekly_schedule_uses_blue_time_grid(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
