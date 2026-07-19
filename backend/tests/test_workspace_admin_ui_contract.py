@@ -121,7 +121,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-admin-schedule-invite-1", html)
+        self.assertIn("20260719-admin-schedule-time-grid-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -136,6 +136,56 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("admin-topbar-btn", source)
         self.assertIn("grid-template-columns: 96px minmax(0, 1fr)", css)
         self.assertIn("width: 264px", css)
+
+    def test_admin_weekly_schedule_uses_blue_time_grid(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+
+        for marker in (
+            "timeStringToMinutes",
+            "buildScheduleSegments",
+            "assignScheduleLanes",
+            "renderWeeklyTimeGrid",
+            "admin-week-grid",
+            "admin-week-shift",
+            "repeat(96, 12px)",
+            "#cae6ff",
+            "#101a44",
+        ):
+            self.assertIn(marker, source + css)
+        self.assertNotIn("admin-roster-table", source + css)
+        self.assertNotIn("#16262d", css)
+        self.assertNotIn("#dff3f5", css)
+
+    def test_admin_weekly_schedule_splits_overnight_and_assigns_overlap_lanes(self) -> None:
+        self.run_admin_app_script(
+            """
+            const engineers = [
+              { account_id: "zac", display_name: "Zac", availability: "available", shifts: [
+                { weekday: 6, start: "22:00", end: "06:00" },
+                { weekday: 0, start: "09:00", end: "17:00" },
+              ] },
+              { account_id: "maya", display_name: "Maya", availability: "unavailable", shifts: [
+                { weekday: 0, start: "10:00", end: "14:00" },
+              ] },
+            ];
+            const segments = assignScheduleLanes(buildScheduleSegments(engineers));
+            const sunday = segments.find((segment) => segment.weekday === 6 && segment.startMinute === 1320 && segment.endMinute === 1440);
+            const mondayOvernight = segments.find((segment) => segment.weekday === 0 && segment.startMinute === 0 && segment.endMinute === 360);
+            const zacMonday = segments.find((segment) => segment.weekday === 0 && segment.startMinute === 540);
+            const mayaMonday = segments.find((segment) => segment.weekday === 0 && segment.startMinute === 600);
+            if (!sunday || !mondayOvernight) throw new Error("Sunday overnight shift was not split across the week boundary");
+            if (sunday.label !== "22:00-24:00" || mondayOvernight.label !== "00:00-06:00") {
+              throw new Error("overnight shift segments do not display their actual day-local time range");
+            }
+            if (sunday.laneCount !== 1 || mondayOvernight.laneCount !== 1) {
+              throw new Error("non-overlapping overnight segments should occupy the full day column");
+            }
+            if (!zacMonday || !mayaMonday || zacMonday.lane === mayaMonday.lane || zacMonday.laneCount < 2 || mayaMonday.laneCount < 2) {
+              throw new Error("overlapping Monday shifts were not assigned separate lanes");
+            }
+            """
+        )
 
     def test_workspace_setup_page_uses_one_time_invitation_api(self) -> None:
         source = Path("ui/workspace-ui/setup/app.js").read_text(encoding="utf-8")

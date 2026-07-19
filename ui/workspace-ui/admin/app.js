@@ -318,11 +318,119 @@ function renderCompactEngineers() {
     .join("");
 }
 
+function timeStringToMinutes(value) {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function buildScheduleSegments(engineers) {
+  const segments = [];
+  engineers.forEach((engineer) => {
+    (engineer.shifts || []).forEach((shift) => {
+      const weekday = Number(shift.weekday);
+      const startMinute = timeStringToMinutes(shift.start);
+      const endMinute = timeStringToMinutes(shift.end);
+      if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6 || startMinute === null || endMinute === null || startMinute === endMinute) {
+        return;
+      }
+      const common = {
+        engineer,
+        shift,
+        fullLabel: `${shift.start}-${shift.end}`,
+      };
+      if (endMinute > startMinute) {
+        segments.push({ ...common, weekday, startMinute, endMinute, label: common.fullLabel });
+        return;
+      }
+      segments.push({ ...common, weekday, startMinute, endMinute: 24 * 60, label: `${shift.start}-24:00` });
+      if (endMinute > 0) {
+        segments.push({ ...common, weekday: (weekday + 1) % 7, startMinute: 0, endMinute, label: `00:00-${shift.end}` });
+      }
+    });
+  });
+  return segments;
+}
+
+function assignScheduleLanes(segments) {
+  const withLanes = [];
+  for (let weekday = 0; weekday < 7; weekday += 1) {
+    const daySegments = segments
+      .filter((segment) => segment.weekday === weekday)
+      .sort((left, right) => left.startMinute - right.startMinute || left.endMinute - right.endMinute);
+    let laneEnds = [];
+    let overlapGroup = [];
+    let overlapGroupEnd = -1;
+    let overlapGroupLaneCount = 1;
+    const finishOverlapGroup = () => {
+      overlapGroup.forEach((segment) => {
+        segment.laneCount = overlapGroupLaneCount;
+        withLanes.push(segment);
+      });
+      laneEnds = [];
+      overlapGroup = [];
+      overlapGroupEnd = -1;
+      overlapGroupLaneCount = 1;
+    };
+    daySegments.forEach((segment) => {
+      if (overlapGroup.length && segment.startMinute >= overlapGroupEnd) finishOverlapGroup();
+      let lane = laneEnds.findIndex((endMinute) => endMinute <= segment.startMinute);
+      if (lane < 0) lane = laneEnds.length;
+      laneEnds[lane] = segment.endMinute;
+      overlapGroup.push({ ...segment, lane });
+      overlapGroupEnd = Math.max(overlapGroupEnd, segment.endMinute);
+      overlapGroupLaneCount = Math.max(overlapGroupLaneCount, laneEnds.length);
+    });
+    if (overlapGroup.length) finishOverlapGroup();
+  }
+  return withLanes;
+}
+
+function renderWeeklyTimeGrid(engineers, days) {
+  const segments = assignScheduleLanes(buildScheduleSegments(engineers));
+  const hourLabels = Array.from({ length: 24 }, (_, hour) => {
+    const row = 2 + hour * 4;
+    return `<span class="admin-week-time" style="grid-row:${row} / span 4">${String(hour).padStart(2, "0")}:00</span>`;
+  }).join("");
+  const dayColumns = days
+    .map((day, weekday) => `<div class="admin-week-day" role="gridcell" aria-label="${escapeHtml(day)}" style="grid-column:${weekday + 2};grid-row:2 / span 96"></div>`)
+    .join("");
+  const shiftBlocks = segments
+    .map((segment) => {
+      const startRow = 2 + Math.floor(segment.startMinute / 15);
+      const rowSpan = Math.max(1, Math.ceil(segment.endMinute / 15) - Math.floor(segment.startMinute / 15));
+      const unavailable = segment.engineer.availability !== "available";
+      return `<button class="admin-week-shift${unavailable ? " is-unavailable" : ""}" type="button" role="gridcell"
+        data-action="edit-schedule" data-engineer-id="${escapeHtml(segment.engineer.account_id)}"
+        style="grid-column:${segment.weekday + 2};grid-row:${startRow} / span ${rowSpan};--lane:${segment.lane};--lane-count:${segment.laneCount}"
+        aria-label="Modify ${escapeHtml(segment.engineer.display_name)} shifts, ${escapeHtml(days[segment.weekday])} ${escapeHtml(segment.label)}, ${escapeHtml(segment.engineer.availability)}${segment.label === segment.fullLabel ? "" : `, overnight ${escapeHtml(segment.fullLabel)}`}">
+        <strong>${escapeHtml(segment.engineer.display_name)}</strong>
+        <span>${escapeHtml(segment.label)}</span>
+        <small>${escapeHtml(segment.engineer.availability)}</small>
+      </button>`;
+    })
+    .join("");
+  return `
+    <div class="admin-week-grid-wrap" tabindex="0" aria-label="Weekly engineer schedule">
+      <div class="admin-week-grid" role="grid">
+        <div class="admin-week-corner" aria-hidden="true">TIME</div>
+        ${days.map((day, weekday) => `<div class="admin-week-day-heading" role="columnheader" style="grid-column:${weekday + 2}">${escapeHtml(day)}</div>`).join("")}
+        ${hourLabels}
+        ${dayColumns}
+        ${shiftBlocks}
+        ${segments.length ? "" : `<p class="admin-week-empty">No shifts scheduled.</p>`}
+      </div>
+    </div>`;
+}
+
 function renderAdminEngineerManagement() {
   const engineers = scheduleEngineers();
   const onSchedule = engineers.filter((engineer) => engineer.is_on_schedule_now);
   const selected = engineers.find((engineer) => engineer.account_id === selectedEngineerId);
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   return `
     <header class="admin-main-header admin-management-header">
       <div><h1>Engineer Management</h1><p>Manage weekly coverage and dispatch eligibility.</p></div>
@@ -351,24 +459,7 @@ function renderAdminEngineerManagement() {
       <header class="admin-section-heading">
         <div><p class="admin-eyebrow">${escapeHtml(scheduleData.timezone || "Asia/Shanghai")}</p><h2 id="weekly-schedule-title">Weekly Schedule</h2></div>
       </header>
-      <div class="admin-roster-table-wrap">
-        <table class="admin-roster-table">
-          <thead><tr><th>Engineer</th>${days.map((day) => `<th>${day}</th>`).join("")}<th><span class="sr-only">Actions</span></th></tr></thead>
-          <tbody>
-            ${engineers.length ? engineers.map((engineer) => {
-              const shifts = new Map((engineer.shifts || []).map((shift) => [Number(shift.weekday), shift]));
-              return `<tr>
-                <td><strong>${escapeHtml(engineer.display_name)}</strong><small>${engineer.is_on_schedule_now ? "On schedule" : "Off schedule"} · ${escapeHtml(engineer.availability)}</small></td>
-                ${days.map((_, weekday) => {
-                  const shift = shifts.get(weekday);
-                  return `<td>${shift ? `<span class="admin-shift-chip">${escapeHtml(shift.start)}–${escapeHtml(shift.end)}</span>` : `<span class="admin-day-off">Off</span>`}</td>`;
-                }).join("")}
-                <td><button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify shifts" aria-label="Modify ${escapeHtml(engineer.display_name)} shifts"><span class="material-symbols-outlined" aria-hidden="true">edit</span></button></td>
-              </tr>`;
-            }).join("") : `<tr><td colspan="9" class="admin-empty-state">Invite an engineer to create the first schedule.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
+      ${renderWeeklyTimeGrid(engineers, days)}
     </section>
     ${selected ? renderScheduleEditor(selected, days) : ""}
   `;
