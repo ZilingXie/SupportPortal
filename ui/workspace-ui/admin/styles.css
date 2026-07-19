@@ -3591,8 +3591,15 @@ p {
 .admin-sidebar-body {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding-top: 28px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.admin-sidebar-body::-webkit-scrollbar {
+  display: none;
 }
 
 .admin-sidebar-nav ul {
@@ -3817,12 +3824,27 @@ p {
 
 .admin-week-grid-wrap {
   width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+  height: min(70vh, 720px);
+  min-height: 420px;
+  overflow: auto;
   border-radius: 8px;
   background: var(--surface-lowest);
   box-shadow: 0 8px 28px rgba(23, 28, 33, 0.05);
+  scrollbar-color: rgba(0, 100, 147, 0.32) transparent;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.admin-week-grid-wrap::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.admin-week-grid-wrap::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(0, 100, 147, 0.32);
+  background-clip: padding-box;
 }
 
 .admin-week-grid-wrap:focus-visible {

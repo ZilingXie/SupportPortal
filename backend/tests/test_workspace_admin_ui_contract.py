@@ -121,7 +121,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             'name="password"',
         ):
             self.assertIn(marker, source)
-        self.assertIn("20260719-admin-account-button-1", html)
+        self.assertIn("20260719-admin-schedule-scroll-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -167,6 +167,15 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("admin-roster-table", source + css)
         self.assertNotIn("#16262d", css)
         self.assertNotIn("#dff3f5", css)
+
+    def test_admin_schedule_scrolls_vertically_and_sidebar_scrollbar_is_hidden(self) -> None:
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("height: min(70vh, 720px)", css)
+        self.assertIn("overflow: auto", css)
+        self.assertIn(".admin-week-grid-wrap::-webkit-scrollbar", css)
+        self.assertIn(".admin-sidebar-body::-webkit-scrollbar", css)
+        self.assertIn("scrollbar-width: none", css)
 
     def test_admin_weekly_schedule_splits_overnight_and_assigns_overlap_lanes(self) -> None:
         self.run_admin_app_script(
