@@ -81,6 +81,21 @@ html.material-symbols-pending .material-symbols-outlined {
   visibility: hidden;
 }
 
+html.material-symbols-pending .admin-sidebar .admin-rail-symbol,
+html.material-symbols-failed .admin-sidebar .admin-rail-symbol {
+  visibility: visible;
+  font-size: 0;
+}
+
+html.material-symbols-pending .admin-sidebar .admin-rail-symbol::before,
+html.material-symbols-failed .admin-sidebar .admin-rail-symbol::before {
+  content: attr(data-fallback);
+  font-family: "Inter", sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
 .assignment-app {
   min-height: 100vh;
 }
@@ -3821,6 +3836,29 @@ p {
   gap: 4px;
 }
 
+.admin-availability-toggle {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid rgba(76, 86, 175, 0.22);
+  border-radius: 999px;
+  background: #f0f0ff;
+  color: #4c56af;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.admin-availability-toggle.is-available {
+  border-color: rgba(0, 100, 147, 0.2);
+  background: #eaf3ff;
+  color: var(--primary);
+}
+
+.admin-availability-toggle:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .admin-icon-btn {
   color: var(--ink-soft);
 }
@@ -3863,7 +3901,7 @@ p {
   position: relative;
   display: grid;
   grid-template-columns: 72px repeat(7, minmax(132px, 1fr));
-  grid-template-rows: 44px repeat(96, 12px);
+  grid-template-rows: 44px repeat(48, 26px);
   width: 100%;
   min-width: 1040px;
   isolation: isolate;
@@ -3902,7 +3940,7 @@ p {
   left: 0;
   z-index: 3;
   grid-column: 1;
-  grid-row: 2 / span 96;
+  grid-row: 2 / span 48;
   background: #f7faff;
 }
 
@@ -3910,7 +3948,7 @@ p {
   position: sticky;
   left: 0;
   z-index: 4;
-  align-self: start;
+  align-self: center;
   grid-column: 1;
   padding-right: 10px;
   color: var(--ink-muted);
@@ -3918,11 +3956,6 @@ p {
   font-variant-numeric: tabular-nums;
   line-height: 12px;
   text-align: right;
-  transform: translateY(-50%);
-}
-
-.admin-week-time[data-hour="0"] {
-  z-index: 6;
 }
 
 .admin-week-day {
@@ -3932,9 +3965,15 @@ p {
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
-    transparent 47px,
-    rgba(0, 100, 147, 0.12) 47px,
-    rgba(0, 100, 147, 0.12) 48px
+    transparent 25px,
+    rgba(0, 100, 147, 0.08) 25px,
+    rgba(0, 100, 147, 0.08) 26px
+  ), repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 51px,
+    rgba(0, 100, 147, 0.16) 51px,
+    rgba(0, 100, 147, 0.16) 52px
   );
 }
 
@@ -3942,65 +3981,57 @@ p {
   background-color: #fafdff;
 }
 
-.admin-week-shift {
+.admin-week-slot {
   z-index: 2;
-  align-self: stretch;
+  align-self: center;
   justify-self: start;
-  width: calc((100% / var(--lane-count)) - 6px);
+  width: calc((100% / var(--lane-count)) - 8px);
+  height: 20px;
   min-width: 0;
-  margin: 2px 3px 2px calc((100% / var(--lane-count)) * var(--lane) + 3px);
+  margin-left: calc((100% / var(--lane-count)) * var(--lane) + 4px);
   overflow: hidden;
-  padding: 6px 7px;
-  border: 0;
-  border-left: 3px solid #006493;
-  border-radius: 6px;
-  background: #cae6ff;
+  padding: 0 6px;
+  border: 1px solid rgba(0, 100, 147, 0.24);
+  border-left: 2px solid #006493;
+  border-radius: 4px;
+  background: #eaf3ff;
   color: #00344e;
-  box-shadow: 0 2px 8px rgba(0, 74, 112, 0.14);
+  box-shadow: 0 1px 3px rgba(0, 74, 112, 0.1);
   text-align: left;
 }
 
-.admin-week-shift:hover,
-.admin-week-shift:focus-visible {
+.admin-week-slot:hover,
+.admin-week-slot:focus-visible {
   z-index: 3;
-  background: #b5dcfb;
-  box-shadow: 0 5px 14px rgba(0, 74, 112, 0.22);
+  background: #cae6ff;
+  box-shadow: 0 3px 8px rgba(0, 74, 112, 0.18);
 }
 
-.admin-week-shift:focus-visible {
+.admin-week-slot:focus-visible {
   outline: 3px solid rgba(0, 100, 147, 0.32);
   outline-offset: 1px;
 }
 
-.admin-week-shift.is-unavailable {
-  border-left-color: #4c56af;
-  background: #e0e0ff;
-  color: #303a87;
-}
-
-.admin-week-shift strong,
-.admin-week-shift span,
-.admin-week-shift small {
+.admin-week-slot span {
   display: block;
   overflow: hidden;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.admin-week-shift strong {
+.admin-schedule-notice {
+  width: fit-content;
+  margin: -6px 0 16px;
+  padding: 7px 10px;
+  border: 1px solid rgba(0, 100, 147, 0.2);
+  border-radius: 6px;
+  background: #eaf3ff;
+  color: var(--primary);
   font-size: 11px;
-  line-height: 1.25;
-}
-
-.admin-week-shift span,
-.admin-week-shift small {
-  font-size: 10px;
-  line-height: 1.3;
-}
-
-.admin-week-shift small {
-  margin-top: 2px;
-  opacity: 0.74;
+  font-weight: 750;
 }
 
 .admin-week-empty {
@@ -4111,21 +4142,29 @@ p {
   height: 17px;
 }
 
-.admin-shift-row input[type="time"] {
+.admin-time-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.admin-time-selects select {
+  width: 100%;
   min-width: 0;
   height: 42px;
   padding: 0 8px;
   border: 1px solid var(--ghost-border);
   border-radius: 6px;
   background: var(--surface-lowest);
+  color: var(--ink);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-.admin-availability-fields {
-  display: grid;
-  grid-template-columns: 0.8fr 1.2fr;
-  gap: 12px;
-  margin-top: 20px;
+.admin-time-selects select:disabled {
+  color: var(--ink-muted);
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .admin-schedule-editor form > footer {
@@ -4319,8 +4358,7 @@ p {
   }
 
   .admin-roster-list,
-  .admin-invite-layout,
-  .admin-availability-fields {
+  .admin-invite-layout {
     grid-template-columns: 1fr;
   }
 
