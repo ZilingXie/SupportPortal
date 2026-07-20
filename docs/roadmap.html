@@ -294,7 +294,7 @@
 
     .phase-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 1px;
       background: var(--line);
     }
@@ -1430,9 +1430,10 @@
       <h1>整体落地优化计划</h1>
       <ul class="hero-bullets" aria-label="Roadmap summary">
         <li><strong>项目定位：</strong>建设基于 agent 的工单系统，不把 AI 包装成完全替代真人的 support engineer。</li>
-        <li><strong>当前阶段：</strong>Phase 1 已完成，Phase 2 进入 9/1 Controlled Launch 实施与验证；正式入口是 <code>/workspace</code> 与 <code>/workspace/admin</code>。</li>
-        <li><strong>9/1 主链路：</strong>Billing automation、Not automated Engineer Case 切量、邮件邀请与 weekly schedule 约束的系统派单、3 小时 SLA、guardrail approve/final approve、Outlook reply 和 Admin 管理闭环。</li>
-        <li><strong>边界：</strong>Engineer multi-agent 与 AgentRelay 真实 case 集成不进入 9/1 交付主链路；旧 <code>/engineer</code> UI 是 legacy，但 <code>/api/engineer/*</code> 仍是 active backend contract。</li>
+        <li><strong>当前阶段：</strong>Phase 1 已完成；Phase 2 聚焦确定性 automation 与 controlled validation，Phase 3 承接 AI 首次回复和 Slack 工程师流程。</li>
+        <li><strong>Phase 2：</strong>收口 account suspension / fraud、detailed invoice、enablement，完善字段规则、回复节奏、Prompt 模板和 automation coverage。</li>
+        <li><strong>Phase 3：</strong>客户继续从 Zendesk 开单，AI 首次回复后按 Round Robin 分配给工程师，Slack、Guardrail 与 Admin 控制组成内部处理链路。</li>
+        <li><strong>长期边界：</strong>Engineer multi-agent 与 AgentRelay 自主调查不占用 Phase 3，继续作为后续长期计划。</li>
       </ul>
       <div class="hero-grid" id="heroMetrics"></div>
     </header>
@@ -1441,9 +1442,9 @@
       <header>
         <div>
           <div class="eyebrow"><span class="pulse"></span>总计划追踪</div>
-          <h2>Phase 1 完成，Phase 2 进入 9/1 Controlled Launch</h2>
+          <h2>Phase 2 验证自动化，Phase 3 建立 Slack 工程师流程</h2>
         </div>
-        <p>Phase 2 的 P0、P1、P2 都属于 9/1 交付范围；优先级只决定实施顺序，不代表低优先级项目可以延期到 9/1 之后。</p>
+        <p>会议第一阶段对应实际 Phase 2，会议第二阶段对应实际 Phase 3。已完成基础与端到端阶段目标分开记录，避免把现有能力误写成完整交付。</p>
       </header>
       <div class="phase-grid">
         <article class="phase-card">
@@ -1460,30 +1461,39 @@
           <a class="phase-action" href="./roadmap/phase1.html" aria-label="打开 Phase 1 演示讲稿页">打开 Phase 1 演示讲稿 <span aria-hidden="true">-></span></a>
         </article>
         <article class="phase-card">
-          <span class="phase-status doing">9/1 Controlled Launch</span>
-          <h3>Phase 2：Billing automation + Engineer Case 生产闭环</h3>
+          <span class="phase-status doing">Controlled Validation</span>
+          <h3>Phase 2：确定性 Automation + Controlled Validation</h3>
           <ul class="phase-gate-list">
-            <li><strong>P0：</strong>生产账号与 RBAC、Admin 创建账号、available/unavailable 管理及完整操作审计。</li>
-            <li><strong>P0：</strong>available engineer + round-robin 系统派单；manual claim 禁用，pending/assigned/resolved 原子更新并防重复派发。</li>
-            <li><strong>P0：</strong>assigned 后立即开始 3 小时 SLA；超时或 assignee unavailable 时转派给下一个 available engineer。</li>
-            <li><strong>P1：</strong>Client Ticket 与 Engineer Case 两种工单完全分层；Client status 不再充当 assignment status。</li>
-            <li><strong>P1：</strong>Account Not automated 只统计自身工单，每第 10 单创建 Engineer Case，验证后切到 100%。</li>
-            <li><strong>P1：</strong>Zendesk/external ID 幂等，避免重复 webhook 重复建单、派单或发送邮件。</li>
-            <li><strong>P2：</strong>完成 Admin metrics、action-specific 内部邮箱配置和真实 case 全量流转接入。</li>
-            <li>Billing 内部处理统一通过 Outlook reply；所有客户回复必须经过 guardrail 与 engineer final approve。</li>
+            <li><strong>Fraud fields：</strong>Suhird 明确 required 与 optional fields。</li>
+            <li><strong>Clarification：</strong>同一信息不能无限追问，达到限制后转人工。</li>
+            <li><strong>Reply timing：</strong>首条自动回复随机延迟 6–10 分钟，避免 AI 秒回。</li>
+            <li><strong>Prompt：</strong>维护不同人设的受控回复模板。</li>
+            <li><strong>Scope：</strong>自动化覆盖 account suspension / fraud、detailed invoice 与 enablement。</li>
+            <li><strong>Metrics：</strong>展示可解决 case 百分比，并据此决定是否扩充 category。</li>
           </ul>
-          <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-></span></a>
+          <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-&gt;</span></a>
         </article>
         <article class="phase-card">
-          <span class="phase-status blocked">与 9/1 隔离</span>
-          <h3>Phase 3：Engineer multi-agent + governed agent-to-agent</h3>
+          <span class="phase-status doing">Engineer workflow</span>
+          <h3>Phase 3：AI First Response + Slack Engineer Workflow</h3>
           <ul class="phase-gate-list">
-            <li>Engineer multi-agent 默认关闭，不影响 9/1 Workspace、派单、Billing 与 guardrail 主链路。</li>
-            <li>后续再在 AgentRelay foundation 上扩大 Support agent 与研发、数据、日志 agent 的协作范围。</li>
-            <li>重点从“能通信”转向“能自主调查”：权限、证据质量、成本、endpoint/forum/hub 协作和审计协议必须达标。</li>
-            <li>限制 retry、并发和 token 预算，避免 T1 无限追问造成成本失控。</li>
-            <li>企业级合规审计先行：权限、历史记录、敏感信息、source of truth 都要可证明。</li>
-            <li>当 AI 能稳定解决大多数 case 后，人转向例外处理、最终责任和质量抽查。</li>
+            <li>客户继续从 Zendesk 创建 ticket；大客户、明显生气或高风险客户先排除 AI。</li>
+            <li>AI 只做首次有效回复，随后 assign 给工程师。</li>
+            <li>后续客户回复全部经过 Guardrail。</li>
+            <li>在 Slack 中投递关联 case；具体消息承载方式需先验证权限。</li>
+            <li>只有 Admin 可以 reassign case。</li>
+            <li>使用全局 Round Robin 平均分配。</li>
+            <li>Admin Dashboard 统一展示 assignee、priority、resolved、audit 与 reassign。</li>
+          </ul>
+          <a class="phase-action" href="./roadmap/phase3.html" aria-label="打开 Phase 3 计划页面">打开 Phase 3 计划 <span aria-hidden="true">-&gt;</span></a>
+        </article>
+        <article class="phase-card">
+          <span class="phase-status blocked">Long term</span>
+          <h3>后续长期计划：Engineer multi-agent + governed agent-to-agent</h3>
+          <ul class="phase-gate-list">
+            <li>Engineer multi-agent 继续默认关闭，不影响 Phase 2 automation 与 Phase 3 Slack 工程师流程。</li>
+            <li>在 AgentRelay foundation 上逐步接入研发、数据与日志 agent。</li>
+            <li>权限、证据质量、成本、retry、并发、token 预算与企业级审计达标后再扩大范围。</li>
           </ul>
         </article>
       </div>
@@ -1491,6 +1501,7 @@
 
     <nav class="toolbar" aria-label="Roadmap filters">
       <a class="phase-filter-link" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">Phase 2 <span aria-hidden="true">-></span></a>
+      <a class="phase-filter-link" href="./roadmap/phase3.html" aria-label="打开 Phase 3 计划页面">Phase 3 <span aria-hidden="true">-></span></a>
       <div class="filter" id="laneFilters"></div>
       <input id="searchInput" class="search" type="search" placeholder="搜索任务、来源或计划">
     </nav>
@@ -2011,7 +2022,7 @@ flowchart TD
         short: "Assignment",
         title: "Engineer Case assignment + Workspace",
         status: "doing",
-        thesis: "9/1 Controlled Launch 使用 `/workspace` 作为 Engineer Case 正式处理入口，工程师登录后先查看个人 weekly schedule，并仅在点击 Ready to roll 后进入 assigned case；`/workspace/admin` 作为邮件邀请、weekly schedule、availability、派单、审计和指标入口。工程师不能领取工单：系统只从当前 on-schedule 且 available 的 engineer 中按 round-robin 派单，assigned 后立即开始 3 小时 SLA；超时、engineer unavailable 或离开 schedule 时自动转派。Client Ticket status 与 Engineer Case assignment status 完全分层。",
+        thesis: "现有 `/workspace`、`/workspace/admin`、Admin-only reassign、Guardrail 与 round-robin 是 Phase 3 的基础能力。Phase 3 在此基础上增加 AI 首次有效回复和 Slack 工程师流程：客户继续从 Zendesk 开单，eligibility gate 排除大客户、明显生气或高风险客户，AI 首次回复后按全局 Round Robin 分配，Slack 负责工程师送达，Admin 继续掌握 reassign 与审计控制。",
         done: [
           { summary: "Workspace 账号、PBKDF2 password、signed token 与 Admin/Engineer RBAC 已接入；Admin 通过 Graph 邮件邀请和一次性 setup link 创建账号，邀请邮箱被锁定为登录身份。", prs: [] },
           { summary: "Admin 可在 Engineer Management 使用独立 available/unavailable 开关管理 engineer availability；切换时清空 reason，审计字段与 availability 变更 audit 已落地。", prs: [] },
@@ -2033,6 +2044,10 @@ flowchart TD
           "其他 legacy 入口包括 `/login`、`/client2`、`/clienttest`、`/api/v1/auth/logout`、已移除的 `/assignment` prototype、`ui/archive/*` 与仅供历史兼容的 `/response`。"
         ],
         next: [
+          { id: "assign-phase3-eligibility", status: "todo", label: "Phase 3：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。", horizon: "Eligibility" },
+          { id: "assign-phase3-first-reply", status: "todo", label: "Phase 3：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。", horizon: "First Reply" },
+          { id: "assign-phase3-slack", status: "todo", label: "Phase 3：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。", horizon: "Slack" },
+          { id: "assign-phase3-admin-sync", status: "todo", label: "Phase 3：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。", horizon: "Admin" },
           { id: "assign-live-postgres", status: "doing", label: "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。", horizon: "Reliability" },
           { id: "assign-auth-hardening", status: "doing", label: "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。", horizon: "Security" },
           { id: "assign-rollout", status: "doing", label: "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。", horizon: "Rollout" },
@@ -2187,7 +2202,7 @@ flowchart TD
           { id: "routing-billing-risky-negatives", status: "todo", label: "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。", horizon: "Safety" },
           { id: "routing-dashboard-metrics", status: "todo", label: "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。", horizon: "Metrics" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
-          { id: "routing-automation-rollout", status: "todo", label: "Phase 2/3：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension 和 detailed_invoice 的 limited automation。", horizon: "Rollout" },
+          { id: "routing-automation-rollout", status: "todo", label: "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension、detailed_invoice 和 enablement 的 limited automation。", horizon: "Rollout" },
         ],
         architecture: {
           title: "Routing Architecture: Semantic Intent -> Policy Gate -> Route Contract",
