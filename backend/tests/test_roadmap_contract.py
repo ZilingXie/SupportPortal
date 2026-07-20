@@ -12,6 +12,7 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 ROADMAP_PATH = Path("docs/roadmap.html")
 PHASE1_PATH = Path("docs/roadmap/phase1.html")
 PHASE2_PATH = Path("docs/roadmap/phase2.html")
+PHASE3_PATH = Path("docs/roadmap/phase3.html")
 PHASE1_VIDEO_DIR = Path("docs/roadmap/phase1_video")
 PHASE1_VIDEO_SCRIPT_PATH = PHASE1_VIDEO_DIR / "video_script.md"
 PHASE1_VIDEO_SCRIPT_CN_PATH = PHASE1_VIDEO_DIR / "video_script_cn.md"
@@ -35,6 +36,18 @@ class RoadmapContractTests(unittest.TestCase):
             "Assignment",
             "Billing",
             "Reliability",
+            "Automation Scope",
+            "Reply Quality",
+            "Validation &amp; Metrics",
+            "Fraud 字段规则",
+            "Suhird",
+            "限制重复追问",
+            "随机延迟 6–10 分钟",
+            "不同人设 Prompt 模板",
+            "account suspension / fraud、detailed invoice 和 enablement",
+            "自动化覆盖率",
+            'class="delivery-group" data-status-group="incomplete" open',
+            'class="delivery-group" data-status-group="complete"',
             "Active UI",
             "Workspace auth",
             "Engineer backend",
@@ -60,12 +73,68 @@ class RoadmapContractTests(unittest.TestCase):
             r'<tbody id="endpointRows">(.*?)</tbody>', phase2_source, flags=re.DOTALL
         )
         self.assertGreaterEqual(len(delivery_rows), 10)
-        self.assertTrue(all('class="pr-link"' in row for row in delivery_rows))
+        self.assertTrue(all('data-status="' in row for row in delivery_rows))
+        complete_rows = [row for row in delivery_rows if 'data-status="done"' in row]
+        incomplete_rows = [row for row in delivery_rows if 'data-status="done"' not in row]
+        self.assertTrue(complete_rows)
+        self.assertTrue(incomplete_rows)
+        self.assertTrue(all('class="pr-link"' in row for row in complete_rows))
+        self.assertTrue(all('status-chip' in row for row in incomplete_rows))
         self.assertIsNotNone(endpoint_body)
         assert endpoint_body is not None
         endpoint_rows = re.findall(r"<tr>.*?</tr>", endpoint_body.group(1), flags=re.DOTALL)
         self.assertGreaterEqual(len(endpoint_rows), 15)
         self.assertTrue(all('class="pr-link"' in row for row in endpoint_rows))
+
+    def test_phase3_plan_page_is_linked_and_tracks_slack_workflow(self) -> None:
+        roadmap_source = ROADMAP_PATH.read_text(encoding="utf-8")
+        phase3_source = PHASE3_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('href="./roadmap/phase3.html"', roadmap_source)
+        for term in (
+            "Phase 3 Plan",
+            "AI First Response + Slack Engineer Workflow",
+            "Zendesk Intake &amp; Eligibility",
+            "AI First Response",
+            "Slack Engineer Workflow",
+            "Assignment &amp; Admin",
+            "客户从 Zendesk 创建 ticket",
+            "大客户、明显生气或高风险客户",
+            "AI 只负责首次有效回复",
+            "之后所有客户回复经过 Guardrail",
+            "在 Slack 中分配 case",
+            "只有 Admin 可以 reassign case",
+            "全局 Round Robin 平均分配",
+            "Admin Dashboard",
+            "Slack bot 权限与承载模型",
+            'class="delivery-group" data-status-group="incomplete" open',
+            'class="delivery-group" data-status-group="complete"',
+        ):
+            with self.subTest(term=term):
+                self.assertIn(term, phase3_source)
+
+        plan_rows = re.findall(
+            r'<article class="delivery-row".*?</article>', phase3_source, flags=re.DOTALL
+        )
+        self.assertGreaterEqual(len(plan_rows), 8)
+        self.assertTrue(all('data-status="' in row for row in plan_rows))
+        self.assertTrue(any('data-status="done"' in row for row in plan_rows))
+        self.assertTrue(any('data-status="doing"' in row for row in plan_rows))
+        self.assertTrue(any('data-status="todo"' in row for row in plan_rows))
+
+    def test_phase_tracker_uses_new_phase_boundaries(self) -> None:
+        html_source = ROADMAP_PATH.read_text(encoding="utf-8")
+
+        for term in (
+            "Phase 2：确定性 Automation + Controlled Validation",
+            "Phase 3：AI First Response + Slack Engineer Workflow",
+            "后续长期计划：Engineer multi-agent + governed agent-to-agent",
+            'href="./roadmap/phase3.html"',
+        ):
+            with self.subTest(term=term):
+                self.assertIn(term, html_source)
+
+        self.assertNotIn("Phase 3：Engineer multi-agent + governed agent-to-agent", html_source)
 
     def test_phase1_talk_track_page_is_linked_from_roadmap(self) -> None:
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")
@@ -375,6 +444,7 @@ class RoadmapContractTests(unittest.TestCase):
                 ("/roadmap.html", "整体落地优化计划"),
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
                 ("/roadmap/phase2.html", "Phase 2 Delivery Record"),
+                ("/roadmap/phase3.html", "Phase 3 Plan"),
                 ("/roadmap/phase2/workspace-admin.jpg", "JPEG"),
                 ("/roadmap/phase1_video/video_script.md", "SupportPortal Phase 1 3-minute video script"),
                 ("/roadmap/phase1_video/video_script_cn.md", "SupportPortal Phase 1 视频分镜说明"),
@@ -423,16 +493,17 @@ class RoadmapContractTests(unittest.TestCase):
             'class="hero-bullets"',
             "项目定位",
             "当前阶段",
-            "9/1 Controlled Launch",
-            "9/1 主链路",
+            "Controlled Validation",
+            "Phase 3 建立 Slack 工程师流程",
             "总计划追踪",
             "Phase 1：效率提升 + 工单系统雏形",
-            "Phase 2：Billing automation + Engineer Case 生产闭环",
+            "Phase 2：确定性 Automation + Controlled Validation",
             "AgentRelay communication foundation 已完成",
-            "Phase 3：Engineer multi-agent + governed agent-to-agent",
-            "P0、P1、P2 都属于 9/1 交付范围",
-            "available engineer + round-robin",
-            "每第 10 单创建 Engineer Case",
+            "Phase 3：AI First Response + Slack Engineer Workflow",
+            "后续长期计划：Engineer multi-agent + governed agent-to-agent",
+            "会议第一阶段对应实际 Phase 2",
+            "全局 Round Robin 平均分配",
+            "AI 只做首次有效回复",
         ]
         for term in required_terms:
             with self.subTest(term=term):
