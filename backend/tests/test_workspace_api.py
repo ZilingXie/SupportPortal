@@ -30,7 +30,6 @@ class WorkspaceApiTests(unittest.TestCase):
                 "display_name": "Admin One",
                 "role": "admin",
                 "password_hash": hash_workspace_password("admin-password-1"),
-                "availability": "unavailable",
                 "created_at": now,
                 "updated_at": now,
             }
@@ -88,7 +87,6 @@ class WorkspaceApiTests(unittest.TestCase):
                 "display_name": account_id,
                 "role": "engineer",
                 "password_hash": hash_workspace_password("engineer-password-1"),
-                "availability": "unavailable",
                 "created_at": now,
                 "updated_at": now,
             }
@@ -139,11 +137,6 @@ class WorkspaceApiTests(unittest.TestCase):
             },
         )
         self._set_schedule_now("maya@example.com", headers)
-        available = self.client.patch(
-            "/api/workspace/admin/engineers/maya@example.com/availability",
-            headers=headers,
-            json={"availability": "available", "reason": "on shift"},
-        )
         audit = self.client.get("/api/workspace/admin/audit", headers=headers)
 
         self.assertEqual(invited.status_code, 201, invited.text)
@@ -152,11 +145,11 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertNotIn("password_hash", setup.json()["account"])
         self.assertEqual(setup.json()["account"]["account_id"], "maya@example.com")
         self.assertEqual(setup.json()["account"]["email"], "maya@example.com")
+        self.assertNotIn("availability", setup.json()["account"])
+        self.assertNotIn("availability_reason", setup.json()["account"])
         self._login("maya@example.com", "engineer-password-1")
-        self.assertEqual(available.status_code, 200, available.text)
-        self.assertEqual(available.json()["account"]["availability"], "available")
-        self.assertTrue(
-            any(event["event_type"] == "engineer_availability_changed" for event in audit.json()["events"])
+        self.assertFalse(
+            any("availability" in event["event_type"] for event in audit.json()["events"])
         )
 
     def test_direct_admin_account_creation_is_retired(self) -> None:
@@ -179,21 +172,53 @@ class WorkspaceApiTests(unittest.TestCase):
         headers = self._admin_headers()
         self._seed_engineer()
         self._set_schedule_now("Maya", headers)
-        availability = self.client.patch(
-            "/api/workspace/admin/engineers/Maya/availability",
-            headers=headers,
-            json={"availability": "available"},
-        )
         engineer_token = self._login("Maya", "engineer-password-1")
         engineer_headers = {"Authorization": f"Bearer {engineer_token}"}
         cases = self.client.get("/api/workspace/cases", headers=engineer_headers)
 
-        self.assertEqual(availability.status_code, 200, availability.text)
-        self.assertEqual(len(availability.json()["assignment_updates"]), 1)
         self.assertEqual(cases.status_code, 200, cases.text)
         self.assertEqual(len(cases.json()["cases"]), 1)
         self.assertEqual(cases.json()["cases"][0]["assigned_engineer_id"], "Maya")
         self.assertEqual(cases.json()["cases"][0]["assignment_status"], "assigned")
+
+    def test_legacy_availability_endpoint_is_removed(self) -> None:
+        self._seed_engineer()
+
+        response = self.client.patch(
+            "/api/workspace/admin/engineers/Maya/availability",
+            headers=self._admin_headers(),
+            json={"availability": "available", "reason": "legacy"},
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+
+    def test_admin_manual_assignment_uses_schedule_as_the_only_runtime_gate(self) -> None:
+        headers = self._admin_headers()
+        self._seed_engineer("Maya")
+        self._set_schedule_now("Maya", headers)
+        self._seed_case()
+
+        response = self.client.post(
+            "/api/workspace/admin/cases/TK-WORKSPACE-001-1/assignment",
+            headers=headers,
+            json={"engineer_id": "Maya", "expected_version": 0, "reason": "admin_assignment"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["case"]["assigned_engineer_id"], "Maya")
+
+    def test_admin_manual_assignment_rejects_off_schedule_engineer(self) -> None:
+        self._seed_engineer("Maya")
+        self._seed_case()
+
+        response = self.client.post(
+            "/api/workspace/admin/cases/TK-WORKSPACE-001-1/assignment",
+            headers=self._admin_headers(),
+            json={"engineer_id": "Maya", "expected_version": 0, "reason": "admin_assignment"},
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], "Engineer is not on schedule")
 
     def test_manual_claim_endpoint_is_gone(self) -> None:
         response = self.client.post(
@@ -212,7 +237,6 @@ class WorkspaceApiTests(unittest.TestCase):
                 "display_name": "Maya",
                 "role": "engineer",
                 "password_hash": hash_workspace_password("engineer-password-1"),
-                "availability": "available",
                 "created_at": now,
                 "updated_at": now,
             }
@@ -252,6 +276,8 @@ class WorkspaceApiTests(unittest.TestCase):
             [{"weekday": 0, "start": "09:00", "end": "17:00"}],
         )
         self.assertNotIn("password_hash", response.json()["engineer"])
+        self.assertNotIn("availability", response.json()["engineer"])
+        self.assertNotIn("availability_reason", response.json()["engineer"])
 
     def test_admin_schedule_accepts_half_hour_and_24_hour_end(self) -> None:
         self._seed_engineer("Maya")
@@ -264,6 +290,23 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         engineer = next(item for item in response.json()["engineers"] if item["account_id"] == "Maya")
         self.assertEqual(engineer["shifts"], [{"weekday": 0, "start": "00:00", "end": "24:00"}])
+
+    def test_admin_metrics_expose_schedule_driven_engineer_state_only(self) -> None:
+        headers = self._admin_headers()
+        self._seed_engineer("Maya")
+        self._seed_engineer("Leo")
+        self._set_schedule_now("Maya", headers)
+
+        response = self.client.get("/api/workspace/admin/metrics", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        engineer_metrics = response.json()["engineers"]
+        self.assertEqual(engineer_metrics["on_schedule"], 1)
+        self.assertEqual(engineer_metrics["off_schedule"], 1)
+        self.assertEqual(engineer_metrics["dispatch_eligible"], 1)
+        self.assertNotIn("available", engineer_metrics)
+        self.assertNotIn("unavailable", engineer_metrics)
+        self.assertNotIn("availability_reassigned", response.json()["engineer_cases"])
 
     def test_admin_schedule_rejects_non_half_hour_values(self) -> None:
         self._seed_engineer("Maya")
@@ -294,7 +337,6 @@ class WorkspaceApiTests(unittest.TestCase):
                     "display_name": account_id,
                     "role": "engineer",
                     "password_hash": hash_workspace_password(f"{account_id.lower()}-password-1"),
-                    "availability": "available",
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -329,7 +371,6 @@ class WorkspaceApiTests(unittest.TestCase):
                 "display_name": "Maya",
                 "role": "engineer",
                 "password_hash": hash_workspace_password("maya-password-1"),
-                "availability": "available",
                 "created_at": now,
                 "updated_at": now,
             }

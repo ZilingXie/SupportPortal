@@ -191,7 +191,6 @@ class EngineerAssignmentServiceTests(unittest.TestCase):
                     "display_name": account_id,
                     "role": "engineer",
                     "password_hash": "test-hash",
-                    "availability": "available",
                     "created_at": "2026-07-18T00:00:00+00:00",
                     "updated_at": "2026-07-18T00:00:00+00:00",
                 }
@@ -210,7 +209,7 @@ class EngineerAssignmentServiceTests(unittest.TestCase):
             now_provider=lambda: self.now,
         )
 
-    def test_round_robin_uses_only_available_engineers_and_starts_three_hour_sla(self) -> None:
+    def test_round_robin_uses_only_on_schedule_engineers_and_starts_three_hour_sla(self) -> None:
         first = self.service.dispatch_case("TK-DISPATCH-001-1")
         second = self.service.dispatch_case("TK-DISPATCH-002-1")
 
@@ -222,44 +221,33 @@ class EngineerAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(first["sla_due_at"], "2026-07-18T04:00:00+00:00")
         self.assertEqual(second["sla_due_at"], "2026-07-18T04:00:00+00:00")
 
-    def test_unavailable_engineer_is_audited_and_assigned_case_moves_to_next_engineer(self) -> None:
+    def test_legacy_availability_value_does_not_override_current_schedule(self) -> None:
+        jack = self.repository.get_workspace_account("Jack")
+        assert jack is not None
+        jack["availability"] = "unavailable"
+        jack["availability_reason"] = "legacy value"
+        saved = self.repository.save_workspace_account(jack)
+
         assigned = self.service.dispatch_case("TK-DISPATCH-001-1")
+
+        self.assertNotIn("availability", saved)
+        self.assertNotIn("availability_reason", saved)
         assert assigned is not None
         self.assertEqual(assigned["assigned_engineer_id"], "Jack")
 
-        account = self.repository.set_engineer_availability(
-            "Jack",
-            availability="unavailable",
-            reason="out sick",
-            actor_id="admin-1",
-            updated_at="2026-07-18T01:30:00+00:00",
-        )
-        reassigned = self.service.reassign_unavailable_engineer("Jack")
-
-        self.assertIsNotNone(account)
-        self.assertEqual(len(reassigned), 1)
-        self.assertEqual(reassigned[0]["assigned_engineer_id"], "Maya")
-        self.assertEqual(reassigned[0]["previous_assignees"], ["Jack"])
-        audit = self.repository.list_workspace_audit_events()
-        self.assertEqual(audit[0]["event_type"], "engineer_availability_changed")
-        self.assertEqual(audit[0]["payload"]["reason"], "out sick")
-
-    def test_worker_reconciliation_moves_case_left_on_unavailable_engineer(self) -> None:
+    def test_worker_reconciliation_moves_case_left_on_inactive_engineer(self) -> None:
         assigned = self.service.dispatch_case("TK-DISPATCH-001-1")
         assert assigned is not None
-        self.repository.set_engineer_availability(
-            "Jack",
-            availability="unavailable",
-            reason="shift ended",
-            actor_id="admin-1",
-            updated_at="2026-07-18T01:30:00+00:00",
-        )
+        jack = self.repository.get_workspace_account("Jack")
+        assert jack is not None
+        jack["active"] = False
+        self.repository.save_workspace_account(jack)
 
-        reassigned = self.service.reassign_unavailable_cases()
+        reassigned = self.service.reassign_off_schedule_cases()
 
         self.assertEqual(len(reassigned), 1)
         self.assertEqual(reassigned[0]["assigned_engineer_id"], "Maya")
-        self.assertEqual(reassigned[0]["last_assignment_reason"], "engineer_unavailable")
+        self.assertEqual(reassigned[0]["last_assignment_reason"], "engineer_off_schedule")
 
     def test_engineer_without_schedule_is_not_eligible_for_dispatch(self) -> None:
         for account_id in ("Jack", "Maya"):
@@ -277,6 +265,27 @@ class EngineerAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(pending["assignment_status"], "pending")
         self.assertIsNone(pending["assigned_engineer_id"])
 
+    def test_sla_reassignment_without_on_schedule_candidate_returns_to_pending(self) -> None:
+        assigned = self.service.dispatch_case("TK-DISPATCH-001-1")
+        assert assigned is not None
+        for account_id in ("Jack", "Maya"):
+            self.repository.replace_engineer_schedule(
+                account_id,
+                timezone_name="Asia/Shanghai",
+                shifts=[],
+                actor_id="admin-1",
+                updated_at="2026-07-18T04:30:00+00:00",
+            )
+        self.now = datetime(2026, 7, 18, 5, 0, tzinfo=timezone.utc)
+
+        reassigned = self.service.reassign_due_cases()
+
+        self.assertEqual(len(reassigned), 1)
+        self.assertEqual(reassigned[0]["assignment_status"], "pending")
+        self.assertIsNone(reassigned[0]["assigned_engineer_id"])
+        self.assertIsNone(reassigned[0]["sla_due_at"])
+        self.assertEqual(reassigned[0]["last_assignment_reason"], "no_on_schedule_engineer")
+
     def test_worker_reassigns_case_when_shift_ends(self) -> None:
         assigned = self.service.dispatch_case("TK-DISPATCH-001-1")
         assert assigned is not None
@@ -289,7 +298,7 @@ class EngineerAssignmentServiceTests(unittest.TestCase):
             updated_at="2026-07-18T01:01:00+00:00",
         )
 
-        reassigned = self.service.reassign_unavailable_cases()
+        reassigned = self.service.reassign_off_schedule_cases()
 
         self.assertEqual(len(reassigned), 1)
         self.assertEqual(reassigned[0]["assigned_engineer_id"], "Maya")

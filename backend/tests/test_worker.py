@@ -152,9 +152,9 @@ class WorkerResilienceTests(unittest.TestCase):
                 calls.append("resolve_closed")
                 return [{"engineer_case_id": "CASE-CLOSED"}]
 
-            def reassign_unavailable_cases(self):
-                calls.append("reassign_unavailable")
-                return [{"engineer_case_id": "CASE-UNAVAILABLE"}]
+            def reassign_off_schedule_cases(self):
+                calls.append("reassign_off_schedule")
+                return [{"engineer_case_id": "CASE-OFF-SCHEDULE"}]
 
             def reassign_due_cases(self):
                 calls.append("reassign_due")
@@ -175,7 +175,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         self.assertEqual(
             calls,
-            ["resolve_closed", "reassign_unavailable", "reassign_due", "dispatch_pending"],
+            ["resolve_closed", "reassign_off_schedule", "reassign_due", "dispatch_pending"],
         )
 
     def test_worker_rag_executor_uses_extended_timeout_and_recovery_window(self) -> None:

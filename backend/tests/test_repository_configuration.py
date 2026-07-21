@@ -1990,13 +1990,28 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "next_version = current_version + 1",
             "assigned_engineer_id = support_engineer_cases.assigned_engineer_id",
             "assignment_status = support_engineer_cases.assignment_status",
-            "def set_engineer_availability",
             "def create_workspace_invitation",
             "def replace_engineer_schedule",
             "def begin_idempotent_request",
             "def record_rollout_event",
         ):
             self.assertIn(marker, repo_source)
+        for removed_marker in (
+            "availability TEXT NOT NULL",
+            "availability_reason TEXT",
+            "availability_updated_at TIMESTAMPTZ",
+        ):
+            self.assertNotIn(removed_marker, sql_source)
+        for migration_marker in (
+            "DROP COLUMN IF EXISTS availability",
+            "DROP COLUMN IF EXISTS availability_reason",
+            "DROP COLUMN IF EXISTS availability_updated_at",
+            "engineer_availability_changed",
+            "engineer_case_availability_reassigned",
+            "no_on_schedule_engineer",
+        ):
+            self.assertIn(migration_marker, sql_source)
+        self.assertNotIn("def set_engineer_availability", repo_source)
 
 
 if __name__ == "__main__":

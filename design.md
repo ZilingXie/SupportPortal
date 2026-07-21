@@ -213,22 +213,22 @@
    - Client Ticket status：`open / communicating / escalated / investigating / resolved`
    - Engineer Case assignment status：`pending / assigned / resolved`
 9. assignment status 只能读取后端 `assignment_status`，不得根据 Client Ticket status 或 `assigned_engineer_id` 是否为空在前端推导。
-10. engineer availability 由 `/workspace/admin` 的 `available / unavailable` 控件管理；Engineer Workspace 只读展示 availability，不提供本地 shift 或 availability 写入。
+10. engineer 的 dispatch availability 完全由数据库 schedule 计算：账号必须为 active 且当前命中班次；不得维护独立 available/unavailable 状态、reason 或人工开关。
 11. Engineer Case 的 SLA 使用后端 `assigned_at / sla_due_at`，不得使用浏览器本地时间或 localStorage 创建 SLA 起点。
 12. `/workspace` 未登录页面采用轻量事务型登录壳：顶部只展示 `Workspace` 品牌，主区居中展示欢迎文案与单一登录卡，底部展示安全工作区信息；不得复用登录后的 rail 或工单工作区结构。
-13. `/workspace/admin` 未登录页面复用同一事务型登录壳，顶部品牌固定为 `Admin`，主区文案说明账号、派单、availability 与 SLA 管理范围；登录后的管理控制台结构不受此规则影响。
+13. `/workspace/admin` 未登录页面复用同一事务型登录壳，顶部品牌固定为 `Admin`，主区文案说明账号、班表、派单与 SLA 管理范围；登录后的管理控制台结构不受此规则影响。
 14. `/workspace/admin` 登录后的 rail 在桌面默认使用 `96px` icon-only 状态，hover 或 focus-within 时展开到 `264px`；当前账号与 Logout 固定放在 rail footer，不再放入全局顶栏。
 15. `/workspace/admin` 将工程师状态管理与完整班表拆成相邻工作面：`Engineer Management` 固定展示 `On Schedule Now` 和全量 `Engineer Schedules` 名单；独立 `Schedule` tab 展示 `Weekly Schedule` 时间网格与右侧 shift inspector。
-   - Engineer Management 的每位工程师必须展示 on/off-schedule 与 availability，并提供 `Modify Schedule` 入口；入口切换到 `Schedule` tab 后直接打开对应 shift inspector。Availability 使用独立开关管理，Schedule inspector 不展示 Availability 或 Reason 字段。
+   - Engineer Management 的每位工程师只展示 on/off-schedule，并提供 `Modify Schedule` 入口；入口切换到 `Schedule` tab 后直接打开对应 shift inspector。不得出现独立 Availability、Reason 或人工 availability 开关。
    - `Weekly Schedule` 固定使用横轴 Monday-Sunday、纵轴 `00:00-24:00` 的时间网格，不得退回“工程师为行”的文本表格；每小时横向拆成两个固定 30 分钟 slot。
    - 每个整点标签与对应 `:00-:30` slot 垂直居中，时间标签与姓名块必须来自同一 CSS grid row，不得再用 transform 修补坐标。
    - 班次按 30 分钟 slot 逐格显示工程师姓名，不使用跨多个格子的连续填充块；跨夜班次拆分到相邻两天，同一 slot 的重叠工程师必须横向并排且可分别操作。
    - Schedule inspector 使用有限的小时与分钟选择器：Start hour 为 `00-23`，End hour 为 `00-24`，分钟仅 `00/30`，`24` 仅能搭配 `00`；不得使用循环滚动的原生 time picker。
    - Schedule 保存必须在首次提交时立即显示 `Saving schedule...`、锁定重复提交并通过单一 schedule 请求完成；成功和失败都必须提供可见反馈，保存期间不得清空 Admin rail。
    - 网格完整展开 24 小时高度，由页面主滚动条负责纵向浏览；网格内部仅在窄屏支持横向滚动，时间列在横向滚动时保持可见，且不得造成页面级横向溢出。
-   - 每个在班半小时格只显示工程师姓名，并使用按内容收缩的蓝色胶囊，不得横向铺满整个 slot 或 overlap lane；胶囊必须限制在所属 lane 内，长姓名使用省略号。完整日期与半小时范围通过可访问名称提供，availability 仅在 Engineer Management 展示，点击姓名胶囊可打开对应 shift inspector。
+   - 每个在班半小时格只显示工程师姓名，并使用按内容收缩的蓝色胶囊，不得横向铺满整个 slot 或 overlap lane；胶囊必须限制在所属 lane 内，长姓名使用省略号。完整日期与半小时范围通过可访问名称提供，点击姓名胶囊可打开对应 shift inspector。
    - Admin 工作面的品牌与交互主色继续使用 `primary / primary-fixed / secondary` 蓝色体系；不得以青绿或绿色替代导航、班次、头像和成功反馈的主色。
-16. `On Schedule Now` 只表达当前时间命中数据库 schedule，不能命名为 `Online Engineers`，也不能推导浏览器连接或 presence；availability 必须作为独立文字状态展示。
+16. `On Schedule Now` 表达当前时间命中数据库 schedule，也是唯一的实时 dispatch availability；不能命名为 `Online Engineers`，也不能推导浏览器连接或 presence。
 17. 新账号创建使用独立邀请任务页：Engineer Management 只保留 `New Account` 命令，邀请页收集 email 与冻结角色，并覆盖 sending / success / error 状态。
    - setup 页面将邀请 email 作为唯一账号身份，Email 输入框由已校验的邀请记录自动填充并保持只读；页面和登录表单不得再向用户展示 `Account ID`。
    - setup 提交不得接受客户端另行指定账号身份；后端必须使用邀请记录中的规范化 email 创建账号。数据库内部可继续保留 `account_id` 作为兼容主键。
@@ -237,8 +237,8 @@
 19. Admin rail 不显示浏览器滚动条；内容超出时仍须保留滚轮、触控板、触摸与键盘滚动能力，移动端顶部导航同样隐藏滚动轨迹。
    - Rail 的品牌、导航和 Logout 不得依赖远程图标字体才能识别。只有所需 Material Symbols glyph 完整加载并校验后才进入 icon-ready 状态；刷新、字体 pending、加载失败或状态异常时必须持续显示稳定的短标签 fallback，不能出现空白导航框。
    - Rail 刷新或重渲染时，桌面与平板的 sidebar body 横向位置必须归零；active item 居中只允许调整移动端顶部导航自身的 `scrollLeft`，不得使用会把桌面 rail 内容卷出可视区域的 `scrollIntoView()`。
-20. `/workspace` 登录成功后必须先进入 Engineer Workspace 首页，不得自动打开已派发 case；只有工程师点击 `I'm ready to roll` 后，系统才检查并打开下一条 assigned Engineer Case。首页欢迎区保持紧凑，只展示 `Engineer workspace`、动态 `Welcome back, {name}` 与该准备按钮，不得重复展示 assignment 标题、说明文案或 schedule / availability 状态标签。
-21. Engineer Workspace 首页必须只读展示当前账号的 weekly schedule、当前是否命中 schedule、独立 availability 状态和 schedule timezone；排班编辑仍只允许在 `/workspace/admin` 完成。
+20. `/workspace` 登录成功后必须先进入 Engineer Workspace 首页，不得自动打开已派发 case；只有工程师点击 `I'm ready to roll` 后，系统才检查并打开下一条 assigned Engineer Case。首页欢迎区保持紧凑，只展示 `Engineer workspace`、动态 `Welcome back, {name}` 与该准备按钮，不得重复展示 assignment 标题或说明文案。
+21. Engineer Workspace 首页必须只读展示当前账号的 weekly schedule、当前是否命中 schedule 和 schedule timezone；dispatch availability 直接跟随当前 schedule，排班编辑仍只允许在 `/workspace/admin` 完成。
 22. 个人 weekly schedule 使用 Monday-Sunday 的横向扫描布局：每天显示真实起止时间，无班次显示 `Off`，跨夜班次明确标记次日结束；窄屏允许区域内横向滚动，不得造成页面级横向溢出。
 23. `/workspace` 登录后的 Ready 首页、准备态和 Engineer Case 详情统一使用无侧栏的单工作面与 sticky 顶部栏：左侧固定展示 Workspace icon/品牌，右侧展示当前用户与 Logout；移动端保留 icon、用户名和 Logout，不得退回 rail、抽屉或悬浮在内容上的账户控件。
 24. `/workspace` 与 `/workspace/admin` 必须使用独立的浏览器会话存储命名空间；Engineer 入口只接受 `role === "engineer"`，Admin 入口只接受 `role === "admin"`。角色不匹配时必须显示对应入口的登录页，Logout 与 401 清理不得影响另一入口的登录状态。

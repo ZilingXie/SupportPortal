@@ -233,15 +233,15 @@ def _run_engineer_assignment_poller(interval_seconds: float) -> None:
     while not SHUTTING_DOWN:
         try:
             resolved = service.resolve_closed_cases()
-            unavailable_reassigned = service.reassign_unavailable_cases()
+            off_schedule_reassigned = service.reassign_off_schedule_cases()
             sla_reassigned = service.reassign_due_cases()
             dispatched = service.dispatch_pending_cases()
-            if resolved or unavailable_reassigned or sla_reassigned or dispatched:
+            if resolved or off_schedule_reassigned or sla_reassigned or dispatched:
                 LOGGER.info(
-                    "Engineer assignment poller handled resolved=%s unavailable_reassigned=%s "
+                    "Engineer assignment poller handled resolved=%s off_schedule_reassigned=%s "
                     "sla_reassigned=%s dispatched=%s.",
                     len(resolved),
-                    len(unavailable_reassigned),
+                    len(off_schedule_reassigned),
                     len(sla_reassigned),
                     len(dispatched),
                 )

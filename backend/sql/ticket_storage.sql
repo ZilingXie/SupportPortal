@@ -244,9 +244,6 @@ CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     role TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
-    availability TEXT NOT NULL DEFAULT 'unavailable',
-    availability_reason TEXT,
-    availability_updated_at TIMESTAMPTZ,
     last_assigned_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
@@ -255,11 +252,18 @@ CREATE TABLE IF NOT EXISTS support_workspace_accounts (
 ALTER TABLE support_workspace_accounts
     ADD COLUMN IF NOT EXISTS email TEXT;
 
+DROP INDEX IF EXISTS idx_support_workspace_accounts_dispatch;
+
+ALTER TABLE support_workspace_accounts
+    DROP COLUMN IF EXISTS availability,
+    DROP COLUMN IF EXISTS availability_reason,
+    DROP COLUMN IF EXISTS availability_updated_at;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_support_workspace_accounts_email_unique
     ON support_workspace_accounts (LOWER(email)) WHERE email IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_support_workspace_accounts_dispatch
-    ON support_workspace_accounts (role, active, availability, last_assigned_at, account_id);
+    ON support_workspace_accounts (role, active, last_assigned_at, account_id);
 
 CREATE TABLE IF NOT EXISTS support_workspace_account_invitations (
     id TEXT PRIMARY KEY,
@@ -382,6 +386,24 @@ CREATE TABLE IF NOT EXISTS support_engineer_case_events (
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DELETE FROM support_workspace_audit_events
+WHERE event_type = 'engineer_availability_changed';
+
+DELETE FROM support_engineer_case_events
+WHERE event_type = 'engineer_case_availability_reassigned';
+
+UPDATE support_engineer_cases
+SET last_assignment_reason = CASE last_assignment_reason
+        WHEN 'engineer_unavailable' THEN 'engineer_off_schedule'
+        WHEN 'no_available_engineer' THEN 'no_on_schedule_engineer'
+        ELSE last_assignment_reason
+    END
+WHERE last_assignment_reason IN ('engineer_unavailable', 'no_available_engineer');
+
+UPDATE support_engineer_case_events
+SET payload = jsonb_set(payload, '{reason}', to_jsonb('no_on_schedule_engineer'::text))
+WHERE payload ->> 'reason' = 'no_available_engineer';
 
 CREATE TABLE IF NOT EXISTS support_engineer_hitl_feedback (
     feedback_id TEXT PRIMARY KEY,

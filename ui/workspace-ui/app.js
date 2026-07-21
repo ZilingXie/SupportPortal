@@ -440,12 +440,6 @@ function utc8Now() {
   return new Date(Date.now() + UTC8_OFFSET_MS);
 }
 
-function isInShift(now = utc8Now()) {
-  void now;
-  refreshWorkspaceSessionState();
-  return String(workspaceAccount?.availability || "").toLowerCase() === "available";
-}
-
 const WORKSPACE_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 function currentWorkspaceWeekday() {
@@ -2734,7 +2728,6 @@ function renderWelcomeViewHtml() {
   if (!engineer) {
     return "";
   }
-  const isAvailable = isInShift();
   const isOnSchedule = Boolean(workspaceScheduleState.engineer?.is_on_schedule_now);
   const scheduleTimezone = workspaceScheduleState.timezone || "Asia/Shanghai";
   return `
@@ -2755,10 +2748,10 @@ function renderWelcomeViewHtml() {
           <div class="workspace-panel-heading">
             <p class="ticket-kicker">System dispatch</p>
             <h2>${isOnSchedule ? "You are on schedule now" : "You are currently off schedule"}</h2>
-            <p>Availability is managed separately by Workspace Admin and is currently ${isAvailable ? "available" : "unavailable"}.</p>
+            <p>Your dispatch availability follows this schedule.</p>
           </div>
           <div class="workspace-shift-readiness-body">
-            <span class="status-pill ${isAvailable ? "is-success" : "is-muted"}">${isAvailable ? "Available" : "Unavailable"}</span>
+            <span class="status-pill ${isOnSchedule ? "is-success" : "is-muted"}">${isOnSchedule ? "On schedule" : "Off schedule"}</span>
           </div>
         </article>
         <section class="workspace-info-panel workspace-personal-schedule" aria-labelledby="workspace-personal-schedule-title">

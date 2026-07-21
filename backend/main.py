@@ -556,11 +556,6 @@ class EngineerScheduleUpdateRequest(BaseModel):
     shifts: list[EngineerScheduleShiftRequest] = Field(max_length=7)
 
 
-class EngineerAvailabilityUpdateRequest(BaseModel):
-    availability: str = Field(pattern="^(available|unavailable)$")
-    reason: str | None = Field(default=None, max_length=500)
-
-
 class EngineerAdminAssignmentRequest(BaseModel):
     engineer_id: str | None = Field(default=None, max_length=128)
     expected_version: int = Field(ge=0)
@@ -805,7 +800,6 @@ def _bootstrap_workspace_admin() -> None:
             "role": "admin",
             "password_hash": hash_workspace_password(password),
             "active": True,
-            "availability": "unavailable",
             "created_at": created_at,
             "updated_at": created_at,
         }
@@ -5179,38 +5173,11 @@ def replace_workspace_engineer_schedule(
     )
     if schedule is None:
         raise HTTPException(status_code=404, detail="Engineer account not found")
-    reassigned = _engineer_assignment_service().reassign_unavailable_cases()
+    reassigned = _engineer_assignment_service().reassign_off_schedule_cases()
     dispatched = _engineer_assignment_service().dispatch_pending_cases()
     return {
         **_workspace_schedule_payload(),
         "assignment_updates": reassigned + dispatched,
-    }
-
-
-@app.patch("/api/workspace/admin/engineers/{engineer_id}/availability")
-def update_workspace_engineer_availability(
-    engineer_id: str,
-    request: EngineerAvailabilityUpdateRequest,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
-) -> dict[str, Any]:
-    updated_at = now_iso()
-    account = ticket_repository.set_engineer_availability(
-        engineer_id,
-        availability=request.availability,
-        reason=request.reason,
-        actor_id=principal.account_id,
-        updated_at=updated_at,
-    )
-    if account is None:
-        raise HTTPException(status_code=404, detail="Engineer account not found")
-    reassigned_cases = []
-    if request.availability == "unavailable":
-        reassigned_cases = _engineer_assignment_service().reassign_unavailable_engineer(engineer_id)
-    else:
-        reassigned_cases = _engineer_assignment_service().dispatch_pending_cases()
-    return {
-        "account": _public_workspace_account(account),
-        "assignment_updates": reassigned_cases,
     }
 
 
@@ -5228,10 +5195,9 @@ def update_workspace_admin_assignment(
             not isinstance(account, dict)
             or account.get("role") != "engineer"
             or not bool(account.get("active", True))
-            or account.get("availability") != "available"
             or assigned_engineer_id not in on_schedule
         ):
-            raise HTTPException(status_code=409, detail="Engineer is not on schedule and available")
+            raise HTTPException(status_code=409, detail="Engineer is not on schedule")
     updated_at = datetime.now(timezone.utc)
     engineer_case = ticket_repository.update_engineer_case_assignment(
         engineer_case_id,
@@ -5322,7 +5288,6 @@ def get_workspace_admin_metrics(
     first_assignment_seconds: list[float] = []
     resolution_seconds: list[float] = []
     sla_reassign_count = 0
-    availability_reassign_count = 0
     schedule_reassign_count = 0
     guardrail_reject_count = 0
     now = datetime.now(timezone.utc)
@@ -5362,9 +5327,6 @@ def get_workspace_admin_metrics(
         ):
             event_type = str(event.get("event_type") or "").lower()
             sla_reassign_count += int(event_type == "engineer_case_sla_reassigned")
-            availability_reassign_count += int(
-                event_type == "engineer_case_availability_reassigned"
-            )
             schedule_reassign_count += int(
                 event_type == "engineer_case_schedule_reassigned"
             )
@@ -5414,24 +5376,13 @@ def get_workspace_admin_metrics(
                 else None
             ),
             "sla_reassigned": sla_reassign_count,
-            "availability_reassigned": availability_reassign_count,
             "schedule_reassigned": schedule_reassign_count,
         },
         "engineers": {
             "total": len(engineer_accounts),
-            "available": sum(
-                1 for account in engineer_accounts if account.get("availability") == "available"
-            ),
-            "unavailable": sum(
-                1 for account in engineer_accounts if account.get("availability") != "available"
-            ),
             "on_schedule": len(on_schedule),
-            "dispatch_eligible": sum(
-                1
-                for account in engineer_accounts
-                if account.get("availability") == "available"
-                and str(account.get("account_id") or "").strip() in on_schedule
-            ),
+            "off_schedule": len(active_engineer_ids - on_schedule),
+            "dispatch_eligible": len(on_schedule),
         },
         "billing": {
             "total": len(billing_tickets),

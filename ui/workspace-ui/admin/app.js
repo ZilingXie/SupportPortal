@@ -81,12 +81,6 @@ function isAdminAuthenticated() {
   );
 }
 
-function publicEngineerAccounts() {
-  return accounts.filter(
-    (account) => String(account.role || "").toLowerCase() === "engineer" && account.active !== false
-  );
-}
-
 function scheduleEngineers() {
   return Array.isArray(scheduleData?.engineers) ? scheduleData.engineers : [];
 }
@@ -126,10 +120,10 @@ function formatDateTime(value) {
 
 function statusPill(status) {
   const label = String(status || "unknown").replaceAll("_", " ");
-  const tone = status === "assigned" || status === "available" || status === "on_schedule"
+  const tone = status === "assigned" || status === "on_schedule"
     ? "is-active"
     : status === "resolved"
-    ? "is-available"
+    ? "is-resolved"
     : "is-offline";
   return `<span class="admin-work-status ${tone}">${escapeHtml(label)}</span>`;
 }
@@ -147,7 +141,7 @@ function renderLogin() {
         <div class="admin-login-content">
           <header class="admin-login-heading">
             <h1>Welcome Back</h1>
-            <p>An administrative workspace for managing engineer access, assignments, availability, and SLA health.</p>
+            <p>An administrative workspace for managing engineer access, schedules, assignments, and SLA health.</p>
           </header>
           <section class="admin-login-card" aria-label="Admin sign in">
             <form class="admin-login-form" data-admin-login-form>
@@ -256,20 +250,20 @@ function renderOverview() {
   const billingMetrics = metrics?.billing || {};
   return `
     <header class="admin-main-header">
-      <div><h1>Operations Overview</h1><p>Current Engineer Case queue, availability, and SLA health.</p></div>
+      <div><h1>Operations Overview</h1><p>Current Engineer Case queue, schedule coverage, and SLA health.</p></div>
       <div class="admin-topbar-actions">
         <button class="btn btn-ghost" type="button" data-action="dispatch">Dispatch pending</button>
         <button class="btn btn-primary" type="button" data-action="reassign-due">Reassign overdue</button>
       </div>
     </header>
     <section class="admin-metric-grid">
-      ${renderMetricCard("Pending", caseMetrics.pending, "Waiting for an available engineer", "pending_actions")}
+      ${renderMetricCard("Pending", caseMetrics.pending, "Waiting for an on-schedule engineer", "pending_actions")}
       ${renderMetricCard("Assigned", caseMetrics.assigned, "SLA currently running", "assignment_ind")}
       ${renderMetricCard("SLA overdue", caseMetrics.sla_overdue, "Requires automatic reassignment", "timer_off")}
       ${renderMetricCard("Dispatch eligible", engineerMetrics.dispatch_eligible, `${engineerMetrics.on_schedule || 0} on schedule`, "groups")}
       ${renderMetricCard("Client Tickets", clientMetrics.total, `${clientMetrics.not_automated || 0} not automated`, "support_agent")}
       ${renderMetricCard("Rollout created", caseMetrics.rollout_created, "Engineer Cases from account rollout", "call_split")}
-      ${renderMetricCard("SLA reassignments", caseMetrics.sla_reassigned, `${caseMetrics.availability_reassigned || 0} availability · ${caseMetrics.schedule_reassigned || 0} schedule`, "move_up")}
+      ${renderMetricCard("SLA reassignments", caseMetrics.sla_reassigned, `${caseMetrics.schedule_reassigned || 0} schedule reassignments`, "move_up")}
       ${renderMetricCard("Email failures", billingMetrics.internal_email_failed, `${billingMetrics.automation || 0} billing automation tickets`, "mark_email_unread")}
     </section>
     <section class="admin-bottom-grid">
@@ -278,7 +272,7 @@ function renderOverview() {
         <div class="admin-bottom-card-body">${renderCompactCases("pending")}</div>
       </article>
       <article class="admin-bottom-card">
-        <header class="admin-bottom-card-header"><h3>Availability</h3></header>
+        <header class="admin-bottom-card-header"><h3>Schedule Coverage</h3></header>
         <div class="admin-bottom-card-body">${renderCompactEngineers()}</div>
       </article>
     </section>
@@ -298,14 +292,14 @@ function renderCompactCases(status) {
 }
 
 function renderCompactEngineers() {
-  const engineers = publicEngineerAccounts();
+  const engineers = scheduleEngineers();
   if (!engineers.length) return `<p class="admin-card-detail">No engineer accounts.</p>`;
   return engineers
     .map(
       (engineer) => `<div class="admin-triage-item"><div class="admin-triage-item-top"><strong>${escapeHtml(
         engineer.display_name
-      )}</strong>${statusPill(engineer.availability)}</div><p class="admin-triage-summary">${escapeHtml(
-        engineer.availability_reason || "No availability reason"
+      )}</strong>${statusPill(engineer.is_on_schedule_now ? "on_schedule" : "off_schedule")}</div><p class="admin-triage-summary">${escapeHtml(
+        engineer.is_on_schedule_now ? "Currently on schedule" : "Currently off schedule"
       )}</p></div>`
     )
     .join("");
@@ -455,7 +449,7 @@ function renderAdminEngineerManagement() {
           <article class="admin-roster-person">
             <span class="admin-user-avatar">${escapeHtml(engineerInitials(engineer))}</span>
             <span class="admin-roster-copy"><strong>${escapeHtml(engineer.display_name)}</strong><small>${escapeHtml(engineer.email || engineer.account_id)}</small></span>
-            ${statusPill(engineer.availability)}
+            ${statusPill("on_schedule")}
             <button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify schedule" aria-label="Modify ${escapeHtml(engineer.display_name)} schedule">
               <span class="material-symbols-outlined" aria-hidden="true">edit_calendar</span>
             </button>
@@ -474,7 +468,6 @@ function renderAdminEngineerManagement() {
             <span class="admin-roster-copy"><strong>${escapeHtml(engineer.display_name)}</strong><small>${escapeHtml(engineer.email || engineer.account_id)}</small></span>
             <span class="admin-roster-statuses">
               ${statusPill(engineer.is_on_schedule_now ? "on_schedule" : "off_schedule")}
-              <button class="admin-availability-toggle ${engineer.availability === "available" ? "is-available" : ""}" type="button" role="switch" aria-checked="${engineer.availability === "available"}" data-action="toggle-availability" data-engineer-id="${escapeHtml(engineer.account_id)}" data-next-availability="${engineer.availability === "available" ? "unavailable" : "available"}">${escapeHtml(engineer.availability)}</button>
             </span>
             <button class="admin-icon-btn" type="button" data-action="edit-schedule" data-engineer-id="${escapeHtml(engineer.account_id)}" title="Modify schedule" aria-label="Modify ${escapeHtml(engineer.display_name)} schedule">
               <span class="material-symbols-outlined" aria-hidden="true">edit_calendar</span>
@@ -605,7 +598,7 @@ function renderAdminTicketBoard(section = adminSection) {
 
 function renderAudit() {
   return `
-    <header class="admin-main-header"><div><h1>Audit</h1><p>Account and availability administration events.</p></div></header>
+    <header class="admin-main-header"><div><h1>Audit</h1><p>Account, schedule, and assignment administration events.</p></div></header>
     <section class="admin-pool-panel panel-card">
       <table class="admin-work-table"><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Target</th><th>Reason</th></tr></thead><tbody>
         ${
@@ -615,7 +608,7 @@ function renderAudit() {
                   (event) => `<tr><td>${escapeHtml(formatDateTime(event.created_at))}</td><td>${escapeHtml(
                     event.event_type
                   )}</td><td>${escapeHtml(event.actor_id)}</td><td>${escapeHtml(event.target_id || "-")}</td><td>${escapeHtml(
-                    event.payload?.reason || event.payload?.availability || "-"
+                    event.payload?.reason || "-"
                   )}</td></tr>`
                 )
                 .join("")
@@ -804,37 +797,6 @@ async function handleScheduleUpdate(form) {
   }
 }
 
-async function handleAvailabilityToggle(button) {
-  if (button.dataset.submitting === "true") return;
-  const engineerId = button.dataset.engineerId || "";
-  const nextAvailability = button.dataset.nextAvailability || "unavailable";
-  button.dataset.submitting = "true";
-  button.setAttribute("aria-busy", "true");
-  button.disabled = true;
-  button.textContent = "Updating...";
-  try {
-    const payload = await fetchJson(`/api/workspace/admin/engineers/${encodeURIComponent(engineerId)}/availability`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ availability: nextAvailability, reason: null }),
-    });
-    const updatedAccount = payload.account;
-    scheduleData = {
-      ...scheduleData,
-      engineers: scheduleEngineers().map((engineer) =>
-        engineer.account_id === engineerId
-          ? { ...engineer, availability: updatedAccount.availability, availability_reason: null }
-          : engineer
-      ),
-    };
-    accounts = accounts.map((account) => account.account_id === engineerId ? { ...account, ...updatedAccount } : account);
-    renderAdmin();
-  } catch (error) {
-    loadError = error.message;
-    renderAdmin();
-  }
-}
-
 root.addEventListener("click", (event) => {
   const sectionLink = event.target.closest("[data-section]");
   if (sectionLink) {
@@ -856,8 +818,6 @@ root.addEventListener("click", (event) => {
     scheduleNotice = null;
     if (globalThis.location) globalThis.location.hash = "schedule";
     renderAdmin();
-  } else if (action === "toggle-availability") {
-    handleAvailabilityToggle(event.target.closest("[data-engineer-id]"));
   } else if (action === "close-schedule-editor") {
     selectedEngineerId = "";
     renderAdmin();

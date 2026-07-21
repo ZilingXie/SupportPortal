@@ -2292,7 +2292,7 @@ p {
   border-color: rgba(0, 176, 255, 0.28);
 }
 
-.admin-work-status.is-available {
+.admin-work-status.is-resolved {
   background: rgba(0, 104, 117, 0.08);
   color: var(--success);
   border-color: rgba(0, 104, 117, 0.2);
@@ -3935,29 +3935,6 @@ p {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 4px;
-}
-
-.admin-availability-toggle {
-  min-height: 24px;
-  padding: 2px 8px;
-  border: 1px solid rgba(76, 86, 175, 0.22);
-  border-radius: 999px;
-  background: #f0f0ff;
-  color: #4c56af;
-  font-size: 10px;
-  font-weight: 750;
-  text-transform: capitalize;
-}
-
-.admin-availability-toggle.is-available {
-  border-color: rgba(0, 100, 147, 0.2);
-  background: #eaf3ff;
-  color: var(--primary);
-}
-
-.admin-availability-toggle:disabled {
-  cursor: wait;
-  opacity: 0.68;
 }
 
 .admin-icon-btn {

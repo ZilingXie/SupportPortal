@@ -2025,19 +2025,19 @@ flowchart TD
         thesis: "现有 `/workspace`、`/workspace/admin`、Admin-only reassign、Guardrail 与 round-robin 是 Phase 3 的基础能力。Phase 3 在此基础上增加 AI 首次有效回复和 Slack 工程师流程：客户继续从 Zendesk 开单，eligibility gate 排除大客户、明显生气或高风险客户，AI 首次回复后按全局 Round Robin 分配，Slack 负责工程师送达，Admin 继续掌握 reassign 与审计控制。",
         done: [
           { summary: "Workspace 账号、PBKDF2 password、signed token 与 Admin/Engineer RBAC 已接入；Admin 通过 Graph 邮件邀请和一次性 setup link 创建账号，邀请邮箱被锁定为登录身份。", prs: [] },
-          { summary: "Admin 可在 Engineer Management 使用独立 available/unavailable 开关管理 engineer availability；切换时清空 reason，审计字段与 availability 变更 audit 已落地。", prs: [] },
+          { summary: "Engineer dispatch availability 已统一由 active account 与当前 weekly schedule 决定；独立 availability 字段、reason、开关、API 和指标已移除。", prs: [] },
           { summary: "Admin 可在独立 Schedule tab 以 30 分钟 slot 持久化编辑 Asia/Shanghai weekly schedule，每个在班格显示工程师姓名；单日单班段支持跨夜和 24:00 全天边界，离开 schedule 的未完成 case 会自动转派或回到 pending。", prs: [] },
           { summary: "Engineer Case assignment_status 已独立为 pending/assigned/resolved；assigned_at、sla_due_at、previous assignees、attempt count、reason 与 version 已持久化。", prs: [] },
-          { summary: "on-schedule + available engineer 的 round-robin 系统派单已接入；派单立即开始 3 小时 SLA，SLA 到期、engineer unavailable 或离开 schedule 会转派到下一个合格 engineer。", prs: [] },
+          { summary: "active + on-schedule engineer 的 round-robin 系统派单已接入；派单立即开始 3 小时 SLA，SLA 到期、账号 inactive 或离开 schedule 会转派到下一个合格 engineer。", prs: [] },
           { summary: "派单更新使用 transaction、row lock 与 assignment_version compare-and-set，assignment event 与状态更新同事务写入。", prs: [] },
           { summary: "`/workspace` 仅展示当前登录 engineer 已被系统派发的 Engineer Case，并保留处理、回复、approve 与 final approve 主链路。", prs: [] },
-          { summary: "`/workspace` 登录后先展示个人 weekly schedule 和独立 availability 状态，工程师点击 Ready to roll 后才进入 assigned case。", prs: [] },
-          { summary: "`/workspace/admin` 已接入真实账号、availability、Engineer Case board、人工派单/转派、dispatch、SLA reassign、audit 与 metrics API。", prs: [] },
+          { summary: "`/workspace` 登录后先展示个人 weekly schedule 与当前 on/off-schedule 状态，工程师点击 Ready to roll 后才进入 assigned case。", prs: [] },
+          { summary: "`/workspace/admin` 已接入真实账号、schedule coverage、Engineer Case board、人工派单/转派、dispatch、SLA reassign、audit 与 metrics API。", prs: [] },
           { summary: "manual claim 已禁用；旧 claim endpoint 返回 410，`/workspace` 不再调用 claim。", prs: [] },
           { summary: "Client Ticket status 与 Engineer Case assignment status 已在 payload、Workspace 和 Admin 中分层；legacy `support_engineer_cases.status` 仅保留兼容。", prs: [] }
         ],
         review: [
-          "系统派单替代人工领取后，assigned 同时表示已派发和 SLA 计时中；Admin 调整、availability 变更与 SLA reassign 必须维持原子状态更新、版本保护和审计。",
+          "系统派单替代人工领取后，assigned 同时表示已派发和 SLA 计时中；Admin 调整、schedule 变更与 SLA reassign 必须维持原子状态更新、版本保护和审计。",
           "两种工单必须严格分层：Client Ticket 使用 open/communicating/escalated/investigating/resolved；Engineer Case assignment 只使用 pending/assigned/resolved。",
           "数据库暂时保留 `support_engineer_cases.status` 作为兼容层，9/1 前不向用户展示；不能直接全局改名破坏现有 `/api/engineer/*` contract。",
           "对外统一称 Engineer Case。`/engineer` UI 是 legacy；`/api/engineer/*` 仍是 active backend contract，但 `/api/engineer/tickets/{id}/claim` 已停用。",
@@ -2051,7 +2051,7 @@ flowchart TD
           { id: "assign-live-postgres", status: "doing", label: "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。", horizon: "Reliability" },
           { id: "assign-auth-hardening", status: "doing", label: "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。", horizon: "Security" },
           { id: "assign-rollout", status: "doing", label: "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。", horizon: "Rollout" },
-          { id: "assign-metrics", status: "doing", label: "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/availability reassign 与 engineer availability 指标。", horizon: "Metrics" },
+          { id: "assign-metrics", status: "doing", label: "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/schedule reassign 与 schedule coverage 指标。", horizon: "Metrics" },
           { id: "assign-legacy-cleanup", status: "todo", label: "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。", horizon: "Cleanup" }
         ],
         sources: [
