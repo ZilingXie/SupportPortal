@@ -18,6 +18,7 @@ For each new entry, record:
   - Removed the active `.env.local` template and stopped single-host helpers from loading a second env file. `--use-local-env` remains a deprecated mode alias only.
   - Mounted the root env file read-only into the API for the Admin Environment Config names-only inventory.
   - Added staged restart fallback: compose validation and build occur before the old stack is stopped, and failed startup or health verification restores the previous API image while returning a failure status.
+  - Preserved the running image by image ID under a temporary rollback tag before rebuilding, including same-commit rebuilds that reuse the same runtime tag, and extended the default health window to 120 seconds.
 - Reason:
   - Multiple env files had overlapping ownership, while the Admin API could not see the host root `.env` inside the container and therefore rendered an empty inventory.
   - A failed image build or unhealthy replacement stack must not unnecessarily discard the previously healthy runtime.

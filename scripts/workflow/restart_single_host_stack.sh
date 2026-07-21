@@ -209,7 +209,7 @@ fi
 echo "requirements.base.txt: $(git hash-object requirements.base.txt)"
 echo "requirements.ml.txt: $(git hash-object requirements.ml.txt)"
 
-health_attempts="${SUPPORTPORTAL_HEALTH_ATTEMPTS:-30}"
+health_attempts="${SUPPORTPORTAL_HEALTH_ATTEMPTS:-60}"
 health_interval_seconds="${SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS:-2}"
 [[ "$health_attempts" =~ ^[1-9][0-9]*$ ]] || die "SUPPORTPORTAL_HEALTH_ATTEMPTS must be a positive integer."
 [[ "$health_interval_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS must be non-negative."
@@ -249,18 +249,32 @@ PY
 }
 
 previous_image="$(podman inspect --format '{{.ImageName}}' deployment_api_1 2>/dev/null || true)"
+previous_image_id="$(podman inspect --format '{{.Image}}' deployment_api_1 2>/dev/null || true)"
 previous_ref="${previous_image##*:}"
 new_image="$APP_RUNTIME_IMAGE"
 new_ref="$APP_BUILD_REF"
+rollback_image=""
+
+cleanup_rollback_image() {
+  if [[ -n "$rollback_image" ]]; then
+    podman image rm -f "$rollback_image" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_rollback_image EXIT
+
+if [[ -n "$previous_image" && -n "$previous_image_id" ]]; then
+  rollback_image="localhost/supportportal-app:rollback-${new_ref}-$$"
+  podman tag "$previous_image_id" "$rollback_image"
+fi
 
 restore_previous_stack() {
-  if [[ -z "$previous_image" || "$previous_image" == "$new_image" ]]; then
-    warn "New stack failed and no distinct previous image is available for automatic restore."
+  if [[ -z "$rollback_image" ]]; then
+    warn "New stack failed and no previous image ID is available for automatic restore."
     return 1
   fi
 
-  warn "New stack failed; restoring previous image $previous_image."
-  export APP_RUNTIME_IMAGE="$previous_image"
+  warn "New stack failed; restoring previous image $previous_image from its rollback tag."
+  export APP_RUNTIME_IMAGE="$rollback_image"
   export APP_BUILD_REF="$previous_ref"
   podman-compose "${compose_args[@]}" down >/dev/null 2>&1 || true
   if podman-compose "${compose_args[@]}" up -d --no-build \

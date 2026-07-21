@@ -644,6 +644,7 @@ class WorkflowScriptTests(unittest.TestCase):
         official_sentiment_provider: str = "model",
         official_torch_available: bool = True,
         official_image: str = "localhost/supportportal-app:test-ref",
+        official_image_id: str = "sha256:previous-image-id",
         official_health_build_ref: str = "test-ref",
         official_runtime_build_ref: str = "test-ref",
         official_runtime_build_time: str = "2026-04-20T00:00:00Z",
@@ -796,7 +797,7 @@ class WorkflowScriptTests(unittest.TestCase):
                             "app_build_time": {auxiliary_runtime_build_time!r},
                         }}))
                 elif args[:1] == ["inspect"]:
-                    print({official_image!r})
+                    print({official_image!r} if "ImageName" in " ".join(args) else {official_image_id!r})
                 else:
                     print("")
                 """
@@ -1012,14 +1013,60 @@ class WorkflowScriptTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
+        podman_calls = self._read_json_lines(state_dir / "podman_cli_calls.jsonl")
+        rollback_tag = next(call["argv"][2] for call in podman_calls if call["argv"][:1] == ["tag"])
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
         rollback_up = [
             call for call in calls
-            if "up" in call["argv"] and call["app_runtime_image"] == previous_image
+            if "up" in call["argv"] and call["app_runtime_image"] == rollback_tag
         ]
         self.assertEqual(len(rollback_up), 1)
         self.assertIn("--no-build", rollback_up[0]["argv"])
         self.assertIn("restored previous image", result.stderr.lower())
+
+    def test_restart_single_host_stack_same_tag_failure_restores_previous_image_id(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        current_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
+        current_tag = f"localhost/supportportal-app:{current_ref}"
+        previous_image_id = "sha256:same-tag-previous-image"
+        fake_bin, state_dir = self._install_fake_single_host_commands(
+            official_image=current_tag,
+            official_image_id=previous_image_id,
+        )
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "RESTART_CURL_FAIL_COUNT": "1",
+                "SUPPORTPORTAL_HEALTH_ATTEMPTS": "1",
+                "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS": "0",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        podman_calls = self._read_json_lines(state_dir / "podman_cli_calls.jsonl")
+        tag_calls = [call["argv"] for call in podman_calls if call["argv"][:1] == ["tag"]]
+        self.assertEqual(len(tag_calls), 1)
+        self.assertEqual(tag_calls[0][1], previous_image_id)
+        rollback_tag = tag_calls[0][2]
+        self.assertNotEqual(rollback_tag, current_tag)
+        compose_calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        rollback_up = [
+            call for call in compose_calls
+            if "up" in call["argv"] and call["app_runtime_image"] == rollback_tag
+        ]
+        self.assertEqual(len(rollback_up), 1)
+        self.assertIn("--no-build", rollback_up[0]["argv"])
+        cleanup_calls = [call["argv"] for call in podman_calls if call["argv"][:2] == ["image", "rm"]]
+        self.assertEqual(cleanup_calls, [["image", "rm", "-f", rollback_tag]])
 
     def test_restart_single_host_stack_use_local_env_is_root_only_compatibility_alias(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
