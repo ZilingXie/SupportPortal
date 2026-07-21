@@ -10,7 +10,6 @@ COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.yml"
 LIGHTWEIGHT_COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.local-lightweight.yml"
 DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
-ENV_LOCAL_EXAMPLE_PATH = REPO_ROOT / ".env.local.example"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 REQUIREMENTS_BASE_PATH = REPO_ROOT / "requirements.base.txt"
 REQUIREMENTS_ML_PATH = REPO_ROOT / "requirements.ml.txt"
@@ -169,6 +168,21 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("- ../.msgraph:/app/.msgraph", api_block)
         self.assertIn("- ../.msgraph:/app/.msgraph", worker_aux_block)
 
+    def test_api_receives_read_only_environment_inventory_file(self) -> None:
+        api_block = self._service_block("api")
+
+        self.assertIn("- ../.env:/run/supportportal/environment-config.env:ro", api_block)
+        self.assertIn(
+            "SUPPORTPORTAL_ENV_CONFIG_PATH: /run/supportportal/environment-config.env",
+            api_block,
+        )
+        for service_name in RUNTIME_SERVICE_NAMES:
+            if service_name != "api":
+                self.assertNotIn(
+                    "/run/supportportal/environment-config.env",
+                    self._service_block(service_name),
+                )
+
     def test_legacy_single_worker_service_is_removed(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")
         self.assertNotRegex(content, r"(?m)^  worker:\n")
@@ -296,15 +310,15 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("DEEPSEEK_FALLBACK_MODEL=deepseek-v4-pro", content)
         self.assertIn("DEEPSEEK_FALLBACK_ENABLED=true", content)
 
-    def test_env_examples_document_stack_mode_defaults(self) -> None:
+    def test_root_env_example_documents_all_stack_modes(self) -> None:
         env_content = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
-        env_local_content = ENV_LOCAL_EXAMPLE_PATH.read_text(encoding="utf-8")
 
         self.assertIn("STACK_RUNTIME_MODE=full", env_content)
         self.assertIn("STACK_DB_MODE=remote", env_content)
-        self.assertIn("STACK_RUNTIME_MODE=local_lightweight", env_local_content)
-        self.assertIn("STACK_DB_MODE=remote", env_local_content)
-        self.assertIn("# Use --db local to opt into local Postgres/pgvector.", env_local_content)
+        self.assertIn("LOCAL_POSTGRES_USER=", env_content)
+        self.assertIn("LOCAL_PGVECTOR_TABLE=", env_content)
+        self.assertIn("LOCAL_NEO4J_AUTH=", env_content)
+        self.assertFalse((REPO_ROOT / ".env.local.example").exists())
 
     def test_api_build_injects_app_build_metadata(self) -> None:
         api_block = self._service_block("api")

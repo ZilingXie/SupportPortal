@@ -20,10 +20,12 @@ DEFAULT_PERSONA_CONTENT = {
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def environment_config_names(env_path: Path) -> list[str]:
+def environment_config_names(env_path: Path, *, required: bool = False) -> list[str]:
     try:
         lines = env_path.read_text(encoding="utf-8").splitlines()
     except OSError:
+        if required:
+            raise
         return []
     names: set[str] = set()
     for raw_line in lines:

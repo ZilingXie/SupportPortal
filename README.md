@@ -104,17 +104,15 @@ An online deployment is available. Contact the project maintainer for the deploy
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 cp .env.example .env 2>/dev/null || true
-cp .env.local.example .env.local 2>/dev/null || true
 
 # Rootless Podman uses port 8080 locally.
-# Ensure .env.local contains: NGINX_HOST_PORT=8080
+# Ensure the root .env contains: NGINX_HOST_PORT=8080
 
 podman machine start
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-# Official local single-host entry point:
-# with .env.local enabled, this starts local_lightweight + remote/RDS Postgres.
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env
+# Official local single-host entry point: local_lightweight + remote/RDS Postgres.
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote
 
 # Confirm the official deployment stack and build provenance.
 bash scripts/workflow/inspect_single_host_stack_mode.sh
@@ -124,10 +122,11 @@ Notes:
 
 1. The official local single-host stack is `deployment`. If `deploymentlw` appears, clean it with `bash scripts/workflow/cleanup_single_host_aux_stack.sh`.
 2. The restart script pins the running image to the current root `main` `app_build.ref`, so old checkouts do not continue processing new tickets.
-3. `restart_single_host_stack.sh` is the recommended entry point. Without `--use-local-env`, it reads only `.env` and defaults to `full + remote DB`.
-4. For local development, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env` to layer `.env.local` and run `local_lightweight + remote/RDS DB`.
-5. To debug with an isolated local Postgres/pgvector database, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local`.
-6. `restart_single_host_lightweight_stack.sh` and `restart_single_host_local_stack.sh` remain compatibility wrappers.
+3. The root `.env` is the only application runtime configuration source. `restart_single_host_stack.sh` defaults to `full + remote DB` when mode and DB are omitted.
+4. For local development, use `bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote`.
+5. To debug with an isolated local Postgres/pgvector database, use `bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db local`.
+6. `--use-local-env` remains a deprecated compatibility alias for `--mode local_lightweight`; it no longer reads a second env file. The lightweight and local wrappers remain compatible.
+7. The restart script validates compose and builds before stopping the healthy stack. If startup or health verification fails, it restores the previous API image and exits non-zero.
 
 ### Common Commands
 
@@ -155,7 +154,7 @@ podman-compose \
 1. After changing `backend/`, `ui/client-ui/`, `ui/engineer-ui/`, or `ui/dashboard-ui/`:
 
 ```bash
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 ```
 
@@ -165,16 +164,16 @@ bash scripts/workflow/inspect_single_host_stack_mode.sh
 podman-compose -f deployment/docker-compose.single-host.yml restart nginx
 ```
 
-3. After changing `.env.local` or local runtime config:
+3. After changing the root `.env` or local runtime config:
 
 ```bash
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote
 ```
 
 4. After changing local DB/RAG config while explicitly using local DB:
 
 ```bash
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db local
 ```
 
 ## Troubleshooting

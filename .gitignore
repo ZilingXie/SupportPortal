@@ -32,12 +32,12 @@ CLAUDE.md
 official_doc/
 local_knowledge/
 
+# Retired local configuration files remain ignored for migration rollback safety.
+deployment/.env_override
+
 # Reasonix local desktop metadata
 .reasonix/desktop-topic-*.json
 .reasonix/attachments/
-
-# Local deployment overrides
-deployment/.env_override
 
 # Vendored cusmem local experiment outputs
 vendor/cusmem/v10_logs/

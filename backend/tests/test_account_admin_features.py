@@ -54,6 +54,17 @@ class AccountAdminFeatureTests(unittest.TestCase):
             self.assertEqual(environment_config_names(env_path), ["OTHER_KEY", "SAFE_NAME"])
         self.assertEqual(environment_config_names(Path(directory) / ".env"), [])
 
+    def test_environment_config_can_require_a_readable_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing_path = Path(directory) / ".env"
+            with self.assertRaises(OSError):
+                environment_config_names(missing_path, required=True)
+
+            directory_path = Path(directory) / "config-dir"
+            directory_path.mkdir()
+            with self.assertRaises(OSError):
+                environment_config_names(directory_path, required=True)
+
     def test_route_execution_preserves_exact_prompt_snapshot(self) -> None:
         decision = SupportRouteDecision(
             scope_label="billing",

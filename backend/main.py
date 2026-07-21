@@ -5593,7 +5593,13 @@ def set_workspace_admin_account_persona_enabled(persona_key: str, request: Accou
 def get_workspace_admin_environment_config(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, list[str]]:
-    return {"names": environment_config_names(BASE_DIR / ".env")}
+    configured_path = str(os.getenv("SUPPORTPORTAL_ENV_CONFIG_PATH") or "").strip()
+    env_path = Path(configured_path) if configured_path else BASE_DIR / ".env"
+    try:
+        names = environment_config_names(env_path, required=bool(configured_path))
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="Environment configuration inventory unavailable") from exc
+    return {"names": names}
 
 
 @app.get("/api/engineer/tickets")
