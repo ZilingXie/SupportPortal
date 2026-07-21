@@ -358,7 +358,7 @@
 1. `Automated Cases` 使用单行 metric strip 加紧凑 case table；占比文案必须明确表示 routed-to-Automated，不得暗示已解决。
 2. `Route & Prompt` 使用纵向 route timeline 和独立等宽 Prompt inspector。历史记录缺少 snapshot 时显示明确 unavailable state，deterministic route 显示未使用 LLM。
 3. `Persona Prompt Template` 使用左右 workspace：Persona/version 列表作为上下文，编辑器作为主工作区；Draft、Publish、Rollback 必须通过文字状态与确认动作区分。
-4. `Environment Config` 只能显示可搜索的配置名 inventory；不得为 value、set/unset、长度或来源预留 UI。
+4. `Environment Config` 只能显示可搜索的配置名 inventory，并为每个配置名显示一条仅由 key 名决定的静态用途说明；说明不得读取或推断 value、set/unset、长度、哈希或来源。每行使用独立的 copy-name icon command，搜索同时匹配 key 和用途说明。
 5. 上述页面沿用 Admin 的低对比 surface 和紧凑信息密度；移动端改为单列，不允许 Prompt、key 或 route label 横向溢出。
 
 ## 7. States, Motion, Accessibility

@@ -10,6 +10,7 @@ from backend.services.account_admin import (
     ROUTER_PROMPT_VERSION,
     apply_persona_to_customer_reply,
     account_automation_payload,
+    environment_config_entries,
     environment_config_names,
     route_execution_from_decision,
 )
@@ -64,6 +65,39 @@ class AccountAdminFeatureTests(unittest.TestCase):
             directory_path.mkdir()
             with self.assertRaises(OSError):
                 environment_config_names(directory_path, required=True)
+
+    def test_environment_config_entries_describe_every_name_without_reading_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "OPENAI_API_KEY=do-not-return-this-value\n"
+                "TICKET_DB_DSN=postgresql://hidden\n"
+                "CUSTOM_RUNTIME_SWITCH=another-secret\n",
+                encoding="utf-8",
+            )
+
+            entries = environment_config_entries(env_path)
+
+        self.assertEqual([entry["name"] for entry in entries], [
+            "CUSTOM_RUNTIME_SWITCH",
+            "OPENAI_API_KEY",
+            "TICKET_DB_DSN",
+        ])
+        self.assertTrue(all(str(entry["description"]).strip() for entry in entries))
+        self.assertIn("OpenAI", entries[1]["description"])
+        self.assertIn("PostgreSQL", entries[2]["description"])
+        serialized = repr(entries)
+        self.assertNotIn("do-not-return-this-value", serialized)
+        self.assertNotIn("postgresql://hidden", serialized)
+        self.assertNotIn("another-secret", serialized)
+
+    def test_environment_config_example_has_descriptions_for_every_key(self) -> None:
+        entries = environment_config_entries(Path(".env.example"))
+
+        self.assertGreater(len(entries), 100)
+        self.assertEqual(len(entries), len(environment_config_names(Path(".env.example"))))
+        self.assertTrue(all(entry["description"].strip() for entry in entries))
+        self.assertEqual(len({entry["name"] for entry in entries}), len(entries))
 
     def test_route_execution_preserves_exact_prompt_snapshot(self) -> None:
         decision = SupportRouteDecision(
