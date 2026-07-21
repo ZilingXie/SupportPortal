@@ -354,6 +354,13 @@
 6. `/client2` correspondence detail 的 header meta 允许在 `Updated` 右侧追加 reply ETA chip，但只允许在最新一条可见消息来自客户时显示；agent 最新发言时必须隐藏。该 chip 对所有 eligible statuses 的 baseline next-update SLA 固定为 20 minutes，不按 status 拆分。展示文案规则固定为：`< 60 min` 显示 `Next update in MM:00`，`>= 60 min` 显示 `Next update in Hh MMm`。
 7. 该例外不适用于 `/client`、`/clienttest` draft 页面、`/client2` draft 页面，或 `/clienttest` 的其他 ticket detail 页面。
 
+### 6.7 Account Automation Admin Surfaces
+1. `Automated Cases` 使用单行 metric strip 加紧凑 case table；占比文案必须明确表示 routed-to-Automated，不得暗示已解决。
+2. `Route & Prompt` 使用纵向 route timeline 和独立等宽 Prompt inspector。历史记录缺少 snapshot 时显示明确 unavailable state，deterministic route 显示未使用 LLM。
+3. `Persona Prompt Template` 使用左右 workspace：Persona/version 列表作为上下文，编辑器作为主工作区；Draft、Publish、Rollback 必须通过文字状态与确认动作区分。
+4. `Environment Config` 只能显示可搜索的配置名 inventory；不得为 value、set/unset、长度或来源预留 UI。
+5. 上述页面沿用 Admin 的低对比 surface 和紧凑信息密度；移动端改为单列，不允许 Prompt、key 或 route label 横向溢出。
+
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：
    - `loading`

@@ -196,6 +196,7 @@ def build_billing_automation_result(
     requester: str | None = None,
     billing_ticket_id: str | None = None,
     response_link: str | None = None,
+    persona_instruction: str | None = None,
 ) -> BillingAutomationResult:
     normalized_action = _clean_text(action).lower()
     if normalized_action not in _FIELD_ALIASES:
@@ -212,6 +213,7 @@ def build_billing_automation_result(
                 missing_fields,
                 requester=requester,
                 customer_id=customer_email,
+                persona_instruction=persona_instruction,
             ),
             missing_fields=missing_fields,
             collected_fields=collected_fields,
@@ -839,7 +841,7 @@ def _account_verification_email_reply(
     return reply.removesuffix("Best Regards,\nSid").rstrip() + f"\n\n{ACCOUNT_VERIFICATION_SIGNOFF}"
 
 
-def _humanize_account_verification_reply(reply: str, missing_fields: list[str]) -> str:
+def _humanize_account_verification_reply(reply: str, missing_fields: list[str], persona_instruction: str | None = None) -> str:
     profile = resolve_model_profile(BILLING_REPLY_SCENARIO)
     if not profile.has_invocation_credentials():
         return reply
@@ -851,7 +853,8 @@ def _humanize_account_verification_reply(reply: str, missing_fields: list[str]) 
             system_prompt=(
                 "You lightly polish customer-facing account verification intake replies. Keep the exact "
                 "email structure, greeting, required information, escalation meaning, and sign-off. Do not "
-                "add new requested fields, remove requested fields, mention internal tools, or change facts."
+                "add new requested fields, remove requested fields, mention internal tools, or change facts. "
+                f"Customer voice instruction: {_clean_text(persona_instruction) or 'Use a calm, warm, polished support voice.'}"
             ),
             user_prompt=(
                 "Polish this reply so it sounds warm, natural, and human while preserving every required "
@@ -878,6 +881,7 @@ def _build_missing_fields_reply(
     *,
     requester: str | None = None,
     customer_id: str | None = None,
+    persona_instruction: str | None = None,
 ) -> str:
     if action == BILLING_ACTION_ACCOUNT_VERIFICATION:
         reply = _account_verification_email_reply(
@@ -885,7 +889,7 @@ def _build_missing_fields_reply(
             requester=requester,
             customer_id=customer_id,
         )
-        return _humanize_account_verification_reply(reply, missing_fields)
+        return _humanize_account_verification_reply(reply, missing_fields, persona_instruction)
 
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
         intro = (

@@ -1057,7 +1057,10 @@ def decide_support_route(
             has_active_engineer_case=has_active_engineer_case,
         )
         if heuristic_decision is not None:
-            return heuristic_decision
+            return replace(
+                heuristic_decision,
+                **_build_fallback_audit_kwargs(llm_attempt=llm_attempt, threshold=threshold),
+            )
         audit_kwargs = _build_fallback_audit_kwargs(llm_attempt=llm_attempt, threshold=threshold)
         return _build_route_decision(
             scope_label="agora_technical",

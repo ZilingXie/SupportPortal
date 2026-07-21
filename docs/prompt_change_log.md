@@ -2697,3 +2697,21 @@ For each new entry, record:
   - `rtk pytest backend/tests/test_support_router_semantic_billing.py -v` (17 passed)
   - `rtk pytest backend/tests/test_support_router.py -v` (50 passed)
   - `rtk python -m py_compile backend/services/support_router.py backend/services/billing_automation.py backend/main.py`
+
+## 2026-07-21 - Account router audit and Persona Prompt registry
+
+- Area or subsystem: `/account` routing and customer reply Persona
+- Prompt or model version: `account-router-v1` / `default-support-v1`
+- Summary: Versioned the semantic router Prompt, persisted the exact route Prompt snapshot, and added Admin-managed Persona drafts, publishing, immutable history, rollback, and stable per-ticket assignment.
+- Reason: Admins need to audit how an account case was routed and safely manage the voice used for account customer replies without changing historical executions.
+- Affected files or config:
+  - `backend/services/account_admin.py`
+  - `backend/services/support_router.py`
+  - `backend/main.py`
+  - `backend/repositories/ticket_repository.py`
+  - `ui/workspace-ui/admin/`
+- Expected behavior change:
+  - New `/account` routes record the router version and exact system/user Prompt used; deterministic and legacy cases are represented without fabricated Prompt snapshots.
+  - Account customer replies receive a persisted Persona assignment; published Persona changes apply only to tickets that have not yet been assigned.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_admin_features backend.tests.test_account_intake backend.tests.test_workspace_api backend.tests.test_workspace_admin_ui_contract`

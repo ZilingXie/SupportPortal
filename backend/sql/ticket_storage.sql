@@ -121,6 +121,44 @@ CREATE TABLE IF NOT EXISTS support_billing_route_corrections (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_account_route_executions (
+    execution_id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS support_account_personas (
+    persona_key TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    published_version INTEGER,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_account_prompt_versions (
+    persona_key TEXT NOT NULL REFERENCES support_account_personas(persona_key) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'superseded')),
+    content JSONB NOT NULL,
+    change_note TEXT NOT NULL,
+    based_on_version INTEGER,
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    published_by TEXT,
+    published_at TIMESTAMPTZ,
+    PRIMARY KEY (persona_key, version)
+);
+
+CREATE TABLE IF NOT EXISTS support_account_persona_assignments (
+    ticket_id TEXT PRIMARY KEY REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    persona_key TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    assigned_at TIMESTAMPTZ NOT NULL,
+    FOREIGN KEY (persona_key, version) REFERENCES support_account_prompt_versions(persona_key, version)
+);
+
 CREATE TABLE IF NOT EXISTS support_assets (
     asset_id TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL,

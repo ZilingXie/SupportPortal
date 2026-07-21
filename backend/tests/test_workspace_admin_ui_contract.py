@@ -71,6 +71,37 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn('/api/engineer/tickets?status=all', source)
         self.assertNotIn("/availability", source)
 
+    def test_account_automation_routing_persona_and_environment_tabs_are_operational(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+        for marker in (
+            '"automated-cases"', '"route-prompt"', '"persona-prompts"', '"environment-config"',
+            "/api/workspace/admin/account-automation",
+            "/api/workspace/admin/account-routing/config",
+            "/api/workspace/admin/account-routes",
+            "/api/workspace/admin/account-personas",
+            "/api/workspace/admin/environment-config",
+            "Automation share", "Route execution", "Version history", "Configuration names",
+            "data-persona-draft-form", "data-env-search", "data-action=\"publish-persona\"",
+        ):
+            self.assertIn(marker, source)
+        for marker in (".admin-metric-strip", ".admin-route-timeline", ".admin-prompt-editor", ".admin-config-list"):
+            self.assertIn(marker, css)
+
+        self.run_admin_app_script(
+            """
+            automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ client_ticket_id: 'TK-1', title: 'Invoice', automation_status: 'automation' }] };
+            routingData = { router_prompt_version: 'account-router-v1', stages: ['semantic_intent', 'policy_gate'], system_prompt: 'actual prompt' };
+            routeData = { routes: [{ ticket_id: 'TK-1', final_route: 'detailed_invoice', route_source: 'intent_router', prompt_snapshot_available: true, stages: [] }] };
+            personaData = { personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', signoff_name: 'Sid' }, change_note: 'Initial' }] }] };
+            environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'] };
+            if (!renderAutomatedCases().includes('25.0%')) throw new Error('automation ratio missing');
+            if (!renderRoutePrompt().includes('account-router-v1')) throw new Error('route version missing');
+            if (!renderPersonaPrompts().includes('Version history')) throw new Error('persona history missing');
+            if (!renderEnvironmentConfig().includes('OPENAI_API_KEY')) throw new Error('config name missing');
+            """
+        )
+
     def test_admin_session_is_role_gated_and_preserves_engineer_storage(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         for marker in (
@@ -201,7 +232,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260721-schedule-driven-availability-1", html)
+        self.assertIn("20260721-account-automation-admin-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

@@ -660,7 +660,7 @@
 
       <div class="delivery-list reveal" id="deliveryList">
         <details class="delivery-group" data-status-group="incomplete" open>
-          <summary><span class="group-heading">未完成计划<small>默认展开 · 会议第一阶段行动项</small></span><span>6 项</span></summary>
+          <summary><span class="group-heading">未完成计划<small>默认展开 · 会议第一阶段行动项</small></span><span>10 项</span></summary>
           <div class="delivery-group-body">
             <article class="delivery-row" data-category="automation" data-status="todo">
               <div class="delivery-category">Automation Scope</div>
@@ -691,6 +691,26 @@
               <div class="delivery-category">Validation &amp; Metrics</div>
               <div class="delivery-main"><h3>自动化覆盖率</h3><p>展示有多少百分比的真实 case 能被解决，并结合 route accuracy、失败原因和人工抽查决定是否扩充 automation category。</p></div>
               <div class="status-meta"><span class="status-chip doing">进行中</span></div>
+            </article>
+            <article class="delivery-row" data-category="validation" data-status="doing">
+              <div class="delivery-category">Validation &amp; Metrics</div>
+              <div class="delivery-main"><h3>Automated Cases Dashboard</h3><p>以全部 <code>/account</code> ticket 为分母，展示被 route 为 Automated 的 case 数量、占比和明细；不把 routed-to-Automated 误写成已解决。</p></div>
+              <div class="status-meta"><span class="status-chip doing">实现中</span></div>
+            </article>
+            <article class="delivery-row" data-category="automation" data-status="doing">
+              <div class="delivery-category">Automation Scope</div>
+              <div class="delivery-main"><h3>Route execution + Prompt snapshot</h3><p>持久化每次 <code>/account</code> route 的 stage、policy、fallback、Router Prompt version 和实际 Prompt；历史缺失 snapshot 时明确标记 unavailable。</p></div>
+              <div class="status-meta"><span class="status-chip doing">实现中</span></div>
+            </article>
+            <article class="delivery-row" data-category="reply" data-status="doing">
+              <div class="delivery-category">Reply Quality</div>
+              <div class="delivery-main"><h3>Persona Prompt registry 与版本管理</h3><p>支持多 Persona 的 Draft、Publish、版本历史、稳定 ticket 分配和创建新版本式 rollback，并用于 <code>/account</code> 客户回复。</p></div>
+              <div class="status-meta"><span class="status-chip doing">实现中</span></div>
+            </article>
+            <article class="delivery-row" data-category="reliability" data-status="doing">
+              <div class="delivery-category">Reliability</div>
+              <div class="delivery-main"><h3>Environment Config names-only inventory</h3><p>Admin 只查看项目根 <code>.env</code> 的合法配置名；API 与 UI 均不返回 value 或任何 value-derived metadata。</p></div>
+              <div class="status-meta"><span class="status-chip doing">实现中</span></div>
             </article>
           </div>
         </details>
