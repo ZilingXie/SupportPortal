@@ -14,6 +14,7 @@ ROUTER_PROMPT_VERSION = "account-router-v1"
 DEFAULT_PERSONA_KEY = "default-support"
 DEFAULT_PERSONA_CONTENT = {
     "instruction": "Use a calm, warm, polished concierge-style support voice. Match the customer's language.",
+    "opener": "",
     "signoff_name": "Sid",
 }
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -137,12 +138,20 @@ def routing_config_payload() -> dict[str, Any]:
 def apply_persona_to_customer_reply(reply: str, persona: dict[str, Any]) -> str:
     content = persona.get("content") if isinstance(persona.get("content"), dict) else {}
     signoff_name = str(content.get("signoff_name") or "Sid").strip() or "Sid"
+    opener = str(content.get("opener") or "").strip()
     normalized = str(reply or "").strip()
-    if signoff_name == "Sid":
-        return normalized
-    if re.search(r"\nSid\s*$", normalized):
-        return re.sub(r"\nSid\s*$", f"\n{signoff_name}", normalized)
+    if opener and opener not in normalized:
+        salutation = re.match(r"^([^\n]+(?:,|：))\n\n", normalized)
+        normalized = (
+            f"{salutation.group(1)}\n\n{opener}\n\n{normalized[salutation.end():]}"
+            if salutation
+            else f"{opener}\n\n{normalized}"
+        )
+    if signoff_name != "Sid" and re.search(r"\nSid\s*$", normalized):
+        normalized = re.sub(r"\nSid\s*$", f"\n{signoff_name}", normalized)
     signoff_pattern = re.compile(r"(\n\n(?:Best [Rr]egards,|此致)\n)[^\n]+\s*$")
-    if signoff_pattern.search(normalized):
-        return signoff_pattern.sub(lambda match: f"{match.group(1)}{signoff_name}", normalized)
-    return ensure_customer_reply_email_style(body=normalized, signoff_name=signoff_name)
+    if signoff_name != "Sid" and signoff_pattern.search(normalized):
+        normalized = signoff_pattern.sub(lambda match: f"{match.group(1)}{signoff_name}", normalized)
+    if re.search(r"\n(?:Sid|" + re.escape(signoff_name) + r")\s*$", normalized):
+        return normalized
+    return ensure_customer_reply_email_style(body=normalized, opener=opener or None, signoff_name=signoff_name)

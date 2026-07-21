@@ -152,6 +152,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(executions[0]["router_prompt_version"], "account-router-v1")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn("Detailed invoice request", executions[0]["user_prompt"])
+        replies = self.repository.list_account_reply_executions(payload["ticket_id"])
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0]["persona_key"], "default-support")
+        self.assertEqual(replies[0]["persona_version"], 1)
+        self.assertEqual(replies[0]["reply_kind"], "detailed_invoice")
 
     def test_account_intake_preserves_non_automated_ticket_without_email(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(

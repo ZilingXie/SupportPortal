@@ -8,6 +8,7 @@ from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.account_admin import (
     DEFAULT_PERSONA_KEY,
     ROUTER_PROMPT_VERSION,
+    apply_persona_to_customer_reply,
     account_automation_payload,
     environment_config_names,
     route_execution_from_decision,
@@ -111,6 +112,32 @@ class AccountAdminFeatureTests(unittest.TestCase):
     def test_last_enabled_persona_cannot_be_disabled(self) -> None:
         with self.assertRaisesRegex(ValueError, "last enabled persona"):
             self.repository.set_account_persona_enabled(DEFAULT_PERSONA_KEY, False)
+
+    def test_persona_opener_and_reply_execution_are_auditable(self) -> None:
+        persona = {
+            "persona_key": "concise",
+            "version": 4,
+            "content": {
+                "instruction": "Be concise",
+                "opener": "Thanks for contacting the billing team.",
+                "signoff_name": "Maya",
+            },
+        }
+        rendered = apply_persona_to_customer_reply("Hi Taylor,\n\nPlease send the transaction ID.\n\nBest Regards,\nSid", persona)
+        self.assertIn("Thanks for contacting the billing team.", rendered)
+        self.assertTrue(rendered.endswith("Best Regards,\nMaya"))
+
+        saved = self.repository.save_account_reply_execution({
+            "execution_id": "reply-1",
+            "ticket_id": "TK-1",
+            "reply_kind": "missing_fields",
+            "persona_key": "concise",
+            "persona_version": 4,
+            "effective_prompt": persona["content"],
+            "created_at": "2026-07-21T00:00:00+00:00",
+        })
+        self.assertEqual(saved["persona_version"], 4)
+        self.assertEqual(self.repository.list_account_reply_executions("TK-1"), [saved])
 
 
 if __name__ == "__main__":
