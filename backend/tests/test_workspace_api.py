@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
@@ -353,11 +355,27 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual([item["version"] for item in versions], [1, 2, 3])
 
     def test_environment_config_api_never_returns_values(self) -> None:
-        response = self.client.get("/api/workspace/admin/environment-config", headers=self._admin_headers())
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("SAFE_NAME=do-not-return-this-value\nOTHER_NAME=also-hidden\n", encoding="utf-8")
+            with patch.dict(os.environ, {"SUPPORTPORTAL_ENV_CONFIG_PATH": str(env_path)}):
+                response = self.client.get("/api/workspace/admin/environment-config", headers=self._admin_headers())
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(set(payload), {"names"})
-        self.assertIsInstance(payload["names"], list)
+        self.assertEqual(payload["names"], ["OTHER_NAME", "SAFE_NAME"])
+        self.assertNotIn("do-not-return-this-value", response.text)
+        self.assertNotIn(str(env_path), response.text)
+
+    def test_environment_config_api_returns_generic_503_for_missing_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing_path = Path(directory) / "missing.env"
+            with patch.dict(os.environ, {"SUPPORTPORTAL_ENV_CONFIG_PATH": str(missing_path)}):
+                response = self.client.get("/api/workspace/admin/environment-config", headers=self._admin_headers())
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json(), {"detail": "Environment configuration inventory unavailable"})
+        self.assertNotIn(str(missing_path), response.text)
 
     def test_admin_schedule_rejects_non_half_hour_values(self) -> None:
         self._seed_engineer("Maya")

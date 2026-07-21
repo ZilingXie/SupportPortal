@@ -83,6 +83,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "/api/workspace/admin/environment-config",
             "Automation share", "Route execution", "Version history", "Configuration names",
             "data-persona-draft-form", "data-env-search", "data-action=\"publish-persona\"",
+            "environmentLoadError", "loadEnvironmentConfig",
+            "data-action=\"retry-environment-config\"",
         ):
             self.assertIn(marker, source)
         for marker in (".admin-metric-strip", ".admin-route-timeline", ".admin-prompt-editor", ".admin-config-list"):
@@ -100,6 +102,14 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!renderPersonaPrompts().includes('Version history')) throw new Error('persona history missing');
             if (!renderEnvironmentConfig().includes('OPENAI_API_KEY')) throw new Error('config name missing');
             """
+        )
+
+        core_load = source[source.index("async function loadAdminData"):source.index("function signOut")]
+        promise_all_start = core_load.index("Promise.all")
+        promise_all_end = core_load.index("]);", promise_all_start)
+        self.assertNotIn(
+            "/api/workspace/admin/environment-config",
+            core_load[promise_all_start:promise_all_end],
         )
 
     def test_admin_session_is_role_gated_and_preserves_engineer_storage(self) -> None:

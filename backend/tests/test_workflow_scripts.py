@@ -689,9 +689,28 @@ class WorkflowScriptTests(unittest.TestCase):
                     "pgvector_table": os.environ.get("PGVECTOR_TABLE"),
                     "pgvector_dim": os.environ.get("PGVECTOR_DIM"),
                 }
-                with (state_dir / "podman_calls.jsonl").open("a", encoding="utf-8") as handle:
+                calls_file = (
+                    "podman_aux_calls.jsonl"
+                    if sys.argv[1:3] == ["-p", "deploymentlw"]
+                    else "podman_calls.jsonl"
+                )
+                with (state_dir / calls_file).open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(payload) + "\\n")
 
+                command = next(
+                    (item for item in ("config", "build", "down", "up", "ps") if item in sys.argv[1:]),
+                    "",
+                )
+                if command == os.environ.get("RESTART_FAIL_COMPOSE_COMMAND"):
+                    print(f"forced {{command}} failure", file=sys.stderr)
+                    raise SystemExit(23)
+                if (
+                    command == "up"
+                    and os.environ.get("RESTART_FAIL_NEW_UP") == "1"
+                    and os.environ.get("APP_RUNTIME_IMAGE") != os.environ.get("RESTART_PREVIOUS_IMAGE")
+                ):
+                    print("forced new up failure", file=sys.stderr)
+                    raise SystemExit(24)
                 if "ps" in sys.argv[1:]:
                     print("NAME\\napi up")
                 else:
@@ -713,10 +732,16 @@ class WorkflowScriptTests(unittest.TestCase):
                 payload = {{"argv": sys.argv[1:], "url": sys.argv[-1]}}
                 with (state_dir / "curl_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(payload) + "\\n")
+                count_path = state_dir / "curl_count"
+                call_count = int(count_path.read_text(encoding="utf-8") or "0") + 1 if count_path.exists() else 1
+                count_path.write_text(str(call_count), encoding="utf-8")
+                if call_count <= int(os.environ.get("RESTART_CURL_FAIL_COUNT", "0")):
+                    raise SystemExit(22)
+                runtime_ref = os.environ.get("APP_BUILD_REF")
                 if sys.argv[-1].endswith(":18080/health"):
                     print({json.dumps({"status": "ok", "app_build": {"ref": auxiliary_health_build_ref}})!r})
                 else:
-                    print({json.dumps({"status": "ok", "app_build": {"ref": official_health_build_ref}})!r})
+                    print(json.dumps({{"status": "ok", "app_build": {{"ref": runtime_ref or {official_health_build_ref!r}}}}}))
                 """
             ),
         )
@@ -770,6 +795,8 @@ class WorkflowScriptTests(unittest.TestCase):
                             "app_build_ref": {auxiliary_runtime_build_ref!r},
                             "app_build_time": {auxiliary_runtime_build_time!r},
                         }}))
+                elif args[:1] == ["inspect"]:
+                    print({official_image!r})
                 else:
                     print("")
                 """
@@ -926,11 +953,9 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
-        self.assertEqual(calls[0]["argv"][:4], ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml"])
-        self.assertEqual(calls[1]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
-        self.assertEqual(calls[2]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
-        self.assertEqual(calls[3]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
+        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "--no-build", "ps"])
+        for call in calls:
+            self.assertEqual(call["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
         expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
         for call in calls:
             self.assertEqual(call["app_build_ref"], expected_ref)
@@ -938,6 +963,95 @@ class WorkflowScriptTests(unittest.TestCase):
             self.assertTrue(str(call["app_build_time"]).strip())
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
+    def test_restart_single_host_stack_build_failure_leaves_current_stack_running(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "RESTART_FAIL_COMPOSE_COMMAND": "build",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        commands = [next((item for item in ("config", "build", "down", "up", "ps") if item in call["argv"]), "") for call in calls]
+        self.assertEqual(commands, ["config", "build"])
+
+    def test_restart_single_host_stack_health_failure_restores_previous_image(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        previous_image = "localhost/supportportal-app:previous-ref"
+        fake_bin, state_dir = self._install_fake_single_host_commands(official_image=previous_image)
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "RESTART_CURL_FAIL_COUNT": "1",
+                "RESTART_PREVIOUS_IMAGE": previous_image,
+                "SUPPORTPORTAL_HEALTH_ATTEMPTS": "1",
+                "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS": "0",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        rollback_up = [
+            call for call in calls
+            if "up" in call["argv"] and call["app_runtime_image"] == previous_image
+        ]
+        self.assertEqual(len(rollback_up), 1)
+        self.assertIn("--no-build", rollback_up[0]["argv"])
+        self.assertIn("restored previous image", result.stderr.lower())
+
+    def test_restart_single_host_stack_use_local_env_is_root_only_compatibility_alias(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(
+            seed,
+            ".env",
+            "STACK_RUNTIME_MODE=full\n"
+            "STACK_DB_MODE=remote\n"
+            "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._commit_all(seed, "Add root-only stack files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            "--use-local-env",
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("deprecated compatibility alias", result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        self.assertTrue(any("deployment/docker-compose.single-host.local-lightweight.yml" in call["argv"] for call in calls))
 
     def test_restart_single_host_stack_prints_build_cache_diagnostics_and_honors_no_cache_flag(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
@@ -977,9 +1091,9 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn(f"requirements.ml.txt: {expected_ml_hash}", result.stdout)
         self.assertNotIn("fatal:", result.stderr.lower())
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertIn("--no-cache", calls[2]["argv"])
-        self.assertEqual(calls[2]["buildah_progress"], "plain")
-        self.assertEqual(calls[2]["buildkit_progress"], "plain")
+        self.assertIn("--no-cache", calls[1]["argv"])
+        self.assertEqual(calls[1]["buildah_progress"], "plain")
+        self.assertEqual(calls[1]["buildkit_progress"], "plain")
 
     def test_restart_single_host_stack_ignores_env_local_without_use_local_env(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
@@ -1037,10 +1151,9 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
-        self.assertEqual(calls[0]["argv"][:4], ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml"])
+        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "--no-build", "ps"])
         expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
-        for call in calls[1:]:
+        for call in calls:
             self.assertEqual(
                 call["argv"][:2],
                 [
@@ -1064,7 +1177,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
         self._terminate_pid_file(pid_path)
 
-    def test_restart_single_host_stack_use_local_env_uses_remote_db_from_env_local(self) -> None:
+    def test_restart_single_host_stack_use_local_env_uses_remote_db_from_root_env(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
         self._write(
             seed,
@@ -1074,20 +1187,6 @@ class WorkflowScriptTests(unittest.TestCase):
             "OPENAI_API_KEY=test-key\n"
             "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
             "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
-        )
-        self._write(
-            seed,
-            ".env.local",
-            "STACK_RUNTIME_MODE=local_lightweight\n"
-            "STACK_DB_MODE=remote\n"
-            "LOCAL_POSTGRES_USER=localuser\n"
-            "LOCAL_POSTGRES_PASSWORD=localpass\n"
-            "LOCAL_POSTGRES_DB=localdb\n"
-            "LOCAL_POSTGRES_HOST_PORT=15555\n"
-            "LOCAL_TICKET_DB_SCHEMA=local_ticket\n"
-            "LOCAL_PGVECTOR_SCHEMA=local_rag\n"
-            "LOCAL_PGVECTOR_TABLE=local_chunks\n"
-            "LOCAL_PGVECTOR_DIM=768\n",
         )
         self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
         self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
@@ -1132,13 +1231,7 @@ class WorkflowScriptTests(unittest.TestCase):
             "STACK_DB_MODE=remote\n"
             "OPENAI_API_KEY=test-key\n"
             "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
-            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
-        )
-        self._write(
-            seed,
-            ".env.local",
-            "STACK_RUNTIME_MODE=local_lightweight\n"
-            "STACK_DB_MODE=local\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n"
             "LOCAL_POSTGRES_USER=localuser\n"
             "LOCAL_POSTGRES_PASSWORD=localpass\n"
             "LOCAL_POSTGRES_DB=localdb\n"
@@ -1205,17 +1298,11 @@ class WorkflowScriptTests(unittest.TestCase):
             seed,
             ".env",
             "STACK_RUNTIME_MODE=full\n"
-            "STACK_DB_MODE=remote\n"
+            "STACK_DB_MODE=local\n"
             "TICKET_DB_DSN='"
             "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
             "PGVECTOR_DSN='"
-            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n",
-        )
-        self._write(
-            seed,
-            ".env.local",
-            "STACK_RUNTIME_MODE=local_lightweight\n"
-            "STACK_DB_MODE=local\n"
+            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n"
             "LOCAL_POSTGRES_USER=localuser\n"
             "LOCAL_POSTGRES_PASSWORD=localpass\n"
             "LOCAL_POSTGRES_DB=localdb\n",
@@ -1280,13 +1367,7 @@ class WorkflowScriptTests(unittest.TestCase):
             "STACK_DB_MODE=remote\n"
             "OPENAI_API_KEY=test-key\n"
             "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
-            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
-        )
-        self._write(
-            seed,
-            ".env.local",
-            "STACK_RUNTIME_MODE=local_lightweight\n"
-            "STACK_DB_MODE=local\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n"
             "LOCAL_POSTGRES_USER=localuser\n"
             "LOCAL_POSTGRES_PASSWORD=localpass\n"
             "LOCAL_POSTGRES_DB=localdb\n"
@@ -1524,11 +1605,7 @@ class WorkflowScriptTests(unittest.TestCase):
             "TICKET_DB_DSN='"
             "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
             "PGVECTOR_DSN='"
-            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n",
-        )
-        self._write(
-            seed,
-            ".env.local",
+            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n"
             "LOCAL_POSTGRES_USER=localuser\n"
             "LOCAL_POSTGRES_PASSWORD=localpass\n"
             "LOCAL_POSTGRES_DB=localdb\n"
@@ -1558,8 +1635,8 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Compatibility wrapper", result.stdout)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
-        for call in calls[1:]:
+        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "--no-build", "ps"])
+        for call in calls:
             self.assertEqual(
                 call["argv"][:6],
                 [
@@ -1643,10 +1720,10 @@ class WorkflowScriptTests(unittest.TestCase):
 
     def test_run_with_local_db_env_exports_host_side_local_dsns(self) -> None:
         repo = self._init_repo()
-        self._write(repo, ".env", "OPENAI_API_KEY=test-key\n")
         self._write(
             repo,
-            ".env.local",
+            ".env",
+            "OPENAI_API_KEY=test-key\n"
             "LOCAL_POSTGRES_USER=hostuser\n"
             "LOCAL_POSTGRES_PASSWORD=hostpass\n"
             "LOCAL_POSTGRES_DB=hostdb\n"
@@ -1721,25 +1798,22 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("local_neo4j:", compose_source)
         self.assertIn("condition: service_healthy", compose_source)
 
-    def test_local_env_template_keeps_remote_db_default_and_does_not_replace_online_env(self) -> None:
+    def test_root_env_template_contains_local_options_without_a_second_env_file(self) -> None:
         gitignore_source = Path(".gitignore").read_text(encoding="utf-8")
-        local_env_source = Path(".env.local.example").read_text(encoding="utf-8")
+        env_source = Path(".env.example").read_text(encoding="utf-8")
 
         self.assertIn(".env.local", gitignore_source)
-        self.assertIn("STACK_RUNTIME_MODE=local_lightweight", local_env_source)
-        self.assertIn("STACK_DB_MODE=remote", local_env_source)
-        self.assertIn("LOCAL_POSTGRES_USER=supportportal", local_env_source)
-        self.assertIn("LOCAL_POSTGRES_HOST_PORT=15432", local_env_source)
-        self.assertIn("LOCAL_PGVECTOR_TABLE=docagent_chunks_bge_m3_1024", local_env_source)
-        self.assertIn("KG_NEO4J_URI=bolt://local_neo4j:7687", local_env_source)
-        self.assertIn("LOCAL_NEO4J_HEAP_INITIAL=256m", local_env_source)
-        self.assertIn("LOCAL_NEO4J_HEAP_MAX=512m", local_env_source)
-        self.assertIn("LOCAL_NEO4J_PAGECACHE=256m", local_env_source)
-        self.assertNotIn("LOCAL_NEO4J_HTTP_PORT", local_env_source)
-        self.assertIn("KG_EMBEDDING_MODEL=BAAI/bge-m3", local_env_source)
-        self.assertIn("KG_EMBEDDING_DIM=1024", local_env_source)
-        self.assertIn("# Use --db local to opt into local Postgres/pgvector.", local_env_source)
-        self.assertNotIn("YOUR_AWS_POSTGRES_HOST", local_env_source)
+        self.assertIn("deployment/.env_override", gitignore_source)
+        self.assertFalse(Path(".env.local.example").exists())
+        self.assertIn("STACK_RUNTIME_MODE=full", env_source)
+        self.assertIn("STACK_DB_MODE=remote", env_source)
+        self.assertIn("LOCAL_POSTGRES_USER=supportportal", env_source)
+        self.assertIn("LOCAL_POSTGRES_HOST_PORT=15432", env_source)
+        self.assertIn("LOCAL_PGVECTOR_TABLE=docagent_chunks_bge_m3_1024", env_source)
+        self.assertIn("LOCAL_NEO4J_HEAP_INITIAL=256m", env_source)
+        self.assertIn("LOCAL_NEO4J_HEAP_MAX=512m", env_source)
+        self.assertIn("LOCAL_NEO4J_PAGECACHE=256m", env_source)
+        self.assertNotIn("LOCAL_NEO4J_HTTP_PORT", env_source)
 
     def test_cleanup_single_host_aux_stack_only_targets_auxiliary_project(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
@@ -1759,7 +1833,7 @@ class WorkflowScriptTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        calls = self._read_json_lines(state_dir / "podman_aux_calls.jsonl")
         self.assertEqual(len(calls), 1)
         self.assertEqual(
             calls[0]["argv"],

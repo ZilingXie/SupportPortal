@@ -18,6 +18,7 @@ let routeData = { routes: [] };
 let selectedRouteDetail = null;
 let personaData = { personas: [] };
 let environmentData = { names: [] };
+let environmentLoadError = "";
 let environmentQuery = "";
 let selectedPersonaKey = "";
 let comparePersonaVersions = [];
@@ -672,7 +673,7 @@ function renderPersonaPrompts() {
 
 function renderEnvironmentConfig() {
   const names = (environmentData.names || []).filter(name => name.toLowerCase().includes(environmentQuery.toLowerCase()));
-  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><h1>Environment Config</h1><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface"><label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search configuration names" /></label><h2>Configuration names <span class="admin-count">${names.length}</span></h2><div class="admin-config-list">${names.length ? names.map(name => `<button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy configuration name"><code>${escapeHtml(name)}</code><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button>`).join("") : `<p>No matching configuration names.</p>`}</div></section>`;
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><h1>Environment Config</h1><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search configuration names" /></label><h2>Configuration names <span class="admin-count">${names.length}</span></h2><div class="admin-config-list">${names.length ? names.map(name => `<button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy configuration name"><code>${escapeHtml(name)}</code><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button>`).join("") : `<p>No matching configuration names.</p>`}</div>`}</section>`;
 }
 
 function syncAdminRailScrollPosition() {
@@ -720,13 +721,26 @@ function renderAdmin() {
   syncAdminRailScrollPosition();
 }
 
+async function loadEnvironmentConfig({ render = true } = {}) {
+  environmentLoadError = "";
+  try {
+    const payload = await fetchJson("/api/workspace/admin/environment-config");
+    environmentData = payload || { names: [] };
+  } catch (error) {
+    environmentData = { names: [] };
+    environmentLoadError = error.message;
+  }
+  if (render) renderAdmin();
+}
+
 async function loadAdminData() {
   if (!isAdminAuthenticated()) return;
   loading = true;
   loadError = "";
   renderAdmin();
+  const environmentRequest = loadEnvironmentConfig({ render: false });
   try {
-    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload, routesPayload, personasPayload, environmentPayload] = await Promise.all([
+    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload, routesPayload, personasPayload] = await Promise.all([
       fetchJson("/api/workspace/admin/accounts"),
       fetchJson("/api/workspace/cases?assignment_status=all"),
       fetchJson("/api/workspace/admin/metrics"),
@@ -736,7 +750,6 @@ async function loadAdminData() {
       fetchJson("/api/workspace/admin/account-routing/config"),
       fetchJson("/api/workspace/admin/account-routes"),
       fetchJson("/api/workspace/admin/account-personas"),
-      fetchJson("/api/workspace/admin/environment-config"),
     ]);
     accounts = Array.isArray(accountPayload.accounts) ? accountPayload.accounts : [];
     adminTickets = Array.isArray(casePayload.cases) ? casePayload.cases.map(normalizeAdminTicket) : [];
@@ -747,10 +760,10 @@ async function loadAdminData() {
     routingData = routingPayload || { stages: [], system_prompt: "" };
     routeData = routesPayload || { routes: [] };
     personaData = personasPayload || { personas: [] };
-    environmentData = environmentPayload || { names: [] };
   } catch (error) {
     loadError = error.message;
   } finally {
+    await environmentRequest;
     loading = false;
     renderAdmin();
   }
@@ -767,6 +780,8 @@ function signOut(options = {}) {
   metrics = null;
   auditEvents = [];
   scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
+  environmentData = { names: [] };
+  environmentLoadError = "";
   selectedEngineerId = "";
   invitationResult = null;
   if (options.render !== false) renderAdmin();
@@ -897,6 +912,8 @@ root.addEventListener("click", (event) => {
     renderAdmin();
   } else if (action === "refresh") {
     loadAdminData();
+  } else if (action === "retry-environment-config") {
+    loadEnvironmentConfig();
   } else if (action === "dispatch") {
     fetchJson("/api/workspace/admin/dispatch", { method: "POST" }).then(loadAdminData).catch((error) => {
       loadError = error.message;

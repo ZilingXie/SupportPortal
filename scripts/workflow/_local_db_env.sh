@@ -6,7 +6,6 @@ load_supportportal_local_env() {
   local root_path="$1"
   local require_base_env="${2:-optional}"
   local env_file="$root_path/.env"
-  local local_env_file="$root_path/.env.local"
 
   if [[ "$require_base_env" == "required" && ! -f "$env_file" ]]; then
     die "Root .env not found at $env_file. Copy .env.example to .env for shared API/model settings."
@@ -18,13 +17,6 @@ load_supportportal_local_env() {
     source "$env_file"
     set +a
   fi
-
-  [[ -f "$local_env_file" ]] || die "Root .env.local not found at $local_env_file. Copy .env.local.example to .env.local for local DB settings."
-
-  set -a
-  # shellcheck source=/dev/null
-  source "$local_env_file"
-  set +a
 
   export LOCAL_POSTGRES_USER="${LOCAL_POSTGRES_USER:-supportportal}"
   export LOCAL_POSTGRES_PASSWORD="${LOCAL_POSTGRES_PASSWORD:-supportportal}"

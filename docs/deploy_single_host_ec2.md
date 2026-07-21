@@ -64,36 +64,35 @@ NGINX_HOST_PORT=8080
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 cp .env.example .env 2>/dev/null || true
-cp .env.local.example .env.local 2>/dev/null || true
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote
 ```
 
 说明：
-1. 官方推荐入口统一为 `bash scripts/workflow/restart_single_host_stack.sh`。本地开发默认使用 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env`；生产 / EC2 / 需要本地 ML 依赖的验证继续使用 `bash scripts/workflow/restart_single_host_stack.sh`。
+1. 官方推荐入口统一为 `bash scripts/workflow/restart_single_host_stack.sh`。本地开发使用 `--mode local_lightweight --db remote`；生产 / EC2 / 需要本地 ML 依赖的验证继续使用默认 full 模式。
 2. 所有单机重建脚本都只能从根工作区的干净 `main` 运行；如果本地 `main` 没有同步到 `origin/main`，脚本会直接失败。
 3. 官方本地单机栈只有 `deployment`；重建前脚本会先清理 stray/unsupported 的 `deploymentlw`，避免并存运行。
 4. 重建脚本会导出当前根 `main` 对应的 `APP_RUNTIME_IMAGE=localhost/supportportal-app:<app_build.ref>`；不要再从任意 task worktree 直接执行 `podman-compose ... up -d --build`，否则运行中的 API/worker 可能和根 `main` 不一致。
+5. 根 `.env` 是应用唯一运行配置源。脚本先执行 compose 校验和镜像构建，再停止旧栈；build 失败不会中断旧栈，新栈启动或健康检查失败时会恢复上一 API 镜像并返回非零。
 
 ### 2.3.1 本地 lightweight 重建（线上/RDS DB）
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 cp .env.example .env 2>/dev/null || true
-cp .env.local.example .env.local 2>/dev/null || true
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote
 ```
 
 说明：
 1. 该模式只用于本地开发，不改变 EC2 / `support.stellarix.space` 的 full build 默认行为。
 2. lightweight override 会把本地 `api` 的镜像构建切到 `INSTALL_ML_DEPS=0`，同时将本地 sentiment provider 固定为 `legacy`。
-3. 这会跳过 `torch` / `sentence-transformers` / `accelerate` 的镜像安装，缩短本地 `down -> up -d --build`。
+3. 这会跳过 `torch` / `sentence-transformers` / `accelerate` 的镜像安装，缩短本地 build 与重启过程。
 4. 默认 `EMBEDDING_PROVIDER=siliconflow` 仍可正常工作；如果你把 `EMBEDDING_PROVIDER` 改成 `local_bge_m3`，`/health.config_warnings` 会报告该 lightweight 镜像不兼容。
 5. 轻量模式的 `/health.runtime_profile` 固定为 `local_lightweight`；full 模式固定为 `full`。
-6. `restart_single_host_stack.sh --use-local-env` 会显式叠加 `.env.local` 的 `STACK_RUNTIME_MODE=local_lightweight`，但 DB 默认继续使用 `.env` 中的线上/RDS `TICKET_DB_DSN` / `PGVECTOR_DSN`。
+6. `--mode local_lightweight --db remote` 只读取根 `.env`，并继续使用其中的线上/RDS `TICKET_DB_DSN` / `PGVECTOR_DSN`。
 7. 如果 `.env` 使用 `hostaddr=192.168.127.254` 和 `:15433`，脚本会继续调用 `ensure_local_db_relay.sh`。
 8. `restart_single_host_lightweight_stack.sh` 仍保留可用，但只是兼容 wrapper，不再作为主推荐入口。
 
@@ -103,7 +102,7 @@ bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db local
 ```
 
 说明：
@@ -129,10 +128,10 @@ bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local
 
 ```bash
 # local lightweight + 线上/RDS DB（官方本地默认）
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote
 
 # local lightweight + 本地 Postgres/pgvector
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db local
 
 # 让 host-side 命令使用本地 DB/RAG DSN
 bash scripts/workflow/run_with_local_db_env.sh -- python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical
@@ -169,7 +168,7 @@ podman-compose \
 
 1. 报错 `rootlessport cannot expose privileged port 80`：
    - 原因：rootless Podman 不能绑 80。
-   - 处理：本地 lightweight 路径在 `.env.local` 中设置 `NGINX_HOST_PORT=8080`；full / EC2 路径在 `.env` 中设置。
+   - 处理：在根 `.env` 中为本地 lightweight 设置 `NGINX_HOST_PORT=8080`；full / EC2 可使用其部署所需端口。
 
 2. 报错 `Dockerfile not found in .../deployment/backend/Dockerfile`：
    - 原因：compose 相对路径基准错误。
@@ -183,8 +182,8 @@ podman-compose \
    - 使用带端口 URL，比如 `http://localhost:8080/client/`。
 
 5. `/health` 变成 `ticket_storage=memory`，engineer 端看不到 ticket：
-   - 默认本地 lightweight 路径走线上/RDS DB，先运行 `bash scripts/workflow/ensure_local_db_relay.sh`，再运行 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env`。
-   - 如果明确使用本地 Postgres 路径，运行 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db local` 并确认 `local_postgres` 健康。
+   - 默认本地 lightweight 路径走线上/RDS DB，先运行 `bash scripts/workflow/ensure_local_db_relay.sh`，再运行 `bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote`。
+   - 如果明确使用本地 Postgres 路径，运行 `bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db local` 并确认 `local_postgres` 健康。
    - relay 路径的完整排障步骤见 [local_db_relay_recovery.md](./local_db_relay_recovery.md)。
 
 ---
@@ -267,7 +266,7 @@ curl -I http://support.stellarix.space
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
-bash scripts/workflow/restart_single_host_stack.sh --use-local-env
+bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote
 ```
 
 本地如果明确需要 full 模式，可改用：

@@ -11,6 +11,32 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-07-21 - Consolidate single-host runtime configuration and restart fallback
+
+- Summary:
+  - Consolidated application runtime configuration into the root `.env`; local Postgres, pgvector, BM25, and Neo4j settings now use documented `LOCAL_*` keys in `.env.example`.
+  - Removed the active `.env.local` template and stopped single-host helpers from loading a second env file. `--use-local-env` remains a deprecated mode alias only.
+  - Mounted the root env file read-only into the API for the Admin Environment Config names-only inventory.
+  - Added staged restart fallback: compose validation and build occur before the old stack is stopped, and failed startup or health verification restores the previous API image while returning a failure status.
+- Reason:
+  - Multiple env files had overlapping ownership, while the Admin API could not see the host root `.env` inside the container and therefore rendered an empty inventory.
+  - A failed image build or unhealthy replacement stack must not unnecessarily discard the previously healthy runtime.
+- Affected files/config:
+  - `.env.example`
+  - `.env.local.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `scripts/workflow/restart_single_host_stack.sh`
+  - `scripts/workflow/_local_db_env.sh`
+  - `backend/main.py`
+  - `backend/services/account_admin.py`
+  - `ui/workspace-ui/admin/app.js`
+- Data impact:
+  - No RAG rows, chunks, embeddings, pgvector/BM25/FTS data, Neo4j graph data, or ticket data are migrated or rewritten.
+  - Existing runtime values retain root `.env` precedence during the one-time local migration; local-only values are copied only when the root key is absent.
+- Verification:
+  - Unit and contract tests cover names-only inventory access, missing-file isolation, root-only compose configuration, compatibility aliases, pre-down build failure, and previous-image restoration.
+  - Shell syntax, JavaScript syntax, Python compilation, diff checks, and post-merge three-stage live migration are required before completion.
+
 ## 2026-07-16 - Harden local Neo4j resource and Browser defaults
 
 - Summary:

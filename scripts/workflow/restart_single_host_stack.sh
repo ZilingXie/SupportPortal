@@ -9,8 +9,10 @@ source "$SCRIPT_DIR/_common.sh"
 source "$SCRIPT_DIR/_local_db_env.sh"
 
 require_command git
+require_command podman
 require_command podman-compose
 require_command curl
+require_command python3
 
 ensure_root_workspace_on_main
 
@@ -76,7 +78,6 @@ fi
 
 env_file="$(repo_root)/.env"
 [[ -f "$env_file" ]] || die "Root .env not found at $env_file"
-local_env_file="$(repo_root)/.env.local"
 
 set -a
 # shellcheck source=/dev/null
@@ -85,11 +86,10 @@ set +a
 base_stack_db_mode="${STACK_DB_MODE:-remote}"
 
 if (( use_local_env )); then
-  [[ -f "$local_env_file" ]] || die "Root .env.local not found at $local_env_file. Copy .env.local.example to .env.local for local development defaults."
-  set -a
-  # shellcheck source=/dev/null
-  source "$local_env_file"
-  set +a
+  warn "--use-local-env is a deprecated compatibility alias for --mode local_lightweight; only root .env is loaded."
+  if [[ -z "$runtime_mode_override" ]]; then
+    runtime_mode_override="local_lightweight"
+  fi
 fi
 
 runtime_mode="${runtime_mode_override:-${STACK_RUNTIME_MODE:-full}}"
@@ -209,12 +209,74 @@ fi
 echo "requirements.base.txt: $(git hash-object requirements.base.txt)"
 echo "requirements.ml.txt: $(git hash-object requirements.ml.txt)"
 
-"$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
-podman-compose "${compose_args[@]}" down
+health_attempts="${SUPPORTPORTAL_HEALTH_ATTEMPTS:-30}"
+health_interval_seconds="${SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS:-2}"
+[[ "$health_attempts" =~ ^[1-9][0-9]*$ ]] || die "SUPPORTPORTAL_HEALTH_ATTEMPTS must be a positive integer."
+[[ "$health_interval_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS must be non-negative."
 
-up_args=(up -d --build)
+wait_for_stack_health() {
+  local expected_ref="$1"
+  local attempt
+  local payload
+
+  for (( attempt = 1; attempt <= health_attempts; attempt++ )); do
+    payload="$(curl -fsS "http://127.0.0.1:${health_port}/health" 2>/dev/null || true)"
+    if [[ -n "$payload" ]] && python3 - "$payload" "$expected_ref" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except (TypeError, ValueError):
+    raise SystemExit(1)
+
+raise SystemExit(
+    0
+    if payload.get("status") == "ok"
+    and str((payload.get("app_build") or {}).get("ref") or "") == sys.argv[2]
+    else 1
+)
+PY
+    then
+      printf '%s\n' "$payload"
+      return 0
+    fi
+    if (( attempt < health_attempts )); then
+      sleep "$health_interval_seconds"
+    fi
+  done
+  return 1
+}
+
+previous_image="$(podman inspect --format '{{.ImageName}}' deployment_api_1 2>/dev/null || true)"
+previous_ref="${previous_image##*:}"
+new_image="$APP_RUNTIME_IMAGE"
+new_ref="$APP_BUILD_REF"
+
+restore_previous_stack() {
+  if [[ -z "$previous_image" || "$previous_image" == "$new_image" ]]; then
+    warn "New stack failed and no distinct previous image is available for automatic restore."
+    return 1
+  fi
+
+  warn "New stack failed; restoring previous image $previous_image."
+  export APP_RUNTIME_IMAGE="$previous_image"
+  export APP_BUILD_REF="$previous_ref"
+  podman-compose "${compose_args[@]}" down >/dev/null 2>&1 || true
+  if podman-compose "${compose_args[@]}" up -d --no-build \
+    && wait_for_stack_health "$previous_ref" >/dev/null; then
+    warn "Restored previous image $previous_image."
+    return 0
+  fi
+  warn "Failed to restore previous image $previous_image."
+  return 1
+}
+
+podman-compose "${compose_args[@]}" config >/dev/null
+
+build_args=(build)
 if (( _cache_disabled )); then
-  up_args+=(--no-cache)
+  build_args+=(--no-cache)
 fi
 
 if [[ "$_build_progress" == "plain" ]]; then
@@ -222,6 +284,16 @@ if [[ "$_build_progress" == "plain" ]]; then
   export BUILDAH_PROGRESS=plain
 fi
 
-podman-compose "${compose_args[@]}" "${up_args[@]}"
+podman-compose "${compose_args[@]}" "${build_args[@]}"
+"$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
+podman-compose "${compose_args[@]}" down
+
+if ! podman-compose "${compose_args[@]}" up -d --no-build; then
+  restore_previous_stack || true
+  exit 1
+fi
 podman-compose "${compose_args[@]}" ps
-curl -sS "http://127.0.0.1:${health_port}/health"
+if ! wait_for_stack_health "$new_ref"; then
+  restore_previous_stack || true
+  exit 1
+fi
