@@ -13,6 +13,11 @@ SKIP_EXTERNAL_CHECK=0
 FOLLOW_LOGS=0
 DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${PROJECT_ROOT}/.deploy_ec2.lock}"
 DEPLOY_LOCK_ALREADY_HELD="${DEPLOY_LOCK_ALREADY_HELD:-0}"
+ROLLBACK_IMAGE=""
+PREVIOUS_IMAGE=""
+PREVIOUS_IMAGE_ID=""
+PREVIOUS_BUILD_REF=""
+PREVIOUS_BUILD_TIME=""
 
 log() {
   printf '[deploy] %s\n' "$*"
@@ -114,6 +119,82 @@ export_env_value() {
   local value="$2"
   printf -v "${key}" '%s' "${value}"
   export "${key}"
+}
+
+prepare_build_metadata() {
+  export_env_value APP_BUILD_REF "$(git rev-parse --short=12 HEAD)"
+  export_env_value APP_BUILD_TIME "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  export_env_value APP_RUNTIME_IMAGE "localhost/supportportal-app:${APP_BUILD_REF}"
+
+  log "Build ref: ${APP_BUILD_REF}"
+  log "Build time: ${APP_BUILD_TIME}"
+  log "Runtime image: ${APP_RUNTIME_IMAGE}"
+}
+
+read_container_env_value() {
+  local container_id="$1"
+  local key="$2"
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${container_id}" 2>/dev/null \
+    | awk -F= -v key="${key}" '$1 == key { sub("^[^=]*=", "", $0); print; exit }'
+}
+
+capture_previous_runtime() {
+  local api_container
+  api_container="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps -q api 2>/dev/null || true)"
+  if [[ -z "${api_container}" ]]; then
+    log "No running API container found; automatic image rollback is unavailable for this deploy."
+    return 0
+  fi
+
+  PREVIOUS_IMAGE_ID="$(docker inspect --format '{{.Image}}' "${api_container}" 2>/dev/null || true)"
+  PREVIOUS_IMAGE="$(docker inspect --format '{{.Config.Image}}' "${api_container}" 2>/dev/null || true)"
+  PREVIOUS_BUILD_REF="$(read_container_env_value "${api_container}" APP_BUILD_REF || true)"
+  PREVIOUS_BUILD_TIME="$(read_container_env_value "${api_container}" APP_BUILD_TIME || true)"
+
+  if [[ -z "${PREVIOUS_IMAGE_ID}" ]]; then
+    log "Running API image ID could not be resolved; automatic image rollback is unavailable for this deploy."
+    return 0
+  fi
+
+  if [[ -z "${PREVIOUS_BUILD_REF}" && -n "${PREVIOUS_IMAGE}" ]]; then
+    PREVIOUS_BUILD_REF="${PREVIOUS_IMAGE##*:}"
+  fi
+
+  ROLLBACK_IMAGE="localhost/supportportal-app:rollback-${APP_BUILD_REF}-$$"
+  docker image tag "${PREVIOUS_IMAGE_ID}" "${ROLLBACK_IMAGE}"
+  log "Saved running API image for rollback: ${ROLLBACK_IMAGE}"
+}
+
+cleanup_rollback_image() {
+  if [[ -n "${ROLLBACK_IMAGE}" ]]; then
+    docker image rm -f "${ROLLBACK_IMAGE}" >/dev/null 2>&1 || true
+  fi
+}
+
+restore_previous_stack() {
+  local internal_url="$1"
+  local timeout_seconds="$2"
+  local retry_interval_seconds="$3"
+
+  if [[ -z "${ROLLBACK_IMAGE}" ]]; then
+    log "New stack failed and no previous image ID is available for automatic restore."
+    return 1
+  fi
+
+  log "New stack failed; restoring previous image ${PREVIOUS_IMAGE:-${PREVIOUS_IMAGE_ID}}."
+  export_env_value APP_RUNTIME_IMAGE "${ROLLBACK_IMAGE}"
+  export_env_value APP_BUILD_REF "${PREVIOUS_BUILD_REF:-previous}"
+  export_env_value APP_BUILD_TIME "${PREVIOUS_BUILD_TIME}"
+
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down >/dev/null 2>&1 || true
+  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --no-build \
+    && wait_for_http_ok "Restored internal" "${internal_url}" "${timeout_seconds}" "${retry_interval_seconds}"; then
+    log "Restored previous image ${PREVIOUS_IMAGE:-${PREVIOUS_IMAGE_ID}}."
+    return 0
+  fi
+
+  log "Failed to restore previous image ${PREVIOUS_IMAGE:-${PREVIOUS_IMAGE_ID}}."
+  return 1
 }
 
 prepare_compose_env() {
@@ -390,6 +471,8 @@ main() {
 
   log "Resolved deploy commit: branch=$(git rev-parse --abbrev-ref HEAD) commit=$(git_head_summary)"
 
+  prepare_build_metadata
+
   local host_port internal_url external_url health_timeout_seconds health_retry_interval_seconds
   host_port="$(resolve_port)"
   health_timeout_seconds="$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)"
@@ -403,11 +486,18 @@ main() {
     fail "docker compose build failed"
   fi
 
+  capture_previous_runtime
+
   log "Stopping services..."
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down; then
+    show_compose_diagnostics
+    restore_previous_stack "http://127.0.0.1:${host_port}/health" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
+    fail "docker compose down failed; rollback image retained: ${ROLLBACK_IMAGE:-unavailable}"
+  fi
   log "Starting services (detached)..."
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d; then
     show_compose_diagnostics
+    restore_previous_stack "http://127.0.0.1:${host_port}/health" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
     fail "docker compose up failed"
   fi
 
@@ -418,17 +508,23 @@ main() {
   log "Checking internal health: ${internal_url}"
   if ! wait_for_http_ok "Internal" "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
     show_compose_diagnostics
+    restore_previous_stack "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
     fail "Internal health check failed after ${health_timeout_seconds}s: ${internal_url}"
   fi
 
   if [[ "${SKIP_EXTERNAL_CHECK}" -eq 0 ]]; then
     external_url="https://${DOMAIN}/health"
     log "Checking external health: ${external_url}"
-    wait_for_http_ok "External" "${external_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" \
-      || fail "External health check failed after ${health_timeout_seconds}s: ${external_url}"
+    if ! wait_for_http_ok "External" "${external_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
+      show_compose_diagnostics
+      fail "External health check failed after ${health_timeout_seconds}s: ${external_url}; inspect DNS, TLS, load balancer, security group, and nginx before rolling back the application image"
+    fi
   else
     log "Skipping external health check."
   fi
+
+  cleanup_rollback_image
+  ROLLBACK_IMAGE=""
 
   if [[ "${FOLLOW_LOGS}" -eq 1 ]]; then
     log "Following logs (Ctrl+C to exit)..."

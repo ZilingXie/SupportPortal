@@ -105,6 +105,9 @@ class AutoDeployEc2Tests(unittest.TestCase):
                 state_dir="${AUTO_DEPLOY_TEST_STATE_DIR:?}"
                 printf '%s\n' "$*" >> "${state_dir}/deploy_calls.log"
                 printf '%s\n' "${DEPLOY_LOCK_ALREADY_HELD:-}" > "${state_dir}/deploy_lock_already_held.txt"
+                printf '%s\n' "${APP_BUILD_REF:-}" > "${state_dir}/deploy_build_ref.txt"
+                printf '%s\n' "${APP_BUILD_TIME:-}" > "${state_dir}/deploy_build_time.txt"
+                printf '%s\n' "${APP_RUNTIME_IMAGE:-}" > "${state_dir}/deploy_runtime_image.txt"
                 pwd > "${state_dir}/deploy_pwd.txt"
                 exit "${FAKE_DEPLOY_EXIT_CODE:-0}"
                 """
@@ -310,6 +313,22 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.assertEqual(
             (self.state_dir / "deploy_lock_already_held.txt").read_text(encoding="utf-8").strip(),
             "1",
+        )
+        expected_ref = _git(
+            ["rev-parse", "--short=12", "origin/main"],
+            cwd=self.repo,
+        ).stdout.strip()
+        self.assertEqual(
+            (self.state_dir / "deploy_build_ref.txt").read_text(encoding="utf-8").strip(),
+            expected_ref,
+        )
+        self.assertEqual(
+            (self.state_dir / "deploy_runtime_image.txt").read_text(encoding="utf-8").strip(),
+            f"localhost/supportportal-app:{expected_ref}",
+        )
+        self.assertRegex(
+            (self.state_dir / "deploy_build_time.txt").read_text(encoding="utf-8").strip(),
+            r"^20\d{2}-\d{2}-\d{2}T",
         )
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
         aws_calls = self._read_json_lines(self.state_dir / "aws_calls.jsonl")
