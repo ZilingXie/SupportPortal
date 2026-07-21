@@ -90,7 +90,17 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 state_dir = Path(os.environ["DEPLOY_TEST_STATE_DIR"])
                 args = sys.argv[1:]
                 with (state_dir / "docker_calls.jsonl").open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps({"argv": args}) + "\\n")
+                    handle.write(
+                        json.dumps(
+                            {
+                                "argv": args,
+                                "app_build_ref": os.environ.get("APP_BUILD_REF"),
+                                "app_build_time": os.environ.get("APP_BUILD_TIME"),
+                                "app_runtime_image": os.environ.get("APP_RUNTIME_IMAGE"),
+                            }
+                        )
+                        + "\\n"
+                    )
 
                 if args[:2] == ["builder", "prune"]:
                     print("builder prune ok")
@@ -98,6 +108,34 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
                 if args[:2] == ["image", "prune"]:
                     print("image prune ok")
+                    sys.exit(0)
+
+                if args[:2] == ["image", "tag"]:
+                    print("image tag ok")
+                    sys.exit(0)
+
+                if args[:2] == ["image", "rm"]:
+                    print("image rm ok")
+                    sys.exit(0)
+
+                if args[:1] == ["inspect"]:
+                    format_value = args[args.index("--format") + 1]
+                    previous_image_id = os.environ.get(
+                        "FAKE_PREVIOUS_IMAGE_ID",
+                        "sha256:previous-image-id",
+                    )
+                    previous_image = os.environ.get(
+                        "FAKE_PREVIOUS_IMAGE",
+                        "localhost/supportportal-app:previous-ref",
+                    )
+                    previous_ref = os.environ.get("FAKE_PREVIOUS_BUILD_REF", "previous-ref")
+                    if format_value == "{{.Image}}":
+                        print(previous_image_id)
+                    elif format_value == "{{.Config.Image}}":
+                        print(previous_image)
+                    else:
+                        print(f"APP_BUILD_REF={previous_ref}")
+                        print("APP_BUILD_TIME=2026-07-20T00:00:00Z")
                     sys.exit(0)
 
                 if args[:1] != ["compose"]:
@@ -120,14 +158,17 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     sys.exit(0)
 
                 if "up" in args:
-                    if os.environ.get("FAKE_DOCKER_UP_EXIT_CODE") == "1":
+                    if os.environ.get("FAKE_DOCKER_UP_EXIT_CODE") == "1" and "--no-build" not in args:
                         print("up failed", file=sys.stderr)
                         sys.exit(1)
                     print("up ok")
                     sys.exit(0)
 
                 if "ps" in args:
-                    print("NAME\\napi up")
+                    if "-q" in args:
+                        print("api-container-id")
+                    else:
+                        print("NAME\\napi up")
                     sys.exit(0)
 
                 if "logs" in args:
@@ -185,6 +226,19 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 url = sys.argv[-1]
                 with (state_dir / "curl_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps({"argv": sys.argv[1:], "url": url}) + "\\n")
+
+                failure_counter_path = state_dir / "curl_failure_counter.txt"
+                failure_count = int(os.environ.get("FAKE_CURL_FAIL_COUNT", "0"))
+                failures_seen = (
+                    int(failure_counter_path.read_text(encoding="utf-8"))
+                    if failure_counter_path.exists()
+                    else 0
+                )
+                if url == os.environ.get("FAKE_CURL_FAIL_URL") and failures_seen < failure_count:
+                    failure_counter_path.write_text(str(failures_seen + 1), encoding="utf-8")
+                    print("health failed", file=sys.stderr)
+                    sys.exit(22)
+
                 print('{"status":"ok"}')
                 """
             ),
@@ -289,7 +343,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         verbs = self._compose_verbs()
-        self.assertEqual(verbs, ["build", "down", "up", "ps"])
+        self.assertEqual(verbs, ["build", "ps", "down", "up", "ps"])
         self.assertNotIn("builder-prune", self._docker_actions())
         self.assertNotIn("image-prune", self._docker_actions())
 
@@ -303,6 +357,109 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 "http://127.0.0.1:18080/health",
                 "https://support.stellarix.space/health",
             ],
+        )
+        self.assertTrue(
+            any(
+                call["argv"][:3] == ["image", "rm", "-f"]
+                for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            )
+        )
+
+    def test_deploy_generates_dynamic_build_metadata(self) -> None:
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=self.repo).stdout.strip()
+
+        result = self._run_script("--skip-pull", "--branch", "main")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        build_call = next(call for call in docker_calls if "build" in call["argv"])
+        self.assertEqual(build_call["app_build_ref"], expected_ref)
+        self.assertEqual(build_call["app_runtime_image"], f"localhost/supportportal-app:{expected_ref}")
+        self.assertRegex(str(build_call["app_build_time"]), r"^2026-|^20\d{2}-")
+        self.assertIn(f"Build ref: {expected_ref}", result.stdout)
+
+    def test_up_failure_restores_previous_image_id(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={"FAKE_DOCKER_UP_EXIT_CODE": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Restored previous image localhost/supportportal-app:previous-ref", result.stdout)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        tag_call = next(call for call in docker_calls if call["argv"][:2] == ["image", "tag"])
+        self.assertEqual(tag_call["argv"][2], "sha256:previous-image-id")
+        rollback_tag = tag_call["argv"][3]
+        rollback_up = next(
+            call
+            for call in docker_calls
+            if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(rollback_up["app_runtime_image"], rollback_tag)
+        self.assertEqual(rollback_up["app_build_ref"], "previous-ref")
+        self.assertFalse(any(call["argv"][:3] == ["image", "rm", "-f"] for call in docker_calls))
+
+    def test_same_runtime_tag_failure_restores_previous_image_id(self) -> None:
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=self.repo).stdout.strip()
+        current_tag = f"localhost/supportportal-app:{expected_ref}"
+        previous_image_id = "sha256:same-tag-previous-image-id"
+
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "FAKE_DOCKER_UP_EXIT_CODE": "1",
+                "FAKE_PREVIOUS_IMAGE": current_tag,
+                "FAKE_PREVIOUS_BUILD_REF": expected_ref,
+                "FAKE_PREVIOUS_IMAGE_ID": previous_image_id,
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        tag_call = next(call for call in docker_calls if call["argv"][:2] == ["image", "tag"])
+        self.assertEqual(tag_call["argv"][2], previous_image_id)
+        rollback_tag = tag_call["argv"][3]
+        self.assertNotEqual(rollback_tag, current_tag)
+        rollback_up = next(
+            call
+            for call in docker_calls
+            if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(rollback_up["app_runtime_image"], rollback_tag)
+        self.assertEqual(rollback_up["app_build_ref"], expected_ref)
+        self.assertFalse(any(call["argv"][:3] == ["image", "rm", "-f"] for call in docker_calls))
+
+    def test_internal_health_failure_restores_previous_image_id(self) -> None:
+        internal_url = "http://127.0.0.1:18080/health"
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
+                "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "1",
+                "FAKE_CURL_FAIL_URL": internal_url,
+                "FAKE_CURL_FAIL_COUNT": "2",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Internal health check failed", result.stdout + result.stderr)
+        self.assertIn("Restored previous image localhost/supportportal-app:previous-ref", result.stdout)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        rollback_up = next(
+            call
+            for call in docker_calls
+            if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(rollback_up["app_build_ref"], "previous-ref")
+        self.assertEqual(
+            [call["url"] for call in self._read_json_lines(self.state_dir / "curl_calls.jsonl")],
+            [internal_url, internal_url, internal_url],
         )
 
     def test_low_disk_space_prunes_docker_cache_before_build(self) -> None:
@@ -323,6 +480,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 "builder-prune",
                 "image-prune",
                 "compose-build",
+                "compose-ps",
                 "compose-down",
                 "compose-up",
                 "compose-ps",

@@ -12,20 +12,22 @@
 3. `.env.local` 和 `deployment/.env_override` 不再作为运行配置源；确认三轮验证通过后再移出仓库目录。
 4. `/etc/supportportal/auto-deploy.env` 必须保留。它只服务于 systemd 定时部署、SES 告警和部署报告，不属于应用 `.env`，不得合并或删除。
 5. 不要用 `.env.example` 覆盖线上 `.env`，也不要在终端、工单、PR 或日志中打印真实配置值。
-6. 如果线上启用了 systemd auto-deploy，迁移期间必须暂停 timer；当前自动部署链路不会动态生成 build metadata，完成相应代码加固前不要重新启用。
+6. 如果线上启用了 systemd auto-deploy，迁移期间仍必须暂停 timer；当前部署链路已动态生成 build metadata 并支持 image-ID 自动回滚，但完成一次线上失败恢复演练前不要重新启用。
 
 建议把本次操作安排在可回滚的维护窗口，并暂时停用自动部署 timer。
 
 ## 2. 当前线上部署能力边界
 
-合入 PR #640 和 #641 后，本地 Podman 重启脚本具备 image-ID 自动回滚，但线上 `deployment/deploy_ec2.sh` 当前只有以下保证：
+`deployment/deploy_ec2.sh` 现已与本地重启链路保持一致：
 
+- 每次拉取代码后动态生成 `APP_BUILD_REF`、`APP_BUILD_TIME` 和唯一 `APP_RUNTIME_IMAGE` tag；不要把这些值静态写入 `.env`。
 - `docker compose build` 在 `down` 之前执行，build 失败不会停止旧服务。
-- `docker compose up`、内部健康检查或外部健康检查失败时，脚本会返回非零并输出诊断。
-- 线上脚本尚未自动恢复上一 image ID。
-- 线上脚本尚未自动设置 `APP_BUILD_REF`、`APP_BUILD_TIME` 和唯一 `APP_RUNTIME_IMAGE` tag。
+- build 成功后、停止服务前，通过 `docker compose ps -q api` 和 `docker inspect` 保存当前运行 image ID 到临时 rollback tag。
+- `docker compose up` 或内部健康检查失败时，脚本使用旧 image ID 执行 `up -d --no-build` 并再次验证内部健康，然后仍以非零退出保留失败信号；外部健康失败只输出诊断并返回非零，避免把 DNS/TLS/负载入口故障误判成应用镜像故障。
+- systemd auto-deploy 会把目标远端 commit 的同等 build metadata 传给部署脚本；部署脚本在 pull 完成后再次以实际 `HEAD` 校准。
+- 临时 rollback tag 只在新部署全部健康检查成功后删除；部署失败或恢复失败时保留，便于继续人工处置。`.env` 迁移期间仍建议另保留仓库外配置备份和人工 rollback tag，覆盖脚本进程中断、Docker 故障或配置回滚场景。
 
-因此本次线上迁移必须在部署前手工保留上一 image ID，并为新部署导出动态 build metadata。不要把静态 `APP_BUILD_REF` 或 `APP_BUILD_TIME` 长期写进 `.env`。
+代码级失败恢复测试已覆盖 build 失败不停止旧服务、启动失败恢复旧 image ID、动态 metadata 和 auto-deploy metadata 传递。重新启用 timer 前仍需在线上完成一次受控失败恢复演练。
 
 ## 3. 变更窗口前检查
 
@@ -100,9 +102,7 @@ git pull --ff-only origin main
 # 必须包含单一 env 和同 tag rollback 修复。
 git merge-base --is-ancestor fab53340718a HEAD
 
-export APP_BUILD_REF="$(git rev-parse --short=12 HEAD)"
-export APP_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-export APP_RUNTIME_IMAGE="localhost/supportportal-app:${APP_BUILD_REF}"
+# build ref、build time 和唯一 runtime image 由部署脚本动态生成。
 export DEPLOY_HEALTH_TIMEOUT_SECONDS=180
 
 docker compose --env-file .env \
@@ -168,9 +168,7 @@ PY
 
 ```bash
 cd ~/SupportPortal
-export APP_BUILD_REF="$(git rev-parse --short=12 HEAD)"
-export APP_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-export APP_RUNTIME_IMAGE="localhost/supportportal-app:${APP_BUILD_REF}"
+# build ref、build time 和唯一 runtime image 由部署脚本动态生成。
 export DEPLOY_HEALTH_TIMEOUT_SECONDS=180
 
 ./deployment/deploy_ec2.sh \
@@ -208,12 +206,9 @@ rm -rf "${backup_dir}"
 
 删除备份前必须再次确认根 `.env` 为 `0600`、生产仓库 clean、内部/外部 health 正常。
 
-当前版本不要立即重新启用 `supportportal-auto-deploy.timer`。必须先满足以下任一条件：
+代码层阻断已经解除：`deployment/deploy_ec2.sh` 已实现动态 build metadata 和 image-ID 自动回滚，`scripts/ops/auto_deploy_ec2.sh` 也会传递目标 commit 的同等 metadata，相关自动化测试已通过。
 
-1. `deployment/deploy_ec2.sh` 已实现动态 build metadata 和 image-ID 自动回滚，并完成一次手工验收。
-2. `scripts/ops/auto_deploy_ec2.sh` 在调用部署脚本前动态导出同等 metadata，并完成失败恢复测试。
-
-条件满足后才能执行：
+仍不要在迁移完成后立即重新启用 `supportportal-auto-deploy.timer`。先在线上手工执行一次部署，并至少完成一次受控失败恢复演练，确认旧 image ID 能恢复、内部 health 回到 `ok`、失败部署仍返回非零且 SES 报告可见。验收完成后才能执行：
 
 ```bash
 sudo systemctl enable --now supportportal-auto-deploy.timer
@@ -301,7 +296,7 @@ Operator:
 
 ## 11. 后续工程建议
 
-本次迁移可以按上述人工 rollback 安全执行，但线上部署仍有一项阻断 auto-deploy 恢复的代码改进：将本地 `restart_single_host_stack.sh` 的 image-ID rollback 机制移植到 `deployment/deploy_ec2.sh`，并由脚本动态生成 build metadata。完成失败恢复测试后，才能重新启用 systemd auto-deploy，而不是长期依赖人工保存 `rollback_tag`。
+代码改进已完成：`deployment/deploy_ec2.sh` 已移植 image-ID rollback 并动态生成 build metadata，auto-deploy 也会传递目标 commit metadata。后续工作只剩线上受控失败恢复演练和运维验收；迁移窗口中的仓库外 `.env` 备份与人工 `rollback_tag` 仍应保留，不能仅依赖脚本内临时 tag。
 
 ## 12. 假设与待确认项
 

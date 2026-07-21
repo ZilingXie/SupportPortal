@@ -450,8 +450,19 @@ main() {
   log "Execution mode: ${EXECUTION_MODE}"
 
   if [[ "${EXECUTION_MODE}" == "deploy" ]]; then
+    local deploy_build_ref deploy_build_time deploy_runtime_image
+    deploy_build_ref="$(git rev-parse --short=12 "origin/${DEPLOY_BRANCH}")"
+    deploy_build_time="$(current_utc_timestamp)"
+    deploy_runtime_image="localhost/supportportal-app:${deploy_build_ref}"
+    log "Deploy build metadata: ref=${deploy_build_ref} image=${deploy_runtime_image}"
+
     CURRENT_STEP="Run deploy script"
-    DEPLOY_LOCK_ALREADY_HELD=1 DEPLOY_LOCK_FILE="${LOCK_FILE}" "${DEPLOY_SCRIPT}" \
+    APP_BUILD_REF="${deploy_build_ref}" \
+      APP_BUILD_TIME="${deploy_build_time}" \
+      APP_RUNTIME_IMAGE="${deploy_runtime_image}" \
+      DEPLOY_LOCK_ALREADY_HELD=1 \
+      DEPLOY_LOCK_FILE="${LOCK_FILE}" \
+      "${DEPLOY_SCRIPT}" \
       --branch "${DEPLOY_BRANCH}" \
       --domain "${DEPLOY_DOMAIN}"
     LOCAL_COMMIT="$(git rev-parse --short HEAD)"

@@ -300,16 +300,18 @@ chmod +x deployment/deploy_ec2.sh
 
 脚本会执行：
 1. 拉取最新代码（`git fetch/pull`，默认当前分支）。
-2. 在 build 前检查镜像存储所在磁盘的剩余空间，默认要求至少 `40 GiB`。
-3. 如果剩余空间低于阈值，会自动执行 `docker builder prune -af` 和 `docker image prune -af` 后再复查。
-4. 如果清理后仍低于阈值，会直接失败并输出明确错误，不会开始 `docker compose build`。
-5. 先执行 `docker compose build`，只有构建成功后才会继续切换服务。
-6. 重启容器（`docker compose down` + `up -d`）。
-7. 健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）。
-8. 外网检查（默认 `https://support.stellarix.space/health`）。
-9. 使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
+2. 根据实际 `HEAD` 动态生成 `APP_BUILD_REF`、`APP_BUILD_TIME` 和唯一 `APP_RUNTIME_IMAGE`；不要把这些值静态写入 `.env`。
+3. 在 build 前检查镜像存储所在磁盘的剩余空间，默认要求至少 `40 GiB`。
+4. 如果剩余空间低于阈值，会自动执行 `docker builder prune -af` 和 `docker image prune -af` 后再复查。
+5. 如果清理后仍低于阈值，会直接失败并输出明确错误，不会开始 `docker compose build`。
+6. 先执行 `docker compose build`，只有构建成功后才会继续切换服务。
+7. 停服前从当前 API container 保存运行中 image ID 到临时 rollback tag。
+8. 重启容器（`docker compose down` + `up -d`）。
+9. 执行内部健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）和外网检查（默认 `https://support.stellarix.space/health`）。
+10. 新栈启动或内部健康检查失败时，使用旧 image ID 执行 `up -d --no-build` 并验证恢复后的内部健康；外网失败只输出诊断并返回非零，需先排查 DNS、TLS、负载入口、安全组和 Nginx。
+11. 只有新部署全部健康检查成功后才清理临时 rollback tag；失败时保留该 tag 供人工处置。脚本同时使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
 
-这样即使镜像构建阶段失败，也不会先把线上容器停掉。
+这样 build 失败不会停止旧容器，新栈失败也会优先自动恢复上一运行镜像。涉及 `.env` 迁移时仍要保留仓库外配置备份和人工 rollback tag，以覆盖配置回滚和脚本进程中断。
 
 磁盘预检查支持两个可选环境变量：
 1. `DEPLOY_MIN_FREE_DISK_GB`
@@ -350,7 +352,7 @@ chmod +x deployment/deploy_ec2.sh
 自动调度 wrapper 会执行：
 1. 获取 `origin` 最新 refs。
 2. 比较本地 `HEAD` 和 `origin/main`。
-3. 如果远端有新提交，调用 `deployment/deploy_ec2.sh --branch main --domain support.stellarix.space` 做完整部署。
+3. 如果远端有新提交，生成目标 commit 的 build metadata，再调用 `deployment/deploy_ec2.sh --branch main --domain support.stellarix.space` 做完整部署；部署脚本会在 pull 后按实际 `HEAD` 再次校准。
 4. 如果没有新提交，只做内外网健康检查，不重启容器。
 5. 无论成功还是失败，都会尝试调用 Amazon SES 发一封日报。
 6. 日报会附带 `docker compose ps` 摘要、最近 docker 日志摘录，以及可选的 AI 日志分析。
