@@ -69,6 +69,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             self.assertIn(marker, source)
         self.assertNotIn("supportportal_assignment_admin_schedule", source)
         self.assertNotIn('/api/engineer/tickets?status=all', source)
+        self.assertNotIn("/availability", source)
 
     def test_admin_session_is_role_gated_and_preserves_engineer_storage(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
@@ -191,7 +192,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         for marker in (
             '<strong>Admin</strong>',
             "Welcome Back",
-            "An administrative workspace for managing engineer access, assignments, availability, and SLA health.",
+            "An administrative workspace for managing engineer access, schedules, assignments, and SLA health.",
             "admin-login-card",
             "Secure Admin Workspace",
             '<span>Email</span>',
@@ -200,7 +201,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-admin-case-header-spacing-1", html)
+        self.assertIn("20260721-schedule-driven-availability-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -352,7 +353,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.run_admin_app_script(
             """
             scheduleData = { timezone: "Asia/Shanghai", engineers: [
-              { account_id: "zac", email: "zac@example.com", display_name: "Zac", availability: "available", is_on_schedule_now: false, shifts: [] },
+              { account_id: "zac", email: "zac@example.com", display_name: "Zac", is_on_schedule_now: false, shifts: [] },
             ] };
             const management = renderAdminEngineerManagement();
             const schedule = renderAdminSchedule();
@@ -386,8 +387,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             """
             scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
             const html = renderScheduleEditor({
-              account_id: "zac", display_name: "Zac", availability: "unavailable",
-              availability_reason: "break", shifts: [{ weekday: 0, start: "00:00", end: "24:00" }],
+              account_id: "zac", display_name: "Zac", shifts: [{ weekday: 0, start: "00:00", end: "24:00" }],
             }, ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
             if (html.includes('type="time"') || html.includes('name="availability"') || html.includes('name="reason"')) {
               throw new Error("schedule editor still contains removed controls");
@@ -469,33 +469,15 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             """
         )
 
-    def test_admin_availability_is_a_separate_reasonless_toggle(self) -> None:
-        self.run_admin_app_script(
-            """
-            let requestUrl = "";
-            let requestBody = null;
-            scheduleData = { timezone: "Asia/Shanghai", engineers: [
-              { account_id: "zac", display_name: "Zac", availability: "unavailable", availability_reason: "break", shifts: [] },
-            ] };
-            accounts = [{ account_id: "zac", role: "engineer", availability: "unavailable", availability_reason: "break" }];
-            fetchJson = async (url, options) => {
-              requestUrl = url;
-              requestBody = JSON.parse(options.body);
-              return { account: { account_id: "zac", availability: "available", availability_reason: null } };
-            };
-            const button = {
-              dataset: { engineerId: "zac", nextAvailability: "available" }, textContent: "unavailable", disabled: false,
-              setAttribute() {},
-            };
-            await handleAvailabilityToggle(button);
-            if (!requestUrl.endsWith("/availability") || requestBody.reason !== null || requestBody.availability !== "available") {
-              throw new Error("availability toggle did not use the reasonless PATCH contract");
-            }
-            if (scheduleData.engineers[0].availability !== "available" || scheduleData.engineers[0].availability_reason !== null) {
-              throw new Error("availability response did not update local state");
-            }
-            """
-        )
+    def test_admin_uses_schedule_as_the_only_engineer_availability_state(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+
+        self.assertNotIn("handleAvailabilityToggle", source)
+        self.assertNotIn("toggle-availability", source)
+        self.assertNotIn("availability_reason", source)
+        self.assertNotIn("admin-availability-toggle", source + css)
+        self.assertNotIn("availability_reassigned", source)
 
     def test_admin_schedule_uses_page_scroll_and_sidebar_scrollbar_is_hidden(self) -> None:
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
@@ -512,11 +494,11 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.run_admin_app_script(
             """
             const engineers = [
-              { account_id: "zac", display_name: "Zac", availability: "available", shifts: [
+              { account_id: "zac", display_name: "Zac", shifts: [
                 { weekday: 6, start: "22:00", end: "06:00" },
                 { weekday: 0, start: "09:00", end: "17:00" },
               ] },
-              { account_id: "maya", display_name: "Maya", availability: "unavailable", shifts: [
+              { account_id: "maya", display_name: "Maya", shifts: [
                 { weekday: 0, start: "10:00", end: "14:00" },
               ] },
             ];

@@ -25,7 +25,6 @@ _VALID_STATUSES = {"open", "communicating", "escalated", "investigating", "resol
 _VALID_ASSIGNMENT_STATUSES = {"pending", "assigned", "resolved"}
 _VALID_DISPATCH_STATUSES = {"pending", "assigned", "failed", "resolved"}
 _VALID_WORKSPACE_ROLES = {"admin", "engineer"}
-_VALID_ENGINEER_AVAILABILITY = {"available", "unavailable"}
 _VALID_ROLES = {"customer", "assistant", "engineer", "system"}
 _VALID_INVESTIGATION_ROLES = {"engineer_ai", "engineer", "system"}
 _VALID_INVESTIGATION_STATES = {"active", "awaiting_confirmation", "awaiting_final_approval", "closed"}
@@ -129,11 +128,6 @@ def _normalize_workspace_role(value: Any) -> str:
     return role if role in _VALID_WORKSPACE_ROLES else "engineer"
 
 
-def _normalize_engineer_availability(value: Any) -> str:
-    availability = str(value or "unavailable").strip().lower()
-    return availability if availability in _VALID_ENGINEER_AVAILABILITY else "unavailable"
-
-
 def _normalize_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
     account_id = str(account.get("account_id") or "").strip()
     if not account_id:
@@ -146,9 +140,6 @@ def _normalize_workspace_account(account: dict[str, Any]) -> dict[str, Any]:
         "role": _normalize_workspace_role(account.get("role")),
         "password_hash": str(account.get("password_hash") or "").strip(),
         "active": bool(account.get("active", True)),
-        "availability": _normalize_engineer_availability(account.get("availability")),
-        "availability_reason": str(account.get("availability_reason") or "").strip() or None,
-        "availability_updated_at": account.get("availability_updated_at"),
         "last_assigned_at": account.get("last_assigned_at"),
         "created_at": account.get("created_at") or now,
         "updated_at": now,
@@ -163,12 +154,9 @@ def _workspace_account_row_to_payload(row: tuple[Any, ...]) -> dict[str, Any]:
         "role": _normalize_workspace_role(row[3]),
         "password_hash": str(row[4] or ""),
         "active": bool(row[5]),
-        "availability": _normalize_engineer_availability(row[6]),
-        "availability_reason": str(row[7] or "").strip() or None,
-        "availability_updated_at": _to_iso(row[8]) if row[8] is not None else None,
-        "last_assigned_at": _to_iso(row[9]) if row[9] is not None else None,
-        "created_at": _to_iso(row[10]),
-        "updated_at": _to_iso(row[11]),
+        "last_assigned_at": _to_iso(row[6]) if row[6] is not None else None,
+        "created_at": _to_iso(row[7]),
+        "updated_at": _to_iso(row[8]),
     }
 
 
@@ -938,17 +926,6 @@ class TicketRepository(Protocol):
     ) -> list[dict[str, Any]] | None:
         ...
 
-    def set_engineer_availability(
-        self,
-        account_id: str,
-        *,
-        availability: str,
-        reason: str | None,
-        actor_id: str,
-        updated_at: str,
-    ) -> dict[str, Any] | None:
-        ...
-
     def record_workspace_audit_event(
         self,
         event_type: str,
@@ -1694,10 +1671,6 @@ class InMemoryTicketRepository:
                 normalized["email"] = existing.get("email")
             if not normalized["password_hash"]:
                 normalized["password_hash"] = str(existing.get("password_hash") or "")
-            if "availability" not in account:
-                normalized["availability"] = existing.get("availability") or "unavailable"
-                normalized["availability_reason"] = existing.get("availability_reason")
-                normalized["availability_updated_at"] = existing.get("availability_updated_at")
             normalized["last_assigned_at"] = account.get("last_assigned_at", existing.get("last_assigned_at"))
         if not normalized["password_hash"]:
             raise ValueError("password_hash is required")
@@ -1813,7 +1786,6 @@ class InMemoryTicketRepository:
                     "role": invitation["role"],
                     "password_hash": password_hash,
                     "active": True,
-                    "availability": "unavailable",
                     "created_at": completed_at,
                     "updated_at": completed_at,
                 }
@@ -1874,45 +1846,6 @@ class InMemoryTicketRepository:
                 for item in self.list_engineer_schedules()
                 if item["engineer_id"] == normalized_engineer_id
             ]
-
-    def set_engineer_availability(
-        self,
-        account_id: str,
-        *,
-        availability: str,
-        reason: str | None,
-        actor_id: str,
-        updated_at: str,
-    ) -> dict[str, Any] | None:
-        normalized_account_id = str(account_id or "").strip()
-        normalized_availability = _normalize_engineer_availability(availability)
-        with self._assignment_lock:
-            account = self._workspace_accounts.get(normalized_account_id)
-            if not isinstance(account, dict) or account.get("role") != "engineer":
-                return None
-            previous_availability = account.get("availability")
-            previous_reason = account.get("availability_reason")
-            account.update(
-                {
-                    "availability": normalized_availability,
-                    "availability_reason": str(reason or "").strip() or None,
-                    "availability_updated_at": updated_at,
-                    "updated_at": updated_at,
-                }
-            )
-            self.record_workspace_audit_event(
-                "engineer_availability_changed",
-                actor_id=actor_id,
-                target_id=normalized_account_id,
-                payload={
-                    "previous_availability": previous_availability,
-                    "availability": normalized_availability,
-                    "previous_reason": previous_reason,
-                    "reason": account["availability_reason"],
-                },
-                created_at=updated_at,
-            )
-            return copy.deepcopy(account)
 
     def record_workspace_audit_event(
         self,
@@ -3243,9 +3176,6 @@ class PostgresTicketRepository:
                             role TEXT NOT NULL,
                             password_hash TEXT NOT NULL,
                             active BOOLEAN NOT NULL DEFAULT TRUE,
-                            availability TEXT NOT NULL DEFAULT 'unavailable',
-                            availability_reason TEXT,
-                            availability_updated_at TIMESTAMPTZ,
                             last_assigned_at TIMESTAMPTZ,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
@@ -3259,10 +3189,35 @@ class PostgresTicketRepository:
                     )
                 )
                 cur.execute(
+                    sql.SQL("DROP INDEX IF EXISTS {}").format(
+                        self._table("idx_support_workspace_accounts_dispatch")
+                    )
+                )
+                for column_name in (
+                    "availability",
+                    "availability_reason",
+                    "availability_updated_at",
+                ):
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {} DROP COLUMN IF EXISTS {}").format(
+                            self._table("support_workspace_accounts"),
+                            sql.Identifier(column_name),
+                        )
+                    )
+                cur.execute(
                     sql.SQL(
                         "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (LOWER(email)) WHERE email IS NOT NULL"
                     ).format(
                         sql.Identifier("idx_support_workspace_accounts_email_unique"),
+                        self._table("support_workspace_accounts"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} "
+                        "(role, active, last_assigned_at, account_id)"
+                    ).format(
+                        sql.Identifier("idx_support_workspace_accounts_dispatch"),
                         self._table("support_workspace_accounts"),
                     )
                 )
@@ -3455,6 +3410,38 @@ class PostgresTicketRepository:
                         self._table("support_engineer_case_events"),
                         self._table("support_engineer_cases"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE event_type = 'engineer_availability_changed'"
+                    ).format(self._table("support_workspace_audit_events"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE event_type = 'engineer_case_availability_reassigned'"
+                    ).format(self._table("support_engineer_case_events"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET last_assignment_reason = CASE last_assignment_reason
+                            WHEN 'engineer_unavailable' THEN 'engineer_off_schedule'
+                            WHEN 'no_available_engineer' THEN 'no_on_schedule_engineer'
+                            ELSE last_assignment_reason
+                        END
+                        WHERE last_assignment_reason IN ('engineer_unavailable', 'no_available_engineer')
+                        """
+                    ).format(self._table("support_engineer_cases"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET payload = jsonb_set(payload, '{{reason}}', to_jsonb('no_on_schedule_engineer'::text))
+                        WHERE payload ->> 'reason' = 'no_available_engineer'
+                        """
+                    ).format(self._table("support_engineer_case_events"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -5361,10 +5348,9 @@ class PostgresTicketRepository:
                             """
                             INSERT INTO {} AS existing_account (
                                 account_id, email, display_name, role, password_hash, active,
-                                availability, availability_reason, availability_updated_at,
                                 last_assigned_at, created_at, updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (account_id) DO UPDATE SET
                                 email = COALESCE(EXCLUDED.email, existing_account.email),
                                 display_name = EXCLUDED.display_name,
@@ -5380,7 +5366,6 @@ class PostgresTicketRepository:
                                 ),
                                 updated_at = EXCLUDED.updated_at
                             RETURNING account_id, email, display_name, role, password_hash, active,
-                                      availability, availability_reason, availability_updated_at,
                                       last_assigned_at, created_at, updated_at
                             """
                         ).format(self._table("support_workspace_accounts")),
@@ -5391,9 +5376,6 @@ class PostgresTicketRepository:
                             normalized["role"],
                             normalized["password_hash"],
                             normalized["active"],
-                            normalized["availability"],
-                            normalized["availability_reason"],
-                            normalized["availability_updated_at"],
                             normalized["last_assigned_at"],
                             normalized["created_at"],
                             normalized["updated_at"],
@@ -5416,7 +5398,6 @@ class PostgresTicketRepository:
                     sql.SQL(
                         """
                         SELECT account_id, email, display_name, role, password_hash, active,
-                               availability, availability_reason, availability_updated_at,
                                last_assigned_at, created_at, updated_at
                         FROM {}
                         WHERE account_id = %s
@@ -5436,7 +5417,6 @@ class PostgresTicketRepository:
                     sql.SQL(
                         """
                         SELECT account_id, email, display_name, role, password_hash, active,
-                               availability, availability_reason, availability_updated_at,
                                last_assigned_at, created_at, updated_at
                         FROM {}
                         ORDER BY LOWER(display_name), account_id
@@ -5458,7 +5438,6 @@ class PostgresTicketRepository:
                     sql.SQL(
                         """
                         SELECT account_id, email, display_name, role, password_hash, active,
-                               availability, availability_reason, availability_updated_at,
                                last_assigned_at, created_at, updated_at
                         FROM {}
                         WHERE LOWER(email) = %s
@@ -5648,11 +5627,10 @@ class PostgresTicketRepository:
                             """
                             INSERT INTO {} (
                                 account_id, email, display_name, role, password_hash, active,
-                                availability, created_at, updated_at
+                                created_at, updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, TRUE, 'unavailable', %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s)
                             RETURNING account_id, email, display_name, role, password_hash, active,
-                                      availability, availability_reason, availability_updated_at,
                                       last_assigned_at, created_at, updated_at
                             """
                         ).format(self._table("support_workspace_accounts")),
@@ -5790,84 +5768,6 @@ class PostgresTicketRepository:
             for item in self.list_engineer_schedules()
             if item["engineer_id"] == normalized_engineer_id
         ]
-
-    def set_engineer_availability(
-        self,
-        account_id: str,
-        *,
-        availability: str,
-        reason: str | None,
-        actor_id: str,
-        updated_at: str,
-    ) -> dict[str, Any] | None:
-        normalized_account_id = str(account_id or "").strip()
-        normalized_availability = _normalize_engineer_availability(availability)
-        normalized_reason = str(reason or "").strip() or None
-
-        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
-            with conn.transaction():
-                with conn.cursor() as cur:
-                    cur.execute(
-                        sql.SQL(
-                            """
-                            SELECT availability, availability_reason
-                            FROM {}
-                            WHERE account_id = %s AND role = 'engineer'
-                            FOR UPDATE
-                            """
-                        ).format(self._table("support_workspace_accounts")),
-                        (normalized_account_id,),
-                    )
-                    previous = cur.fetchone()
-                    if previous is None:
-                        return None
-                    cur.execute(
-                        sql.SQL(
-                            """
-                            UPDATE {}
-                            SET availability = %s,
-                                availability_reason = %s,
-                                availability_updated_at = %s,
-                                updated_at = %s
-                            WHERE account_id = %s
-                            RETURNING account_id, email, display_name, role, password_hash, active,
-                                      availability, availability_reason, availability_updated_at,
-                                      last_assigned_at, created_at, updated_at
-                            """
-                        ).format(self._table("support_workspace_accounts")),
-                        (
-                            normalized_availability,
-                            normalized_reason,
-                            updated_at,
-                            updated_at,
-                            normalized_account_id,
-                        ),
-                    )
-                    row = cur.fetchone()
-                    audit_payload = {
-                        "previous_availability": _normalize_engineer_availability(previous[0]),
-                        "availability": normalized_availability,
-                        "previous_reason": str(previous[1] or "").strip() or None,
-                        "reason": normalized_reason,
-                    }
-                    cur.execute(
-                        sql.SQL(
-                            """
-                            INSERT INTO {} (event_type, actor_id, target_id, payload, created_at)
-                            VALUES (%s, %s, %s, %s, %s)
-                            """
-                        ).format(self._table("support_workspace_audit_events")),
-                        (
-                            "engineer_availability_changed",
-                            str(actor_id or "system").strip() or "system",
-                            normalized_account_id,
-                            Json(audit_payload),
-                            updated_at,
-                        ),
-                    )
-                    return _workspace_account_row_to_payload(row) if row is not None else None
-
-        return self._run_with_connection_retry("set_engineer_availability", _operation)
 
     def record_workspace_audit_event(
         self,

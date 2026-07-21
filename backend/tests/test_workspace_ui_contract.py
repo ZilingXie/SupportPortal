@@ -184,7 +184,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260719-workspace-auth-isolation-1", html)
+        self.assertIn("20260721-schedule-driven-availability-1", html)
         self.assertIn(".workspace-login-header", css)
         self.assertIn(".workspace-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -239,7 +239,7 @@ class WorkspaceUiContractTests(unittest.TestCase):
             "Welcome back, ${escapeHtml(engineer.name)}",
             "I'm ready to roll",
             "workspace-home-copy",
-            "20260719-workspace-auth-isolation-1",
+            "20260721-schedule-driven-availability-1",
         ):
             self.assertIn(marker, welcome_source + html)
         for removed_marker in (
@@ -265,6 +265,9 @@ class WorkspaceUiContractTests(unittest.TestCase):
             "repeat(7, minmax(112px, 1fr))",
         ):
             self.assertIn(marker, source + css)
+        self.assertNotIn("workspaceAccount?.availability", source)
+        self.assertNotIn("Availability is managed separately", source)
+        self.assertIn("Your dispatch availability follows this schedule.", source)
 
     def test_workspace_disables_multi_agent_from_controlled_launch_main_flow(self) -> None:
         source = Path("ui/workspace-ui/app.js").read_text(encoding="utf-8")
