@@ -3317,6 +3317,18 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         }
         ticket["messages"].append(pending_assistant_message)
         await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=[pending_assistant_message])
+        await async_to_thread(
+            ticket_repository.save_account_reply_execution,
+            {
+                "execution_id": f"reply-{uuid4().hex}",
+                "ticket_id": ticket_id,
+                "reply_kind": route or "account_reply",
+                "persona_key": persona_assignment["persona_key"],
+                "persona_version": persona_assignment["version"],
+                "effective_prompt": copy.deepcopy(persona_assignment.get("content") or {}),
+                "created_at": timestamp,
+            },
+        )
 
     billing_ticket: dict[str, Any] = {
         "billing_ticket_id": billing_ticket_id,

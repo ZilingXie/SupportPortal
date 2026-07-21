@@ -942,6 +942,8 @@ class TicketRepository(Protocol):
 
     def save_account_route_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
+    def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
+    def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
     def list_account_personas(self) -> list[dict[str, Any]]: ...
     def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]: ...
     def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]: ...
@@ -1170,6 +1172,7 @@ class InMemoryTicketRepository:
         self._rollout_counters: dict[str, int] = {}
         self._rollout_events: dict[tuple[str, str], int] = {}
         self._account_route_executions: dict[str, list[dict[str, Any]]] = {}
+        self._account_reply_executions: dict[str, list[dict[str, Any]]] = {}
         self._account_personas: dict[str, dict[str, Any]] = {}
         self._account_persona_versions: dict[str, list[dict[str, Any]]] = {}
         self._account_persona_assignments: dict[str, dict[str, Any]] = {}
@@ -1211,6 +1214,20 @@ class InMemoryTicketRepository:
             return copy.deepcopy(self._account_route_executions.get(str(ticket_id), []))
         return sorted(
             [copy.deepcopy(item) for items in self._account_route_executions.values() for item in items],
+            key=lambda item: str(item.get("created_at") or ""), reverse=True,
+        )
+
+    def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(execution)
+        saved["created_at"] = saved.get("created_at") or _utc_now()
+        self._account_reply_executions.setdefault(str(saved["ticket_id"]), []).append(saved)
+        return copy.deepcopy(saved)
+
+    def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]:
+        if ticket_id is not None:
+            return copy.deepcopy(self._account_reply_executions.get(str(ticket_id), []))
+        return sorted(
+            [copy.deepcopy(item) for items in self._account_reply_executions.values() for item in items],
             key=lambda item: str(item.get("created_at") or ""), reverse=True,
         )
 
@@ -3459,6 +3476,7 @@ class PostgresTicketRepository:
                     ).format(self._table("support_workspace_audit_events"))
                 )
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (execution_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_account_route_executions"), self._table("support_tickets")))
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (execution_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_account_reply_executions"), self._table("support_tickets")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, published_version INTEGER, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)").format(self._table("support_account_personas")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT NOT NULL REFERENCES {}(persona_key) ON DELETE CASCADE, version INTEGER NOT NULL, status TEXT NOT NULL CHECK (status IN ('draft','published','superseded')), content JSONB NOT NULL, change_note TEXT NOT NULL, based_on_version INTEGER, created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, published_by TEXT, published_at TIMESTAMPTZ, PRIMARY KEY (persona_key, version))").format(self._table("support_account_prompt_versions"), self._table("support_account_personas")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (ticket_id TEXT PRIMARY KEY REFERENCES {}(ticket_id) ON DELETE CASCADE, persona_key TEXT NOT NULL, version INTEGER NOT NULL, assigned_at TIMESTAMPTZ NOT NULL, FOREIGN KEY (persona_key, version) REFERENCES {}(persona_key, version))").format(self._table("support_account_persona_assignments"), self._table("support_tickets"), self._table("support_account_prompt_versions")))
@@ -7646,6 +7664,25 @@ class PostgresTicketRepository:
                     cur.execute(sql.SQL("SELECT payload FROM {} WHERE ticket_id=%s ORDER BY created_at").format(self._table("support_account_route_executions")), (str(ticket_id),))
                 return [dict(row[0]) for row in cur.fetchall()]
         return self._run_with_connection_retry("list_account_route_executions", _operation)
+
+    def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(execution)
+        saved["created_at"] = saved.get("created_at") or _utc_now()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("INSERT INTO {} (execution_id, ticket_id, payload, created_at) VALUES (%s,%s,%s,%s) ON CONFLICT (execution_id) DO UPDATE SET payload=EXCLUDED.payload").format(self._table("support_account_reply_executions")), (saved["execution_id"], saved["ticket_id"], Json(saved), saved["created_at"]))
+            return copy.deepcopy(saved)
+        return self._run_with_connection_retry("save_account_reply_execution", _operation)
+
+    def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                if ticket_id is None:
+                    cur.execute(sql.SQL("SELECT payload FROM {} ORDER BY created_at DESC").format(self._table("support_account_reply_executions")))
+                else:
+                    cur.execute(sql.SQL("SELECT payload FROM {} WHERE ticket_id=%s ORDER BY created_at").format(self._table("support_account_reply_executions")), (str(ticket_id),))
+                return [dict(row[0]) for row in cur.fetchall()]
+        return self._run_with_connection_retry("list_account_reply_executions", _operation)
 
     def list_account_personas(self) -> list[dict[str, Any]]:
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:

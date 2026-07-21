@@ -128,6 +128,13 @@ CREATE TABLE IF NOT EXISTS support_account_route_executions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_account_reply_executions (
+    execution_id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS support_account_personas (
     persona_key TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
