@@ -19,6 +19,148 @@ DEFAULT_PERSONA_CONTENT = {
 }
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+_ENV_EXACT_DESCRIPTIONS = {
+    "OPENAI_API_KEY": "Credential used to authenticate requests to the OpenAI API.",
+    "TICKET_DB_DSN": "PostgreSQL connection string used by the ticket and workspace repository.",
+    "TICKET_DB_MIGRATION_DSN": "Privileged PostgreSQL connection string used only for ticket schema migrations.",
+    "PGVECTOR_DSN": "PostgreSQL connection string used by the pgvector knowledge store.",
+    "WORKSPACE_AUTH_SECRET": "Secret used to sign and verify Workspace authentication tokens.",
+    "WORKSPACE_PUBLIC_BASE_URL": "Public base URL used when SupportPortal creates Workspace links.",
+    "WORKSPACE_BOOTSTRAP_ADMIN_ID": "Stable identifier for the bootstrap Workspace administrator account.",
+    "WORKSPACE_BOOTSTRAP_ADMIN_NAME": "Display name for the bootstrap Workspace administrator account.",
+    "WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD": "Initial password for the bootstrap Workspace administrator account.",
+    "STACK_RUNTIME_MODE": "Selects which SupportPortal services the single-host stack runs.",
+    "STACK_DB_MODE": "Selects whether the single-host stack uses local or remote data services.",
+    "NGINX_HOST_PORT": "Host port exposed by the SupportPortal Nginx gateway.",
+    "ASYNC_QUERY_ENABLED": "Enables asynchronous processing for supported query workflows.",
+    "OPTIMISTIC_PARALLEL_ROUTE_ENABLED": "Enables optimistic parallel execution in the support routing path.",
+    "REDIS_URL": "Redis connection URL used by task queues and runtime coordination.",
+    "TASK_QUEUE_NAME": "Queue name used for general asynchronous SupportPortal tasks.",
+    "RAG_QUEUE_NAME": "Queue name used for asynchronous RAG tasks.",
+    "EVENT_BUS_CHANNEL": "Redis channel used for SupportPortal runtime events.",
+    "RAG_SERVICE_URL": "Internal base URL used to call the RAG service.",
+    "RAG_SERVICE_SHARED_TOKEN": "Shared credential used to authenticate internal RAG service requests.",
+    "APP_BUILD_REF": "Source revision identifier reported by the running application build.",
+    "APP_BUILD_TIME": "Build timestamp reported by the running application.",
+    "APP_RUNTIME_IMAGE": "Container image reference used to run SupportPortal application services.",
+    "API_WORKERS": "Number of API worker processes started by the application server.",
+    "RUNTIME_PROFILE": "Selects the SupportPortal runtime behavior profile.",
+    "CLIENT_TICKET_AGENT_RUNTIME_MODE": "Selects the execution mode for the client ticket agent.",
+    "LOCAL_KNOWLEDGE_ROOT": "Filesystem root containing knowledge sources for local ingestion.",
+    "PRIMARY_CHUNK_STRATEGY": "Chunking strategy used by the primary knowledge index.",
+    "SHADOW_CHUNK_STRATEGY": "Chunking strategy used by the shadow knowledge index.",
+    "ASSET_STORAGE_PROVIDER": "Selects the storage backend used for uploaded support assets.",
+    "ASSET_ALLOWED_EXTENSIONS": "File extensions accepted by the support asset upload API.",
+    "ASSET_S3_KMS_KEY_ID": "AWS KMS key identifier used to encrypt uploaded S3 assets.",
+    "AWS_ACCESS_KEY_ID": "AWS access key identifier used by configured AWS integrations.",
+    "AWS_SECRET_ACCESS_KEY": "AWS secret access key used by configured AWS integrations.",
+    "AWS_SESSION_TOKEN": "Temporary AWS session credential used by configured AWS integrations.",
+    "DEPLOY_DOMAIN": "Public domain checked by the EC2 deployment workflow.",
+    "DEPLOY_ALERT_FROM": "Sender address used for deployment alert email.",
+    "DEPLOY_ALERT_TO": "Recipient address used for deployment alert email.",
+    "ALERT_FROM_EMAIL": "Legacy alias for the deployment alert sender address.",
+    "ALERT_TO_EMAIL": "Legacy alias for the deployment alert recipient address.",
+    "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL": "Internal destination for account-suspension automation requests.",
+    "BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL": "Internal destination for detailed-invoice automation requests.",
+    "BILLING_AUTOMATION_INTERNAL_EMAIL": "Legacy fallback destination for billing automation requests.",
+    "BILLING_AUTOMATION_EMAIL_FROM": "Sender address used by billing automation email.",
+    "BILLING_AUTOMATION_MAIL_TRANSPORT": "Selects the transport used to send billing automation email.",
+    "BILLING_AUTOMATION_REPLY_RECORD_PATH": "Filesystem path used to record polled billing reply metadata.",
+    "DEPLOY_MIN_FREE_DISK_GB": "Minimum free disk space required before an EC2 deployment proceeds.",
+    "DEPLOY_REPORT_ENABLE_AI": "Enables AI-generated analysis in deployment reports.",
+    "DEPLOY_REPORT_LOG_SINCE": "Lookback window used when collecting logs for a deployment report.",
+    "DEPLOY_REPORT_LOG_LINES_PER_SERVICE": "Maximum log lines collected from each service for a deployment report.",
+    "DEPLOY_REPORT_TIMEZONE": "Timezone used for deployment report timestamps.",
+    "TICKET_DB_APPLICATION_NAME": "PostgreSQL application name attached to ticket database connections.",
+    "TICKET_DB_CONNECT_TIMEOUT": "Connection timeout used by the ticket database client.",
+    "PGVECTOR_CONNECT_TIMEOUT": "Connection timeout used by the pgvector client.",
+    "PGVECTOR_CONNECT_RETRIES": "Maximum number of pgvector connection attempts.",
+    "PGVECTOR_CONNECT_RETRY_DELAY_SECONDS": "Delay between pgvector connection attempts.",
+    "TICKET_WORKER_RAG_MAX_WAIT_SECONDS": "Maximum time a ticket worker waits for a RAG result.",
+}
+
+_ENV_PREFIX_DESCRIPTIONS = (
+    ("BILLING_AUTOMATION_", "billing automation"),
+    ("ENGINEER_INVESTIGATION_REPLY_", "engineer investigation reply"),
+    ("ENGINEER_ASSIGNMENT_", "engineer assignment"),
+    ("ENGINEER_MULTI_AGENT_", "engineer multi-agent"),
+    ("REQUEST_BODY_ANALYZER_", "request body analysis"),
+    ("RAG_CONTEXT_COMPRESSION_", "RAG context compression"),
+    ("RAG_QUERY_EXPANSION_", "RAG query expansion"),
+    ("RAG_SUFFICIENCY_JUDGE_", "RAG sufficiency judging"),
+    ("RAG_BENCHMARK_", "RAG benchmark"),
+    ("RAG_RERANK_", "RAG reranking"),
+    ("RAG_VECTOR_", "RAG vector retrieval"),
+    ("RAG_SHADOW_", "RAG shadow retrieval"),
+    ("RAG_KG_", "RAG knowledge-graph integration"),
+    ("CLIENT_RAG_", "client RAG request"),
+    ("CLIENT_ACK_", "automated client acknowledgement"),
+    ("INTENT_ROUTER_", "account intent routing"),
+    ("OPENAI_WEB_SEARCH_", "OpenAI web search"),
+    ("OPENAI_", "OpenAI integration"),
+    ("DEEPSEEK_", "DeepSeek fallback integration"),
+    ("SILICONFLOW_", "SiliconFlow integration"),
+    ("SILLICONFLOW_", "legacy SiliconFlow integration"),
+    ("EMBEDDING_", "embedding generation"),
+    ("KNOWLEDGE_", "knowledge ingestion"),
+    ("KG_EMBEDDING_", "knowledge-graph embedding"),
+    ("KG_LLM_", "knowledge-graph language model"),
+    ("KG_NEO4J_", "knowledge-graph Neo4j"),
+    ("KG_", "knowledge graph"),
+    ("RAG_", "retrieval-augmented generation"),
+    ("LOCAL_POSTGRES_", "local PostgreSQL"),
+    ("LOCAL_TICKET_DB_", "local ticket database"),
+    ("LOCAL_PGVECTOR_", "local pgvector"),
+    ("LOCAL_NEO4J_", "local Neo4j"),
+    ("LOCAL_KNOWLEDGE_", "local knowledge index"),
+    ("TICKET_DB_", "ticket database"),
+    ("PGVECTOR_", "pgvector knowledge store"),
+    ("WORKSPACE_", "Workspace"),
+    ("ASSET_S3_", "S3 asset storage"),
+    ("ASSET_", "support asset storage"),
+    ("AWS_", "AWS integration"),
+    ("MSGRAPH_", "Microsoft Graph integration"),
+    ("DEPLOY_REPORT_", "deployment report"),
+    ("DEPLOY_", "EC2 deployment"),
+    ("SENTIMENT_", "sentiment analysis"),
+)
+
+_ENV_SUFFIX_PURPOSES = (
+    ("_API_KEY", "API credential"), ("_CLIENT_SECRET", "client credential"),
+    ("_PASSWORD", "password credential"), ("_SHARED_TOKEN", "shared authentication token"),
+    ("_TOKEN_CACHE", "authentication token cache path"), ("_DSN", "database connection string"),
+    ("_BASE_URL", "service base URL"), ("_URI", "service connection URI"),
+    ("_MODEL_ID", "model identifier"), ("_MODELS", "model selection list"),
+    ("_MODEL", "model selection"), ("_PROVIDER", "provider selection"),
+    ("_REASONING_EFFORT", "model reasoning-effort level"),
+    ("_CONFIDENCE_THRESHOLD", "minimum confidence threshold"),
+    ("_TIMEOUT_SECONDS", "timeout in seconds"), ("_TIMEOUT_MS", "timeout in milliseconds"),
+    ("_POLL_INTERVAL_SECONDS", "polling interval in seconds"),
+    ("_RECOVERY_WINDOW_SECONDS", "recovery window in seconds"),
+    ("_RETRY_DELAY_SECONDS", "delay between retry attempts in seconds"),
+    ("_MAX_WAIT_SECONDS", "maximum wait time in seconds"),
+    ("_TTL_SECONDS", "retention duration in seconds"), ("_TTL_HOURS", "retention duration in hours"),
+    ("_SLA_HOURS", "service-level target in hours"),
+    ("_MAX_RETRIES", "maximum retry count"), ("_MAX_OUTPUT_TOKENS", "maximum generated token count"),
+    ("_MAX_ATTACHMENTS", "maximum attachment count"), ("_MAX_MESSAGES", "maximum message count per poll"),
+    ("_MAX_LOG_CHARS", "maximum captured log character count"), ("_MAX_BYTES", "maximum allowed size in bytes"),
+    ("_MAX_SIZE", "maximum pool size"), ("_MIN_SIZE", "minimum pool size"),
+    ("_BATCH_SIZE", "batch size"), ("_NUM_RESULTS", "result count"),
+    ("_CANDIDATE_K", "retrieval candidate count"), ("_TOP_K", "top retrieval result count"),
+    ("_TOP_N", "top result count"), ("_WINDOW_TOKENS", "context window token budget"),
+    ("_BUFFER_TOKENS", "context safety buffer in tokens"),
+    ("_RESERVE_TOKENS", "reserved output token budget"),
+    ("_ENABLED", "feature toggle"), ("_DIMENSIONS", "embedding vector dimensions"),
+    ("_DIM", "vector dimensions"), ("_SCHEMA", "database schema name"),
+    ("_TABLE", "database table name"), ("_USERNAME", "service account username"),
+    ("_USER", "service account username"), ("_CLIENT_ID", "OAuth client identifier"),
+    ("_TENANT_ID", "OAuth tenant identifier"), ("_HOST_PORT", "host port mapping"),
+    ("_PORT", "network port"), ("_REGION", "cloud region"),
+    ("_BUCKET", "object storage bucket name"), ("_PREFIX", "object key prefix"),
+    ("_QUEUE_NAME", "task queue name"), ("_PERCENT", "rollout percentage"),
+    ("_PATH", "filesystem path"), ("_DIR", "filesystem directory"),
+)
+
 
 def environment_config_names(env_path: Path, *, required: bool = False) -> list[str]:
     try:
@@ -39,6 +181,35 @@ def environment_config_names(env_path: Path, *, required: bool = False) -> list[
         if separator and _ENV_KEY_RE.fullmatch(name):
             names.add(name)
     return sorted(names)
+
+
+def environment_config_description(name: str) -> str:
+    """Describe an environment key without reading or inferring its value."""
+    normalized_name = name.upper()
+    if normalized_name in _ENV_EXACT_DESCRIPTIONS:
+        return _ENV_EXACT_DESCRIPTIONS[normalized_name]
+
+    scope = "SupportPortal"
+    remainder = normalized_name
+    for prefix, description in _ENV_PREFIX_DESCRIPTIONS:
+        if normalized_name.startswith(prefix):
+            scope = description
+            remainder = normalized_name[len(prefix):]
+            break
+
+    for suffix, purpose in _ENV_SUFFIX_PURPOSES:
+        if normalized_name.endswith(suffix):
+            return f"{purpose.capitalize()} used by the {scope} configuration."
+
+    label = remainder.replace("_", " ").lower()
+    return f"Runtime setting for {label} in the {scope} configuration."
+
+
+def environment_config_entries(env_path: Path, *, required: bool = False) -> list[dict[str, str]]:
+    return [
+        {"name": name, "description": environment_config_description(name)}
+        for name in environment_config_names(env_path, required=required)
+    ]
 
 
 def _is_automated(ticket: dict[str, Any]) -> bool:

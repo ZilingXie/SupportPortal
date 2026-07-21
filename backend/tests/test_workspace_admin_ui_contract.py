@@ -85,9 +85,10 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "data-persona-draft-form", "data-env-search", "data-action=\"publish-persona\"",
             "environmentLoadError", "loadEnvironmentConfig",
             "data-action=\"retry-environment-config\"",
+            "description.toLowerCase()", "admin-config-description", "admin-config-copy",
         ):
             self.assertIn(marker, source)
-        for marker in (".admin-metric-strip", ".admin-route-timeline", ".admin-prompt-editor", ".admin-config-list"):
+        for marker in (".admin-metric-strip", ".admin-route-timeline", ".admin-prompt-editor", ".admin-config-list", ".admin-config-description", ".admin-config-copy"):
             self.assertIn(marker, css)
 
         self.run_admin_app_script(
@@ -96,11 +97,22 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             routingData = { router_prompt_version: 'account-router-v1', stages: ['semantic_intent', 'policy_gate'], system_prompt: 'actual prompt' };
             routeData = { routes: [{ ticket_id: 'TK-1', final_route: 'detailed_invoice', route_source: 'intent_router', prompt_snapshot_available: true, stages: [] }] };
             personaData = { personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', signoff_name: 'Sid' }, change_note: 'Initial' }] }] };
-            environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'] };
+            environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'], items: [
+              { name: 'OPENAI_API_KEY', description: 'Credential used by OpenAI.' },
+              { name: 'TICKET_DB_DSN', description: 'PostgreSQL connection string for ticket storage.' }
+            ] };
             if (!renderAutomatedCases().includes('25.0%')) throw new Error('automation ratio missing');
             if (!renderRoutePrompt().includes('account-router-v1')) throw new Error('route version missing');
             if (!renderPersonaPrompts().includes('Version history')) throw new Error('persona history missing');
             if (!renderEnvironmentConfig().includes('OPENAI_API_KEY')) throw new Error('config name missing');
+            if (!renderEnvironmentConfig().includes('Credential used by OpenAI.')) throw new Error('config description missing');
+            environmentQuery = 'ticket storage';
+            const filteredEnvironment = renderEnvironmentConfig();
+            if (!filteredEnvironment.includes('TICKET_DB_DSN') || filteredEnvironment.includes('OPENAI_API_KEY')) throw new Error('description search missing');
+            environmentQuery = '';
+            environmentData = { names: ['LEGACY_ONLY_KEY'] };
+            const legacyEnvironment = renderEnvironmentConfig();
+            if (!legacyEnvironment.includes('LEGACY_ONLY_KEY') || !legacyEnvironment.includes('Description unavailable until the API is updated.')) throw new Error('names-only compatibility missing');
             """
         )
 

@@ -17,7 +17,7 @@ let routingData = { stages: [], system_prompt: "" };
 let routeData = { routes: [] };
 let selectedRouteDetail = null;
 let personaData = { personas: [] };
-let environmentData = { names: [] };
+let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
 let environmentQuery = "";
 let selectedPersonaKey = "";
@@ -672,8 +672,14 @@ function renderPersonaPrompts() {
 }
 
 function renderEnvironmentConfig() {
-  const names = (environmentData.names || []).filter(name => name.toLowerCase().includes(environmentQuery.toLowerCase()));
-  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><h1>Environment Config</h1><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search configuration names" /></label><h2>Configuration names <span class="admin-count">${names.length}</span></h2><div class="admin-config-list">${names.length ? names.map(name => `<button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy configuration name"><code>${escapeHtml(name)}</code><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button>`).join("") : `<p>No matching configuration names.</p>`}</div>`}</section>`;
+  const sourceItems = Array.isArray(environmentData.items) && environmentData.items.length
+    ? environmentData.items
+    : (environmentData.names || []).map(name => ({ name, description: "Description unavailable until the API is updated." }));
+  const normalizedQuery = environmentQuery.toLowerCase();
+  const items = sourceItems.filter(({ name, description }) => (
+    name.toLowerCase().includes(normalizedQuery) || description.toLowerCase().includes(normalizedQuery)
+  ));
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><h1>Environment Config</h1><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search names or descriptions" /></label><h2>Configuration names <span class="admin-count">${items.length}</span></h2><div class="admin-config-list">${items.length ? items.map(({ name, description }) => `<div class="admin-config-item"><div class="admin-config-copy"><code>${escapeHtml(name)}</code><span class="admin-config-description">${escapeHtml(description)}</span></div><button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy ${escapeHtml(name)}" aria-label="Copy ${escapeHtml(name)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></div>`).join("") : `<p>No matching configuration names or descriptions.</p>`}</div>`}</section>`;
 }
 
 function syncAdminRailScrollPosition() {
@@ -725,9 +731,9 @@ async function loadEnvironmentConfig({ render = true } = {}) {
   environmentLoadError = "";
   try {
     const payload = await fetchJson("/api/workspace/admin/environment-config");
-    environmentData = payload || { names: [] };
+    environmentData = payload || { names: [], items: [] };
   } catch (error) {
-    environmentData = { names: [] };
+    environmentData = { names: [], items: [] };
     environmentLoadError = error.message;
   }
   if (render) renderAdmin();
@@ -780,7 +786,7 @@ function signOut(options = {}) {
   metrics = null;
   auditEvents = [];
   scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
-  environmentData = { names: [] };
+  environmentData = { names: [], items: [] };
   environmentLoadError = "";
   selectedEngineerId = "";
   invitationResult = null;

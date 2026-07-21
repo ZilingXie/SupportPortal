@@ -362,9 +362,12 @@ class WorkspaceApiTests(unittest.TestCase):
                 response = self.client.get("/api/workspace/admin/environment-config", headers=self._admin_headers())
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(set(payload), {"names"})
+        self.assertEqual(set(payload), {"items", "names"})
         self.assertEqual(payload["names"], ["OTHER_NAME", "SAFE_NAME"])
+        self.assertEqual([item["name"] for item in payload["items"]], payload["names"])
+        self.assertTrue(all(item["description"].strip() for item in payload["items"]))
         self.assertNotIn("do-not-return-this-value", response.text)
+        self.assertNotIn("also-hidden", response.text)
         self.assertNotIn(str(env_path), response.text)
 
     def test_environment_config_api_returns_generic_503_for_missing_inventory(self) -> None:
