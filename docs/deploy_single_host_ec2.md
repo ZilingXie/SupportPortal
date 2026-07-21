@@ -192,6 +192,9 @@ podman-compose \
 
 说明：EC2 上使用 Docker，不使用 Podman。
 
+现有线上环境从多 env 文件迁移到单一根 `.env` 时，请先执行
+[线上单一 `.env` 迁移报告](./production_env_migration_report.md)中的三阶段 gate 和人工 image-ID rollback 流程。不要直接删除线上旧 env 文件。
+
 ### 3.1 准备 EC2
 1. Ubuntu 22.04/24.04。
 2. 安全组开放：
