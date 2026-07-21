@@ -1467,9 +1467,10 @@
             <li><strong>Fraud fields：</strong>Suhird 明确 required 与 optional fields。</li>
             <li><strong>Clarification：</strong>同一信息不能无限追问，达到限制后转人工。</li>
             <li><strong>Reply timing：</strong>首条自动回复随机延迟 6–10 分钟，避免 AI 秒回。</li>
-            <li><strong>Prompt：</strong>维护不同人设的受控回复模板。</li>
+            <li><strong>Prompt：</strong>维护不同人设的受控回复模板、发布版本、比较与回滚。</li>
             <li><strong>Scope：</strong>自动化覆盖 account suspension / fraud、detailed invoice 与 enablement。</li>
-            <li><strong>Metrics：</strong>展示可解决 case 百分比，并据此决定是否扩充 category。</li>
+            <li><strong>Metrics：</strong>以全部 /account ticket 为分母展示 routed-to-Automated 占比，并据此决定是否扩充 category。</li>
+            <li><strong>Admin：</strong>新增 Automated Cases、Route &amp; Prompt、Persona Prompt Template 与 Environment Config 控制面。</li>
           </ul>
           <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-&gt;</span></a>
         </article>
@@ -1483,7 +1484,7 @@
             <li>在 Slack 中投递关联 case；具体消息承载方式需先验证权限。</li>
             <li>只有 Admin 可以 reassign case。</li>
             <li>使用全局 Round Robin 平均分配。</li>
-            <li>Admin Dashboard 统一展示 assignee、priority、resolved、audit 与 reassign。</li>
+            <li>Admin Dashboard 复用 Phase 2 四个 automation 控制面，并继续展示 assignee、priority、resolved、audit 与 reassign。</li>
           </ul>
           <a class="phase-action" href="./roadmap/phase3.html" aria-label="打开 Phase 3 计划页面">打开 Phase 3 计划 <span aria-hidden="true">-&gt;</span></a>
         </article>

@@ -101,6 +101,14 @@ from backend.services.workspace_auth import (
     verify_workspace_access_token,
     verify_workspace_password,
 )
+from backend.services.account_admin import (
+    apply_persona_to_customer_reply,
+    account_automation_payload,
+    environment_config_names,
+    route_execution_from_decision,
+    routing_config_payload,
+)
+from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
 from backend.services.case_memory_ledger import build_case_memory_ledger_record_from_feedback
 from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
 from backend.services.engineer_evidence_tools import (
@@ -281,6 +289,7 @@ def _build_billing_internal_email_attempt(
     billing_ticket_id: str,
     customer_email: str | None,
     requester: str | None,
+    persona_instruction: str | None = None,
 ) -> dict[str, Any]:
     billing_result = build_billing_automation_result(
         action=action,
@@ -289,6 +298,7 @@ def _build_billing_internal_email_attempt(
         customer_email=customer_email,
         requester=requester,
         billing_ticket_id=billing_ticket_id,
+        persona_instruction=persona_instruction,
     )
     customer_reply = billing_result.customer_reply
     missing_fields = list(billing_result.missing_fields)
@@ -422,6 +432,22 @@ class AccountIntakeRequest(BaseModel):
     external_id: str | None = Field(default=None, max_length=160)
     source: str | dict[str, Any] | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=160)
+
+
+class AccountPersonaCreateRequest(BaseModel):
+    persona_key: str = Field(pattern=r"^[a-z][a-z0-9-]{1,63}$")
+    display_name: str = Field(min_length=1, max_length=120)
+    content: dict[str, Any]
+
+
+class AccountPersonaDraftRequest(BaseModel):
+    content: dict[str, Any]
+    change_note: str = Field(min_length=1, max_length=500)
+    based_on_version: int | None = Field(default=None, ge=1)
+
+
+class AccountPersonaEnabledRequest(BaseModel):
+    enabled: bool
 
 
 class BillingResponseSubmitRequest(BaseModel):
@@ -3213,6 +3239,13 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         ticket_context=ticket_context,
         semantic_first=True,
     )
+    route_system_prompt = build_route_system_prompt()
+    route_user_prompt = build_route_user_payload(
+        route_input,
+        ticket_subject=title,
+        ticket_context=ticket_context,
+        response_language=decision.response_language,
+    )
     route = str(decision.execution_action or decision.route or "").strip()
     route_family = str(decision.route_family or "").strip()
     is_billing_automation_route = (
@@ -3223,6 +3256,12 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         route_family == "billing_review"
         and route == "human_review_required"
     )
+    persona_assignment: dict[str, Any] | None = None
+    ticket_saved = False
+    if is_billing_automation_route:
+        await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
+        persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, ticket_id)
+        ticket_saved = True
 
     resolution: SupportResolution | None = None
     response_status = "not_automated"
@@ -3243,6 +3282,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
             billing_ticket_id=billing_ticket_id,
             customer_email=str(request.customer_email or "").strip() or None,
             requester=str(request.customer_email or "").strip() or None,
+            persona_instruction=str(persona_assignment.get("content", {}).get("instruction") or "") if persona_assignment else None,
         )
         customer_reply = str(billing_email_attempt["customer_reply"] or "")
         missing_fields = list(billing_email_attempt["missing_fields"])
@@ -3261,7 +3301,22 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 }
             )
 
-    await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
+    pending_assistant_message = ticket["messages"].pop() if customer_reply else None
+    if not ticket_saved:
+        await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
+
+    if customer_reply:
+        if persona_assignment is None:
+            persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, ticket_id)
+        customer_reply = apply_persona_to_customer_reply(customer_reply, persona_assignment)
+        assert pending_assistant_message is not None
+        pending_assistant_message["content"] = customer_reply
+        pending_assistant_message["meta"] = {
+            "persona_key": persona_assignment["persona_key"],
+            "persona_version": persona_assignment["version"],
+        }
+        ticket["messages"].append(pending_assistant_message)
+        await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=[pending_assistant_message])
 
     billing_ticket: dict[str, Any] = {
         "billing_ticket_id": billing_ticket_id,
@@ -3296,6 +3351,16 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "router_source": decision.router_source,
     }
     await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+    await async_to_thread(
+        ticket_repository.save_account_route_execution,
+        route_execution_from_decision(
+            ticket_id=ticket_id,
+            decision=decision,
+            system_prompt=route_system_prompt,
+            user_prompt=route_user_prompt,
+            created_at=timestamp,
+        ),
+    )
 
     rollout_position: int | None = None
     rollout_selected = False
@@ -5397,6 +5462,126 @@ def get_workspace_admin_metrics(
         "guardrail": {"rejected": guardrail_reject_count},
         "generated_at": now.isoformat(),
     }
+
+
+@app.get("/api/workspace/admin/account-automation")
+def get_workspace_admin_account_automation(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    route_status: str | None = Query(default=None, pattern="^(automation|not_automated)$"),
+    category: str | None = Query(default=None, max_length=128),
+    created_from: str | None = Query(default=None, max_length=64),
+    created_to: str | None = Query(default=None, max_length=64),
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return account_automation_payload(ticket_repository, page=page, page_size=page_size, route_status=route_status, category=category, created_from=created_from, created_to=created_to)
+
+
+@app.get("/api/workspace/admin/account-routing/config")
+def get_workspace_admin_account_routing_config(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return routing_config_payload()
+
+
+@app.get("/api/workspace/admin/account-routes")
+def get_workspace_admin_account_routes(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    executions = ticket_repository.list_account_route_executions()
+    summaries = [{key: value for key, value in item.items() if key not in {"system_prompt", "user_prompt"}} for item in executions]
+    start = (page - 1) * page_size
+    return {"routes": summaries[start : start + page_size], "page": page, "page_size": page_size, "total": len(summaries)}
+
+
+@app.get("/api/workspace/admin/account-routes/{ticket_id}")
+def get_workspace_admin_account_route_detail(
+    ticket_id: str,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    executions = ticket_repository.list_account_route_executions(ticket_id)
+    if executions:
+        return {"ticket_id": ticket_id, "executions": executions, "legacy": False}
+    legacy = ticket_repository.get_billing_ticket_by_client_ticket_id(ticket_id)
+    if legacy is None:
+        raise HTTPException(status_code=404, detail="Account route not found")
+    return {"ticket_id": ticket_id, "executions": [], "legacy": True, "legacy_route": legacy, "prompt_snapshot_available": False}
+
+
+@app.get("/api/workspace/admin/account-personas")
+def get_workspace_admin_account_personas(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return {"personas": ticket_repository.list_account_personas()}
+
+
+@app.post("/api/workspace/admin/account-personas")
+def create_workspace_admin_account_persona(
+    request: AccountPersonaCreateRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    timestamp = now_iso()
+    try:
+        version = ticket_repository.create_account_persona(request.persona_key, request.display_name, content=request.content, actor_id=principal.account_id, created_at=timestamp)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ticket_repository.record_workspace_audit_event("account_persona_created", actor_id=principal.account_id, target_id=request.persona_key, payload={"version": version["version"]}, created_at=timestamp)
+    return {"version": version}
+
+
+@app.post("/api/workspace/admin/account-personas/{persona_key}/drafts")
+def create_workspace_admin_account_persona_draft(
+    persona_key: str,
+    request: AccountPersonaDraftRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    timestamp = now_iso()
+    try:
+        version = ticket_repository.create_account_persona_draft(persona_key, content=request.content, change_note=request.change_note, based_on_version=request.based_on_version, actor_id=principal.account_id, created_at=timestamp)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ticket_repository.record_workspace_audit_event("account_persona_draft_created", actor_id=principal.account_id, target_id=persona_key, payload={"version": version["version"], "change_note": request.change_note}, created_at=timestamp)
+    return {"version": version}
+
+
+def _account_persona_version_action(persona_key: str, version: int, principal: WorkspacePrincipal, action: str) -> dict[str, Any]:
+    timestamp = now_iso()
+    method = ticket_repository.publish_account_persona_version if action == "publish" else ticket_repository.rollback_account_persona_version
+    try:
+        result = method(persona_key, version, actor_id=principal.account_id, published_at=timestamp)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ticket_repository.record_workspace_audit_event(f"account_persona_{action}ed", actor_id=principal.account_id, target_id=persona_key, payload={"version": result["version"], "source_version": version}, created_at=timestamp)
+    return {"version": result}
+
+
+@app.post("/api/workspace/admin/account-personas/{persona_key}/versions/{version}/publish")
+def publish_workspace_admin_account_persona(persona_key: str, version: int, principal: WorkspacePrincipal = Depends(require_workspace_admin)) -> dict[str, Any]:
+    return _account_persona_version_action(persona_key, version, principal, "publish")
+
+
+@app.post("/api/workspace/admin/account-personas/{persona_key}/versions/{version}/rollback")
+def rollback_workspace_admin_account_persona(persona_key: str, version: int, principal: WorkspacePrincipal = Depends(require_workspace_admin)) -> dict[str, Any]:
+    return _account_persona_version_action(persona_key, version, principal, "rollback")
+
+
+@app.patch("/api/workspace/admin/account-personas/{persona_key}")
+def set_workspace_admin_account_persona_enabled(persona_key: str, request: AccountPersonaEnabledRequest, principal: WorkspacePrincipal = Depends(require_workspace_admin)) -> dict[str, Any]:
+    try:
+        persona = ticket_repository.set_account_persona_enabled(persona_key, request.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ticket_repository.record_workspace_audit_event("account_persona_enabled_changed", actor_id=principal.account_id, target_id=persona_key, payload={"enabled": request.enabled}, created_at=now_iso())
+    return {"persona": persona}
+
+
+@app.get("/api/workspace/admin/environment-config")
+def get_workspace_admin_environment_config(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, list[str]]:
+    return {"names": environment_config_names(BASE_DIR / ".env")}
 
 
 @app.get("/api/engineer/tickets")

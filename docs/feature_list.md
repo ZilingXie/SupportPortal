@@ -28,6 +28,7 @@
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口可查看 Billing ticket 历史和详情。
+- Account 客户回复使用可发布、可回滚并按 ticket 稳定分配的 Persona Prompt 版本。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口会对 Not automated 工单按可配置比例创建 Engineer Case，当前支持每第 10 单试运行并可切换到 100%。
@@ -85,6 +86,7 @@
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 - Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
 - `/workspace/admin` 可查看 Client Ticket、Engineer Case、SLA、派单/转派、Engineer schedule coverage、Billing automation 和 guardrail 指标。
+- `/workspace/admin` 可查看 Automated Cases 占比、实际 Route/Prompt 轨迹、Persona Prompt 版本和 names-only 环境配置清单。
 - 对话支持上传 txt/log/err 日志附件。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。

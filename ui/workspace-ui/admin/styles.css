@@ -4324,6 +4324,74 @@ p {
   border: 0;
 }
 
+.admin-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-bottom: 24px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(91, 106, 115, 0.18);
+}
+
+.admin-metric-strip > div {
+  min-width: 0;
+  padding: 18px;
+  background: #f8faf9;
+}
+
+.admin-metric-strip span,
+.admin-metric-strip strong { display: block; }
+.admin-metric-strip span { color: #59676e; font-size: 12px; }
+.admin-metric-strip strong { margin-top: 8px; font-size: 26px; }
+.admin-metric-strip .is-emphasis { background: #d9eee4; color: #124c3b; }
+
+.admin-ops-surface {
+  min-width: 0;
+  padding: 22px;
+  border-radius: 8px;
+  background: #f8faf9;
+  box-shadow: 0 10px 30px rgba(31, 48, 56, 0.06);
+  overflow-x: auto;
+}
+
+.admin-route-layout,
+.admin-persona-workspace { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 18px; }
+.admin-route-detail { margin-top: 18px; }
+.admin-route-timeline { display: grid; gap: 10px; margin: 18px 0; padding-left: 24px; }
+.admin-route-timeline li { padding: 10px 12px; background: #edf3f1; border-radius: 6px; overflow-wrap: anywhere; }
+.admin-route-timeline li span { float: right; color: #59676e; }
+.admin-route-row { width: 100%; min-height: 52px; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 0; border-bottom: 1px solid rgba(91,106,115,.14); background: transparent; text-align: left; cursor: pointer; }
+.admin-route-row span:first-child { display: grid; }
+.admin-route-row small { color: #69777d; }
+.admin-prompt-inspector pre,
+.admin-ops-surface pre { max-height: 320px; overflow: auto; padding: 14px; border-radius: 6px; background: #172328; color: #e6f1ed; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.admin-prompt-editor { display: grid; gap: 16px; }
+.admin-prompt-editor label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; }
+.admin-prompt-editor textarea,
+.admin-prompt-editor input,
+.admin-config-search input { width: 100%; min-height: 44px; padding: 11px 12px; border: 1px solid rgba(75,94,101,.24); border-radius: 6px; background: #fff; font: inherit; }
+.admin-editor-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.admin-filter-bar { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
+.admin-filter-bar input,
+.admin-filter-bar select,
+.admin-version-compare select { min-height: 44px; padding: 9px 11px; border: 1px solid rgba(75,94,101,.24); border-radius: 6px; background: #fff; font: inherit; }
+.admin-persona-list { display: grid; gap: 5px; margin-bottom: 18px; }
+.admin-persona-list button { min-height: 44px; border: 0; border-radius: 6px; background: #edf3f1; text-align: left; cursor: pointer; }
+.admin-persona-list button.is-active { background: #d9eee4; color: #124c3b; font-weight: 800; }
+.admin-version-compare { margin-top: 18px; }
+.admin-version-compare > div:first-of-type { display: flex; gap: 10px; }
+.admin-compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.admin-version-list { display: grid; gap: 6px; }
+.admin-version-list button { min-height: 52px; display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: center; border: 0; border-radius: 6px; background: #edf3f1; text-align: left; cursor: pointer; }
+.admin-version-list small { overflow-wrap: anywhere; }
+
+.admin-config-search { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
+.admin-config-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.admin-config-list button { min-width: 0; min-height: 46px; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border: 0; border-radius: 6px; background: #edf3f1; cursor: pointer; }
+.admin-config-list code { overflow-wrap: anywhere; text-align: left; }
+
 @keyframes admin-slide-in {
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
@@ -4447,6 +4515,12 @@ p {
   .admin-shift-row {
     grid-template-columns: 64px 1fr 1fr;
   }
+
+  .admin-metric-strip,
+  .admin-route-layout,
+  .admin-persona-workspace,
+  .admin-config-list,
+  .admin-compare-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

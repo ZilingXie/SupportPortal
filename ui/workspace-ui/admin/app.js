@@ -12,6 +12,15 @@ let adminTickets = [];
 let metrics = null;
 let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
+let automationData = { metrics: {}, cases: [] };
+let routingData = { stages: [], system_prompt: "" };
+let routeData = { routes: [] };
+let selectedRouteDetail = null;
+let personaData = { personas: [] };
+let environmentData = { names: [] };
+let environmentQuery = "";
+let selectedPersonaKey = "";
+let comparePersonaVersions = [];
 let selectedEngineerId = "";
 let invitationResult = null;
 let scheduleNotice = null;
@@ -20,7 +29,7 @@ let loadError = "";
 
 function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
-  return ["overview", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(section)
+  return ["overview", "automated-cases", "route-prompt", "persona-prompts", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(section)
     ? section
     : "overview";
 }
@@ -186,6 +195,10 @@ function renderLogin() {
 function renderAdminShell(content) {
   const navItems = [
     ["overview", "dashboard", "Operations Overview", "OV"],
+    ["automated-cases", "automation", "Automated Cases", "AC"],
+    ["route-prompt", "account_tree", "Route & Prompt", "RP"],
+    ["persona-prompts", "record_voice_over", "Persona Prompts", "PP"],
+    ["environment-config", "settings", "Environment Config", "EC"],
     ["engineers", "groups", "Engineer Management", "EN"],
     ["schedule", "calendar_month", "Schedule", "SC"],
     ["pending-assignment", "pending_actions", "Pending Assignment", "PA"],
@@ -619,6 +632,49 @@ function renderAudit() {
   `;
 }
 
+function renderAutomatedCases() {
+  const metric = automationData.metrics || {};
+  const rate = Number(metric.automation_rate || 0) * 100;
+  const cases = Array.isArray(automationData.cases) ? automationData.cases : [];
+  return `
+    <header class="admin-main-header"><div><p class="admin-eyebrow">ACCOUNT AUTOMATION</p><h1>Automated Cases</h1><p>All /account cases. Automated means the final route was Automated, not that the case was resolved.</p></div></header>
+    <section class="admin-metric-strip" aria-label="Account automation metrics">
+      <div><span>Total account cases</span><strong>${Number(metric.total_account_cases || 0)}</strong></div>
+      <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
+      <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
+      <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
+    </section><form class="admin-filter-bar" data-automation-filter-form><select name="route_status"><option value="">All routes</option><option value="automation">Automated</option><option value="not_automated">Not Automated</option></select><input name="category" placeholder="Route category" /><input name="created_from" type="date" aria-label="Created from" /><input name="created_to" type="date" aria-label="Created to" /><button class="btn btn-ghost" type="submit">Apply filters</button></form>
+    <section class="admin-ops-surface"><table class="admin-work-table"><thead><tr><th>Case</th><th>Subject</th><th>Route status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${statusPill(item.automation_status)}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="4">No /account cases.</td></tr>`}</tbody></table></section>`;
+}
+
+function renderRoutePrompt() {
+  const routes = Array.isArray(routeData.routes) ? routeData.routes : [];
+  const detail = selectedRouteDetail?.executions?.[0] || null;
+  return `
+    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING AUDIT</p><h1>Route &amp; Prompt</h1><p>Inspect the actual route execution and persisted Prompt snapshot for each /account case.</p></div></header>
+    <section class="admin-route-layout">
+      <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${(routingData.stages || []).map(stage => `<li>${escapeHtml(stage)}</li>`).join("")}</ol><h3>Current router Prompt</h3><pre>${escapeHtml(routingData.system_prompt || "No LLM prompt used")}</pre></div>
+      <div class="admin-ops-surface"><h2>Route execution</h2>${routes.length ? routes.map(item => `<button class="admin-route-row" data-action="inspect-route" data-ticket-id="${escapeHtml(item.ticket_id)}"><span><strong>${escapeHtml(item.ticket_id)}</strong><small>${escapeHtml(item.route_source || "legacy")}</small></span><span>${escapeHtml(item.final_route || "unknown")}</span></button>`).join("") : `<p>No route executions recorded.</p>`}</div>
+    </section>
+    ${selectedRouteDetail ? `<section class="admin-ops-surface admin-route-detail"><h2>${escapeHtml(selectedRouteDetail.ticket_id)}</h2>${selectedRouteDetail.legacy ? `<p class="admin-empty-state">Prompt snapshot unavailable for this historical case.</p>` : `<ol class="admin-route-timeline">${(detail?.stages || []).map(stage => `<li><strong>${escapeHtml(stage.name)}</strong><span>${escapeHtml(stage.status)}</span></li>`).join("")}</ol><div class="admin-prompt-inspector"><h3>System Prompt</h3><pre>${escapeHtml(detail?.system_prompt || "No LLM prompt used")}</pre><h3>User Prompt</h3><pre>${escapeHtml(detail?.user_prompt || "No LLM prompt used")}</pre></div>`}</section>` : ""}`;
+}
+
+function renderPersonaPrompts() {
+  const personas = Array.isArray(personaData.personas) ? personaData.personas : [];
+  const persona = personas.find(item => item.persona_key === selectedPersonaKey) || personas[0];
+  const versions = persona?.versions || [];
+  const active = versions.find(item => Number(item.version) === Number(persona?.published_version)) || versions.at(-1);
+  return `
+    <header class="admin-main-header"><div><p class="admin-eyebrow">CUSTOMER VOICE</p><h1>Persona Prompt Template</h1><p>Draft, publish, compare, and roll back the Prompt used for /account customer replies.</p></div></header>
+    <form class="admin-filter-bar" data-persona-create-form><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /><input name="display_name" placeholder="Display name" required /><input name="instruction" placeholder="Persona instruction" required /><button class="btn btn-ghost" type="submit">Create Persona</button></form>
+    ${persona ? `<section class="admin-persona-workspace"><aside class="admin-ops-surface"><nav class="admin-persona-list">${personas.map(item => `<button type="button" data-action="select-persona" data-persona-key="${escapeHtml(item.persona_key)}" class="${item.persona_key === persona.persona_key ? "is-active" : ""}">${escapeHtml(item.display_name)}</button>`).join("")}</nav><h2>${escapeHtml(persona.display_name)}</h2><p>${statusPill(persona.enabled ? "active" : "disabled")} Published v${escapeHtml(persona.published_version || "-")}</p><button class="btn btn-ghost" type="button" data-action="toggle-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-enabled="${persona.enabled ? "false" : "true"}">${persona.enabled ? "Disable" : "Enable"}</button><h3>Version history</h3><div class="admin-version-list">${versions.map(item => `<button type="button" data-action="rollback-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" title="Create a new published version from v${item.version}"><strong>v${item.version}</strong><span>${escapeHtml(item.status)}</span><small>${escapeHtml(item.change_note)}</small></button>`).join("")}</div></aside><div><form class="admin-ops-surface admin-prompt-editor" data-persona-draft-form data-persona-key="${escapeHtml(persona.persona_key)}"><label>Persona instruction<textarea name="instruction" rows="10" required>${escapeHtml(active?.content?.instruction || "")}</textarea></label><label>Signoff name<input name="signoff_name" value="${escapeHtml(active?.content?.signoff_name || "Sid")}" required /></label><label>Change note<input name="change_note" required maxlength="500" /></label><input type="hidden" name="based_on_version" value="${escapeHtml(persona.published_version || "")}" /><div class="admin-editor-actions"><button class="btn btn-ghost" type="submit">Save draft</button>${versions.filter(item => item.status === "draft").map(item => `<button class="btn btn-primary" type="button" data-action="publish-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}">Publish v${item.version}</button>`).join("")}</div></form><section class="admin-ops-surface admin-version-compare"><h3>Compare versions</h3><div><select data-version-compare="0">${versions.map(item => `<option value="${item.version}">v${item.version}</option>`).join("")}</select><select data-version-compare="1">${versions.map(item => `<option value="${item.version}" ${item.version === versions.at(-1)?.version ? "selected" : ""}>v${item.version}</option>`).join("")}</select></div><div class="admin-compare-grid">${[comparePersonaVersions[0] || versions[0]?.version, comparePersonaVersions[1] || versions.at(-1)?.version].map(version => { const item = versions.find(candidate => Number(candidate.version) === Number(version)); return `<pre>${escapeHtml(JSON.stringify(item?.content || {}, null, 2))}</pre>`; }).join("")}</div></section></div></section>` : `<p class="admin-empty-state">No Persona templates available.</p>`}`;
+}
+
+function renderEnvironmentConfig() {
+  const names = (environmentData.names || []).filter(name => name.toLowerCase().includes(environmentQuery.toLowerCase()));
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><h1>Environment Config</h1><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface"><label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search configuration names" /></label><h2>Configuration names <span class="admin-count">${names.length}</span></h2><div class="admin-config-list">${names.length ? names.map(name => `<button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy configuration name"><code>${escapeHtml(name)}</code><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button>`).join("") : `<p>No matching configuration names.</p>`}</div></section>`;
+}
+
 function syncAdminRailScrollPosition() {
   const sidebarBody = root.querySelector(".admin-sidebar-body");
   const activeLink = root.querySelector(".admin-sidebar-nav a.is-active");
@@ -651,6 +707,14 @@ function renderAdmin() {
     ? renderAdminTicketBoard(adminSection)
     : adminSection === "audit"
     ? renderAudit()
+    : adminSection === "automated-cases"
+    ? renderAutomatedCases()
+    : adminSection === "route-prompt"
+    ? renderRoutePrompt()
+    : adminSection === "persona-prompts"
+    ? renderPersonaPrompts()
+    : adminSection === "environment-config"
+    ? renderEnvironmentConfig()
     : renderOverview();
   root.innerHTML = renderAdminShell(content);
   syncAdminRailScrollPosition();
@@ -662,18 +726,28 @@ async function loadAdminData() {
   loadError = "";
   renderAdmin();
   try {
-    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload] = await Promise.all([
+    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload, routesPayload, personasPayload, environmentPayload] = await Promise.all([
       fetchJson("/api/workspace/admin/accounts"),
       fetchJson("/api/workspace/cases?assignment_status=all"),
       fetchJson("/api/workspace/admin/metrics"),
       fetchJson("/api/workspace/admin/audit?limit=200"),
       fetchJson("/api/workspace/admin/engineer-schedules"),
+      fetchJson("/api/workspace/admin/account-automation"),
+      fetchJson("/api/workspace/admin/account-routing/config"),
+      fetchJson("/api/workspace/admin/account-routes"),
+      fetchJson("/api/workspace/admin/account-personas"),
+      fetchJson("/api/workspace/admin/environment-config"),
     ]);
     accounts = Array.isArray(accountPayload.accounts) ? accountPayload.accounts : [];
     adminTickets = Array.isArray(casePayload.cases) ? casePayload.cases.map(normalizeAdminTicket) : [];
     metrics = metricPayload || null;
     auditEvents = Array.isArray(auditPayload.events) ? auditPayload.events : [];
     scheduleData = schedulePayload || { timezone: "Asia/Shanghai", engineers: [] };
+    automationData = automationPayload || { metrics: {}, cases: [] };
+    routingData = routingPayload || { stages: [], system_prompt: "" };
+    routeData = routesPayload || { routes: [] };
+    personaData = personasPayload || { personas: [] };
+    environmentData = environmentPayload || { names: [] };
   } catch (error) {
     loadError = error.message;
   } finally {
@@ -833,10 +907,34 @@ root.addEventListener("click", (event) => {
       loadError = error.message;
       renderAdmin();
     });
+  } else if (action === "inspect-route") {
+    const ticketId = event.target.closest("[data-ticket-id]")?.dataset.ticketId;
+    fetchJson(`/api/workspace/admin/account-routes/${encodeURIComponent(ticketId)}`).then((payload) => { selectedRouteDetail = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
+  } else if (action === "publish-persona" || action === "rollback-persona") {
+    const button = event.target.closest("[data-persona-key]");
+    const operation = action === "publish-persona" ? "publish" : "rollback";
+    if (operation === "rollback" && !globalThis.confirm?.(`Create a new published version from v${button.dataset.version}?`)) return;
+    fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(button.dataset.personaKey)}/versions/${button.dataset.version}/${operation}`, { method: "POST" }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
+  } else if (action === "copy-config-name") {
+    const name = event.target.closest("[data-config-name]")?.dataset.configName || "";
+    globalThis.navigator?.clipboard?.writeText(name);
+  } else if (action === "select-persona") {
+    selectedPersonaKey = event.target.closest("[data-persona-key]")?.dataset.personaKey || "";
+    comparePersonaVersions = [];
+    renderAdmin();
+  } else if (action === "toggle-persona") {
+    const button = event.target.closest("[data-persona-key]");
+    fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(button.dataset.personaKey)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: button.dataset.enabled === "true" }) }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
   }
 });
 
 root.addEventListener("change", (event) => {
+  const compare = event.target.closest("[data-version-compare]");
+  if (compare) {
+    comparePersonaVersions[Number(compare.dataset.versionCompare)] = Number(compare.value);
+    renderAdmin();
+    return;
+  }
   const endHour = event.target.closest("[data-end-hour]");
   if (!endHour) return;
   const weekday = endHour.dataset.endHour;
@@ -845,6 +943,13 @@ root.addEventListener("change", (event) => {
   const isEndOfDay = endHour.value === "24";
   if (isEndOfDay) minuteSelect.value = "00";
   minuteSelect.disabled = isEndOfDay;
+});
+
+root.addEventListener("input", (event) => {
+  if (!event.target.matches("[data-env-search]")) return;
+  environmentQuery = event.target.value;
+  renderAdmin();
+  root.querySelector("[data-env-search]")?.focus();
 });
 
 root.addEventListener("submit", (event) => {
@@ -862,6 +967,30 @@ root.addEventListener("submit", (event) => {
   }
   if (form.matches("[data-schedule-form]")) {
     handleScheduleUpdate(form);
+    return;
+  }
+  if (form.matches("[data-persona-draft-form]")) {
+    const data = new FormData(form);
+    fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(form.dataset.personaKey)}/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: { instruction: String(data.get("instruction") || ""), signoff_name: String(data.get("signoff_name") || "Sid") },
+        change_note: String(data.get("change_note") || ""),
+        based_on_version: Number(data.get("based_on_version")) || null,
+      }),
+    }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
+    return;
+  }
+  if (form.matches("[data-persona-create-form]")) {
+    const data = new FormData(form);
+    fetchJson("/api/workspace/admin/account-personas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ persona_key: String(data.get("persona_key") || ""), display_name: String(data.get("display_name") || ""), content: { instruction: String(data.get("instruction") || ""), signoff_name: "Sid" } }) }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
+    return;
+  }
+  if (form.matches("[data-automation-filter-form]")) {
+    const params = new URLSearchParams();
+    for (const [key, value] of new FormData(form).entries()) if (String(value).trim()) params.set(key, String(value).trim());
+    fetchJson(`/api/workspace/admin/account-automation?${params}`).then((payload) => { automationData = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
     return;
   }
 });

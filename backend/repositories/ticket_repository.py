@@ -940,6 +940,16 @@ class TicketRepository(Protocol):
     def list_workspace_audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
         ...
 
+    def save_account_route_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
+    def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
+    def list_account_personas(self) -> list[dict[str, Any]]: ...
+    def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]: ...
+    def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]: ...
+    def publish_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]: ...
+    def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]: ...
+    def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]: ...
+    def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
+
     def begin_idempotent_request(
         self,
         scope: str,
@@ -1159,6 +1169,120 @@ class InMemoryTicketRepository:
         self._idempotency_records: dict[tuple[str, str], dict[str, Any]] = {}
         self._rollout_counters: dict[str, int] = {}
         self._rollout_events: dict[tuple[str, str], int] = {}
+        self._account_route_executions: dict[str, list[dict[str, Any]]] = {}
+        self._account_personas: dict[str, dict[str, Any]] = {}
+        self._account_persona_versions: dict[str, list[dict[str, Any]]] = {}
+        self._account_persona_assignments: dict[str, dict[str, Any]] = {}
+        self._seed_default_account_persona()
+
+    def _seed_default_account_persona(self) -> None:
+        from backend.services.account_admin import DEFAULT_PERSONA_CONTENT, DEFAULT_PERSONA_KEY
+
+        created_at = _utc_now()
+        self._account_personas[DEFAULT_PERSONA_KEY] = {
+            "persona_key": DEFAULT_PERSONA_KEY,
+            "display_name": "Default Support",
+            "enabled": True,
+            "published_version": 1,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        self._account_persona_versions[DEFAULT_PERSONA_KEY] = [{
+            "persona_key": DEFAULT_PERSONA_KEY,
+            "version": 1,
+            "status": "published",
+            "content": copy.deepcopy(DEFAULT_PERSONA_CONTENT),
+            "change_note": "Seeded from the pre-registry customer reply behavior",
+            "based_on_version": None,
+            "created_by": "system",
+            "created_at": created_at,
+            "published_by": "system",
+            "published_at": created_at,
+        }]
+
+    def save_account_route_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(execution)
+        saved["created_at"] = saved.get("created_at") or _utc_now()
+        self._account_route_executions.setdefault(str(saved["ticket_id"]), []).append(saved)
+        return copy.deepcopy(saved)
+
+    def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]:
+        if ticket_id is not None:
+            return copy.deepcopy(self._account_route_executions.get(str(ticket_id), []))
+        return sorted(
+            [copy.deepcopy(item) for items in self._account_route_executions.values() for item in items],
+            key=lambda item: str(item.get("created_at") or ""), reverse=True,
+        )
+
+    def list_account_personas(self) -> list[dict[str, Any]]:
+        result = []
+        for key, persona in sorted(self._account_personas.items()):
+            item = copy.deepcopy(persona)
+            item["versions"] = copy.deepcopy(self._account_persona_versions.get(key, []))
+            result.append(item)
+        return result
+
+    def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]:
+        key = str(persona_key).strip().lower()
+        if not key or key in self._account_personas:
+            raise ValueError("persona_key must be unique")
+        self._account_personas[key] = {"persona_key": key, "display_name": str(display_name).strip(), "enabled": True, "published_version": None, "created_at": created_at, "updated_at": created_at}
+        return self.create_account_persona_draft(key, content=content, change_note="Initial draft", based_on_version=None, actor_id=actor_id, created_at=created_at)
+
+    def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]:
+        key = str(persona_key).strip().lower()
+        if key not in self._account_personas:
+            raise ValueError("persona not found")
+        versions = self._account_persona_versions.setdefault(key, [])
+        if based_on_version is not None and not any(int(item["version"]) == int(based_on_version) for item in versions):
+            raise ValueError("based_on_version not found")
+        item = {"persona_key": key, "version": max([int(v["version"]) for v in versions] or [0]) + 1, "status": "draft", "content": copy.deepcopy(content), "change_note": str(change_note).strip(), "based_on_version": based_on_version, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
+        versions.append(item)
+        return copy.deepcopy(item)
+
+    def publish_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
+        key = str(persona_key).strip().lower()
+        versions = self._account_persona_versions.get(key, [])
+        target = next((item for item in versions if int(item["version"]) == int(version)), None)
+        if target is None or target["status"] != "draft":
+            raise ValueError("draft version not found")
+        for item in versions:
+            if item["status"] == "published": item["status"] = "superseded"
+        target.update({"status": "published", "published_by": actor_id, "published_at": published_at})
+        self._account_personas[key].update({"published_version": int(version), "updated_at": published_at})
+        return copy.deepcopy(target)
+
+    def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
+        key = str(persona_key).strip().lower()
+        source = next((item for item in self._account_persona_versions.get(key, []) if int(item["version"]) == int(version)), None)
+        if source is None: raise ValueError("version not found")
+        draft = self.create_account_persona_draft(key, content=source["content"], change_note=f"Rollback to version {version}", based_on_version=version, actor_id=actor_id, created_at=published_at)
+        return self.publish_account_persona_version(key, draft["version"], actor_id=actor_id, published_at=published_at)
+
+    def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]:
+        key = str(persona_key).strip().lower()
+        persona = self._account_personas.get(key)
+        if persona is None: raise ValueError("persona not found")
+        if not enabled and persona.get("enabled") and sum(1 for item in self._account_personas.values() if item.get("enabled") and item.get("published_version")) <= 1:
+            raise ValueError("last enabled persona cannot be disabled")
+        persona["enabled"] = bool(enabled)
+        return copy.deepcopy(persona)
+
+    def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]:
+        normalized_ticket_id = str(ticket_id).strip()
+        assigned = self._account_persona_assignments.get(normalized_ticket_id)
+        if assigned: return copy.deepcopy(assigned)
+        choices = sorted(
+            (item for item in self._account_personas.values() if item.get("enabled") and item.get("published_version")),
+            key=lambda item: str(item.get("persona_key") or ""),
+        )
+        if not choices: raise ValueError("no enabled published persona")
+        import hashlib
+        persona = choices[int(hashlib.sha256(normalized_ticket_id.encode()).hexdigest(), 16) % len(choices)]
+        version = next(item for item in self._account_persona_versions[persona["persona_key"]] if int(item["version"]) == int(persona["published_version"]))
+        assigned = {"ticket_id": normalized_ticket_id, "persona_key": persona["persona_key"], "version": version["version"], "content": copy.deepcopy(version["content"]), "assigned_at": _utc_now()}
+        self._account_persona_assignments[normalized_ticket_id] = assigned
+        return copy.deepcopy(assigned)
 
     def initialize(self) -> None:
         return None
@@ -3334,6 +3458,12 @@ class PostgresTicketRepository:
                         """
                     ).format(self._table("support_workspace_audit_events"))
                 )
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (execution_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_account_route_executions"), self._table("support_tickets")))
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, published_version INTEGER, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)").format(self._table("support_account_personas")))
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT NOT NULL REFERENCES {}(persona_key) ON DELETE CASCADE, version INTEGER NOT NULL, status TEXT NOT NULL CHECK (status IN ('draft','published','superseded')), content JSONB NOT NULL, change_note TEXT NOT NULL, based_on_version INTEGER, created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, published_by TEXT, published_at TIMESTAMPTZ, PRIMARY KEY (persona_key, version))").format(self._table("support_account_prompt_versions"), self._table("support_account_personas")))
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (ticket_id TEXT PRIMARY KEY REFERENCES {}(ticket_id) ON DELETE CASCADE, persona_key TEXT NOT NULL, version INTEGER NOT NULL, assigned_at TIMESTAMPTZ NOT NULL, FOREIGN KEY (persona_key, version) REFERENCES {}(persona_key, version))").format(self._table("support_account_persona_assignments"), self._table("support_tickets"), self._table("support_account_prompt_versions")))
+                cur.execute(sql.SQL("INSERT INTO {} (persona_key, display_name, enabled, published_version, created_at, updated_at) VALUES ('default-support','Default Support',TRUE,1,NOW(),NOW()) ON CONFLICT (persona_key) DO NOTHING").format(self._table("support_account_personas")))
+                cur.execute(sql.SQL("INSERT INTO {} (persona_key, version, status, content, change_note, created_by, created_at, published_by, published_at) VALUES ('default-support',1,'published',%s,'Seeded from the pre-registry customer reply behavior','system',NOW(),'system',NOW()) ON CONFLICT (persona_key, version) DO NOTHING").format(self._table("support_account_prompt_versions")), (Json({"instruction": "Use a calm, warm, polished concierge-style support voice. Match the customer's language.", "signoff_name": "Sid"}),))
                 cur.execute(
                     sql.SQL(
                         """
@@ -7497,6 +7627,103 @@ class PostgresTicketRepository:
                     return dict(zip(col_names, row))
 
         return self._run_with_connection_retry("mark_billing_route_reviewed", _operation)
+
+    def save_account_route_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(execution)
+        saved["created_at"] = saved.get("created_at") or _utc_now()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("INSERT INTO {} (execution_id, ticket_id, payload, created_at) VALUES (%s,%s,%s,%s) ON CONFLICT (execution_id) DO UPDATE SET payload=EXCLUDED.payload").format(self._table("support_account_route_executions")), (saved["execution_id"], saved["ticket_id"], Json(saved), saved["created_at"]))
+            return copy.deepcopy(saved)
+        return self._run_with_connection_retry("save_account_route_execution", _operation)
+
+    def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                if ticket_id is None:
+                    cur.execute(sql.SQL("SELECT payload FROM {} ORDER BY created_at DESC").format(self._table("support_account_route_executions")))
+                else:
+                    cur.execute(sql.SQL("SELECT payload FROM {} WHERE ticket_id=%s ORDER BY created_at").format(self._table("support_account_route_executions")), (str(ticket_id),))
+                return [dict(row[0]) for row in cur.fetchall()]
+        return self._run_with_connection_retry("list_account_route_executions", _operation)
+
+    def list_account_personas(self) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT persona_key, display_name, enabled, published_version, created_at, updated_at FROM {} ORDER BY persona_key").format(self._table("support_account_personas")))
+                personas = [{"persona_key": str(r[0]), "display_name": str(r[1]), "enabled": bool(r[2]), "published_version": r[3], "created_at": _to_iso(r[4]), "updated_at": _to_iso(r[5])} for r in cur.fetchall()]
+                for persona in personas:
+                    cur.execute(sql.SQL("SELECT version,status,content,change_note,based_on_version,created_by,created_at,published_by,published_at FROM {} WHERE persona_key=%s ORDER BY version").format(self._table("support_account_prompt_versions")), (persona["persona_key"],))
+                    persona["versions"] = [{"persona_key": persona["persona_key"], "version": int(r[0]), "status": str(r[1]), "content": dict(r[2]), "change_note": str(r[3]), "based_on_version": r[4], "created_by": str(r[5]), "created_at": _to_iso(r[6]), "published_by": str(r[7]) if r[7] else None, "published_at": _to_iso(r[8]) if r[8] else None} for r in cur.fetchall()]
+                return personas
+        return self._run_with_connection_retry("list_account_personas", _operation)
+
+    def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]:
+        key = str(persona_key).strip().lower()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                try:
+                    cur.execute(sql.SQL("INSERT INTO {} (persona_key,display_name,enabled,published_version,created_at,updated_at) VALUES (%s,%s,TRUE,NULL,%s,%s)").format(self._table("support_account_personas")), (key, str(display_name).strip(), created_at, created_at))
+                except psycopg.errors.UniqueViolation as exc: raise ValueError("persona_key must be unique") from exc
+                cur.execute(sql.SQL("INSERT INTO {} (persona_key,version,status,content,change_note,created_by,created_at) VALUES (%s,1,'draft',%s,'Initial draft',%s,%s)").format(self._table("support_account_prompt_versions")), (key, Json(content), actor_id, created_at))
+            return {"persona_key": key, "version": 1, "status": "draft", "content": copy.deepcopy(content), "change_note": "Initial draft", "based_on_version": None, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
+        return self._run_with_connection_retry("create_account_persona", _operation)
+
+    def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]:
+        key = str(persona_key).strip().lower()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT COALESCE(MAX(version),0)+1 FROM {} WHERE persona_key=%s").format(self._table("support_account_prompt_versions")), (key,)); version=int(cur.fetchone()[0])
+                if based_on_version is not None:
+                    cur.execute(sql.SQL("SELECT 1 FROM {} WHERE persona_key=%s AND version=%s").format(self._table("support_account_prompt_versions")), (key,based_on_version))
+                    if cur.fetchone() is None: raise ValueError("based_on_version not found")
+                cur.execute(sql.SQL("INSERT INTO {} (persona_key,version,status,content,change_note,based_on_version,created_by,created_at) VALUES (%s,%s,'draft',%s,%s,%s,%s,%s)").format(self._table("support_account_prompt_versions")), (key,version,Json(content),change_note,based_on_version,actor_id,created_at))
+            return {"persona_key":key,"version":version,"status":"draft","content":copy.deepcopy(content),"change_note":change_note,"based_on_version":based_on_version,"created_by":actor_id,"created_at":created_at,"published_by":None,"published_at":None}
+        return self._run_with_connection_retry("create_account_persona_draft", _operation)
+
+    def publish_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
+        key=str(persona_key).strip().lower()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT content,change_note,based_on_version,created_by,created_at,status FROM {} WHERE persona_key=%s AND version=%s FOR UPDATE").format(self._table("support_account_prompt_versions")),(key,version)); row=cur.fetchone()
+                if row is None or row[5] != "draft": raise ValueError("draft version not found")
+                cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE persona_key=%s AND status='published'").format(self._table("support_account_prompt_versions")),(key,))
+                cur.execute(sql.SQL("UPDATE {} SET status='published',published_by=%s,published_at=%s WHERE persona_key=%s AND version=%s").format(self._table("support_account_prompt_versions")),(actor_id,published_at,key,version))
+                cur.execute(sql.SQL("UPDATE {} SET published_version=%s,updated_at=%s WHERE persona_key=%s").format(self._table("support_account_personas")),(version,published_at,key))
+            return {"persona_key":key,"version":version,"status":"published","content":dict(row[0]),"change_note":str(row[1]),"based_on_version":row[2],"created_by":str(row[3]),"created_at":_to_iso(row[4]),"published_by":actor_id,"published_at":published_at}
+        return self._run_with_connection_retry("publish_account_persona_version", _operation)
+
+    def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
+        personas=self.list_account_personas(); persona=next((p for p in personas if p["persona_key"]==str(persona_key).strip().lower()),None); source=next((v for v in (persona or {}).get("versions",[]) if int(v["version"])==int(version)),None)
+        if source is None: raise ValueError("version not found")
+        draft=self.create_account_persona_draft(persona_key,content=source["content"],change_note=f"Rollback to version {version}",based_on_version=version,actor_id=actor_id,created_at=published_at)
+        return self.publish_account_persona_version(persona_key,draft["version"],actor_id=actor_id,published_at=published_at)
+
+    def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]:
+        key=str(persona_key).strip().lower()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                if not enabled:
+                    cur.execute(sql.SQL("SELECT COUNT(*) FROM {} WHERE enabled=TRUE AND published_version IS NOT NULL").format(self._table("support_account_personas")))
+                    if int(cur.fetchone()[0]) <= 1: raise ValueError("last enabled persona cannot be disabled")
+                cur.execute(sql.SQL("UPDATE {} SET enabled=%s,updated_at=NOW() WHERE persona_key=%s RETURNING display_name,published_version,created_at,updated_at").format(self._table("support_account_personas")),(bool(enabled),key)); row=cur.fetchone()
+                if row is None: raise ValueError("persona not found")
+                return {"persona_key":key,"display_name":str(row[0]),"enabled":bool(enabled),"published_version":row[1],"created_at":_to_iso(row[2]),"updated_at":_to_iso(row[3])}
+        return self._run_with_connection_retry("set_account_persona_enabled", _operation)
+
+    def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]:
+        normalized=str(ticket_id).strip()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT a.persona_key,a.version,v.content,a.assigned_at FROM {} a JOIN {} v ON v.persona_key=a.persona_key AND v.version=a.version WHERE a.ticket_id=%s").format(self._table("support_account_persona_assignments"),self._table("support_account_prompt_versions")),(normalized,)); row=cur.fetchone()
+                if row: return {"ticket_id":normalized,"persona_key":str(row[0]),"version":int(row[1]),"content":dict(row[2]),"assigned_at":_to_iso(row[3])}
+                cur.execute(sql.SQL("SELECT p.persona_key,p.published_version,v.content FROM {} p JOIN {} v ON v.persona_key=p.persona_key AND v.version=p.published_version WHERE p.enabled=TRUE ORDER BY p.persona_key").format(self._table("support_account_personas"),self._table("support_account_prompt_versions"))); choices=cur.fetchall()
+                if not choices: raise ValueError("no enabled published persona")
+                import hashlib
+                choice=choices[int(hashlib.sha256(normalized.encode()).hexdigest(),16)%len(choices)]; assigned_at=_utc_now()
+                cur.execute(sql.SQL("INSERT INTO {} (ticket_id,persona_key,version,assigned_at) VALUES (%s,%s,%s,%s)").format(self._table("support_account_persona_assignments")),(normalized,choice[0],choice[1],assigned_at))
+                return {"ticket_id":normalized,"persona_key":str(choice[0]),"version":int(choice[1]),"content":dict(choice[2]),"assigned_at":assigned_at}
+        return self._run_with_connection_retry("resolve_account_persona", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:

@@ -308,6 +308,57 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertNotIn("unavailable", engineer_metrics)
         self.assertNotIn("availability_reassigned", response.json()["engineer_cases"])
 
+    def test_account_admin_endpoints_are_admin_only_and_expose_real_data(self) -> None:
+        self.repository.save_billing_ticket({
+            "billing_ticket_id": "BT-TK-AUTO",
+            "client_ticket_id": "TK-AUTO",
+            "title": "Invoice",
+            "question": "Detailed invoice",
+            "automation_status": "automation",
+            "created_at": "2026-07-21T00:00:00+00:00",
+        })
+        self.assertEqual(self.client.get("/api/workspace/admin/account-automation").status_code, 401)
+
+        response = self.client.get("/api/workspace/admin/account-automation", headers=self._admin_headers())
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["metrics"]["automation_rate"], 1)
+
+        routing = self.client.get("/api/workspace/admin/account-routing/config", headers=self._admin_headers())
+        self.assertEqual(routing.status_code, 200, routing.text)
+        self.assertIn("router_prompt_version", routing.json())
+        self.assertIn("system_prompt", routing.json())
+
+        personas = self.client.get("/api/workspace/admin/account-personas", headers=self._admin_headers())
+        self.assertEqual(personas.status_code, 200, personas.text)
+        self.assertEqual(personas.json()["personas"][0]["persona_key"], "default-support")
+
+    def test_account_persona_api_publishes_and_rolls_back_without_overwriting_history(self) -> None:
+        headers = self._admin_headers()
+        draft = self.client.post(
+            "/api/workspace/admin/account-personas/default-support/drafts",
+            headers=headers,
+            json={"content": {"instruction": "Direct", "signoff_name": "Sid"}, "change_note": "Direct voice", "based_on_version": 1},
+        )
+        self.assertEqual(draft.status_code, 200, draft.text)
+        version = draft.json()["version"]["version"]
+        published = self.client.post(
+            f"/api/workspace/admin/account-personas/default-support/versions/{version}/publish", headers=headers
+        )
+        self.assertEqual(published.status_code, 200, published.text)
+        rollback = self.client.post(
+            "/api/workspace/admin/account-personas/default-support/versions/1/rollback", headers=headers
+        )
+        self.assertEqual(rollback.status_code, 200, rollback.text)
+        versions = self.client.get("/api/workspace/admin/account-personas", headers=headers).json()["personas"][0]["versions"]
+        self.assertEqual([item["version"] for item in versions], [1, 2, 3])
+
+    def test_environment_config_api_never_returns_values(self) -> None:
+        response = self.client.get("/api/workspace/admin/environment-config", headers=self._admin_headers())
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(set(payload), {"names"})
+        self.assertIsInstance(payload["names"], list)
+
     def test_admin_schedule_rejects_non_half_hour_values(self) -> None:
         self._seed_engineer("Maya")
         headers = self._admin_headers()
