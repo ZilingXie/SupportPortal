@@ -329,6 +329,8 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(routing.status_code, 200, routing.text)
         self.assertIn("router_prompt_version", routing.json())
         self.assertIn("system_prompt", routing.json())
+        self.assertTrue(all(stage["description"] for stage in routing.json()["stages"]))
+        self.assertEqual(routing.json()["route_categories"][0]["name"], "ticket_resolution")
 
         personas = self.client.get("/api/workspace/admin/account-personas", headers=self._admin_headers())
         self.assertEqual(personas.status_code, 200, personas.text)

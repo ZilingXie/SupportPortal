@@ -13,6 +13,7 @@ from backend.services.account_admin import (
     environment_config_entries,
     environment_config_names,
     route_execution_from_decision,
+    routing_config_payload,
 )
 from backend.services.support_router import SupportRouteDecision
 
@@ -123,6 +124,20 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(execution["user_prompt"], "user snapshot")
         self.assertTrue(execution["prompt_snapshot_available"])
         self.assertGreaterEqual(len(execution["stages"]), 3)
+
+    def test_routing_config_describes_stages_and_lists_supported_categories(self) -> None:
+        payload = routing_config_payload()
+
+        self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stages"]))
+        self.assertEqual(
+            [category["name"] for category in payload["route_categories"]],
+            ["ticket_resolution", "billing", "agora_technical", "agora_non_technical", "small_talk", "non_agora"],
+        )
+        billing = next(category for category in payload["route_categories"] if category["name"] == "billing")
+        self.assertEqual(
+            billing["execution_actions"],
+            ["account_suspension", "detailed_invoice", "account_verification", "human_review_required", "refuse"],
+        )
 
     def test_persona_draft_publish_assignment_and_rollback_are_versioned(self) -> None:
         personas = self.repository.list_account_personas()

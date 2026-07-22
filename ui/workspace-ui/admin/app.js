@@ -13,9 +13,7 @@ let metrics = null;
 let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let automationData = { metrics: {}, cases: [] };
-let routingData = { stages: [], system_prompt: "" };
-let routeData = { routes: [] };
-let selectedRouteDetail = null;
+let routingData = { stages: [], route_categories: [], system_prompt: "" };
 let personaData = { personas: [] };
 let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
@@ -649,15 +647,15 @@ function renderAutomatedCases() {
 }
 
 function renderRoutePrompt() {
-  const routes = Array.isArray(routeData.routes) ? routeData.routes : [];
-  const detail = selectedRouteDetail?.executions?.[0] || null;
+  const stages = Array.isArray(routingData.stages) ? routingData.stages : [];
+  const categories = Array.isArray(routingData.route_categories) ? routingData.route_categories : [];
   return `
-    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING AUDIT</p><h1>Route &amp; Prompt</h1><p>Inspect the actual route execution and persisted Prompt snapshot for each /account case.</p></div></header>
+    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><h1>Route &amp; Prompt</h1><p>Review the active routing stages, supported route categories, and current router Prompt.</p></div></header>
     <section class="admin-route-layout">
-      <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${(routingData.stages || []).map(stage => `<li>${escapeHtml(stage)}</li>`).join("")}</ol><h3>Current router Prompt</h3><pre>${escapeHtml(routingData.system_prompt || "No LLM prompt used")}</pre></div>
-      <div class="admin-ops-surface"><h2>Route execution</h2>${routes.length ? routes.map(item => `<button class="admin-route-row" data-action="inspect-route" data-ticket-id="${escapeHtml(item.ticket_id)}"><span><strong>${escapeHtml(item.ticket_id)}</strong><small>${escapeHtml(item.route_source || "legacy")}</small></span><span>${escapeHtml(item.final_route || "unknown")}</span></button>`).join("") : `<p>No route executions recorded.</p>`}</div>
+      <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${stages.map(stage => `<li><strong>${escapeHtml(stage.name || stage)}</strong>${stage.description ? `<small>${escapeHtml(stage.description)}</small>` : ""}</li>`).join("")}</ol><h3>Current router Prompt</h3><pre>${escapeHtml(routingData.system_prompt || "No LLM prompt used")}</pre></div>
+      <div class="admin-ops-surface"><h2>Route category</h2><p class="admin-section-note">Categories currently recognized by the support router.</p><div class="admin-route-categories">${categories.length ? categories.map(category => `<article><div><strong>${escapeHtml(category.display_name || category.name)}</strong><code>${escapeHtml(category.name)}</code></div><p>${escapeHtml(category.description)}</p><small>Actions: ${escapeHtml((category.execution_actions || []).join(", "))}</small></article>`).join("") : `<p>No route categories configured.</p>`}</div></div>
     </section>
-    ${selectedRouteDetail ? `<section class="admin-ops-surface admin-route-detail"><h2>${escapeHtml(selectedRouteDetail.ticket_id)}</h2>${selectedRouteDetail.legacy ? `<p class="admin-empty-state">Prompt snapshot unavailable for this historical case.</p>` : `<ol class="admin-route-timeline">${(detail?.stages || []).map(stage => `<li><strong>${escapeHtml(stage.name)}</strong><span>${escapeHtml(stage.status)}</span></li>`).join("")}</ol><div class="admin-prompt-inspector"><h3>System Prompt</h3><pre>${escapeHtml(detail?.system_prompt || "No LLM prompt used")}</pre><h3>User Prompt</h3><pre>${escapeHtml(detail?.user_prompt || "No LLM prompt used")}</pre></div>`}</section>` : ""}`;
+  `;
 }
 
 function renderPersonaPrompts() {
@@ -746,7 +744,7 @@ async function loadAdminData() {
   renderAdmin();
   const environmentRequest = loadEnvironmentConfig({ render: false });
   try {
-    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload, routesPayload, personasPayload] = await Promise.all([
+    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload, personasPayload] = await Promise.all([
       fetchJson("/api/workspace/admin/accounts"),
       fetchJson("/api/workspace/cases?assignment_status=all"),
       fetchJson("/api/workspace/admin/metrics"),
@@ -754,7 +752,6 @@ async function loadAdminData() {
       fetchJson("/api/workspace/admin/engineer-schedules"),
       fetchJson("/api/workspace/admin/account-automation"),
       fetchJson("/api/workspace/admin/account-routing/config"),
-      fetchJson("/api/workspace/admin/account-routes"),
       fetchJson("/api/workspace/admin/account-personas"),
     ]);
     accounts = Array.isArray(accountPayload.accounts) ? accountPayload.accounts : [];
@@ -763,8 +760,7 @@ async function loadAdminData() {
     auditEvents = Array.isArray(auditPayload.events) ? auditPayload.events : [];
     scheduleData = schedulePayload || { timezone: "Asia/Shanghai", engineers: [] };
     automationData = automationPayload || { metrics: {}, cases: [] };
-    routingData = routingPayload || { stages: [], system_prompt: "" };
-    routeData = routesPayload || { routes: [] };
+    routingData = routingPayload || { stages: [], route_categories: [], system_prompt: "" };
     personaData = personasPayload || { personas: [] };
   } catch (error) {
     loadError = error.message;
@@ -930,9 +926,6 @@ root.addEventListener("click", (event) => {
       loadError = error.message;
       renderAdmin();
     });
-  } else if (action === "inspect-route") {
-    const ticketId = event.target.closest("[data-ticket-id]")?.dataset.ticketId;
-    fetchJson(`/api/workspace/admin/account-routes/${encodeURIComponent(ticketId)}`).then((payload) => { selectedRouteDetail = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
   } else if (action === "publish-persona" || action === "rollback-persona") {
     const button = event.target.closest("[data-persona-key]");
     const operation = action === "publish-persona" ? "publish" : "rollback";
