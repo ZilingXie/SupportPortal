@@ -3786,19 +3786,38 @@ p {
   padding: 34px clamp(24px, 4vw, 56px) 56px;
 }
 
-.admin-account-bar {
+.admin-workspace-topbar {
   display: flex;
-  justify-content: flex-end;
-  min-height: 40px;
-  margin-bottom: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-width: 0;
+  min-height: 54px;
+  margin-bottom: 24px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-workspace-topbar h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text);
+  font: 700 24px/1.2 "Manrope", sans-serif;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .admin-account-chip {
   display: flex;
   align-items: center;
+  flex: 0 1 320px;
   gap: 12px;
   min-width: 0;
-  max-width: min(320px, 50vw);
+  max-width: min(320px, 48%);
 }
 
 .admin-user-avatar,
@@ -3833,7 +3852,7 @@ p {
   font-size: 11px;
 }
 
-.admin-main-header h1,
+.admin-workspace-topbar h1,
 .admin-section-heading h2,
 .admin-schedule-editor h2 {
   letter-spacing: 0;
@@ -4576,13 +4595,27 @@ p {
     padding: 24px 16px 42px;
   }
 
-  .admin-account-bar {
-    min-height: 40px;
-    margin-bottom: 16px;
+  .admin-workspace-topbar {
+    gap: 10px;
+    min-height: 50px;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+  }
+
+  .admin-workspace-topbar h1 {
+    font-size: 20px;
   }
 
   .admin-account-chip {
-    max-width: 100%;
+    flex-basis: 168px;
+    gap: 8px;
+    max-width: 50%;
+  }
+
+  .admin-account-avatar {
+    flex-basis: 36px;
+    width: 36px;
+    height: 36px;
   }
 
   .admin-management-header {

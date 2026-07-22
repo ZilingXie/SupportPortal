@@ -1,6 +1,20 @@
 const WORKSPACE_ACCESS_TOKEN_KEY = "supportportal_admin_workspace_access_token";
 const WORKSPACE_ACCOUNT_KEY = "supportportal_admin_workspace_account";
 const WORKSPACE_AUTH_KEY = "supportportal_admin_workspace_account_id";
+const ADMIN_SECTION_TITLES = {
+  overview: "Operations Overview",
+  "automated-cases": "Automated Cases",
+  "agent-config": "Agent Config",
+  "route-strategy": "Route Strategy",
+  "environment-config": "Environment Config",
+  engineers: "Engineer Management",
+  schedule: "Weekly Schedule",
+  "new-account": "Invite a workspace member",
+  "pending-assignment": "Pending Assignment",
+  assigned: "Assigned",
+  resolved: "Resolved",
+  audit: "Audit",
+};
 
 const root = document.getElementById("workspace-admin-root");
 
@@ -211,6 +225,7 @@ function renderAdminShell(content) {
   ];
   const activeNavSection = adminSection === "new-account" ? "engineers" : adminSection;
   const accountName = String(currentAccount?.display_name || currentAccount?.account_id || "Admin");
+  const sectionTitle = ADMIN_SECTION_TITLES[adminSection] || ADMIN_SECTION_TITLES.overview;
   return `
     <section class="admin-shell">
       <aside class="admin-sidebar">
@@ -239,12 +254,13 @@ function renderAdminShell(content) {
         </footer>
       </aside>
       <main class="admin-main">
-        <div class="admin-account-bar" aria-label="Current administrator">
+        <header class="admin-workspace-topbar">
+          <h1 title="${escapeHtml(sectionTitle)}">${escapeHtml(sectionTitle)}</h1>
           <div class="admin-account-chip" title="${escapeHtml(accountName)}">
             <span class="admin-account-avatar">${escapeHtml(engineerInitials(currentAccount))}</span>
             <span class="admin-account-meta"><strong>${escapeHtml(accountName)}</strong><small>Administrator</small></span>
           </div>
-        </div>
+        </header>
         ${loadError ? `<p class="login-error">${escapeHtml(loadError)}</p>` : ""}
         ${content}
       </main>
@@ -269,7 +285,7 @@ function renderOverview() {
   const billingMetrics = metrics?.billing || {};
   return `
     <header class="admin-main-header">
-      <div><h1>Operations Overview</h1><p>Current Engineer Case queue, schedule coverage, and SLA health.</p></div>
+      <div><p>Current Engineer Case queue, schedule coverage, and SLA health.</p></div>
       <div class="admin-topbar-actions">
         <button class="btn btn-ghost" type="button" data-action="dispatch">Dispatch pending</button>
         <button class="btn btn-primary" type="button" data-action="reassign-due">Reassign overdue</button>
@@ -453,7 +469,7 @@ function renderAdminEngineerManagement() {
   const onSchedule = engineers.filter((engineer) => engineer.is_on_schedule_now);
   return `
     <header class="admin-main-header admin-management-header">
-      <div><h1>Engineer Management</h1><p>Monitor current coverage and update engineer schedules.</p></div>
+      <div><p>Monitor current coverage and update engineer schedules.</p></div>
       <a class="btn btn-primary admin-new-account-btn" href="#new-account" data-section="new-account">
         <span class="material-symbols-outlined" aria-hidden="true">add</span><span>New Account</span>
       </a>
@@ -503,7 +519,7 @@ function renderAdminSchedule() {
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   return `
     <header class="admin-main-header">
-      <div><h1>Weekly Schedule</h1><p>Review coverage and modify engineer shifts.</p></div>
+      <div><p>Review coverage and modify engineer shifts.</p></div>
     </header>
     ${scheduleNotice ? `<p class="admin-schedule-notice" role="status">${escapeHtml(scheduleNotice)}</p>` : ""}
     <section class="admin-weekly-section" aria-labelledby="weekly-schedule-title">
@@ -560,7 +576,7 @@ function renderAdminNewAccount() {
   return `
     <section class="admin-invite-page">
       <a class="admin-back-link" href="#engineers" data-section="engineers"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>Engineer Management</a>
-      <header class="admin-main-header"><div><p class="admin-eyebrow">ACCOUNT ACCESS</p><h1>Invite a workspace member</h1><p>Send a secure, single-use setup link by email.</p></div></header>
+      <header class="admin-main-header"><div><p class="admin-eyebrow">ACCOUNT ACCESS</p><p>Send a secure, single-use setup link by email.</p></div></header>
       <div class="admin-invite-layout">
         <form class="admin-invite-form" data-invitation-form>
           <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required maxlength="320" placeholder="name@company.com" /></label>
@@ -584,7 +600,7 @@ function renderAdminTicketBoard(section = adminSection) {
   const showAssignee = activeTab.status !== "pending";
   const columnCount = showAssignee ? 6 : 5;
   return `
-    <header class="admin-main-header admin-case-header"><div><p class="admin-eyebrow">ENGINEER CASES</p><h1>${activeTab.label}</h1><p>Cases grouped by assignment status, with client ticket status shown independently.</p></div></header>
+    <header class="admin-main-header admin-case-header"><div><p class="admin-eyebrow">ENGINEER CASES</p><p>Cases grouped by assignment status, with client ticket status shown independently.</p></div></header>
     <nav class="admin-case-tabs" aria-label="Engineer Case assignment status">
       ${tabs.map((tab) => `<a href="#${tab.section}" data-section="${tab.section}" class="${tab.section === activeTab.section ? "is-active" : ""}" ${tab.section === activeTab.section ? 'aria-current="page"' : ""}>${tab.label}</a>`).join("")}
     </nav>
@@ -617,7 +633,7 @@ function renderAdminTicketBoard(section = adminSection) {
 
 function renderAudit() {
   return `
-    <header class="admin-main-header"><div><h1>Audit</h1><p>Account, schedule, and assignment administration events.</p></div></header>
+    <header class="admin-main-header"><div><p>Account, schedule, and assignment administration events.</p></div></header>
     <section class="admin-pool-panel panel-card">
       <table class="admin-work-table"><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Target</th><th>Reason</th></tr></thead><tbody>
         ${
@@ -643,7 +659,7 @@ function renderAutomatedCases() {
   const rate = Number(metric.automation_rate || 0) * 100;
   const cases = Array.isArray(automationData.cases) ? automationData.cases : [];
   return `
-    <header class="admin-main-header"><div><p class="admin-eyebrow">ACCOUNT AUTOMATION</p><h1>Automated Cases</h1><p>All /account cases. Automated means the final route was Automated, not that the case was resolved.</p></div></header>
+    <header class="admin-main-header"><div><p class="admin-eyebrow">ACCOUNT AUTOMATION</p><p>All /account cases. Automated means the final route was Automated, not that the case was resolved.</p></div></header>
     <section class="admin-metric-strip" aria-label="Account automation metrics">
       <div><span>Total account cases</span><strong>${Number(metric.total_account_cases || 0)}</strong></div>
       <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
@@ -659,7 +675,7 @@ function renderRouteStrategy() {
     : (Array.isArray(routingData.stages) ? routingData.stages : []);
   const categories = Array.isArray(routingData.route_categories) ? routingData.route_categories : [];
   return `
-    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><h1>Route Strategy</h1><p>Review the active route stages and supported route categories.</p></div></header>
+    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><p>Review the active route stages and supported route categories.</p></div></header>
     <section class="admin-route-layout">
       <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${stages.map(stage => `<li><strong>${escapeHtml(stage.name || stage)}</strong>${stage.description ? `<small>${escapeHtml(stage.description)}</small>` : ""}</li>`).join("")}</ol></div>
       <div class="admin-ops-surface"><h2>Route category</h2><p class="admin-section-note">Categories currently recognized by the support router.</p><div class="admin-route-categories">${categories.length ? categories.map(category => `<article><div><strong>${escapeHtml(category.display_name || category.name)}</strong><code>${escapeHtml(category.name)}</code></div><p>${escapeHtml(category.description)}</p><small>Actions: ${escapeHtml((category.execution_actions || []).join(", "))}</small></article>`).join("") : `<p>No route categories configured.</p>`}</div></div>
@@ -759,7 +775,7 @@ function renderAgentConfig() {
       <section class="admin-agent-group" aria-labelledby="agent-config-services"><header><div><h2 id="agent-config-services">Related services</h2><p>Deterministic systems shown here because they own related prompt configuration.</p></div><span>${services.length}</span></header>${services.length ? services.map(renderAgentEntry).join("") : `<p class="admin-empty-state">No related services configured.</p>`}</section>
     `;
   }
-  return `<header class="admin-main-header"><div><p class="admin-eyebrow">RUNTIME INVENTORY</p><h1>Agent Config</h1><p>Read-only system prompts, formal skills, and MCP connections for the current runtime.</p></div></header><div class="admin-agent-catalog">${content}</div>`;
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">RUNTIME INVENTORY</p><p>Read-only system prompts, formal skills, and MCP connections for the current runtime.</p></div></header><div class="admin-agent-catalog">${content}</div>`;
 }
 
 function renderEnvironmentConfig() {
@@ -770,7 +786,7 @@ function renderEnvironmentConfig() {
   const items = sourceItems.filter(({ name, description }) => (
     name.toLowerCase().includes(normalizedQuery) || description.toLowerCase().includes(normalizedQuery)
   ));
-  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><h1>Environment Config</h1><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search names or descriptions" /></label><h2>Configuration names <span class="admin-count">${items.length}</span></h2><div class="admin-config-list">${items.length ? items.map(({ name, description }) => `<div class="admin-config-item"><div class="admin-config-copy"><code>${escapeHtml(name)}</code><span class="admin-config-description">${escapeHtml(description)}</span></div><button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy ${escapeHtml(name)}" aria-label="Copy ${escapeHtml(name)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></div>`).join("") : `<p>No matching configuration names or descriptions.</p>`}</div>`}</section>`;
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search names or descriptions" /></label><h2>Configuration names <span class="admin-count">${items.length}</span></h2><div class="admin-config-list">${items.length ? items.map(({ name, description }) => `<div class="admin-config-item"><div class="admin-config-copy"><code>${escapeHtml(name)}</code><span class="admin-config-description">${escapeHtml(description)}</span></div><button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy ${escapeHtml(name)}" aria-label="Copy ${escapeHtml(name)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></div>`).join("") : `<p>No matching configuration names or descriptions.</p>`}</div>`}</section>`;
 }
 
 function syncAdminRailScrollPosition() {
