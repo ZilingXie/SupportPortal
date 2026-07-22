@@ -128,7 +128,8 @@ class AccountAdminFeatureTests(unittest.TestCase):
     def test_routing_config_describes_stages_and_lists_supported_categories(self) -> None:
         payload = routing_config_payload()
 
-        self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stages"]))
+        self.assertEqual(payload["stages"], [stage["name"] for stage in payload["stage_details"]])
+        self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stage_details"]))
         self.assertEqual(
             [category["name"] for category in payload["route_categories"]],
             ["ticket_resolution", "billing", "agora_technical", "agora_non_technical", "small_talk", "non_agora"],

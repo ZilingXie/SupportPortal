@@ -340,7 +340,8 @@ def routing_config_payload() -> dict[str, Any]:
     return {
         "router_prompt_version": ROUTER_PROMPT_VERSION,
         "system_prompt": build_route_system_prompt(),
-        "stages": [
+        "stages": list(ROUTING_STAGE_DESCRIPTIONS),
+        "stage_details": [
             {"name": name, "description": description}
             for name, description in ROUTING_STAGE_DESCRIPTIONS.items()
         ],
