@@ -217,7 +217,7 @@
 11. Engineer Case 的 SLA 使用后端 `assigned_at / sla_due_at`，不得使用浏览器本地时间或 localStorage 创建 SLA 起点。
 12. `/workspace` 未登录页面采用轻量事务型登录壳：顶部只展示 `Workspace` 品牌，主区居中展示欢迎文案与单一登录卡，底部展示安全工作区信息；不得复用登录后的 rail 或工单工作区结构。
 13. `/workspace/admin` 未登录页面复用同一事务型登录壳，顶部品牌固定为 `Admin`，主区文案说明账号、班表、派单与 SLA 管理范围；登录后的管理控制台结构不受此规则影响。
-14. `/workspace/admin` 登录后的 rail 在桌面默认使用 `96px` icon-only 状态，hover 或 focus-within 时展开到 `264px`；当前账号与 Logout 固定放在 rail footer，不再放入全局顶栏。
+14. `/workspace/admin` 登录后的 rail 在桌面默认使用 `96px` icon-only 状态，hover 或 focus-within 时展开到 `264px`；rail footer 只保留默认可见的 Logout 图标，当前账号头像、名称与角色固定放在每个 tab 共用的工作区右上角账号条中。
 15. `/workspace/admin` 将工程师状态管理与完整班表拆成相邻工作面：`Engineer Management` 固定展示 `On Schedule Now` 和全量 `Engineer Schedules` 名单；独立 `Schedule` tab 展示 `Weekly Schedule` 时间网格与右侧 shift inspector。
    - Engineer Management 的每位工程师只展示 on/off-schedule，并提供 `Modify Schedule` 入口；入口切换到 `Schedule` tab 后直接打开对应 shift inspector。不得出现独立 Availability、Reason 或人工 availability 开关。
    - `Weekly Schedule` 固定使用横轴 Monday-Sunday、纵轴 `00:00-24:00` 的时间网格，不得退回“工程师为行”的文本表格；每小时横向拆成两个固定 30 分钟 slot。
@@ -233,7 +233,7 @@
    - setup 页面将邀请 email 作为唯一账号身份，Email 输入框由已校验的邀请记录自动填充并保持只读；页面和登录表单不得再向用户展示 `Account ID`。
    - setup 提交不得接受客户端另行指定账号身份；后端必须使用邀请记录中的规范化 email 创建账号。数据库内部可继续保留 `account_id` 作为兼容主键。
    - Workspace 与 Admin 登录表单统一使用 `Email` 标签；现有无 email 的 legacy 账号可继续通过原内部 ID 登录，但新邀请账号使用 email 登录。
-18. Admin 响应式 rail 规则固定为：`>= 901px` 支持 hover/focus 展开，`721px - 900px` 保持 icon-only，`<= 720px` 退化为顶部静态导航并显示必要标签与账户操作。
+18. Admin 响应式 rail 规则固定为：`>= 901px` 支持 hover/focus 展开，`721px - 900px` 保持 icon-only，`<= 720px` 退化为顶部静态导航并显示必要标签与 Logout；工作区账号条在窄屏独立占行并保持右对齐，不得与任一 tab 标题或操作按钮重叠。
 19. Admin rail 不显示浏览器滚动条；内容超出时仍须保留滚轮、触控板、触摸与键盘滚动能力，移动端顶部导航同样隐藏滚动轨迹。
    - Rail 的品牌、导航和 Logout 不得依赖远程图标字体才能识别。只有所需 Material Symbols glyph 完整加载并校验后才进入 icon-ready 状态；刷新、字体 pending、加载失败或状态异常时必须持续显示稳定的短标签 fallback，不能出现空白导航框。
    - Rail 刷新或重渲染时，桌面与平板的 sidebar body 横向位置必须归零；active item 居中只允许调整移动端顶部导航自身的 `scrollLeft`，不得使用会把桌面 rail 内容卷出可视区域的 `scrollIntoView()`。
