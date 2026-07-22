@@ -16,7 +16,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               const root = {{ innerHTML: "", addEventListener() {{}}, querySelector() {{ return null; }} }};
               const storage = new Map();
               const sandbox = {{
-                console, Headers,
+                console, Headers, URLSearchParams,
                 window: {{ location: {{ pathname: "/workspace/admin/" }} }},
                 document: {{ getElementById() {{ return root; }} }},
                 localStorage: {{
@@ -118,7 +118,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260722-route-prompt-categories-1", index)
+        self.assertIn("20260722-automated-cases-default-1", index)
 
         core_load = source[source.index("async function loadAdminData"):source.index("function signOut")]
         promise_all_start = core_load.index("Promise.all")
@@ -126,6 +126,32 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn(
             "/api/workspace/admin/environment-config",
             core_load[promise_all_start:promise_all_end],
+        )
+
+    def test_automated_cases_defaults_to_automated_route_filter(self) -> None:
+        self.run_admin_app_script(
+            """
+            const requestedUrls = [];
+            fetch = async (url) => {
+              requestedUrls.push(String(url));
+              return { ok: true, status: 200, json: async () => ({ cases: [] }) };
+            };
+            accessToken = 'admin-token';
+            currentAccount = { account_id: 'admin', role: 'admin' };
+            await loadAdminData();
+            if (!requestedUrls.includes('/api/workspace/admin/account-automation?route_status=automation')) {
+              throw new Error('default automated cases request is not filtered');
+            }
+            const defaultMarkup = renderAutomatedCases();
+            if (!defaultMarkup.includes('<option value="automation" selected>Automated</option>')) {
+              throw new Error('Automated option is not selected by default');
+            }
+            automationRouteStatus = '';
+            const allRoutesMarkup = renderAutomatedCases();
+            if (!allRoutesMarkup.includes('<option value="" selected>All routes</option>')) {
+              throw new Error('explicit All routes selection is not preserved');
+            }
+            """
         )
 
     def test_admin_session_is_role_gated_and_preserves_engineer_storage(self) -> None:

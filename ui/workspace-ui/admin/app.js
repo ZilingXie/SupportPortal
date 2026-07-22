@@ -13,6 +13,7 @@ let metrics = null;
 let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let automationData = { metrics: {}, cases: [] };
+let automationRouteStatus = "automation";
 let routingData = { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
 let personaData = { personas: [] };
 let environmentData = { names: [], items: [] };
@@ -642,7 +643,7 @@ function renderAutomatedCases() {
       <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
       <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
-    </section><form class="admin-filter-bar" data-automation-filter-form><select name="route_status"><option value="">All routes</option><option value="automation">Automated</option><option value="not_automated">Not Automated</option></select><input name="category" placeholder="Route category" /><input name="created_from" type="date" aria-label="Created from" /><input name="created_to" type="date" aria-label="Created to" /><button class="btn btn-ghost" type="submit">Apply filters</button></form>
+    </section><form class="admin-filter-bar" data-automation-filter-form><select name="route_status"><option value="" ${automationRouteStatus ? "" : "selected"}>All routes</option><option value="automation" ${automationRouteStatus === "automation" ? "selected" : ""}>Automated</option><option value="not_automated" ${automationRouteStatus === "not_automated" ? "selected" : ""}>Not Automated</option></select><input name="category" placeholder="Route category" /><input name="created_from" type="date" aria-label="Created from" /><input name="created_to" type="date" aria-label="Created to" /><button class="btn btn-ghost" type="submit">Apply filters</button></form>
     <section class="admin-ops-surface"><table class="admin-work-table"><thead><tr><th>Case</th><th>Subject</th><th>Route status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${statusPill(item.automation_status)}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="4">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
@@ -745,6 +746,8 @@ async function loadAdminData() {
   loadError = "";
   renderAdmin();
   const environmentRequest = loadEnvironmentConfig({ render: false });
+  const automationParams = new URLSearchParams();
+  if (automationRouteStatus) automationParams.set("route_status", automationRouteStatus);
   try {
     const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload, personasPayload] = await Promise.all([
       fetchJson("/api/workspace/admin/accounts"),
@@ -752,7 +755,7 @@ async function loadAdminData() {
       fetchJson("/api/workspace/admin/metrics"),
       fetchJson("/api/workspace/admin/audit?limit=200"),
       fetchJson("/api/workspace/admin/engineer-schedules"),
-      fetchJson("/api/workspace/admin/account-automation"),
+      fetchJson(`/api/workspace/admin/account-automation?${automationParams}`),
       fetchJson("/api/workspace/admin/account-routing/config"),
       fetchJson("/api/workspace/admin/account-personas"),
     ]);
@@ -1006,6 +1009,7 @@ root.addEventListener("submit", (event) => {
     return;
   }
   if (form.matches("[data-automation-filter-form]")) {
+    automationRouteStatus = String(new FormData(form).get("route_status") || "").trim();
     const params = new URLSearchParams();
     for (const [key, value] of new FormData(form).entries()) if (String(value).trim()) params.set(key, String(value).trim());
     fetchJson(`/api/workspace/admin/account-automation?${params}`).then((payload) => { automationData = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
