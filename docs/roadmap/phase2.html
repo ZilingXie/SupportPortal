@@ -347,6 +347,7 @@
 
     .status-chip.doing { background: var(--blue-soft); color: var(--blue); }
     .status-chip.todo { background: var(--yellow-soft); color: #725b17; }
+    .status-chip.done { background: var(--forest-soft); color: var(--forest); }
     .owner-chip { border: 1px solid var(--line-strong); color: var(--forest); }
 
     .pr-link {
@@ -706,8 +707,13 @@
         </details>
 
         <details class="delivery-group" data-status-group="complete">
-          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>15 项</span></summary>
+          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>16 项</span></summary>
           <div class="delivery-group-body">
+        <article class="delivery-row" data-category="reliability" data-status="done">
+          <div class="delivery-category">Reliability</div>
+          <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 以只读目录展示 Route、Client、Engineer、Guardrail Agent 的 system Prompt、正式 skill 与 MCP 状态，并将 Billing 明确标记为确定性服务；Current route 与 Route category 独立收口到 Route Strategy。</p></div>
+          <div class="status-meta"><span class="status-chip done">已完成</span></div>
+        </article>
         <article class="delivery-row" data-category="quality" data-status="done">
           <div class="delivery-category">Reply Quality</div>
           <div class="delivery-main"><h3>限制重复追问</h3><p>同一规范化缺失字段在一个 ticket 内最多询问一次；客户未回答时停止重复索取，保留现有上下文并进入人工关注状态。</p></div>

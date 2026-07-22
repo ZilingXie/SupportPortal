@@ -109,6 +109,7 @@ from backend.services.account_admin import (
     route_execution_from_decision,
     routing_config_payload,
 )
+from backend.services.agent_config import build_agent_config_payload
 from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
 from backend.services.case_memory_ledger import build_case_memory_ledger_record_from_feedback
 from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
@@ -5572,6 +5573,13 @@ def get_workspace_admin_account_routing_config(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
     return routing_config_payload()
+
+
+@app.get("/api/workspace/admin/agent-config")
+def get_workspace_admin_agent_config(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return build_agent_config_payload(ticket_repository.list_account_personas())
 
 
 @app.get("/api/workspace/admin/account-routes")

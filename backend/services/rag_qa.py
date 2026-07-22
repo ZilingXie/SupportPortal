@@ -64,7 +64,11 @@ from backend.services.prompts.rag_agent_planner import (
     build_rag_agent_planner_system_prompt,
     build_rag_agent_planner_user_prompt,
 )
-from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
+from backend.services.prompts.rag_answer import (
+    INSUFFICIENT_EVIDENCE_REPLY,
+    build_rag_answer_system_prompt,
+    build_rag_answer_user_prompt,
+)
 from backend.services.query_understanding import (
     QueryUnderstandingResult,
     RetrievalPlan,
@@ -118,10 +122,6 @@ _QUERY_STOPWORDS = {
     "you",
     "your",
 }
-
-INSUFFICIENT_EVIDENCE_REPLY = (
-    "I couldn't find enough information in the available support knowledge base to answer that question."
-)
 
 AGENT_PLAN_VERSION = "v1"
 _RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL: dict[str, float] = {}

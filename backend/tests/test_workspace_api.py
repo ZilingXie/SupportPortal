@@ -337,6 +337,37 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(personas.status_code, 200, personas.text)
         self.assertEqual(personas.json()["personas"][0]["persona_key"], "default-support")
 
+    def test_agent_config_is_admin_only_and_includes_read_only_persona_versions(self) -> None:
+        self.assertEqual(self.client.get("/api/workspace/admin/agent-config").status_code, 401)
+        self._seed_engineer()
+        engineer_token = self._login("Maya", "engineer-password-1")
+        self.assertEqual(
+            self.client.get(
+                "/api/workspace/admin/agent-config",
+                headers={"Authorization": f"Bearer {engineer_token}"},
+            ).status_code,
+            403,
+        )
+
+        response = self.client.get(
+            "/api/workspace/admin/agent-config",
+            headers=self._admin_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(
+            [agent["key"] for agent in payload["agents"]],
+            ["route-agent", "client-agent", "engineer-agent", "guardrail-agent"],
+        )
+        billing = payload["related_services"][0]
+        self.assertEqual(billing["kind"], "service")
+        published = next(
+            prompt for prompt in billing["prompts"] if prompt["metadata"]["is_published"]
+        )
+        self.assertEqual(published["metadata"]["persona_key"], "default-support")
+        self.assertNotIn("OPENAI_API_KEY", response.text)
+
     def test_account_persona_api_publishes_and_rolls_back_without_overwriting_history(self) -> None:
         headers = self._admin_headers()
         draft = self.client.post(

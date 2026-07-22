@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 
+INSUFFICIENT_EVIDENCE_REPLY = (
+    "I couldn't find enough information in the available support knowledge base to answer that question."
+)
+
+
 def build_rag_answer_system_prompt(
     *,
     insufficient_reply: str,

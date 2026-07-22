@@ -15,12 +15,15 @@ let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let automationData = { metrics: {}, cases: [] };
 let automationRouteStatus = "automation";
 let routingData = { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
-let personaData = { personas: [] };
+let agentConfigData = null;
+let agentConfigLoading = false;
+let agentConfigLoadError = "";
+let expandedAgentKeys = new Set();
+let selectedAgentViews = {};
+let selectedAgentPrompts = {};
 let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
 let environmentQuery = "";
-let selectedPersonaKey = "";
-let comparePersonaVersions = [];
 let selectedEngineerId = "";
 let invitationResult = null;
 let scheduleNotice = null;
@@ -29,7 +32,7 @@ let loadError = "";
 
 function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
-  return ["overview", "automated-cases", "route-prompt", "persona-prompts", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(section)
+  return ["overview", "automated-cases", "agent-config", "route-strategy", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(section)
     ? section
     : "overview";
 }
@@ -196,8 +199,8 @@ function renderAdminShell(content) {
   const navItems = [
     ["overview", "dashboard", "Operations Overview", "OV"],
     ["automated-cases", "automation", "Automated Cases", "AC"],
-    ["route-prompt", "account_tree", "Route & Prompt", "RP"],
-    ["persona-prompts", "record_voice_over", "Persona Prompts", "PP"],
+    ["agent-config", "smart_toy", "Agent Config", "AG"],
+    ["route-strategy", "account_tree", "Route Strategy", "RT"],
     ["environment-config", "settings", "Environment Config", "EC"],
     ["engineers", "groups", "Engineer Management", "EN"],
     ["schedule", "calendar_month", "Schedule", "SC"],
@@ -647,29 +650,113 @@ function renderAutomatedCases() {
     <section class="admin-ops-surface"><table class="admin-work-table"><thead><tr><th>Case</th><th>Subject</th><th>Route status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${statusPill(item.automation_status)}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="4">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
-function renderRoutePrompt() {
+function renderRouteStrategy() {
   const stages = Array.isArray(routingData.stage_details) && routingData.stage_details.length
     ? routingData.stage_details
     : (Array.isArray(routingData.stages) ? routingData.stages : []);
   const categories = Array.isArray(routingData.route_categories) ? routingData.route_categories : [];
   return `
-    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><h1>Route &amp; Prompt</h1><p>Review the active routing stages, supported route categories, and current router Prompt.</p></div></header>
+    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><h1>Route Strategy</h1><p>Review the active route stages and supported route categories.</p></div></header>
     <section class="admin-route-layout">
-      <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${stages.map(stage => `<li><strong>${escapeHtml(stage.name || stage)}</strong>${stage.description ? `<small>${escapeHtml(stage.description)}</small>` : ""}</li>`).join("")}</ol><h3>Current router Prompt</h3><pre>${escapeHtml(routingData.system_prompt || "No LLM prompt used")}</pre></div>
+      <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${stages.map(stage => `<li><strong>${escapeHtml(stage.name || stage)}</strong>${stage.description ? `<small>${escapeHtml(stage.description)}</small>` : ""}</li>`).join("")}</ol></div>
       <div class="admin-ops-surface"><h2>Route category</h2><p class="admin-section-note">Categories currently recognized by the support router.</p><div class="admin-route-categories">${categories.length ? categories.map(category => `<article><div><strong>${escapeHtml(category.display_name || category.name)}</strong><code>${escapeHtml(category.name)}</code></div><p>${escapeHtml(category.description)}</p><small>Actions: ${escapeHtml((category.execution_actions || []).join(", "))}</small></article>`).join("") : `<p>No route categories configured.</p>`}</div></div>
     </section>
   `;
 }
 
-function renderPersonaPrompts() {
-  const personas = Array.isArray(personaData.personas) ? personaData.personas : [];
-  const persona = personas.find(item => item.persona_key === selectedPersonaKey) || personas[0];
-  const versions = persona?.versions || [];
-  const active = versions.find(item => Number(item.version) === Number(persona?.published_version)) || versions.at(-1);
+function agentStatusLabel(status) {
+  return String(status || "unknown").replaceAll("_", " ");
+}
+
+function renderAgentBadge(label, tone = "") {
+  return `<span class="admin-agent-badge ${tone}">${escapeHtml(label)}</span>`;
+}
+
+function renderAgentPromptPanel(entry) {
+  const prompts = Array.isArray(entry.prompts) ? entry.prompts : [];
+  if (!prompts.length) {
+    return `<div class="admin-agent-empty"><span class="material-symbols-outlined" aria-hidden="true">text_snippet</span><p>No system prompt configured. This component is deterministic.</p></div>`;
+  }
+  const preferred = prompts.find(prompt => prompt.metadata?.is_published) || prompts[0];
+  const selectedKey = selectedAgentPrompts[entry.key] || preferred.key;
+  const selected = prompts.find(prompt => prompt.key === selectedKey) || preferred;
+  const metadata = selected.metadata || {};
+  const details = [
+    selected.version ? `Version ${selected.version}` : "Unversioned",
+    selected.component_key ? `Component ${selected.component_key}` : "",
+    metadata.status ? agentStatusLabel(metadata.status) : "",
+    metadata.variant || "",
+  ].filter(Boolean);
   return `
-    <header class="admin-main-header"><div><p class="admin-eyebrow">CUSTOMER VOICE</p><h1>Persona Prompt Template</h1><p>Draft, publish, compare, and roll back the Prompt used for /account customer replies.</p></div></header>
-    <form class="admin-filter-bar" data-persona-create-form><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /><input name="display_name" placeholder="Display name" required /><input name="instruction" placeholder="Persona instruction" required /><button class="btn btn-ghost" type="submit">Create Persona</button></form>
-    ${persona ? `<section class="admin-persona-workspace"><aside class="admin-ops-surface"><nav class="admin-persona-list">${personas.map(item => `<button type="button" data-action="select-persona" data-persona-key="${escapeHtml(item.persona_key)}" class="${item.persona_key === persona.persona_key ? "is-active" : ""}">${escapeHtml(item.display_name)}</button>`).join("")}</nav><h2>${escapeHtml(persona.display_name)}</h2><p>${statusPill(persona.enabled ? "active" : "disabled")} Published v${escapeHtml(persona.published_version || "-")}</p><button class="btn btn-ghost" type="button" data-action="toggle-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-enabled="${persona.enabled ? "false" : "true"}">${persona.enabled ? "Disable" : "Enable"}</button><h3>Version history</h3><div class="admin-version-list">${versions.map(item => `<button type="button" data-action="rollback-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" title="Create a new published version from v${item.version}"><strong>v${item.version}</strong><span>${escapeHtml(item.status)}</span><small>${escapeHtml(item.change_note)}</small></button>`).join("")}</div></aside><div><form class="admin-ops-surface admin-prompt-editor" data-persona-draft-form data-persona-key="${escapeHtml(persona.persona_key)}"><label>Persona instruction<textarea name="instruction" rows="10" required>${escapeHtml(active?.content?.instruction || "")}</textarea></label><label>Reply opener<input name="opener" value="${escapeHtml(active?.content?.opener || "")}" placeholder="Optional opening sentence" /></label><label>Signoff name<input name="signoff_name" value="${escapeHtml(active?.content?.signoff_name || "Sid")}" required /></label><label>Change note<input name="change_note" required maxlength="500" /></label><input type="hidden" name="based_on_version" value="${escapeHtml(persona.published_version || "")}" /><div class="admin-editor-actions"><button class="btn btn-ghost" type="submit">Save draft</button>${versions.filter(item => item.status === "draft").map(item => `<button class="btn btn-primary" type="button" data-action="publish-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}">Publish v${item.version}</button>`).join("")}</div></form><section class="admin-ops-surface admin-version-compare"><h3>Compare versions</h3><div><select data-version-compare="0">${versions.map(item => `<option value="${item.version}">v${item.version}</option>`).join("")}</select><select data-version-compare="1">${versions.map(item => `<option value="${item.version}" ${item.version === versions.at(-1)?.version ? "selected" : ""}>v${item.version}</option>`).join("")}</select></div><div class="admin-compare-grid">${[comparePersonaVersions[0] || versions[0]?.version, comparePersonaVersions[1] || versions.at(-1)?.version].map(version => { const item = versions.find(candidate => Number(candidate.version) === Number(version)); return `<pre>${escapeHtml(JSON.stringify(item?.content || {}, null, 2))}</pre>`; }).join("")}</div></section></div></section>` : `<p class="admin-empty-state">No Persona templates available.</p>`}`;
+    <div class="admin-agent-prompt-layout">
+      <nav class="admin-agent-prompt-list" aria-label="${escapeHtml(entry.name)} prompts">
+        ${prompts.map(prompt => `<button type="button" data-action="select-agent-prompt" data-agent-key="${escapeHtml(entry.key)}" data-prompt-key="${escapeHtml(prompt.key)}" class="${prompt.key === selected.key ? "is-active" : ""}" aria-pressed="${prompt.key === selected.key ? "true" : "false"}"><strong>${escapeHtml(prompt.name)}</strong><small>${escapeHtml(prompt.version ? `v${prompt.version}` : prompt.component_key || "System prompt")}${prompt.metadata?.is_published ? " · Published" : ""}</small></button>`).join("")}
+      </nav>
+      <section class="admin-agent-prompt-viewer" aria-live="polite">
+        <header><div><p class="admin-eyebrow">SYSTEM PROMPT</p><h3>${escapeHtml(selected.name)}</h3></div><span>${escapeHtml(details.join(" · "))}</span></header>
+        ${metadata.change_note ? `<p class="admin-agent-change-note">${escapeHtml(metadata.change_note)}</p>` : ""}
+        <pre tabindex="0">${escapeHtml(selected.content || "No prompt content available")}</pre>
+      </section>
+    </div>
+  `;
+}
+
+function renderAgentSkillsPanel(entry) {
+  const skills = Array.isArray(entry.skills) ? entry.skills : [];
+  if (!skills.length) {
+    return `<div class="admin-agent-empty"><span class="material-symbols-outlined" aria-hidden="true">extension_off</span><p>No formal skill registry configured.</p></div>`;
+  }
+  return `<div class="admin-agent-capability-list">${skills.map(skill => `<div><code>${escapeHtml(skill.key)}</code><strong>${escapeHtml(skill.name)}</strong><p>${escapeHtml(skill.description)}</p></div>`).join("")}</div>`;
+}
+
+function renderAgentMcpPanel(entry) {
+  const servers = Array.isArray(entry.mcp_servers) ? entry.mcp_servers : [];
+  if (!servers.length) {
+    return `<div class="admin-agent-empty"><span class="material-symbols-outlined" aria-hidden="true">hub</span><p>No MCP configured.</p></div>`;
+  }
+  return `<div class="admin-agent-capability-list">${servers.map(server => `<div><code>${escapeHtml(server.key || server.name)}</code><strong>${escapeHtml(server.name)}</strong><p>${escapeHtml(server.description || "")}</p></div>`).join("")}</div>`;
+}
+
+function renderAgentEntry(entry) {
+  const view = ["prompts", "skills", "mcp"].includes(selectedAgentViews[entry.key]) ? selectedAgentViews[entry.key] : "prompts";
+  const components = Array.isArray(entry.components) ? entry.components : [];
+  const isService = entry.kind === "service";
+  return `
+    <details class="admin-agent-entry" data-agent-entry="${escapeHtml(entry.key)}" ${expandedAgentKeys.has(entry.key) ? "open" : ""}>
+      <summary>
+        <span class="admin-agent-summary-icon material-symbols-outlined" aria-hidden="true">${isService ? "settings_suggest" : "smart_toy"}</span>
+        <span class="admin-agent-summary-copy"><span><strong>${escapeHtml(entry.name)}</strong>${renderAgentBadge(isService ? "Service" : "Agent", isService ? "is-service" : "")}${renderAgentBadge(agentStatusLabel(entry.status), entry.status === "feature_gated" ? "is-gated" : "is-active")}</span><small>${escapeHtml(entry.description)}</small></span>
+        <span class="admin-agent-summary-count">${components.length} component${components.length === 1 ? "" : "s"}</span>
+        <span class="admin-agent-summary-chevron material-symbols-outlined" aria-hidden="true">expand_more</span>
+      </summary>
+      <div class="admin-agent-entry-body">
+        <div class="admin-agent-components" aria-label="Components">${components.map(component => `<div><span class="material-symbols-outlined" aria-hidden="true">${component.status === "feature_gated" ? "lock_clock" : "check_circle"}</span><span><strong>${escapeHtml(component.name)}</strong><small>${escapeHtml(component.description)}</small></span></div>`).join("")}</div>
+        <div class="admin-agent-tabs" role="tablist" aria-label="${escapeHtml(entry.name)} configuration">
+          ${[["prompts", "Prompts"], ["skills", "Skills"], ["mcp", "MCP"]].map(([id, label]) => `<button type="button" role="tab" aria-selected="${view === id ? "true" : "false"}" data-action="select-agent-view" data-agent-key="${escapeHtml(entry.key)}" data-agent-view="${id}" class="${view === id ? "is-active" : ""}">${label}<span>${id === "prompts" ? (entry.prompts || []).length : id === "skills" ? (entry.skills || []).length : (entry.mcp_servers || []).length}</span></button>`).join("")}
+        </div>
+        <div class="admin-agent-panel" role="tabpanel">${view === "skills" ? renderAgentSkillsPanel(entry) : view === "mcp" ? renderAgentMcpPanel(entry) : renderAgentPromptPanel(entry)}</div>
+      </div>
+    </details>
+  `;
+}
+
+function renderAgentConfig() {
+  let content = "";
+  if (agentConfigLoading) {
+    content = `<div class="admin-agent-loading" aria-live="polite"><span class="material-symbols-outlined admin-invite-spinner" aria-hidden="true">progress_activity</span><p>Loading Agent configuration...</p></div>`;
+  } else if (agentConfigLoadError) {
+    content = `<div class="admin-agent-error" role="alert"><span class="material-symbols-outlined" aria-hidden="true">error</span><div><strong>Agent configuration unavailable</strong><p>${escapeHtml(agentConfigLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-agent-config">Retry</button></div></div>`;
+  } else if (!agentConfigData) {
+    content = `<div class="admin-agent-loading"><p>Agent configuration has not been loaded.</p></div>`;
+  } else {
+    const agents = Array.isArray(agentConfigData.agents) ? agentConfigData.agents : [];
+    const services = Array.isArray(agentConfigData.related_services) ? agentConfigData.related_services : [];
+    content = `
+      <section class="admin-agent-group" aria-labelledby="agent-config-agents"><header><h2 id="agent-config-agents">Agents</h2><span>${agents.length}</span></header>${agents.length ? agents.map(renderAgentEntry).join("") : `<p class="admin-empty-state">No Agents configured.</p>`}</section>
+      <section class="admin-agent-group" aria-labelledby="agent-config-services"><header><div><h2 id="agent-config-services">Related services</h2><p>Deterministic systems shown here because they own related prompt configuration.</p></div><span>${services.length}</span></header>${services.length ? services.map(renderAgentEntry).join("") : `<p class="admin-empty-state">No related services configured.</p>`}</section>
+    `;
+  }
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">RUNTIME INVENTORY</p><h1>Agent Config</h1><p>Read-only system prompts, formal skills, and MCP connections for the current runtime.</p></div></header><div class="admin-agent-catalog">${content}</div>`;
 }
 
 function renderEnvironmentConfig() {
@@ -717,10 +804,10 @@ function renderAdmin() {
     ? renderAudit()
     : adminSection === "automated-cases"
     ? renderAutomatedCases()
-    : adminSection === "route-prompt"
-    ? renderRoutePrompt()
-    : adminSection === "persona-prompts"
-    ? renderPersonaPrompts()
+    : adminSection === "agent-config"
+    ? renderAgentConfig()
+    : adminSection === "route-strategy"
+    ? renderRouteStrategy()
     : adminSection === "environment-config"
     ? renderEnvironmentConfig()
     : renderOverview();
@@ -740,6 +827,23 @@ async function loadEnvironmentConfig({ render = true } = {}) {
   if (render) renderAdmin();
 }
 
+async function loadAgentConfig({ render = true, force = false } = {}) {
+  if (agentConfigLoading || (agentConfigData && !force)) return;
+  agentConfigLoading = true;
+  agentConfigLoadError = "";
+  if (render) renderAdmin();
+  try {
+    const payload = await fetchJson("/api/workspace/admin/agent-config");
+    agentConfigData = payload || { agents: [], related_services: [] };
+  } catch (error) {
+    agentConfigData = null;
+    agentConfigLoadError = error.message;
+  } finally {
+    agentConfigLoading = false;
+    if (render) renderAdmin();
+  }
+}
+
 async function loadAdminData() {
   if (!isAdminAuthenticated()) return;
   loading = true;
@@ -749,7 +853,7 @@ async function loadAdminData() {
   const automationParams = new URLSearchParams();
   if (automationRouteStatus) automationParams.set("route_status", automationRouteStatus);
   try {
-    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload, personasPayload] = await Promise.all([
+    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload] = await Promise.all([
       fetchJson("/api/workspace/admin/accounts"),
       fetchJson("/api/workspace/cases?assignment_status=all"),
       fetchJson("/api/workspace/admin/metrics"),
@@ -757,7 +861,6 @@ async function loadAdminData() {
       fetchJson("/api/workspace/admin/engineer-schedules"),
       fetchJson(`/api/workspace/admin/account-automation?${automationParams}`),
       fetchJson("/api/workspace/admin/account-routing/config"),
-      fetchJson("/api/workspace/admin/account-personas"),
     ]);
     accounts = Array.isArray(accountPayload.accounts) ? accountPayload.accounts : [];
     adminTickets = Array.isArray(casePayload.cases) ? casePayload.cases.map(normalizeAdminTicket) : [];
@@ -766,13 +869,13 @@ async function loadAdminData() {
     scheduleData = schedulePayload || { timezone: "Asia/Shanghai", engineers: [] };
     automationData = automationPayload || { metrics: {}, cases: [] };
     routingData = routingPayload || { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
-    personaData = personasPayload || { personas: [] };
   } catch (error) {
     loadError = error.message;
   } finally {
     await environmentRequest;
     loading = false;
     renderAdmin();
+    if (adminSection === "agent-config") loadAgentConfig();
   }
 }
 
@@ -787,6 +890,12 @@ function signOut(options = {}) {
   metrics = null;
   auditEvents = [];
   scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
+  agentConfigData = null;
+  agentConfigLoading = false;
+  agentConfigLoadError = "";
+  expandedAgentKeys = new Set();
+  selectedAgentViews = {};
+  selectedAgentPrompts = {};
   environmentData = { names: [], items: [] };
   environmentLoadError = "";
   selectedEngineerId = "";
@@ -903,6 +1012,7 @@ root.addEventListener("click", (event) => {
     if (adminSection !== "new-account") invitationResult = null;
     if (globalThis.location) globalThis.location.hash = adminSection;
     renderAdmin();
+    if (adminSection === "agent-config") loadAgentConfig();
     return;
   }
   const action = event.target.closest("[data-action]")?.dataset.action;
@@ -921,6 +1031,8 @@ root.addEventListener("click", (event) => {
     loadAdminData();
   } else if (action === "retry-environment-config") {
     loadEnvironmentConfig();
+  } else if (action === "retry-agent-config") {
+    loadAgentConfig({ force: true });
   } else if (action === "dispatch") {
     fetchJson("/api/workspace/admin/dispatch", { method: "POST" }).then(loadAdminData).catch((error) => {
       loadError = error.message;
@@ -931,31 +1043,21 @@ root.addEventListener("click", (event) => {
       loadError = error.message;
       renderAdmin();
     });
-  } else if (action === "publish-persona" || action === "rollback-persona") {
-    const button = event.target.closest("[data-persona-key]");
-    const operation = action === "publish-persona" ? "publish" : "rollback";
-    if (operation === "rollback" && !globalThis.confirm?.(`Create a new published version from v${button.dataset.version}?`)) return;
-    fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(button.dataset.personaKey)}/versions/${button.dataset.version}/${operation}`, { method: "POST" }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
   } else if (action === "copy-config-name") {
     const name = event.target.closest("[data-config-name]")?.dataset.configName || "";
     globalThis.navigator?.clipboard?.writeText(name);
-  } else if (action === "select-persona") {
-    selectedPersonaKey = event.target.closest("[data-persona-key]")?.dataset.personaKey || "";
-    comparePersonaVersions = [];
+  } else if (action === "select-agent-view") {
+    const button = event.target.closest("[data-agent-key]");
+    selectedAgentViews[button.dataset.agentKey] = button.dataset.agentView;
     renderAdmin();
-  } else if (action === "toggle-persona") {
-    const button = event.target.closest("[data-persona-key]");
-    fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(button.dataset.personaKey)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: button.dataset.enabled === "true" }) }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
+  } else if (action === "select-agent-prompt") {
+    const promptButton = event.target.closest("[data-agent-key]");
+    selectedAgentPrompts[promptButton.dataset.agentKey] = promptButton.dataset.promptKey;
+    renderAdmin();
   }
 });
 
 root.addEventListener("change", (event) => {
-  const compare = event.target.closest("[data-version-compare]");
-  if (compare) {
-    comparePersonaVersions[Number(compare.dataset.versionCompare)] = Number(compare.value);
-    renderAdmin();
-    return;
-  }
   const endHour = event.target.closest("[data-end-hour]");
   if (!endHour) return;
   const weekday = endHour.dataset.endHour;
@@ -965,6 +1067,13 @@ root.addEventListener("change", (event) => {
   if (isEndOfDay) minuteSelect.value = "00";
   minuteSelect.disabled = isEndOfDay;
 });
+
+root.addEventListener("toggle", (event) => {
+  const entry = event.target.closest?.("[data-agent-entry]");
+  if (!entry) return;
+  if (entry.open) expandedAgentKeys.add(entry.dataset.agentEntry);
+  else expandedAgentKeys.delete(entry.dataset.agentEntry);
+}, true);
 
 root.addEventListener("input", (event) => {
   if (!event.target.matches("[data-env-search]")) return;
@@ -990,24 +1099,6 @@ root.addEventListener("submit", (event) => {
     handleScheduleUpdate(form);
     return;
   }
-  if (form.matches("[data-persona-draft-form]")) {
-    const data = new FormData(form);
-    fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(form.dataset.personaKey)}/drafts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: { instruction: String(data.get("instruction") || ""), opener: String(data.get("opener") || ""), signoff_name: String(data.get("signoff_name") || "Sid") },
-        change_note: String(data.get("change_note") || ""),
-        based_on_version: Number(data.get("based_on_version")) || null,
-      }),
-    }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
-    return;
-  }
-  if (form.matches("[data-persona-create-form]")) {
-    const data = new FormData(form);
-    fetchJson("/api/workspace/admin/account-personas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ persona_key: String(data.get("persona_key") || ""), display_name: String(data.get("display_name") || ""), content: { instruction: String(data.get("instruction") || ""), signoff_name: "Sid" } }) }).then(loadAdminData).catch((error) => { loadError = error.message; renderAdmin(); });
-    return;
-  }
   if (form.matches("[data-automation-filter-form]")) {
     automationRouteStatus = String(new FormData(form).get("route_status") || "").trim();
     const params = new URLSearchParams();
@@ -1022,6 +1113,7 @@ window.addEventListener?.("hashchange", () => {
   if (nextSection !== adminSection) selectedEngineerId = "";
   adminSection = nextSection;
   renderAdmin();
+  if (adminSection === "agent-config") loadAgentConfig();
 });
 
 renderAdmin();
