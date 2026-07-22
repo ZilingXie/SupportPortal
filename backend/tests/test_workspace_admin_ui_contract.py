@@ -93,7 +93,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.run_admin_app_script(
             """
             automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ client_ticket_id: 'TK-1', title: 'Invoice', automation_status: 'automation' }] };
-            routingData = { router_prompt_version: 'account-router-v1', stages: [{ name: 'semantic_intent', description: 'Classifies the request.' }, { name: 'policy_gate', description: 'Applies policy.' }], route_categories: [{ name: 'billing', display_name: 'Billing', description: 'Billing requests.', execution_actions: ['detailed_invoice'] }], system_prompt: 'actual prompt' };
+            routingData = { router_prompt_version: 'account-router-v1', stages: ['semantic_intent', 'policy_gate'], stage_details: [{ name: 'semantic_intent', description: 'Classifies the request.' }, { name: 'policy_gate', description: 'Applies policy.' }], route_categories: [{ name: 'billing', display_name: 'Billing', description: 'Billing requests.', execution_actions: ['detailed_invoice'] }], system_prompt: 'actual prompt' };
             personaData = { personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', signoff_name: 'Sid' }, change_note: 'Initial' }] }] };
             environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'], items: [
               { name: 'OPENAI_API_KEY', description: 'Credential used by OpenAI.' },
@@ -117,6 +117,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         )
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
+        index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
+        self.assertIn("20260722-route-prompt-categories-1", index)
 
         core_load = source[source.index("async function loadAdminData"):source.index("function signOut")]
         promise_all_start = core_load.index("Promise.all")
@@ -256,7 +258,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260721-account-automation-admin-1", html)
+        self.assertIn("20260722-route-prompt-categories-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

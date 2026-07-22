@@ -13,7 +13,7 @@ let metrics = null;
 let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let automationData = { metrics: {}, cases: [] };
-let routingData = { stages: [], route_categories: [], system_prompt: "" };
+let routingData = { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
 let personaData = { personas: [] };
 let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
@@ -647,7 +647,9 @@ function renderAutomatedCases() {
 }
 
 function renderRoutePrompt() {
-  const stages = Array.isArray(routingData.stages) ? routingData.stages : [];
+  const stages = Array.isArray(routingData.stage_details) && routingData.stage_details.length
+    ? routingData.stage_details
+    : (Array.isArray(routingData.stages) ? routingData.stages : []);
   const categories = Array.isArray(routingData.route_categories) ? routingData.route_categories : [];
   return `
     <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><h1>Route &amp; Prompt</h1><p>Review the active routing stages, supported route categories, and current router Prompt.</p></div></header>
@@ -760,7 +762,7 @@ async function loadAdminData() {
     auditEvents = Array.isArray(auditPayload.events) ? auditPayload.events : [];
     scheduleData = schedulePayload || { timezone: "Asia/Shanghai", engineers: [] };
     automationData = automationPayload || { metrics: {}, cases: [] };
-    routingData = routingPayload || { stages: [], route_categories: [], system_prompt: "" };
+    routingData = routingPayload || { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
     personaData = personasPayload || { personas: [] };
   } catch (error) {
     loadError = error.message;
