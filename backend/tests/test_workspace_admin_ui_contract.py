@@ -78,10 +78,9 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             '"automated-cases"', '"route-prompt"', '"persona-prompts"', '"environment-config"',
             "/api/workspace/admin/account-automation",
             "/api/workspace/admin/account-routing/config",
-            "/api/workspace/admin/account-routes",
             "/api/workspace/admin/account-personas",
             "/api/workspace/admin/environment-config",
-            "Automation share", "Route execution", "Version history", "Configuration names",
+            "Automation share", "Route category", "Current route", "Version history", "Configuration names",
             "data-persona-draft-form", "data-env-search", "data-action=\"publish-persona\"",
             "environmentLoadError", "loadEnvironmentConfig",
             "data-action=\"retry-environment-config\"",
@@ -94,8 +93,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.run_admin_app_script(
             """
             automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ client_ticket_id: 'TK-1', title: 'Invoice', automation_status: 'automation' }] };
-            routingData = { router_prompt_version: 'account-router-v1', stages: ['semantic_intent', 'policy_gate'], system_prompt: 'actual prompt' };
-            routeData = { routes: [{ ticket_id: 'TK-1', final_route: 'detailed_invoice', route_source: 'intent_router', prompt_snapshot_available: true, stages: [] }] };
+            routingData = { router_prompt_version: 'account-router-v1', stages: [{ name: 'semantic_intent', description: 'Classifies the request.' }, { name: 'policy_gate', description: 'Applies policy.' }], route_categories: [{ name: 'billing', display_name: 'Billing', description: 'Billing requests.', execution_actions: ['detailed_invoice'] }], system_prompt: 'actual prompt' };
             personaData = { personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', signoff_name: 'Sid' }, change_note: 'Initial' }] }] };
             environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'], items: [
               { name: 'OPENAI_API_KEY', description: 'Credential used by OpenAI.' },
@@ -103,6 +101,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             ] };
             if (!renderAutomatedCases().includes('25.0%')) throw new Error('automation ratio missing');
             if (!renderRoutePrompt().includes('account-router-v1')) throw new Error('route version missing');
+            if (!renderRoutePrompt().includes('Classifies the request.')) throw new Error('route stage description missing');
+            if (!renderRoutePrompt().includes('Billing requests.')) throw new Error('route category missing');
             if (!renderPersonaPrompts().includes('Version history')) throw new Error('persona history missing');
             if (!renderEnvironmentConfig().includes('OPENAI_API_KEY')) throw new Error('config name missing');
             if (!renderEnvironmentConfig().includes('Credential used by OpenAI.')) throw new Error('config description missing');
@@ -115,6 +115,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!legacyEnvironment.includes('LEGACY_ONLY_KEY') || !legacyEnvironment.includes('Description unavailable until the API is updated.')) throw new Error('names-only compatibility missing');
             """
         )
+        self.assertNotIn("Route execution", source)
+        self.assertNotIn("inspect-route", source)
 
         core_load = source[source.index("async function loadAdminData"):source.index("function signOut")]
         promise_all_start = core_load.index("Promise.all")

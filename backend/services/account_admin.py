@@ -8,9 +8,25 @@ from uuid import uuid4
 from backend.services.support_router import SupportRouteDecision
 from backend.services.support_router_prompt import build_route_system_prompt
 from backend.services.customer_reply_composer import ensure_customer_reply_email_style
+from backend.services.route_correction import VALID_ROUTE_TUPLES
 
 
 ROUTER_PROMPT_VERSION = "account-router-v1"
+ROUTING_STAGE_DESCRIPTIONS = {
+    "semantic_intent": "Classifies the request intent and captures the evidence used by the router.",
+    "confidence_threshold": "Checks whether the model confidence is high enough to use the semantic result.",
+    "policy_gate": "Applies automation and safety policy before an action can run.",
+    "heuristic_fallback": "Uses deterministic signals when semantic routing is unavailable or uncertain.",
+    "final_route": "Selects the execution action and tooling profile used to handle the request.",
+}
+ROUTE_CATEGORY_METADATA = {
+    "ticket_resolution": ("Ticket resolution", "Requests to resolve or close an existing support ticket."),
+    "billing": ("Billing", "Account, invoice, verification, and billing review requests."),
+    "agora_technical": ("Agora technical", "Technical Agora product and SDK questions handled with Agora documentation."),
+    "agora_non_technical": ("Agora non-technical", "Agora company or product questions that may use official web sources."),
+    "small_talk": ("Small talk", "Brief conversational messages that receive a controlled response."),
+    "non_agora": ("Non-Agora", "Requests outside Agora support scope that are refused."),
+}
 DEFAULT_PERSONA_KEY = "default-support"
 DEFAULT_PERSONA_CONTENT = {
     "instruction": "Use a calm, warm, polished concierge-style support voice. Match the customer's language.",
@@ -301,10 +317,34 @@ def route_execution_from_decision(
 
 
 def routing_config_payload() -> dict[str, Any]:
+    actions_by_category: dict[str, list[str]] = {}
+    for route in VALID_ROUTE_TUPLES:
+        category = route["scope_label"]
+        action = route["execution_action"]
+        actions = actions_by_category.setdefault(category, [])
+        if action not in actions:
+            actions.append(action)
+
+    route_categories = []
+    for name, actions in actions_by_category.items():
+        display_name, description = ROUTE_CATEGORY_METADATA[name]
+        route_categories.append(
+            {
+                "name": name,
+                "display_name": display_name,
+                "description": description,
+                "execution_actions": actions,
+            }
+        )
+
     return {
         "router_prompt_version": ROUTER_PROMPT_VERSION,
         "system_prompt": build_route_system_prompt(),
-        "stages": ["semantic_intent", "confidence_threshold", "policy_gate", "heuristic_fallback", "final_route"],
+        "stages": [
+            {"name": name, "description": description}
+            for name, description in ROUTING_STAGE_DESCRIPTIONS.items()
+        ],
+        "route_categories": route_categories,
     }
 
 
