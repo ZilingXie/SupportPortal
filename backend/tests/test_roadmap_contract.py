@@ -50,6 +50,8 @@ class RoadmapContractTests(unittest.TestCase):
             "Route execution + Prompt snapshot",
             "Persona Prompt registry 与版本管理",
             "Environment Config names-only inventory",
+            "Zendesk ticket ID 作为 canonical Ticket ID",
+            "16 项",
             'class="delivery-group" data-status-group="incomplete" open',
             'class="delivery-group" data-status-group="complete"',
             "Active UI",
@@ -65,6 +67,7 @@ class RoadmapContractTests(unittest.TestCase):
             "PR #610",
             "PR #611",
             "PR #612",
+            "PR #649",
             "./phase2/workspace-admin.jpg",
         ):
             with self.subTest(term=term):

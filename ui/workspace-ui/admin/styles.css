@@ -3673,8 +3673,7 @@ p {
 }
 
 .admin-rail-copy,
-.admin-rail-label,
-.admin-user-meta {
+.admin-rail-label {
   overflow: hidden;
   max-width: 0;
   opacity: 0;
@@ -3690,8 +3689,7 @@ p {
   font: 700 18px/1.2 "Manrope", sans-serif;
 }
 
-.admin-rail-copy small,
-.admin-user-meta small {
+.admin-rail-copy small {
   color: #b9c9cf;
   font-size: 11px;
 }
@@ -3699,9 +3697,7 @@ p {
 .admin-sidebar:hover .admin-rail-copy,
 .admin-sidebar:focus-within .admin-rail-copy,
 .admin-sidebar:hover .admin-rail-label,
-.admin-sidebar:focus-within .admin-rail-label,
-.admin-sidebar:hover .admin-user-meta,
-.admin-sidebar:focus-within .admin-user-meta {
+.admin-sidebar:focus-within .admin-rail-label {
   max-width: 170px;
   opacity: 1;
 }
@@ -3751,37 +3747,7 @@ p {
 }
 
 .admin-rail-footer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px;
-  gap: 6px;
-  align-items: center;
   padding-top: 14px;
-}
-
-.admin-user-chip {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.admin-user-avatar {
-  display: grid;
-  place-items: center;
-  flex: 0 0 40px;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #dbeafe;
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.admin-user-meta {
-  display: grid;
-  color: #ffffff;
-  font-size: 12px;
 }
 
 .admin-logout-btn,
@@ -3797,6 +3763,12 @@ p {
 }
 
 .admin-logout-btn {
+  display: flex;
+  justify-content: flex-start;
+  gap: 14px;
+  width: 236px;
+  min-height: 46px;
+  padding: 1px 9px;
   color: #cbd8dd;
 }
 
@@ -3812,6 +3784,53 @@ p {
   min-height: 100vh;
   overflow: visible;
   padding: 34px clamp(24px, 4vw, 56px) 56px;
+}
+
+.admin-account-bar {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 40px;
+  margin-bottom: 18px;
+}
+
+.admin-account-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  max-width: min(320px, 50vw);
+}
+
+.admin-user-avatar,
+.admin-account-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-account-meta {
+  display: grid;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.admin-account-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-account-meta small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .admin-main-header h1,
@@ -4469,9 +4488,7 @@ p {
   .admin-sidebar:hover .admin-rail-copy,
   .admin-sidebar:focus-within .admin-rail-copy,
   .admin-sidebar:hover .admin-rail-label,
-  .admin-sidebar:focus-within .admin-rail-label,
-  .admin-sidebar:hover .admin-user-meta,
-  .admin-sidebar:focus-within .admin-user-meta {
+  .admin-sidebar:focus-within .admin-rail-label {
     max-width: 0;
     opacity: 0;
   }
@@ -4517,10 +4534,8 @@ p {
 
   .admin-rail-copy,
   .admin-rail-label,
-  .admin-user-meta,
   .admin-sidebar:hover .admin-rail-copy,
-  .admin-sidebar:hover .admin-rail-label,
-  .admin-sidebar:hover .admin-user-meta {
+  .admin-sidebar:hover .admin-rail-label {
     max-width: 180px;
     opacity: 1;
   }
@@ -4547,13 +4562,27 @@ p {
 
   .admin-rail-footer {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     padding-top: 10px;
+  }
+
+  .admin-logout-btn {
+    width: auto;
+    padding-right: 14px;
   }
 
   .admin-main {
     min-height: 0;
     padding: 24px 16px 42px;
+  }
+
+  .admin-account-bar {
+    min-height: 40px;
+    margin-bottom: 16px;
+  }
+
+  .admin-account-chip {
+    max-width: 100%;
   }
 
   .admin-management-header {
@@ -4589,7 +4618,6 @@ p {
   .admin-sidebar,
   .admin-rail-copy,
   .admin-rail-label,
-  .admin-user-meta,
   .admin-editor-backdrop,
   .admin-schedule-editor,
   .admin-agent-summary-chevron {

@@ -232,16 +232,19 @@ function renderAdminShell(content) {
           </ul></nav>
         </div>
         <footer class="admin-rail-footer">
-          <div class="admin-user-chip" title="${escapeHtml(accountName)}">
-            <span class="admin-user-avatar">${escapeHtml(engineerInitials(currentAccount))}</span>
-            <span class="admin-user-meta"><strong>${escapeHtml(accountName)}</strong><small>Administrator</small></span>
-          </div>
           <button class="admin-logout-btn" type="button" data-action="sign-out" title="Sign out" aria-label="Sign out">
             <span class="admin-rail-symbol-wrap" aria-hidden="true"><span class="material-symbols-outlined admin-rail-glyph">logout</span><span class="admin-rail-fallback">LO</span></span>
+            <span class="admin-rail-label">Logout</span>
           </button>
         </footer>
       </aside>
       <main class="admin-main">
+        <div class="admin-account-bar" aria-label="Current administrator">
+          <div class="admin-account-chip" title="${escapeHtml(accountName)}">
+            <span class="admin-account-avatar">${escapeHtml(engineerInitials(currentAccount))}</span>
+            <span class="admin-account-meta"><strong>${escapeHtml(accountName)}</strong><small>Administrator</small></span>
+          </div>
+        </div>
         ${loadError ? `<p class="login-error">${escapeHtml(loadError)}</p>` : ""}
         ${content}
       </main>
