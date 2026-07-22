@@ -3149,6 +3149,14 @@ def _account_intake_idempotency_key(request: AccountIntakeRequest) -> str:
     return f"source:{source_link}" if source_link else ""
 
 
+def _resolve_account_ticket_id(request: AccountIntakeRequest) -> str:
+    external_id = str(request.external_id or "").strip()
+    if external_id:
+        return external_id
+    ticket_id = str(request.ticket_id or "").strip()
+    return ticket_id or f"TK-ACC-{uuid4().hex[:6].upper()}"
+
+
 def _rollout_position_is_selected(position: int, percent: int) -> bool:
     if percent <= 0:
         return False
@@ -3283,7 +3291,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 return {**replay_payload, "idempotent_replay": True}
             raise HTTPException(status_code=409, detail="account intake request is already processing")
 
-    ticket_id = str(request.ticket_id or "").strip() or f"TK-ACC-{uuid4().hex[:6].upper()}"
+    ticket_id = _resolve_account_ticket_id(request)
     billing_ticket_id = f"BT-{ticket_id}"
     existing_ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
     if existing_ticket is not None:
