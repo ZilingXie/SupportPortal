@@ -33,6 +33,7 @@
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口会对 Not automated 工单按可配置比例创建 Engineer Case，当前支持每第 10 单试运行并可切换到 100%。
 - Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。
+- 所有 Account ticket 都会先分类，再将 AI 回复延迟 6–10 分钟仅发布到 `/account`，并限制同一缺失字段最多询问一次。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
@@ -91,6 +92,7 @@
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
+- 所有 Account ticket 都会先分类，再将 AI 回复延迟 6–10 分钟仅发布到 `/account`，并限制同一缺失字段最多询问一次。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 
 ### 未完成

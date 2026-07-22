@@ -12,6 +12,36 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-22 - Account-only delayed reply standard process
+
+- Area or subsystem: `/account` routing, AI reply scheduling, and Billing missing-field collection
+- Prompt or model version: `account-standard-reply-v1` / existing Persona assignment
+- Summary: Every `/account` ticket now routes first and schedules an AI reply for account-only publication after a persisted random 6–10 minute delay. Billing reply generation receives the normalized fields already requested in the ticket and deterministically excludes them from later questions.
+- Reason: Account replies must not look instantaneous or leave the account system, and customers must not be repeatedly asked for information they already declined or omitted.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/billing_automation.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `ui/account-ui/app.js`
+  - `ui/account-ui/styles.css`
+  - `backend/tests/test_account_intake.py`
+  - `backend/tests/test_account_ui_contract.py`
+  - `design.md`
+  - `docs/feature_list.md`
+  - `docs/roadmap.html`
+  - `docs/roadmap/phase2.html`
+- Expected behavior change:
+  - New tickets and customer follow-ups immediately persist their timestamp and route result, while assistant messages remain absent until their stored scheduled time.
+  - AI replies are marked `visibility=account_only`; no customer-source delivery adapter is invoked. Existing internal Outlook handoff continues when Billing fields are complete.
+  - A newer customer message cancels the older unpublished job and schedules one replacement against the latest conversation.
+  - Every normalized Billing field can appear in an AI question only once per ticket. Later replies retain the missing-field state without repeating the request.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_intake.py backend/tests/test_account_ui_contract.py backend/tests/test_account_admin_features.py -q`
+  - `rtk node --check ui/account-ui/app.js`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/worker.py backend/repositories/ticket_repository.py backend/services/billing_automation.py`
+
 ## 2026-07-03 - Billing reply PDF attachment forwarding
 
 - Area or subsystem: Account billing automation — Outlook inbox reply poller

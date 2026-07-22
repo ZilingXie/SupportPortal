@@ -197,6 +197,7 @@ def build_billing_automation_result(
     billing_ticket_id: str | None = None,
     response_link: str | None = None,
     persona_instruction: str | None = None,
+    already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
 ) -> BillingAutomationResult:
     normalized_action = _clean_text(action).lower()
     if normalized_action not in _FIELD_ALIASES:
@@ -207,14 +208,27 @@ def build_billing_automation_result(
         field_name for field_name in _FIELD_ALIASES[normalized_action] if not collected_fields.get(field_name)
     ]
     if missing_fields:
-        return BillingAutomationResult(
-            customer_reply=_build_missing_fields_reply(
+        requested_before = {
+            _clean_text(field_name).lower()
+            for field_name in (already_requested_fields or [])
+            if _clean_text(field_name)
+        }
+        fields_to_request = [field_name for field_name in missing_fields if field_name not in requested_before]
+        if fields_to_request:
+            customer_reply = _build_missing_fields_reply(
                 normalized_action,
-                missing_fields,
+                fields_to_request,
                 requester=requester,
                 customer_id=customer_email,
                 persona_instruction=persona_instruction,
-            ),
+            )
+        else:
+            customer_reply = (
+                "Thanks for the update. We’ve added it to this request and will continue the review "
+                "with the information currently available."
+            )
+        return BillingAutomationResult(
+            customer_reply=customer_reply,
             missing_fields=missing_fields,
             collected_fields=collected_fields,
             internal_email=None,

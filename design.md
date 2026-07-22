@@ -361,6 +361,14 @@
 4. `Environment Config` 只能显示可搜索的配置名 inventory，并为每个配置名显示一条仅由 key 名决定的静态用途说明；说明不得读取或推断 value、set/unset、长度、哈希或来源。每行使用独立的 copy-name icon command，搜索同时匹配 key 和用途说明。
 5. 上述页面沿用 Admin 的低对比 surface 和紧凑信息密度；移动端改为单列，不允许 Prompt、key 或 route label 横向溢出。
 
+### 6.8 Account Ticket Conversation (`/account`)
+1. 所有 account ticket 都必须先展示 route 结果，再由 AI 尝试生成仅在 `/account` 内可见的回复；不得把 AI draft 或 assistant message 回传到来源 Zendesk / 客户邮件渠道。
+2. 新 ticket 和每次客户补充后的 AI 回复统一随机延迟 6–10 分钟。等待期间使用紧凑的 scheduled status row，不创建空 assistant bubble，也不展示 draft 正文。
+3. Conversation 中每条客户与 AI 消息都必须展示服务端 timestamp；UI 使用本地化日期、时间和时区，原始 ISO 时间保留在 `time[datetime]`。
+4. scheduled status row 必须保持固定最小高度，通过轻量 pulse 表达处理中；`prefers-reduced-motion` 下取消动画，状态变化不得引发布局跳动。
+5. 同一规范化缺失字段在同一 ticket 中最多询问一次。客户未回答时不得换措辞重复追问；后续状态显示继续处理或 manual attention。
+6. `manual_attention / failed` 必须作为文字状态显示并使用 `aria-live="polite"`，不能只靠颜色。客户在等待期间追加消息时，旧 scheduled reply 必须取消并由最新上下文替代。
+
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：
    - `loading`

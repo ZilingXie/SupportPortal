@@ -62,6 +62,9 @@ const state = {
 
 let composerRuntime = null;
 let isFetchingRouteErrorSummary = false;
+let replyPollTimer = null;
+
+const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "publishing"]);
 
 const ROUTE_TUPLE_OPTIONS = [
   { scope: "ticket_resolution", action: "resolve_ticket", label: "Ticket resolution / Resolve ticket" },
@@ -195,6 +198,60 @@ function showToast(message) {
   window.setTimeout(() => {
     toastRoot.innerHTML = "";
   }, 3200);
+}
+
+function formatMessageTimestamp(value) {
+  const date = new Date(String(value || ""));
+  if (Number.isNaN(date.getTime())) return "Time unavailable";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function renderAiReplyState(item) {
+  const status = String(item?.ai_reply_status || "");
+  if (!status || status === "published" || status === "cancelled") return "";
+  const scheduled = formatMessageTimestamp(item.ai_reply_scheduled_for);
+  if (ACTIVE_AI_REPLY_STATUSES.has(status)) {
+    return `
+      <div class="ai-reply-state" role="status" aria-live="polite">
+        <span class="ai-reply-state__pulse" aria-hidden="true"></span>
+        <span><strong>AI reply scheduled</strong><span>${escapeHtml(scheduled)}</span></span>
+      </div>
+    `;
+  }
+  const message = status === "manual_attention"
+    ? "AI could not prepare a reliable reply. Manual attention is required."
+    : item.ai_reply_error || "AI reply preparation failed.";
+  return `<div class="ai-reply-state ai-reply-state--attention" role="status" aria-live="polite">${escapeHtml(message)}</div>`;
+}
+
+function updateReplyPolling() {
+  if (replyPollTimer) {
+    window.clearTimeout(replyPollTimer);
+    replyPollTimer = null;
+  }
+  const item = state.activeItem;
+  if (state.view !== "detail" || !item || !ACTIVE_AI_REPLY_STATUSES.has(String(item.ai_reply_status || ""))) return;
+  replyPollTimer = window.setTimeout(async () => {
+    if (document.hidden || state.view !== "detail" || !state.activeItem) {
+      updateReplyPolling();
+      return;
+    }
+    const ticketId = state.activeItem.ticket_id || state.activeItem.client_ticket_id || "";
+    const detail = ticketId ? await fetchTicketDetail(ticketId) : null;
+    if (detail) {
+      state.activeItem = detail;
+      render();
+      return;
+    }
+    updateReplyPolling();
+  }, 12000);
 }
 
 async function fetchTickets() {
@@ -573,16 +630,18 @@ function renderMessageThread() {
           const isCustomer = role === "customer" || role === "user";
           const bubbleClass = isCustomer ? "msg-bubble--customer" : "msg-bubble--assistant";
           const label = isCustomer ? "Customer" : "AI";
+          const timestamp = formatMessageTimestamp(msg.created_at);
           return `
         <div class="msg-row ${isCustomer ? "msg-row--customer" : "msg-row--assistant"}">
           <div class="msg-bubble ${bubbleClass}">
-            <div class="msg-label">${escapeHtml(label)}</div>
+            <div class="msg-header"><span class="msg-label">${escapeHtml(label)}</span><time datetime="${escapeHtml(msg.created_at || "")}">${escapeHtml(timestamp)}</time></div>
             <div class="msg-content">${renderMarkdownMessage(content)}</div>
           </div>
         </div>
       `;
         })
         .join("")}
+      ${renderAiReplyState(item)}
     </div>
   `;
 }
@@ -592,10 +651,10 @@ function renderReplyComposer() {
   if (!item) return "";
   return `
     <div class="reply-composer">
-      <div class="detail-section-title">Reply</div>
+      <div class="detail-section-title">Add customer message</div>
       <textarea
         class="reply-textarea"
-        placeholder="Type your reply..."
+        placeholder="Add the customer's latest message..."
         data-reply-input
         ${state.isSubmittingReply ? "disabled" : ""}
       >${escapeHtml(state.replyMessage)}</textarea>
@@ -607,7 +666,7 @@ function renderReplyComposer() {
           ${state.isSubmittingReply ? "disabled" : ""}
         >
           <span class="material-symbols-outlined">send</span>
-          ${state.isSubmittingReply ? "Sending..." : "Send reply"}
+          ${state.isSubmittingReply ? "Adding..." : "Add message"}
         </button>
       </div>
       ${
@@ -934,46 +993,20 @@ async function submitReply() {
   render();
 
   try {
-    const itemStatus = item.status || item.automation_status || "";
-    const isAutomation = isAutomationStatus(itemStatus);
-
-    if (isAutomation) {
-      const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
-      const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || "Reply failed.");
-      }
-      state.activeItem = payload;
-    } else {
-      const canonicalTicketId = item.ticket_id || item.client_ticket_id || "";
-      const response = await fetch("/api/tickets/query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticket_id: canonicalTicketId,
-          message: message,
-          customer_id: item.customer_id || item.requester || "account-intake",
-          content_format: "plaintext",
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || "Reply failed.");
-      }
-      // Refresh detail after non-automation reply.
-      const refreshed = await fetchTicketDetail(canonicalTicketId);
-      if (refreshed) {
-        state.activeItem = refreshed;
-      }
+    const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
+    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || "Message failed.");
     }
+    state.activeItem = payload;
 
     state.replyMessage = "";
-    showToast("Reply sent");
+    showToast("Customer message added");
     await fetchTickets();
   } catch (err) {
     state.replyError = err instanceof Error ? err.message : "Reply failed.";
@@ -1021,7 +1054,12 @@ function render() {
     </main>
   `;
   bind();
+  updateReplyPolling();
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) updateReplyPolling();
+});
 
 function bind() {
   const form = document.querySelector("[data-account-form]");

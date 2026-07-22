@@ -660,22 +660,12 @@
 
       <div class="delivery-list reveal" id="deliveryList">
         <details class="delivery-group" data-status-group="incomplete" open>
-          <summary><span class="group-heading">未完成计划<small>默认展开 · 会议第一阶段行动项</small></span><span>10 项</span></summary>
+          <summary><span class="group-heading">未完成计划<small>默认展开 · 会议第一阶段行动项</small></span><span>8 项</span></summary>
           <div class="delivery-group-body">
             <article class="delivery-row" data-category="automation" data-status="todo">
               <div class="delivery-category">Automation Scope</div>
               <div class="delivery-main"><h3>Fraud 字段规则</h3><p>明确 account suspension / fraud 流程中哪些 fields 为 required、哪些为 optional，避免把无法提供的字段变成无限阻塞条件。</p></div>
               <div class="status-meta"><span class="status-chip todo">待办</span><span class="owner-chip">Owner: Suhird</span></div>
-            </article>
-            <article class="delivery-row" data-category="quality" data-status="todo">
-              <div class="delivery-category">Reply Quality</div>
-              <div class="delivery-main"><h3>限制重复追问</h3><p>同一信息不能持续向客户索取；达到限定追问次数后停止重复提问，保留已收集上下文并转人工处理。</p></div>
-              <div class="status-meta"><span class="status-chip todo">待办</span></div>
-            </article>
-            <article class="delivery-row" data-category="quality" data-status="todo">
-              <div class="delivery-category">Reply Quality</div>
-              <div class="delivery-main"><h3>真人化回复节奏</h3><p>首条自动回复随机延迟 6–10 分钟，避免秒回和实时聊天预期；回复仍需提供真实进展，不能只重复 Zendesk 的自动收件确认。</p></div>
-              <div class="status-meta"><span class="status-chip todo">待办</span></div>
             </article>
             <article class="delivery-row" data-category="quality" data-status="todo">
               <div class="delivery-category">Reply Quality</div>
@@ -716,8 +706,18 @@
         </details>
 
         <details class="delivery-group" data-status-group="complete">
-          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>13 项</span></summary>
+          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>15 项</span></summary>
           <div class="delivery-group-body">
+        <article class="delivery-row" data-category="quality" data-status="done">
+          <div class="delivery-category">Reply Quality</div>
+          <div class="delivery-main"><h3>限制重复追问</h3><p>同一规范化缺失字段在一个 ticket 内最多询问一次；客户未回答时停止重复索取，保留现有上下文并进入人工关注状态。</p></div>
+          <div class="pr-links"><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/647">PR #647</a></div>
+        </article>
+        <article class="delivery-row" data-category="quality" data-status="done">
+          <div class="delivery-category">Reply Quality</div>
+          <div class="delivery-main"><h3>真人化回复节奏</h3><p>所有 <code>/account</code> 客户消息都会创建持久化 scheduled reply，随机延迟 6–10 分钟后仅发布到 account thread；客户追加消息会取消旧回复并重新排期。</p></div>
+          <div class="pr-links"><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/647">PR #647</a></div>
+        </article>
         <article class="delivery-row" data-category="access" data-status="done">
           <div class="delivery-category">Access &amp; RBAC</div>
           <div class="delivery-main"><h3>Workspace 生产认证</h3><p>PBKDF2 密码、signed access token、Admin/Engineer RBAC、受认证 WebSocket，以及 Admin 创建账号能力。</p></div>
@@ -818,7 +818,7 @@
         <table>
           <thead><tr><th>分类</th><th>Endpoint</th><th>状态</th><th>用途 / 边界</th><th>Phase 2 PR</th></tr></thead>
           <tbody id="endpointRows">
-            <tr><td>Active UI</td><td><code>/account</code></td><td><span class="status status-active">Active</span></td><td>客户工单入口；接收所有 ticket，Billing automation 或 Not automated 分流。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
+            <tr><td>Active UI</td><td><code>/account</code></td><td><span class="status status-active">Active</span></td><td>客户工单入口；所有 ticket 先分类，AI 回复持久化延迟 6–10 分钟后仅发布到 account thread。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
             <tr><td>Active UI</td><td><code>/workspace</code></td><td><span class="status status-active">Active</span></td><td>Engineer Case 正式处理入口，仅展示系统派发给当前 engineer 的 case。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
             <tr><td>Active UI</td><td><code>/workspace/admin</code></td><td><span class="status status-active">Active</span></td><td>账号、availability、派单、SLA、审计和 metrics 管理入口。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
             <tr><td>Workspace auth</td><td><code>POST /api/workspace/auth/login</code><br><code>GET /api/workspace/me</code><br><code>WS /ws/workspace</code></td><td><span class="status status-active">Active</span></td><td>Workspace 登录、当前账号和受认证实时更新。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
@@ -827,7 +827,7 @@
             <tr><td>Admin accounts</td><td><code>GET/POST /api/workspace/admin/accounts</code><br><code>PATCH /api/workspace/admin/engineers/{id}/availability</code></td><td><span class="status status-active">Active</span></td><td>Admin 创建账号、切换 availability，并写入审计。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/612">#612</a></td></tr>
             <tr><td>Admin dispatch</td><td><code>POST /api/workspace/admin/dispatch</code><br><code>POST /api/workspace/admin/reassign-due</code><br><code>POST /api/workspace/admin/cases/{id}/assignment</code></td><td><span class="status status-active">Active</span></td><td>系统派单、SLA 到期转派和带版本保护的 Admin 人工调整。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
             <tr><td>Admin observability</td><td><code>GET /api/workspace/admin/audit</code><br><code>GET /api/workspace/admin/metrics</code></td><td><span class="status status-active">Active</span></td><td>操作审计和 Phase 2 运行指标。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
-            <tr><td>Account tickets</td><td><code>GET /api/account/billing-tickets</code><br><code>GET /api/account/billing-tickets/{id}</code><br><code>POST /api/account/billing-tickets/{id}/reply</code></td><td><span class="status status-active">Active</span></td><td>Account ticket 列表、详情和客户补充信息。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
+            <tr><td>Account tickets</td><td><code>GET /api/account/billing-tickets</code><br><code>GET /api/account/billing-tickets/{id}</code><br><code>POST /api/account/billing-tickets/{id}/reply</code></td><td><span class="status status-active">Active</span></td><td>Account ticket 列表、详情、客户补充信息、scheduled AI 状态与逐消息 timestamp。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
             <tr><td>Account review</td><td><code>POST /api/account/billing-tickets/{id}/route-correction</code><br><code>POST /api/account/billing-tickets/{id}/route-review</code><br><code>GET /api/account/route-errors/summary</code></td><td><span class="status status-active">Active</span></td><td>误路由纠正、人工 review 和 route error 汇总。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
             <tr><td>Engineer backend</td><td><code>/api/engineer/*</code></td><td><span class="status status-contract">Contract</span></td><td>仍是 active backend contract；新 Workspace UI 不再直接依赖这组 endpoint。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>
             <tr><td>Manual claim</td><td><code>POST /api/engineer/tickets/{id}/claim</code></td><td><span class="status status-disabled">Disabled</span></td><td>返回 410；禁止与系统派单并行写 assignee。</td><td><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/609">#609</a></td></tr>

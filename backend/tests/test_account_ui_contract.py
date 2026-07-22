@@ -102,7 +102,10 @@ class AccountUiContractTests(unittest.TestCase):
         # Reply endpoint references.
         self.assertIn("/api/account/billing-tickets/", app_source)
         self.assertIn("/reply", app_source)
-        self.assertIn("/api/tickets/query", app_source)
+        self.assertNotIn("/api/tickets/query", app_source)
+        self.assertIn("ai_reply_scheduled_for", app_source)
+        self.assertIn("formatMessageTimestamp", app_source)
+        self.assertIn("AI reply scheduled", app_source)
         self.assertNotIn("Customer reply", app_source)
 
     def test_account_app_contains_route_correction_flow(self) -> None:
