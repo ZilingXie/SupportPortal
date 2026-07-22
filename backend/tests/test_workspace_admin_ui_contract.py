@@ -137,7 +137,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260722-agent-config-route-strategy-2", index)
+        self.assertIn("20260722-admin-tab-topbar-1", index)
 
         core_load = source[source.index("async function loadAdminData"):source.index("function signOut")]
         promise_all_start = core_load.index("Promise.all")
@@ -329,12 +329,12 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260722-agent-config-route-strategy-2", html)
+        self.assertIn("20260722-admin-tab-topbar-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
 
-    def test_admin_shell_uses_collapsed_rail_logout_and_header_account(self) -> None:
+    def test_admin_shell_uses_collapsed_rail_logout_and_shared_tab_topbar(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         html = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
@@ -342,7 +342,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn("admin-rail-footer", source)
         self.assertIn("admin-logout-btn", source)
         self.assertIn('<span class="admin-rail-label">Logout</span>', source)
-        self.assertIn("admin-account-bar", source)
+        self.assertIn("ADMIN_SECTION_TITLES", source)
+        self.assertIn("admin-workspace-topbar", source)
         self.assertIn("admin-account-chip", source)
         self.assertIn("admin-account-avatar", source)
         self.assertIn("admin-account-meta", source)
@@ -359,18 +360,47 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn('html.material-symbols-ready .admin-sidebar .admin-rail-fallback', css)
         self.assertIn(".admin-account-meta strong", css)
         self.assertIn("text-overflow: ellipsis", css)
-        self.assertIn(".admin-account-chip {\n    max-width: 100%;", css)
+        self.assertIn(".admin-workspace-topbar h1", css)
+        self.assertIn("white-space: nowrap", css)
+        self.assertNotIn("admin-account-bar", source)
+        self.assertEqual(source.count("<h1"), 2)
+        topbar_css = css[css.index(".admin-workspace-topbar {"):css.index(".admin-account-chip {")]
+        self.assertNotIn("position: fixed", topbar_css)
+        self.assertIn("max-width: none", topbar_css)
         self.assertIn("syncAdminRailScrollPosition", source)
         self.assertNotIn('scrollIntoView({ block: "nearest", inline: "center" })', source)
 
         self.run_admin_app_script(
             """
             currentAccount = { account_id: 'admin@example.com', display_name: 'Admin Operator', role: 'admin' };
+            const titles = {
+              overview: 'Operations Overview',
+              'automated-cases': 'Automated Cases',
+              'agent-config': 'Agent Config',
+              'route-strategy': 'Route Strategy',
+              'environment-config': 'Environment Config',
+              engineers: 'Engineer Management',
+              schedule: 'Weekly Schedule',
+              'new-account': 'Invite a workspace member',
+              'pending-assignment': 'Pending Assignment',
+              assigned: 'Assigned',
+              resolved: 'Resolved',
+              audit: 'Audit',
+            };
+            for (const [section, title] of Object.entries(titles)) {
+              adminSection = section;
+              const sectionShell = renderAdminShell('<section data-test-tab>Tab content</section>');
+              const topbar = sectionShell.slice(sectionShell.indexOf('<header class="admin-workspace-topbar">'), sectionShell.indexOf('</header>') + 9);
+              if (!topbar.includes(`<h1 title="${title}">${title}</h1>`)) throw new Error(`${section} topbar title missing`);
+              if (!topbar.includes('admin-account-chip') || !topbar.includes('Admin Operator')) throw new Error(`${section} topbar account missing`);
+              if (sectionShell.indexOf('admin-workspace-topbar') < sectionShell.indexOf('</aside>')) throw new Error(`${section} topbar overlaps rail structure`);
+              if (sectionShell.indexOf('admin-workspace-topbar') > sectionShell.indexOf('data-test-tab')) throw new Error(`${section} topbar does not precede tab content`);
+            }
+            adminSection = 'overview';
             const shell = renderAdminShell('<section data-test-tab>Tab content</section>');
             const footer = shell.slice(shell.indexOf('<footer class="admin-rail-footer">'), shell.indexOf('</footer>') + 9);
             if (!footer.includes('admin-logout-btn') || footer.includes('admin-account-chip')) throw new Error("rail footer is not logout-only");
-            if (!shell.includes('admin-account-chip') || !shell.includes('Admin Operator') || !shell.includes('Administrator')) throw new Error("header account identity missing");
-            if (shell.indexOf('admin-account-bar') > shell.indexOf('data-test-tab')) throw new Error("account bar does not precede tab content");
+            if (!shell.includes('admin-account-chip') || !shell.includes('Admin Operator') || !shell.includes('Administrator')) throw new Error("topbar account identity missing");
 
             const sidebarBody = { scrollLeft: 73, clientWidth: 68, scrollWidth: 236 };
             const activeLink = { offsetLeft: 104, offsetWidth: 44 };
