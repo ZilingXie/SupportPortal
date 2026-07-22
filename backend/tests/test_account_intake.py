@@ -212,6 +212,101 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "question is required")
         self.assertEqual(self.repository.list_tickets(), [])
 
+    def test_account_intake_uses_trimmed_external_id_as_canonical_ticket_id(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "external_id": " 11830 ",
+                    "title": "Zendesk support request",
+                    "question": "Can someone tell me more about Agora products?",
+                    "source": "https://agoraio.zendesk.com/agent/tickets/11830",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ticket_id"], "11830")
+        self.assertEqual(payload["billing_ticket_id"], "BT-11830")
+        self.assertIsNotNone(self.repository.get_ticket("11830"))
+        billing_ticket = self.repository.get_billing_ticket("BT-11830")
+        self.assertIsNotNone(billing_ticket)
+        assert billing_ticket is not None
+        self.assertEqual(billing_ticket["client_ticket_id"], "11830")
+        self.assertEqual(billing_ticket["external_id"], "11830")
+
+    def test_account_intake_external_id_takes_precedence_over_ticket_id(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "external_id": "zendesk-42",
+                    "ticket_id": "TK-UPSTREAM-42",
+                    "title": "Zendesk support request",
+                    "question": "Can someone tell me more about Agora products?",
+                    "source": "api",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["ticket_id"], "zendesk-42")
+        self.assertIsNotNone(self.repository.get_ticket("zendesk-42"))
+        self.assertIsNone(self.repository.get_ticket("TK-UPSTREAM-42"))
+
+    def test_account_intake_falls_back_to_ticket_id_then_generated_id(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            provided_response = self.client.post(
+                "/account",
+                json={
+                    "ticket_id": " TK-COMPAT-001 ",
+                    "title": "Compatible support request",
+                    "question": "Can someone tell me more about Agora products?",
+                    "source": "manual",
+                },
+            )
+            generated_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Manual support request",
+                    "question": "Can someone tell me more about Agora products?",
+                    "source": "manual",
+                },
+            )
+
+        self.assertEqual(provided_response.status_code, 200, provided_response.text)
+        self.assertEqual(provided_response.json()["ticket_id"], "TK-COMPAT-001")
+        self.assertEqual(generated_response.status_code, 200, generated_response.text)
+        self.assertTrue(generated_response.json()["ticket_id"].startswith("TK-ACC-"))
+
+    def test_account_intake_external_id_collision_does_not_overwrite_existing_ticket(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "zendesk-existing-1",
+                "customer_id": "legacy-customer",
+                "requester": "legacy@example.com",
+                "subject": "Existing ticket",
+                "status": "open",
+            }
+        )
+
+        response = self.client.post(
+            "/account",
+            json={
+                "external_id": "zendesk-existing-1",
+                "title": "Replacement ticket",
+                "question": "Can someone tell me more about Agora products?",
+                "source": "api",
+            },
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], "ticket_id already exists")
+        existing = self.repository.get_ticket("zendesk-existing-1")
+        self.assertIsNotNone(existing)
+        assert existing is not None
+        self.assertEqual(existing["subject"], "Existing ticket")
+        self.assertEqual(len(self.repository.list_tickets()), 1)
+
     def test_account_intake_empty_title_derives_from_question(self) -> None:
         """N8n sends title: \"\" — backend should derive title from question body."""
         source_url = "https://agoraio.zendesk.com/api/v2/tickets/11830.json"
@@ -940,8 +1035,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(all(item["engineer_case_id"] is None for item in responses[:9]))
         self.assertEqual(responses[9]["rollout_position"], 10)
         self.assertTrue(responses[9]["rollout_selected"])
-        self.assertEqual(responses[9]["engineer_case_id"], "TK-ROLLOUT-010-1")
-        engineer_case = self.repository.get_engineer_case("TK-ROLLOUT-010-1")
+        self.assertEqual(responses[9]["engineer_case_id"], "zendesk-10-1")
+        engineer_case = self.repository.get_engineer_case("zendesk-10-1")
         self.assertIsNotNone(engineer_case)
         assert engineer_case is not None
         self.assertEqual(engineer_case["assignment_status"], "pending")
@@ -966,9 +1061,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertFalse(first.json().get("idempotent_replay", False))
         self.assertTrue(second.json()["idempotent_replay"])
         self.assertEqual(first.json()["ticket_id"], second.json()["ticket_id"])
+        self.assertEqual(first.json()["ticket_id"], "zendesk-idempotent-1")
         self.assertEqual(first.json()["rollout_position"], 1)
         self.assertEqual(second.json()["rollout_position"], 1)
-        self.assertEqual(len(self.repository.list_ticket_engineer_cases("TK-IDEMPOTENT-001")), 1)
+        self.assertEqual(len(self.repository.list_ticket_engineer_cases("zendesk-idempotent-1")), 1)
 
     def test_account_intake_billing_review_stays_not_automated(self) -> None:
         decision = SupportRouteDecision(
