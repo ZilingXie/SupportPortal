@@ -944,6 +944,11 @@ class TicketRepository(Protocol):
     def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
+    def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
+    def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None: ...
+    def get_latest_account_reply_job(self, ticket_id: str) -> dict[str, Any] | None: ...
+    def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int: ...
+    def claim_account_reply_jobs(self, *, from_status: str, to_status: str, now_value: str, limit: int = 10, due_only: bool = False) -> list[dict[str, Any]]: ...
     def list_account_personas(self) -> list[dict[str, Any]]: ...
     def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]: ...
     def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]: ...
@@ -1173,6 +1178,7 @@ class InMemoryTicketRepository:
         self._rollout_events: dict[tuple[str, str], int] = {}
         self._account_route_executions: dict[str, list[dict[str, Any]]] = {}
         self._account_reply_executions: dict[str, list[dict[str, Any]]] = {}
+        self._account_reply_jobs: dict[str, dict[str, Any]] = {}
         self._account_personas: dict[str, dict[str, Any]] = {}
         self._account_persona_versions: dict[str, list[dict[str, Any]]] = {}
         self._account_persona_assignments: dict[str, dict[str, Any]] = {}
@@ -1220,7 +1226,9 @@ class InMemoryTicketRepository:
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
         saved = copy.deepcopy(execution)
         saved["created_at"] = saved.get("created_at") or _utc_now()
-        self._account_reply_executions.setdefault(str(saved["ticket_id"]), []).append(saved)
+        executions = self._account_reply_executions.setdefault(str(saved["ticket_id"]), [])
+        executions[:] = [item for item in executions if item.get("execution_id") != saved.get("execution_id")]
+        executions.append(saved)
         return copy.deepcopy(saved)
 
     def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]:
@@ -1230,6 +1238,73 @@ class InMemoryTicketRepository:
             [copy.deepcopy(item) for items in self._account_reply_executions.values() for item in items],
             key=lambda item: str(item.get("created_at") or ""), reverse=True,
         )
+
+    def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(job)
+        saved["created_at"] = saved.get("created_at") or _utc_now()
+        saved["updated_at"] = saved.get("updated_at") or saved["created_at"]
+        saved["attempt_count"] = int(saved.get("attempt_count") or 0)
+        with self._assignment_lock:
+            self._account_reply_jobs[str(saved["job_id"])] = saved
+        return copy.deepcopy(saved)
+
+    def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            job = self._account_reply_jobs.get(str(job_id))
+            return copy.deepcopy(job) if job is not None else None
+
+    def get_latest_account_reply_job(self, ticket_id: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            jobs = [
+                copy.deepcopy(job)
+                for job in self._account_reply_jobs.values()
+                if str(job.get("ticket_id") or "") == str(ticket_id)
+            ]
+        if not jobs:
+            return None
+        return max(jobs, key=lambda item: str(item.get("created_at") or ""))
+
+    def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int:
+        cancelled = 0
+        with self._assignment_lock:
+            for job in self._account_reply_jobs.values():
+                if str(job.get("ticket_id") or "") != str(ticket_id):
+                    continue
+                if str(job.get("status") or "") not in {"queued", "preparing", "scheduled"}:
+                    continue
+                job["status"] = "cancelled"
+                job["updated_at"] = updated_at
+                cancelled += 1
+        return cancelled
+
+    def claim_account_reply_jobs(
+        self,
+        *,
+        from_status: str,
+        to_status: str,
+        now_value: str,
+        limit: int = 10,
+        due_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        claimed: list[dict[str, Any]] = []
+        with self._assignment_lock:
+            candidates = sorted(
+                self._account_reply_jobs.values(),
+                key=lambda item: (str(item.get("scheduled_for") or ""), str(item.get("created_at") or "")),
+            )
+            for job in candidates:
+                if len(claimed) >= max(1, int(limit)):
+                    break
+                if str(job.get("status") or "") != from_status:
+                    continue
+                if due_only and str(job.get("scheduled_for") or "") > now_value:
+                    continue
+                job["status"] = to_status
+                job["claimed_at"] = now_value
+                job["updated_at"] = now_value
+                job["attempt_count"] = int(job.get("attempt_count") or 0) + 1
+                claimed.append(copy.deepcopy(job))
+        return claimed
 
     def list_account_personas(self) -> list[dict[str, Any]]:
         result = []
@@ -3477,6 +3552,32 @@ class PostgresTicketRepository:
                 )
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (execution_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_account_route_executions"), self._table("support_tickets")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (execution_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_account_reply_executions"), self._table("support_tickets")))
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            job_id TEXT PRIMARY KEY,
+                            ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            trigger_message_created_at TIMESTAMPTZ NOT NULL,
+                            status TEXT NOT NULL CHECK (status IN ('queued','preparing','scheduled','publishing','published','manual_attention','cancelled','failed')),
+                            scheduled_for TIMESTAMPTZ NOT NULL,
+                            payload JSONB NOT NULL,
+                            attempt_count INTEGER NOT NULL DEFAULT 0,
+                            claimed_at TIMESTAMPTZ,
+                            published_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            UNIQUE (ticket_id, trigger_message_created_at)
+                        )
+                        """
+                    ).format(self._table("support_account_reply_jobs"), self._table("support_tickets"))
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, scheduled_for, created_at)").format(
+                        sql.Identifier("idx_support_account_reply_jobs_status_due"),
+                        self._table("support_account_reply_jobs"),
+                    )
+                )
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, published_version INTEGER, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)").format(self._table("support_account_personas")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT NOT NULL REFERENCES {}(persona_key) ON DELETE CASCADE, version INTEGER NOT NULL, status TEXT NOT NULL CHECK (status IN ('draft','published','superseded')), content JSONB NOT NULL, change_note TEXT NOT NULL, based_on_version INTEGER, created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, published_by TEXT, published_at TIMESTAMPTZ, PRIMARY KEY (persona_key, version))").format(self._table("support_account_prompt_versions"), self._table("support_account_personas")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (ticket_id TEXT PRIMARY KEY REFERENCES {}(ticket_id) ON DELETE CASCADE, persona_key TEXT NOT NULL, version INTEGER NOT NULL, assigned_at TIMESTAMPTZ NOT NULL, FOREIGN KEY (persona_key, version) REFERENCES {}(persona_key, version))").format(self._table("support_account_persona_assignments"), self._table("support_tickets"), self._table("support_account_prompt_versions")))
@@ -7683,6 +7784,134 @@ class PostgresTicketRepository:
                     cur.execute(sql.SQL("SELECT payload FROM {} WHERE ticket_id=%s ORDER BY created_at").format(self._table("support_account_reply_executions")), (str(ticket_id),))
                 return [dict(row[0]) for row in cur.fetchall()]
         return self._run_with_connection_retry("list_account_reply_executions", _operation)
+
+    @staticmethod
+    def _account_reply_job_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        payload = dict(row[5] or {})
+        return {
+            **payload,
+            "job_id": str(row[0]),
+            "ticket_id": str(row[1]),
+            "trigger_message_created_at": _to_iso(row[2]),
+            "status": str(row[3]),
+            "scheduled_for": _to_iso(row[4]),
+            "payload": payload,
+            "attempt_count": int(row[6] or 0),
+            "claimed_at": _to_iso(row[7]) if row[7] is not None else None,
+            "published_at": _to_iso(row[8]) if row[8] is not None else None,
+            "created_at": _to_iso(row[9]),
+            "updated_at": _to_iso(row[10]),
+        }
+
+    def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        saved = copy.deepcopy(job)
+        saved["created_at"] = saved.get("created_at") or _utc_now()
+        saved["updated_at"] = saved.get("updated_at") or saved["created_at"]
+        saved["attempt_count"] = int(saved.get("attempt_count") or 0)
+        payload = dict(saved.get("payload") or {})
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            job_id, ticket_id, trigger_message_created_at, status, scheduled_for,
+                            payload, attempt_count, claimed_at, published_at, created_at, updated_at
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (job_id) DO UPDATE SET
+                            status=EXCLUDED.status,
+                            scheduled_for=EXCLUDED.scheduled_for,
+                            payload=EXCLUDED.payload,
+                            attempt_count=EXCLUDED.attempt_count,
+                            claimed_at=EXCLUDED.claimed_at,
+                            published_at=EXCLUDED.published_at,
+                            updated_at=EXCLUDED.updated_at
+                        """
+                    ).format(self._table("support_account_reply_jobs")),
+                    (
+                        saved["job_id"], saved["ticket_id"], saved["trigger_message_created_at"],
+                        saved["status"], saved["scheduled_for"], Json(payload), saved["attempt_count"],
+                        saved.get("claimed_at"), saved.get("published_at"), saved["created_at"], saved["updated_at"],
+                    ),
+                )
+            return copy.deepcopy({**saved, "payload": payload})
+
+        return self._run_with_connection_retry("save_account_reply_job", _operation)
+
+    def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT job_id,ticket_id,trigger_message_created_at,status,scheduled_for,payload,attempt_count,claimed_at,published_at,created_at,updated_at FROM {} WHERE job_id=%s").format(self._table("support_account_reply_jobs")),
+                    (str(job_id),),
+                )
+                row = cur.fetchone()
+                return self._account_reply_job_from_row(row) if row is not None else None
+        return self._run_with_connection_retry("get_account_reply_job", _operation)
+
+    def get_latest_account_reply_job(self, ticket_id: str) -> dict[str, Any] | None:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT job_id,ticket_id,trigger_message_created_at,status,scheduled_for,payload,attempt_count,claimed_at,published_at,created_at,updated_at FROM {} WHERE ticket_id=%s ORDER BY created_at DESC LIMIT 1").format(self._table("support_account_reply_jobs")),
+                    (str(ticket_id),),
+                )
+                row = cur.fetchone()
+                return self._account_reply_job_from_row(row) if row is not None else None
+        return self._run_with_connection_retry("get_latest_account_reply_job", _operation)
+
+    def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int:
+        def _operation(conn: psycopg.Connection[Any]) -> int:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("UPDATE {} SET status='cancelled', updated_at=%s WHERE ticket_id=%s AND status IN ('queued','preparing','scheduled')").format(self._table("support_account_reply_jobs")),
+                    (updated_at, str(ticket_id)),
+                )
+                return int(cur.rowcount or 0)
+        return self._run_with_connection_retry("cancel_pending_account_reply_jobs", _operation)
+
+    def claim_account_reply_jobs(
+        self,
+        *,
+        from_status: str,
+        to_status: str,
+        now_value: str,
+        limit: int = 10,
+        due_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        due_clause = sql.SQL("AND scheduled_for <= %s") if due_only else sql.SQL("")
+        params: list[Any] = [from_status]
+        if due_only:
+            params.append(now_value)
+        params.extend([max(1, int(limit)), to_status, now_value, now_value])
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        WITH candidates AS (
+                            SELECT job_id FROM {}
+                            WHERE status=%s {} ORDER BY scheduled_for, created_at
+                            FOR UPDATE SKIP LOCKED LIMIT %s
+                        )
+                        UPDATE {} AS jobs
+                        SET status=%s, claimed_at=%s, updated_at=%s, attempt_count=jobs.attempt_count+1
+                        FROM candidates WHERE jobs.job_id=candidates.job_id
+                        RETURNING jobs.job_id,jobs.ticket_id,jobs.trigger_message_created_at,jobs.status,
+                                  jobs.scheduled_for,jobs.payload,jobs.attempt_count,jobs.claimed_at,
+                                  jobs.published_at,jobs.created_at,jobs.updated_at
+                        """
+                    ).format(
+                        self._table("support_account_reply_jobs"),
+                        due_clause,
+                        self._table("support_account_reply_jobs"),
+                    ),
+                    tuple(params),
+                )
+                return [self._account_reply_job_from_row(row) for row in cur.fetchall()]
+        return self._run_with_connection_retry("claim_account_reply_jobs", _operation)
 
     def list_account_personas(self) -> list[dict[str, Any]]:
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:

@@ -26,6 +26,7 @@ from backend.main import (
     asset_storage,
     ticket_repository,
 )
+from backend.services.account_admin import apply_persona_to_customer_reply
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, create_asset_id, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -86,6 +87,7 @@ BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECOND
 BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
 ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV = "ENGINEER_ASSIGNMENT_POLLER_ENABLED"
 ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV = "ENGINEER_ASSIGNMENT_POLL_INTERVAL_SECONDS"
+ACCOUNT_REPLY_POLL_INTERVAL_ENV = "ACCOUNT_REPLY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_SUBJECT_TICKET_RE = re.compile(r"\bTicket\s+(TK-[A-Z0-9-]+)\b", re.IGNORECASE)
 
 
@@ -199,6 +201,10 @@ def _engineer_assignment_poll_interval_from_env() -> float:
     return _safe_positive_float(os.getenv(ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV), 60.0)
 
 
+def _account_reply_poll_interval_from_env() -> float:
+    return _safe_positive_float(os.getenv(ACCOUNT_REPLY_POLL_INTERVAL_ENV), 2.0)
+
+
 def _install_signal_handlers() -> None:
     def _handle_signal(signum: int, _frame: Any) -> None:
         global SHUTTING_DOWN
@@ -251,6 +257,217 @@ def _run_engineer_assignment_poller(interval_seconds: float) -> None:
         while not SHUTTING_DOWN and time.time() < sleep_until:
             time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
     LOGGER.info("Engineer assignment poller stopped.")
+
+
+def _account_reply_trigger_is_latest(ticket: dict[str, Any], trigger_created_at: str) -> bool:
+    customer_timestamps = [
+        str(message.get("created_at") or "")
+        for message in ticket.get("messages", [])
+        if isinstance(message, dict)
+        and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+    ]
+    return bool(customer_timestamps) and max(customer_timestamps) == str(trigger_created_at)
+
+
+def _prepare_account_reply_job(job: dict[str, Any]) -> None:
+    job_id = str(job.get("job_id") or "").strip()
+    ticket_id = str(job.get("ticket_id") or "").strip()
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if not job_id or ticket is None:
+        raise RuntimeError("account reply job is missing its linked ticket")
+    if not _account_reply_trigger_is_latest(ticket, str(job.get("trigger_message_created_at") or "")):
+        job["status"] = "cancelled"
+        job["updated_at"] = now_iso()
+        ticket_repository.save_account_reply_job(job)
+        return
+
+    trigger_message = next(
+        (
+            message
+            for message in reversed(ticket.get("messages", []))
+            if isinstance(message, dict)
+            and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+            and str(message.get("created_at") or "") == str(job.get("trigger_message_created_at") or "")
+        ),
+        None,
+    )
+    if trigger_message is None:
+        raise RuntimeError("account reply trigger message was not found")
+
+    context = [
+        {"role": str(message.get("role") or "system"), "content": str(message.get("content") or "")}
+        for message in ticket.get("messages", [])
+        if isinstance(message, dict) and str(message.get("content") or "").strip()
+    ]
+    latest_assistant = next(
+        (
+            message for message in reversed(ticket.get("messages", []))
+            if isinstance(message, dict) and str(message.get("role") or "").strip().lower() == "assistant"
+        ),
+        None,
+    )
+    resolution = resolve_support_message(
+        str(trigger_message.get("content") or ""),
+        ticket_id=ticket_id,
+        customer_id=str(ticket.get("customer_id") or "") or None,
+        ticket_subject=str(ticket.get("subject") or "") or None,
+        ticket_context=context,
+        product=str(ticket.get("product") or "") or None,
+        latest_assistant_message=latest_assistant,
+        current_ticket_status=str(ticket.get("status") or "") or None,
+        has_active_engineer_case=bool(ticket_repository.get_active_engineer_case(ticket_id)),
+    )
+    draft = str(resolution.answer or "").strip()
+    payload = dict(job.get("payload") or {})
+    if not draft:
+        payload["error"] = "AI could not prepare a reliable account-only reply."
+        job["status"] = "manual_attention"
+    else:
+        persona = ticket_repository.resolve_account_persona(ticket_id)
+        payload.update(
+            {
+                "draft_content": apply_persona_to_customer_reply(draft, persona),
+                "persona_key": persona.get("persona_key"),
+                "persona_version": persona.get("version"),
+                "effective_prompt": dict(persona.get("content") or {}),
+                "answer_route": resolution.answer_route,
+                "route_reason": resolution.route_reason,
+            }
+        )
+        job["status"] = "scheduled"
+    current_job = ticket_repository.get_account_reply_job(job_id)
+    if current_job is None or str(current_job.get("status") or "") != "preparing":
+        return
+    job["payload"] = payload
+    job["updated_at"] = now_iso()
+    ticket_repository.save_account_reply_job(job)
+
+
+def _publish_account_reply_job(job: dict[str, Any]) -> None:
+    job_id = str(job.get("job_id") or "").strip()
+    ticket_id = str(job.get("ticket_id") or "").strip()
+    current_job = ticket_repository.get_account_reply_job(job_id)
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if current_job is None or ticket is None:
+        raise RuntimeError("account reply job is missing its linked ticket")
+    if str(current_job.get("status") or "") != "publishing":
+        return
+    payload = dict(current_job.get("payload") or {})
+    existing_message = next(
+        (
+            message
+            for message in ticket.get("messages", [])
+            if isinstance(message, dict)
+            and isinstance(message.get("meta"), dict)
+            and str(message["meta"].get("account_reply_job_id") or "") == job_id
+        ),
+        None,
+    )
+    if existing_message is None and not _account_reply_trigger_is_latest(
+        ticket, str(job.get("trigger_message_created_at") or "")
+    ):
+        current_job["status"] = "cancelled"
+        current_job["updated_at"] = now_iso()
+        ticket_repository.save_account_reply_job(current_job)
+        return
+
+    content = str((existing_message or {}).get("content") or payload.get("draft_content") or "").strip()
+    if not content:
+        payload["error"] = "AI reply draft is unavailable."
+        current_job["status"] = "manual_attention"
+        current_job["payload"] = payload
+        current_job["updated_at"] = now_iso()
+        ticket_repository.save_account_reply_job(current_job)
+        return
+
+    published_at = str((existing_message or {}).get("created_at") or now_iso())
+    if existing_message is None:
+        assistant_message = {
+            "role": "assistant",
+            "content": content,
+            "created_at": published_at,
+            "content_format": "plaintext",
+            "source": "account_ai",
+            "meta": {
+                "account_reply_job_id": job_id,
+                "visibility": "account_only",
+                "trigger_message_created_at": current_job.get("trigger_message_created_at"),
+                "scheduled_for": current_job.get("scheduled_for"),
+                "published_at": published_at,
+                "asked_field_keys": list(payload.get("asked_field_keys") or []),
+                "persona_key": payload.get("persona_key"),
+                "persona_version": payload.get("persona_version"),
+            },
+        }
+        ticket.setdefault("messages", []).append(assistant_message)
+        ticket["updated_at"] = published_at
+        ticket_repository.save_ticket(ticket, new_messages=[assistant_message])
+
+    billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(ticket_id)
+    if billing_ticket is not None:
+        billing_ticket["customer_reply"] = content
+        billing_ticket["updated_at"] = published_at
+        ticket_repository.save_billing_ticket(billing_ticket)
+
+    ticket_repository.save_account_reply_execution(
+        {
+            "execution_id": f"reply-{job_id}",
+            "ticket_id": ticket_id,
+            "reply_kind": str((billing_ticket or {}).get("route") or payload.get("answer_route") or "account_reply"),
+            "persona_key": payload.get("persona_key"),
+            "persona_version": payload.get("persona_version"),
+            "effective_prompt": dict(payload.get("effective_prompt") or {}),
+            "visibility": "account_only",
+            "scheduled_for": current_job.get("scheduled_for"),
+            "published_at": published_at,
+            "created_at": published_at,
+        }
+    )
+    current_job["status"] = "published"
+    current_job["published_at"] = published_at
+    current_job["updated_at"] = published_at
+    ticket_repository.save_account_reply_job(current_job)
+
+
+def _run_account_reply_poller(interval_seconds: float) -> None:
+    LOGGER.info("Account reply poller started with interval_seconds=%s.", interval_seconds)
+    while not SHUTTING_DOWN:
+        try:
+            now_value = now_iso()
+            for job in ticket_repository.claim_account_reply_jobs(
+                from_status="queued", to_status="preparing", now_value=now_value, limit=5
+            ):
+                try:
+                    _prepare_account_reply_job(job)
+                except Exception as exc:
+                    LOGGER.exception("Account reply preparation failed for %s", job.get("job_id"))
+                    current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
+                    if current is not None and str(current.get("status") or "") == "cancelled":
+                        continue
+                    job["status"] = "queued" if int(job.get("attempt_count") or 0) < 3 else "failed"
+                    job["payload"] = {**dict(job.get("payload") or {}), "error": str(exc)}
+                    job["updated_at"] = now_iso()
+                    ticket_repository.save_account_reply_job(job)
+            for job in ticket_repository.claim_account_reply_jobs(
+                from_status="scheduled", to_status="publishing", now_value=now_iso(), limit=10, due_only=True
+            ):
+                try:
+                    _publish_account_reply_job(job)
+                except Exception as exc:
+                    LOGGER.exception("Account reply publication failed for %s", job.get("job_id"))
+                    current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
+                    if current is not None and str(current.get("status") or "") == "cancelled":
+                        continue
+                    job["status"] = "scheduled" if int(job.get("attempt_count") or 0) < 4 else "failed"
+                    job["payload"] = {**dict(job.get("payload") or {}), "error": str(exc)}
+                    job["updated_at"] = now_iso()
+                    ticket_repository.save_account_reply_job(job)
+        except Exception:
+            LOGGER.exception("Account reply poller failed")
+        sleep_until = time.time() + max(interval_seconds, 1.0)
+        while not SHUTTING_DOWN and time.time() < sleep_until:
+            time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
+    LOGGER.info("Account reply poller stopped.")
 
 
 def _ticket_id_from_billing_reply_subject(subject: str) -> str:
@@ -507,6 +724,17 @@ def _start_engineer_assignment_poller_if_enabled() -> threading.Thread | None:
         target=_run_engineer_assignment_poller,
         args=(_engineer_assignment_poll_interval_from_env(),),
         name="engineer-assignment-poller",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def _start_account_reply_poller() -> threading.Thread:
+    thread = threading.Thread(
+        target=_run_account_reply_poller,
+        args=(_account_reply_poll_interval_from_env(),),
+        name="account-reply-poller",
         daemon=True,
     )
     thread.start()
@@ -1999,6 +2227,7 @@ def run_worker() -> int:
     )
     _start_billing_reply_poller_if_enabled()
     _start_engineer_assignment_poller_if_enabled()
+    _start_account_reply_poller()
     if concurrency <= 1:
         _run_worker_consumer(task_types, 1)
         LOGGER.info("Worker stopped.")

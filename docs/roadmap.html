@@ -1465,8 +1465,8 @@
           <h3>Phase 2：确定性 Automation + Controlled Validation</h3>
           <ul class="phase-gate-list">
             <li><strong>Fraud fields：</strong>Suhird 明确 required 与 optional fields。</li>
-            <li><strong>Clarification：</strong>同一信息不能无限追问，达到限制后转人工。</li>
-            <li><strong>Reply timing：</strong>首条自动回复随机延迟 6–10 分钟，避免 AI 秒回。</li>
+            <li><strong>Clarification：</strong>已落地同一规范化字段最多询问一次；未回答时停止重复追问并保留人工处理状态。</li>
+            <li><strong>Reply timing：</strong>已为所有 <code>/account</code> 客户消息落地持久化 6–10 分钟随机延迟，AI 回复只发布在 account thread。</li>
             <li><strong>Prompt：</strong>维护不同人设的受控回复模板、发布版本、比较与回滚。</li>
             <li><strong>Scope：</strong>自动化覆盖 account suspension / fraud、detailed invoice 与 enablement。</li>
             <li><strong>Metrics：</strong>以全部 /account ticket 为分母展示 routed-to-Automated 占比，并据此决定是否扩充 category。</li>

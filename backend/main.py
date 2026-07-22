@@ -6,6 +6,7 @@ import importlib.util
 import json
 import logging
 import os
+import random
 import re
 import time
 import urllib.parse
@@ -290,6 +291,7 @@ def _build_billing_internal_email_attempt(
     customer_email: str | None,
     requester: str | None,
     persona_instruction: str | None = None,
+    already_requested_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     billing_result = build_billing_automation_result(
         action=action,
@@ -299,6 +301,7 @@ def _build_billing_internal_email_attempt(
         requester=requester,
         billing_ticket_id=billing_ticket_id,
         persona_instruction=persona_instruction,
+        already_requested_fields=already_requested_fields,
     )
     customer_reply = billing_result.customer_reply
     missing_fields = list(billing_result.missing_fields)
@@ -323,6 +326,87 @@ def _build_billing_internal_email_attempt(
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
     }
+
+
+ACCOUNT_REPLY_DELAY_MIN_SECONDS = 6 * 60
+ACCOUNT_REPLY_DELAY_MAX_SECONDS = 10 * 60
+_ACCOUNT_REPLY_RANDOM = random.SystemRandom()
+
+
+def _account_reply_delay_seconds() -> int:
+    return _ACCOUNT_REPLY_RANDOM.randint(ACCOUNT_REPLY_DELAY_MIN_SECONDS, ACCOUNT_REPLY_DELAY_MAX_SECONDS)
+
+
+def _account_asked_field_keys(ticket: dict[str, Any]) -> set[str]:
+    asked: set[str] = set()
+    for message in ticket.get("messages", []):
+        if not isinstance(message, dict) or str(message.get("role") or "").strip().lower() != "assistant":
+            continue
+        meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+        for field_name in meta.get("asked_field_keys", []):
+            normalized = str(field_name or "").strip().lower()
+            if normalized:
+                asked.add(normalized)
+    return asked
+
+
+def _account_reply_job_public(job: dict[str, Any] | None) -> dict[str, Any]:
+    if not job:
+        return {
+            "ai_reply_status": None,
+            "ai_reply_scheduled_for": None,
+            "ai_reply_published_at": None,
+            "ai_reply_error": None,
+        }
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    return {
+        "ai_reply_status": str(job.get("status") or "") or None,
+        "ai_reply_scheduled_for": job.get("scheduled_for"),
+        "ai_reply_published_at": job.get("published_at"),
+        "ai_reply_error": str(payload.get("error") or "") or None,
+    }
+
+
+def _create_account_reply_job(
+    *,
+    ticket_id: str,
+    trigger_message_created_at: str,
+    draft_content: str = "",
+    asked_field_keys: list[str] | None = None,
+    persona_assignment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    created_at = now_iso()
+    scheduled_for = (
+        datetime.fromisoformat(trigger_message_created_at) + timedelta(seconds=_account_reply_delay_seconds())
+    ).astimezone(timezone.utc).isoformat()
+    ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
+    payload: dict[str, Any] = {
+        "draft_content": str(draft_content or "").strip(),
+        "asked_field_keys": sorted({str(item).strip().lower() for item in (asked_field_keys or []) if str(item).strip()}),
+        "visibility": "account_only",
+    }
+    if persona_assignment:
+        payload.update(
+            {
+                "persona_key": persona_assignment.get("persona_key"),
+                "persona_version": persona_assignment.get("version"),
+                "effective_prompt": copy.deepcopy(persona_assignment.get("content") or {}),
+            }
+        )
+    job = {
+        "job_id": f"account-reply-{uuid4().hex}",
+        "ticket_id": ticket_id,
+        "trigger_message_created_at": trigger_message_created_at,
+        "status": "scheduled" if payload["draft_content"] else "queued",
+        "scheduled_for": scheduled_for,
+        "payload": payload,
+        "attempt_count": 0,
+        "claimed_at": None,
+        "published_at": None,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+    return ticket_repository.save_account_reply_job(job)
 
 
 async def _send_billing_internal_email_attempt(attempt: dict[str, Any]) -> tuple[str, str]:
@@ -3290,18 +3374,6 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         internal_email_payload = billing_email_attempt["internal_email_payload"]
         internal_email_send_status = str(billing_email_attempt["internal_email_send_status"])
         internal_email_send_reason = str(billing_email_attempt["internal_email_send_reason"])
-        if customer_reply:
-            ticket["messages"].append(
-                {
-                    "role": "assistant",
-                    "content": customer_reply,
-                    "created_at": timestamp,
-                    "content_format": "plaintext",
-                    "source": "billing_automation",
-                }
-            )
-
-    pending_assistant_message = ticket["messages"].pop() if customer_reply else None
     if not ticket_saved:
         await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
 
@@ -3309,26 +3381,6 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         if persona_assignment is None:
             persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, ticket_id)
         customer_reply = apply_persona_to_customer_reply(customer_reply, persona_assignment)
-        assert pending_assistant_message is not None
-        pending_assistant_message["content"] = customer_reply
-        pending_assistant_message["meta"] = {
-            "persona_key": persona_assignment["persona_key"],
-            "persona_version": persona_assignment["version"],
-        }
-        ticket["messages"].append(pending_assistant_message)
-        await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=[pending_assistant_message])
-        await async_to_thread(
-            ticket_repository.save_account_reply_execution,
-            {
-                "execution_id": f"reply-{uuid4().hex}",
-                "ticket_id": ticket_id,
-                "reply_kind": route or "account_reply",
-                "persona_key": persona_assignment["persona_key"],
-                "persona_version": persona_assignment["version"],
-                "effective_prompt": copy.deepcopy(persona_assignment.get("content") or {}),
-                "created_at": timestamp,
-            },
-        )
 
     billing_ticket: dict[str, Any] = {
         "billing_ticket_id": billing_ticket_id,
@@ -3349,7 +3401,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "automation_status": response_status,
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,
-        "customer_reply": customer_reply or None,
+        "customer_reply": None,
         "internal_email_payload": internal_email_payload,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
@@ -3372,6 +3424,15 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
             user_prompt=route_user_prompt,
             created_at=timestamp,
         ),
+    )
+    asked_field_keys = list(missing_fields) if customer_reply else []
+    reply_job = await async_to_thread(
+        _create_account_reply_job,
+        ticket_id=ticket_id,
+        trigger_message_created_at=timestamp,
+        draft_content=customer_reply,
+        asked_field_keys=asked_field_keys,
+        persona_assignment=persona_assignment,
     )
 
     rollout_position: int | None = None
@@ -3471,7 +3532,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "engineer_case_id": engineer_case_id,
         "rollout_position": rollout_position,
         "rollout_selected": rollout_selected,
-        "customer_reply": customer_reply,
+        "customer_reply": "",
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,
         "internal_email_send_status": internal_email_send_status,
@@ -3490,6 +3551,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "intent_router_fallback_reason": decision.intent_router_fallback_reason,
         "intent_router_failure_type": decision.intent_router_failure_type,
         "intent_router_failure_source": decision.intent_router_failure_source,
+        **_account_reply_job_public(reply_job),
     }
     if idempotency_key:
         await async_to_thread(
@@ -3811,6 +3873,9 @@ def list_billing_tickets(
             ),
             "billing_ticket_id": item.get("billing_ticket_id"),
             "client_ticket_id": item.get("client_ticket_id"),
+            **_account_reply_job_public(
+                ticket_repository.get_latest_account_reply_job(str(item.get("client_ticket_id") or ""))
+            ),
         }
         for item in tickets
     ]
@@ -3846,6 +3911,11 @@ def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
         view_model["customer_id"] = ticket.get("client_ticket_id") or ""
         view_model["requester"] = ticket.get("client_ticket_id") or ""
         view_model["support_ticket_status"] = ""
+    view_model.update(
+        _account_reply_job_public(
+            ticket_repository.get_latest_account_reply_job(str(canonical_ticket_id or ""))
+        )
+    )
     return {
         **ticket,
         **view_model,
@@ -4085,9 +4155,13 @@ async def reply_to_billing_ticket(
     automation_status = str(
         billing_ticket.get("automation_status") or billing_ticket.get("status") or ""
     ).strip()
+    assistant_reply = ""
+    requested_field_keys: list[str] = []
+    persona_assignment: dict[str, Any] | None = None
 
     if automation_status in {"automation", "automated"}:
         route = str(billing_ticket.get("route") or "").strip()
+        already_requested_fields = _account_asked_field_keys(canonical_ticket)
         # Field extraction should use customer-provided text only; assistant checklist
         # prompts contain the same labels and can be misread as customer values.
         all_contents = [
@@ -4105,31 +4179,22 @@ async def reply_to_billing_ticket(
             billing_ticket_id=billing_ticket_id,
             customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
             requester=str(canonical_ticket.get("requester") or "").strip() or None,
+            already_requested_fields=sorted(already_requested_fields),
         )
 
         assistant_reply = str(billing_email_attempt["customer_reply"] or "")
         missing_fields = list(billing_email_attempt["missing_fields"])
+        requested_field_keys = [field_name for field_name in missing_fields if field_name not in already_requested_fields]
         collected_fields = dict(billing_email_attempt["collected_fields"])
 
         # Update billing ticket with recomputed fields.
         billing_ticket["missing_fields"] = missing_fields
         billing_ticket["collected_fields"] = collected_fields
-        billing_ticket["customer_reply"] = assistant_reply
+        billing_ticket["customer_reply"] = None
         billing_ticket["internal_email_payload"] = billing_email_attempt["internal_email_payload"]
         billing_ticket["internal_email_send_status"] = billing_email_attempt["internal_email_send_status"]
         billing_ticket["internal_email_send_reason"] = billing_email_attempt["internal_email_send_reason"]
         billing_ticket["updated_at"] = timestamp
-
-        if assistant_reply:
-            canonical_ticket["messages"].append(
-                {
-                    "role": "assistant",
-                    "content": assistant_reply,
-                    "created_at": timestamp,
-                    "content_format": "plaintext",
-                    "source": "billing_automation",
-                }
-            )
 
         new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
         await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
@@ -4142,10 +4207,22 @@ async def reply_to_billing_ticket(
             billing_ticket["internal_email_send_reason"] = internal_email_send_reason
             billing_ticket["updated_at"] = now_iso()
             await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+        if assistant_reply:
+            persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, client_ticket_id)
+            assistant_reply = apply_persona_to_customer_reply(assistant_reply, persona_assignment)
     else:
-        # Non-automated: just save the customer message (reply handled by /api/tickets/query on frontend).
+        # Non-automated replies are prepared by the account reply poller.
         new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
         await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
+
+    reply_job = await async_to_thread(
+        _create_account_reply_job,
+        ticket_id=client_ticket_id,
+        trigger_message_created_at=timestamp,
+        draft_content=assistant_reply,
+        asked_field_keys=requested_field_keys,
+        persona_assignment=persona_assignment,
+    )
 
     # Return refreshed detail view.
     view_model = _build_account_ticket_view_model(billing_ticket)
@@ -4153,6 +4230,7 @@ async def reply_to_billing_ticket(
     view_model["customer_id"] = canonical_ticket.get("customer_id")
     view_model["requester"] = canonical_ticket.get("requester")
     view_model["support_ticket_status"] = canonical_ticket.get("status")
+    view_model.update(_account_reply_job_public(reply_job))
     return {
         **billing_ticket,
         **view_model,

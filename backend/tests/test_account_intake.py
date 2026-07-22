@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -12,9 +13,10 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from fastapi.testclient import TestClient
 
 import backend.main as main
+import backend.worker as worker
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.billing_response_flow import hash_billing_response_token
-from backend.services.support_router import SupportRouteDecision, _LlmRouteAttempt
+from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
 
 
 class AccountIntakeApiTests(unittest.TestCase):
@@ -22,7 +24,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.repository = InMemoryTicketRepository()
         self.repository.initialize()
         self.original_repository = main.ticket_repository
+        self.original_worker_repository = worker.ticket_repository
         main.ticket_repository = self.repository
+        worker.ticket_repository = self.repository
         self.client = TestClient(main.app)
         # Patch LLM route decision to return empty attempt so semantic_first falls through to deterministic
         self._llm_patcher = patch(
@@ -35,6 +39,19 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._llm_patcher.stop()
         self.client.close()
         main.ticket_repository = self.original_repository
+        worker.ticket_repository = self.original_worker_repository
+
+    def _publish_latest_account_reply(self, ticket_id: str) -> dict[str, object]:
+        job = self.repository.get_latest_account_reply_job(ticket_id)
+        self.assertIsNotNone(job)
+        assert job is not None
+        job["status"] = "publishing"
+        self.repository.save_account_reply_job(job)
+        worker._publish_account_reply_job(job)
+        published = self.repository.get_account_reply_job(str(job["job_id"]))
+        self.assertIsNotNone(published)
+        assert published is not None
+        return published
 
     def _create_invoice_ticket_with_response_token(self) -> tuple[dict[str, object], str]:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
@@ -115,8 +132,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route"], "detailed_invoice")
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["missing_fields"], [])
-        # Automation tickets now return a customer-facing reply and internal email is not sent.
-        self.assertTrue(payload["customer_reply"])
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["ai_reply_status"], "scheduled")
         self.assertEqual(payload["internal_email_send_status"], "skipped_config_missing")
         self.assertIn("missing", payload["internal_email_send_reason"])
 
@@ -127,15 +144,14 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(ticket["requester"], "customer@example.com")
         self.assertEqual(ticket["customer_id"], "customer@example.com")
         self.assertEqual(ticket["source"], "manual")
-        # Should have customer message + assistant reply.
-        self.assertEqual(
-            [message["role"] for message in ticket["messages"]],
-            ["customer", "assistant"],
-        )
-        # Assistant message should contain the escalation reply.
+        self.assertEqual([message["role"] for message in ticket["messages"]], ["customer"])
+        self._publish_latest_account_reply(payload["ticket_id"])
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        assert ticket is not None
         assistant_msg = ticket["messages"][1]
         self.assertIn("escalated", assistant_msg["content"].lower())
-        self.assertEqual(assistant_msg["source"], "billing_automation")
+        self.assertEqual(assistant_msg["source"], "account_ai")
+        self.assertEqual(assistant_msg["meta"]["visibility"], "account_only")
 
         event_payloads = [
             item["payload"]
@@ -877,7 +893,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["title"], "Detailed invoice request")
         self.assertIsNotNone(bt["route_reason"])
         self.assertIsNotNone(bt["route_confidence"])
-        self.assertTrue(bt["customer_reply"])
+        self.assertIsNone(bt["customer_reply"])
         self.assertEqual(bt["internal_email_send_status"], "skipped_config_missing")
 
     def test_account_intake_saves_non_automated_billing_ticket(self) -> None:
@@ -1693,7 +1709,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "automation")
         self.assertEqual(payload["route"], "account_suspension")
-        self.assertTrue(payload["customer_reply"])
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["ai_reply_status"], "scheduled")
         self.assertEqual(payload["internal_email_send_status"], "not_ready")
         self.assertNotIn("support_ticket_id", payload)
 
@@ -1893,7 +1910,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     # --- New tests for billing automation reply flow ---
 
-    def test_account_intake_automation_returns_customer_reply_and_appends_assistant_message(self) -> None:
+    def test_account_intake_schedules_customer_reply_before_publishing_assistant_message(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.send_billing_internal_email",
             return_value={"status": "skipped_config_missing", "reason": "missing BILLING_AUTOMATION_SMTP_PASSWORD"},
@@ -1913,17 +1930,21 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["status"], "automation")
-        self.assertTrue(payload["customer_reply"])
-        self.assertIn("escalated", payload["customer_reply"].lower())
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["ai_reply_status"], "scheduled")
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)
         assert ticket is not None
         messages = ticket["messages"]
-        self.assertEqual(len(messages), 2)
+        self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0]["role"], "customer")
-        self.assertEqual(messages[1]["role"], "assistant")
-        self.assertEqual(messages[1]["source"], "billing_automation")
+        self._publish_latest_account_reply(payload["ticket_id"])
+        ticket = self.repository.get_ticket(payload["ticket_id"])
+        assert ticket is not None
+        self.assertEqual(ticket["messages"][1]["role"], "assistant")
+        self.assertEqual(ticket["messages"][1]["source"], "account_ai")
+        self.assertIn("escalated", ticket["messages"][1]["content"].lower())
 
     def test_account_intake_sends_internal_email_via_async_to_thread(self) -> None:
         decision = SupportRouteDecision(
@@ -1994,14 +2015,17 @@ class AccountIntakeApiTests(unittest.TestCase):
         # Account suspension with no field info should have missing fields.
         self.assertTrue(len(payload["missing_fields"]) > 0)
         self.assertIn("company_name", payload["missing_fields"])
-        self.assertTrue(payload["customer_reply"])
-        self.assertIn("provide the following details", payload["customer_reply"].lower())
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["ai_reply_status"], "scheduled")
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertTrue(len(bt["missing_fields"]) > 0)
-        self.assertTrue(bt["customer_reply"])
+        self.assertIsNone(bt["customer_reply"])
+        job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
+        assert job is not None
+        self.assertIn("provide the following details", job["payload"]["draft_content"].lower())
 
     def test_account_verification_missing_use_case_uses_customer_name_email_style(self) -> None:
         decision = SupportRouteDecision(
@@ -2041,9 +2065,12 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["route"], "account_verification")
         self.assertEqual(payload["missing_fields"], ["use_case"])
-        self.assertTrue(payload["customer_reply"].startswith("Hi Taylor,"))
-        self.assertIn("could you please provide your use case?", payload["customer_reply"])
-        self.assertTrue(payload["customer_reply"].endswith("Thanks in advance!\nSid"))
+        job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
+        assert job is not None
+        draft = job["payload"]["draft_content"]
+        self.assertTrue(draft.startswith("Hi Taylor,"))
+        self.assertIn("could you please provide your use case?", draft)
+        self.assertTrue(draft.endswith("Thanks in advance!\nSid"))
 
     def test_billing_automation_reply_recomputes_fields(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -2060,12 +2087,12 @@ class AccountIntakeApiTests(unittest.TestCase):
         create_payload = create_response.json()
         bt_id = create_payload["billing_ticket_id"]
 
-        # Initial state: missing fields exist, customer_reply asks for more info.
+        # Initial state: missing fields exist and the reply remains scheduled.
         self.assertTrue(len(create_payload["missing_fields"]) > 0)
-        self.assertIn("provide the following details", create_payload["customer_reply"].lower())
+        self.assertEqual(create_payload["ai_reply_status"], "scheduled")
 
         ticket = self.repository.get_ticket(create_payload["ticket_id"])
-        self.assertEqual(len(ticket["messages"]), 2)
+        self.assertEqual(len(ticket["messages"]), 1)
 
         saved_new_message_counts: list[int] = []
         original_save_ticket = self.repository.save_ticket
@@ -2095,17 +2122,20 @@ class AccountIntakeApiTests(unittest.TestCase):
         reply_payload = reply_response.json()
         self.assertEqual(reply_payload["status"], "automation")
         self.assertEqual(reply_payload["missing_fields"], [])
-        self.assertTrue(reply_payload["customer_reply"])
-        self.assertIn("escalated", reply_payload["customer_reply"].lower())
+        self.assertEqual(reply_payload["customer_reply"], None)
+        self.assertEqual(reply_payload["ai_reply_status"], "scheduled")
 
-        # Check that only this reply's customer and assistant messages were persisted as new messages.
-        self.assertEqual(saved_new_message_counts, [2])
+        # Only the customer message is visible until the scheduled publication.
+        self.assertEqual(saved_new_message_counts, [1])
 
-        # Check that customer and assistant messages were appended.
         ticket = self.repository.get_ticket(create_payload["ticket_id"])
-        self.assertEqual(len(ticket["messages"]), 4)
-        self.assertEqual(ticket["messages"][2]["role"], "customer")
-        self.assertEqual(ticket["messages"][3]["role"], "assistant")
+        self.assertEqual(len(ticket["messages"]), 2)
+        self.assertEqual(ticket["messages"][1]["role"], "customer")
+        self._publish_latest_account_reply(create_payload["ticket_id"])
+        ticket = self.repository.get_ticket(create_payload["ticket_id"])
+        assert ticket is not None
+        self.assertEqual(ticket["messages"][2]["role"], "assistant")
+        self.assertIn("escalated", ticket["messages"][2]["content"].lower())
 
         # Check billing ticket was updated.
         bt = self.repository.get_billing_ticket(bt_id)
@@ -2260,13 +2290,15 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "amount": "USD 100",
             },
         )
+        self._publish_latest_account_reply(ticket_id)
 
         # Detail should show all messages.
         detail = self.client.get(f"/api/account/billing-tickets/{bt_id}").json()
         self.assertIn("messages", detail)
-        self.assertEqual(len(detail["messages"]), 4)  # customer + assistant + customer + assistant
+        self.assertEqual(len(detail["messages"]), 3)  # customer + customer + scheduled assistant
         self.assertEqual(detail["messages"][0]["role"], "customer")
-        self.assertEqual(detail["messages"][1]["role"], "assistant")
+        self.assertEqual(detail["messages"][1]["role"], "customer")
+        self.assertEqual(detail["messages"][2]["role"], "assistant")
         self.assertEqual(detail["customer_id"], "customer@example.com")
         self.assertEqual(detail["requester"], "customer@example.com")
         self.assertIn("support_ticket_status", detail)
@@ -2657,3 +2689,170 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["source"], '{"Link": "https://example.com/case/42"}')
+
+    def test_account_reply_delay_is_sampled_once_within_six_to_ten_minutes(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "_account_reply_delay_seconds", return_value=417
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        payload = response.json()
+        job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
+        assert job is not None
+        trigger = datetime.fromisoformat(job["trigger_message_created_at"])
+        scheduled = datetime.fromisoformat(job["scheduled_for"])
+        self.assertEqual((scheduled - trigger).total_seconds(), 417)
+        self.assertEqual(payload["ai_reply_scheduled_for"], job["scheduled_for"])
+
+    def test_missing_fields_are_asked_only_once_per_ticket(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+
+        first_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert first_job is not None
+        self.assertTrue(first_job["payload"]["asked_field_keys"])
+        self._publish_latest_account_reply(created["ticket_id"])
+
+        response = self.client.post(
+            f"/api/account/billing-tickets/{created['billing_ticket_id']}/reply",
+            json={"message": "Thank you for checking."},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        second_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert second_job is not None
+        self.assertEqual(second_job["payload"]["asked_field_keys"], [])
+        self.assertNotIn("could you please provide", second_job["payload"]["draft_content"].lower())
+        self.assertNotIn("provide the following", second_job["payload"]["draft_content"].lower())
+
+    def test_new_customer_message_cancels_pending_reply(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+        first_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert first_job is not None
+
+        response = self.client.post(
+            f"/api/account/billing-tickets/{created['billing_ticket_id']}/reply",
+            json={"message": "Issue date: 1 Jan 2026."},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.repository.get_account_reply_job(first_job["job_id"])["status"], "cancelled")
+        latest = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert latest is not None
+        self.assertNotEqual(latest["job_id"], first_job["job_id"])
+
+    def test_non_automated_ticket_prepares_account_only_reply(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Product question",
+                    "question": "What Agora products are available?",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+        job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert job is not None
+        self.assertEqual(job["status"], "queued")
+        job["status"] = "preparing"
+        self.repository.save_account_reply_job(job)
+        resolution = SupportResolution(
+            answer="Agora provides real-time voice and video products.",
+            confidence=0.9,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="web_search",
+            scope_label="agora_non_technical",
+            route_reason="official_product_question",
+            route_confidence=0.9,
+            search_used=True,
+        )
+        with patch.object(worker, "resolve_support_message", return_value=resolution):
+            worker._prepare_account_reply_job(job)
+
+        prepared = self.repository.get_account_reply_job(job["job_id"])
+        assert prepared is not None
+        self.assertEqual(prepared["status"], "scheduled")
+        self.assertEqual(prepared["payload"]["visibility"], "account_only")
+        self.assertIn("real-time voice", prepared["payload"]["draft_content"])
+
+    def test_account_reply_publication_is_idempotent_after_partial_worker_recovery(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+
+        published = self._publish_latest_account_reply(created["ticket_id"])
+        ticket = self.repository.get_ticket(created["ticket_id"])
+        assert ticket is not None
+        self.assertEqual(len(ticket["messages"]), 2)
+        self.assertEqual(len(self.repository.list_account_reply_executions(created["ticket_id"])), 1)
+
+        published["status"] = "publishing"
+        self.repository.save_account_reply_job(published)
+        worker._publish_account_reply_job(published)
+        ticket = self.repository.get_ticket(created["ticket_id"])
+        assert ticket is not None
+        self.assertEqual(len(ticket["messages"]), 2)
+        self.assertEqual(len(self.repository.list_account_reply_executions(created["ticket_id"])), 1)
+
+    def test_account_reply_job_claims_once_after_due_time(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+        job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert job is not None
+
+        not_due = self.repository.claim_account_reply_jobs(
+            from_status="scheduled",
+            to_status="publishing",
+            now_value="2000-01-01T00:00:00+00:00",
+            due_only=True,
+        )
+        self.assertEqual(not_due, [])
+        claimed = self.repository.claim_account_reply_jobs(
+            from_status="scheduled",
+            to_status="publishing",
+            now_value="2999-01-01T00:00:00+00:00",
+            due_only=True,
+        )
+        self.assertEqual([item["job_id"] for item in claimed], [job["job_id"]])
+        claimed_again = self.repository.claim_account_reply_jobs(
+            from_status="scheduled",
+            to_status="publishing",
+            now_value="2999-01-01T00:00:00+00:00",
+            due_only=True,
+        )
+        self.assertEqual(claimed_again, [])

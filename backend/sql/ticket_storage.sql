@@ -135,6 +135,24 @@ CREATE TABLE IF NOT EXISTS support_account_reply_executions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_account_reply_jobs (
+    job_id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    trigger_message_created_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'scheduled', 'publishing', 'published', 'manual_attention', 'cancelled', 'failed')),
+    scheduled_for TIMESTAMPTZ NOT NULL,
+    payload JSONB NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    claimed_at TIMESTAMPTZ,
+    published_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (ticket_id, trigger_message_created_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_account_reply_jobs_status_due
+    ON support_account_reply_jobs (status, scheduled_for, created_at);
+
 CREATE TABLE IF NOT EXISTS support_account_personas (
     persona_key TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
