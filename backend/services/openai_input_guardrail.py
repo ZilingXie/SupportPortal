@@ -32,7 +32,7 @@ _BLOCKED_CATEGORIES = {
     GUARDRAIL_ERROR_CATEGORY,
 }
 _SUPPORTED_CATEGORIES = {ALLOWED_CATEGORY, *_BLOCKED_CATEGORIES}
-_PROMPT_VERSION = "input-guardrail-front-door-v1"
+INPUT_GUARDRAIL_PROMPT_VERSION = "input-guardrail-front-door-v1"
 _PLACEHOLDER_BY_LANGUAGE = {
     "en": "[Message redacted by input guardrail. Please restate your technical question without personal data or unsafe content.]",
     "zh": "[该条消息已被输入安全检查隐藏。请在移除隐私信息和不安全内容后重新描述技术问题。]",
@@ -57,6 +57,10 @@ _CLASSIFIER_INSTRUCTIONS = (
     f"Blocked categories are '{JAILBREAK_PROMPT_INJECTION_CATEGORY}', '{ABUSE_CATEGORY}', '{PII_CATEGORY}', "
     f"and '{INVALID_OR_DANGEROUS_CATEGORY}'."
 )
+
+
+def build_input_guardrail_system_prompt() -> str:
+    return _CLASSIFIER_INSTRUCTIONS
 
 
 @dataclass(frozen=True)
@@ -367,7 +371,7 @@ async def evaluate_openai_input_guardrail(
             requester=requester,
             customer_id=customer_id,
             diagnostics={
-                "prompt_version": _PROMPT_VERSION,
+                "prompt_version": INPUT_GUARDRAIL_PROMPT_VERSION,
                 "guardrail_mode": "blocking",
                 "source": "deterministic_precheck",
             },
@@ -408,7 +412,7 @@ async def evaluate_openai_input_guardrail(
         if inspect.isawaitable(guardrail_output):
             guardrail_output = await guardrail_output
         diagnostics = {
-            "prompt_version": _PROMPT_VERSION,
+            "prompt_version": INPUT_GUARDRAIL_PROMPT_VERSION,
             "guardrail_mode": "blocking",
             "model": profile.model,
             "reasoning_effort": profile.reasoning_effort,
@@ -436,7 +440,7 @@ async def evaluate_openai_input_guardrail(
             requester=requester,
             customer_id=customer_id,
             diagnostics={
-                "prompt_version": _PROMPT_VERSION,
+                "prompt_version": INPUT_GUARDRAIL_PROMPT_VERSION,
                 "guardrail_mode": "blocking",
                 "exception_type": exc.__class__.__name__,
                 "exception_message": _clean_text(exc),

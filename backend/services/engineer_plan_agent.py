@@ -5,13 +5,13 @@ from typing import Any
 ENGINEER_PLAN_VERSION = "engineer-plan-v1"
 ENGINEER_PLAN_AGENT_VERSION = "engineer-plan-agent-v1"
 
-_FALLBACK_SKILLS = [
+ENGINEER_PLAN_SKILLS = (
     "context_review",
     "internal_knowledge_search",
     "official_docs_fallback",
     "missing_info_triage",
     "synthesis",
-]
+)
 
 _SKILL_TO_TASK_TEMPLATE: dict[str, dict[str, Any]] = {
     "context_review": {
@@ -101,7 +101,7 @@ def _normalize_selected_skills(skills: list[Any]) -> list[str]:
         if _clean_text(skill) in _SKILL_TO_TASK_TEMPLATE
     ]
     if not selected:
-        return list(_FALLBACK_SKILLS)
+        return list(ENGINEER_PLAN_SKILLS)
 
     # Keep core scheduling boundaries present even when the installed skill list
     # only exposes one middle task.
@@ -175,7 +175,7 @@ def resolve_plan_skill_context(
     return {
         "mode": "allowlist_fallback",
         "available_skills": [],
-        "selected_skills": list(_FALLBACK_SKILLS),
+        "selected_skills": list(ENGINEER_PLAN_SKILLS),
         "fallback_reason": "skill_list_not_installed",
     }
 
