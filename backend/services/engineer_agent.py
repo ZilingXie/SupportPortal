@@ -17,6 +17,7 @@ from backend.services.prompts.engineer_investigation_reply import (
     build_engineer_investigation_reply_system_prompt,
     build_engineer_investigation_reply_user_prompt,
 )
+from backend.services.prompt_runtime import resolve_system_prompt
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _ACTIVE_STATE = "active"
@@ -1102,7 +1103,10 @@ def _generate_investigation_reply_turn(
             error=f"{ENGINEER_INVESTIGATION_REPLY_SCENARIO}_missing_api_key",
         )
 
-    system_prompt = build_engineer_investigation_reply_system_prompt()
+    system_prompt = resolve_system_prompt(
+        "engineer-investigation-reply",
+        build_engineer_investigation_reply_system_prompt(),
+    )
     user_prompt = build_engineer_investigation_reply_user_prompt(
         customer_language_hint=_customer_language_hint(ticket),
         engineer_thread_language_hint=engineer_thread_language_hint,

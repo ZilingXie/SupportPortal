@@ -386,8 +386,7 @@ cleanup() {
 trap 'cleanup $?' EXIT
 
 main() {
-  local current_branch local_head remote_head host_port internal_url external_url
-  local health_timeout_seconds health_retry_interval_seconds
+  local current_branch local_head remote_head
 
   setup_logging
   RUN_STARTED_AT_UTC="$(current_utc_timestamp)"
@@ -437,74 +436,38 @@ main() {
     || fail "Remote branch not found: origin/${DEPLOY_BRANCH}"
   REMOTE_COMMIT="$(git rev-parse --short "origin/${DEPLOY_BRANCH}")"
 
-  CURRENT_STEP="Determine execution mode"
+  CURRENT_STEP="Validate deploy ancestry"
   local_head="$(git rev-parse HEAD)"
   remote_head="$(git rev-parse "origin/${DEPLOY_BRANCH}")"
-  if [[ "${local_head}" == "${remote_head}" ]]; then
-    EXECUTION_MODE="health-only"
-  elif git merge-base --is-ancestor "${local_head}" "origin/${DEPLOY_BRANCH}"; then
-    EXECUTION_MODE="deploy"
-  else
+  if [[ "${local_head}" != "${remote_head}" ]] \
+    && ! git merge-base --is-ancestor "${local_head}" "origin/${DEPLOY_BRANCH}"; then
     fail "Local ${DEPLOY_BRANCH} is not a clean ancestor of origin/${DEPLOY_BRANCH}; manual intervention required."
   fi
+  EXECUTION_MODE="deploy"
   log "Execution mode: ${EXECUTION_MODE}"
 
-  if [[ "${EXECUTION_MODE}" == "deploy" ]]; then
-    local deploy_build_ref deploy_build_time deploy_runtime_image
-    deploy_build_ref="$(git rev-parse --short=12 "origin/${DEPLOY_BRANCH}")"
-    deploy_build_time="$(current_utc_timestamp)"
-    deploy_runtime_image="localhost/supportportal-app:${deploy_build_ref}"
-    log "Deploy build metadata: ref=${deploy_build_ref} image=${deploy_runtime_image}"
+  local deploy_build_ref deploy_build_time deploy_runtime_image
+  deploy_build_ref="$(git rev-parse --short=12 "origin/${DEPLOY_BRANCH}")"
+  deploy_build_time="$(current_utc_timestamp)"
+  deploy_runtime_image="localhost/supportportal-app:${deploy_build_ref}"
+  log "Deploy build metadata: ref=${deploy_build_ref} image=${deploy_runtime_image}"
 
-    CURRENT_STEP="Run deploy script"
-    APP_BUILD_REF="${deploy_build_ref}" \
-      APP_BUILD_TIME="${deploy_build_time}" \
-      APP_RUNTIME_IMAGE="${deploy_runtime_image}" \
-      DEPLOY_LOCK_ALREADY_HELD=1 \
-      DEPLOY_LOCK_FILE="${LOCK_FILE}" \
-      "${DEPLOY_SCRIPT}" \
-      --branch "${DEPLOY_BRANCH}" \
-      --domain "${DEPLOY_DOMAIN}"
-    LOCAL_COMMIT="$(git rev-parse --short HEAD)"
-    INTERNAL_HEALTH_STATUS="ok"
-    INTERNAL_HEALTH_DETAIL="Validated by deployment/deploy_ec2.sh"
-    EXTERNAL_HEALTH_STATUS="ok"
-    EXTERNAL_HEALTH_DETAIL="Validated by deployment/deploy_ec2.sh"
-    CURRENT_STEP="Completed"
-    log "Deploy mode finished successfully."
-    return 0
-  fi
-
-  host_port="$(resolve_port)"
-  health_timeout_seconds="$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)"
-  health_retry_interval_seconds="$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)"
-  internal_url="${AUTO_DEPLOY_INTERNAL_HEALTH_URL:-http://127.0.0.1:${host_port}/health}"
-  external_url="${AUTO_DEPLOY_EXTERNAL_HEALTH_URL:-https://${DEPLOY_DOMAIN}/health}"
-
-  CURRENT_STEP="Internal health check"
-  log "Checking internal health: ${internal_url}"
-  if wait_for_http_ok "Internal" "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
-    INTERNAL_HEALTH_STATUS="ok"
-    INTERNAL_HEALTH_DETAIL="${LAST_HEALTH_OUTPUT}"
-  else
-    INTERNAL_HEALTH_STATUS="failed"
-    INTERNAL_HEALTH_DETAIL="${LAST_HEALTH_OUTPUT}"
-    fail "Internal health check failed: ${internal_url}"
-  fi
-
-  CURRENT_STEP="External health check"
-  log "Checking external health: ${external_url}"
-  if wait_for_http_ok "External" "${external_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
-    EXTERNAL_HEALTH_STATUS="ok"
-    EXTERNAL_HEALTH_DETAIL="${LAST_HEALTH_OUTPUT}"
-  else
-    EXTERNAL_HEALTH_STATUS="failed"
-    EXTERNAL_HEALTH_DETAIL="${LAST_HEALTH_OUTPUT}"
-    fail "External health check failed: ${external_url}"
-  fi
-
+  CURRENT_STEP="Run deploy script"
+  APP_BUILD_REF="${deploy_build_ref}" \
+    APP_BUILD_TIME="${deploy_build_time}" \
+    APP_RUNTIME_IMAGE="${deploy_runtime_image}" \
+    DEPLOY_LOCK_ALREADY_HELD=1 \
+    DEPLOY_LOCK_FILE="${LOCK_FILE}" \
+    "${DEPLOY_SCRIPT}" \
+    --branch "${DEPLOY_BRANCH}" \
+    --domain "${DEPLOY_DOMAIN}"
+  LOCAL_COMMIT="$(git rev-parse --short HEAD)"
+  INTERNAL_HEALTH_STATUS="ok"
+  INTERNAL_HEALTH_DETAIL="Validated by deployment/deploy_ec2.sh"
+  EXTERNAL_HEALTH_STATUS="ok"
+  EXTERNAL_HEALTH_DETAIL="Validated by deployment/deploy_ec2.sh"
   CURRENT_STEP="Completed"
-  log "Health-only mode finished successfully."
+  log "Daily deploy finished successfully."
 }
 
 main "$@"

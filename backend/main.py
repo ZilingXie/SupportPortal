@@ -110,6 +110,8 @@ from backend.services.account_admin import (
     routing_config_payload,
 )
 from backend.services.agent_config import build_agent_config_payload
+from backend.services.prompt_runtime import initialize_prompt_runtime, prompt_runtime_info, resolve_system_prompt
+from backend.services.prompt_versioning import PromptVersionService
 from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
 from backend.services.case_memory_ledger import build_case_memory_ledger_record_from_feedback
 from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
@@ -529,6 +531,12 @@ class AccountPersonaDraftRequest(BaseModel):
     content: dict[str, Any]
     change_note: str = Field(min_length=1, max_length=500)
     based_on_version: int | None = Field(default=None, ge=1)
+
+
+class PromptDraftRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=100_000)
+    change_note: str = Field(min_length=1, max_length=500)
+    based_on_version: int = Field(ge=1)
 
 
 class AccountPersonaEnabledRequest(BaseModel):
@@ -2844,6 +2852,8 @@ def startup_event() -> None:
         try:
             ticket_repository.initialize()
             LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
+            PromptVersionService(ticket_repository).sync_catalog()
+            initialize_prompt_runtime(ticket_repository, service_name="api")
             _bootstrap_workspace_admin()
             _initialize_asset_repository_with_fallback()
             return
@@ -2866,6 +2876,8 @@ def startup_event() -> None:
     fallback_repository = InMemoryTicketRepository()
     fallback_repository.initialize()
     ticket_repository = fallback_repository
+    PromptVersionService(ticket_repository).sync_catalog()
+    initialize_prompt_runtime(ticket_repository, service_name="api")
     _bootstrap_workspace_admin()
     LOGGER.warning("Falling back to in-memory ticket repository for this process.")
     _initialize_asset_repository_with_fallback()
@@ -2941,6 +2953,7 @@ def health() -> dict[str, Any]:
         "async_query_enabled": "true" if ASYNC_QUERY_ENABLED else "false",
         "runtime_profile": _runtime_profile(),
         "config_warnings": _health_config_warnings(),
+        "prompt_runtime": prompt_runtime_info(),
     }
 
 
@@ -3332,7 +3345,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         ticket_context=ticket_context,
         semantic_first=True,
     )
-    route_system_prompt = build_route_system_prompt()
+    route_system_prompt = resolve_system_prompt("route-system", build_route_system_prompt())
     route_user_prompt = build_route_user_payload(
         route_input,
         ticket_subject=title,
@@ -5587,7 +5600,129 @@ def get_workspace_admin_account_routing_config(
 def get_workspace_admin_agent_config(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return build_agent_config_payload(ticket_repository.list_account_personas())
+    prompt_service = PromptVersionService(ticket_repository)
+    prompt_service.sync_catalog()
+    return build_agent_config_payload(
+        ticket_repository.list_account_personas(),
+        prompt_service.list_prompts(),
+    )
+
+
+@app.get("/api/workspace/admin/prompts")
+def get_workspace_admin_prompts(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    prompt_service = PromptVersionService(ticket_repository)
+    prompt_service.sync_catalog()
+    return {
+        "prompts": prompt_service.list_prompts(),
+        "active_release": prompt_service.active_release(),
+    }
+
+
+@app.get("/api/workspace/admin/prompts/{prompt_key}")
+def get_workspace_admin_prompt(
+    prompt_key: str,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    try:
+        return {"prompt": PromptVersionService(ticket_repository).get_prompt(prompt_key)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/workspace/admin/prompts/{prompt_key}/drafts")
+def create_workspace_admin_prompt_draft(
+    prompt_key: str,
+    request: PromptDraftRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    timestamp = now_iso()
+    try:
+        version = PromptVersionService(ticket_repository).create_draft(
+            prompt_key,
+            content=request.content,
+            change_note=request.change_note,
+            based_on_version=request.based_on_version,
+            actor_id=principal.account_id,
+            created_at=timestamp,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ticket_repository.record_workspace_audit_event(
+        "prompt_draft_created",
+        actor_id=principal.account_id,
+        target_id=prompt_key,
+        payload={"version": version["version"], "change_note": request.change_note},
+        created_at=timestamp,
+    )
+    return {"version": version}
+
+
+def _workspace_admin_prompt_version_action(
+    prompt_key: str,
+    version: int,
+    principal: WorkspacePrincipal,
+    action: str,
+) -> dict[str, Any]:
+    timestamp = now_iso()
+    prompt_service = PromptVersionService(ticket_repository)
+    try:
+        if action == "schedule":
+            result = prompt_service.schedule(prompt_key, version, actor_id=principal.account_id, scheduled_at=timestamp)
+        elif action == "unschedule":
+            result = prompt_service.unschedule(prompt_key, version)
+        elif action == "restore":
+            result = prompt_service.restore(prompt_key, version, actor_id=principal.account_id, created_at=timestamp)
+        else:  # pragma: no cover - internal caller contract
+            raise ValueError("unsupported prompt version action")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ticket_repository.record_workspace_audit_event(
+        f"prompt_version_{action}d" if action != "schedule" else "prompt_version_scheduled",
+        actor_id=principal.account_id,
+        target_id=prompt_key,
+        payload={"version": result["version"]},
+        created_at=timestamp,
+    )
+    return {"version": result}
+
+
+@app.post("/api/workspace/admin/prompts/{prompt_key}/versions/{version}/schedule")
+def schedule_workspace_admin_prompt_version(
+    prompt_key: str,
+    version: int,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return _workspace_admin_prompt_version_action(prompt_key, version, principal, "schedule")
+
+
+@app.post("/api/workspace/admin/prompts/{prompt_key}/versions/{version}/unschedule")
+def unschedule_workspace_admin_prompt_version(
+    prompt_key: str,
+    version: int,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return _workspace_admin_prompt_version_action(prompt_key, version, principal, "unschedule")
+
+
+@app.post("/api/workspace/admin/prompts/{prompt_key}/versions/{version}/restore")
+def restore_workspace_admin_prompt_version(
+    prompt_key: str,
+    version: int,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return _workspace_admin_prompt_version_action(prompt_key, version, principal, "restore")
+
+
+@app.get("/api/workspace/admin/prompt-releases")
+def get_workspace_admin_prompt_releases(
+    limit: int = 50,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return {"releases": PromptVersionService(ticket_repository).list_releases(limit=limit)}
 
 
 @app.get("/api/workspace/admin/account-routes")

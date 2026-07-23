@@ -360,6 +360,8 @@
 3. `Persona Prompt Template` 使用左右 workspace：Persona/version 列表作为上下文，编辑器作为主工作区；Draft、Publish、Rollback 必须通过文字状态与确认动作区分。
 4. `Environment Config` 只能显示可搜索的配置名 inventory，并为每个配置名显示一条仅由 key 名决定的静态用途说明；说明不得读取或推断 value、set/unset、长度、哈希或来源。每行使用独立的 copy-name icon command，搜索同时匹配 key 和用途说明。
 5. 上述页面沿用 Admin 的低对比 surface 和紧凑信息密度；移动端改为单列，不允许 Prompt、key 或 route label 横向溢出。
+6. `Agent Config` 的 managed Prompt 使用左侧 Prompt 列表与右侧版本工作区；必须同时显示 Active 与 Next deploy 状态，版本历史用选择控件切换，Diff 使用等宽双栏并在移动端降为单列。
+7. 新建 Draft 必须基于当前 Active version，要求填写 change note；Schedule、Unschedule、Restore 都是明确文字动作。UI 必须说明保存和 Schedule 均不会热更新，只有下一次成功的每日部署才会生效，并原位展示 409 冲突。
 
 ### 6.8 Account Ticket Conversation (`/account`)
 1. 所有 account ticket 都必须先展示 route 结果，再由 AI 尝试生成仅在 `/account` 内可见的回复；不得把 AI draft 或 assistant message 回传到来源 Zendesk / 客户邮件渠道。

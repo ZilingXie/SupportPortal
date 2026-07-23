@@ -38,6 +38,7 @@ from backend.services.knowledge_monitoring import (
     now_iso,
 )
 from backend.services.llm_profiles import parse_provider_model_reference
+from backend.services.prompt_runtime import initialize_prompt_runtime_from_environment, prompt_runtime_info
 from backend.services.rag_benchmark_readiness import (
     build_local_benchmark_readiness_report,
     format_local_benchmark_readiness_failures,
@@ -1051,6 +1052,7 @@ async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[s
 @app.on_event("startup")
 def startup_event() -> None:
     global event_repository
+    initialize_prompt_runtime_from_environment(service_name="rag_api")
     _ensure_rag_query_telemetry_runtime()
     try:
         event_repository.initialize()
@@ -1104,6 +1106,7 @@ def health() -> dict[str, Any]:
         "embedding_provider": _knowledge_embedding_provider(),
         "embedding_model": _knowledge_embedding_model(),
         "vector_table": _knowledge_vector_table(),
+        "prompt_runtime": prompt_runtime_info(),
     }
 
 

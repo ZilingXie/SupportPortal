@@ -62,6 +62,7 @@ from backend.services.client_ticket_agent_runtime import (
     resolve_next_ticket_status,
 )
 from backend.services.product_selection import resolve_support_product_context
+from backend.services.prompt_runtime import initialize_prompt_runtime
 from backend.services.rag_executor import build_worker_rag_executor
 from backend.services.rag_service_client import (
     RagServiceClient,
@@ -2195,8 +2196,12 @@ def run_worker() -> int:
 
     try:
         ticket_repository.initialize()
+        initialize_prompt_runtime(
+            ticket_repository,
+            service_name=str(os.getenv("PROMPT_RUNTIME_SERVICE") or "worker"),
+        )
     except Exception as exc:
-        LOGGER.error("Worker failed to initialize ticket repository: %s", exc)
+        LOGGER.error("Worker failed to initialize ticket repository or Prompt Release: %s", exc)
         return 1
 
     task_types = _worker_task_types_from_env()

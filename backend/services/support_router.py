@@ -25,6 +25,7 @@ from backend.services.llm_profiles import (
     resolve_model_profile,
 )
 from backend.services.prompts.web_search import build_web_search_system_prompt, build_web_search_user_prompt
+from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.support_router_prompt import (
     build_route_prompt_hints,
     build_route_system_prompt,
@@ -667,7 +668,7 @@ def _llm_route_decision(
             failure_type="missing_credentials",
             failure_source="profile_check",
         )
-    system_prompt = build_route_system_prompt()
+    system_prompt = resolve_system_prompt("route-system", build_route_system_prompt())
     user_prompt = build_route_user_payload(
         message,
         ticket_subject=ticket_subject,
@@ -1251,11 +1252,16 @@ def _openai_web_search(
     }
     if allowed_domains:
         tool["filters"] = {"allowed_domains": allowed_domains}
-    system_prompt = build_web_search_system_prompt(
+    fallback_system_prompt = build_web_search_system_prompt(
         response_language=response_language,
         official_only=bool(allowed_domains),
         route_reason=route_reason,
     )
+    if response_language == "en":
+        prompt_key = "web-search-product-portfolio" if route_reason == PRODUCT_PORTFOLIO_ROUTE_REASON else "web-search"
+        system_prompt = resolve_system_prompt(prompt_key, fallback_system_prompt)
+    else:
+        system_prompt = fallback_system_prompt
     user_prompt = build_web_search_user_prompt(question=question, route_reason=route_reason)
     extra_payload = {
         "tools": [tool],

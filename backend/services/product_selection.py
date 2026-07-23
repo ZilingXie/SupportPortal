@@ -22,6 +22,7 @@ from backend.services.prompts.product_selection import (
     build_product_selection_system_prompt,
     build_product_selection_user_prompt,
 )
+from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.support_products import (
     SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING,
     SUPPORT_PRODUCT_CLOUD_RECORDING,
@@ -347,7 +348,7 @@ def decide_support_product(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=build_product_selection_system_prompt(),
+            system_prompt=resolve_system_prompt("product-selection", build_product_selection_system_prompt()),
             user_prompt=build_product_selection_user_prompt(
                 latest_customer_message=message,
                 ticket_subject=ticket_subject,

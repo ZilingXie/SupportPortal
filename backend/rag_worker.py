@@ -16,6 +16,7 @@ from backend.services.rag_eval_dataset_factory import process_dataset_generation
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.knowledge_ingestion import process_knowledge_ingestion
 from backend.services.knowledge_monitoring import build_knowledge_event_payload
+from backend.services.prompt_runtime import initialize_prompt_runtime_from_environment
 from backend.services.task_queue import SyncRedisTaskQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -198,6 +199,12 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     _install_signal_handlers()
+
+    try:
+        initialize_prompt_runtime_from_environment(service_name="rag_worker")
+    except Exception as exc:
+        LOGGER.error("RAG worker failed to initialize Prompt Release: %s", exc)
+        return 1
 
     try:
         event_repository.initialize()

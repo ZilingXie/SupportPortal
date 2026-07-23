@@ -87,7 +87,7 @@
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 - Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
 - `/workspace/admin` 可查看 Client Ticket、Engineer Case、SLA、派单/转派、Engineer schedule coverage、Billing automation 和 guardrail 指标。
-- `/workspace/admin` 可通过 Agent Config 只读查看 Agent Prompt、正式 skill、MCP 状态与 Persona 版本，并通过 Route Strategy 查看当前路由阶段和类别。
+- `/workspace/admin` 可通过 Agent Config 查看 Agent Prompt、正式 skill 与 MCP 状态，并以 Draft、Scheduled、Active、Diff、Restore 和历史版本管理 Prompt；Scheduled Prompt 仅在下一次成功的每日部署后统一生效。
 - 对话支持上传 txt/log/err 日志附件。
 - Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。

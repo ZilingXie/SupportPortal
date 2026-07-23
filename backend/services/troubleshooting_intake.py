@@ -34,6 +34,7 @@ from backend.services.prompts.troubleshooting_intake import (
     build_troubleshooting_intake_system_prompt,
     build_troubleshooting_intake_user_prompt,
 )
+from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.support_products import (
     build_support_product_intake_role,
     build_support_product_prompt_scope,
@@ -1377,13 +1378,27 @@ def _evaluate_with_llm(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=build_troubleshooting_intake_system_prompt(
-                intake_role=build_support_product_intake_role(product) or "",
-                product_scope=build_support_product_prompt_scope(product),
-                required_fields=required_labels,
-                answer_clarify_fields=list_support_product_field_labels(
-                    [*_ANSWER_MODE_REQUIRED_FIELDS, _ANSWER_MODE_EXAMPLE_SCOPE_FIELD]
-                ),
+            system_prompt=(
+                resolve_system_prompt(
+                    f"troubleshooting-intake-{product}",
+                    build_troubleshooting_intake_system_prompt(
+                        intake_role=build_support_product_intake_role(product) or "",
+                        product_scope=build_support_product_prompt_scope(product),
+                        required_fields=required_labels,
+                        answer_clarify_fields=list_support_product_field_labels(
+                            [*_ANSWER_MODE_REQUIRED_FIELDS, _ANSWER_MODE_EXAMPLE_SCOPE_FIELD]
+                        ),
+                    ),
+                )
+                if product
+                else build_troubleshooting_intake_system_prompt(
+                    intake_role="",
+                    product_scope=None,
+                    required_fields=required_labels,
+                    answer_clarify_fields=list_support_product_field_labels(
+                        [*_ANSWER_MODE_REQUIRED_FIELDS, _ANSWER_MODE_EXAMPLE_SCOPE_FIELD]
+                    ),
+                )
             ),
             user_prompt=build_troubleshooting_intake_user_prompt(
                 latest_customer_message=message,
