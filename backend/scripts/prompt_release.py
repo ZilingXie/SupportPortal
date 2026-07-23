@@ -12,7 +12,8 @@ from backend.services.prompt_versioning import PromptVersionService
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage deployment-bound Prompt Releases.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("current", help="Return the active Prompt Release.")
+    current = subparsers.add_parser("current", help="Return the active Prompt Release.")
+    current.add_argument("--output", choices=("json", "shell"), default="json")
     subparsers.add_parser("pending", help="Return Prompt versions scheduled for the next deployment.")
     prepare = subparsers.add_parser("prepare", help="Freeze scheduled Prompt versions into a candidate Release.")
     prepare.add_argument("--build-ref", required=True)
@@ -71,7 +72,10 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True), file=sys.stderr)
         return 1
-    if args.command == "prepare" and args.output == "shell":
+    if args.command == "current" and args.output == "shell":
+        release = payload["release"]
+        print(str((release or {}).get("release_id") or ""))
+    elif args.command == "prepare" and args.output == "shell":
         release = payload["release"]
         print(f"{release['release_id']}\t{'true' if release.get('created') else 'false'}")
     else:

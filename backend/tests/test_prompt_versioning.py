@@ -157,6 +157,12 @@ class PromptReleaseCliTests(unittest.TestCase):
         self.assertFalse(payload["release"]["created"])
         self.assertEqual(payload["release"]["status"], "active")
 
+    def test_current_returns_active_release_for_shell_reconciliation(self) -> None:
+        repository = InMemoryTicketRepository()
+        payload = run_prompt_release(["current", "--output", "shell"], repository=repository)
+
+        self.assertEqual(payload["release"]["status"], "active")
+
 
 if __name__ == "__main__":
     unittest.main()

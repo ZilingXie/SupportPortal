@@ -137,7 +137,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260723-prompt-versioning-1", index)
+        self.assertIn("20260723-prompt-versioning-2", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -180,6 +180,47 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             await loadAgentConfig({ force: true });
             if (agentConfigLoadError !== 'catalog unavailable') throw new Error('agent config error was not scoped locally');
             if (!renderAgentConfig().includes('Retry')) throw new Error('agent config retry state missing');
+            """
+        )
+
+    def test_managed_prompt_diff_restore_and_failed_draft_preserve_operator_context(self) -> None:
+        self.run_admin_app_script(
+            """
+            accessToken = 'admin-token';
+            currentAccount = { account_id: 'admin', role: 'admin' };
+            adminSection = 'agent-config';
+            const managedPrompt = {
+              key: 'route-system', name: 'Route classifier', version: '1', component_key: 'route-classifier', content: 'header\\nold rule\\nfooter',
+              metadata: { managed: true, active_version: 1, scheduled_version: null, versions: [
+                { prompt_key: 'route-system', version: 2, status: 'draft', content: 'header\\nnew rule\\nfooter', change_note: 'Change rule', created_at: '2026-07-23T00:00:00Z' },
+                { prompt_key: 'route-system', version: 1, status: 'active', content: 'header\\nold rule\\nfooter', change_note: 'Initial', created_at: '2026-07-22T00:00:00Z' },
+              ] }
+            };
+            agentConfigData = { agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', components: [], prompts: [managedPrompt], skills: [], mcp_servers: [] }], related_services: [] };
+            expandedAgentKeys.add('route-agent');
+            selectedPromptVersions['route-system'] = 2;
+            promptDiffKeys.add('route-system');
+            const diffMarkup = renderAgentConfig();
+            if (!diffMarkup.includes('is-removed') || !diffMarkup.includes('is-added')) throw new Error('line diff highlighting missing');
+            if (!diffMarkup.includes('old rule') || !diffMarkup.includes('new rule')) throw new Error('diff content missing');
+
+            FormData = function FormData(form) { return { get(name) { return form.values[name]; }, entries() { return []; } }; };
+            promptEditorKeys.add('route-system');
+            const form = { dataset: { promptKey: 'route-system', basedOnVersion: '1' }, values: { content: 'operator text', change_note: 'operator note' } };
+            fetch = async () => ({ ok: false, status: 409, json: async () => ({ detail: 'active prompt version changed' }) });
+            await createPromptDraft(form);
+            if (promptDraftValues['route-system'].content !== 'operator text' || promptDraftValues['route-system'].change_note !== 'operator note') throw new Error('failed draft lost operator input');
+            if (!promptEditorKeys.has('route-system') || promptOperationNotice['route-system'].tone !== 'error') throw new Error('failed draft state missing');
+
+            let fetchCount = 0;
+            fetch = async (url) => {
+              fetchCount += 1;
+              if (String(url).includes('/restore')) return { ok: true, status: 200, json: async () => ({ version: { version: 3, status: 'draft' } }) };
+              return { ok: true, status: 200, json: async () => agentConfigData };
+            };
+            await runPromptVersionAction('restore', 'route-system', 1);
+            if (selectedPromptVersions['route-system'] !== 3) throw new Error('restore did not select new draft');
+            if (fetchCount < 2) throw new Error('restore did not refresh agent config');
             """
         )
 
@@ -339,7 +380,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260723-prompt-versioning-1", html)
+        self.assertIn("20260723-prompt-versioning-2", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

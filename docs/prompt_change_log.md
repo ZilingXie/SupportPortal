@@ -30,8 +30,10 @@ For each new entry, record:
   - `api`, `rag_api`, `rag_worker`, `worker_query`, and `worker_aux` must load the same validated Release and expose/emit its identity for deployment verification.
   - Failed build, startup, internal/external health, service verification, or activation restores the previous image, build ref, and Prompt Release.
   - The daily automation runs a full deployment even when Git has no new commit, allowing scheduled Prompt changes to ship.
+  - Completion audit follow-up: activation transport failures are reconciled against the committed Active Release before rollback; the Admin Diff highlights changed lines and preserves unsaved operator input after conflicts.
 - Verification:
   - `rtk python3 -m unittest backend.tests.test_deploy_ec2 backend.tests.test_auto_deploy_ec2 -v`
+  - Temporary PostgreSQL 16 schema: `RUN_PROMPT_POSTGRES_TEST=true python -m unittest backend.tests.test_prompt_versioning_postgres -v`
   - Podman project image: `python -m unittest backend.tests.test_prompt_versioning backend.tests.test_agent_config -v`
   - Podman project image: `python -m unittest backend.tests.test_workspace_api.WorkspaceApiTests.test_prompt_version_api_manages_next_deploy_without_changing_active_runtime -v`
   - `rtk python3 -m unittest backend.tests.test_workspace_admin_ui_contract backend.tests.test_single_host_compose -v`

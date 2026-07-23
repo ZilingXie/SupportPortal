@@ -228,8 +228,19 @@ mark_candidate_prompt_release_failed() {
 }
 
 activate_candidate_prompt_release() {
-  run_prompt_release_command activate --release-id "${CANDIDATE_PROMPT_RELEASE_ID}" >/dev/null || return 1
-  log "Activated Prompt Release ${CANDIDATE_PROMPT_RELEASE_ID}."
+  local active_release_id
+  if run_prompt_release_command activate --release-id "${CANDIDATE_PROMPT_RELEASE_ID}" >/dev/null; then
+    log "Activated Prompt Release ${CANDIDATE_PROMPT_RELEASE_ID}."
+    return 0
+  fi
+
+  log "Prompt Release activation command failed; reconciling committed database state."
+  active_release_id="$(run_prompt_release_command current --output shell | tail -n 1)" || return 1
+  if [[ "${active_release_id}" == "${CANDIDATE_PROMPT_RELEASE_ID}" ]]; then
+    log "Prompt Release ${CANDIDATE_PROMPT_RELEASE_ID} is already active; treating activation as successful."
+    return 0
+  fi
+  return 1
 }
 
 verify_prompt_runtime_services() {

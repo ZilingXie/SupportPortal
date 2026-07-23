@@ -40,6 +40,7 @@ let promptEditorKeys = new Set();
 let promptDiffKeys = new Set();
 let promptOperationNotice = {};
 let promptOperationBusy = false;
+let promptDraftValues = {};
 let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
 let environmentQuery = "";
@@ -730,6 +731,28 @@ function promptVersionLabel(version) {
   return `v${version.version} · ${agentStatusLabel(version.status)}`;
 }
 
+function buildPromptLineDiff(beforeContent, afterContent) {
+  const before = String(beforeContent || "").split("\n");
+  const after = String(afterContent || "").split("\n");
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix
+    && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) suffix += 1;
+  const renderLines = (lines, tone) => lines.map((line, index) => {
+    const changed = index >= prefix && index < lines.length - suffix;
+    return `<span class="${changed ? `is-${tone}` : ""}">${escapeHtml(line) || " "}</span>`;
+  }).join("");
+  return {
+    beforeHtml: renderLines(before, "removed"),
+    afterHtml: renderLines(after, "added"),
+    changed: prefix !== before.length || prefix !== after.length,
+  };
+}
+
 function renderManagedPromptPanel(entry, selected, prompts) {
   const metadata = selected.metadata || {};
   const versions = Array.isArray(metadata.versions) ? metadata.versions : [];
@@ -739,6 +762,8 @@ function renderManagedPromptPanel(entry, selected, prompts) {
   const inspected = versions.find(item => Number(item.version) === Number(selectedVersionNumber)) || active;
   const isEditing = promptEditorKeys.has(selected.key);
   const isDiffing = promptDiffKeys.has(selected.key) && inspected.version !== active.version;
+  const diff = buildPromptLineDiff(active.content, inspected.content);
+  const draftValues = promptDraftValues[selected.key] || { content: active.content || "", change_note: "" };
   const notice = promptOperationNotice[selected.key];
   return `
     <div class="admin-agent-prompt-layout">
@@ -753,7 +778,7 @@ function renderManagedPromptPanel(entry, selected, prompts) {
           <button class="btn btn-ghost" type="button" data-action="toggle-prompt-diff" data-prompt-key="${escapeHtml(selected.key)}" ${inspected.version === active.version ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">difference</span>Diff</button>
           <button class="btn btn-primary" type="button" data-action="edit-prompt" data-prompt-key="${escapeHtml(selected.key)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>New draft</button>
         </div>
-        ${isEditing ? `<form class="admin-prompt-editor" data-prompt-draft-form data-prompt-key="${escapeHtml(selected.key)}" data-based-on-version="${active.version}"><label><span>Prompt</span><textarea name="content" required maxlength="100000">${escapeHtml(active.content || "")}</textarea></label><label><span>Change note</span><input name="change_note" required maxlength="500" placeholder="Describe the intended behavior change" /></label><div><button class="btn btn-primary" type="submit" ${promptOperationBusy ? "disabled" : ""}>Save draft</button><button class="btn btn-ghost" type="button" data-action="cancel-prompt-edit" data-prompt-key="${escapeHtml(selected.key)}">Cancel</button></div></form>` : isDiffing ? `<div class="admin-prompt-diff"><section><header>Active v${active.version}</header><pre tabindex="0">${escapeHtml(active.content || "")}</pre></section><section><header>Selected v${inspected.version}</header><pre tabindex="0">${escapeHtml(inspected.content || "")}</pre></section></div>` : `<pre tabindex="0">${escapeHtml(inspected.content || "No prompt content available")}</pre>`}
+        ${isEditing ? `<form class="admin-prompt-editor" data-prompt-draft-form data-prompt-key="${escapeHtml(selected.key)}" data-based-on-version="${active.version}"><label><span>Prompt</span><textarea name="content" required maxlength="100000" data-prompt-draft-content="${escapeHtml(selected.key)}">${escapeHtml(draftValues.content)}</textarea></label><label><span>Change note</span><input name="change_note" required maxlength="500" data-prompt-draft-note="${escapeHtml(selected.key)}" value="${escapeHtml(draftValues.change_note)}" placeholder="Describe the intended behavior change" /></label><div><button class="btn btn-primary" type="submit" ${promptOperationBusy ? "disabled" : ""}>Save draft</button><button class="btn btn-ghost" type="button" data-action="cancel-prompt-edit" data-prompt-key="${escapeHtml(selected.key)}">Cancel</button></div></form>` : isDiffing ? `<div class="admin-prompt-diff"><section><header>Active v${active.version}</header><pre tabindex="0" class="admin-prompt-diff-lines">${diff.beforeHtml}</pre></section><section><header>Selected v${inspected.version}${diff.changed ? "" : " · No content changes"}</header><pre tabindex="0" class="admin-prompt-diff-lines">${diff.afterHtml}</pre></section></div>` : `<pre tabindex="0">${escapeHtml(inspected.content || "No prompt content available")}</pre>`}
         <div class="admin-prompt-version-meta"><span>${escapeHtml(inspected.change_note || "No change note")}</span><span>${escapeHtml(formatDateTime(inspected.created_at))}</span></div>
         <div class="admin-prompt-version-actions">
           ${inspected.status === "draft" ? `<button class="btn btn-primary" type="button" data-action="schedule-prompt-version" data-prompt-key="${escapeHtml(selected.key)}" data-prompt-version="${inspected.version}" ${promptOperationBusy ? "disabled" : ""}>Schedule for next deploy</button>` : ""}
@@ -769,7 +794,8 @@ async function runPromptVersionAction(action, promptKey, version) {
   promptOperationNotice[promptKey] = null;
   renderAdmin();
   try {
-    await fetchJson(`/api/workspace/admin/prompts/${encodeURIComponent(promptKey)}/versions/${version}/${action}`, { method: "POST" });
+    const payload = await fetchJson(`/api/workspace/admin/prompts/${encodeURIComponent(promptKey)}/versions/${version}/${action}`, { method: "POST" });
+    if (action === "restore" && payload?.version?.version) selectedPromptVersions[promptKey] = payload.version.version;
     promptOperationNotice[promptKey] = { tone: "success", message: action === "schedule" ? "Scheduled for the next daily deployment." : `${action[0].toUpperCase()}${action.slice(1)} completed.` };
     agentConfigData = null;
     await loadAgentConfig({ force: true });
@@ -784,6 +810,10 @@ async function runPromptVersionAction(action, promptKey, version) {
 async function createPromptDraft(form) {
   const promptKey = form.dataset.promptKey;
   const values = new FormData(form);
+  promptDraftValues[promptKey] = {
+    content: String(values.get("content") || ""),
+    change_note: String(values.get("change_note") || ""),
+  };
   promptOperationBusy = true;
   renderAdmin();
   try {
@@ -794,6 +824,7 @@ async function createPromptDraft(form) {
     });
     selectedPromptVersions[promptKey] = payload.version.version;
     promptEditorKeys.delete(promptKey);
+    delete promptDraftValues[promptKey];
     promptOperationNotice[promptKey] = { tone: "success", message: `Draft v${payload.version.version} saved. It is not live until scheduled and deployed.` };
     agentConfigData = null;
     await loadAgentConfig({ force: true });
@@ -1160,11 +1191,19 @@ root.addEventListener("click", (event) => {
     renderAdmin();
   } else if (action === "edit-prompt") {
     const promptKey = event.target.closest("[data-prompt-key]").dataset.promptKey;
+    const selectedPrompt = [...(agentConfigData?.agents || []), ...(agentConfigData?.related_services || [])]
+      .flatMap(entry => entry.prompts || []).find(prompt => prompt.key === promptKey);
+    promptDraftValues[promptKey] = {
+      content: selectedPrompt?.content || "",
+      change_note: "",
+    };
     promptEditorKeys.add(promptKey);
     promptDiffKeys.delete(promptKey);
     renderAdmin();
   } else if (action === "cancel-prompt-edit") {
-    promptEditorKeys.delete(event.target.closest("[data-prompt-key]").dataset.promptKey);
+    const promptKey = event.target.closest("[data-prompt-key]").dataset.promptKey;
+    promptEditorKeys.delete(promptKey);
+    delete promptDraftValues[promptKey];
     renderAdmin();
   } else if (action === "toggle-prompt-diff") {
     const promptKey = event.target.closest("[data-prompt-key]").dataset.promptKey;
@@ -1204,6 +1243,17 @@ root.addEventListener("toggle", (event) => {
 }, true);
 
 root.addEventListener("input", (event) => {
+  const draftContent = event.target.closest("[data-prompt-draft-content]");
+  const draftNote = event.target.closest("[data-prompt-draft-note]");
+  if (draftContent || draftNote) {
+    const promptKey = (draftContent || draftNote).dataset.promptDraftContent || (draftContent || draftNote).dataset.promptDraftNote;
+    const current = promptDraftValues[promptKey] || { content: "", change_note: "" };
+    promptDraftValues[promptKey] = {
+      content: draftContent ? draftContent.value : current.content,
+      change_note: draftNote ? draftNote.value : current.change_note,
+    };
+    return;
+  }
   if (!event.target.matches("[data-env-search]")) return;
   environmentQuery = event.target.value;
   renderAdmin();
