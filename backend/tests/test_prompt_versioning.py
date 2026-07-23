@@ -126,12 +126,14 @@ class PromptRuntimeTests(unittest.TestCase):
         )
         release = self.repository.prepare_prompt_release(build_ref="abc", created_at="2026-07-23T02:00:00+00:00")
 
-        with patch.dict("os.environ", {"PROMPT_RELEASE_ID": release["release_id"], "PROMPT_RELEASE_REQUIRED": "true"}, clear=False):
-            snapshot = initialize_prompt_runtime(self.repository, service_name="api")
+        with self.assertLogs("backend.services.prompt_runtime", level="WARNING") as captured:
+            with patch.dict("os.environ", {"PROMPT_RELEASE_ID": release["release_id"], "PROMPT_RELEASE_REQUIRED": "true"}, clear=False):
+                snapshot = initialize_prompt_runtime(self.repository, service_name="api")
 
         self.assertEqual(snapshot.release_id, release["release_id"])
         self.assertEqual(resolve_system_prompt("route-system", "fallback"), "candidate route")
         self.assertEqual(prompt_runtime_info()["source"], "release")
+        self.assertTrue(any(f"prompt_runtime_loaded service=api release_id={release['release_id']}" in line for line in captured.output))
 
     def test_strict_mode_rejects_missing_release_id(self) -> None:
         with patch.dict("os.environ", {"PROMPT_RELEASE_ID": "", "PROMPT_RELEASE_REQUIRED": "true"}, clear=False):

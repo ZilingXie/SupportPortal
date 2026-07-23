@@ -60,7 +60,7 @@ def initialize_prompt_runtime(repository: Any | None = None, *, service_name: st
             if required:
                 raise RuntimeError("PROMPT_RELEASE_ID is required")
             _SNAPSHOT = _code_snapshot()
-            LOGGER.info(
+            LOGGER.warning(
                 "prompt_runtime_loaded service=%s release_id=%s prompts=%s source=code",
                 str(service_name or "unknown"),
                 _SNAPSHOT.release_id,
@@ -101,7 +101,7 @@ def initialize_prompt_runtime(repository: Any | None = None, *, service_name: st
             extra = sorted(set(prompts) - expected_keys)
             raise RuntimeError(f"Prompt Release {release_id} catalog mismatch missing={missing} extra={extra}")
         _SNAPSHOT = PromptRuntimeSnapshot(release_id=release_id, prompts=prompts, source="release")
-        LOGGER.info(
+        LOGGER.warning(
             "prompt_runtime_loaded service=%s release_id=%s prompts=%s source=release",
             str(service_name or "unknown"),
             release_id,
