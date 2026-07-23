@@ -1960,6 +1960,26 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("communicating", repo_source)
         self.assertIn("escalated", repo_source)
 
+    def test_prompt_tables_are_created_by_runtime_initializer_and_documented_schema(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        for table_name in (
+            "support_prompt_definitions",
+            "support_prompt_versions",
+            "support_prompt_releases",
+            "support_prompt_release_items",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table_name}", sql_source)
+            self.assertIn(f'self._table("{table_name}")', repo_source)
+        for index_name in (
+            "idx_support_prompt_versions_one_scheduled",
+            "idx_support_prompt_versions_one_active",
+            "idx_support_prompt_releases_one_active",
+        ):
+            self.assertIn(index_name, sql_source)
+            self.assertIn(index_name, repo_source)
+
     def test_ticket_storage_contract_includes_phase_two_assignment_and_rollout_state(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
