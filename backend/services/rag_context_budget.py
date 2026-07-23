@@ -17,6 +17,7 @@ from backend.services.prompts.rag_context_compression import (
     build_rag_context_compression_system_prompt,
     build_rag_context_compression_user_prompt,
 )
+from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.token_usage import build_usage_ledger_entry
 
 if TYPE_CHECKING:
@@ -365,7 +366,7 @@ def _compress_entries_with_llm(
     try:
         response = invoke_responses_text(
             profile=compression_profile,
-            system_prompt=build_rag_context_compression_system_prompt(),
+            system_prompt=resolve_system_prompt("rag-context-compression", build_rag_context_compression_system_prompt()),
             user_prompt=build_rag_context_compression_user_prompt(
                 question=question,
                 evidence_segments=_compression_entries_payload(entries),

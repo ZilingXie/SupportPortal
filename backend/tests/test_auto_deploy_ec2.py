@@ -268,19 +268,16 @@ class AutoDeployEc2Tests(unittest.TestCase):
             if line.strip()
         ]
 
-    def test_health_only_mode_checks_internal_and_external_health_without_deploy(self) -> None:
+    def test_daily_deploy_runs_even_when_origin_has_no_new_commit(self) -> None:
         result = self._run_script()
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        self.assertIn("Execution mode: health-only", result.stdout)
-        self.assertFalse((self.state_dir / "deploy_calls.log").exists())
+        self.assertIn("Execution mode: deploy", result.stdout)
         self.assertEqual(
-            [call["url"] for call in self._read_json_lines(self.state_dir / "curl_calls.jsonl")],
-            [
-                "http://127.0.0.1:18080/health",
-                "https://support.stellarix.space/health",
-            ],
+            (self.state_dir / "deploy_calls.log").read_text(encoding="utf-8").splitlines(),
+            ["--branch main --domain support.stellarix.space"],
         )
+        self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
         aws_calls = self._read_json_lines(self.state_dir / "aws_calls.jsonl")
         self.assertEqual(len(aws_calls), 1)
         payload = aws_calls[0]["payload"]
@@ -292,7 +289,7 @@ class AutoDeployEc2Tests(unittest.TestCase):
         )
         body = payload["Content"]["Simple"]["Body"]["Text"]["Data"]
         self.assertIn("运行摘要", body)
-        self.assertIn("执行模式：health-only", body)
+        self.assertIn("执行模式：deploy", body)
         self.assertIn("AI 日志分析", body)
         self.assertIn("AI analysis unavailable", body)
         docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
@@ -339,17 +336,13 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.assertEqual(payload["Content"]["Simple"]["Subject"]["Data"], "SupportPortal Report 4/4")
         self.assertIn("执行模式：deploy", payload["Content"]["Simple"]["Body"]["Text"]["Data"])
 
-    def test_failed_health_check_sends_ses_alert_with_context(self) -> None:
+    def test_failed_daily_deploy_sends_ses_alert_with_context(self) -> None:
         result = self._run_script(
-            {
-                "FAKE_CURL_FAIL_URLS": "http://127.0.0.1:18080/health",
-                "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
-                "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "1",
-            }
+            {"FAKE_DEPLOY_EXIT_CODE": "1"}
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.state_dir / "deploy_calls.log").exists())
+        self.assertTrue((self.state_dir / "deploy_calls.log").exists())
         aws_calls = self._read_json_lines(self.state_dir / "aws_calls.jsonl")
         self.assertEqual(len(aws_calls), 1)
         payload = aws_calls[0]["payload"]
@@ -359,8 +352,8 @@ class AutoDeployEc2Tests(unittest.TestCase):
         subject = payload["Content"]["Simple"]["Subject"]["Data"]
         body = payload["Content"]["Simple"]["Body"]["Text"]["Data"]
         self.assertEqual(subject, "[Failed] SupportPortal Report 4/4")
-        self.assertIn("执行模式：health-only", body)
-        self.assertIn("失败步骤：Internal health check", body)
+        self.assertIn("执行模式：deploy", body)
+        self.assertIn("失败步骤：Run deploy script", body)
         self.assertIn("分支：main", body)
         self.assertIn("可疑原始日志", body)
 

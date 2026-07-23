@@ -184,6 +184,60 @@ CREATE TABLE IF NOT EXISTS support_account_persona_assignments (
     FOREIGN KEY (persona_key, version) REFERENCES support_account_prompt_versions(persona_key, version)
 );
 
+CREATE TABLE IF NOT EXISTS support_prompt_definitions (
+    prompt_key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    agent_key TEXT NOT NULL,
+    component_key TEXT NOT NULL,
+    editable BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_prompt_versions (
+    prompt_key TEXT NOT NULL REFERENCES support_prompt_definitions(prompt_key) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('draft', 'scheduled', 'active', 'superseded')),
+    based_on_version INTEGER,
+    change_note TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    scheduled_by TEXT,
+    scheduled_at TIMESTAMPTZ,
+    activated_at TIMESTAMPTZ,
+    PRIMARY KEY (prompt_key, version)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_prompt_versions_one_scheduled
+    ON support_prompt_versions (prompt_key) WHERE status = 'scheduled';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_prompt_versions_one_active
+    ON support_prompt_versions (prompt_key) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS support_prompt_releases (
+    release_id TEXT PRIMARY KEY,
+    build_ref TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('candidate', 'active', 'superseded', 'failed')),
+    previous_release_id TEXT REFERENCES support_prompt_releases(release_id),
+    created_at TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ,
+    failure_reason TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_prompt_releases_one_active
+    ON support_prompt_releases ((status)) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS support_prompt_release_items (
+    release_id TEXT NOT NULL REFERENCES support_prompt_releases(release_id) ON DELETE CASCADE,
+    prompt_key TEXT NOT NULL,
+    prompt_version INTEGER NOT NULL,
+    PRIMARY KEY (release_id, prompt_key),
+    FOREIGN KEY (prompt_key, prompt_version)
+        REFERENCES support_prompt_versions(prompt_key, version)
+);
+
 CREATE TABLE IF NOT EXISTS support_assets (
     asset_id TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL,

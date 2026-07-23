@@ -18,6 +18,7 @@ from backend.services.prompts.request_body_evidence import (
     build_request_body_evidence_system_prompt,
     build_request_body_evidence_user_prompt,
 )
+from backend.services.prompt_runtime import resolve_system_prompt
 
 
 REQUEST_BODY_INSUFFICIENT_REASON = "rag_completed_with_insufficient_evidence"
@@ -334,7 +335,7 @@ def detect_request_body_evidence_query(message: str, *, use_llm: bool = False) -
             return rule_query
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=build_request_body_evidence_system_prompt(),
+            system_prompt=resolve_system_prompt("request-body-evidence", build_request_body_evidence_system_prompt()),
             user_prompt=build_request_body_evidence_user_prompt(
                 question=message,
                 rule_hints={

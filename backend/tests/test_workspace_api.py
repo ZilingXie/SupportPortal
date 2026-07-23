@@ -368,6 +368,49 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(published["metadata"]["persona_key"], "default-support")
         self.assertNotIn("OPENAI_API_KEY", response.text)
 
+    def test_prompt_version_api_manages_next_deploy_without_changing_active_runtime(self) -> None:
+        self.assertEqual(self.client.get("/api/workspace/admin/prompts").status_code, 401)
+        headers = self._admin_headers()
+        catalog = self.client.get("/api/workspace/admin/prompts", headers=headers)
+        self.assertEqual(catalog.status_code, 200, catalog.text)
+        route = next(item for item in catalog.json()["prompts"] if item["prompt_key"] == "route-system")
+        active_version = route["active_version"]["version"]
+        active_release_id = catalog.json()["active_release"]["release_id"]
+
+        stale = self.client.post(
+            "/api/workspace/admin/prompts/route-system/drafts",
+            headers=headers,
+            json={"content": "stale", "change_note": "stale", "based_on_version": 999},
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+
+        draft = self.client.post(
+            "/api/workspace/admin/prompts/route-system/drafts",
+            headers=headers,
+            json={"content": "Updated route prompt", "change_note": "Improve routing", "based_on_version": active_version},
+        )
+        self.assertEqual(draft.status_code, 200, draft.text)
+        version = draft.json()["version"]["version"]
+        scheduled = self.client.post(
+            f"/api/workspace/admin/prompts/route-system/versions/{version}/schedule", headers=headers
+        )
+        self.assertEqual(scheduled.status_code, 200, scheduled.text)
+        refreshed = self.client.get("/api/workspace/admin/prompts", headers=headers).json()
+        route = next(item for item in refreshed["prompts"] if item["prompt_key"] == "route-system")
+        self.assertEqual(route["active_version"]["version"], active_version)
+        self.assertEqual(route["scheduled_version"]["version"], version)
+        self.assertEqual(refreshed["active_release"]["release_id"], active_release_id)
+
+        unscheduled = self.client.post(
+            f"/api/workspace/admin/prompts/route-system/versions/{version}/unschedule", headers=headers
+        )
+        self.assertEqual(unscheduled.status_code, 200, unscheduled.text)
+        restored = self.client.post(
+            f"/api/workspace/admin/prompts/route-system/versions/{active_version}/restore", headers=headers
+        )
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertEqual(restored.json()["version"]["status"], "draft")
+
     def test_account_persona_api_publishes_and_rolls_back_without_overwriting_history(self) -> None:
         headers = self._admin_headers()
         draft = self.client.post(

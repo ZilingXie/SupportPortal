@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
 import os
 import threading
@@ -956,6 +957,19 @@ class TicketRepository(Protocol):
     def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]: ...
     def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]: ...
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
+    def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]: ...
+    def list_managed_prompts(self) -> list[dict[str, Any]]: ...
+    def get_managed_prompt(self, prompt_key: str) -> dict[str, Any] | None: ...
+    def create_prompt_draft(self, prompt_key: str, *, content: str, change_note: str, based_on_version: int, actor_id: str, created_at: str) -> dict[str, Any]: ...
+    def schedule_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, scheduled_at: str) -> dict[str, Any]: ...
+    def unschedule_prompt_version(self, prompt_key: str, version: int) -> dict[str, Any]: ...
+    def restore_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, created_at: str) -> dict[str, Any]: ...
+    def prepare_prompt_release(self, *, build_ref: str, created_at: str) -> dict[str, Any]: ...
+    def activate_prompt_release(self, release_id: str, *, activated_at: str) -> dict[str, Any]: ...
+    def fail_prompt_release(self, release_id: str, *, failure_reason: str) -> dict[str, Any]: ...
+    def get_active_prompt_release(self) -> dict[str, Any] | None: ...
+    def get_prompt_release(self, release_id: str) -> dict[str, Any] | None: ...
+    def list_prompt_releases(self, limit: int = 50) -> list[dict[str, Any]]: ...
 
     def begin_idempotent_request(
         self,
@@ -1182,6 +1196,9 @@ class InMemoryTicketRepository:
         self._account_personas: dict[str, dict[str, Any]] = {}
         self._account_persona_versions: dict[str, list[dict[str, Any]]] = {}
         self._account_persona_assignments: dict[str, dict[str, Any]] = {}
+        self._prompt_definitions: dict[str, dict[str, Any]] = {}
+        self._prompt_versions: dict[str, list[dict[str, Any]]] = {}
+        self._prompt_releases: dict[str, dict[str, Any]] = {}
         self._seed_default_account_persona()
 
     def _seed_default_account_persona(self) -> None:
@@ -1375,6 +1392,197 @@ class InMemoryTicketRepository:
         assigned = {"ticket_id": normalized_ticket_id, "persona_key": persona["persona_key"], "version": version["version"], "content": copy.deepcopy(version["content"]), "assigned_at": _utc_now()}
         self._account_persona_assignments[normalized_ticket_id] = assigned
         return copy.deepcopy(assigned)
+
+    def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]:
+        with self._assignment_lock:
+            has_active_release = self.get_active_prompt_release() is not None
+            created_keys: list[str] = []
+            for definition in definitions:
+                key = str(definition.get("prompt_key") or "").strip()
+                content = str(definition.get("content") or "").strip()
+                if not key or not content:
+                    raise ValueError("prompt catalog entries require prompt_key and content")
+                existing = self._prompt_definitions.get(key)
+                if existing is None:
+                    self._prompt_definitions[key] = {
+                        "prompt_key": key,
+                        "name": str(definition.get("name") or key).strip(),
+                        "agent_key": str(definition.get("agent_key") or "").strip(),
+                        "component_key": str(definition.get("component_key") or "").strip(),
+                        "editable": bool(definition.get("editable", True)),
+                        "created_at": created_at,
+                        "updated_at": created_at,
+                    }
+                    self._prompt_versions[key] = [{
+                        "prompt_key": key,
+                        "version": 1,
+                        "content": content,
+                        "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                        "status": "scheduled" if has_active_release else "active",
+                        "based_on_version": None,
+                        "change_note": "Seeded from code prompt catalog",
+                        "created_by": actor_id,
+                        "created_at": created_at,
+                        "scheduled_by": actor_id if has_active_release else None,
+                        "scheduled_at": created_at if has_active_release else None,
+                        "activated_at": None if has_active_release else created_at,
+                    }]
+                    created_keys.append(key)
+                else:
+                    existing.update({
+                        "name": str(definition.get("name") or key).strip(),
+                        "agent_key": str(definition.get("agent_key") or "").strip(),
+                        "component_key": str(definition.get("component_key") or "").strip(),
+                        "editable": bool(definition.get("editable", True)),
+                        "updated_at": created_at,
+                    })
+            if not has_active_release and self._prompt_definitions:
+                release_id = f"pr-{uuid4().hex[:12]}"
+                self._prompt_releases[release_id] = {
+                    "release_id": release_id,
+                    "build_ref": "initial",
+                    "status": "active",
+                    "previous_release_id": None,
+                    "created_at": created_at,
+                    "activated_at": created_at,
+                    "failure_reason": None,
+                    "items": {
+                        key: 1 for key in sorted(self._prompt_definitions)
+                    },
+                }
+            return {"created_prompt_keys": created_keys, "prompt_count": len(self._prompt_definitions)}
+
+    def _managed_prompt_payload(self, prompt_key: str) -> dict[str, Any]:
+        definition = copy.deepcopy(self._prompt_definitions[prompt_key])
+        versions = copy.deepcopy(self._prompt_versions.get(prompt_key, []))
+        definition["versions"] = versions
+        definition["active_version"] = next((item for item in versions if item["status"] == "active"), None)
+        definition["scheduled_version"] = next((item for item in versions if item["status"] == "scheduled"), None)
+        active_release = self.get_active_prompt_release()
+        definition["active_release_id"] = active_release.get("release_id") if active_release else None
+        return definition
+
+    def list_managed_prompts(self) -> list[dict[str, Any]]:
+        return [self._managed_prompt_payload(key) for key in sorted(self._prompt_definitions)]
+
+    def get_managed_prompt(self, prompt_key: str) -> dict[str, Any] | None:
+        key = str(prompt_key or "").strip()
+        return self._managed_prompt_payload(key) if key in self._prompt_definitions else None
+
+    def create_prompt_draft(self, prompt_key: str, *, content: str, change_note: str, based_on_version: int, actor_id: str, created_at: str) -> dict[str, Any]:
+        key = str(prompt_key or "").strip()
+        normalized_content = str(content or "").strip()
+        if key not in self._prompt_definitions:
+            raise ValueError("prompt not found")
+        versions = self._prompt_versions[key]
+        active = next((item for item in versions if item["status"] == "active"), None)
+        if active is None or int(active["version"]) != int(based_on_version):
+            raise RuntimeError("active prompt version changed")
+        version = max(int(item["version"]) for item in versions) + 1
+        item = {
+            "prompt_key": key, "version": version, "content": normalized_content,
+            "content_sha256": hashlib.sha256(normalized_content.encode("utf-8")).hexdigest(),
+            "status": "draft", "based_on_version": int(based_on_version),
+            "change_note": str(change_note or "").strip(), "created_by": actor_id,
+            "created_at": created_at, "scheduled_by": None, "scheduled_at": None,
+            "activated_at": None,
+        }
+        versions.append(item)
+        return copy.deepcopy(item)
+
+    def schedule_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, scheduled_at: str) -> dict[str, Any]:
+        key = str(prompt_key or "").strip()
+        versions = self._prompt_versions.get(key, [])
+        target = next((item for item in versions if int(item["version"]) == int(version)), None)
+        if target is None or target["status"] != "draft":
+            raise ValueError("draft version not found")
+        for item in versions:
+            if item["status"] == "scheduled":
+                item.update({"status": "draft", "scheduled_by": None, "scheduled_at": None})
+        target.update({"status": "scheduled", "scheduled_by": actor_id, "scheduled_at": scheduled_at})
+        return copy.deepcopy(target)
+
+    def unschedule_prompt_version(self, prompt_key: str, version: int) -> dict[str, Any]:
+        versions = self._prompt_versions.get(str(prompt_key or "").strip(), [])
+        target = next((item for item in versions if int(item["version"]) == int(version)), None)
+        if target is None or target["status"] != "scheduled":
+            raise ValueError("scheduled version not found")
+        target.update({"status": "draft", "scheduled_by": None, "scheduled_at": None})
+        return copy.deepcopy(target)
+
+    def restore_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, created_at: str) -> dict[str, Any]:
+        prompt = self.get_managed_prompt(prompt_key)
+        source = next((item for item in (prompt or {}).get("versions", []) if int(item["version"]) == int(version)), None)
+        active = (prompt or {}).get("active_version")
+        if source is None or active is None:
+            raise ValueError("prompt version not found")
+        return self.create_prompt_draft(prompt_key, content=source["content"], change_note=f"Restore version {version}", based_on_version=int(active["version"]), actor_id=actor_id, created_at=created_at)
+
+    def prepare_prompt_release(self, *, build_ref: str, created_at: str) -> dict[str, Any]:
+        with self._assignment_lock:
+            active = self.get_active_prompt_release()
+            scheduled = {
+                key: next((item for item in versions if item["status"] == "scheduled"), None)
+                for key, versions in self._prompt_versions.items()
+            }
+            scheduled = {key: item for key, item in scheduled.items() if item is not None}
+            if not scheduled:
+                if active is None:
+                    raise ValueError("active prompt release not found")
+                return {**copy.deepcopy(active), "created": False}
+            for release in self._prompt_releases.values():
+                if release["status"] == "candidate":
+                    release.update({"status": "failed", "failure_reason": "Superseded by a newer deployment candidate"})
+            items = dict((active or {}).get("items") or {})
+            items.update({key: int(item["version"]) for key, item in scheduled.items()})
+            release_id = f"pr-{uuid4().hex[:12]}"
+            release = {
+                "release_id": release_id, "build_ref": str(build_ref or "unknown"),
+                "status": "candidate", "previous_release_id": (active or {}).get("release_id"),
+                "created_at": created_at, "activated_at": None, "failure_reason": None,
+                "items": items,
+            }
+            self._prompt_releases[release_id] = release
+            return {**copy.deepcopy(release), "created": True}
+
+    def activate_prompt_release(self, release_id: str, *, activated_at: str) -> dict[str, Any]:
+        release = self._prompt_releases.get(str(release_id or "").strip())
+        if release is None:
+            raise ValueError("prompt release not found")
+        if release["status"] == "active":
+            return copy.deepcopy(release)
+        if release["status"] != "candidate":
+            raise ValueError("candidate prompt release not found")
+        for current in self._prompt_releases.values():
+            if current["status"] == "active":
+                current["status"] = "superseded"
+        for key, selected_version in release["items"].items():
+            for item in self._prompt_versions[key]:
+                if item["status"] == "active":
+                    item["status"] = "superseded"
+                if int(item["version"]) == int(selected_version):
+                    item.update({"status": "active", "activated_at": activated_at})
+        release.update({"status": "active", "activated_at": activated_at})
+        return copy.deepcopy(release)
+
+    def fail_prompt_release(self, release_id: str, *, failure_reason: str) -> dict[str, Any]:
+        release = self._prompt_releases.get(str(release_id or "").strip())
+        if release is None or release["status"] != "candidate":
+            raise ValueError("candidate prompt release not found")
+        release.update({"status": "failed", "failure_reason": str(failure_reason or "").strip()})
+        return copy.deepcopy(release)
+
+    def get_active_prompt_release(self) -> dict[str, Any] | None:
+        release = next((item for item in self._prompt_releases.values() if item["status"] == "active"), None)
+        return copy.deepcopy(release) if release else None
+
+    def get_prompt_release(self, release_id: str) -> dict[str, Any] | None:
+        release = self._prompt_releases.get(str(release_id or "").strip())
+        return copy.deepcopy(release) if release else None
+
+    def list_prompt_releases(self, limit: int = 50) -> list[dict[str, Any]]:
+        releases = sorted(self._prompt_releases.values(), key=lambda item: str(item["created_at"]), reverse=True)
+        return copy.deepcopy(releases[:max(1, min(int(limit), 200))])
 
     def initialize(self) -> None:
         return None
@@ -7990,6 +8198,265 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("INSERT INTO {} (ticket_id,persona_key,version,assigned_at) VALUES (%s,%s,%s,%s)").format(self._table("support_account_persona_assignments")),(normalized,choice[0],choice[1],assigned_at))
                 return {"ticket_id":normalized,"persona_key":str(choice[0]),"version":int(choice[1]),"content":dict(choice[2]),"assigned_at":assigned_at}
         return self._run_with_connection_retry("resolve_account_persona", _operation)
+
+    @staticmethod
+    def _prompt_version_from_row(prompt_key: str, row: tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "prompt_key": prompt_key,
+            "version": int(row[0]),
+            "content": str(row[1]),
+            "content_sha256": str(row[2]),
+            "status": str(row[3]),
+            "based_on_version": row[4],
+            "change_note": str(row[5]),
+            "created_by": str(row[6]),
+            "created_at": _to_iso(row[7]),
+            "scheduled_by": str(row[8]) if row[8] else None,
+            "scheduled_at": _to_iso(row[9]) if row[9] else None,
+            "activated_at": _to_iso(row[10]) if row[10] else None,
+        }
+
+    def _prompt_release_from_row(self, cur: psycopg.Cursor[Any], row: tuple[Any, ...]) -> dict[str, Any]:
+        release_id = str(row[0])
+        cur.execute(
+            sql.SQL("SELECT prompt_key,prompt_version FROM {} WHERE release_id=%s ORDER BY prompt_key").format(
+                self._table("support_prompt_release_items")
+            ),
+            (release_id,),
+        )
+        return {
+            "release_id": release_id,
+            "build_ref": str(row[1]),
+            "status": str(row[2]),
+            "previous_release_id": str(row[3]) if row[3] else None,
+            "created_at": _to_iso(row[4]),
+            "activated_at": _to_iso(row[5]) if row[5] else None,
+            "failure_reason": str(row[6]) if row[6] else None,
+            "items": {str(item[0]): int(item[1]) for item in cur.fetchall()},
+        }
+
+    def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT release_id FROM {} WHERE status='active' LIMIT 1").format(self._table("support_prompt_releases")))
+                has_active_release = cur.fetchone() is not None
+                created_keys: list[str] = []
+                for definition in definitions:
+                    key = str(definition.get("prompt_key") or "").strip()
+                    content = str(definition.get("content") or "").strip()
+                    if not key or not content:
+                        raise ValueError("prompt catalog entries require prompt_key and content")
+                    cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s").format(self._table("support_prompt_definitions")), (key,))
+                    exists = cur.fetchone() is not None
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (prompt_key,name,agent_key,component_key,editable,created_at,updated_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (prompt_key) DO UPDATE SET "
+                            "name=EXCLUDED.name,agent_key=EXCLUDED.agent_key,component_key=EXCLUDED.component_key,"
+                            "editable=EXCLUDED.editable,updated_at=EXCLUDED.updated_at"
+                        ).format(self._table("support_prompt_definitions")),
+                        (key, str(definition.get("name") or key).strip(), str(definition.get("agent_key") or "").strip(), str(definition.get("component_key") or "").strip(), bool(definition.get("editable", True)), created_at, created_at),
+                    )
+                    if not exists:
+                        status = "scheduled" if has_active_release else "active"
+                        cur.execute(
+                            sql.SQL(
+                                "INSERT INTO {} (prompt_key,version,content,content_sha256,status,based_on_version,change_note,created_by,created_at,scheduled_by,scheduled_at,activated_at) "
+                                "VALUES (%s,1,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s)"
+                            ).format(self._table("support_prompt_versions")),
+                            (key, content, hashlib.sha256(content.encode("utf-8")).hexdigest(), status, "Seeded from code prompt catalog", actor_id, created_at, actor_id if has_active_release else None, created_at if has_active_release else None, None if has_active_release else created_at),
+                        )
+                        created_keys.append(key)
+                if not has_active_release and definitions:
+                    release_id = f"pr-{uuid4().hex[:12]}"
+                    cur.execute(
+                        sql.SQL("INSERT INTO {} (release_id,build_ref,status,previous_release_id,created_at,activated_at) VALUES (%s,'initial','active',NULL,%s,%s)").format(self._table("support_prompt_releases")),
+                        (release_id, created_at, created_at),
+                    )
+                    cur.execute(
+                        sql.SQL("INSERT INTO {} (release_id,prompt_key,prompt_version) SELECT %s,prompt_key,version FROM {} WHERE status='active'").format(
+                            self._table("support_prompt_release_items"), self._table("support_prompt_versions")
+                        ),
+                        (release_id,),
+                    )
+                return {"created_prompt_keys": created_keys, "prompt_count": len(definitions)}
+        return self._run_with_connection_retry("sync_prompt_catalog", _operation)
+
+    def list_managed_prompts(self) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT release_id FROM {} WHERE status='active' LIMIT 1").format(self._table("support_prompt_releases")))
+                active_row = cur.fetchone()
+                active_release_id = str(active_row[0]) if active_row else None
+                cur.execute(sql.SQL("SELECT prompt_key,name,agent_key,component_key,editable,created_at,updated_at FROM {} ORDER BY agent_key,component_key,prompt_key").format(self._table("support_prompt_definitions")))
+                definitions = cur.fetchall()
+                result: list[dict[str, Any]] = []
+                for row in definitions:
+                    key = str(row[0])
+                    cur.execute(
+                        sql.SQL("SELECT version,content,content_sha256,status,based_on_version,change_note,created_by,created_at,scheduled_by,scheduled_at,activated_at FROM {} WHERE prompt_key=%s ORDER BY version DESC").format(self._table("support_prompt_versions")),
+                        (key,),
+                    )
+                    versions = [self._prompt_version_from_row(key, item) for item in cur.fetchall()]
+                    result.append({
+                        "prompt_key": key, "name": str(row[1]), "agent_key": str(row[2]),
+                        "component_key": str(row[3]), "editable": bool(row[4]),
+                        "created_at": _to_iso(row[5]), "updated_at": _to_iso(row[6]),
+                        "versions": versions,
+                        "active_version": next((item for item in versions if item["status"] == "active"), None),
+                        "scheduled_version": next((item for item in versions if item["status"] == "scheduled"), None),
+                        "active_release_id": active_release_id,
+                    })
+                return result
+        return self._run_with_connection_retry("list_managed_prompts", _operation)
+
+    def get_managed_prompt(self, prompt_key: str) -> dict[str, Any] | None:
+        key = str(prompt_key or "").strip()
+        return next((item for item in self.list_managed_prompts() if item["prompt_key"] == key), None)
+
+    def create_prompt_draft(self, prompt_key: str, *, content: str, change_note: str, based_on_version: int, actor_id: str, created_at: str) -> dict[str, Any]:
+        key = str(prompt_key or "").strip()
+        normalized_content = str(content or "").strip()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s FOR UPDATE").format(self._table("support_prompt_definitions")), (key,))
+                if cur.fetchone() is None:
+                    raise ValueError("prompt not found")
+                cur.execute(sql.SQL("SELECT version FROM {} WHERE prompt_key=%s AND status='active'").format(self._table("support_prompt_versions")), (key,))
+                active_row = cur.fetchone()
+                if active_row is None or int(active_row[0]) != int(based_on_version):
+                    raise RuntimeError("active prompt version changed")
+                cur.execute(sql.SQL("SELECT COALESCE(MAX(version),0)+1 FROM {} WHERE prompt_key=%s").format(self._table("support_prompt_versions")), (key,))
+                version = int(cur.fetchone()[0])
+                content_hash = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
+                cur.execute(
+                    sql.SQL("INSERT INTO {} (prompt_key,version,content,content_sha256,status,based_on_version,change_note,created_by,created_at) VALUES (%s,%s,%s,%s,'draft',%s,%s,%s,%s)").format(self._table("support_prompt_versions")),
+                    (key, version, normalized_content, content_hash, int(based_on_version), str(change_note or "").strip(), actor_id, created_at),
+                )
+                return {"prompt_key": key, "version": version, "content": normalized_content, "content_sha256": content_hash, "status": "draft", "based_on_version": int(based_on_version), "change_note": str(change_note or "").strip(), "created_by": actor_id, "created_at": created_at, "scheduled_by": None, "scheduled_at": None, "activated_at": None}
+        return self._run_with_connection_retry("create_prompt_draft", _operation)
+
+    def schedule_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, scheduled_at: str) -> dict[str, Any]:
+        key = str(prompt_key or "").strip()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT status FROM {} WHERE prompt_key=%s AND version=%s FOR UPDATE").format(self._table("support_prompt_versions")), (key, version))
+                row = cur.fetchone()
+                if row is None or str(row[0]) != "draft":
+                    raise ValueError("draft version not found")
+                cur.execute(sql.SQL("UPDATE {} SET status='draft',scheduled_by=NULL,scheduled_at=NULL WHERE prompt_key=%s AND status='scheduled'").format(self._table("support_prompt_versions")), (key,))
+                cur.execute(sql.SQL("UPDATE {} SET status='scheduled',scheduled_by=%s,scheduled_at=%s WHERE prompt_key=%s AND version=%s RETURNING content,content_sha256,based_on_version,change_note,created_by,created_at,scheduled_by,scheduled_at,activated_at").format(self._table("support_prompt_versions")), (actor_id, scheduled_at, key, version))
+                updated = cur.fetchone()
+                assert updated is not None
+                return {
+                    "prompt_key": key, "version": int(version), "content": str(updated[0]),
+                    "content_sha256": str(updated[1]), "status": "scheduled",
+                    "based_on_version": updated[2], "change_note": str(updated[3]),
+                    "created_by": str(updated[4]), "created_at": _to_iso(updated[5]),
+                    "scheduled_by": str(updated[6]), "scheduled_at": _to_iso(updated[7]),
+                    "activated_at": _to_iso(updated[8]),
+                }
+        return self._run_with_connection_retry("schedule_prompt_version", _operation)
+
+    def unschedule_prompt_version(self, prompt_key: str, version: int) -> dict[str, Any]:
+        key = str(prompt_key or "").strip()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET status='draft',scheduled_by=NULL,scheduled_at=NULL WHERE prompt_key=%s AND version=%s AND status='scheduled' RETURNING content,content_sha256,based_on_version,change_note,created_by,created_at").format(self._table("support_prompt_versions")), (key, version))
+                row = cur.fetchone()
+                if row is None:
+                    raise ValueError("scheduled version not found")
+                return {"prompt_key": key, "version": int(version), "content": str(row[0]), "content_sha256": str(row[1]), "status": "draft", "based_on_version": row[2], "change_note": str(row[3]), "created_by": str(row[4]), "created_at": _to_iso(row[5]), "scheduled_by": None, "scheduled_at": None, "activated_at": None}
+        return self._run_with_connection_retry("unschedule_prompt_version", _operation)
+
+    def restore_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, created_at: str) -> dict[str, Any]:
+        prompt = self.get_managed_prompt(prompt_key)
+        source = next((item for item in (prompt or {}).get("versions", []) if int(item["version"]) == int(version)), None)
+        active = (prompt or {}).get("active_version")
+        if source is None or active is None:
+            raise ValueError("prompt version not found")
+        return self.create_prompt_draft(prompt_key, content=source["content"], change_note=f"Restore version {version}", based_on_version=int(active["version"]), actor_id=actor_id, created_at=created_at)
+
+    def prepare_prompt_release(self, *, build_ref: str, created_at: str) -> dict[str, Any]:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason FROM {} WHERE status='active' FOR UPDATE").format(self._table("support_prompt_releases")))
+                active_row = cur.fetchone()
+                active = self._prompt_release_from_row(cur, active_row) if active_row else None
+                cur.execute(sql.SQL("SELECT prompt_key,version FROM {} WHERE status='scheduled' ORDER BY prompt_key").format(self._table("support_prompt_versions")))
+                scheduled = {str(row[0]): int(row[1]) for row in cur.fetchall()}
+                if not scheduled:
+                    if active is None:
+                        raise ValueError("active prompt release not found")
+                    return {**active, "created": False}
+                cur.execute(sql.SQL("UPDATE {} SET status='failed',failure_reason='Superseded by a newer deployment candidate' WHERE status='candidate'").format(self._table("support_prompt_releases")))
+                release_id = f"pr-{uuid4().hex[:12]}"
+                cur.execute(sql.SQL("INSERT INTO {} (release_id,build_ref,status,previous_release_id,created_at) VALUES (%s,%s,'candidate',%s,%s)").format(self._table("support_prompt_releases")), (release_id, str(build_ref or "unknown"), (active or {}).get("release_id"), created_at))
+                items = dict((active or {}).get("items") or {})
+                items.update(scheduled)
+                for key, selected_version in items.items():
+                    cur.execute(sql.SQL("INSERT INTO {} (release_id,prompt_key,prompt_version) VALUES (%s,%s,%s)").format(self._table("support_prompt_release_items")), (release_id, key, selected_version))
+                return {"release_id": release_id, "build_ref": str(build_ref or "unknown"), "status": "candidate", "previous_release_id": (active or {}).get("release_id"), "created_at": created_at, "activated_at": None, "failure_reason": None, "items": items, "created": True}
+        return self._run_with_connection_retry("prepare_prompt_release", _operation)
+
+    def activate_prompt_release(self, release_id: str, *, activated_at: str) -> dict[str, Any]:
+        normalized = str(release_id or "").strip()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason FROM {} WHERE release_id=%s FOR UPDATE").format(self._table("support_prompt_releases")), (normalized,))
+                row = cur.fetchone()
+                if row is None:
+                    raise ValueError("prompt release not found")
+                if str(row[2]) == "active":
+                    return self._prompt_release_from_row(cur, row)
+                if str(row[2]) != "candidate":
+                    raise ValueError("candidate prompt release not found")
+                release = self._prompt_release_from_row(cur, row)
+                cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE status='active'").format(self._table("support_prompt_releases")))
+                for key, selected_version in release["items"].items():
+                    cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE prompt_key=%s AND status='active'").format(self._table("support_prompt_versions")), (key,))
+                    cur.execute(sql.SQL("UPDATE {} SET status='active',activated_at=%s WHERE prompt_key=%s AND version=%s").format(self._table("support_prompt_versions")), (activated_at, key, selected_version))
+                cur.execute(sql.SQL("UPDATE {} SET status='active',activated_at=%s WHERE release_id=%s").format(self._table("support_prompt_releases")), (activated_at, normalized))
+                release.update({"status": "active", "activated_at": activated_at})
+                return release
+        return self._run_with_connection_retry("activate_prompt_release", _operation)
+
+    def fail_prompt_release(self, release_id: str, *, failure_reason: str) -> dict[str, Any]:
+        normalized = str(release_id or "").strip()
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET status='failed',failure_reason=%s WHERE release_id=%s AND status='candidate' RETURNING release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason").format(self._table("support_prompt_releases")), (str(failure_reason or "").strip(), normalized))
+                row = cur.fetchone()
+                if row is None:
+                    raise ValueError("candidate prompt release not found")
+                return self._prompt_release_from_row(cur, row)
+        return self._run_with_connection_retry("fail_prompt_release", _operation)
+
+    def _find_prompt_release(self, *, release_id: str | None = None, status: str | None = None) -> dict[str, Any] | None:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                if release_id is not None:
+                    cur.execute(sql.SQL("SELECT release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason FROM {} WHERE release_id=%s").format(self._table("support_prompt_releases")), (release_id,))
+                else:
+                    cur.execute(sql.SQL("SELECT release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason FROM {} WHERE status=%s ORDER BY created_at DESC LIMIT 1").format(self._table("support_prompt_releases")), (status,))
+                row = cur.fetchone()
+                return self._prompt_release_from_row(cur, row) if row else None
+        return self._run_with_connection_retry("find_prompt_release", _operation)
+
+    def get_active_prompt_release(self) -> dict[str, Any] | None:
+        return self._find_prompt_release(status="active")
+
+    def get_prompt_release(self, release_id: str) -> dict[str, Any] | None:
+        return self._find_prompt_release(release_id=str(release_id or "").strip())
+
+    def list_prompt_releases(self, limit: int = 50) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 200))
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason FROM {} ORDER BY created_at DESC LIMIT %s").format(self._table("support_prompt_releases")), (safe_limit,))
+                rows = cur.fetchall()
+                return [self._prompt_release_from_row(cur, row) for row in rows]
+        return self._run_with_connection_retry("list_prompt_releases", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:

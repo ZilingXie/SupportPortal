@@ -69,6 +69,7 @@ from backend.services.prompts.rag_answer import (
     build_rag_answer_system_prompt,
     build_rag_answer_user_prompt,
 )
+from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.query_understanding import (
     QueryUnderstandingResult,
     RetrievalPlan,
@@ -184,11 +185,12 @@ _TOKEN_USAGE_FOCUSED_VARIANT_KINDS = frozenset({"focused_token_usage", "focused_
 _CONNECTION_STATE_FOCUSED_VARIANT_KINDS = frozenset({"focused_reference", "focused_rewrite"})
 _API_SEMANTICS_MAX_FANOUT_CHILDREN = 3
 def _build_answer_system_prompt(product: str | None = None) -> str:
-    return build_rag_answer_system_prompt(
+    fallback = build_rag_answer_system_prompt(
         insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         product_role=build_support_product_rag_role(product),
         product_scope=build_support_product_prompt_scope(product),
     )
+    return resolve_system_prompt(f"rag-answer-{product}", fallback) if product else fallback
 
 
 @dataclass
@@ -2112,9 +2114,19 @@ def _invoke_agentic_planner(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=build_rag_agent_planner_system_prompt(
-                product_role=build_support_product_rag_role(product),
-                product_scope=build_support_product_prompt_scope(product),
+            system_prompt=(
+                resolve_system_prompt(
+                    f"rag-planner-{product}",
+                    build_rag_agent_planner_system_prompt(
+                        product_role=build_support_product_rag_role(product),
+                        product_scope=build_support_product_prompt_scope(product),
+                    ),
+                )
+                if product
+                else build_rag_agent_planner_system_prompt(
+                    product_role=None,
+                    product_scope=None,
+                )
             ),
             user_prompt=build_rag_agent_planner_user_prompt(
                 message=message,

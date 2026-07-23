@@ -15,6 +15,7 @@ from backend.services.rag_sufficiency_prompt import (
     build_rag_sufficiency_system_prompt,
     build_rag_sufficiency_user_payload,
 )
+from backend.services.prompt_runtime import resolve_system_prompt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def judge_rag_answer_sufficiency(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=build_rag_sufficiency_system_prompt(),
+            system_prompt=resolve_system_prompt("rag-sufficiency", build_rag_sufficiency_system_prompt()),
             user_prompt=build_rag_sufficiency_user_payload(
                 message=message,
                 ticket_subject=ticket_subject,

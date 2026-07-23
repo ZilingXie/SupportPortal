@@ -12,6 +12,30 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-23 - Deployment-bound Prompt version management
+
+- Area or subsystem: Agent Config, shared LLM Prompt runtime, EC2 deployment
+- Prompt or model version: `prompt-release-v1`
+- Summary: Added immutable Prompt versions with Draft, Scheduled, Active, history, Diff, Restore, and deployment-bound Releases. Prompt changes do not hot reload; one Release is loaded by all five LLM runtime services during `deployment/deploy_ec2.sh`.
+- Reason: Prompt edits need reviewable history and atomic rollout without allowing processes to observe different versions or allowing an editor save to change production immediately.
+- Affected files or config:
+  - `backend/services/agent_config.py`, `backend/services/prompt_versioning.py`, `backend/services/prompt_runtime.py`
+  - `backend/repositories/ticket_repository.py`, `backend/sql/ticket_storage.sql`, `backend/main.py`
+  - Prompt-consuming backend services and worker entry points
+  - `backend/scripts/prompt_release.py`
+  - `deployment/deploy_ec2.sh`, `deployment/docker-compose.single-host.yml`, `scripts/ops/auto_deploy_ec2.sh`
+  - `ui/workspace-ui/admin/`
+- Expected behavior change:
+  - Saving or scheduling a Prompt never changes a running process. Scheduled versions become Active only after the next successful daily deployment.
+  - `api`, `rag_api`, `rag_worker`, `worker_query`, and `worker_aux` must load the same validated Release and expose/emit its identity for deployment verification.
+  - Failed build, startup, internal/external health, service verification, or activation restores the previous image, build ref, and Prompt Release.
+  - The daily automation runs a full deployment even when Git has no new commit, allowing scheduled Prompt changes to ship.
+- Verification:
+  - `rtk python3 -m unittest backend.tests.test_deploy_ec2 backend.tests.test_auto_deploy_ec2 -v`
+  - Podman project image: `python -m unittest backend.tests.test_prompt_versioning backend.tests.test_agent_config -v`
+  - Podman project image: `python -m unittest backend.tests.test_workspace_api.WorkspaceApiTests.test_prompt_version_api_manages_next_deploy_without_changing_active_runtime -v`
+  - `rtk python3 -m unittest backend.tests.test_workspace_admin_ui_contract backend.tests.test_single_host_compose -v`
+
 ## 2026-07-22 - Account-only delayed reply standard process
 
 - Area or subsystem: `/account` routing, AI reply scheduling, and Billing missing-field collection

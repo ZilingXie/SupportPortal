@@ -14,6 +14,7 @@ from backend.services.customer_reply_composer import (
     ensure_customer_reply_email_style,
 )
 from backend.services.llm_profiles import INPUT_GUARDRAIL_SCENARIO, resolve_model_profile
+from backend.services.prompt_runtime import resolve_system_prompt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -207,7 +208,7 @@ def _load_agents_sdk() -> SimpleNamespace:
 def _build_classifier_agent(sdk: SimpleNamespace, *, model: str, reasoning_effort: str | None, temperature: float | None) -> Any:
     agent_kwargs: dict[str, Any] = {
         "name": "SupportPortalInputGuardrailClassifier",
-        "instructions": _CLASSIFIER_INSTRUCTIONS,
+        "instructions": resolve_system_prompt("input-guardrail", _CLASSIFIER_INSTRUCTIONS),
         "model": model,
     }
     model_settings_cls = getattr(sdk, "ModelSettings", None)

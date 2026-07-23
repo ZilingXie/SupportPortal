@@ -97,6 +97,8 @@ class DeployEc2ScriptTests(unittest.TestCase):
                                 "app_build_ref": os.environ.get("APP_BUILD_REF"),
                                 "app_build_time": os.environ.get("APP_BUILD_TIME"),
                                 "app_runtime_image": os.environ.get("APP_RUNTIME_IMAGE"),
+                                "prompt_release_id": os.environ.get("PROMPT_RELEASE_ID"),
+                                "prompt_release_required": os.environ.get("PROMPT_RELEASE_REQUIRED"),
                             }
                         )
                         + "\\n"
@@ -136,6 +138,19 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     else:
                         print(f"APP_BUILD_REF={previous_ref}")
                         print("APP_BUILD_TIME=2026-07-20T00:00:00Z")
+                        print(
+                            "PROMPT_RELEASE_ID="
+                            + (os.environ.get("PROMPT_RELEASE_ID") or "release-previous")
+                        )
+                    sys.exit(0)
+
+                if args[:1] == ["logs"]:
+                    container_id = args[-1]
+                    service = container_id.removesuffix("-container-id")
+                    print(
+                        f"prompt_runtime_loaded service={service} "
+                        "release_id=release-candidate prompts=1 source=release"
+                    )
                     sys.exit(0)
 
                 if args[:1] != ["compose"]:
@@ -153,6 +168,21 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     print("build ok")
                     sys.exit(0)
 
+                if "run" in args:
+                    if "prepare" in args:
+                        print("release-candidate\\ttrue")
+                    elif "activate" in args:
+                        if os.environ.get("FAKE_PROMPT_ACTIVATE_EXIT_CODE") == "1":
+                            print("activate failed", file=sys.stderr)
+                            sys.exit(1)
+                        print('{"ok":true}')
+                    elif "fail" in args:
+                        print('{"ok":true}')
+                    else:
+                        print("unsupported prompt command", args, file=sys.stderr)
+                        sys.exit(1)
+                    sys.exit(0)
+
                 if "down" in args:
                     print("down ok")
                     sys.exit(0)
@@ -166,9 +196,13 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
                 if "ps" in args:
                     if "-q" in args:
-                        print("api-container-id")
+                        print(f"{args[-1]}-container-id")
                     else:
                         print("NAME\\napi up")
+                    sys.exit(0)
+
+                if "exec" in args:
+                    print("health contract ok")
                     sys.exit(0)
 
                 if "logs" in args:
@@ -343,13 +377,21 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         verbs = self._compose_verbs()
-        self.assertEqual(verbs, ["build", "ps", "down", "up", "ps"])
+        self.assertEqual(verbs[:5], ["build", "ps", "down", "up", "ps"])
+        self.assertEqual(verbs.count("ps"), 7)
         self.assertNotIn("builder-prune", self._docker_actions())
         self.assertNotIn("image-prune", self._docker_actions())
 
         docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        prepare_index = next(index for index, call in enumerate(docker_calls) if "prepare" in call["argv"])
+        down_index = next(index for index, call in enumerate(docker_calls) if "down" in call["argv"])
+        activate_index = next(index for index, call in enumerate(docker_calls) if "activate" in call["argv"])
+        self.assertLess(prepare_index, down_index)
+        self.assertGreater(activate_index, down_index)
         up_call = next(call for call in docker_calls if "up" in call["argv"])
         self.assertNotIn("--build", up_call["argv"])
+        self.assertEqual(up_call["prompt_release_id"], "release-candidate")
+        self.assertEqual(up_call["prompt_release_required"], "true")
 
         self.assertEqual(
             [call["url"] for call in self._read_json_lines(self.state_dir / "curl_calls.jsonl")],
@@ -475,7 +517,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("Pruning Docker cache before build", result.stdout)
         self.assertEqual(
-            self._docker_actions(),
+            self._docker_actions()[:7],
             [
                 "builder-prune",
                 "image-prune",
@@ -486,6 +528,46 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 "compose-ps",
             ],
         )
+
+    def test_activation_failure_marks_candidate_failed_and_restores_previous_release(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={"FAKE_PROMPT_ACTIVATE_EXIT_CODE": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Prompt Release activation failed", result.stdout + result.stderr)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertTrue(any("fail" in call["argv"] for call in docker_calls))
+        rollback_up = next(
+            call for call in docker_calls if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(rollback_up["prompt_release_id"], "release-previous")
+        self.assertEqual(rollback_up["prompt_release_required"], "true")
+
+    def test_external_health_failure_restores_previous_release(self) -> None:
+        external_url = "https://support.stellarix.space/health"
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
+                "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "1",
+                "FAKE_CURL_FAIL_URL": external_url,
+                "FAKE_CURL_FAIL_COUNT": "2",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("External health check failed", result.stdout + result.stderr)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        rollback_up = next(
+            call for call in docker_calls if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(rollback_up["prompt_release_id"], "release-previous")
 
     def test_low_disk_space_after_prune_fails_before_build(self) -> None:
         result = self._run_script(

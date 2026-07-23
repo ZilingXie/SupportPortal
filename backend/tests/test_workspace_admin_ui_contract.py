@@ -137,7 +137,17 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260722-admin-tab-topbar-1", index)
+        self.assertIn("20260723-prompt-versioning-1", index)
+        for marker in (
+            "/api/workspace/admin/prompts/",
+            "data-prompt-draft-form",
+            "schedule-prompt-version",
+            "unschedule-prompt-version",
+            "restore-prompt-version",
+            "toggle-prompt-diff",
+            "next successful daily deployment",
+        ):
+            self.assertIn(marker, source)
 
         core_load = source[source.index("async function loadAdminData"):source.index("function signOut")]
         promise_all_start = core_load.index("Promise.all")
@@ -329,7 +339,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260722-admin-tab-topbar-1", html)
+        self.assertIn("20260723-prompt-versioning-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

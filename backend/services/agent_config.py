@@ -211,7 +211,7 @@ def _persona_prompts(personas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return prompts
 
 
-def build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any]:
     agents = [
         {
             "key": "route-agent",
@@ -324,3 +324,69 @@ def build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any]
         }
     ]
     return {"agents": agents, "related_services": related_services}
+
+
+def build_managed_prompt_catalog() -> list[dict[str, Any]]:
+    payload = _build_agent_config_payload([])
+    catalog: list[dict[str, Any]] = []
+    for agent in payload["agents"]:
+        for prompt in agent["prompts"]:
+            catalog.append(
+                {
+                    "prompt_key": prompt["key"],
+                    "name": prompt["name"],
+                    "agent_key": agent["key"],
+                    "component_key": prompt["component_key"],
+                    "content": prompt["content"],
+                    "editable": True,
+                }
+            )
+    return catalog
+
+
+def build_agent_config_payload(
+    personas: list[dict[str, Any]],
+    managed_prompts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload = _build_agent_config_payload(personas)
+    if managed_prompts is None:
+        return payload
+
+    by_key = {
+        str(item.get("prompt_key") or ""): item
+        for item in managed_prompts
+        if isinstance(item, dict)
+    }
+    for agent in payload["agents"]:
+        updated_prompts: list[dict[str, Any]] = []
+        for prompt in agent["prompts"]:
+            managed = by_key.get(prompt["key"])
+            if managed is None:
+                updated_prompts.append(prompt)
+                continue
+            active = managed.get("active_version") or {}
+            scheduled = managed.get("scheduled_version") or None
+            updated = dict(prompt)
+            updated["content"] = str(active.get("content") or prompt["content"])
+            updated["version"] = str(active.get("version") or prompt.get("version") or "") or None
+            updated["metadata"] = {
+                **dict(prompt.get("metadata") or {}),
+                "managed": True,
+                "status": "active",
+                "active_version": active.get("version"),
+                "scheduled_version": scheduled.get("version") if isinstance(scheduled, dict) else None,
+                "versions": list(managed.get("versions") or []),
+            }
+            updated_prompts.append(updated)
+        agent["prompts"] = updated_prompts
+    payload["prompt_release"] = {
+        "release_id": next(
+            (
+                item.get("active_release_id")
+                for item in managed_prompts
+                if isinstance(item, dict) and item.get("active_release_id")
+            ),
+            None,
+        )
+    }
+    return payload

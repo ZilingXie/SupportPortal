@@ -22,6 +22,7 @@ from backend.services.prompts.query_understanding import (
     build_self_query_user_prompt,
 )
 from backend.services.query_expansion_cache import QueryExpansionCache, build_query_expansion_cache_key
+from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.token_usage import build_usage_ledger_entry
 
 if TYPE_CHECKING:
@@ -1086,7 +1087,7 @@ def understand_rag_query(
         try:
             llm_self_query_raw, usage_entry = _invoke_query_expansion_llm(
                 stage="query_self_query",
-                system_prompt=build_self_query_system_prompt(),
+                system_prompt=resolve_system_prompt("self-query", build_self_query_system_prompt()),
                 user_prompt=build_self_query_user_prompt(query=normalized_query, glossary_hits=dictionary_hits),
             )
             if usage_entry:
@@ -1098,7 +1099,11 @@ def understand_rag_query(
         try:
             llm_rewrite_raw, usage_entry = _invoke_query_expansion_llm(
                 stage="query_rewrite",
-                system_prompt=build_query_rewrite_system_prompt(query_policy=query_policy),
+                system_prompt=(
+                    resolve_system_prompt("query-rewrite", build_query_rewrite_system_prompt(query_policy=query_policy))
+                    if query_policy == "client_accuracy_first"
+                    else build_query_rewrite_system_prompt(query_policy=query_policy)
+                ),
                 user_prompt=build_query_rewrite_user_prompt(
                     query=normalized_query,
                     canonical_terms=canonical_terms,
@@ -1121,7 +1126,7 @@ def understand_rag_query(
             try:
                 llm_decomposition_raw, usage_entry = _invoke_query_expansion_llm(
                     stage="query_decomposition",
-                    system_prompt=build_query_decomposition_system_prompt(),
+                    system_prompt=resolve_system_prompt("query-decomposition", build_query_decomposition_system_prompt()),
                     user_prompt=build_query_decomposition_user_prompt(
                         query=normalized_query,
                         retrieval_plan_summary={

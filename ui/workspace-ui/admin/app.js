@@ -35,6 +35,11 @@ let agentConfigLoadError = "";
 let expandedAgentKeys = new Set();
 let selectedAgentViews = {};
 let selectedAgentPrompts = {};
+let selectedPromptVersions = {};
+let promptEditorKeys = new Set();
+let promptDiffKeys = new Set();
+let promptOperationNotice = {};
+let promptOperationBusy = false;
 let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
 let environmentQuery = "";
@@ -700,6 +705,7 @@ function renderAgentPromptPanel(entry) {
   const selectedKey = selectedAgentPrompts[entry.key] || preferred.key;
   const selected = prompts.find(prompt => prompt.key === selectedKey) || preferred;
   const metadata = selected.metadata || {};
+  if (metadata.managed) return renderManagedPromptPanel(entry, selected, prompts);
   const details = [
     selected.version ? `Version ${selected.version}` : "Unversioned",
     selected.component_key ? `Component ${selected.component_key}` : "",
@@ -718,6 +724,85 @@ function renderAgentPromptPanel(entry) {
       </section>
     </div>
   `;
+}
+
+function promptVersionLabel(version) {
+  return `v${version.version} · ${agentStatusLabel(version.status)}`;
+}
+
+function renderManagedPromptPanel(entry, selected, prompts) {
+  const metadata = selected.metadata || {};
+  const versions = Array.isArray(metadata.versions) ? metadata.versions : [];
+  const active = versions.find(item => item.status === "active") || versions[0] || {};
+  const scheduled = versions.find(item => item.status === "scheduled") || null;
+  const selectedVersionNumber = selectedPromptVersions[selected.key] || active.version;
+  const inspected = versions.find(item => Number(item.version) === Number(selectedVersionNumber)) || active;
+  const isEditing = promptEditorKeys.has(selected.key);
+  const isDiffing = promptDiffKeys.has(selected.key) && inspected.version !== active.version;
+  const notice = promptOperationNotice[selected.key];
+  return `
+    <div class="admin-agent-prompt-layout">
+      <nav class="admin-agent-prompt-list" aria-label="${escapeHtml(entry.name)} prompts">
+        ${prompts.map(prompt => `<button type="button" data-action="select-agent-prompt" data-agent-key="${escapeHtml(entry.key)}" data-prompt-key="${escapeHtml(prompt.key)}" class="${prompt.key === selected.key ? "is-active" : ""}" aria-pressed="${prompt.key === selected.key ? "true" : "false"}"><strong>${escapeHtml(prompt.name)}</strong><small>Active v${escapeHtml(prompt.metadata?.active_version || prompt.version || "-")}${prompt.metadata?.scheduled_version ? ` · Next v${escapeHtml(prompt.metadata.scheduled_version)}` : ""}</small></button>`).join("")}
+      </nav>
+      <section class="admin-agent-prompt-viewer admin-prompt-managed" aria-live="polite">
+        <header><div><p class="admin-eyebrow">DEPLOYMENT-BOUND PROMPT</p><h3>${escapeHtml(selected.name)}</h3></div><div class="admin-prompt-statuses">${renderAgentBadge(`Active v${active.version}`, "is-active")}${scheduled ? renderAgentBadge(`Next deploy v${scheduled.version}`, "is-scheduled") : ""}</div></header>
+        ${notice ? `<p class="admin-prompt-notice ${notice.tone === "error" ? "is-error" : ""}" role="status">${escapeHtml(notice.message)}</p>` : ""}
+        <div class="admin-prompt-toolbar">
+          <label><span>Version</span><select data-prompt-version-select="${escapeHtml(selected.key)}">${versions.map(item => `<option value="${item.version}" ${item.version === inspected.version ? "selected" : ""}>${escapeHtml(promptVersionLabel(item))}</option>`).join("")}</select></label>
+          <button class="btn btn-ghost" type="button" data-action="toggle-prompt-diff" data-prompt-key="${escapeHtml(selected.key)}" ${inspected.version === active.version ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">difference</span>Diff</button>
+          <button class="btn btn-primary" type="button" data-action="edit-prompt" data-prompt-key="${escapeHtml(selected.key)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>New draft</button>
+        </div>
+        ${isEditing ? `<form class="admin-prompt-editor" data-prompt-draft-form data-prompt-key="${escapeHtml(selected.key)}" data-based-on-version="${active.version}"><label><span>Prompt</span><textarea name="content" required maxlength="100000">${escapeHtml(active.content || "")}</textarea></label><label><span>Change note</span><input name="change_note" required maxlength="500" placeholder="Describe the intended behavior change" /></label><div><button class="btn btn-primary" type="submit" ${promptOperationBusy ? "disabled" : ""}>Save draft</button><button class="btn btn-ghost" type="button" data-action="cancel-prompt-edit" data-prompt-key="${escapeHtml(selected.key)}">Cancel</button></div></form>` : isDiffing ? `<div class="admin-prompt-diff"><section><header>Active v${active.version}</header><pre tabindex="0">${escapeHtml(active.content || "")}</pre></section><section><header>Selected v${inspected.version}</header><pre tabindex="0">${escapeHtml(inspected.content || "")}</pre></section></div>` : `<pre tabindex="0">${escapeHtml(inspected.content || "No prompt content available")}</pre>`}
+        <div class="admin-prompt-version-meta"><span>${escapeHtml(inspected.change_note || "No change note")}</span><span>${escapeHtml(formatDateTime(inspected.created_at))}</span></div>
+        <div class="admin-prompt-version-actions">
+          ${inspected.status === "draft" ? `<button class="btn btn-primary" type="button" data-action="schedule-prompt-version" data-prompt-key="${escapeHtml(selected.key)}" data-prompt-version="${inspected.version}" ${promptOperationBusy ? "disabled" : ""}>Schedule for next deploy</button>` : ""}
+          ${inspected.status === "scheduled" ? `<button class="btn btn-ghost" type="button" data-action="unschedule-prompt-version" data-prompt-key="${escapeHtml(selected.key)}" data-prompt-version="${inspected.version}" ${promptOperationBusy ? "disabled" : ""}>Unschedule</button>` : ""}
+          ${inspected.status === "superseded" ? `<button class="btn btn-ghost" type="button" data-action="restore-prompt-version" data-prompt-key="${escapeHtml(selected.key)}" data-prompt-version="${inspected.version}" ${promptOperationBusy ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">restore</span>Restore as draft</button>` : ""}
+        </div>
+      </section>
+    </div>`;
+}
+
+async function runPromptVersionAction(action, promptKey, version) {
+  promptOperationBusy = true;
+  promptOperationNotice[promptKey] = null;
+  renderAdmin();
+  try {
+    await fetchJson(`/api/workspace/admin/prompts/${encodeURIComponent(promptKey)}/versions/${version}/${action}`, { method: "POST" });
+    promptOperationNotice[promptKey] = { tone: "success", message: action === "schedule" ? "Scheduled for the next daily deployment." : `${action[0].toUpperCase()}${action.slice(1)} completed.` };
+    agentConfigData = null;
+    await loadAgentConfig({ force: true });
+  } catch (error) {
+    promptOperationNotice[promptKey] = { tone: "error", message: error.message };
+  } finally {
+    promptOperationBusy = false;
+    renderAdmin();
+  }
+}
+
+async function createPromptDraft(form) {
+  const promptKey = form.dataset.promptKey;
+  const values = new FormData(form);
+  promptOperationBusy = true;
+  renderAdmin();
+  try {
+    const payload = await fetchJson(`/api/workspace/admin/prompts/${encodeURIComponent(promptKey)}/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: values.get("content"), change_note: values.get("change_note"), based_on_version: Number(form.dataset.basedOnVersion) }),
+    });
+    selectedPromptVersions[promptKey] = payload.version.version;
+    promptEditorKeys.delete(promptKey);
+    promptOperationNotice[promptKey] = { tone: "success", message: `Draft v${payload.version.version} saved. It is not live until scheduled and deployed.` };
+    agentConfigData = null;
+    await loadAgentConfig({ force: true });
+  } catch (error) {
+    promptOperationNotice[promptKey] = { tone: "error", message: error.message };
+  } finally {
+    promptOperationBusy = false;
+    renderAdmin();
+  }
 }
 
 function renderAgentSkillsPanel(entry) {
@@ -775,7 +860,7 @@ function renderAgentConfig() {
       <section class="admin-agent-group" aria-labelledby="agent-config-services"><header><div><h2 id="agent-config-services">Related services</h2><p>Deterministic systems shown here because they own related prompt configuration.</p></div><span>${services.length}</span></header>${services.length ? services.map(renderAgentEntry).join("") : `<p class="admin-empty-state">No related services configured.</p>`}</section>
     `;
   }
-  return `<header class="admin-main-header"><div><p class="admin-eyebrow">RUNTIME INVENTORY</p><p>Read-only system prompts, formal skills, and MCP connections for the current runtime.</p></div></header><div class="admin-agent-catalog">${content}</div>`;
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">RUNTIME INVENTORY</p><p>Prompt drafts are isolated from runtime. Scheduled versions become active only after the next successful daily deployment.</p></div></header><div class="admin-agent-catalog">${content}</div>`;
 }
 
 function renderEnvironmentConfig() {
@@ -1073,10 +1158,34 @@ root.addEventListener("click", (event) => {
     const promptButton = event.target.closest("[data-agent-key]");
     selectedAgentPrompts[promptButton.dataset.agentKey] = promptButton.dataset.promptKey;
     renderAdmin();
+  } else if (action === "edit-prompt") {
+    const promptKey = event.target.closest("[data-prompt-key]").dataset.promptKey;
+    promptEditorKeys.add(promptKey);
+    promptDiffKeys.delete(promptKey);
+    renderAdmin();
+  } else if (action === "cancel-prompt-edit") {
+    promptEditorKeys.delete(event.target.closest("[data-prompt-key]").dataset.promptKey);
+    renderAdmin();
+  } else if (action === "toggle-prompt-diff") {
+    const promptKey = event.target.closest("[data-prompt-key]").dataset.promptKey;
+    if (promptDiffKeys.has(promptKey)) promptDiffKeys.delete(promptKey);
+    else promptDiffKeys.add(promptKey);
+    renderAdmin();
+  } else if (["schedule-prompt-version", "unschedule-prompt-version", "restore-prompt-version"].includes(action)) {
+    const button = event.target.closest("[data-prompt-key]");
+    const apiAction = action.replace("-prompt-version", "");
+    runPromptVersionAction(apiAction, button.dataset.promptKey, button.dataset.promptVersion);
   }
 });
 
 root.addEventListener("change", (event) => {
+  const versionSelect = event.target.closest("[data-prompt-version-select]");
+  if (versionSelect) {
+    selectedPromptVersions[versionSelect.dataset.promptVersionSelect] = Number(versionSelect.value);
+    promptDiffKeys.delete(versionSelect.dataset.promptVersionSelect);
+    renderAdmin();
+    return;
+  }
   const endHour = event.target.closest("[data-end-hour]");
   if (!endHour) return;
   const weekday = endHour.dataset.endHour;
@@ -1123,6 +1232,10 @@ root.addEventListener("submit", (event) => {
     const params = new URLSearchParams();
     for (const [key, value] of new FormData(form).entries()) if (String(value).trim()) params.set(key, String(value).trim());
     fetchJson(`/api/workspace/admin/account-automation?${params}`).then((payload) => { automationData = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
+    return;
+  }
+  if (form.matches("[data-prompt-draft-form]")) {
+    createPromptDraft(form);
     return;
   }
 });

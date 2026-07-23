@@ -187,6 +187,17 @@ class SingleHostComposeTests(unittest.TestCase):
         content = COMPOSE_PATH.read_text(encoding="utf-8")
         self.assertNotRegex(content, r"(?m)^  worker:\n")
 
+    def test_prompt_runtime_release_is_shared_by_all_llm_services_only(self) -> None:
+        prompt_services = ("api", "rag_api", "rag_worker", "worker_query", "worker_aux")
+        for service_name in prompt_services:
+            block = self._service_block(service_name)
+            self.assertIn("PROMPT_RELEASE_ID: ${PROMPT_RELEASE_ID:-}", block)
+            self.assertIn("PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}", block)
+            self.assertIn(f"PROMPT_RUNTIME_SERVICE: {service_name}", block)
+        ws_gateway_block = self._service_block("ws_gateway")
+        self.assertNotIn("PROMPT_RELEASE_ID", ws_gateway_block)
+        self.assertNotIn("PROMPT_RUNTIME_SERVICE", ws_gateway_block)
+
     def test_client_rag_recovery_defaults_are_present(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")
 

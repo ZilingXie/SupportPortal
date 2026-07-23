@@ -4461,6 +4461,32 @@ p {
 .admin-agent-prompt-viewer > header > span { color: var(--ink-muted); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
 .admin-agent-prompt-viewer pre { max-height: 520px; margin: 0; overflow: auto; padding: 16px; border-radius: 6px; background: #172328; color: #e6f1ed; white-space: pre-wrap; overflow-wrap: anywhere; }
 .admin-agent-change-note { margin-bottom: 10px !important; color: var(--ink-soft); font-size: 13px; }
+.admin-prompt-managed { display: grid; gap: 12px; }
+.admin-prompt-statuses { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.admin-agent-badge.is-scheduled { background: #ffddb8; color: #633c00; }
+.admin-prompt-notice { margin: 0; padding: 9px 11px; border-left: 3px solid var(--success); background: rgba(211, 241, 221, .55); color: #235233; font-size: 12px; }
+.admin-prompt-notice.is-error { border-left-color: var(--danger); background: rgba(255, 218, 214, .55); color: var(--danger); }
+.admin-prompt-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.admin-prompt-toolbar label { min-width: 190px; display: grid; gap: 4px; margin-right: auto; color: var(--ink-muted); font-size: 11px; font-weight: 750; }
+.admin-prompt-toolbar select,
+.admin-prompt-editor input,
+.admin-prompt-editor textarea { width: 100%; border: 1px solid var(--ghost-border); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.admin-prompt-toolbar select,
+.admin-prompt-editor input { min-height: 40px; padding: 8px 10px; }
+.admin-prompt-toolbar .btn { min-height: 40px; display: inline-flex; align-items: center; gap: 6px; }
+.admin-prompt-toolbar .material-symbols-outlined,
+.admin-prompt-version-actions .material-symbols-outlined { font-size: 18px; }
+.admin-prompt-editor { display: grid; gap: 12px; }
+.admin-prompt-editor label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 12px; font-weight: 750; }
+.admin-prompt-editor textarea { min-height: 360px; resize: vertical; padding: 14px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.admin-prompt-editor > div,
+.admin-prompt-version-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-prompt-diff { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.admin-prompt-diff section { min-width: 0; overflow: hidden; border: 1px solid var(--ghost-border); border-radius: 6px; }
+.admin-prompt-diff header { padding: 8px 10px; background: var(--surface-container-high); color: var(--ink-soft); font-size: 12px; font-weight: 800; }
+.admin-prompt-diff pre { border-radius: 0; }
+.admin-prompt-version-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--ink-muted); font-size: 11px; }
+.admin-prompt-version-meta span { overflow-wrap: anywhere; }
 .admin-agent-capability-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; }
 .admin-agent-capability-list > div { min-width: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; padding: 10px 0; border-bottom: 1px solid var(--ghost-border); }
 .admin-agent-capability-list code { color: var(--secondary); font-size: 11px; }
@@ -4645,6 +4671,10 @@ p {
   .admin-agent-prompt-list { max-height: 230px; }
   .admin-agent-prompt-viewer > header { align-items: flex-start; flex-direction: column; }
   .admin-agent-prompt-viewer > header > span { text-align: left; }
+  .admin-prompt-statuses { justify-content: flex-start; }
+  .admin-prompt-diff { grid-template-columns: 1fr; }
+  .admin-prompt-toolbar label { width: 100%; }
+  .admin-prompt-version-meta { flex-direction: column; gap: 3px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
