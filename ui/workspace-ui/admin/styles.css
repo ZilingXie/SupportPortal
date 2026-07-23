@@ -4485,6 +4485,11 @@ p {
 .admin-prompt-diff section { min-width: 0; overflow: hidden; border: 1px solid var(--ghost-border); border-radius: 6px; }
 .admin-prompt-diff header { padding: 8px 10px; background: var(--surface-container-high); color: var(--ink-soft); font-size: 12px; font-weight: 800; }
 .admin-prompt-diff pre { border-radius: 0; }
+.admin-prompt-diff-lines { padding: 10px 0 !important; counter-reset: prompt-line; }
+.admin-prompt-diff-lines > span { min-height: 20px; display: block; padding: 1px 12px 1px 44px; position: relative; white-space: pre-wrap; }
+.admin-prompt-diff-lines > span::before { position: absolute; left: 10px; width: 24px; color: #8ca09a; content: counter(prompt-line); counter-increment: prompt-line; text-align: right; }
+.admin-prompt-diff-lines > span.is-removed { background: rgba(255, 180, 171, .2); color: #ffd7d2; }
+.admin-prompt-diff-lines > span.is-added { background: rgba(166, 218, 181, .2); color: #d8f4df; }
 .admin-prompt-version-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--ink-muted); font-size: 11px; }
 .admin-prompt-version-meta span { overflow-wrap: anywhere; }
 .admin-agent-capability-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; }

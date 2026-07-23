@@ -1492,15 +1492,16 @@ class InMemoryTicketRepository:
 
     def schedule_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, scheduled_at: str) -> dict[str, Any]:
         key = str(prompt_key or "").strip()
-        versions = self._prompt_versions.get(key, [])
-        target = next((item for item in versions if int(item["version"]) == int(version)), None)
-        if target is None or target["status"] != "draft":
-            raise ValueError("draft version not found")
-        for item in versions:
-            if item["status"] == "scheduled":
-                item.update({"status": "draft", "scheduled_by": None, "scheduled_at": None})
-        target.update({"status": "scheduled", "scheduled_by": actor_id, "scheduled_at": scheduled_at})
-        return copy.deepcopy(target)
+        with self._assignment_lock:
+            versions = self._prompt_versions.get(key, [])
+            target = next((item for item in versions if int(item["version"]) == int(version)), None)
+            if target is None or target["status"] != "draft":
+                raise ValueError("draft version not found")
+            for item in versions:
+                if item["status"] == "scheduled":
+                    item.update({"status": "draft", "scheduled_by": None, "scheduled_at": None})
+            target.update({"status": "scheduled", "scheduled_by": actor_id, "scheduled_at": scheduled_at})
+            return copy.deepcopy(target)
 
     def unschedule_prompt_version(self, prompt_key: str, version: int) -> dict[str, Any]:
         versions = self._prompt_versions.get(str(prompt_key or "").strip(), [])
@@ -8347,6 +8348,9 @@ class PostgresTicketRepository:
         key = str(prompt_key or "").strip()
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s FOR UPDATE").format(self._table("support_prompt_definitions")), (key,))
+                if cur.fetchone() is None:
+                    raise ValueError("prompt not found")
                 cur.execute(sql.SQL("SELECT status FROM {} WHERE prompt_key=%s AND version=%s FOR UPDATE").format(self._table("support_prompt_versions")), (key, version))
                 row = cur.fetchone()
                 if row is None or str(row[0]) != "draft":

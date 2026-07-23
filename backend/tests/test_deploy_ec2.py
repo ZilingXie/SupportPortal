@@ -176,6 +176,11 @@ class DeployEc2ScriptTests(unittest.TestCase):
                             print("activate failed", file=sys.stderr)
                             sys.exit(1)
                         print('{"ok":true}')
+                    elif "current" in args:
+                        if os.environ.get("FAKE_PROMPT_ACTIVATE_COMMITTED") == "1":
+                            print("release-candidate")
+                        else:
+                            print("release-previous")
                     elif "fail" in args:
                         print('{"ok":true}')
                     else:
@@ -546,6 +551,23 @@ class DeployEc2ScriptTests(unittest.TestCase):
         )
         self.assertEqual(rollback_up["prompt_release_id"], "release-previous")
         self.assertEqual(rollback_up["prompt_release_required"], "true")
+
+    def test_activation_transport_failure_keeps_new_stack_when_candidate_is_already_active(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "FAKE_PROMPT_ACTIVATE_EXIT_CODE": "1",
+                "FAKE_PROMPT_ACTIVATE_COMMITTED": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("is already active; treating activation as successful", result.stdout)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(any("fail" in call["argv"] for call in docker_calls))
+        self.assertFalse(any("up" in call["argv"] and "--no-build" in call["argv"] for call in docker_calls))
 
     def test_external_health_failure_restores_previous_release(self) -> None:
         external_url = "https://support.stellarix.space/health"
