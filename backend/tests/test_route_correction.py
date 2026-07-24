@@ -28,6 +28,14 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         self.assertEqual(result["route_family"], "agora_docs_rag")
         self.assertEqual(result["tooling_profile"], "agora_docs_only")
 
+    def test_valid_enablement_derives_automated_tuple(self) -> None:
+        result = validate_route_correction(scope_label="enablement", execution_action="enablement")
+        self.assertEqual(result["scope_label"], "enablement")
+        self.assertEqual(result["execution_action"], "enablement")
+        self.assertEqual(result["route_family"], "automated")
+        self.assertEqual(result["tooling_profile"], "deterministic_enablement_intake")
+        self.assertEqual(result["automation_handler"], "enablement")
+
     def test_invalid_scope_rejected(self) -> None:
         with self.assertRaises(RouteCorrectionValidationError):
             validate_route_correction(scope_label="unknown_scope", execution_action="rag")
@@ -53,6 +61,7 @@ class RouteCorrectionValidationTests(unittest.TestCase):
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
             ("billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
             ("billing", "account_verification", "automated", "deterministic_billing_intake"),
+            ("enablement", "enablement", "automated", "deterministic_enablement_intake"),
             ("billing", "human_review_required", "billing_review", "deterministic_billing_intake"),
             ("billing", "refuse", "fallback_or_refuse", "no_agora_docs_refusal"),
             ("agora_technical", "rag", "agora_docs_rag", "agora_docs_only"),

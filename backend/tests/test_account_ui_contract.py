@@ -128,6 +128,10 @@ class AccountUiContractTests(unittest.TestCase):
             '{ scope: "automation", action: "account_suspension"',
             app_source,
         )
+        self.assertIn(
+            '{ scope: "automation", action: "enablement", label: "Automation / Enablement" }',
+            app_source,
+        )
         self.assertIn("scope|action", app_source)
         self.assertIn("renderRouteCorrectionPanel", app_source)
         self.assertIn("submitRouteCorrection", app_source)

@@ -660,7 +660,7 @@
 
       <div class="delivery-list reveal" id="deliveryList">
         <details class="delivery-group" data-status-group="incomplete" open>
-          <summary><span class="group-heading">未完成计划<small>默认展开 · 会议第一阶段行动项</small></span><span>8 项</span></summary>
+          <summary><span class="group-heading">未完成计划<small>默认展开 · 会议第一阶段行动项</small></span><span>7 项</span></summary>
           <div class="delivery-group-body">
             <article class="delivery-row" data-category="automation" data-status="todo">
               <div class="delivery-category">Automation Scope</div>
@@ -671,11 +671,6 @@
               <div class="delivery-category">Reply Quality</div>
               <div class="delivery-main"><h3>不同人设 Prompt 模板</h3><p>维护多套受控的问候、表达、签名和语气模板，在保持自然口吻的同时统一敏感表达边界。</p></div>
               <div class="status-meta"><span class="status-chip todo">待办</span></div>
-            </article>
-            <article class="delivery-row" data-category="automation" data-status="doing">
-              <div class="delivery-category">Automation Scope</div>
-              <div class="delivery-main"><h3>三类确定性自动化范围</h3><p>Phase 2 收口到 account suspension / fraud、detailed invoice 和 enablement；前两类沿用现有 Billing 基础，enablement 仍需接入并验证。</p></div>
-              <div class="status-meta"><span class="status-chip doing">进行中</span></div>
             </article>
             <article class="delivery-row" data-category="validation" data-status="doing">
               <div class="delivery-category">Validation &amp; Metrics</div>
@@ -706,8 +701,14 @@
         </details>
 
         <details class="delivery-group" data-status-group="complete">
-          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>17 项</span></summary>
+          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>18 项</span></summary>
           <div class="delivery-group-body">
+        <article class="delivery-row" data-category="automation" data-status="done">
+          <div class="delivery-category">Automation Scope</div>
+          <div class="delivery-main"><h3>三类确定性自动化范围</h3><p>Automation 已覆盖 account verification、detailed invoice 和 enablement；Enablement 使用独立 handler 收集 App ID、发送内部开通邮件并接收 Outlook 处理结果。</p></div>
+          <div class="status-meta"><span class="status-chip done">已完成</span></div>
+          <div class="pr-links"><span class="pr-link">Current implementation</span></div>
+        </article>
         <article class="delivery-row" data-category="reliability" data-status="done">
           <div class="delivery-category">Reliability</div>
           <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 以只读目录展示 Route、Client、Engineer、Guardrail Agent 的 system Prompt、正式 skill 与 MCP 状态，并将 Billing 明确标记为确定性服务；Current route 与 Route category 独立收口到 Route Strategy。</p></div>

@@ -24,6 +24,12 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "tooling_profile": "deterministic_billing_intake",
     },
     {
+        "scope_label": "enablement",
+        "execution_action": "enablement",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
+        "tooling_profile": "deterministic_enablement_intake",
+    },
+    {
         "scope_label": "billing",
         "execution_action": "human_review_required",
         "route_family": "billing_review",

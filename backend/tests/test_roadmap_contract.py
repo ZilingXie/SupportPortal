@@ -52,7 +52,7 @@ class RoadmapContractTests(unittest.TestCase):
             "Environment Config names-only inventory",
             "Zendesk ticket ID 作为 canonical Ticket ID",
             "Agent Config 与 Route Strategy 管理面",
-            "17 项",
+            "18 项",
             'class="delivery-group" data-status-group="incomplete" open',
             'class="delivery-group" data-status-group="complete"',
             "Active UI",

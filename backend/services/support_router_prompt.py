@@ -448,6 +448,39 @@ ROUTE_FEW_SHOT_EXAMPLES = (
             "risk_flags": ["account_access_restore"],
         },
     },
+    {
+        "message": (
+            "My App ID is 7da36383d624411698e5c0bc1fda6324. We enabled co-host token "
+            "authentication but PK view does not show, so please enable Media Relay from your end."
+        ),
+        "hints": {"agora": ["app id", "media relay"], "flags": {"has_agora_brand": True}},
+        "output": {
+            "scope_label": "enablement",
+            "semantic_intent": "enablement.feature_activation",
+            "recommended_action": "enablement",
+            "automation_eligibility": "eligible",
+            "confidence": 0.98,
+            "reason": "Customer explicitly asks Agora to enable Media Relay from the backend.",
+            "matched_signals": ["enable Media Relay", "from your end"],
+            "evidence_spans": ["please enable Media Relay from your end"],
+            "risk_flags": [],
+        },
+    },
+    {
+        "message": "How do I enable and configure Media Relay in the SDK?",
+        "hints": {"agora": ["media relay", "sdk"], "flags": {"has_agora_brand": True}},
+        "output": {
+            "scope_label": "agora_technical",
+            "semantic_intent": None,
+            "recommended_action": "rag",
+            "automation_eligibility": None,
+            "confidence": 0.96,
+            "reason": "Customer asks for technical configuration guidance rather than backend activation.",
+            "matched_signals": ["How do I enable", "configure", "SDK"],
+            "evidence_spans": [],
+            "risk_flags": [],
+        },
+    },
 )
 
 

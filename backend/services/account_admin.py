@@ -12,7 +12,7 @@ from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-router-v1"
+ROUTER_PROMPT_VERSION = "account-router-v2"
 ROUTING_STAGE_DESCRIPTIONS = {
     "semantic_intent": "Classifies the request intent and captures the evidence used by the router.",
     "confidence_threshold": "Checks whether the model confidence is high enough to use the semantic result.",
@@ -84,6 +84,10 @@ _ENV_EXACT_DESCRIPTIONS = {
     "BILLING_AUTOMATION_EMAIL_FROM": "Sender address used by billing automation email.",
     "BILLING_AUTOMATION_MAIL_TRANSPORT": "Selects the transport used to send billing automation email.",
     "BILLING_AUTOMATION_REPLY_RECORD_PATH": "Filesystem path used to record polled billing reply metadata.",
+    "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "Internal destination for backend feature-enablement requests.",
+    "AUTOMATION_REPLY_POLL_ENABLED": "Enables polling for registered automation-handler email replies.",
+    "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS": "Interval between automation email reply polls.",
+    "AUTOMATION_REPLY_POLL_MAX_MESSAGES": "Maximum unread messages inspected by each automation reply poll.",
     "DEPLOY_MIN_FREE_DISK_GB": "Minimum free disk space required before an EC2 deployment proceeds.",
     "DEPLOY_REPORT_ENABLE_AI": "Enables AI-generated analysis in deployment reports.",
     "DEPLOY_REPORT_LOG_SINCE": "Lookback window used when collecting logs for a deployment report.",
@@ -98,6 +102,8 @@ _ENV_EXACT_DESCRIPTIONS = {
 }
 
 _ENV_PREFIX_DESCRIPTIONS = (
+    ("ENABLEMENT_AUTOMATION_", "enablement automation"),
+    ("AUTOMATION_REPLY_", "automation reply polling"),
     ("BILLING_AUTOMATION_", "billing automation"),
     ("ENGINEER_INVESTIGATION_REPLY_", "engineer investigation reply"),
     ("ENGINEER_ASSIGNMENT_", "engineer assignment"),

@@ -18,6 +18,15 @@ from backend.services.billing_automation import (
     detect_billing_route,
     send_billing_internal_email,
 )
+from backend.services.enablement_automation import (
+    ENABLEMENT_ACTION,
+    ENABLEMENT_SCOPE_LABEL,
+    ENABLEMENT_SEMANTIC_INTENT,
+    ENABLEMENT_TOOLING_PROFILE,
+    build_enablement_automation_result,
+    detect_enablement_route,
+    send_enablement_internal_email,
+)
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
     INTENT_ROUTER_SCENARIO,
@@ -254,6 +263,10 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
         if normalized_action == "human_review_required":
             return "billing_review", "human_review_required", BILLING_TOOLING_PROFILE
         return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
+    if clean_scope == ENABLEMENT_SCOPE_LABEL:
+        if normalized_action in {ENABLEMENT_ACTION, "automation_candidate"}:
+            return BILLING_ROUTE_FAMILY, ENABLEMENT_ACTION, ENABLEMENT_TOOLING_PROFILE
+        return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
     if clean_scope == "agora_technical":
         return "agora_docs_rag", "rag", "agora_docs_only"
     if clean_scope == "agora_non_technical":
@@ -461,6 +474,21 @@ def _heuristic_route_decision(
     text = _normalize_text(message)
     if not text:
         return None
+
+    enablement_match = detect_enablement_route(text)
+    if enablement_match is not None:
+        return _build_route_decision(
+            scope_label=ENABLEMENT_SCOPE_LABEL,
+            action=ENABLEMENT_ACTION,
+            confidence=0.99,
+            reason=enablement_match.reason,
+            matched_signals=enablement_match.matched_signals,
+            response_language=response_language,
+            semantic_intent=ENABLEMENT_SEMANTIC_INTENT,
+            automation_eligibility="eligible",
+            policy_decision="policy_gate",
+            router_source="deterministic",
+        )
 
     billing_match = detect_billing_route(text)
     if billing_match is not None:
@@ -714,6 +742,7 @@ def _llm_route_decision(
     if scope_label not in {
         "ticket_resolution",
         BILLING_SCOPE_LABEL,
+        ENABLEMENT_SCOPE_LABEL,
         "small_talk",
         "non_agora",
         "agora_non_technical",
@@ -742,6 +771,13 @@ def _llm_route_decision(
             failure_type="invalid_payload",
             failure_source="action_validation",
         )
+    if scope_label == ENABLEMENT_SCOPE_LABEL and action not in {ENABLEMENT_ACTION, "automation_candidate"}:
+        return _LlmRouteAttempt(
+            decision=None,
+            attempted=True,
+            failure_type="invalid_payload",
+            failure_source="action_validation",
+        )
     return _LlmRouteAttempt(
         decision=_build_route_decision(
             scope_label=scope_label,
@@ -762,7 +798,7 @@ def _llm_route_decision(
     )
 
 
-def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
+def _apply_policy_gate(decision: SupportRouteDecision, *, message: str) -> SupportRouteDecision:
     """Apply deterministic safety policy over LLM semantic routing.
 
     The LLM recommends intent and eligibility; the policy gate has final say on:
@@ -788,6 +824,39 @@ def _apply_policy_gate(decision: SupportRouteDecision) -> SupportRouteDecision:
         elif action == "detailed_invoice":
             intent = "billing.detailed_invoice"
     semantic_intent = decision.semantic_intent or intent or None
+
+    if decision.scope_label == ENABLEMENT_SCOPE_LABEL:
+        enablement_match = detect_enablement_route(message)
+        if enablement_match is None or semantic_intent != ENABLEMENT_SEMANTIC_INTENT:
+            return _policy_route_decision(
+                scope_label="agora_technical",
+                action="rag",
+                confidence=decision.confidence,
+                reason="enablement_policy_gate_failed",
+                matched_signals=list(decision.matched_signals),
+                response_language=decision.response_language,
+                semantic_intent=None,
+                automation_eligibility="not_eligible",
+                policy_decision="policy_gate",
+                not_automated_reason="explicit_enablement_request_required",
+                risk_flags=list(decision.risk_flags),
+                evidence_spans=list(decision.evidence_spans),
+                router_source=decision.router_source,
+            )
+        return _policy_route_decision(
+            scope_label=ENABLEMENT_SCOPE_LABEL,
+            action=ENABLEMENT_ACTION,
+            confidence=decision.confidence,
+            reason=decision.reason,
+            matched_signals=list(decision.matched_signals),
+            response_language=decision.response_language,
+            semantic_intent=ENABLEMENT_SEMANTIC_INTENT,
+            automation_eligibility="eligible",
+            policy_decision="policy_gate",
+            risk_flags=list(decision.risk_flags),
+            evidence_spans=list(decision.evidence_spans),
+            router_source=decision.router_source,
+        )
 
     # Non-billing: pass through unchanged.
     if decision.scope_label != BILLING_SCOPE_LABEL:
@@ -1052,7 +1121,8 @@ def decide_support_route(
         )
         if llm_attempt.decision is not None and llm_attempt.decision.confidence >= threshold:
             return _apply_policy_gate(
-                _with_intent_router_success_audit(llm_attempt.decision, threshold=threshold)
+                _with_intent_router_success_audit(llm_attempt.decision, threshold=threshold),
+                message=text,
             )
         # Fall through to heuristic + fallback with audit tracking.
         heuristic_decision = _heuristic_route_decision(
@@ -1109,7 +1179,8 @@ def decide_support_route(
     )
     if llm_attempt.decision is not None and llm_attempt.decision.confidence >= threshold:
         return _apply_policy_gate(
-            _with_intent_router_success_audit(llm_attempt.decision, threshold=threshold)
+            _with_intent_router_success_audit(llm_attempt.decision, threshold=threshold),
+            message=text,
         )
 
     audit_kwargs = _build_fallback_audit_kwargs(llm_attempt=llm_attempt, threshold=threshold)
@@ -1399,6 +1470,42 @@ def resolve_support_message(
                 "not_automated_reason": decision.not_automated_reason or "",
                 "risk_flags": list(decision.risk_flags),
                 "evidence_spans": list(decision.evidence_spans),
+            },
+            **_route_audit_kwargs_from_decision(decision),
+        )
+    if decision.route_family == BILLING_ROUTE_FAMILY and decision.scope_label == ENABLEMENT_SCOPE_LABEL:
+        enablement_result = build_enablement_automation_result(
+            message=message,
+            ticket_id=ticket_id or "{{ticket_id}}",
+            account_case_id=f"AC-{ticket_id}" if ticket_id else "{{account_case_id}}",
+            customer_email=customer_id,
+        )
+        email_send_result = (
+            send_enablement_internal_email(enablement_result.internal_email)
+            if enablement_result.internal_email
+            else {"status": "not_ready", "reason": "missing_required_fields"}
+        )
+        return SupportResolution(
+            answer=enablement_result.customer_reply,
+            confidence=round(decision.confidence, 2),
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="workflow",
+            scope_label=decision.scope_label,
+            route_family=decision.route_family,
+            execution_action=decision.execution_action,
+            tooling_profile=decision.tooling_profile,
+            route_reason=decision.reason,
+            route_confidence=decision.confidence,
+            search_used=False,
+            matched_signals=list(decision.matched_signals),
+            evidence_summary={
+                "enablement_missing_fields": list(enablement_result.missing_fields),
+                "enablement_collected_fields": dict(enablement_result.collected_fields),
+                "enablement_internal_email_send_status": str(email_send_result.get("status") or ""),
+                "enablement_internal_email_send_reason": str(email_send_result.get("reason") or ""),
+                **({"enablement_internal_email": dict(enablement_result.internal_email)} if enablement_result.internal_email else {}),
             },
             **_route_audit_kwargs_from_decision(decision),
         )

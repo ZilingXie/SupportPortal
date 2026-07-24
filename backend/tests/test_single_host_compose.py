@@ -124,6 +124,22 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertIn(
+            "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL: ${ENABLEMENT_AUTOMATION_INTERNAL_EMAIL:-}",
+            worker_block,
+        )
+        self.assertIn(
+            "AUTOMATION_REPLY_POLL_ENABLED: ${AUTOMATION_REPLY_POLL_ENABLED:-}",
+            worker_block,
+        )
+        self.assertIn(
+            "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS: ${AUTOMATION_REPLY_POLL_INTERVAL_SECONDS:-}",
+            worker_block,
+        )
+        self.assertIn(
+            "AUTOMATION_REPLY_POLL_MAX_MESSAGES: ${AUTOMATION_REPLY_POLL_MAX_MESSAGES:-}",
+            worker_block,
+        )
+        self.assertIn(
             "BILLING_AUTOMATION_REPLY_POLL_ENABLED: ${BILLING_AUTOMATION_REPLY_POLL_ENABLED:-false}",
             worker_block,
         )
