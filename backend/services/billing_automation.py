@@ -327,6 +327,19 @@ def poll_billing_request_replies(
     handler: Any | None = None,
     max_messages: int = 25,
 ) -> list[BillingRequestReply]:
+    return poll_automation_request_replies(
+        handler=handler,
+        max_messages=max_messages,
+        subject_prefixes=(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,),
+    )
+
+
+def poll_automation_request_replies(
+    *,
+    handler: Any | None = None,
+    max_messages: int = 25,
+    subject_prefixes: tuple[str, ...] = (BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,),
+) -> list[BillingRequestReply]:
     graph_config = _load_graph_mail_config()
     missing_graph = [name for name, value in graph_config.items() if not value]
     if missing_graph:
@@ -334,17 +347,22 @@ def poll_billing_request_replies(
 
     access_token = _acquire_graph_access_token(graph_config)
     replies: list[BillingRequestReply] = []
+    normalized_prefixes = tuple(_clean_text(prefix).lower() for prefix in subject_prefixes if _clean_text(prefix))
     for summary in _list_unread_inbox_messages(access_token=access_token, max_messages=max_messages):
         subject = _clean_text(summary.get("subject"))
         message_id = _clean_text(summary.get("id"))
-        if BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX.lower() not in subject.lower() or not message_id:
+        matched_prefix = next((prefix for prefix in normalized_prefixes if prefix in subject.lower()), "")
+        if not matched_prefix or not message_id:
             continue
 
         message = _get_graph_message(access_token=access_token, message_id=message_id)
         reply = _billing_request_reply_from_graph_message(message or summary)
         if not reply.message_id:
             continue
-        if bool(message.get("hasAttachments")) or bool(summary.get("hasAttachments")):
+        if (
+            matched_prefix == BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX.lower()
+            and (bool(message.get("hasAttachments")) or bool(summary.get("hasAttachments")))
+        ):
             attachments = _download_billing_reply_pdf_attachments(
                 access_token=access_token,
                 message_id=reply.message_id,

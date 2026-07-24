@@ -24,7 +24,7 @@
 - Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。
 - 对话支持上传 txt/log/err 日志附件。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
-- Automation 类别通过 account_verification 和 detailed_invoice 子类自动收集字段并交由已注册 handler 处理；账户暂停请求统一归入 account_verification。
+- Automation 类别通过 account_verification、detailed_invoice 和 enablement 子类自动收集字段并交由已注册 handler 处理；账户暂停请求统一归入 account_verification。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 - Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automation 或非自动化路由。
 - Account 入口可查看 Account Case 历史和详情。

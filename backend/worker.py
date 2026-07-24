@@ -47,7 +47,11 @@ from backend.services.investigation_flow import (
     normalize_ticket_status,
     start_or_refresh_investigation,
 )
-from backend.services.billing_automation import poll_billing_request_replies, record_billing_request_reply
+from backend.services.billing_automation import poll_automation_request_replies, record_billing_request_reply
+from backend.services.enablement_automation import (
+    ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
+    build_enablement_customer_followup,
+)
 from backend.services.billing_response_flow import (
     BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
     BILLING_RESPONSE_EVENT,
@@ -86,6 +90,9 @@ SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
 BILLING_REPLY_POLL_ENABLED_ENV = "BILLING_AUTOMATION_REPLY_POLL_ENABLED"
 BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
+AUTOMATION_REPLY_POLL_ENABLED_ENV = "AUTOMATION_REPLY_POLL_ENABLED"
+AUTOMATION_REPLY_POLL_INTERVAL_ENV = "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
+AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_MESSAGES"
 ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV = "ENGINEER_ASSIGNMENT_POLLER_ENABLED"
 ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV = "ENGINEER_ASSIGNMENT_POLL_INTERVAL_SECONDS"
 ACCOUNT_REPLY_POLL_INTERVAL_ENV = "ACCOUNT_REPLY_POLL_INTERVAL_SECONDS"
@@ -178,15 +185,24 @@ def _worker_concurrency_from_env() -> int:
 
 
 def _billing_reply_poller_enabled_from_env() -> bool:
-    return str(os.getenv(BILLING_REPLY_POLL_ENABLED_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+    value = os.getenv(AUTOMATION_REPLY_POLL_ENABLED_ENV)
+    if value is None or not str(value).strip():
+        value = os.getenv(BILLING_REPLY_POLL_ENABLED_ENV)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _billing_reply_poll_interval_from_env() -> float:
-    return _safe_positive_float(os.getenv(BILLING_REPLY_POLL_INTERVAL_ENV), 300.0)
+    return _safe_positive_float(
+        os.getenv(AUTOMATION_REPLY_POLL_INTERVAL_ENV) or os.getenv(BILLING_REPLY_POLL_INTERVAL_ENV),
+        300.0,
+    )
 
 
 def _billing_reply_poll_max_messages_from_env() -> int:
-    return _safe_positive_int(os.getenv(BILLING_REPLY_POLL_MAX_MESSAGES_ENV), 25)
+    return _safe_positive_int(
+        os.getenv(AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV) or os.getenv(BILLING_REPLY_POLL_MAX_MESSAGES_ENV),
+        25,
+    )
 
 
 def _engineer_assignment_poller_enabled_from_env() -> bool:
@@ -217,21 +233,22 @@ def _install_signal_handlers() -> None:
 
 
 def _run_billing_reply_poller(interval_seconds: float) -> None:
-    LOGGER.info("Billing reply poller started with interval_seconds=%s.", interval_seconds)
+    LOGGER.info("Automation reply poller started with interval_seconds=%s.", interval_seconds)
     while not SHUTTING_DOWN:
         try:
-            replies = poll_billing_request_replies(
-                handler=handle_billing_request_reply,
+            replies = poll_automation_request_replies(
+                handler=handle_automation_request_reply,
                 max_messages=_billing_reply_poll_max_messages_from_env(),
+                subject_prefixes=("[Billing Request]", ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX),
             )
             if replies:
-                LOGGER.info("Billing reply poller handled %s reply message(s).", len(replies))
+                LOGGER.info("Automation reply poller handled %s reply message(s).", len(replies))
         except Exception as exc:
-            LOGGER.warning("Billing reply poller failed: %s", exc)
+            LOGGER.warning("Automation reply poller failed: %s", exc)
         sleep_until = time.time() + max(interval_seconds, 1.0)
         while not SHUTTING_DOWN and time.time() < sleep_until:
             time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
-    LOGGER.info("Billing reply poller stopped.")
+    LOGGER.info("Automation reply poller stopped.")
 
 
 def _run_engineer_assignment_poller(interval_seconds: float) -> None:
@@ -482,7 +499,7 @@ def _billing_resolution_automation_status(result: str, notify_customer: bool) ->
     return "customer_notified" if notify_customer else "resolved_without_customer_notification"
 
 
-def _billing_reply_already_processed(client_ticket_id: str, message_id: str) -> bool:
+def _automation_reply_already_processed(client_ticket_id: str, message_id: str) -> bool:
     normalized_message_id = str(message_id or "").strip()
     if not normalized_message_id:
         return False
@@ -490,7 +507,8 @@ def _billing_reply_already_processed(client_ticket_id: str, message_id: str) -> 
         payload = event.get("payload") if isinstance(event, dict) else {}
         if not isinstance(payload, dict):
             continue
-        if str(payload.get("billing_reply_message_id") or "").strip() == normalized_message_id:
+        recorded_message_id = payload.get("automation_reply_message_id") or payload.get("billing_reply_message_id")
+        if str(recorded_message_id or "").strip() == normalized_message_id:
             return True
     return False
 
@@ -603,7 +621,7 @@ def handle_billing_request_reply(reply: Any) -> None:
     if not client_ticket_id:
         raise ValueError("billing reply subject does not include client ticket id")
     message_id = str(getattr(reply, "message_id", "") or "").strip()
-    if _billing_reply_already_processed(client_ticket_id, message_id):
+    if _automation_reply_already_processed(client_ticket_id, message_id):
         LOGGER.info(
             "Billing reply message %s for ticket %s was already processed.",
             message_id,
@@ -704,6 +722,95 @@ def handle_billing_request_reply(reply: Any) -> None:
     ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_AI_FOLLOWUP_EVENT, followup_event)
 
 
+def handle_enablement_request_reply(reply: Any) -> None:
+    client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
+    if not client_ticket_id:
+        raise ValueError("enablement reply subject does not include client ticket id")
+    message_id = str(getattr(reply, "message_id", "") or "").strip()
+    if _automation_reply_already_processed(client_ticket_id, message_id):
+        LOGGER.info(
+            "Enablement reply message %s for ticket %s was already processed.",
+            message_id,
+            client_ticket_id,
+        )
+        return
+
+    account_case = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
+    if account_case is None:
+        raise ValueError(f"account case not found for {client_ticket_id}")
+    if str(account_case.get("automation_handler") or "").strip() != "enablement":
+        raise ValueError(f"account case {client_ticket_id} is not handled by enablement automation")
+    canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
+    if canonical_ticket is None:
+        raise ValueError(f"linked support ticket not found for {client_ticket_id}")
+
+    note = str(getattr(reply, "body_text", "") or "").strip()
+    if not note:
+        raise ValueError("enablement reply body is empty")
+    collected_fields = account_case.get("collected_fields")
+    collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
+    customer_reply = build_enablement_customer_followup(
+        requested_feature_label=str(
+            collected_fields.get("requested_feature_label")
+            or collected_fields.get("requested_feature")
+            or "feature"
+        ),
+        resolution_note=note,
+    )
+
+    timestamp = now_iso()
+    assistant_message = {
+        "role": "assistant",
+        "content": customer_reply,
+        "created_at": timestamp,
+        "content_format": "plaintext",
+        "source": "enablement_reply_email",
+    }
+    initial_message_count = len(canonical_ticket.get("messages", []))
+    canonical_ticket.setdefault("messages", []).append(assistant_message)
+    canonical_ticket["updated_at"] = timestamp
+    account_case["automation_status"] = "customer_notified"
+    account_case["customer_reply"] = customer_reply
+    account_case["updated_at"] = timestamp
+
+    ticket_repository.save_ticket(
+        canonical_ticket,
+        new_messages=canonical_ticket.get("messages", [])[initial_message_count:],
+    )
+    ticket_repository.save_account_case(account_case)
+    resolution_event = {
+        "event": "enablement_internal_resolution_received",
+        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
+        "ticket_id": client_ticket_id,
+        "note": note,
+        "created_at": timestamp,
+        "source": "enablement_reply_email",
+        "automation_reply_message_id": message_id,
+    }
+    ticket_repository.record_event(client_ticket_id, resolution_event["event"], resolution_event)
+    followup_event = {
+        "event": "enablement_customer_followup_generated",
+        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
+        "ticket_id": client_ticket_id,
+        "customer_reply": customer_reply,
+        "created_at": timestamp,
+        "source": "enablement_reply_email",
+        "automation_reply_message_id": message_id,
+    }
+    ticket_repository.record_event(client_ticket_id, followup_event["event"], followup_event)
+
+
+def handle_automation_request_reply(reply: Any) -> None:
+    subject = str(getattr(reply, "subject", "") or "")
+    if ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX.lower() in subject.lower():
+        handle_enablement_request_reply(reply)
+        return
+    if "[billing request]" in subject.lower():
+        handle_billing_request_reply(reply)
+        return
+    raise ValueError("unsupported automation reply subject")
+
+
 def _start_billing_reply_poller_if_enabled() -> threading.Thread | None:
     if not _billing_reply_poller_enabled_from_env():
         return None
@@ -711,7 +818,7 @@ def _start_billing_reply_poller_if_enabled() -> threading.Thread | None:
     thread = threading.Thread(
         target=_run_billing_reply_poller,
         args=(interval_seconds,),
-        name="billing-reply-poller",
+        name="automation-reply-poller",
         daemon=True,
     )
     thread.start()

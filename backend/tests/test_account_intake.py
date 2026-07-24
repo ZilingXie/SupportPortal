@@ -171,7 +171,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-router-v1")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-router-v2")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn("Detailed invoice request", executions[0]["user_prompt"])
         replies = self.repository.list_account_reply_executions(payload["ticket_id"])
@@ -179,6 +179,79 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(replies[0]["persona_key"], "default-support")
         self.assertEqual(replies[0]["persona_version"], 1)
         self.assertEqual(replies[0]["reply_kind"], "detailed_invoice")
+
+    def test_account_intake_routes_enablement_and_sends_internal_request(self) -> None:
+        question = (
+            "My App ID: 7da36383d624411698e5c0bc1fda6324. We enabled co-host token authentication "
+            "but PK view does not show, so please enable Media Relay from your end."
+        )
+        with patch.dict(os.environ, {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "enablement@example.com"}, clear=False), patch.object(
+            main, "dispatch_event", AsyncMock()
+        ), patch(
+            "backend.main.send_enablement_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_email:
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Enable Media Relay Feature",
+                    "question": question,
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["category"], "automation")
+        self.assertEqual(payload["subcategory"], "enablement")
+        self.assertEqual(payload["route_family"], "automated")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["automation_handler"], "enablement")
+        self.assertEqual(payload["semantic_intent"], "enablement.feature_activation")
+        self.assertEqual(payload["collected_fields"]["app_id"], "7da36383d624411698e5c0bc1fda6324")
+        self.assertEqual(payload["collected_fields"]["requested_feature"], "media_relay")
+        self.assertEqual(payload["internal_email_send_status"], "sent")
+        send_email.assert_called_once()
+        email_payload = send_email.call_args.args[0]
+        self.assertEqual(email_payload["to"], "enablement@example.com")
+        self.assertIn("[Enablement Request]", email_payload["subject"])
+        self.assertIn(payload["account_case_id"], email_payload["body"])
+
+    def test_enablement_followup_collects_app_id_and_sends_only_once(self) -> None:
+        with patch.dict(os.environ, {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "enablement@example.com"}, clear=False), patch.object(
+            main, "dispatch_event", AsyncMock()
+        ), patch(
+            "backend.main.send_enablement_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_email:
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Cross Channel Media Relay Activation",
+                    "question": "Please enable Cross Channel Media Relay from your end.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+            self.assertEqual(created.status_code, 200, created.text)
+            created_payload = created.json()
+            self.assertEqual(created_payload["missing_fields"], ["app_id"])
+            send_email.assert_not_called()
+
+            completed = self.client.post(
+                f"/api/account/cases/{created_payload['account_case_id']}/reply",
+                json={"message": "App ID: 7da36383d624411698e5c0bc1fda6324"},
+            )
+            self.assertEqual(completed.status_code, 200, completed.text)
+            self.assertEqual(completed.json()["missing_fields"], [])
+            self.assertEqual(completed.json()["internal_email_send_status"], "sent")
+            send_email.assert_called_once()
+
+            repeated = self.client.post(
+                f"/api/account/cases/{created_payload['account_case_id']}/reply",
+                json={"message": "Thank you."},
+            )
+            self.assertEqual(repeated.status_code, 200, repeated.text)
+            send_email.assert_called_once()
 
     def test_account_intake_preserves_non_automated_ticket_without_email(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(

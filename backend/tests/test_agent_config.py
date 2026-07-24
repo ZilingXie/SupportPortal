@@ -45,7 +45,7 @@ class AgentConfigTests(unittest.TestCase):
         payload = build_agent_config_payload([])
         agents = {agent["key"]: agent for agent in payload["agents"]}
 
-        self.assertEqual(agents["route-agent"]["prompts"][0]["version"], "account-router-v1")
+        self.assertEqual(agents["route-agent"]["prompts"][0]["version"], "account-router-v2")
         self.assertIn("Agora's route classifier", agents["route-agent"]["prompts"][0]["content"])
         self.assertGreater(len(agents["client-agent"]["prompts"]), 10)
         self.assertEqual(

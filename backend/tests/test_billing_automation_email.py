@@ -11,6 +11,7 @@ from backend.services.billing_automation import (
     BILLING_ACTION_ACCOUNT_VERIFICATION,
     BillingRequestReply,
     build_billing_automation_result,
+    poll_automation_request_replies,
     poll_billing_request_replies,
     record_billing_request_reply,
     send_billing_internal_email,
@@ -321,6 +322,42 @@ class BillingAutomationEmailTests(unittest.TestCase):
 
         self.assertEqual(replies, [])
         self.assertEqual(len(requests), 1)
+
+    def test_poll_automation_request_replies_does_not_download_enablement_attachments(self) -> None:
+        summary = {
+            "id": "msg-enablement",
+            "subject": "Re: [Enablement Request] Media Relay - Ticket TK-1",
+            "hasAttachments": True,
+        }
+        message = {
+            **summary,
+            "from": {"emailAddress": {"address": "enablement@example.com"}},
+            "body": {"contentType": "text", "content": "Review is complete."},
+        }
+
+        with patch.dict(os.environ, GRAPH_ENV), patch(
+            "backend.services.billing_automation._acquire_graph_access_token",
+            return_value="access-token",
+        ), patch(
+            "backend.services.billing_automation._list_unread_inbox_messages",
+            return_value=[summary],
+        ), patch(
+            "backend.services.billing_automation._get_graph_message",
+            return_value=message,
+        ), patch(
+            "backend.services.billing_automation._download_billing_reply_pdf_attachments",
+        ) as download_mock, patch(
+            "backend.services.billing_automation._mark_graph_message_read",
+        ) as mark_read_mock:
+            replies = poll_automation_request_replies(
+                subject_prefixes=("[Billing Request]", "[Enablement Request]"),
+            )
+
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].body_text, "Review is complete.")
+        self.assertEqual(replies[0].attachments, ())
+        download_mock.assert_not_called()
+        mark_read_mock.assert_called_once_with(access_token="access-token", message_id="msg-enablement")
 
     def test_poll_billing_request_replies_leaves_message_unread_when_handler_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

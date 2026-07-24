@@ -34,6 +34,18 @@ class AutomationRoutingTests(unittest.TestCase):
             frozenset({"account_verification", "detailed_invoice"}),
         )
 
+    def test_enablement_uses_its_own_handler(self) -> None:
+        self.assertEqual(
+            automation_metadata(route_family="automated", execution_action="enablement"),
+            {
+                "category": "automation",
+                "subcategory": "enablement",
+                "route_status": "automated",
+                "automation_handler": "enablement",
+            },
+        )
+        self.assertEqual(AUTOMATION_HANDLER_REGISTRY["enablement"], frozenset({"enablement"}))
+
     def test_legacy_account_suspension_is_canonicalized_to_account_verification(self) -> None:
         self.assertEqual(
             automation_metadata(

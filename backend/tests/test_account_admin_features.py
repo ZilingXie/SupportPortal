@@ -141,7 +141,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
         self.assertEqual(
             automation["subcategories"],
-            ["account_verification", "detailed_invoice"],
+            ["account_verification", "detailed_invoice", "enablement"],
         )
         billing = next(category for category in payload["route_categories"] if category["name"] == "billing")
         self.assertEqual(

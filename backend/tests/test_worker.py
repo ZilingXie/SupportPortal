@@ -2033,6 +2033,67 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_billing_ticket.assert_not_called()
         repository.record_event.assert_not_called()
 
+    def test_handle_enablement_request_reply_notifies_customer_without_assuming_success(self) -> None:
+        repository = Mock()
+        repository.list_ticket_events.return_value = []
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-ACC-2",
+            "billing_ticket_id": "AC-TK-ACC-2",
+            "client_ticket_id": "TK-ACC-2",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+            "route_status": "automated",
+            "collected_fields": {
+                "app_id": "7da36383d624411698e5c0bc1fda6324",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ACC-2",
+            "messages": [{"role": "customer", "content": "Please enable Media Relay."}],
+        }
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-1",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ACC-2",
+            sender="enablement@example.com",
+            body_text="Please ask the customer to add a payment method before activation.",
+            received_at="2026-07-24T00:00:00Z",
+        )
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker.handle_automation_request_reply(reply)
+
+        saved_ticket = repository.save_ticket.call_args.args[0]
+        assistant_message = saved_ticket["messages"][-1]
+        self.assertEqual(assistant_message["source"], "enablement_reply_email")
+        self.assertIn("Here is their update", assistant_message["content"])
+        self.assertNotIn("has been enabled", assistant_message["content"])
+        saved_case = repository.save_account_case.call_args.args[0]
+        self.assertEqual(saved_case["automation_status"], "customer_notified")
+        self.assertEqual(saved_case["route_status"], "automated")
+        self.assertEqual(repository.record_event.call_count, 2)
+        event_payload = repository.record_event.call_args_list[0].args[2]
+        self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
+
+    def test_handle_enablement_request_reply_is_idempotent(self) -> None:
+        repository = Mock()
+        repository.list_ticket_events.return_value = [
+            {"payload": {"automation_reply_message_id": "enablement-msg-1"}}
+        ]
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-1",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ACC-2",
+            body_text="Enabled.",
+        )
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker.handle_enablement_request_reply(reply)
+
+        repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
+        repository.save_ticket.assert_not_called()
+        repository.save_account_case.assert_not_called()
+
     def test_handle_billing_request_reply_rejects_empty_body_before_marking_read(self) -> None:
         repository = Mock()
         repository.list_ticket_events.return_value = []
@@ -2205,6 +2266,21 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": "true"}, clear=False):
             self.assertTrue(worker._billing_reply_poller_enabled_from_env())
 
+    def test_automation_reply_poller_config_takes_precedence(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AUTOMATION_REPLY_POLL_ENABLED": "true",
+                "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS": "11",
+                "AUTOMATION_REPLY_POLL_MAX_MESSAGES": "9",
+                "BILLING_AUTOMATION_REPLY_POLL_ENABLED": "false",
+            },
+            clear=False,
+        ):
+            self.assertTrue(worker._billing_reply_poller_enabled_from_env())
+            self.assertEqual(worker._billing_reply_poll_interval_from_env(), 11.0)
+            self.assertEqual(worker._billing_reply_poll_max_messages_from_env(), 9)
+
     def test_start_billing_reply_poller_starts_daemon_thread_when_enabled(self) -> None:
         started_threads = []
 
@@ -2229,7 +2305,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         self.assertIsNotNone(thread)
         self.assertEqual(len(started_threads), 1)
-        self.assertEqual(started_threads[0].name, "billing-reply-poller")
+        self.assertEqual(started_threads[0].name, "automation-reply-poller")
         self.assertTrue(started_threads[0].daemon)
         self.assertEqual(started_threads[0].kwargs["args"], (7.0,))
 

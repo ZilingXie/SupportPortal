@@ -2773,3 +2773,22 @@ For each new entry, record:
   - Deterministic replies apply the published opener/signoff policy, and every emitted account reply records its effective Persona Prompt for audit.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_admin_features backend.tests.test_account_intake backend.tests.test_workspace_api backend.tests.test_workspace_admin_ui_contract`
+
+## 2026-07-24 - Enablement automation routing
+
+- Area or subsystem: Support Router / Automation Enablement
+- Prompt or model version: `account-router-v2`
+- Summary: Added the `enablement` scope and `enablement.feature_activation` intent for explicit requests that Agora activate a named backend feature. Added positive Media Relay and negative SDK configuration examples, while a deterministic policy gate requires concrete feature evidence and an explicit backend activation request.
+- Reason: Repeated Media Relay activation tickets should enter the Automated Case flow, while how-to, configuration, authentication, and troubleshooting questions must remain on the Agora technical RAG route.
+- Affected files or config:
+  - `backend/services/prompts/router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/support_router.py`
+  - `backend/services/account_admin.py`
+- Expected behavior change:
+  - Explicit requests such as “please enable Media Relay from your end” route to `Automation / enablement`.
+  - “How do I enable or configure Media Relay?” remains `agora_technical / rag`.
+  - Vague activation requests without a concrete feature fail closed to the non-automated technical route even if the model recommends Enablement.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_support_router_enablement backend.tests.test_support_router_semantic_billing -v`
+  - `rtk python3 scripts/verify_feature_list.py`
