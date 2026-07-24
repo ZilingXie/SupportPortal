@@ -104,7 +104,7 @@ class GoldenBillingRoutingTests(unittest.TestCase):
         self.assertEqual(decision.scope_label, "billing")
         self.assertNotEqual(decision.execution_action, "web_search")
         # Semantic intent should be populated
-        self.assertEqual(decision.semantic_intent, "billing.account_suspension")
+        self.assertEqual(decision.semantic_intent, "billing.account_verification")
         # router_source may be 'deterministic' (expanded regex) or 'llm_semantic'
         self.assertIn(decision.router_source, {"deterministic", "llm_semantic"})
         # When LLM-sourced, automation_eligibility must be set
@@ -140,7 +140,7 @@ class GoldenBillingRoutingTests(unittest.TestCase):
             decision = decide_support_route(message)
 
         self.assertEqual(decision.scope_label, "billing")
-        self.assertEqual(decision.semantic_intent, "billing.account_suspension")
+        self.assertEqual(decision.semantic_intent, "billing.account_verification")
         self.assertNotEqual(decision.execution_action, "web_search")
 
     def test_deterministic_account_suspension_with_refund_risk_routes_to_billing_review(self) -> None:
@@ -192,7 +192,7 @@ class GoldenBillingRoutingTests(unittest.TestCase):
             decision = decide_support_route(message)
 
         self.assertEqual(decision.scope_label, "billing")
-        self.assertEqual(decision.semantic_intent, "billing.account_suspension")
+        self.assertEqual(decision.semantic_intent, "billing.account_verification")
 
     # ── Positive billing: detailed invoice ────────────────────────────
 

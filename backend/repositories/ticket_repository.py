@@ -77,10 +77,19 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
         route_family=normalized.get("route_family"),
         execution_action=execution_action,
     )
-    for key, value in metadata.items():
-        normalized.setdefault(key, value)
-    if normalized.get("route_status") == "automated":
+    automation_family = str(normalized.get("route_family") or "").strip().lower() in {
+        AUTOMATED_ROUTE_FAMILY,
+        "billing_automation",
+    }
+    if automation_family:
+        normalized.update(metadata)
+    else:
+        for key, value in metadata.items():
+            normalized.setdefault(key, value)
+    if metadata["route_status"] == "automated":
         normalized["route_family"] = AUTOMATED_ROUTE_FAMILY
+        normalized["execution_action"] = metadata["subcategory"]
+        normalized["route"] = metadata["subcategory"]
     return normalized
 _TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v9-product-selection-state"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
@@ -4351,6 +4360,29 @@ class PostgresTicketRepository:
                     ).format(self._table("support_account_cases"))
                 )
                 cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET route = CASE
+                                WHEN route = 'account_suspension' THEN 'account_verification'
+                                ELSE route
+                            END,
+                            execution_action = CASE
+                                WHEN execution_action = 'account_suspension' THEN 'account_verification'
+                                ELSE execution_action
+                            END,
+                            subcategory = 'account_verification'
+                        WHERE route_family = 'automated'
+                          AND route_status = 'automated'
+                          AND (
+                              route = 'account_suspension'
+                              OR execution_action = 'account_suspension'
+                              OR subcategory = 'account_suspension'
+                          )
+                        """
+                    ).format(self._table("support_account_cases"))
+                )
+                cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_handler TEXT").format(
                         self._table("support_account_cases"),
                     )
@@ -4491,6 +4523,25 @@ class PostgresTicketRepository:
                     sql.SQL("ALTER TABLE {} DROP COLUMN IF EXISTS note").format(
                         self._table("support_billing_route_corrections"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET corrected_execution_action = CASE
+                                WHEN corrected_execution_action = 'account_suspension'
+                                    THEN 'account_verification'
+                                ELSE corrected_execution_action
+                            END,
+                            first_corrected_execution_action = CASE
+                                WHEN first_corrected_execution_action = 'account_suspension'
+                                    THEN 'account_verification'
+                                ELSE first_corrected_execution_action
+                            END
+                        WHERE corrected_execution_action = 'account_suspension'
+                           OR first_corrected_execution_action = 'account_suspension'
+                        """
+                    ).format(self._table("support_billing_route_corrections"))
                 )
                 cur.execute(
                     sql.SQL(

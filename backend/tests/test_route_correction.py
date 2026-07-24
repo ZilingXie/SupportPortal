@@ -36,6 +36,13 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         with self.assertRaises(RouteCorrectionValidationError):
             validate_route_correction(scope_label="billing", execution_action="rag")
 
+    def test_legacy_account_suspension_is_not_a_selectable_correction(self) -> None:
+        with self.assertRaises(RouteCorrectionValidationError):
+            validate_route_correction(
+                scope_label="billing",
+                execution_action="account_suspension",
+            )
+
     def test_whitespace_and_case_normalized(self) -> None:
         result = validate_route_correction(scope_label="  Billing  ", execution_action="DETAILED_INVOICE")
         self.assertEqual(result["scope_label"], "billing")
@@ -44,7 +51,6 @@ class RouteCorrectionValidationTests(unittest.TestCase):
     def test_valid_tuple_dictionary_matches_contract(self) -> None:
         expected_pairs = {
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
-            ("billing", "account_suspension", "automated", "deterministic_billing_intake"),
             ("billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
             ("billing", "account_verification", "automated", "deterministic_billing_intake"),
             ("billing", "human_review_required", "billing_review", "deterministic_billing_intake"),

@@ -2075,10 +2075,10 @@ flowchart TD
         short: "Automation",
         title: "Automated Case intake / routing",
         status: "doing",
-        thesis: "Phase 2 将自动化路由统一为 Automation category，并以 account_verification、detailed_invoice、account_suspension 作为 subcategory；Billing 仅作为当前 handler。系统持续收集必要字段，信息完整后发送 action-specific 内部邮件并通过 Outlook reply 返回结果。`/account` 的基础实体统一为 Account Case，Not automated case 继续按 rollout 创建 Engineer Case。",
+        thesis: "Phase 2 将自动化路由统一为 Automation category，并以 account_verification、detailed_invoice 作为 subcategory；账户暂停请求统一归入 account_verification，Billing 仅作为当前 handler。系统持续收集必要字段，信息完整后发送 action-specific 内部邮件并通过 Outlook reply 返回结果。`/account` 的基础实体统一为 Account Case，Not automated case 继续按 rollout 创建 Engineer Case。",
         done: [
-          { summary: "Automated Case 已使用 `category=automation`、现有 action subcategory、`route_family=automated` 和独立 `route_status`；Billing 仅作为当前注册 handler。", prs: [] },
-          { summary: "Billing automation intake 已覆盖 `account_suspension`、`detailed_invoice` 和 `account_verification`，并能追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
+          { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；account_suspension 已合并到 account_verification，Billing 仅作为当前注册 handler。", prs: [] },
+          { summary: "Billing automation intake 已覆盖 `detailed_invoice` 和 `account_verification`，账户暂停场景归入 `account_verification`，并能追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
@@ -2204,7 +2204,7 @@ flowchart TD
           { id: "routing-billing-risky-negatives", status: "todo", label: "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。", horizon: "Safety" },
           { id: "routing-dashboard-metrics", status: "todo", label: "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。", horizon: "Metrics" },
           { id: "routing-semantic-golden-expand", status: "todo", label: "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。", horizon: "Tests" },
-          { id: "routing-automation-rollout", status: "todo", label: "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_suspension、detailed_invoice 和 enablement 的 limited automation。", horizon: "Rollout" },
+          { id: "routing-automation-rollout", status: "todo", label: "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 account_verification、detailed_invoice 和 enablement 的 limited automation。", horizon: "Rollout" },
         ],
         architecture: {
           title: "Routing Architecture: Semantic Intent -> Policy Gate -> Route Contract",
