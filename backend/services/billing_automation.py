@@ -20,12 +20,13 @@ from backend.services.graph_mail import (
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, resolve_model_profile
+from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY
 
 
 LOGGER = logging.getLogger(__name__)
 
 BILLING_SCOPE_LABEL = "billing"
-BILLING_ROUTE_FAMILY = "billing_automation"
+BILLING_ROUTE_FAMILY = AUTOMATED_ROUTE_FAMILY
 BILLING_TOOLING_PROFILE = "deterministic_billing_intake"
 BILLING_ACTION_ACCOUNT_SUSPENSION = "account_suspension"
 BILLING_ACTION_DETAILED_INVOICE = "detailed_invoice"

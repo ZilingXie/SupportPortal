@@ -27,7 +27,7 @@ let metrics = null;
 let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let automationData = { metrics: {}, cases: [] };
-let automationRouteStatus = "automation";
+let automationRouteStatus = "automated";
 let routingData = { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
 let agentConfigData = null;
 let agentConfigLoading = false;
@@ -671,8 +671,8 @@ function renderAutomatedCases() {
       <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
       <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
-    </section><form class="admin-filter-bar" data-automation-filter-form><select name="route_status"><option value="" ${automationRouteStatus ? "" : "selected"}>All routes</option><option value="automation" ${automationRouteStatus === "automation" ? "selected" : ""}>Automated</option><option value="not_automated" ${automationRouteStatus === "not_automated" ? "selected" : ""}>Not Automated</option></select><input name="category" placeholder="Route category" /><input name="created_from" type="date" aria-label="Created from" /><input name="created_to" type="date" aria-label="Created to" /><button class="btn btn-ghost" type="submit">Apply filters</button></form>
-    <section class="admin-ops-surface"><table class="admin-work-table"><thead><tr><th>Case</th><th>Subject</th><th>Route status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${statusPill(item.automation_status)}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="4">No /account cases.</td></tr>`}</tbody></table></section>`;
+    </section><form class="admin-filter-bar" data-automation-filter-form><select name="route_status"><option value="" ${automationRouteStatus ? "" : "selected"}>All routes</option><option value="automated" ${automationRouteStatus === "automated" ? "selected" : ""}>Automated</option><option value="not_automated" ${automationRouteStatus === "not_automated" ? "selected" : ""}>Not Automated</option></select><select name="category" aria-label="Automation category"><option value="automation">Automation</option></select><input name="created_from" type="date" aria-label="Created from" /><input name="created_to" type="date" aria-label="Created to" /><button class="btn btn-ghost" type="submit">Apply filters</button></form>
+    <section class="admin-ops-surface"><table class="admin-work-table"><thead><tr><th>Account Case</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Route status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.account_case_id || item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(item.category === "automation" ? "Automation" : item.category || "-")}</td><td>${escapeHtml(String(item.subcategory || "-").replaceAll("_", " "))}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="6">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
 function renderRouteStrategy() {
@@ -684,7 +684,7 @@ function renderRouteStrategy() {
     <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><p>Review the active route stages and supported route categories.</p></div></header>
     <section class="admin-route-layout">
       <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${stages.map(stage => `<li><strong>${escapeHtml(stage.name || stage)}</strong>${stage.description ? `<small>${escapeHtml(stage.description)}</small>` : ""}</li>`).join("")}</ol></div>
-      <div class="admin-ops-surface"><h2>Route category</h2><p class="admin-section-note">Categories currently recognized by the support router.</p><div class="admin-route-categories">${categories.length ? categories.map(category => `<article><div><strong>${escapeHtml(category.display_name || category.name)}</strong><code>${escapeHtml(category.name)}</code></div><p>${escapeHtml(category.description)}</p><small>Actions: ${escapeHtml((category.execution_actions || []).join(", "))}</small></article>`).join("") : `<p>No route categories configured.</p>`}</div></div>
+      <div class="admin-ops-surface"><h2>Route category</h2><p class="admin-section-note">Categories currently recognized by the support router.</p><div class="admin-route-categories">${categories.length ? categories.map(category => `<article><div><strong>${escapeHtml(category.display_name || category.name)}</strong><code>${escapeHtml(category.name)}</code></div><p>${escapeHtml(category.description)}</p><small>${category.name === "automation" ? "Subcategories" : "Actions"}: ${escapeHtml((category.execution_actions || []).join(", "))}</small></article>`).join("") : `<p>No route categories configured.</p>`}</div></div>
     </section>
   `;
 }

@@ -9,6 +9,7 @@ from backend.services.support_router import SupportRouteDecision
 from backend.services.support_router_prompt import build_route_system_prompt
 from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.route_correction import VALID_ROUTE_TUPLES
+from backend.services.automation_routing import automation_metadata
 
 
 ROUTER_PROMPT_VERSION = "account-router-v1"
@@ -20,6 +21,7 @@ ROUTING_STAGE_DESCRIPTIONS = {
     "final_route": "Selects the execution action and tooling profile used to handle the request.",
 }
 ROUTE_CATEGORY_METADATA = {
+    "automation": ("Automation", "Account cases handled by a registered automation subcategory."),
     "ticket_resolution": ("Ticket resolution", "Requests to resolve or close an existing support ticket."),
     "billing": ("Billing", "Account, invoice, verification, and billing review requests."),
     "agora_technical": ("Agora technical", "Technical Agora product and SDK questions handled with Agora documentation."),
@@ -229,10 +231,20 @@ def environment_config_entries(env_path: Path, *, required: bool = False) -> lis
 
 
 def _is_automated(ticket: dict[str, Any]) -> bool:
-    return str(ticket.get("automation_status") or ticket.get("status") or "").strip().lower() in {
-        "automation",
-        "automated",
-    }
+    route_status = str(ticket.get("route_status") or "").strip().lower()
+    if route_status:
+        return route_status == "automated"
+    metadata = automation_metadata(
+        route_family=ticket.get("route_family"),
+        execution_action=ticket.get("execution_action") or ticket.get("route"),
+    )
+    if metadata["route_status"] == "automated":
+        return True
+    return (
+        not ticket.get("route_family")
+        and str(ticket.get("automation_status") or ticket.get("status") or "").strip().lower()
+        in {"automation", "automated"}
+    )
 
 
 def account_automation_payload(
@@ -247,18 +259,22 @@ def account_automation_payload(
 ) -> dict[str, Any]:
     safe_page = max(1, int(page))
     safe_size = min(200, max(1, int(page_size)))
-    all_cases = repository.list_billing_tickets(limit=100000, offset=0)
+    all_cases = repository.list_account_cases(limit=100000, offset=0)
     automated = sum(1 for item in all_cases if _is_automated(item))
     total = len(all_cases)
     filtered = list(all_cases)
     normalized_status = str(route_status or "").strip().lower()
-    if normalized_status == "automation":
+    if normalized_status in {"automation", "automated"}:
         filtered = [item for item in filtered if _is_automated(item)]
     elif normalized_status == "not_automated":
         filtered = [item for item in filtered if not _is_automated(item)]
     normalized_category = str(category or "").strip().lower()
     if normalized_category:
-        filtered = [item for item in filtered if normalized_category in {str(item.get("route_family") or "").lower(), str(item.get("semantic_intent") or "").lower()}]
+        filtered = [
+            item
+            for item in filtered
+            if normalized_category == str(item.get("category") or "").lower()
+        ]
     if created_from:
         filtered = [item for item in filtered if str(item.get("created_at") or "") >= str(created_from)]
     if created_to:
@@ -319,7 +335,11 @@ def route_execution_from_decision(
 def routing_config_payload() -> dict[str, Any]:
     actions_by_category: dict[str, list[str]] = {}
     for route in VALID_ROUTE_TUPLES:
-        category = route["scope_label"]
+        category = (
+            "automation"
+            if route["route_family"] == "automated"
+            else route["scope_label"]
+        )
         action = route["execution_action"]
         actions = actions_by_category.setdefault(category, [])
         if action not in actions:
@@ -334,6 +354,7 @@ def routing_config_payload() -> dict[str, Any]:
                 "display_name": display_name,
                 "description": description,
                 "execution_actions": actions,
+                "subcategories": actions if name == "automation" else [],
             }
         )
 

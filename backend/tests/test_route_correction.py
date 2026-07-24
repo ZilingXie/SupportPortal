@@ -20,7 +20,7 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         result = validate_route_correction(scope_label="billing", execution_action="detailed_invoice")
         self.assertEqual(result["scope_label"], "billing")
         self.assertEqual(result["execution_action"], "detailed_invoice")
-        self.assertEqual(result["route_family"], "billing_automation")
+        self.assertEqual(result["route_family"], "automated")
         self.assertEqual(result["tooling_profile"], "deterministic_billing_intake")
 
     def test_valid_agora_technical_rag(self) -> None:
@@ -44,9 +44,9 @@ class RouteCorrectionValidationTests(unittest.TestCase):
     def test_valid_tuple_dictionary_matches_contract(self) -> None:
         expected_pairs = {
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
-            ("billing", "account_suspension", "billing_automation", "deterministic_billing_intake"),
-            ("billing", "detailed_invoice", "billing_automation", "deterministic_billing_intake"),
-            ("billing", "account_verification", "billing_automation", "deterministic_billing_intake"),
+            ("billing", "account_suspension", "automated", "deterministic_billing_intake"),
+            ("billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
+            ("billing", "account_verification", "automated", "deterministic_billing_intake"),
             ("billing", "human_review_required", "billing_review", "deterministic_billing_intake"),
             ("billing", "refuse", "fallback_or_refuse", "no_agora_docs_refusal"),
             ("agora_technical", "rag", "agora_docs_rag", "agora_docs_only"),
@@ -83,7 +83,7 @@ class BillingRouteCorrectionRepositoryTests(unittest.TestCase):
                 "automation_status": "automation",
                 "route": "detailed_invoice",
                 "scope_label": "billing",
-                "route_family": "billing_automation",
+                "route_family": "automated",
                 "execution_action": "detailed_invoice",
                 "tooling_profile": "deterministic_billing_intake",
                 "route_reason": "billing_invoice_request",
@@ -96,7 +96,7 @@ class BillingRouteCorrectionRepositoryTests(unittest.TestCase):
             "billing_ticket_id": self.billing_ticket_id,
             "client_ticket_id": "TK-ACC-123456",
             "original_scope_label": "billing",
-            "original_route_family": "billing_automation",
+            "original_route_family": "automated",
             "original_execution_action": "detailed_invoice",
             "original_tooling_profile": "deterministic_billing_intake",
             "original_route_reason": "billing_invoice_request",

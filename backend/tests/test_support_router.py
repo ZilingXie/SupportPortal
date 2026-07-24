@@ -262,7 +262,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             decision = decide_support_route("Our account was suspended and we need help getting it reviewed.")
 
         self.assertEqual(decision.scope_label, "billing")
-        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.route_family, "automated")
         self.assertEqual(decision.execution_action, "account_suspension")
         self.assertEqual(decision.tooling_profile, "deterministic_billing_intake")
         self.assertEqual(decision.route, "account_suspension")
@@ -280,7 +280,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(decision.scope_label, "billing")
-        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.route_family, "automated")
         self.assertEqual(decision.execution_action, "detailed_invoice")
         self.assertEqual(decision.tooling_profile, "deterministic_billing_intake")
         self.assertEqual(decision.route, "detailed_invoice")
@@ -307,7 +307,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             decision = decide_support_route("I need a billing document for my last payment.")
 
         self.assertEqual(decision.scope_label, "billing")
-        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.route_family, "automated")
         self.assertEqual(decision.execution_action, "detailed_invoice")
         self.assertEqual(decision.tooling_profile, "deterministic_billing_intake")
 
@@ -327,7 +327,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(resolution.answer_route, "workflow")
-        self.assertEqual(resolution.route_family, "billing_automation")
+        self.assertEqual(resolution.route_family, "automated")
         self.assertEqual(resolution.execution_action, "account_suspension")
         self.assertEqual(resolution.tooling_profile, "deterministic_billing_intake")
         self.assertFalse(resolution.needs_engineer_guidance)

@@ -54,7 +54,7 @@ function renderSuccess(payload) {
     <h1>处理结果已提交</h1>
     <p class="body-copy">${escapeHtml(notifyText)}</p>
     <dl class="summary-grid">
-      <div><dt>Billing Ticket ID</dt><dd>${escapeHtml(payload.billing_ticket_id)}</dd></div>
+      <div><dt>Account Case ID</dt><dd>${escapeHtml(payload.account_case_id || payload.billing_ticket_id)}</dd></div>
       <div><dt>Automation status</dt><dd>${escapeHtml(payload.automation_status)}</dd></div>
     </dl>
     <p class="subtle-copy">This one-time response link cannot be submitted again.</p>
@@ -71,7 +71,7 @@ function renderForm() {
     renderFrame(`
       <p class="eyebrow">Already submitted</p>
       <h1>这个处理链接已提交</h1>
-      <p class="body-copy">Billing Ticket ID: ${escapeHtml(context.billing_ticket_id)}</p>
+      <p class="body-copy">Account Case ID: ${escapeHtml(context.account_case_id || context.billing_ticket_id)}</p>
       <p class="subtle-copy">For audit safety, each response link can only be used once.</p>
     `, "response-card--success");
     return;
@@ -95,7 +95,7 @@ function renderForm() {
     </div>
 
     <dl class="summary-grid">
-      <div><dt>Billing Ticket ID</dt><dd data-field="billing_ticket_id">${escapeHtml(context.billing_ticket_id)}</dd></div>
+      <div><dt>Account Case ID</dt><dd data-field="billing_ticket_id">${escapeHtml(context.account_case_id || context.billing_ticket_id)}</dd></div>
       <div><dt>Customer email</dt><dd>${escapeHtml(context.customer_email || "Not available")}</dd></div>
       <div class="summary-grid__wide"><dt>Title</dt><dd>${escapeHtml(context.title || "Billing request")}</dd></div>
     </dl>

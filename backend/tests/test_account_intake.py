@@ -100,10 +100,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "question": "q",
                 "automation_status": automation_status,
                 "route": "detailed_invoice" if automation_status == "automation" else "web_search",
-                "scope_label": "billing",
-                "route_family": "billing_automation",
-                "execution_action": "detailed_invoice",
-                "tooling_profile": "deterministic_billing_intake",
+                "scope_label": "billing" if automation_status == "automation" else "agora_non_technical",
+                "route_family": "automated" if automation_status == "automation" else "web_company_info",
+                "execution_action": "detailed_invoice" if automation_status == "automation" else "web_search",
+                "tooling_profile": "deterministic_billing_intake" if automation_status == "automation" else "official_web_search",
                 "route_confidence": route_confidence,
             }
         )
@@ -130,6 +130,12 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "automation")
         self.assertEqual(payload["route"], "detailed_invoice")
+        self.assertTrue(payload["account_case_id"].startswith("AC-"))
+        self.assertEqual(payload["billing_ticket_id"], payload["account_case_id"])
+        self.assertEqual(payload["category"], "automation")
+        self.assertEqual(payload["subcategory"], "detailed_invoice")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["automation_handler"], "billing")
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
@@ -227,9 +233,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["ticket_id"], "11830")
-        self.assertEqual(payload["billing_ticket_id"], "BT-11830")
+        self.assertEqual(payload["account_case_id"], "AC-11830")
+        self.assertEqual(payload["billing_ticket_id"], "AC-11830")
         self.assertIsNotNone(self.repository.get_ticket("11830"))
-        billing_ticket = self.repository.get_billing_ticket("BT-11830")
+        billing_ticket = self.repository.get_account_case("AC-11830")
         self.assertIsNotNone(billing_ticket)
         assert billing_ticket is not None
         self.assertEqual(billing_ticket["client_ticket_id"], "11830")
@@ -375,7 +382,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
-        self.assertTrue(str(payload["billing_ticket_id"] or "").startswith("BT-TK-ACC-"))
+        self.assertTrue(str(payload["account_case_id"] or "").startswith("AC-TK-ACC-"))
+        self.assertEqual(payload["billing_ticket_id"], payload["account_case_id"])
         self.assertNotIn("support_ticket_id", payload)
 
     def test_billing_internal_email_uses_outlook_reply_without_response_link(self) -> None:
@@ -528,6 +536,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(billing_ticket)
         assert billing_ticket is not None
         self.assertEqual(billing_ticket["automation_status"], "customer_notified")
+        self.assertEqual(billing_ticket["route_status"], "automated")
 
     def test_billing_response_submit_generates_customer_reply_from_internal_details(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
@@ -1145,16 +1154,33 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["scope_label"], "billing")
-        self.assertEqual(bt["route_family"], "billing_automation")
+        self.assertEqual(bt["route_family"], "automated")
+        self.assertEqual(bt["account_case_id"], payload["account_case_id"])
+        self.assertEqual(bt["category"], "automation")
+        self.assertEqual(bt["subcategory"], "detailed_invoice")
+        self.assertEqual(bt["route_status"], "automated")
+        self.assertEqual(bt["automation_handler"], "billing")
         self.assertEqual(bt["execution_action"], "detailed_invoice")
         self.assertEqual(bt["route"], "detailed_invoice")
 
         # Detail API surfaces the route result fields.
-        detail = self.client.get(f"/api/account/billing-tickets/{payload['billing_ticket_id']}").json()
+        legacy_detail = self.client.get(
+            f"/api/account/billing-tickets/{payload['billing_ticket_id']}"
+        )
+        self.assertEqual(legacy_detail.status_code, 200, legacy_detail.text)
+        detail = legacy_detail.json()
         self.assertEqual(detail["scope_label"], "billing")
-        self.assertEqual(detail["route_family"], "billing_automation")
+        self.assertEqual(detail["route_family"], "automated")
         self.assertEqual(detail["execution_action"], "detailed_invoice")
         self.assertEqual(detail["route"], "detailed_invoice")
+
+        canonical_detail = self.client.get(f"/api/account/cases/{payload['account_case_id']}")
+        self.assertEqual(canonical_detail.status_code, 200, canonical_detail.text)
+        self.assertEqual(canonical_detail.json()["account_case_id"], payload["account_case_id"])
+        self.assertEqual(canonical_detail.json(), detail)
+        canonical_list = self.client.get("/api/account/cases?route_status=automated")
+        self.assertEqual(canonical_list.status_code, 200, canonical_list.text)
+        self.assertIn("cases", canonical_list.json())
 
     def test_account_intake_persists_route_result_fields_for_non_automated(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -1485,6 +1511,30 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNone(self.repository.get_billing_route_correction(billing_ticket_id))
         dispatch_mock.assert_not_called()
 
+    def test_canonical_route_correction_accepts_automation_subcategory(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={"title": "General question", "question": "Tell me about Agora products."},
+            )
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        account_case_id = create_response.json()["account_case_id"]
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                f"/api/account/cases/{account_case_id}/route-correction",
+                json={"category": "automation", "subcategory": "account_verification"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["category"], "automation")
+        self.assertEqual(payload["subcategory"], "account_verification")
+        self.assertEqual(payload["route_family"], "automated")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["automation_handler"], "billing")
+        self.assertEqual(payload["automation_status"], "not_automated")
+
     def test_route_correction_missing_ticket_returns_404(self) -> None:
         response = self.client.post(
             "/api/account/billing-tickets/BT-MISSING/route-correction",
@@ -1533,7 +1583,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "automation_status": "automation",
                 "route": "detailed_invoice",
                 "scope_label": "billing",
-                "route_family": "billing_automation",
+                "route_family": "automated",
                 "execution_action": "detailed_invoice",
                 "tooling_profile": "deterministic_billing_intake",
                 "route_reason": "invoice",

@@ -323,11 +323,12 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def list_engineer_replay_eval_items", repo_source)
         self.assertIn("def get_engineer_replay_eval_item", repo_source)
 
-    def test_ticket_storage_contract_includes_billing_ticket_table(self) -> None:
+    def test_ticket_storage_contract_includes_account_case_table(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
 
-        self.assertIn("CREATE TABLE IF NOT EXISTS support_billing_tickets", sql_source)
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_account_cases", sql_source)
+        self.assertIn("account_case_id TEXT NOT NULL UNIQUE", sql_source)
         self.assertIn("billing_ticket_id TEXT PRIMARY KEY", sql_source)
         self.assertIn("client_ticket_id TEXT NOT NULL UNIQUE REFERENCES support_tickets", sql_source)
         self.assertIn("automation_status TEXT NOT NULL", sql_source)
@@ -344,8 +345,12 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb", sql_source)
         self.assertIn("evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb", sql_source)
         self.assertIn("router_source TEXT", sql_source)
-        self.assertIn("idx_support_billing_tickets_created", sql_source)
-        self.assertIn("support_billing_tickets", repo_source)
+        self.assertIn("category TEXT", sql_source)
+        self.assertIn("subcategory TEXT", sql_source)
+        self.assertIn("route_status TEXT NOT NULL DEFAULT 'not_automated'", sql_source)
+        self.assertIn("automation_handler TEXT", sql_source)
+        self.assertIn("idx_support_account_cases_created", sql_source)
+        self.assertIn("support_account_cases", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS semantic_intent TEXT", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS scope_label TEXT", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile TEXT", repo_source)
@@ -353,13 +358,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def save_billing_ticket", repo_source)
         self.assertIn("def get_billing_ticket", repo_source)
         self.assertIn("def list_billing_tickets", repo_source)
+        self.assertIn("def save_account_case", repo_source)
+        self.assertIn("def get_account_case", repo_source)
+        self.assertIn("def list_account_cases", repo_source)
 
     def test_ticket_storage_contract_includes_billing_route_corrections(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
 
         self.assertIn("CREATE TABLE IF NOT EXISTS support_billing_route_corrections", sql_source)
-        self.assertIn("billing_ticket_id TEXT PRIMARY KEY REFERENCES support_billing_tickets", sql_source)
+        self.assertIn("billing_ticket_id TEXT PRIMARY KEY REFERENCES support_account_cases", sql_source)
         self.assertIn("original_execution_action TEXT", sql_source)
         self.assertIn("corrected_execution_action TEXT NOT NULL", sql_source)
         self.assertIn("first_corrected_execution_action TEXT NOT NULL", sql_source)

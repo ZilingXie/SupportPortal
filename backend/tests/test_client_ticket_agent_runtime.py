@@ -837,7 +837,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(execution.result.answer_route, "workflow")
-        self.assertEqual(execution.result.route_family, "billing_automation")
+        self.assertEqual(execution.result.route_family, "automated")
         self.assertEqual(execution.result.execution_action, "detailed_invoice")
         self.assertEqual(execution.result.tooling_profile, "deterministic_billing_intake")
         self.assertEqual(execution.result.workflow_action, "answer_customer")

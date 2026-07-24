@@ -68,9 +68,9 @@ const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "p
 
 const ROUTE_TUPLE_OPTIONS = [
   { scope: "ticket_resolution", action: "resolve_ticket", label: "Ticket resolution / Resolve ticket" },
-  { scope: "billing", action: "account_suspension", label: "Billing / Account suspension" },
-  { scope: "billing", action: "detailed_invoice", label: "Billing / Detailed invoice" },
-  { scope: "billing", action: "account_verification", label: "Billing / Account verification" },
+  { scope: "automation", action: "account_suspension", label: "Automation / Account suspension" },
+  { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
+  { scope: "automation", action: "account_verification", label: "Automation / Account verification" },
   { scope: "billing", action: "human_review_required", label: "Billing / Human review required" },
   { scope: "billing", action: "refuse", label: "Billing / Refuse" },
   { scope: "agora_technical", action: "rag", label: "Agora technical / RAG" },
@@ -113,9 +113,10 @@ function routeClass(route) {
 // and to "manual review" when nothing is present.
 function routeResultLabel(item) {
   const parts = [
-    item.scope_label,
+    item.category || item.scope_label,
+    item.subcategory,
     item.route_family,
-    item.execution_action || item.route,
+    item.subcategory ? null : item.execution_action || item.route,
   ]
     .map((value) => String(value || "").trim())
     .filter((value) => value.length > 0);
@@ -265,16 +266,16 @@ async function fetchTickets() {
     } else if (state.statusFilter === "reviewed") {
       params.set("review_status", "reviewed");
     } else if (state.statusFilter === "automation") {
-      params.set("automation_status", "automation");
+      params.set("route_status", "automated");
     } else if (state.statusFilter === "not_automated") {
-      params.set("automation_status", "not_automated");
+      params.set("route_status", "not_automated");
     } else if (state.statusFilter === "route_errors") {
       params.set("route_errors", "true");
     }
-    const response = await fetch(`/api/account/billing-tickets?${params.toString()}`);
+    const response = await fetch(`/api/account/cases?${params.toString()}`);
     if (!response.ok) return;
     const data = await response.json();
-    state.history = data.tickets || data.billing_tickets || [];
+    state.history = data.cases || data.tickets || data.billing_tickets || [];
     state.pagination = {
       page: Number(data.page || state.currentPage || 1),
       pageSize: Number(data.page_size || PAGE_SIZE),
@@ -297,7 +298,7 @@ async function fetchTickets() {
 
 async function fetchTicketDetail(ticketId) {
   try {
-    const response = await fetch(`/api/account/billing-tickets/${ticketId}`);
+    const response = await fetch(`/api/account/cases/${ticketId}`);
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -323,8 +324,9 @@ async function fetchRouteErrorSummary() {
 }
 
 function resetCorrectionState(item = null) {
+  const currentScope = item?.category === "automation" ? "automation" : item?.scope_label;
   const selected = ROUTE_TUPLE_OPTIONS.find(
-    (option) => option.scope === item?.scope_label && option.action === (item?.execution_action || item?.route)
+    (option) => option.scope === currentScope && option.action === (item?.subcategory || item?.execution_action || item?.route)
   );
   state.correctionScope = selected ? selected.scope : "";
   state.correctionAction = selected ? selected.action : "";
@@ -338,7 +340,7 @@ function resetCorrectionState(item = null) {
 async function openTicket(ticketId) {
   const detail = await fetchTicketDetail(ticketId);
   if (!detail) {
-    showToast("Failed to load ticket details.");
+    showToast("Failed to load Account Case details.");
     return;
   }
   state.activeItem = detail;
@@ -527,7 +529,7 @@ function renderHistorySidebar() {
     return `
       <div class="history-empty">
         <span class="material-symbols-outlined">receipt_long</span>
-        <p>No tickets yet</p>
+        <p>No Account Cases yet</p>
       </div>
     `;
   }
@@ -536,7 +538,7 @@ function renderHistorySidebar() {
       ${renderFilterControls()}
       <div class="history-empty">
         <span class="material-symbols-outlined">filter_alt_off</span>
-        <p>No tickets match this filter</p>
+        <p>No Account Cases match this filter</p>
       </div>
     `;
   }
@@ -544,18 +546,18 @@ function renderHistorySidebar() {
     ${renderFilterControls()}
     <div class="history-section-title">${
       state.statusFilter === "reviewed"
-        ? "Reviewed tickets"
+        ? "Reviewed Account Cases"
         : state.statusFilter === "unreviewed"
-          ? "Unreviewed tickets"
-          : "Recent tickets"
+          ? "Unreviewed Account Cases"
+          : "Recent Account Cases"
     }</div>
     ${visibleItems
       .map(
         (item) => {
-          const itemId = item.ticket_id || item.billing_ticket_id || "";
+          const itemId = item.account_case_id || item.ticket_id || item.billing_ticket_id || "";
           const itemTicketId = item.ticket_id || item.client_ticket_id || "";
           const activeTicketId = state.activeItem ? (state.activeItem.ticket_id || state.activeItem.client_ticket_id || "") : "";
-          const activeBillingId = state.activeItem ? (state.activeItem.billing_ticket_id || "") : "";
+          const activeBillingId = state.activeItem ? (state.activeItem.account_case_id || state.activeItem.billing_ticket_id || "") : "";
           const isActive = (activeBillingId && activeBillingId === itemId) || (activeTicketId && activeTicketId === itemTicketId);
           const itemSource = item.source || "";
           const itemStatus = item.status || item.automation_status || "not_automated";
@@ -583,7 +585,7 @@ function renderCreateForm() {
     <div class="panel form-stack">
       <div class="form-header">
         <h3>Create a ticket</h3>
-        <p class="form-desc">Submit an account-side request to route and process billing automation.</p>
+        <p class="form-desc">Submit an account case for routing and automated processing.</p>
       </div>
       <form data-account-form>
         <label class="field">
@@ -805,6 +807,7 @@ function renderDetailView() {
   const itemSource = item.source || "";
   const itemStatus = item.status || item.automation_status || "not_automated";
   const ticketId = item.ticket_id || item.client_ticket_id || "";
+  const accountCaseId = item.account_case_id || item.billing_ticket_id || "";
 
   return `
     <div class="panel detail-stack">
@@ -813,6 +816,10 @@ function renderDetailView() {
         <span class="status-chip ${routeClass(item.route)}">${escapeHtml(item.route || "manual review")}</span>
       </div>
       <div class="meta-grid">
+        <div class="meta-row">
+          <span class="meta-label">Account Case ID</span>
+          <span class="meta-value">${escapeHtml(accountCaseId)}</span>
+        </div>
         <div class="meta-row">
           <span class="meta-label">Ticket ID</span>
           <span class="meta-value">${escapeHtml(ticketId)}</span>
@@ -915,15 +922,19 @@ async function submitRouteCorrection() {
   render();
 
   try {
-    const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/route-correction`, {
+    const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
+    const response = await fetch(`/api/account/cases/${billingTicketId}/route-correction`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scope_label: state.correctionScope,
-        execution_action: state.correctionAction,
-        corrector: "operator",
-      }),
+      body: JSON.stringify(
+        state.correctionScope === "automation"
+          ? { category: "automation", subcategory: state.correctionAction, corrector: "operator" }
+          : {
+              scope_label: state.correctionScope,
+              execution_action: state.correctionAction,
+              corrector: "operator",
+            }
+      ),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -953,8 +964,8 @@ async function submitRouteReview(reviewStatus) {
   render();
 
   try {
-    const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/route-review`, {
+    const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
+    const response = await fetch(`/api/account/cases/${billingTicketId}/route-review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -993,8 +1004,8 @@ async function submitReply() {
   render();
 
   try {
-    const billingTicketId = item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/billing-tickets/${billingTicketId}/reply`, {
+    const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
+    const response = await fetch(`/api/account/cases/${billingTicketId}/reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
@@ -1030,7 +1041,7 @@ function render() {
         <div class="side-actions">
           <button class="primary-button primary-button--small" type="button" data-action="new-ticket">
             <span class="material-symbols-outlined">add</span>
-            New ticket
+            New Account Case
           </button>
         </div>
         <div class="history-stack" id="history-list">
@@ -1041,7 +1052,7 @@ function render() {
         <div class="workbench-header">
           <div>
             <span class="pill"><span class="material-symbols-outlined">route</span>HTTP or manual</span>
-            <h2>${state.view === "create" ? "Create and route an account ticket" : "Ticket detail"}</h2>
+            <h2>${state.view === "create" ? "Create and route an Account Case" : "Account Case detail"}</h2>
           </div>
           ${state.view === "detail" ? `<button class="ghost-button" type="button" data-action="back-to-create">Back to create</button>` : ""}
         </div>

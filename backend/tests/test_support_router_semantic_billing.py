@@ -252,7 +252,7 @@ class GoldenBillingRoutingTests(unittest.TestCase):
 
         self.assertEqual(decision.scope_label, "billing")
         self.assertEqual(decision.semantic_intent, "billing.detailed_invoice")
-        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.route_family, "automated")
         self.assertEqual(decision.execution_action, "detailed_invoice")
         self.assertEqual(decision.automation_eligibility, "eligible")
         self.assertEqual(decision.policy_decision, "policy_gate")
@@ -453,7 +453,7 @@ class GoldenBillingRoutingTests(unittest.TestCase):
 
         self.assertEqual(decision.scope_label, "billing")
         self.assertEqual(decision.semantic_intent, "billing.account_verification")
-        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.route_family, "automated")
         self.assertEqual(decision.execution_action, "account_verification")
         self.assertEqual(decision.automation_eligibility, "eligible")
 
@@ -546,7 +546,7 @@ class GoldenBillingRoutingTests(unittest.TestCase):
 
         self.assertEqual(decision.scope_label, "billing")
         self.assertEqual(decision.semantic_intent, "billing.account_verification")
-        self.assertEqual(decision.route_family, "billing_automation")
+        self.assertEqual(decision.route_family, "automated")
 
     # ── Gratitude downgrade: long messages with "thank you" ────────────
 

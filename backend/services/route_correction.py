@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
+
 VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
         "scope_label": "ticket_resolution",
@@ -12,19 +14,19 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
         "scope_label": "billing",
         "execution_action": "account_suspension",
-        "route_family": "billing_automation",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
         "tooling_profile": "deterministic_billing_intake",
     },
     {
         "scope_label": "billing",
         "execution_action": "detailed_invoice",
-        "route_family": "billing_automation",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
         "tooling_profile": "deterministic_billing_intake",
     },
     {
         "scope_label": "billing",
         "execution_action": "account_verification",
-        "route_family": "billing_automation",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
         "tooling_profile": "deterministic_billing_intake",
     },
     {
@@ -101,11 +103,16 @@ def validate_route_correction(
         raise RouteCorrectionValidationError(
             f"invalid execution_action {execution_action!r} for scope_label {normalized_scope!r}"
         )
+    metadata = automation_metadata(
+        route_family=match["route_family"],
+        execution_action=match["execution_action"],
+    )
     return {
         "scope_label": match["scope_label"],
         "execution_action": match["execution_action"],
         "route_family": match["route_family"],
         "tooling_profile": match["tooling_profile"],
+        **metadata,
     }
 
 

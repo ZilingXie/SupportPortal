@@ -14,6 +14,7 @@ from uuid import uuid4
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
+from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -58,6 +59,29 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
+
+
+def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(account_case)
+    billing_ticket_id = str(
+        normalized.get("billing_ticket_id") or normalized.get("account_case_id") or ""
+    ).strip()
+    if not billing_ticket_id:
+        raise ValueError("account_case_id is required")
+    normalized["billing_ticket_id"] = billing_ticket_id
+    normalized["account_case_id"] = str(
+        normalized.get("account_case_id") or billing_ticket_id
+    ).strip()
+    execution_action = normalized.get("execution_action") or normalized.get("route")
+    metadata = automation_metadata(
+        route_family=normalized.get("route_family"),
+        execution_action=execution_action,
+    )
+    for key, value in metadata.items():
+        normalized.setdefault(key, value)
+    if normalized.get("route_status") == "automated":
+        normalized["route_family"] = AUTOMATED_ROUTE_FAMILY
+    return normalized
 _TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v9-product-selection-state"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
@@ -1103,6 +1127,33 @@ class TicketRepository(Protocol):
     def save_billing_ticket(self, billing_ticket: dict[str, Any]) -> None:
         ...
 
+    def save_account_case(self, account_case: dict[str, Any]) -> None:
+        ...
+
+    def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
+        ...
+
+    def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
+        ...
+
+    def list_account_cases(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def count_account_cases(
+        self,
+        review_status: str | None = None,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+    ) -> int:
+        ...
+
     def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ...
 
@@ -1169,6 +1220,43 @@ class TicketRepository(Protocol):
 
 
 class InMemoryTicketRepository:
+    def save_account_case(self, account_case: dict[str, Any]) -> None:
+        self.save_billing_ticket(account_case)
+
+    def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
+        return self.get_billing_ticket(account_case_id)
+
+    def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
+        return self.get_billing_ticket_by_client_ticket_id(ticket_id)
+
+    def list_account_cases(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.list_billing_tickets(
+            limit=limit,
+            review_status=review_status,
+            offset=offset,
+            automation_filter=route_status,
+            route_errors_only=route_errors_only,
+        )
+
+    def count_account_cases(
+        self,
+        review_status: str | None = None,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+    ) -> int:
+        return self.count_billing_tickets(
+            review_status=review_status,
+            automation_filter=route_status,
+            route_errors_only=route_errors_only,
+        )
+
     def __init__(self) -> None:
         self._tickets: dict[str, dict[str, Any]] = {}
         self._events: list[dict[str, Any]] = []
@@ -2626,10 +2714,8 @@ class InMemoryTicketRepository:
         )
 
     def save_billing_ticket(self, billing_ticket: dict[str, Any]) -> None:
-        billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
-        if not billing_ticket_id:
-            raise ValueError("billing_ticket_id is required")
-        saved = copy.deepcopy(billing_ticket)
+        saved = _normalize_account_case_record(billing_ticket)
+        billing_ticket_id = str(saved["billing_ticket_id"])
         saved.setdefault("created_at", _utc_now())
         saved.setdefault("updated_at", saved["created_at"])
         self._billing_tickets[billing_ticket_id] = saved
@@ -2668,19 +2754,17 @@ class InMemoryTicketRepository:
                 for item in items
                 if str(item.get("route_review_status") or "pending") == review_status
             ]
-        if automation_filter == "automation":
+        if automation_filter in {"automation", "automated"}:
             items = [
                 item
                 for item in items
-                if str(item.get("automation_status") or item.get("status") or "").strip()
-                in {"automation", "automated"}
+                if str(item.get("route_status") or "").strip() == "automated"
             ]
         elif automation_filter == "not_automated":
             items = [
                 item
                 for item in items
-                if str(item.get("automation_status") or item.get("status") or "").strip()
-                not in {"automation", "automated"}
+                if str(item.get("route_status") or "not_automated").strip() != "automated"
             ]
         if route_errors_only:
             corrected_ids = set(self._billing_route_corrections)
@@ -2953,6 +3037,43 @@ def _build_trace_ticket_snapshot_payload(
 
 
 class PostgresTicketRepository:
+    def save_account_case(self, account_case: dict[str, Any]) -> None:
+        self.save_billing_ticket(account_case)
+
+    def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
+        return self.get_billing_ticket(account_case_id)
+
+    def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
+        return self.get_billing_ticket_by_client_ticket_id(ticket_id)
+
+    def list_account_cases(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.list_billing_tickets(
+            limit=limit,
+            review_status=review_status,
+            offset=offset,
+            automation_filter=route_status,
+            route_errors_only=route_errors_only,
+        )
+
+    def count_account_cases(
+        self,
+        review_status: str | None = None,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+    ) -> int:
+        return self.count_billing_tickets(
+            review_status=review_status,
+            automation_filter=route_status,
+            route_errors_only=route_errors_only,
+        )
+
     def __init__(
         self,
         dsn: str,
@@ -4147,9 +4268,25 @@ class PostgresTicketRepository:
                     )
                 )
                 cur.execute(
+                    "SELECT to_regclass(%s), to_regclass(%s)",
+                    (
+                        f"{self._schema}.support_billing_tickets",
+                        f"{self._schema}.support_account_cases",
+                    ),
+                )
+                legacy_account_table, account_cases_table = cur.fetchone() or (None, None)
+                if legacy_account_table is not None and account_cases_table is None:
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {} RENAME TO {}").format(
+                            self._table("support_billing_tickets"),
+                            sql.Identifier("support_account_cases"),
+                        )
+                    )
+                cur.execute(
                     sql.SQL(
                         """
                         CREATE TABLE IF NOT EXISTS {} (
+                            account_case_id TEXT NOT NULL UNIQUE,
                             billing_ticket_id TEXT PRIMARY KEY,
                             client_ticket_id TEXT NOT NULL UNIQUE REFERENCES {}(ticket_id) ON DELETE CASCADE,
                             source TEXT NOT NULL,
@@ -4179,76 +4316,138 @@ class PostgresTicketRepository:
                             risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
                             evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb,
                             router_source TEXT,
+                            category TEXT,
+                            subcategory TEXT,
+                            route_status TEXT NOT NULL DEFAULT 'not_automated',
+                            automation_handler TEXT,
                             route_review_status TEXT NOT NULL DEFAULT 'pending',
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
                         """
                     ).format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                         self._table("support_tickets"),
                     )
                 )
                 cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS account_case_id TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS category TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS subcategory TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_status TEXT NOT NULL DEFAULT 'not_automated'"
+                    ).format(self._table("support_account_cases"))
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_handler TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS scope_label TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_family TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS execution_action TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS semantic_intent TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_eligibility TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS policy_decision TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS not_automated_reason TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS router_source TEXT").format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
                     sql.SQL(
                         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_review_status TEXT NOT NULL DEFAULT 'pending'"
                     ).format(
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET account_case_id = billing_ticket_id "
+                        "WHERE account_case_id IS NULL OR account_case_id = ''"
+                    ).format(self._table("support_account_cases"))
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ALTER COLUMN account_case_id SET NOT NULL").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET route_family = 'automated',
+                            category = 'automation',
+                            subcategory = COALESCE(NULLIF(execution_action, ''), route),
+                            route_status = 'automated',
+                            automation_handler = 'billing'
+                        WHERE route_family IN ('billing_automation', 'automated')
+                          AND COALESCE(NULLIF(execution_action, ''), route) IN (
+                              'account_suspension', 'account_verification', 'detailed_invoice'
+                          )
+                        """
+                    ).format(self._table("support_account_cases"))
+                )
+                cur.execute(
+                    sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (account_case_id)").format(
+                        sql.Identifier("idx_support_account_cases_account_case_id"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
@@ -4279,7 +4478,7 @@ class PostgresTicketRepository:
                         """
                     ).format(
                         self._table("support_billing_route_corrections"),
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
@@ -4297,8 +4496,8 @@ class PostgresTicketRepository:
                     sql.SQL(
                         "CREATE INDEX IF NOT EXISTS {} ON {} (created_at DESC)"
                     ).format(
-                        sql.Identifier("idx_support_billing_tickets_created"),
-                        self._table("support_billing_tickets"),
+                        sql.Identifier("idx_support_account_cases_created"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
@@ -4313,7 +4512,7 @@ class PostgresTicketRepository:
                         """
                     ).format(
                         self._table("support_billing_response_tokens"),
-                        self._table("support_billing_tickets"),
+                        self._table("support_account_cases"),
                     )
                 )
                 cur.execute(
@@ -7348,6 +7547,7 @@ class PostgresTicketRepository:
         return self._run_with_connection_retry("list_ticket_agent_events", _operation)
 
     def save_billing_ticket(self, billing_ticket: dict[str, Any]) -> None:
+        billing_ticket = _normalize_account_case_record(billing_ticket)
         billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
         if not billing_ticket_id:
             raise ValueError("billing_ticket_id is required")
@@ -7365,7 +7565,7 @@ class PostgresTicketRepository:
                         sql.SQL(
                             """
                             INSERT INTO {} (
-                                billing_ticket_id, client_ticket_id, source, external_id,
+                                account_case_id, billing_ticket_id, client_ticket_id, source, external_id,
                                 created_by, title, question, route, scope_label,
                                 route_family, execution_action, tooling_profile,
                                 route_reason, route_confidence, matched_signals,
@@ -7374,10 +7574,12 @@ class PostgresTicketRepository:
                                 internal_email_send_status, internal_email_send_reason,
                                 semantic_intent, automation_eligibility, policy_decision,
                                 not_automated_reason, risk_flags, evidence_spans,
-                                router_source, created_at, updated_at
+                                router_source, category, subcategory, route_status,
+                                automation_handler, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
+                                account_case_id = EXCLUDED.account_case_id,
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 source = EXCLUDED.source,
                                 external_id = EXCLUDED.external_id,
@@ -7406,10 +7608,15 @@ class PostgresTicketRepository:
                                 risk_flags = EXCLUDED.risk_flags,
                                 evidence_spans = EXCLUDED.evidence_spans,
                                 router_source = EXCLUDED.router_source,
+                                category = EXCLUDED.category,
+                                subcategory = EXCLUDED.subcategory,
+                                route_status = EXCLUDED.route_status,
+                                automation_handler = EXCLUDED.automation_handler,
                                 updated_at = EXCLUDED.updated_at
                             """
-                        ).format(self._table("support_billing_tickets")),
+                        ).format(self._table("support_account_cases")),
                         (
+                            str(billing_ticket.get("account_case_id") or billing_ticket_id).strip(),
                             billing_ticket_id,
                             client_ticket_id,
                             str(billing_ticket.get("source") or "").strip(),
@@ -7439,6 +7646,10 @@ class PostgresTicketRepository:
                             Json(billing_ticket.get("risk_flags")) if isinstance(billing_ticket.get("risk_flags"), list) else Json([]),
                             Json(billing_ticket.get("evidence_spans")) if isinstance(billing_ticket.get("evidence_spans"), list) else Json([]),
                             str(billing_ticket.get("router_source") or "").strip() or None,
+                            str(billing_ticket.get("category") or "").strip() or None,
+                            str(billing_ticket.get("subcategory") or "").strip() or None,
+                            str(billing_ticket.get("route_status") or "not_automated").strip(),
+                            str(billing_ticket.get("automation_handler") or "").strip() or None,
                             created_at,
                             updated_at,
                         ),
@@ -7452,7 +7663,7 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "SELECT * FROM {} WHERE billing_ticket_id = %s"
-                    ).format(self._table("support_billing_tickets")),
+                    ).format(self._table("support_account_cases")),
                     (str(billing_ticket_id).strip(),),
                 )
                 rows = cur.fetchall()
@@ -7469,7 +7680,7 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "SELECT * FROM {} WHERE client_ticket_id = %s"
-                    ).format(self._table("support_billing_tickets")),
+                    ).format(self._table("support_account_cases")),
                     (str(client_ticket_id).strip(),),
                 )
                 rows = cur.fetchall()
@@ -7507,7 +7718,7 @@ class PostgresTicketRepository:
                     ORDER BY bt.created_at DESC
                     LIMIT %s OFFSET %s
                     """
-                ).format(self._table("support_billing_tickets"), where_sql)
+                ).format(self._table("support_account_cases"), where_sql)
                 cur.execute(query, (*params, safe_limit, safe_offset))
                 col_names = [desc[0] for desc in cur.description]
                 return [dict(zip(col_names, row)) for row in cur.fetchall()]
@@ -7531,7 +7742,7 @@ class PostgresTicketRepository:
                     route_errors_only=route_errors_only,
                 )
                 query = sql.SQL("SELECT COUNT(*) FROM {} bt {}").format(
-                    self._table("support_billing_tickets"), where_sql
+                    self._table("support_account_cases"), where_sql
                 )
                 cur.execute(query, params)
                 row = cur.fetchone()
@@ -7551,10 +7762,10 @@ class PostgresTicketRepository:
         if review_status:
             clauses.append(sql.SQL("bt.route_review_status = %s"))
             params.append(review_status)
-        if automation_filter == "automation":
-            clauses.append(sql.SQL("bt.automation_status IN ('automation', 'automated')"))
+        if automation_filter in {"automation", "automated"}:
+            clauses.append(sql.SQL("bt.route_status = 'automated'"))
         elif automation_filter == "not_automated":
-            clauses.append(sql.SQL("bt.automation_status NOT IN ('automation', 'automated')"))
+            clauses.append(sql.SQL("bt.route_status <> 'automated'"))
         if route_errors_only:
             clauses.append(
                 sql.SQL(
@@ -7796,7 +8007,7 @@ class PostgresTicketRepository:
                 with conn.cursor() as cur:
                     cur.execute(
                         sql.SQL("SELECT * FROM {} WHERE billing_ticket_id = %s FOR UPDATE").format(
-                            self._table("support_billing_tickets")
+                            self._table("support_account_cases")
                         ),
                         (normalized_id,),
                     )
@@ -7844,16 +8055,24 @@ class PostgresTicketRepository:
                                 route_family = %s,
                                 execution_action = %s,
                                 tooling_profile = %s,
+                                category = %s,
+                                subcategory = %s,
+                                route_status = %s,
+                                automation_handler = %s,
                                 updated_at = %s
                             WHERE billing_ticket_id = %s
                             """
-                        ).format(self._table("support_billing_tickets")),
+                        ).format(self._table("support_account_cases")),
                         (
                             str(active_route.get("route") or "").strip() or None,
                             str(active_route.get("scope_label") or "").strip() or None,
                             str(active_route.get("route_family") or "").strip() or None,
                             str(active_route.get("execution_action") or "").strip() or None,
                             str(active_route.get("tooling_profile") or "").strip() or None,
+                            str(active_route.get("category") or "").strip() or None,
+                            str(active_route.get("subcategory") or "").strip() or None,
+                            str(active_route.get("route_status") or "not_automated").strip(),
+                            str(active_route.get("automation_handler") or "").strip() or None,
                             updated_at,
                             normalized_id,
                         ),
@@ -7952,7 +8171,7 @@ class PostgresTicketRepository:
                             WHERE billing_ticket_id = %s
                             RETURNING *
                             """
-                        ).format(self._table("support_billing_tickets")),
+                        ).format(self._table("support_account_cases")),
                         (normalized_status, updated_at, normalized_id),
                     )
                     row = cur.fetchone()

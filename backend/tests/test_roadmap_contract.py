@@ -607,7 +607,7 @@ class RoadmapContractTests(unittest.TestCase):
         required_terms = [
             "Engineer AI multi-agent",
             "Engineer Case assignment + Workspace",
-            "Billing intake / ticket routing",
+            "Automated Case intake / routing",
             "Routing rules",
             "RAG vs KG / Case Memory",
             "renderMermaidDiagrams",
