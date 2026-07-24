@@ -61,6 +61,11 @@ from backend.services.embedding_provider import (
 )
 from backend.services.agora_service_events import get_agora_service_events_payload
 from backend.services.billing_automation import build_billing_automation_result, send_billing_internal_email
+from backend.services.automation_routing import (
+    AUTOMATED_ROUTE_FAMILY,
+    automation_metadata,
+    is_registered_automation,
+)
 from backend.services.billing_response_flow import (
     BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
     BILLING_RESPONSE_EVENT,
@@ -551,8 +556,10 @@ class BillingResponseSubmitRequest(BaseModel):
 
 
 class BillingRouteCorrectionRequest(BaseModel):
-    scope_label: str = Field(min_length=1, max_length=128)
-    execution_action: str = Field(min_length=1, max_length=128)
+    scope_label: str | None = Field(default=None, min_length=1, max_length=128)
+    execution_action: str | None = Field(default=None, min_length=1, max_length=128)
+    category: str | None = Field(default=None, min_length=1, max_length=128)
+    subcategory: str | None = Field(default=None, min_length=1, max_length=128)
     corrector: str | None = Field(default=None, max_length=160)
 
 
@@ -3192,6 +3199,7 @@ def _public_billing_route_correction(correction: dict[str, Any] | None) -> dict[
     if correction is None:
         return None
     return {
+        "account_case_id": correction.get("account_case_id") or correction.get("billing_ticket_id"),
         "billing_ticket_id": correction.get("billing_ticket_id"),
         "client_ticket_id": correction.get("client_ticket_id"),
         "original_scope_label": correction.get("original_scope_label"),
@@ -3247,8 +3255,23 @@ def _build_account_ticket_view_model(
         str(ticket.get("client_ticket_id") or "").strip()
         or str(ticket.get("ticket_id") or "").strip()
     )
-    billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip() or None
+    account_case_id = str(
+        ticket.get("account_case_id") or ticket.get("billing_ticket_id") or ""
+    ).strip() or None
+    billing_ticket_id = str(ticket.get("billing_ticket_id") or account_case_id or "").strip() or None
     status = str(ticket.get("status") or ticket.get("automation_status") or "").strip() or "not_automated"
+    execution_action = ticket.get("execution_action") or ticket.get("route")
+    metadata = automation_metadata(
+        route_family=ticket.get("route_family"),
+        execution_action=execution_action,
+    )
+    category = ticket.get("category") or metadata["category"]
+    subcategory = ticket.get("subcategory") or metadata["subcategory"]
+    route_status = ticket.get("route_status") or metadata["route_status"]
+    automation_handler = ticket.get("automation_handler") or metadata["automation_handler"]
+    route_family = ticket.get("route_family")
+    if route_status == "automated":
+        route_family = AUTOMATED_ROUTE_FAMILY
 
     raw_source = ticket.get("source")
     source_display: str | dict[str, Any]
@@ -3271,7 +3294,13 @@ def _build_account_ticket_view_model(
     return {
         **ticket,
         "ticket_id": canonical_ticket_id,
+        "account_case_id": account_case_id,
         "billing_ticket_id": billing_ticket_id,
+        "category": category,
+        "subcategory": subcategory,
+        "route_status": route_status,
+        "route_family": route_family,
+        "automation_handler": automation_handler,
         "source": source_display,
         "status": status,
         "automation_status": status,
@@ -3306,7 +3335,8 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
             raise HTTPException(status_code=409, detail="account intake request is already processing")
 
     ticket_id = _resolve_account_ticket_id(request)
-    billing_ticket_id = f"BT-{ticket_id}"
+    account_case_id = f"AC-{ticket_id}"
+    billing_ticket_id = account_case_id
     existing_ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
     if existing_ticket is not None:
         raise HTTPException(status_code=409, detail="ticket_id already exists")
@@ -3354,9 +3384,9 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     )
     route = str(decision.execution_action or decision.route or "").strip()
     route_family = str(decision.route_family or "").strip()
-    is_billing_automation_route = (
-        route_family == "billing_automation"
-        and route in {"detailed_invoice", "account_suspension", "account_verification"}
+    is_billing_automation_route = is_registered_automation(
+        route_family=route_family,
+        execution_action=route,
     )
     is_billing_route = is_billing_automation_route or (
         route_family == "billing_review"
@@ -3404,7 +3434,9 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
             persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, ticket_id)
         customer_reply = apply_persona_to_customer_reply(customer_reply, persona_assignment)
 
+    route_metadata = automation_metadata(route_family=decision.route_family, execution_action=route)
     billing_ticket: dict[str, Any] = {
+        "account_case_id": account_case_id,
         "billing_ticket_id": billing_ticket_id,
         "client_ticket_id": ticket_id,
         "source": _serialize_billing_ticket_source(request.source, account_source),
@@ -3435,8 +3467,9 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "risk_flags": list(decision.risk_flags),
         "evidence_spans": list(decision.evidence_spans),
         "router_source": decision.router_source,
+        **route_metadata,
     }
-    await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+    await async_to_thread(ticket_repository.save_account_case, billing_ticket)
     await async_to_thread(
         ticket_repository.save_account_route_execution,
         route_execution_from_decision(
@@ -3510,7 +3543,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
         billing_ticket["updated_at"] = now_iso()
-        await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
+        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
     event = {
         "event": "ticket_created",
@@ -3550,6 +3583,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "status": response_status,
         "route": route or None,
         "ticket_id": ticket_id,
+        "account_case_id": account_case_id,
         "billing_ticket_id": billing_ticket_id,
         "engineer_case_id": engineer_case_id,
         "rollout_position": rollout_position,
@@ -3561,6 +3595,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "internal_email_send_reason": internal_email_send_reason,
         "semantic_intent": decision.semantic_intent or None,
         "route_family": decision.route_family,
+        **route_metadata,
         "automation_eligibility": decision.automation_eligibility or None,
         "policy_decision": decision.policy_decision or None,
         "not_automated_reason": decision.not_automated_reason or None,
@@ -3696,6 +3731,7 @@ def get_billing_response_context(token: str | None = None) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="billing ticket not found")
 
     return {
+        "account_case_id": billing_ticket.get("account_case_id") or billing_ticket_id,
         "billing_ticket_id": billing_ticket_id,
         "submitted": token_record.get("used_at") is not None,
         "customer_email": _billing_customer_email(billing_ticket),
@@ -3840,6 +3876,7 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
 
     return {
         "submitted": True,
+        "account_case_id": billing_ticket.get("account_case_id") or billing_ticket_id,
         "billing_ticket_id": billing_ticket_id,
         "result": submission["result"],
         "notify_customer": submission["notify_customer"],
@@ -3849,32 +3886,35 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
     }
 
 
-@app.get("/api/account/billing-tickets")
+@app.get("/api/account/cases")
+@app.get("/api/account/billing-tickets", deprecated=True)
 def list_billing_tickets(
     limit: int = 30,
     page: int = 1,
     page_size: int | None = None,
     review_status: str | None = None,
     automation_status: str | None = None,
+    route_status: str | None = None,
     route_errors: bool = False,
 ) -> dict[str, Any]:
     requested_page_size = page_size if page_size is not None else limit
     safe_page_size = max(1, min(requested_page_size, 100))
     normalized_review_status = str(review_status).strip() if review_status else None
-    normalized_automation_status = str(automation_status).strip() if automation_status else None
-    total = ticket_repository.count_billing_tickets(
+    selected_route_status = route_status or automation_status
+    normalized_automation_status = str(selected_route_status).strip() if selected_route_status else None
+    total = ticket_repository.count_account_cases(
         review_status=normalized_review_status,
-        automation_filter=normalized_automation_status,
+        route_status=normalized_automation_status,
         route_errors_only=route_errors,
     )
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
     safe_page = min(max(1, page), total_pages)
     offset = (safe_page - 1) * safe_page_size
-    tickets = ticket_repository.list_billing_tickets(
+    tickets = ticket_repository.list_account_cases(
         limit=safe_page_size,
         review_status=normalized_review_status,
         offset=offset,
-        automation_filter=normalized_automation_status,
+        route_status=normalized_automation_status,
         route_errors_only=route_errors,
     )
     billing_ticket_ids = [
@@ -3902,6 +3942,7 @@ def list_billing_tickets(
         for item in tickets
     ]
     return {
+        "cases": items,
         "tickets": items,
         "billing_tickets": items,
         "count": len(items),
@@ -3913,11 +3954,12 @@ def list_billing_tickets(
     }
 
 
-@app.get("/api/account/billing-tickets/{billing_ticket_id}")
+@app.get("/api/account/cases/{billing_ticket_id}")
+@app.get("/api/account/billing-tickets/{billing_ticket_id}", deprecated=True)
 def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
-    ticket = ticket_repository.get_billing_ticket(billing_ticket_id)
+    ticket = ticket_repository.get_account_case(billing_ticket_id)
     if ticket is None and not str(billing_ticket_id).startswith("BT-"):
-        ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(billing_ticket_id)
+        ticket = ticket_repository.get_account_case_by_ticket_id(billing_ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail="ticket not found")
     view_model = _build_account_ticket_view_model(ticket)
@@ -3945,9 +3987,9 @@ def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
 
 
 async def _load_account_billing_ticket(identifier: str) -> dict[str, Any]:
-    ticket = await async_to_thread(ticket_repository.get_billing_ticket, identifier)
+    ticket = await async_to_thread(ticket_repository.get_account_case, identifier)
     if ticket is None and not str(identifier).startswith("BT-"):
-        ticket = await async_to_thread(ticket_repository.get_billing_ticket_by_client_ticket_id, identifier)
+        ticket = await async_to_thread(ticket_repository.get_account_case_by_ticket_id, identifier)
     if ticket is None:
         raise HTTPException(status_code=404, detail="ticket not found")
     return ticket
@@ -3964,15 +4006,29 @@ def _original_route_tuple_from_ticket(ticket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-correction")
+@app.post("/api/account/cases/{billing_ticket_id}/route-correction")
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-correction", deprecated=True)
 async def correct_billing_ticket_route(
     billing_ticket_id: str,
     request: BillingRouteCorrectionRequest,
 ) -> dict[str, Any]:
+    category = str(request.category or "").strip().lower()
+    scope_label = request.scope_label
+    execution_action = request.execution_action
+    if category:
+        if category != "automation":
+            raise HTTPException(status_code=400, detail=f"invalid category: {request.category!r}")
+        scope_label = "billing"
+        execution_action = request.subcategory
+    if not scope_label or not execution_action:
+        raise HTTPException(
+            status_code=400,
+            detail="provide category/subcategory or scope_label/execution_action",
+        )
     try:
         corrected = validate_route_correction(
-            scope_label=request.scope_label,
-            execution_action=request.execution_action,
+            scope_label=scope_label,
+            execution_action=execution_action,
         )
     except RouteCorrectionValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -4009,6 +4065,10 @@ async def correct_billing_ticket_route(
         "route_family": corrected["route_family"],
         "execution_action": corrected["execution_action"],
         "tooling_profile": corrected["tooling_profile"],
+        "category": corrected["category"],
+        "subcategory": corrected["subcategory"],
+        "route_status": corrected["route_status"],
+        "automation_handler": corrected["automation_handler"],
         "updated_at": timestamp,
     }
     try:
@@ -4036,19 +4096,24 @@ async def correct_billing_ticket_route(
         "corrected_route_family": persisted_correction.get("corrected_route_family"),
         "corrected_execution_action": persisted_correction.get("corrected_execution_action"),
         "corrected_tooling_profile": persisted_correction.get("corrected_tooling_profile"),
+        "category": corrected["category"],
+        "subcategory": corrected["subcategory"],
+        "route_status": corrected["route_status"],
+        "automation_handler": corrected["automation_handler"],
         "correction_count": persisted_correction.get("correction_count") or 1,
     }
     await async_to_thread(ticket_repository.record_event, client_ticket_id, "route_corrected", event)
     await dispatch_event(["engineer", "dashboard"], event)
 
-    refreshed = await async_to_thread(ticket_repository.get_billing_ticket, canonical_billing_ticket_id)
+    refreshed = await async_to_thread(ticket_repository.get_account_case, canonical_billing_ticket_id)
     return get_billing_ticket(canonical_billing_ticket_id) if refreshed is not None else {
         **billing_ticket,
         **_build_account_ticket_view_model(billing_ticket),
     }
 
 
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-review")
+@app.post("/api/account/cases/{billing_ticket_id}/route-review")
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-review", deprecated=True)
 async def review_billing_ticket_route(
     billing_ticket_id: str,
     request: BillingRouteReviewRequest,
@@ -4093,7 +4158,7 @@ async def review_billing_ticket_route(
     await async_to_thread(ticket_repository.record_event, client_ticket_id, "route_reviewed", event)
     await dispatch_event(["engineer", "dashboard"], event)
 
-    refreshed = await async_to_thread(ticket_repository.get_billing_ticket, canonical_billing_ticket_id)
+    refreshed = await async_to_thread(ticket_repository.get_account_case, canonical_billing_ticket_id)
     return get_billing_ticket(canonical_billing_ticket_id) if refreshed is not None else {
         **billing_ticket,
         **_build_account_ticket_view_model(updated_ticket),
@@ -4103,7 +4168,7 @@ async def review_billing_ticket_route(
 @app.get("/api/account/route-errors/summary")
 def get_account_route_error_summary(limit: int = 100) -> dict[str, Any]:
     safe_limit = max(1, min(limit, 500))
-    tickets = ticket_repository.list_billing_tickets(limit=safe_limit)
+    tickets = ticket_repository.list_account_cases(limit=safe_limit)
     total = 0
     corrected_count = 0
     low_confidence_count = 0
@@ -4139,18 +4204,17 @@ class BillingReplyRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
 
 
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply")
+@app.post("/api/account/cases/{billing_ticket_id}/reply")
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply", deprecated=True)
 async def reply_to_billing_ticket(
     billing_ticket_id: str,
     request: BillingReplyRequest,
 ) -> dict[str, Any]:
-    billing_ticket = await async_to_thread(ticket_repository.get_billing_ticket, billing_ticket_id)
-    if billing_ticket is None:
-        raise HTTPException(status_code=404, detail="billing ticket not found")
+    billing_ticket = await _load_account_billing_ticket(billing_ticket_id)
 
     client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
     if not client_ticket_id:
-        raise HTTPException(status_code=400, detail="billing ticket has no linked support ticket")
+        raise HTTPException(status_code=400, detail="account case has no linked support ticket")
 
     canonical_ticket = await async_to_thread(ticket_repository.get_ticket, client_ticket_id)
     if canonical_ticket is None:
@@ -5519,11 +5583,14 @@ def get_workspace_admin_metrics(
     on_schedule = on_schedule_engineer_ids(ticket_repository.list_engineer_schedules(), now)
     on_schedule.intersection_update(active_engineer_ids)
     billing_automation_count = sum(
-        1 for ticket in billing_tickets if ticket.get("automation_status") == "automation"
+        1
+        for ticket in billing_tickets
+        if (ticket.get("route_status") or automation_metadata(
+            route_family=ticket.get("route_family"),
+            execution_action=ticket.get("execution_action") or ticket.get("route"),
+        )["route_status"]) == "automated"
     )
-    billing_not_automated_count = sum(
-        1 for ticket in billing_tickets if ticket.get("automation_status") == "not_automated"
-    )
+    billing_not_automated_count = len(billing_tickets) - billing_automation_count
     return {
         "client_tickets": {
             **client_status_counts,
@@ -5580,7 +5647,7 @@ def get_workspace_admin_metrics(
 def get_workspace_admin_account_automation(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
-    route_status: str | None = Query(default=None, pattern="^(automation|not_automated)$"),
+    route_status: str | None = Query(default=None, pattern="^(automation|automated|not_automated)$"),
     category: str | None = Query(default=None, max_length=128),
     created_from: str | None = Query(default=None, max_length=64),
     created_to: str | None = Query(default=None, max_length=64),

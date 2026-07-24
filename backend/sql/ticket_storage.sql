@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS support_ticket_agent_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS support_billing_tickets (
+CREATE TABLE IF NOT EXISTS support_account_cases (
+    account_case_id TEXT NOT NULL UNIQUE,
     billing_ticket_id TEXT PRIMARY KEY,
     client_ticket_id TEXT NOT NULL UNIQUE REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
     source TEXT NOT NULL,
@@ -86,6 +87,10 @@ CREATE TABLE IF NOT EXISTS support_billing_tickets (
     risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
     evidence_spans JSONB NOT NULL DEFAULT '[]'::jsonb,
     router_source TEXT,
+    category TEXT,
+    subcategory TEXT,
+    route_status TEXT NOT NULL DEFAULT 'not_automated',
+    automation_handler TEXT,
     route_review_status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -93,13 +98,13 @@ CREATE TABLE IF NOT EXISTS support_billing_tickets (
 
 CREATE TABLE IF NOT EXISTS support_billing_response_tokens (
     token_hash TEXT PRIMARY KEY,
-    billing_ticket_id TEXT NOT NULL REFERENCES support_billing_tickets(billing_ticket_id) ON DELETE CASCADE,
+    billing_ticket_id TEXT NOT NULL REFERENCES support_account_cases(billing_ticket_id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     used_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS support_billing_route_corrections (
-    billing_ticket_id TEXT PRIMARY KEY REFERENCES support_billing_tickets(billing_ticket_id) ON DELETE CASCADE,
+    billing_ticket_id TEXT PRIMARY KEY REFERENCES support_account_cases(billing_ticket_id) ON DELETE CASCADE,
     client_ticket_id TEXT NOT NULL,
     original_scope_label TEXT,
     original_route_family TEXT,
@@ -619,8 +624,8 @@ CREATE INDEX IF NOT EXISTS idx_support_ticket_events_ticket_created
 CREATE INDEX IF NOT EXISTS idx_support_ticket_agent_events_ticket_created
     ON support_ticket_agent_events (ticket_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_support_billing_tickets_created
-    ON support_billing_tickets (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_support_account_cases_created
+    ON support_account_cases (created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_support_billing_response_tokens_ticket
     ON support_billing_response_tokens (billing_ticket_id, created_at DESC);

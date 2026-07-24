@@ -24,16 +24,16 @@
 - Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。
 - 对话支持上传 txt/log/err 日志附件。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
-- Billing 白名单问题会自动收集字段并升级内部团队处理。
+- Automation 类别通过 account_verification、detailed_invoice 和 account_suspension 子类自动收集字段并交由已注册 handler 处理。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
-- Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
-- Account 入口可查看 Billing ticket 历史和详情。
+- Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automation 或非自动化路由。
+- Account 入口可查看 Account Case 历史和详情。
 - Account 客户回复使用可发布、可回滚并按 ticket 稳定分配的 Persona Prompt 版本。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口会对 Not automated 工单按可配置比例创建 Engineer Case，当前支持每第 10 单试运行并可切换到 100%。
 - Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。
-- 所有 Account ticket 都会先分类，再将 AI 回复延迟 6–10 分钟仅发布到 `/account`，并限制同一缺失字段最多询问一次。
+- 所有 Account Case 都会先分类，再将 AI 回复延迟 6–10 分钟仅发布到 `/account`，并限制同一缺失字段最多询问一次。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
@@ -86,13 +86,13 @@
 - Dashboard 的 ticket detail 可查看 client agent runtime 摘要与最近 agent events。
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 - Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
-- `/workspace/admin` 可查看 Client Ticket、Engineer Case、SLA、派单/转派、Engineer schedule coverage、Billing automation 和 guardrail 指标。
+- `/workspace/admin` 可查看 Client Ticket、Engineer Case、SLA、派单/转派、Engineer schedule coverage、Automated Cases 和 guardrail 指标。
 - `/workspace/admin` 可通过 Agent Config 查看 Agent Prompt、正式 skill 与 MCP 状态，并以 Draft、Scheduled、Active、Diff、Restore 和历史版本管理 Prompt；Scheduled Prompt 仅在下一次成功的每日部署后统一生效。
 - 对话支持上传 txt/log/err 日志附件。
-- Account 入口可通过 HTTP 或手动 UI 创建客户工单并记录 Billing 自动化或人工审核路由。
+- Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automation 或非自动化路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
-- 所有 Account ticket 都会先分类，再将 AI 回复延迟 6–10 分钟仅发布到 `/account`，并限制同一缺失字段最多询问一次。
+- 所有 Account Case 都会先分类，再将 AI 回复延迟 6–10 分钟仅发布到 `/account`，并限制同一缺失字段最多询问一次。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 
 ### 未完成

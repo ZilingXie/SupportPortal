@@ -235,11 +235,11 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             accessToken = 'admin-token';
             currentAccount = { account_id: 'admin', role: 'admin' };
             await loadAdminData();
-            if (!requestedUrls.includes('/api/workspace/admin/account-automation?route_status=automation')) {
+            if (!requestedUrls.includes('/api/workspace/admin/account-automation?route_status=automated')) {
               throw new Error('default automated cases request is not filtered');
             }
             const defaultMarkup = renderAutomatedCases();
-            if (!defaultMarkup.includes('<option value="automation" selected>Automated</option>')) {
+            if (!defaultMarkup.includes('<option value="automated" selected>Automated</option>')) {
               throw new Error('Automated option is not selected by default');
             }
             automationRouteStatus = '';

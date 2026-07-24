@@ -31,6 +31,8 @@ class AccountAdminFeatureTests(unittest.TestCase):
                     "title": ticket_id,
                     "question": "question",
                     "automation_status": status,
+                    "route_family": "automated" if status == "automation" else "web_company_info",
+                    "execution_action": "detailed_invoice" if status == "automation" else "web_search",
                     "created_at": f"2026-07-2{ticket_id[-1]}T00:00:00+00:00",
                 }
             )
@@ -45,9 +47,11 @@ class AccountAdminFeatureTests(unittest.TestCase):
         })
         self.assertEqual(len(payload["cases"]), 2)
 
-        filtered = account_automation_payload(self.repository, page=1, page_size=20, route_status="automation")
+        filtered = account_automation_payload(self.repository, page=1, page_size=20, route_status="automated")
         self.assertEqual(filtered["total"], 1)
         self.assertEqual(filtered["metrics"]["total_account_cases"], 3)
+        self.assertEqual(filtered["cases"][0]["category"], "automation")
+        self.assertEqual(filtered["cases"][0]["subcategory"], "detailed_invoice")
 
     def test_environment_config_returns_names_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -132,12 +136,17 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stage_details"]))
         self.assertEqual(
             [category["name"] for category in payload["route_categories"]],
-            ["ticket_resolution", "billing", "agora_technical", "agora_non_technical", "small_talk", "non_agora"],
+            ["ticket_resolution", "automation", "billing", "agora_technical", "agora_non_technical", "small_talk", "non_agora"],
+        )
+        automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
+        self.assertEqual(
+            automation["subcategories"],
+            ["account_suspension", "detailed_invoice", "account_verification"],
         )
         billing = next(category for category in payload["route_categories"] if category["name"] == "billing")
         self.assertEqual(
             billing["execution_actions"],
-            ["account_suspension", "detailed_invoice", "account_verification", "human_review_required", "refuse"],
+            ["human_review_required", "refuse"],
         )
 
     def test_persona_draft_publish_assignment_and_rollback_are_versioned(self) -> None:

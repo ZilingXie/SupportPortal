@@ -2072,11 +2072,12 @@ flowchart TD
       },
       {
         id: "billing-routing",
-        short: "Billing",
-        title: "Billing intake / ticket routing",
+        short: "Automation",
+        title: "Automated Case intake / routing",
         status: "doing",
-        thesis: "Phase 2 的 Billing 主链路覆盖 detailed invoice 与 account suspension：系统持续向客户收集必要字段，信息完整后发送 action-specific 内部邮件，内部处理人一律通过 Outlook reply 返回结果。`/account` 接收所有 ticket；Not automated case 先按每第 10 单创建 Engineer Case 验证，9/1 前切到 100%。external ID / ticket ID 幂等用于阻止重复 webhook 重复建单与重复发信。",
+        thesis: "Phase 2 将自动化路由统一为 Automation category，并以 account_verification、detailed_invoice、account_suspension 作为 subcategory；Billing 仅作为当前 handler。系统持续收集必要字段，信息完整后发送 action-specific 内部邮件并通过 Outlook reply 返回结果。`/account` 的基础实体统一为 Account Case，Not automated case 继续按 rollout 创建 Engineer Case。",
         done: [
+          { summary: "Automated Case 已使用 `category=automation`、现有 action subcategory、`route_family=automated` 和独立 `route_status`；Billing 仅作为当前注册 handler。", prs: [] },
           { summary: "Billing automation intake 已覆盖 `account_suspension`、`detailed_invoice` 和 `account_verification`，并能追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
@@ -2097,7 +2098,7 @@ flowchart TD
           "Zendesk webhook / N8n 中转已完成为内部来源入口；real Zendesk replay set 与 Outlook 回复轮询已落地，后续重点是 10% 到 100% 切量、人工审核和指标门禁。",
           "内部处理入口只保留 Outlook reply 作为正式流程；worker 读取 `[Billing Request]` 回复正文并把 PDF 附件转发到客户工单，成功处理后才标记邮件已读。",
           "白名单不要扩大过快；当前用 real Zendesk replay set 持续观察 invoice、account suspension、company verification 的 route_accuracy，再决定是否进一步扩展。",
-          "Automated billing case 当前处理：`/account` 命中 billing automation 后抽取必填字段；缺字段时继续向客户收集信息，字段齐全后发送内部邮件并等待 Outlook reply。客户可见回复仍受 guardrail 和人工最终确认约束。"
+          "Automated Case 当前处理：`/account` 命中 Automation category 下的已注册 subcategory 后，由 Billing handler 抽取必填字段；字段齐全后发送内部邮件并等待 Outlook reply。客户可见回复仍受 guardrail 和人工最终确认约束。"
         ],
         next: [
           { id: "billing-monitor-replay-quality", status: "doing", label: "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。", horizon: "Monitor" },
@@ -2110,17 +2111,17 @@ flowchart TD
           { id: "billing-expand", status: "blocked", label: "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。", horizon: "Decision" }
         ],
         architecture: {
-          title: "Billing Flow: Route -> Outlook Reply -> Customer Follow-up",
-          summary: "Billing 正式流程只使用 Outlook reply：字段完整后发内部邮件，worker 读取回复正文与 PDF 附件并继续客户工单。Not automated ticket 则按 10% 到 100% 的节奏创建并系统派发 Engineer Case。",
+          title: "Automated Case Flow: Route -> Handler -> Customer Follow-up",
+          summary: "Automation category 通过 subcategory 选择已注册 handler；当前 Billing handler 在字段完整后发送内部邮件，worker 读取 Outlook reply 与 PDF 附件并继续客户工单。Not automated Account Case 按 rollout 创建并派发 Engineer Case。",
           mermaid: [
             "flowchart TD",
             "  Z[\"Zendesk webhook / N8n internal forward\"] --> I[\"Billing intake: content + external_id + comments + metadata\"]",
             "  I --> R[\"Support router\"]",
-            "  R -->|scope_label=billing| B{\"billing category?\"}",
+            "  R -->|route_family=automated| B{\"Automation subcategory registered?\"}",
             "  R -->|not automated| RC[\"Rollout counter: Not automated only\"]",
             "  RC -->|every 10th now; 100% before 9/1| EC[\"Create Engineer Case\"]",
             "  EC --> AS[\"System dispatch + 3h SLA\"]",
-            "  B --> BA[\"Billing automation intake\"]",
+            "  B --> BA[\"Billing handler: registered subcategory intake\"]",
             "  BA --> C{\"required info complete?\"}",
             "  C -->|no| Q[\"AI asks customer for missing fields\"]",
             "  C -->|yes| E[\"Internal email to billing owner/team\"]",
@@ -2162,12 +2163,12 @@ flowchart TD
         short: "Routing",
         title: "Routing rules",
         status: "doing",
-        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；三类 case 的 rollout taxonomy 为 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff。Phase 2 用持续指标观察 billing route、风险负例与 Not automated 原因，并支撑 Not automated Engineer Case 从 10% 扩到 100%。",
+        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；自动化结果统一输出 Automation category、action subcategory、automated route family 和独立 route_status，非自动化路由保持原类别。",
         done: [
           { summary: "Routing tab 和架构图已独立维护，固定 deterministic fast path、LLM semantic router、policy gate、fallback 和 route contract 的边界。", prs: [474, 496, 518] },
           { summary: "LLM router 已升级为 semantic intent taxonomy 输出，并把 billing intent、evidence spans、risk flags 和 automation eligibility 纳入 route decision。", prs: [477] },
           { summary: "Policy gate 已拆分「是什么问题」和「能不能 automation」：refund/dispute/legal 不自动化，account_suspension 默认人工审核，detailed_invoice 仅无争议时可自动化。", prs: [477, 520] },
-          { summary: "`SupportRouteDecision`、billing ticket、event 和 account view-model 已透传 semantic routing audit 字段，生产持久化不再丢 route metadata。", prs: [477, 491] },
+          { summary: "`SupportRouteDecision`、Account Case、event 和 account view-model 已透传 semantic routing audit 与 Automation category/subcategory 字段。", prs: [477, 491] },
           { summary: "`billing_review` route family 已建立，用于隔离需人工审核的 billing case，避免与 `billing_automation` 混在一起。", prs: [477, 520] },
           { summary: "Billing deterministic fast path 已扩展 account_suspension、detailed_invoice 和 minimal risk gate，TK-ACC-68BAC7 类 case 不再误判为 web search。", prs: [477, 491, 520] },
           { summary: "Golden billing routing regression set 和 router prompt few-shot 已覆盖 account suspension、detailed invoice、refund/dispute/legal negative 与非 billing case。", prs: [477, 491] },
@@ -2187,7 +2188,7 @@ flowchart TD
         review: [
           "Routing 已从「LLM 做最终 classifier」升级为「LLM 做 semantic intent + policy gate 做 safety boundary」：LLM 不再直接决定 automation，只能建议 intent、置信度、证据片段和风险标记。",
           "Deterministic fast path 保留为 high-precision hint；billing whitelist 命中后已补 minimal risk gate，refund/dispute/legal/compensation/overcharge 等混合风险信号会降级到 `billing_review`，不再被 account_suspension 或 invoice 白名单吞掉。",
-          "`billing_review` route family 隔离了需人工审核的 billing case：deterministic 无风险命中仍可走 `billing_automation`；deterministic mixed-risk、LLM 判断的 account_suspension 和 refund_or_dispute 走 `billing_review`。",
+          "`billing_review` route family 继续隔离需人工审核的 case；符合条件的 action 统一进入 `automated`，由 Automation subcategory 选择 Billing handler。",
           "会议后新增 route rollout 语义：fully_automated 只给稳定 billing/文档类；ai_draft_human_approve 走人审核；unable_to_resolve_handoff 必须停止 AI 乱猜并转真人/CSD/SME。",
           "`conservative_agora_technical_fallback` 对技术问题是安全兜底，但 billing 风险场景不能无条件进 RAG；fallback 前应增加 billing-risk sniff，把 refund/dispute/legal/account access restore 等送 billing_review。",
           "当前 `billing_review` 客户可见体验还不完整：主链路复用 refusal copy，容易让客户误以为 billing 请求不在支持范围内；下一步应改成人工审核确认语，并进入内部待办/queue。",
@@ -2226,8 +2227,8 @@ flowchart TD
             "  PG -->|yes| BG[\"Billing policy gate (_apply_policy_gate)\"]",
             "  BG -->|refund_or_dispute or legal/compensation risk| BR[\"billing_review / human_review_required\"]",
             "  BG -->|billing.account_suspension| BR",
-            "  BG -->|billing.account_verification with no risk| BA1[\"billing_automation / account_verification\"]",
-            "  BG -->|billing.detailed_invoice with no dispute| BA2[\"billing_automation / detailed_invoice\"]",
+            "  BG -->|billing.account_verification with no risk| BA1[\"Automation / account_verification\"]",
+            "  BG -->|billing.detailed_invoice with no dispute| BA2[\"Automation / detailed_invoice\"]",
             "  BG -->|general or risky| BR",
             "  D --> C[\"Route contract\"]",
             "  BP --> C",
@@ -2239,7 +2240,7 @@ flowchart TD
             "  C -->|agora_non_technical| WEB[\"web_company_info / web_search / official_web_search\"]",
             "  C -->|non_agora| REF[\"fallback_or_refuse / refuse\"]",
             "  C -->|small_talk| ST[\"general_chat / controlled_response or refuse\"]",
-            "  C -->|billing| ACC[\"/account view-model + support_billing_tickets audit fields\"]",
+            "  C -->|account intake| ACC[\"/account view-model + support_account_cases audit fields\"]",
             "  C -->|ticket_resolution| TR[\"ticket_resolution / resolve_ticket / deterministic_resolution\"]"
           ].join("\n"),
           note: "图固定两条入口模式：默认（Client AI 主链路）先跑 deterministic fast path，semantic_first（/account）先跑 LLM。Deterministic 命中的决策不进 policy gate（包括 billing 白名单），LLM 命中后只对 billing scope 跑 policy gate，其余 scope 直接落到 route contract。conservative_agora_technical_fallback 是真实分支节点，不是 route contract 输出。新的扩展方式不是继续堆 regex 组合，而是新增 semantic_intent taxonomy、few-shot、policy rule 和 golden case；route contract 保持下游字段稳定。Router audit 字段（intent_router_attempted / fallback_reason / failure_type / router_source）已在 SupportRouteDecision、SupportResolution、TicketExecutionResult 和 billing event 中透传。fallback rate 的口径：仅 router_source=conservative_fallback 计入 fallback；其下按 fallback_reason 细分：below_confidence_threshold（LLM 返回但低于 threshold）、missing_credentials、llm_invocation_failed、invalid_json、invalid_payload、route_fail_open（runtime 超时/异常）。router_source=llm_semantic 才算模型判断，不等于 fallback。"
