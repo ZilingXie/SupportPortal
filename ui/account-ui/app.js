@@ -68,9 +68,8 @@ const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "p
 
 const ROUTE_TUPLE_OPTIONS = [
   { scope: "ticket_resolution", action: "resolve_ticket", label: "Ticket resolution / Resolve ticket" },
-  { scope: "automation", action: "account_suspension", label: "Automation / Account suspension" },
-  { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "automation", action: "account_verification", label: "Automation / Account verification" },
+  { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "billing", action: "human_review_required", label: "Billing / Human review required" },
   { scope: "billing", action: "refuse", label: "Billing / Refuse" },
   { scope: "agora_technical", action: "rag", label: "Agora technical / RAG" },

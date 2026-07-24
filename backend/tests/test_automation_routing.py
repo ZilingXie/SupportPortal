@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from backend.services.automation_routing import automation_metadata, is_registered_automation
+from backend.services.automation_routing import (
+    AUTOMATION_HANDLER_REGISTRY,
+    automation_metadata,
+    is_registered_automation,
+)
 
 
 class AutomationRoutingTests(unittest.TestCase):
@@ -10,7 +14,6 @@ class AutomationRoutingTests(unittest.TestCase):
         for subcategory in (
             "account_verification",
             "detailed_invoice",
-            "account_suspension",
         ):
             with self.subTest(subcategory=subcategory):
                 self.assertEqual(
@@ -25,6 +28,25 @@ class AutomationRoutingTests(unittest.TestCase):
                         "automation_handler": "billing",
                     },
                 )
+
+        self.assertEqual(
+            AUTOMATION_HANDLER_REGISTRY["billing"],
+            frozenset({"account_verification", "detailed_invoice"}),
+        )
+
+    def test_legacy_account_suspension_is_canonicalized_to_account_verification(self) -> None:
+        self.assertEqual(
+            automation_metadata(
+                route_family="automated",
+                execution_action="account_suspension",
+            ),
+            {
+                "category": "automation",
+                "subcategory": "account_verification",
+                "route_status": "automated",
+                "automation_handler": "billing",
+            },
+        )
 
     def test_legacy_billing_route_is_normalized(self) -> None:
         metadata = automation_metadata(

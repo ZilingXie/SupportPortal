@@ -362,6 +362,17 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def get_account_case", repo_source)
         self.assertIn("def list_account_cases", repo_source)
 
+    def test_account_suspension_merge_migration_is_idempotent_and_preserves_original_audit(self) -> None:
+        migration = Path(
+            "backend/sql/migrations/2026_07_24_merge_account_suspension.sql"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("UPDATE support_account_cases", migration)
+        self.assertIn("subcategory", migration)
+        self.assertIn("'account_verification'", migration)
+        self.assertIn("UPDATE support_billing_route_corrections", migration)
+        self.assertNotIn("SET original_execution_action", migration)
+
     def test_ticket_storage_contract_includes_billing_route_corrections(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")

@@ -124,6 +124,10 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertNotIn("data-correction-note", app_source)
         self.assertIn("routeErrorSummary", app_source)
         self.assertIn("ROUTE_TUPLE_OPTIONS", app_source)
+        self.assertNotIn(
+            '{ scope: "automation", action: "account_suspension"',
+            app_source,
+        )
         self.assertIn("scope|action", app_source)
         self.assertIn("renderRouteCorrectionPanel", app_source)
         self.assertIn("submitRouteCorrection", app_source)

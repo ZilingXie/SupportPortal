@@ -7,11 +7,13 @@ AUTOMATED_ROUTE_FAMILY = "automated"
 AUTOMATED_ROUTE_STATUS = "automated"
 NOT_AUTOMATED_ROUTE_STATUS = "not_automated"
 BILLING_AUTOMATION_HANDLER = "billing"
+AUTOMATION_SUBCATEGORY_ALIASES = {
+    "account_suspension": "account_verification",
+}
 
 AUTOMATION_HANDLER_REGISTRY: dict[str, frozenset[str]] = {
     BILLING_AUTOMATION_HANDLER: frozenset(
         {
-            "account_suspension",
             "account_verification",
             "detailed_invoice",
         }
@@ -21,7 +23,7 @@ AUTOMATION_HANDLER_REGISTRY: dict[str, frozenset[str]] = {
 
 def automation_metadata(*, route_family: Any, execution_action: Any) -> dict[str, str | None]:
     normalized_family = str(route_family or "").strip().lower()
-    normalized_action = str(execution_action or "").strip().lower()
+    normalized_action = canonical_automation_subcategory(execution_action)
     is_automated = normalized_family in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}
     handler = _handler_for_subcategory(normalized_action) if is_automated else None
     if handler is None:
@@ -38,6 +40,11 @@ def automation_metadata(*, route_family: Any, execution_action: Any) -> dict[str
         "route_status": AUTOMATED_ROUTE_STATUS,
         "automation_handler": handler,
     }
+
+
+def canonical_automation_subcategory(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return AUTOMATION_SUBCATEGORY_ALIASES.get(normalized, normalized)
 
 
 def is_registered_automation(*, route_family: Any, execution_action: Any) -> bool:

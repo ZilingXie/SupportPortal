@@ -20,7 +20,10 @@ from backend.services.graph_mail import (
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, resolve_model_profile
-from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY
+from backend.services.automation_routing import (
+    AUTOMATED_ROUTE_FAMILY,
+    canonical_automation_subcategory,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -172,7 +175,7 @@ def detect_billing_route(message: str) -> BillingRouteMatch | None:
     account_signals = _matched_signals(text, _ACCOUNT_SUSPENSION_PATTERNS)
     if account_signals:
         return BillingRouteMatch(
-            action=BILLING_ACTION_ACCOUNT_SUSPENSION,
+            action=BILLING_ACTION_ACCOUNT_VERIFICATION,
             reason="billing_account_suspension",
             matched_signals=account_signals,
         )
@@ -200,7 +203,7 @@ def build_billing_automation_result(
     persona_instruction: str | None = None,
     already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
 ) -> BillingAutomationResult:
-    normalized_action = _clean_text(action).lower()
+    normalized_action = canonical_automation_subcategory(action)
     if normalized_action not in _FIELD_ALIASES:
         raise ValueError(f"unsupported billing automation action: {action}")
 
@@ -694,8 +697,14 @@ def _destination_email_for_action(action: str) -> str:
         if action == BILLING_ACTION_DETAILED_INVOICE
         else ""
     )
+    legacy_suspension_destination = (
+        _clean_text(os.getenv(BILLING_ACCOUNT_SUSPENSION_EMAIL_ENV))
+        if action == BILLING_ACTION_ACCOUNT_VERIFICATION
+        else ""
+    )
     return (
         _clean_text(os.getenv(action_env))
+        or legacy_suspension_destination
         or _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_ENV))
         or DEFAULT_BILLING_INTERNAL_EMAIL
     )

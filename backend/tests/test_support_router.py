@@ -263,9 +263,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertEqual(decision.scope_label, "billing")
         self.assertEqual(decision.route_family, "automated")
-        self.assertEqual(decision.execution_action, "account_suspension")
+        self.assertEqual(decision.execution_action, "account_verification")
         self.assertEqual(decision.tooling_profile, "deterministic_billing_intake")
-        self.assertEqual(decision.route, "account_suspension")
+        self.assertEqual(decision.route, "account_verification")
         self.assertEqual(decision.reason, "billing_account_suspension")
         self.assertIn("account suspended", decision.matched_signals)
         urlopen_mock.assert_not_called()
@@ -328,10 +328,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertEqual(resolution.answer_route, "workflow")
         self.assertEqual(resolution.route_family, "automated")
-        self.assertEqual(resolution.execution_action, "account_suspension")
+        self.assertEqual(resolution.execution_action, "account_verification")
         self.assertEqual(resolution.tooling_profile, "deterministic_billing_intake")
         self.assertFalse(resolution.needs_engineer_guidance)
-        self.assertIn("Company location:", resolution.answer)
+        self.assertIn("Address:", resolution.answer)
         self.assertIn("Contact email:", resolution.answer)
         self.assertIn("Phone number:", resolution.answer)
         self.assertIn("Use Case:", resolution.answer)
@@ -357,12 +357,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(resolution.answer_route, "workflow")
-        self.assertEqual(resolution.execution_action, "account_suspension")
-        self.assertIn("We’ve escalated your account suspension request", resolution.answer)
+        self.assertEqual(resolution.execution_action, "account_verification")
+        self.assertIn("We’ve escalated your account verification request", resolution.answer)
         self.assertIsNotNone(resolution.evidence_summary)
         assert resolution.evidence_summary is not None
         internal_email = resolution.evidence_summary["billing_internal_email"]
-        self.assertEqual(internal_email["subject"], "[Billing Request] Account suspension review request - Ticket {{ticket_id}}")
+        self.assertEqual(internal_email["subject"], "[Billing Request] Account verification request - Ticket {{ticket_id}}")
         self.assertIn("Company name: ExampleCo", internal_email["body"])
         self.assertIn("Contact email: ops@example.com", internal_email["body"])
 
@@ -467,7 +467,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         with patch.dict(
             os.environ,
             {
-                "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL": "suspension@example.com",
+                "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL": "verification@example.com",
                 "BILLING_AUTOMATION_DETAILED_INVOICE_EMAIL": "invoice@example.com",
             },
             clear=True,
@@ -494,7 +494,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         assert suspension.internal_email is not None
         assert invoice.internal_email is not None
-        self.assertEqual(suspension.internal_email["to"], "suspension@example.com")
+        self.assertEqual(suspension.internal_email["to"], "verification@example.com")
+        self.assertIn("Account verification request", suspension.internal_email["subject"])
         self.assertEqual(invoice.internal_email["to"], "invoice@example.com")
 
     def test_billing_internal_email_action_destination_falls_back_to_generic_destination(self) -> None:

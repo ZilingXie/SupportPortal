@@ -3270,8 +3270,21 @@ def _build_account_ticket_view_model(
     route_status = ticket.get("route_status") or metadata["route_status"]
     automation_handler = ticket.get("automation_handler") or metadata["automation_handler"]
     route_family = ticket.get("route_family")
-    if route_status == "automated":
+    normalized_route = ticket.get("route")
+    normalized_execution_action = ticket.get("execution_action")
+    automation_family = str(route_family or "").strip().lower() in {
+        AUTOMATED_ROUTE_FAMILY,
+        "billing_automation",
+    }
+    if automation_family:
+        route_status = metadata["route_status"]
+        category = metadata["category"]
+        subcategory = metadata["subcategory"]
+        automation_handler = metadata["automation_handler"]
+    if metadata["route_status"] == "automated":
         route_family = AUTOMATED_ROUTE_FAMILY
+        normalized_route = metadata["subcategory"]
+        normalized_execution_action = metadata["subcategory"]
 
     raw_source = ticket.get("source")
     source_display: str | dict[str, Any]
@@ -3300,6 +3313,8 @@ def _build_account_ticket_view_model(
         "subcategory": subcategory,
         "route_status": route_status,
         "route_family": route_family,
+        "route": normalized_route,
+        "execution_action": normalized_execution_action,
         "automation_handler": automation_handler,
         "source": source_display,
         "status": status,

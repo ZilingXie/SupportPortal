@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from backend.services.api_semantics import is_api_semantics_mismatch_message
+from backend.services.automation_routing import canonical_automation_subcategory
 from backend.services.billing_automation import (
     BILLING_ROUTE_FAMILY,
     BILLING_SCOPE_LABEL,
@@ -164,8 +165,13 @@ class SupportRouteDecision:
             action=self.execution_action or self.route,
             reason=self.reason,
         )
-        object.__setattr__(self, "route_family", self.route_family or route_family)
-        object.__setattr__(self, "execution_action", self.execution_action or execution_action)
+        resolved_route_family = self.route_family or route_family
+        resolved_execution_action = self.execution_action or execution_action
+        if resolved_route_family == BILLING_ROUTE_FAMILY:
+            resolved_execution_action = canonical_automation_subcategory(resolved_execution_action)
+            object.__setattr__(self, "route", resolved_execution_action)
+        object.__setattr__(self, "route_family", resolved_route_family)
+        object.__setattr__(self, "execution_action", resolved_execution_action)
         object.__setattr__(self, "tooling_profile", self.tooling_profile or tooling_profile)
 
 
@@ -242,7 +248,8 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
     if clean_scope == "ticket_resolution":
         return "ticket_resolution", "resolve_ticket", "deterministic_resolution"
     if clean_scope == BILLING_SCOPE_LABEL:
-        if normalized_action in {"account_suspension", "detailed_invoice", "account_verification"}:
+        normalized_action = canonical_automation_subcategory(normalized_action)
+        if normalized_action in {"detailed_invoice", "account_verification"}:
             return BILLING_ROUTE_FAMILY, normalized_action, BILLING_TOOLING_PROFILE
         if normalized_action == "human_review_required":
             return "billing_review", "human_review_required", BILLING_TOOLING_PROFILE
