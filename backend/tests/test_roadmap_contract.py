@@ -51,6 +51,8 @@ class RoadmapContractTests(unittest.TestCase):
             "Persona Prompt registry 与版本管理",
             "Environment Config names-only inventory",
             "Zendesk ticket ID 作为 canonical Ticket ID",
+            "Zendesk source URL 中的 ticket number",
+            "列表与详情统一展示来源 ticket #",
             "Agent Config 与 Route Strategy 管理面",
             "18 项",
             'class="delivery-group" data-status-group="incomplete" open',

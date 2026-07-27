@@ -3223,12 +3223,28 @@ def _account_intake_idempotency_key(request: AccountIntakeRequest) -> str:
     return f"source:{source_link}" if source_link else ""
 
 
+def _zendesk_ticket_id_from_source(value: Any) -> str:
+    link = _extract_account_source_link(value)
+    if not link:
+        return ""
+    parsed = urllib.parse.urlparse(link)
+    host = (parsed.hostname or "").lower()
+    if not (host == "zendesk.com" or host.endswith(".zendesk.com")):
+        return ""
+    path = parsed.path or ""
+    match = _ZENDESK_TICKET_AGENT_RE.match(path) or _ZENDESK_TICKET_API_RE.match(path)
+    return match.group(1) if match else ""
+
+
 def _resolve_account_ticket_id(request: AccountIntakeRequest) -> str:
     external_id = str(request.external_id or "").strip()
     if external_id:
         return external_id
     ticket_id = str(request.ticket_id or "").strip()
-    return ticket_id or f"TK-ACC-{uuid4().hex[:6].upper()}"
+    if ticket_id:
+        return ticket_id
+    zendesk_ticket_id = _zendesk_ticket_id_from_source(request.source)
+    return zendesk_ticket_id or f"TK-ACC-{uuid4().hex[:6].upper()}"
 
 
 def _rollout_position_is_selected(position: int, percent: int) -> bool:
@@ -3521,7 +3537,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "billing_ticket_id": billing_ticket_id,
         "client_ticket_id": ticket_id,
         "source": _serialize_billing_ticket_source(request.source, account_source),
-        "external_id": str(request.external_id).strip() or None,
+        "external_id": str(request.external_id or "").strip() or _zendesk_ticket_id_from_source(request.source) or None,
         "created_by": str(request.created_by).strip() or None,
         "title": title,
         "question": question,

@@ -186,20 +186,28 @@ function sourceClass(source) {
   return "source-manual";
 }
 
-function zendeskTicketLabel(link) {
+function zendeskTicketId(link) {
   try {
     const parsed = new URL(link);
     const host = parsed.hostname.toLowerCase();
     if (host === "zendesk.com" || host.endsWith(".zendesk.com")) {
       const m = parsed.pathname.match(/^\/(?:agent|api\/v2)\/tickets\/(\d+)(?:\.json)?$/);
-      if (m) {
-        return "zen#" + m[1];
-      }
+      if (m) return m[1];
     }
   } catch {
     return "";
   }
   return "";
+}
+
+function zendeskTicketLabel(link) {
+  const ticketId = zendeskTicketId(link);
+  return ticketId ? "zen#" + ticketId : "";
+}
+
+function accountTicketNumber(item) {
+  return zendeskTicketId(safeSourceLink(item?.source))
+    || String(item?.ticket_id || item?.client_ticket_id || "").trim();
 }
 
 function renderSourceValue(source) {
@@ -579,10 +587,14 @@ function renderHistorySidebar() {
           const isActive = (activeBillingId && activeBillingId === itemId) || (activeTicketId && activeTicketId === itemTicketId);
           const itemSource = item.source || "";
           const itemStatus = item.status || item.automation_status || "not_automated";
+          const ticketNumber = accountTicketNumber(item);
           return `
     <button class="history-item ${isActive ? "history-item--active" : ""}" type="button" data-action="open-ticket" data-id="${escapeHtml(itemId)}">
       <div class="history-item-header">
-        <strong>${escapeHtml(item.title || "")}</strong>
+        <div class="history-item-identity">
+          <span class="history-ticket-number">#${escapeHtml(ticketNumber)}</span>
+          <strong>${escapeHtml(item.title || "")}</strong>
+        </div>
         ${renderSourceValue(itemSource)}
       </div>
       ${renderClassificationBadges(item)}
@@ -826,12 +838,17 @@ function renderDetailView() {
   const itemSource = item.source || "";
   const itemStatus = item.status || item.automation_status || "not_automated";
   const ticketId = item.ticket_id || item.client_ticket_id || "";
+  const ticketNumber = accountTicketNumber(item);
   const accountCaseId = item.account_case_id || item.billing_ticket_id || "";
+  const hasDifferentInternalTicketId = Boolean(ticketId && ticketNumber && String(ticketId) !== ticketNumber);
 
   return `
     <div class="panel detail-stack">
       <div class="detail-header">
-        <h3>${escapeHtml(item.title || "")}</h3>
+        <div class="detail-title">
+          <span class="detail-ticket-number">Ticket #${escapeHtml(ticketNumber)}</span>
+          <h3>${escapeHtml(item.title || "")}</h3>
+        </div>
         ${renderClassificationBadges(item)}
       </div>
       <div class="meta-grid">
@@ -840,9 +857,10 @@ function renderDetailView() {
           <span class="meta-value">${escapeHtml(accountCaseId)}</span>
         </div>
         <div class="meta-row">
-          <span class="meta-label">Ticket ID</span>
-          <span class="meta-value">${escapeHtml(ticketId)}</span>
+          <span class="meta-label">Ticket #</span>
+          <span class="meta-value">#${escapeHtml(ticketNumber)}</span>
         </div>
+        ${hasDifferentInternalTicketId ? `<div class="meta-row"><span class="meta-label">Internal Ticket ID</span><span class="meta-value">${escapeHtml(ticketId)}</span></div>` : ""}
 
         <div class="meta-row">
           <span class="meta-label">Source</span>

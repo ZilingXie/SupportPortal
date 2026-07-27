@@ -369,7 +369,8 @@
 3. Conversation 中每条客户与 AI 消息都必须展示服务端 timestamp；UI 使用本地化日期、时间和时区，原始 ISO 时间保留在 `time[datetime]`。
 4. scheduled status row 必须保持固定最小高度，通过轻量 pulse 表达处理中；`prefers-reduced-motion` 下取消动画，状态变化不得引发布局跳动。
 5. 同一规范化缺失字段在同一 ticket 中最多询问一次。客户未回答时不得换措辞重复追问；后续状态显示继续处理或 manual attention。
-6. `manual_attention / failed` 必须作为文字状态显示并使用 `aria-live="polite"`，不能只靠颜色。客户在等待期间追加消息时，旧 scheduled reply 必须取消并由最新上下文替代。
+6. Zendesk 来源的 Account case 必须在列表和详情中优先展示来源 ticket number（例如 `#11830`）；若历史记录的内部 Ticket ID 与 Zendesk number 不一致，详情需同时保留 Internal Ticket ID 供追踪。
+7. `manual_attention / failed` 必须作为文字状态显示并使用 `aria-live="polite"`，不能只靠颜色。客户在等待期间追加消息时，旧 scheduled reply 必须取消并由最新上下文替代。
 
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：

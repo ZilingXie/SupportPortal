@@ -281,7 +281,28 @@ button:disabled {
   min-width: 0;
 }
 
-.history-item-header strong {
+.history-item-identity {
+  display: flex;
+  align-items: baseline;
+  flex: 1 1 auto;
+  gap: 7px;
+  min-width: 0;
+}
+
+.history-ticket-number,
+.detail-ticket-number {
+  color: var(--primary);
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.history-ticket-number {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.history-item-identity strong {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -670,12 +691,22 @@ select.input,
   min-width: 0;
 }
 
-.detail-header h3 {
+.detail-title {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-width: 0;
+}
+
+.detail-ticket-number {
+  font-size: 12px;
+}
+
+.detail-title h3 {
   margin: 0;
   font-family: Manrope, Inter, sans-serif;
   font-size: 22px;
   min-width: 0;
-  flex: 1 1 auto;
   overflow-wrap: anywhere;
   word-break: break-word;
   line-height: 1.25;
