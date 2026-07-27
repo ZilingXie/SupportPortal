@@ -45,8 +45,20 @@ class AgentConfigTests(unittest.TestCase):
         payload = build_agent_config_payload([])
         agents = {agent["key"]: agent for agent in payload["agents"]}
 
-        self.assertEqual(agents["route-agent"]["prompts"][0]["version"], "account-router-v2")
-        self.assertIn("Agora's route classifier", agents["route-agent"]["prompts"][0]["content"])
+        route_prompts = {item["key"]: item for item in agents["route-agent"]["prompts"]}
+        self.assertEqual(route_prompts["account-intent-classifier-system"]["version"], "account-intent-v1")
+        self.assertEqual(route_prompts["account-agora-router-system"]["metadata"]["scope"], "/account")
+        self.assertEqual(route_prompts["account-automation-router-system"]["metadata"]["managed"], False)
+        self.assertEqual(route_prompts["route-system"]["version"], "account-router-v2")
+        component_keys = {item["key"] for item in agents["route-agent"]["components"]}
+        self.assertTrue(
+            {
+                "account-intent-classifier",
+                "account-agora-router",
+                "account-automation-router",
+                "route-classifier",
+            }.issubset(component_keys)
+        )
         self.assertGreater(len(agents["client-agent"]["prompts"]), 10)
         self.assertEqual(
             [skill["key"] for skill in agents["engineer-agent"]["skills"]],

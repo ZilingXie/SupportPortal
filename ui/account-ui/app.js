@@ -67,18 +67,17 @@ let replyPollTimer = null;
 const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "publishing"]);
 
 const ROUTE_TUPLE_OPTIONS = [
-  { scope: "ticket_resolution", action: "resolve_ticket", label: "Ticket resolution / Resolve ticket" },
+  { scope: "ticket_resolution", action: "resolve_ticket", label: "Conversation / Resolve" },
+  { scope: "conversation", action: "follow_up", label: "Conversation / Follow-up" },
+  { scope: "conversation", action: "human_review_required", label: "Conversation / Human Review" },
+  { scope: "non_agora", action: "human_review_required", label: "Support Request / Non-Agora" },
+  { scope: "agora_technical", action: "rag", label: "Support Request / Agora Technical" },
+  { scope: "agora_non_technical", action: "web_search", label: "Support Request / Agora Non-technical" },
+  { scope: "human_review", action: "human_review_required", label: "Support Request / Human Review" },
+  { scope: "unclear", action: "human_review_required", label: "Unclear / Human Review" },
   { scope: "automation", action: "account_verification", label: "Automation / Account verification" },
   { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "automation", action: "enablement", label: "Automation / Enablement" },
-  { scope: "billing", action: "human_review_required", label: "Billing / Human review required" },
-  { scope: "billing", action: "refuse", label: "Billing / Refuse" },
-  { scope: "agora_technical", action: "rag", label: "Agora technical / RAG" },
-  { scope: "agora_non_technical", action: "web_search", label: "Agora non-technical / Web search" },
-  { scope: "agora_non_technical", action: "refuse", label: "Agora non-technical / Refuse" },
-  { scope: "small_talk", action: "controlled_response", label: "Small talk / Controlled response" },
-  { scope: "small_talk", action: "refuse", label: "Small talk / Refuse" },
-  { scope: "non_agora", action: "refuse", label: "Non-Agora / Refuse" },
 ];
 
 const DEFAULT_ROUTE_TUPLE_SELECT_VALUE = "scope|action";
@@ -108,10 +107,29 @@ function routeClass(route) {
   return "route-other";
 }
 
+function classificationLabels(item) {
+  const primary = String(item?.primary_label || "").trim();
+  const secondary = String(item?.secondary_label || "").trim();
+  return { primary, secondary };
+}
+
+function renderClassificationBadges(item) {
+  const { primary, secondary } = classificationLabels(item);
+  if (!primary && !secondary) return "";
+  return `
+    <span class="route-labels" aria-label="Route classification">
+      ${primary ? `<span class="route-label route-label--primary">${escapeHtml(primary)}</span>` : ""}
+      ${secondary ? `<span class="route-label route-label--secondary">${escapeHtml(secondary)}</span>` : ""}
+    </span>
+  `;
+}
+
 // Build the readable "Route result" string: scope_label / route_family / route.
 // Falls back to just `route` for legacy tickets missing the new routing fields,
 // and to "manual review" when nothing is present.
 function routeResultLabel(item) {
+  const { primary, secondary } = classificationLabels(item);
+  if (primary || secondary) return [primary, secondary].filter(Boolean).join(" / ");
   const parts = [
     item.category || item.scope_label,
     item.subcategory,
@@ -567,6 +585,7 @@ function renderHistorySidebar() {
         <strong>${escapeHtml(item.title || "")}</strong>
         ${renderSourceValue(itemSource)}
       </div>
+      ${renderClassificationBadges(item)}
       <div class="history-item-meta">
         <span class="status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         <span class="history-time">${escapeHtml((item.updated_at || item.created_at || "").slice(0, 16).replace("T", " "))}</span>
@@ -813,7 +832,7 @@ function renderDetailView() {
     <div class="panel detail-stack">
       <div class="detail-header">
         <h3>${escapeHtml(item.title || "")}</h3>
-        <span class="status-chip ${routeClass(item.route)}">${escapeHtml(item.route || "manual review")}</span>
+        ${renderClassificationBadges(item)}
       </div>
       <div class="meta-grid">
         <div class="meta-row">

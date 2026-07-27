@@ -711,6 +711,7 @@ function renderAgentPromptPanel(entry) {
     selected.version ? `Version ${selected.version}` : "Unversioned",
     selected.component_key ? `Component ${selected.component_key}` : "",
     metadata.status ? agentStatusLabel(metadata.status) : "",
+    metadata.scope ? `Scope ${metadata.scope}` : "",
     metadata.variant || "",
   ].filter(Boolean);
   return `
