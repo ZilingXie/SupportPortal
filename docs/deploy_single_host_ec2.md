@@ -304,12 +304,13 @@ chmod +x deployment/deploy_ec2.sh
 3. 在 build 前检查镜像存储所在磁盘的剩余空间，默认要求至少 `40 GiB`。
 4. 如果剩余空间低于阈值，会自动执行 `docker builder prune -af` 和 `docker image prune -af` 后再复查。
 5. 如果清理后仍低于阈值，会直接失败并输出明确错误，不会开始 `docker compose build`。
-6. 先执行 `docker compose build`，只有构建成功后才会继续切换服务。
-7. 停服前从当前 API container 保存运行中 image ID 到临时 rollback tag。
-8. 重启容器（`docker compose down` + `up -d`）。
-9. 执行内部健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）和外网检查（默认 `https://support.stellarix.space/health`）。
-10. 新栈启动或内部健康检查失败时，使用旧 image ID 执行 `up -d --no-build` 并验证恢复后的内部健康；外网失败只输出诊断并返回非零，需先排查 DNS、TLS、负载入口、安全组和 Nginx。
-11. 只有新部署全部健康检查成功后才清理临时 rollback tag；失败时保留该 tag 供人工处置。脚本同时使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
+6. build 前从当前 API container 保存运行中 image ID 到临时 rollback tag，避免同一 commit 重建覆盖相同 tag 后丢失 rollback 来源。
+7. 如果运行容器的 image manifest 已丢失，只允许使用同一 `APP_BUILD_REF` 的现存镜像作为 rollback；无法确认同一 build 时会在停服前失败。
+8. 执行 `docker compose build`，只有构建成功后才会继续切换服务；build 或 Prompt Release 准备失败时会清理尚未使用的临时 rollback tag。
+9. 重启容器（`docker compose down` + `up -d`）。
+10. 执行内部健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）和外网检查（默认 `https://support.stellarix.space/health`）。
+11. 新栈启动或内部健康检查失败时，使用旧 image ID 执行 `up -d --no-build` 并验证恢复后的内部健康；外网失败只输出诊断并返回非零，需先排查 DNS、TLS、负载入口、安全组和 Nginx。
+12. 只有新部署全部健康检查成功后才清理临时 rollback tag；失败时保留该 tag 供人工处置。脚本同时使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
 
 这样 build 失败不会停止旧容器，新栈失败也会优先自动恢复上一运行镜像。涉及 `.env` 迁移时仍要保留仓库外配置备份和人工 rollback tag，以覆盖配置回滚和脚本进程中断。
 
@@ -351,11 +352,10 @@ chmod +x deployment/deploy_ec2.sh
 
 自动调度 wrapper 会执行：
 1. 获取 `origin` 最新 refs。
-2. 比较本地 `HEAD` 和 `origin/main`。
-3. 如果远端有新提交，生成目标 commit 的 build metadata，再调用 `deployment/deploy_ec2.sh --branch main --domain support.stellarix.space` 做完整部署；部署脚本会在 pull 后按实际 `HEAD` 再次校准。
-4. 如果没有新提交，只做内外网健康检查，不重启容器。
-5. 无论成功还是失败，都会尝试调用 Amazon SES 发一封日报。
-6. 日报会附带 `docker compose ps` 摘要、最近 docker 日志摘录，以及可选的 AI 日志分析。
+2. 校验本地 `main` 等于或可 fast-forward 到 `origin/main`；分叉时停止并要求人工处理。
+3. 每次触发都生成目标 commit 的 build metadata，再调用 `deployment/deploy_ec2.sh --branch main --domain support.stellarix.space` 做完整部署；即使 commit 未变化，也会生成并验证 deployment-bound Prompt Release。
+4. 无论成功还是失败，都会尝试调用 Amazon SES 发一封日报。
+5. 日报会附带 `docker compose ps` 摘要、最近 docker 日志摘录，以及可选的 AI 日志分析。
 
 #### 4.4.1 前置条件
 
