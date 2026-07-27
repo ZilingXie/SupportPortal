@@ -165,8 +165,21 @@ capture_previous_runtime() {
   fi
 
   ROLLBACK_IMAGE="localhost/supportportal-app:rollback-${APP_BUILD_REF}-$$"
-  docker image tag "${PREVIOUS_IMAGE_ID}" "${ROLLBACK_IMAGE}"
-  log "Saved running API image for rollback: ${ROLLBACK_IMAGE}"
+  if docker image tag "${PREVIOUS_IMAGE_ID}" "${ROLLBACK_IMAGE}"; then
+    log "Saved running API image for rollback: ${ROLLBACK_IMAGE}"
+    return 0
+  fi
+
+  if [[ "${PREVIOUS_BUILD_REF}" == "${APP_BUILD_REF}" ]] \
+    && docker image inspect "${APP_RUNTIME_IMAGE}" >/dev/null 2>&1 \
+    && docker image tag "${APP_RUNTIME_IMAGE}" "${ROLLBACK_IMAGE}"; then
+    log "Running API image manifest is missing; using the existing same-build image for rollback: ${ROLLBACK_IMAGE}"
+    return 0
+  fi
+
+  ROLLBACK_IMAGE=""
+  log "Running API image could not be preserved for rollback: ${PREVIOUS_IMAGE_ID}"
+  return 1
 }
 
 cleanup_rollback_image() {
@@ -547,16 +560,22 @@ main() {
 
   ensure_minimum_free_disk_space
 
+  if ! capture_previous_runtime; then
+    fail "Unable to preserve the running API image before build; the running stack was not stopped"
+  fi
+
   log "Pre-building services before restart..."
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build; then
     show_compose_diagnostics
+    cleanup_rollback_image
+    ROLLBACK_IMAGE=""
     fail "docker compose build failed"
   fi
 
-  capture_previous_runtime
-
   log "Preparing deployment-bound Prompt Release..."
   if ! prepare_candidate_prompt_release; then
+    cleanup_rollback_image
+    ROLLBACK_IMAGE=""
     fail "Prompt Release preparation failed; the running stack was not stopped"
   fi
 

@@ -113,11 +113,20 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     sys.exit(0)
 
                 if args[:2] == ["image", "tag"]:
+                    if args[2] == os.environ.get("FAKE_IMAGE_TAG_FAIL_SOURCE"):
+                        print(f"No such image: {args[2]}", file=sys.stderr)
+                        sys.exit(1)
                     print("image tag ok")
                     sys.exit(0)
 
                 if args[:2] == ["image", "rm"]:
                     print("image rm ok")
+                    sys.exit(0)
+
+                if args[:2] == ["image", "inspect"]:
+                    if os.environ.get("FAKE_CANDIDATE_IMAGE_MISSING") == "1":
+                        sys.exit(1)
+                    print("candidate image present")
                     sys.exit(0)
 
                 if args[:1] == ["inspect"]:
@@ -363,13 +372,14 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("docker compose build failed", result.stdout + result.stderr)
-        self.assertEqual(self._compose_verbs(), ["build", "ps", "logs"])
+        self.assertEqual(self._compose_verbs(), ["ps", "build", "ps", "logs"])
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
         docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
         logs_call = next(call for call in docker_calls if "logs" in call["argv"])
         self.assertIn("worker_query", logs_call["argv"])
         self.assertIn("worker_aux", logs_call["argv"])
         self.assertNotIn("worker", logs_call["argv"])
+        self.assertTrue(any(call["argv"][:3] == ["image", "rm", "-f"] for call in docker_calls))
 
     def test_successful_deploy_builds_before_down_and_reuses_built_image(self) -> None:
         result = self._run_script(
@@ -382,15 +392,22 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         verbs = self._compose_verbs()
-        self.assertEqual(verbs[:5], ["build", "ps", "down", "up", "ps"])
+        self.assertEqual(verbs[:5], ["ps", "build", "down", "up", "ps"])
         self.assertEqual(verbs.count("ps"), 7)
         self.assertNotIn("builder-prune", self._docker_actions())
         self.assertNotIn("image-prune", self._docker_actions())
 
         docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        tag_index = next(
+            index
+            for index, call in enumerate(docker_calls)
+            if call["argv"][:2] == ["image", "tag"]
+        )
+        build_index = next(index for index, call in enumerate(docker_calls) if "build" in call["argv"])
         prepare_index = next(index for index, call in enumerate(docker_calls) if "prepare" in call["argv"])
         down_index = next(index for index, call in enumerate(docker_calls) if "down" in call["argv"])
         activate_index = next(index for index, call in enumerate(docker_calls) if "activate" in call["argv"])
+        self.assertLess(tag_index, build_index)
         self.assertLess(prepare_index, down_index)
         self.assertGreater(activate_index, down_index)
         up_call = next(call for call in docker_calls if "up" in call["argv"])
@@ -480,6 +497,56 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertEqual(rollback_up["app_build_ref"], expected_ref)
         self.assertFalse(any(call["argv"][:3] == ["image", "rm", "-f"] for call in docker_calls))
 
+    def test_missing_same_build_manifest_uses_existing_tag_for_rollback(self) -> None:
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=self.repo).stdout.strip()
+        current_tag = f"localhost/supportportal-app:{expected_ref}"
+        missing_image_id = "sha256:missing-running-image"
+
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "FAKE_DOCKER_UP_EXIT_CODE": "1",
+                "FAKE_PREVIOUS_IMAGE": current_tag,
+                "FAKE_PREVIOUS_BUILD_REF": expected_ref,
+                "FAKE_PREVIOUS_IMAGE_ID": missing_image_id,
+                "FAKE_IMAGE_TAG_FAIL_SOURCE": missing_image_id,
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("using the existing same-build image for rollback", result.stdout)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        tag_calls = [call for call in docker_calls if call["argv"][:2] == ["image", "tag"]]
+        self.assertEqual(tag_calls[0]["argv"][2], missing_image_id)
+        self.assertEqual(tag_calls[1]["argv"][2], current_tag)
+        rollback_tag = tag_calls[1]["argv"][3]
+        rollback_up = next(
+            call
+            for call in docker_calls
+            if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(rollback_up["app_runtime_image"], rollback_tag)
+        self.assertEqual(rollback_up["app_build_ref"], expected_ref)
+
+    def test_missing_different_build_manifest_aborts_before_build(self) -> None:
+        missing_image_id = "sha256:missing-running-image"
+
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "FAKE_PREVIOUS_IMAGE_ID": missing_image_id,
+                "FAKE_IMAGE_TAG_FAIL_SOURCE": missing_image_id,
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unable to preserve the running API image before build", result.stderr)
+        self.assertNotIn("build", self._compose_verbs())
+
     def test_internal_health_failure_restores_previous_image_id(self) -> None:
         internal_url = "http://127.0.0.1:18080/health"
         result = self._run_script(
@@ -526,8 +593,8 @@ class DeployEc2ScriptTests(unittest.TestCase):
             [
                 "builder-prune",
                 "image-prune",
-                "compose-build",
                 "compose-ps",
+                "compose-build",
                 "compose-down",
                 "compose-up",
                 "compose-ps",
