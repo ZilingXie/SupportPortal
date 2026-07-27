@@ -337,6 +337,47 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(self.repository.get_ticket("zendesk-42"))
         self.assertIsNone(self.repository.get_ticket("TK-UPSTREAM-42"))
 
+    def test_account_intake_uses_zendesk_ticket_id_from_source_url(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Zendesk support request",
+                    "question": "Can someone tell me more about Agora products?",
+                    "source": {"Link": "https://agoraio.zendesk.com/api/v2/tickets/11831.json"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ticket_id"], "11831")
+        self.assertEqual(payload["account_case_id"], "AC-11831")
+        self.assertIsNotNone(self.repository.get_ticket("11831"))
+        account_case = self.repository.get_account_case("AC-11831")
+        self.assertIsNotNone(account_case)
+        assert account_case is not None
+        self.assertEqual(account_case["external_id"], "11831")
+        self.assertEqual(
+            account_case["source"],
+            '{"Link": "https://agoraio.zendesk.com/agent/tickets/11831"}',
+        )
+
+    def test_account_intake_ticket_id_precedes_zendesk_source_fallback(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "ticket_id": "TK-UPSTREAM-11832",
+                    "title": "Compatible upstream request",
+                    "question": "Can someone tell me more about Agora products?",
+                    "source": "https://agoraio.zendesk.com/agent/tickets/11832",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["ticket_id"], "TK-UPSTREAM-11832")
+        self.assertIsNotNone(self.repository.get_ticket("TK-UPSTREAM-11832"))
+
     def test_account_intake_falls_back_to_ticket_id_then_generated_id(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             provided_response = self.client.post(
@@ -407,7 +448,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
+        self.assertEqual(payload["ticket_id"], "11830")
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)

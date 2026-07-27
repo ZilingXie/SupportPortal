@@ -210,12 +210,22 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("zendesk.com", app_source)
         self.assertIn("zen#", app_source)
         self.assertIn("zendeskTicketLabel", app_source)
+        self.assertIn("zendeskTicketId", app_source)
+        self.assertIn("accountTicketNumber", app_source)
+        self.assertIn("history-ticket-number", app_source)
+        self.assertIn("detail-ticket-number", app_source)
+        self.assertIn("Internal Ticket ID", app_source)
 
         # Keep existing safety markers.
         self.assertIn('target="_blank"', app_source)
         self.assertIn('rel="noopener noreferrer"', app_source)
         self.assertIn('parsed.protocol === "http:"', app_source)
         self.assertIn('parsed.protocol === "https:"', app_source)
+
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+        self.assertIn(".history-ticket-number", styles)
+        self.assertIn(".detail-ticket-number", styles)
+        self.assertIn("letter-spacing: 0", styles)
 
     def test_account_app_route_result_label_contract(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
