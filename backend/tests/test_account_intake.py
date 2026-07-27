@@ -171,9 +171,13 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-router-v2")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v1")
+        self.assertEqual(executions[0]["classification"]["intent_class"], "support_request")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
-        self.assertIn("Detailed invoice request", executions[0]["user_prompt"])
+        self.assertIn(
+            "Detailed invoice request",
+            executions[0]["prompt_snapshots"]["intent_classifier"]["user_prompt"],
+        )
         replies = self.repository.list_account_reply_executions(payload["ticket_id"])
         self.assertEqual(len(replies), 1)
         self.assertEqual(replies[0]["persona_key"], "default-support")
@@ -1093,7 +1097,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["customer_reply"], None)
 
-    def test_every_tenth_not_automated_account_ticket_creates_pending_engineer_case(self) -> None:
+    def test_not_automated_account_tickets_do_not_create_engineer_cases(self) -> None:
         responses = []
         with patch.dict(
             os.environ,
@@ -1114,14 +1118,9 @@ class AccountIntakeApiTests(unittest.TestCase):
                 responses.append(response.json())
 
         self.assertTrue(all(item["status"] == "not_automated" for item in responses))
-        self.assertTrue(all(item["engineer_case_id"] is None for item in responses[:9]))
-        self.assertEqual(responses[9]["rollout_position"], 10)
-        self.assertTrue(responses[9]["rollout_selected"])
-        self.assertEqual(responses[9]["engineer_case_id"], "zendesk-10-1")
-        engineer_case = self.repository.get_engineer_case("zendesk-10-1")
-        self.assertIsNotNone(engineer_case)
-        assert engineer_case is not None
-        self.assertEqual(engineer_case["assignment_status"], "pending")
+        self.assertTrue(all(item["engineer_case_id"] is None for item in responses))
+        self.assertTrue(all(item["rollout_position"] is None for item in responses))
+        self.assertTrue(all(item["rollout_selected"] is False for item in responses))
 
     def test_account_external_id_replay_does_not_recount_or_duplicate_case(self) -> None:
         request = {
@@ -1144,9 +1143,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(second.json()["idempotent_replay"])
         self.assertEqual(first.json()["ticket_id"], second.json()["ticket_id"])
         self.assertEqual(first.json()["ticket_id"], "zendesk-idempotent-1")
-        self.assertEqual(first.json()["rollout_position"], 1)
-        self.assertEqual(second.json()["rollout_position"], 1)
-        self.assertEqual(len(self.repository.list_ticket_engineer_cases("zendesk-idempotent-1")), 1)
+        self.assertIsNone(first.json()["rollout_position"])
+        self.assertIsNone(second.json()["rollout_position"])
+        self.assertEqual(len(self.repository.list_ticket_engineer_cases("zendesk-idempotent-1")), 0)
 
     def test_account_intake_billing_review_stays_not_automated(self) -> None:
         decision = SupportRouteDecision(
@@ -1183,7 +1182,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "not_automated")
         self.assertEqual(payload["route"], "human_review_required")
-        self.assertEqual(payload["route_family"], "billing_review")
+        self.assertEqual(payload["route_family"], "human_review")
+        self.assertEqual(payload["primary_label"], "Support Request")
+        self.assertEqual(payload["secondary_label"], "Human Review")
         self.assertEqual(payload["automation_eligibility"], "not_eligible")
         self.assertEqual(payload["policy_decision"], "policy_gate")
         self.assertEqual(payload["not_automated_reason"], "human_review_required")
@@ -1542,6 +1543,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_family"], "billing_review")
         self.assertEqual(payload["execution_action"], "human_review_required")
         self.assertEqual(payload["tooling_profile"], "deterministic_billing_intake")
+        self.assertEqual(payload["primary_label"], "Support Request")
+        self.assertEqual(payload["secondary_label"], "Human Review")
         self.assertEqual(payload["automation_status"], "automation")
         self.assertEqual(payload["route_correction"]["original_execution_action"], "detailed_invoice")
         self.assertEqual(payload["route_correction"]["corrected_execution_action"], "human_review_required")
@@ -1607,6 +1610,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_status"], "automated")
         self.assertEqual(payload["automation_handler"], "billing")
         self.assertEqual(payload["automation_status"], "not_automated")
+        self.assertEqual(payload["primary_label"], "Support Request")
+        self.assertEqual(payload["secondary_label"], "Automation / Account Verification")
+        stored = self.repository.get_account_case(account_case_id)
+        assert stored is not None
+        self.assertEqual(stored["route_classification"]["agora_route"], "automation")
+        self.assertEqual(
+            stored["route_classification"]["automation_subcategory"],
+            "account_verification",
+        )
+        self.assertEqual(stored["route_classification"]["classification_source"], "operator_correction")
 
     def test_route_correction_missing_ticket_returns_404(self) -> None:
         response = self.client.post(
@@ -2946,6 +2959,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         first_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
         assert first_job is not None
+        first_job_id = first_job["job_id"]
         self.assertTrue(first_job["payload"]["asked_field_keys"])
         self._publish_latest_account_reply(created["ticket_id"])
 
@@ -2956,9 +2970,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         second_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
         assert second_job is not None
-        self.assertEqual(second_job["payload"]["asked_field_keys"], [])
-        self.assertNotIn("could you please provide", second_job["payload"]["draft_content"].lower())
-        self.assertNotIn("provide the following", second_job["payload"]["draft_content"].lower())
+        self.assertEqual(second_job["job_id"], first_job_id)
+        self.assertEqual(response.json()["primary_label"], "Conversation")
+        self.assertEqual(response.json()["secondary_label"], "Follow-up")
 
     def test_new_customer_message_cancels_pending_reply(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -2983,7 +2997,35 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert latest is not None
         self.assertNotEqual(latest["job_id"], first_job["job_id"])
 
-    def test_non_automated_ticket_prepares_account_only_reply(self) -> None:
+    def test_new_support_question_supersedes_active_automation_handler(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+
+        response = self.client.post(
+            f"/api/account/cases/{created['account_case_id']}/reply",
+            json={"message": "How do I generate an Agora RTC token?"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        # The credential-free legacy fallback is conservative with conflicting
+        # case history, but it must still leave the prior Automation binding.
+        self.assertEqual(payload["primary_label"], "Unclear")
+        self.assertEqual(payload["secondary_label"], "Human Review")
+        self.assertEqual(payload["automation_status"], "not_automated")
+        self.assertIsNone(payload["ai_reply_status"])
+        classification = payload["route_classification"]
+        self.assertEqual(classification["superseded_automation_handler"], "billing")
+        self.assertEqual(classification["previous_handler_binding_status"], "superseded")
+
+    def test_non_automated_ticket_only_records_route_labels(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             created = self.client.post(
                 "/account",
@@ -2994,30 +3036,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 },
             ).json()
         job = self.repository.get_latest_account_reply_job(created["ticket_id"])
-        assert job is not None
-        self.assertEqual(job["status"], "queued")
-        job["status"] = "preparing"
-        self.repository.save_account_reply_job(job)
-        resolution = SupportResolution(
-            answer="Agora provides real-time voice and video products.",
-            confidence=0.9,
-            sources=[],
-            citations=[],
-            needs_engineer_guidance=False,
-            answer_route="web_search",
-            scope_label="agora_non_technical",
-            route_reason="official_product_question",
-            route_confidence=0.9,
-            search_used=True,
-        )
-        with patch.object(worker, "resolve_support_message", return_value=resolution):
-            worker._prepare_account_reply_job(job)
-
-        prepared = self.repository.get_account_reply_job(job["job_id"])
-        assert prepared is not None
-        self.assertEqual(prepared["status"], "scheduled")
-        self.assertEqual(prepared["payload"]["visibility"], "account_only")
-        self.assertIn("real-time voice", prepared["payload"]["draft_content"])
+        self.assertIsNone(job)
+        self.assertEqual(created["primary_label"], "Support Request")
+        self.assertEqual(created["secondary_label"], "Agora Non-technical")
+        self.assertIsNone(created["ai_reply_status"])
 
     def test_account_reply_publication_is_idempotent_after_partial_worker_recovery(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

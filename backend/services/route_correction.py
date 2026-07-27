@@ -6,6 +6,36 @@ from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automati
 
 VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
+        "scope_label": "conversation",
+        "execution_action": "follow_up",
+        "route_family": "conversation",
+        "tooling_profile": "classification_only",
+    },
+    {
+        "scope_label": "conversation",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
+        "scope_label": "human_review",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
+        "scope_label": "unclear",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
+        "scope_label": "non_agora",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
         "scope_label": "ticket_resolution",
         "execution_action": "resolve_ticket",
         "route_family": "ticket_resolution",

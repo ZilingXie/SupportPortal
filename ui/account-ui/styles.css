@@ -417,6 +417,44 @@ button:disabled {
   max-width: 100%;
 }
 
+.route-labels {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.route-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.route-label--primary {
+  background: var(--secondary);
+  color: white;
+}
+
+.route-label--secondary {
+  background: var(--secondary-fixed, #e0e0ff);
+  color: var(--secondary);
+}
+
+.history-item > .route-labels {
+  align-self: flex-start;
+}
+
+.detail-header > .route-labels {
+  justify-content: flex-end;
+}
+
 .route-invoice {
   background: #dceff1;
   color: var(--success);

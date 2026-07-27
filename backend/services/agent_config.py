@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from backend.services.account_admin import ROUTER_PROMPT_VERSION
+from backend.services.account_route_pipeline import account_router_prompt_catalog
 from backend.services.engineer_plan_agent import ENGINEER_PLAN_SKILLS
 from backend.services.openai_input_guardrail import (
     INPUT_GUARDRAIL_PROMPT_VERSION,
@@ -46,6 +46,9 @@ from backend.services.support_products import (
     list_support_products,
 )
 from backend.services.support_router_prompt import build_route_system_prompt
+
+
+CLIENT_ROUTE_PROMPT_VERSION = "account-router-v2"
 
 
 def _component(key: str, name: str, description: str, status: str = "active") -> dict[str, str]:
@@ -212,27 +215,55 @@ def _persona_prompts(personas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any]:
+    account_route_prompts = [
+        _prompt(
+            item["key"],
+            item["name"],
+            item["component_key"],
+            item["content"],
+            version=item["version"],
+            metadata={"managed": False, "scope": "/account"},
+        )
+        for item in account_router_prompt_catalog()
+    ]
     agents = [
         {
             "key": "route-agent",
             "kind": "agent",
             "name": "Route Agent",
-            "description": "Classifies incoming support requests and selects the supported scope and execution route.",
+            "description": "Routes Account Cases through layered classifiers while preserving the existing Client route.",
             "status": "active",
             "components": [
                 _component(
+                    "account-intent-classifier",
+                    "Intent Classifier",
+                    "Classifies /account messages as conversation, support request, or unclear and determines support scope.",
+                ),
+                _component(
+                    "account-agora-router",
+                    "Agora Router",
+                    "Classifies confirmed Agora requests as technical, non-technical, automation, or unclear.",
+                ),
+                _component(
+                    "account-automation-router",
+                    "Automation Router",
+                    "Selects a registered Account Automation subcategory and handler.",
+                ),
+                _component(
                     "route-classifier",
-                    "Route classifier",
-                    "LLM semantic classification followed by confidence and policy gates.",
+                    "Client Route Classifier",
+                    "Existing shared classifier used by /client and non-Account workflows.",
                 )
             ],
             "prompts": [
+                *account_route_prompts,
                 _prompt(
                     "route-system",
-                    "Route classifier",
+                    "Client Route Classifier",
                     "route-classifier",
                     build_route_system_prompt(),
-                    version=ROUTER_PROMPT_VERSION,
+                    version=CLIENT_ROUTE_PROMPT_VERSION,
+                    metadata={"scope": "/client"},
                 )
             ],
             "skills": [],
@@ -331,6 +362,8 @@ def build_managed_prompt_catalog() -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
     for agent in payload["agents"]:
         for prompt in agent["prompts"]:
+            if prompt.get("metadata", {}).get("managed") is False:
+                continue
             catalog.append(
                 {
                     "prompt_key": prompt["key"],

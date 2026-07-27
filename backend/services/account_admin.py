@@ -6,28 +6,22 @@ from typing import Any
 from uuid import uuid4
 
 from backend.services.support_router import SupportRouteDecision
-from backend.services.support_router_prompt import build_route_system_prompt
+from backend.services.prompts.account_routing import (
+    build_account_agora_system_prompt,
+    build_account_automation_system_prompt,
+    build_account_intent_system_prompt,
+)
 from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-router-v2"
+ROUTER_PROMPT_VERSION = "account-layered-router-v1"
 ROUTING_STAGE_DESCRIPTIONS = {
-    "semantic_intent": "Classifies the request intent and captures the evidence used by the router.",
-    "confidence_threshold": "Checks whether the model confidence is high enough to use the semantic result.",
-    "policy_gate": "Applies automation and safety policy before an action can run.",
-    "heuristic_fallback": "Uses deterministic signals when semantic routing is unavailable or uncertain.",
-    "final_route": "Selects the execution action and tooling profile used to handle the request.",
-}
-ROUTE_CATEGORY_METADATA = {
-    "automation": ("Automation", "Account cases handled by a registered automation subcategory."),
-    "ticket_resolution": ("Ticket resolution", "Requests to resolve or close an existing support ticket."),
-    "billing": ("Billing", "Account, invoice, verification, and billing review requests."),
-    "agora_technical": ("Agora technical", "Technical Agora product and SDK questions handled with Agora documentation."),
-    "agora_non_technical": ("Agora non-technical", "Agora company or product questions that may use official web sources."),
-    "small_talk": ("Small talk", "Brief conversational messages that receive a controlled response."),
-    "non_agora": ("Non-Agora", "Requests outside Agora support scope that are refused."),
+    "intent_classifier": "Classifies conversation, support request, support scope, or unclear intent.",
+    "agora_router": "Classifies confirmed Agora requests as technical, non-technical, automation, or unclear.",
+    "automation_router": "Selects a registered Automation subcategory or fails closed to Human Review.",
+    "final_route": "Records the route target and the primary and secondary Account labels.",
 }
 DEFAULT_PERSONA_KEY = "default-support"
 DEFAULT_PERSONA_CONTENT = {
@@ -307,7 +301,42 @@ def route_execution_from_decision(
     system_prompt: str | None,
     user_prompt: str | None,
     created_at: str | None = None,
+    classification: dict[str, Any] | None = None,
+    prompt_snapshots: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    if isinstance(classification, dict) and classification:
+        stage_confidences = dict(classification.get("stage_confidences") or {})
+        stage_reasons = dict(classification.get("stage_reasons") or {})
+        stages = [
+            {
+                "name": name,
+                "status": "completed",
+                "confidence": confidence,
+                "reason": stage_reasons.get(name),
+            }
+            for name, confidence in stage_confidences.items()
+        ]
+        stages.append(
+            {
+                "name": "final_route",
+                "status": str(classification.get("route_target") or "human_review"),
+            }
+        )
+        snapshots = dict(prompt_snapshots or {})
+        return {
+            "execution_id": f"route-{uuid4().hex}",
+            "ticket_id": str(ticket_id),
+            "final_route": str(decision.execution_action or decision.route),
+            "route_source": decision.router_source,
+            "classification": dict(classification),
+            "confidence": decision.confidence,
+            "confidence_threshold": decision.intent_router_confidence_threshold,
+            "router_prompt_version": str(classification.get("pipeline_version") or "account-layered-router-v1"),
+            "prompt_snapshots": snapshots,
+            "prompt_snapshot_available": bool(snapshots),
+            "stages": stages,
+            "created_at": created_at,
+        }
     attempted = bool(decision.intent_router_attempted)
     stages = [
         {"name": "semantic_intent", "status": "attempted" if attempted else "skipped"},
@@ -339,34 +368,51 @@ def route_execution_from_decision(
 
 
 def routing_config_payload() -> dict[str, Any]:
-    actions_by_category: dict[str, list[str]] = {}
-    for route in VALID_ROUTE_TUPLES:
-        category = (
-            "automation"
-            if route["route_family"] == "automated"
-            else route["scope_label"]
-        )
-        action = route["execution_action"]
-        actions = actions_by_category.setdefault(category, [])
-        if action not in actions:
-            actions.append(action)
-
-    route_categories = []
-    for name, actions in actions_by_category.items():
-        display_name, description = ROUTE_CATEGORY_METADATA[name]
-        route_categories.append(
-            {
-                "name": name,
-                "display_name": display_name,
-                "description": description,
-                "execution_actions": actions,
-                "subcategories": actions if name == "automation" else [],
-            }
-        )
+    automation_subcategories = [
+        route["execution_action"]
+        for route in VALID_ROUTE_TUPLES
+        if route["route_family"] == "automated"
+    ]
+    route_categories = [
+        {
+            "name": "conversation",
+            "display_name": "Conversation",
+            "description": "Conversation-only messages classified before support routing.",
+            "execution_actions": ["resolve", "follow_up", "human_review"],
+            "subcategories": [],
+        },
+        {
+            "name": "support_request",
+            "display_name": "Support Request",
+            "description": "Support requests split into Agora, non-Agora, unclear, or mixed scope.",
+            "execution_actions": ["agora", "non_agora", "unclear", "mixed"],
+            "subcategories": [],
+        },
+        {
+            "name": "agora",
+            "display_name": "Agora Router",
+            "description": "Confirmed Agora requests routed to RAG, Web, Automation, or Human Review.",
+            "execution_actions": ["technical", "non_technical", "automation", "unclear", "mixed"],
+            "subcategories": [],
+        },
+        {
+            "name": "automation",
+            "display_name": "Automation",
+            "description": "Account cases handled only by a registered Automation subcategory.",
+            "execution_actions": automation_subcategories,
+            "subcategories": automation_subcategories,
+        },
+    ]
 
     return {
         "router_prompt_version": ROUTER_PROMPT_VERSION,
-        "system_prompt": build_route_system_prompt(),
+        "system_prompt": "\n\n---\n\n".join(
+            [
+                build_account_intent_system_prompt(),
+                build_account_agora_system_prompt(),
+                build_account_automation_system_prompt(),
+            ]
+        ),
         "stages": list(ROUTING_STAGE_DESCRIPTIONS),
         "stage_details": [
             {"name": name, "description": description}

@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS support_account_cases (
     subcategory TEXT,
     route_status TEXT NOT NULL DEFAULT 'not_automated',
     automation_handler TEXT,
+    route_classification JSONB NOT NULL DEFAULT '{}'::jsonb,
     route_review_status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

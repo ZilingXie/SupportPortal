@@ -16,6 +16,20 @@ from backend.services.route_correction import (
 
 
 class RouteCorrectionValidationTests(unittest.TestCase):
+    def test_accepts_layered_conversation_and_human_review_tuples(self) -> None:
+        follow_up = validate_route_correction(
+            scope_label="conversation",
+            execution_action="follow_up",
+        )
+        self.assertEqual(follow_up["route_family"], "conversation")
+        self.assertEqual(follow_up["tooling_profile"], "classification_only")
+
+        unclear = validate_route_correction(
+            scope_label="unclear",
+            execution_action="human_review_required",
+        )
+        self.assertEqual(unclear["route_family"], "human_review")
+
     def test_valid_billing_detailed_invoice_derives_full_tuple(self) -> None:
         result = validate_route_correction(scope_label="billing", execution_action="detailed_invoice")
         self.assertEqual(result["scope_label"], "billing")
@@ -58,6 +72,11 @@ class RouteCorrectionValidationTests(unittest.TestCase):
 
     def test_valid_tuple_dictionary_matches_contract(self) -> None:
         expected_pairs = {
+            ("conversation", "follow_up", "conversation", "classification_only"),
+            ("conversation", "human_review_required", "human_review", "classification_only"),
+            ("human_review", "human_review_required", "human_review", "classification_only"),
+            ("unclear", "human_review_required", "human_review", "classification_only"),
+            ("non_agora", "human_review_required", "human_review", "classification_only"),
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
             ("billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
             ("billing", "account_verification", "automated", "deterministic_billing_intake"),

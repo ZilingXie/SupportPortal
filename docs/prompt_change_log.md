@@ -2792,3 +2792,25 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_support_router_enablement backend.tests.test_support_router_semantic_billing -v`
   - `rtk python3 scripts/verify_feature_list.py`
+
+## 2026-07-27 - Account layered route pipeline
+
+- Area or subsystem: `/account` Route Agent
+- Prompt or model version: `account-intent-v1` / `account-agora-v1` / `account-automation-v1`
+- Summary: Replaced the single `/account` semantic-first Prompt with three scoped classifiers: Intent Classifier, Agora Router, and Automation Router. The shared Client Router remains unchanged.
+- Reason: The Automation taxonomy will continue to grow; separating conversation/scope, Agora route, and registered Automation subcategory decisions keeps each Prompt narrow while preserving examples and fail-closed behavior.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/main.py`
+  - `backend/services/agent_config.py`
+  - `ACCOUNT_ROUTER_MODE`
+  - `ACCOUNT_ROUTER_CONFIDENCE_THRESHOLD`
+- Expected behavior change:
+  - `/account` records primary and secondary labels from the layered result; mixed, unclear, low-confidence, invalid, and unregistered outputs route to Human Review.
+  - Only registered Automation routes execute Billing or Enablement handlers. Other Account routes are classification-only in this phase.
+  - Ordinary Account replies rerun the full pipeline. A reply supplying new required fields continues an active Automation handler before reclassification.
+  - `/client`, background workers, and shared `decide_support_route()` callers retain their existing route behavior.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py backend/tests/test_agent_config.py backend/tests/test_account_ui_contract.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_repository_configuration.py -q`
+  - `rtk python3 scripts/verify_feature_list.py`

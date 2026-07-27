@@ -136,18 +136,15 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stage_details"]))
         self.assertEqual(
             [category["name"] for category in payload["route_categories"]],
-            ["ticket_resolution", "automation", "billing", "agora_technical", "agora_non_technical", "small_talk", "non_agora"],
+            ["conversation", "support_request", "agora", "automation"],
         )
         automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
         self.assertEqual(
             automation["subcategories"],
             ["account_verification", "detailed_invoice", "enablement"],
         )
-        billing = next(category for category in payload["route_categories"] if category["name"] == "billing")
-        self.assertEqual(
-            billing["execution_actions"],
-            ["human_review_required", "refuse"],
-        )
+        self.assertIn("Intent Classifier", payload["system_prompt"])
+        self.assertIn("Automation Router", payload["system_prompt"])
 
     def test_persona_draft_publish_assignment_and_rollback_are_versioned(self) -> None:
         personas = self.repository.list_account_personas()
