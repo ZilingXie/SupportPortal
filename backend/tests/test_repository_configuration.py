@@ -377,6 +377,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("SELECT DISTINCT ON (ticket_id)", repo_source)
         self.assertIn("WHERE ticket_id = ANY(%s)", repo_source)
 
+    def test_account_case_page_combines_lightweight_rows_and_total(self) -> None:
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("def list_account_case_page", repo_source)
+        self.assertIn("WITH filtered AS MATERIALIZED", repo_source)
+        self.assertIn("LEFT JOIN LATERAL", repo_source)
+        list_fields = repo_source.split("_ACCOUNT_CASE_LIST_FIELDS = (", 1)[1].split(")", 1)[0]
+        self.assertNotIn('"internal_email_payload"', list_fields)
+        self.assertNotIn('"question"', list_fields)
+
     def test_account_layered_router_migration_is_idempotent(self) -> None:
         migration = Path(
             "backend/sql/migrations/2026_07_27_account_layered_router.sql"

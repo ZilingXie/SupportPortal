@@ -110,6 +110,33 @@ def _account_case_matches_route_filter(item: dict[str, Any], route_filter: str |
     return expected_label is None or _account_case_route_label(item) == expected_label
 
 
+_ACCOUNT_CASE_LIST_FIELDS = (
+    "account_case_id",
+    "billing_ticket_id",
+    "client_ticket_id",
+    "source",
+    "title",
+    "route",
+    "scope_label",
+    "route_family",
+    "execution_action",
+    "route_confidence",
+    "automation_status",
+    "category",
+    "subcategory",
+    "route_status",
+    "automation_handler",
+    "route_classification",
+    "route_review_status",
+    "created_at",
+    "updated_at",
+)
+
+
+def _account_case_list_record(item: dict[str, Any]) -> dict[str, Any]:
+    return {field: copy.deepcopy(item.get(field)) for field in _ACCOUNT_CASE_LIST_FIELDS}
+
+
 def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(account_case)
     billing_ticket_id = str(
@@ -1208,6 +1235,17 @@ class TicketRepository(Protocol):
     ) -> list[dict[str, Any]]:
         ...
 
+    def list_account_case_page(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+        route_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        ...
+
     def count_account_cases(
         self,
         review_status: str | None = None,
@@ -1311,6 +1349,33 @@ class InMemoryTicketRepository:
             route_errors_only=route_errors_only,
             route_filter=route_filter,
         )
+
+    def list_account_case_page(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+        route_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        safe_limit = _safe_positive_int(limit, 30)
+        requested_offset = _safe_non_negative_int(offset, 0)
+        all_items = self.list_billing_tickets(
+            limit=max(1, len(self._billing_tickets)),
+            review_status=review_status,
+            offset=0,
+            automation_filter=route_status,
+            route_errors_only=route_errors_only,
+            route_filter=route_filter,
+        )
+        total = len(all_items)
+        if total == 0:
+            return [], 0
+        last_page_offset = ((total - 1) // safe_limit) * safe_limit
+        safe_offset = min(requested_offset, last_page_offset)
+        items = all_items[safe_offset : safe_offset + safe_limit]
+        return [_account_case_list_record(item) for item in items], total
 
     def count_account_cases(
         self,
@@ -3158,6 +3223,80 @@ class PostgresTicketRepository:
             route_errors_only=route_errors_only,
             route_filter=route_filter,
         )
+
+    def list_account_case_page(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+        route_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        safe_limit = _safe_positive_int(limit, 30)
+        requested_offset = _safe_non_negative_int(offset, 0)
+        normalized_review_status = str(review_status).strip() if review_status else None
+        normalized_route_status = str(route_status or "").strip()
+        normalized_route_filter = str(route_filter or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> tuple[list[dict[str, Any]], int]:
+            with conn.cursor() as cur:
+                where_sql, params = self._billing_ticket_filter_sql(
+                    review_status=normalized_review_status,
+                    automation_filter=normalized_route_status,
+                    route_errors_only=route_errors_only,
+                    route_filter=normalized_route_filter,
+                )
+                selected_columns = sql.SQL(", ").join(
+                    sql.SQL("bt.{}").format(sql.Identifier(field))
+                    for field in _ACCOUNT_CASE_LIST_FIELDS
+                )
+                query = sql.SQL(
+                    """
+                    WITH filtered AS MATERIALIZED (
+                        SELECT {} FROM {} bt
+                        {}
+                    ), page_meta AS (
+                        SELECT COUNT(*)::BIGINT AS total FROM filtered
+                    )
+                    SELECT page.*, page_meta.total AS _total
+                    FROM page_meta
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM filtered
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        OFFSET LEAST(
+                            %s,
+                            CASE
+                                WHEN page_meta.total = 0 THEN 0
+                                ELSE ((page_meta.total - 1) / %s) * %s
+                            END
+                        )
+                    ) page ON TRUE
+                    """
+                ).format(
+                    selected_columns,
+                    self._table("support_account_cases"),
+                    where_sql,
+                )
+                cur.execute(
+                    query,
+                    (*params, safe_limit, requested_offset, safe_limit, safe_limit),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return [], 0
+                col_names = [desc[0] for desc in cur.description]
+                total = int(rows[0][col_names.index("_total")] or 0)
+                items: list[dict[str, Any]] = []
+                for row in rows:
+                    record = dict(zip(col_names, row))
+                    record.pop("_total", None)
+                    if record.get("client_ticket_id") is not None:
+                        items.append(record)
+                return items, total
+
+        return self._run_with_connection_retry("list_account_case_page", _operation)
 
     def count_account_cases(
         self,

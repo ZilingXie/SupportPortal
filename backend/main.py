@@ -3980,23 +3980,18 @@ def list_billing_tickets(
     normalized_review_status = str(review_status).strip() if review_status else None
     selected_route_status = route_status or automation_status
     normalized_automation_status = str(selected_route_status).strip() if selected_route_status else None
-    total = ticket_repository.count_account_cases(
+    requested_page = max(1, page)
+    requested_offset = (requested_page - 1) * safe_page_size
+    tickets, total = ticket_repository.list_account_case_page(
+        limit=safe_page_size,
         review_status=normalized_review_status,
+        offset=requested_offset,
         route_status=normalized_automation_status,
         route_errors_only=route_errors,
         route_filter=route_label,
     )
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
-    safe_page = min(max(1, page), total_pages)
-    offset = (safe_page - 1) * safe_page_size
-    tickets = ticket_repository.list_account_cases(
-        limit=safe_page_size,
-        review_status=normalized_review_status,
-        offset=offset,
-        route_status=normalized_automation_status,
-        route_errors_only=route_errors,
-        route_filter=route_label,
-    )
+    safe_page = min(requested_page, total_pages)
     billing_ticket_ids = [
         str(item.get("billing_ticket_id") or "").strip()
         for item in tickets
