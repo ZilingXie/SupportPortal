@@ -4007,6 +4007,16 @@ def list_billing_tickets(
         if billing_ticket_ids
         else {}
     )
+    client_ticket_ids = [
+        str(item.get("client_ticket_id") or "").strip()
+        for item in tickets
+        if item.get("client_ticket_id")
+    ]
+    latest_reply_jobs = (
+        ticket_repository.get_latest_account_reply_jobs(client_ticket_ids)
+        if client_ticket_ids
+        else {}
+    )
     items = [
         {
             **_build_account_ticket_view_model(
@@ -4016,7 +4026,7 @@ def list_billing_tickets(
             "billing_ticket_id": item.get("billing_ticket_id"),
             "client_ticket_id": item.get("client_ticket_id"),
             **_account_reply_job_public(
-                ticket_repository.get_latest_account_reply_job(str(item.get("client_ticket_id") or ""))
+                latest_reply_jobs.get(str(item.get("client_ticket_id") or "").strip())
             ),
         }
         for item in tickets
@@ -4255,13 +4265,23 @@ async def review_billing_ticket_route(
 def get_account_route_error_summary(limit: int = 100) -> dict[str, Any]:
     safe_limit = max(1, min(limit, 500))
     tickets = ticket_repository.list_account_cases(limit=safe_limit)
+    billing_ticket_ids = [
+        str(ticket.get("billing_ticket_id") or "").strip()
+        for ticket in tickets
+        if ticket.get("billing_ticket_id")
+    ]
+    corrections = (
+        ticket_repository.get_billing_route_corrections_for_tickets(billing_ticket_ids)
+        if billing_ticket_ids
+        else {}
+    )
     total = 0
     corrected_count = 0
     low_confidence_count = 0
     transitions: dict[str, int] = {}
     for ticket in tickets:
         billing_ticket_id = str(ticket.get("billing_ticket_id") or "").strip()
-        correction = ticket_repository.get_billing_route_correction(billing_ticket_id) if billing_ticket_id else None
+        correction = corrections.get(billing_ticket_id)
         low_confidence = _is_low_route_confidence(ticket)
         if correction is None and not low_confidence:
             continue

@@ -1537,6 +1537,40 @@ class AccountIntakeApiTests(unittest.TestCase):
         invalid = self.client.get("/api/account/cases?route_label=unsupported")
         self.assertEqual(invalid.status_code, 422, invalid.text)
 
+    def test_account_cases_list_fetches_latest_reply_jobs_in_one_batch(self) -> None:
+        for index in range(2):
+            ticket_id = f"TK-BATCH-{index}"
+            self._save_billing_ticket(ticket_id=ticket_id, automation_status="automation")
+            self.repository.save_account_reply_job(
+                {
+                    "job_id": f"JOB-{index}",
+                    "ticket_id": ticket_id,
+                    "status": "scheduled",
+                    "created_at": f"2026-07-28T00:0{index}:00+00:00",
+                }
+            )
+
+        original_batch = self.repository.get_latest_account_reply_jobs
+        with patch.object(
+            self.repository,
+            "get_latest_account_reply_jobs",
+            wraps=original_batch,
+        ) as batch_lookup, patch.object(
+            self.repository,
+            "get_latest_account_reply_job",
+            side_effect=AssertionError("list API must not query reply jobs one ticket at a time"),
+        ):
+            response = self.client.get("/api/account/cases?page_size=30&route_status=automation")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(batch_lookup.call_count, 1)
+        requested_ids = batch_lookup.call_args.args[0]
+        self.assertEqual(set(requested_ids), {"TK-BATCH-0", "TK-BATCH-1"})
+        statuses = {
+            item["client_ticket_id"]: item["ai_reply_status"] for item in response.json()["cases"]
+        }
+        self.assertEqual(statuses, {"TK-BATCH-0": "scheduled", "TK-BATCH-1": "scheduled"})
+
     def test_delete_all_billing_tickets_is_not_allowed_and_preserves_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             for i in range(2):
@@ -1881,7 +1915,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(response.json()["route_correction"]["correction_count"], 7)
 
-    def test_route_error_summary_looks_up_correction_for_each_listed_ticket(self) -> None:
+    def test_route_error_summary_fetches_corrections_in_one_batch(self) -> None:
         for i in range(3):
             billing_ticket_id = f"BT-TK-SUMMARY-{i}"
             self.repository.save_billing_ticket(
@@ -1918,10 +1952,25 @@ class AccountIntakeApiTests(unittest.TestCase):
                 }
             )
 
-        summary = self.client.get("/api/account/route-errors/summary?limit=2").json()
+        original_batch = self.repository.get_billing_route_corrections_for_tickets
+        with patch.object(
+            self.repository,
+            "get_billing_route_corrections_for_tickets",
+            wraps=original_batch,
+        ) as batch_lookup, patch.object(
+            self.repository,
+            "get_billing_route_correction",
+            side_effect=AssertionError("summary API must not query corrections one ticket at a time"),
+        ):
+            summary = self.client.get("/api/account/route-errors/summary?limit=2").json()
 
         self.assertEqual(summary["total"], 2)
         self.assertEqual(summary["corrected_count"], 2)
+        self.assertEqual(batch_lookup.call_count, 1)
+        self.assertEqual(
+            set(batch_lookup.call_args.args[0]),
+            {"BT-TK-SUMMARY-1", "BT-TK-SUMMARY-2"},
+        )
         transitions = {item["transition"]: item["count"] for item in summary["transitions"]}
         self.assertEqual(transitions["detailed_invoice -> human_review_required"], 2)
 

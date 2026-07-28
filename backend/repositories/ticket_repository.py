@@ -1030,6 +1030,9 @@ class TicketRepository(Protocol):
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
     def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None: ...
     def get_latest_account_reply_job(self, ticket_id: str) -> dict[str, Any] | None: ...
+    def get_latest_account_reply_jobs(
+        self, ticket_ids: list[str]
+    ) -> dict[str, dict[str, Any]]: ...
     def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int: ...
     def claim_account_reply_jobs(self, *, from_status: str, to_status: str, now_value: str, limit: int = 10, due_only: bool = False) -> list[dict[str, Any]]: ...
     def list_account_personas(self) -> list[dict[str, Any]]: ...
@@ -1434,6 +1437,27 @@ class InMemoryTicketRepository:
         if not jobs:
             return None
         return max(jobs, key=lambda item: str(item.get("created_at") or ""))
+
+    def get_latest_account_reply_jobs(
+        self, ticket_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        normalized_ids = {
+            str(ticket_id or "").strip() for ticket_id in ticket_ids if str(ticket_id or "").strip()
+        }
+        if not normalized_ids:
+            return {}
+        latest_jobs: dict[str, dict[str, Any]] = {}
+        with self._assignment_lock:
+            for job in self._account_reply_jobs.values():
+                ticket_id = str(job.get("ticket_id") or "").strip()
+                if ticket_id not in normalized_ids:
+                    continue
+                existing = latest_jobs.get(ticket_id)
+                if existing is None or str(job.get("created_at") or "") > str(
+                    existing.get("created_at") or ""
+                ):
+                    latest_jobs[ticket_id] = copy.deepcopy(job)
+        return latest_jobs
 
     def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int:
         cancelled = 0
@@ -3980,6 +4004,12 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, scheduled_for, created_at)").format(
                         sql.Identifier("idx_support_account_reply_jobs_status_due"),
+                        self._table("support_account_reply_jobs"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (ticket_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_account_reply_jobs_ticket_created"),
                         self._table("support_account_reply_jobs"),
                     )
                 )
@@ -8479,6 +8509,36 @@ class PostgresTicketRepository:
                 row = cur.fetchone()
                 return self._account_reply_job_from_row(row) if row is not None else None
         return self._run_with_connection_retry("get_latest_account_reply_job", _operation)
+
+    def get_latest_account_reply_jobs(
+        self, ticket_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        normalized_ids = list(
+            dict.fromkeys(
+                str(ticket_id or "").strip()
+                for ticket_id in ticket_ids
+                if str(ticket_id or "").strip()
+            )
+        )
+        if not normalized_ids:
+            return {}
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT DISTINCT ON (ticket_id) "
+                        "job_id,ticket_id,trigger_message_created_at,status,scheduled_for,payload,"
+                        "attempt_count,claimed_at,published_at,created_at,updated_at "
+                        "FROM {} WHERE ticket_id = ANY(%s) "
+                        "ORDER BY ticket_id, created_at DESC"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (normalized_ids,),
+                )
+                jobs = [self._account_reply_job_from_row(row) for row in cur.fetchall()]
+                return {str(job["ticket_id"]): job for job in jobs}
+
+        return self._run_with_connection_retry("get_latest_account_reply_jobs", _operation)
 
     def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int:
         def _operation(conn: psycopg.Connection[Any]) -> int:

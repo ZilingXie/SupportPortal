@@ -368,6 +368,15 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("bt.route_classification ->> 'support_scope'", repo_source)
         self.assertIn("bt.scope_label = 'agora_technical'", repo_source)
 
+    def test_account_reply_jobs_support_bulk_latest_lookup(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("idx_support_account_reply_jobs_ticket_created", sql_source)
+        self.assertIn("def get_latest_account_reply_jobs", repo_source)
+        self.assertIn("SELECT DISTINCT ON (ticket_id)", repo_source)
+        self.assertIn("WHERE ticket_id = ANY(%s)", repo_source)
+
     def test_account_layered_router_migration_is_idempotent(self) -> None:
         migration = Path(
             "backend/sql/migrations/2026_07_27_account_layered_router.sql"
