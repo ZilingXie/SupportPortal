@@ -103,7 +103,20 @@ class AccountIntakeApiTests(unittest.TestCase):
         ticket_id: str,
         automation_status: str,
         route_confidence: float = 0.95,
+        secondary_label: str | None = None,
     ) -> None:
+        route_classification: dict[str, Any] = {}
+        if secondary_label:
+            route_classification = {
+                "intent_class": "support_request",
+                "support_scope": "non_agora" if secondary_label == "Non-Agora" else "agora",
+                "agora_route": {
+                    "Agora Technical": "technical",
+                    "Agora Non-technical": "non_technical",
+                }.get(secondary_label, "unclear"),
+                "primary_label": "Support Request",
+                "secondary_label": secondary_label,
+            }
         self.repository.save_billing_ticket(
             {
                 "billing_ticket_id": f"BT-{ticket_id}",
@@ -118,6 +131,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "execution_action": "detailed_invoice" if automation_status == "automation" else "web_search",
                 "tooling_profile": "deterministic_billing_intake" if automation_status == "automation" else "official_web_search",
                 "route_confidence": route_confidence,
+                "route_classification": route_classification,
             }
         )
 
@@ -1486,6 +1500,33 @@ class AccountIntakeApiTests(unittest.TestCase):
         clamped_payload = clamped_page.json()
         self.assertEqual(clamped_payload["page"], 2)
         self.assertEqual(clamped_payload["count"], 3)
+
+    def test_account_cases_list_api_filters_route_labels_before_pagination(self) -> None:
+        route_filters = {
+            "human_review": "Human Review",
+            "agora_technical": "Agora Technical",
+            "agora_non_technical": "Agora Non-technical",
+            "non_agora": "Non-Agora",
+        }
+        for route_filter, secondary_label in route_filters.items():
+            self._save_billing_ticket(
+                ticket_id=f"TK-{route_filter}",
+                automation_status="not_automated",
+                secondary_label=secondary_label,
+            )
+
+        for route_filter, secondary_label in route_filters.items():
+            response = self.client.get(
+                f"/api/account/cases?page=1&page_size=1&route_label={route_filter}"
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["total"], 1)
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["cases"][0]["secondary_label"], secondary_label)
+
+        invalid = self.client.get("/api/account/cases?route_label=unsupported")
+        self.assertEqual(invalid.status_code, 422, invalid.text)
 
     def test_delete_all_billing_tickets_is_not_allowed_and_preserves_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

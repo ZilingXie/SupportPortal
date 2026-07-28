@@ -59,6 +59,23 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
+_ACCOUNT_CASE_ROUTE_FILTER_LABELS = {
+    "human_review": "Human Review",
+    "agora_technical": "Agora Technical",
+    "agora_non_technical": "Agora Non-technical",
+    "non_agora": "Non-Agora",
+}
+
+
+def _account_case_matches_route_filter(item: dict[str, Any], route_filter: str | None) -> bool:
+    expected_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(str(route_filter or "").strip())
+    if expected_label is None:
+        return True
+    classification = item.get("route_classification")
+    secondary_label = item.get("secondary_label")
+    if isinstance(classification, dict):
+        secondary_label = classification.get("secondary_label") or secondary_label
+    return str(secondary_label or "").strip() == expected_label
 
 
 def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, Any]:
@@ -1152,6 +1169,7 @@ class TicketRepository(Protocol):
         offset: int = 0,
         route_status: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -1160,6 +1178,7 @@ class TicketRepository(Protocol):
         review_status: str | None = None,
         route_status: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> int:
         ...
 
@@ -1176,6 +1195,7 @@ class TicketRepository(Protocol):
         offset: int = 0,
         automation_filter: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -1184,6 +1204,7 @@ class TicketRepository(Protocol):
         review_status: str | None = None,
         automation_filter: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> int:
         ...
 
@@ -1245,6 +1266,7 @@ class InMemoryTicketRepository:
         offset: int = 0,
         route_status: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         return self.list_billing_tickets(
             limit=limit,
@@ -1252,6 +1274,7 @@ class InMemoryTicketRepository:
             offset=offset,
             automation_filter=route_status,
             route_errors_only=route_errors_only,
+            route_filter=route_filter,
         )
 
     def count_account_cases(
@@ -1259,11 +1282,13 @@ class InMemoryTicketRepository:
         review_status: str | None = None,
         route_status: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> int:
         return self.count_billing_tickets(
             review_status=review_status,
             automation_filter=route_status,
             route_errors_only=route_errors_only,
+            route_filter=route_filter,
         )
 
     def __init__(self) -> None:
@@ -2749,6 +2774,7 @@ class InMemoryTicketRepository:
         offset: int = 0,
         automation_filter: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
         safe_offset = _safe_non_negative_int(offset, 0)
@@ -2783,6 +2809,8 @@ class InMemoryTicketRepository:
                 if str(item.get("billing_ticket_id") or "").strip() in corrected_ids
                 or _safe_float_value(item.get("route_confidence"), 1.0) < 0.6
             ]
+        if route_filter:
+            items = [item for item in items if _account_case_matches_route_filter(item, route_filter)]
         return [copy.deepcopy(item) for item in items[safe_offset : safe_offset + safe_limit]]
 
     def count_billing_tickets(
@@ -2790,6 +2818,7 @@ class InMemoryTicketRepository:
         review_status: str | None = None,
         automation_filter: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> int:
         return len(
             self.list_billing_tickets(
@@ -2798,6 +2827,7 @@ class InMemoryTicketRepository:
                 offset=0,
                 automation_filter=automation_filter,
                 route_errors_only=route_errors_only,
+                route_filter=route_filter,
             )
         )
 
@@ -3062,6 +3092,7 @@ class PostgresTicketRepository:
         offset: int = 0,
         route_status: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         return self.list_billing_tickets(
             limit=limit,
@@ -3069,6 +3100,7 @@ class PostgresTicketRepository:
             offset=offset,
             automation_filter=route_status,
             route_errors_only=route_errors_only,
+            route_filter=route_filter,
         )
 
     def count_account_cases(
@@ -3076,11 +3108,13 @@ class PostgresTicketRepository:
         review_status: str | None = None,
         route_status: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> int:
         return self.count_billing_tickets(
             review_status=review_status,
             automation_filter=route_status,
             route_errors_only=route_errors_only,
+            route_filter=route_filter,
         )
 
     def __init__(
@@ -7757,11 +7791,13 @@ class PostgresTicketRepository:
         offset: int = 0,
         automation_filter: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
         safe_offset = _safe_non_negative_int(offset, 0)
         normalized_review_status = str(review_status).strip() if review_status else None
         normalized_automation_filter = str(automation_filter or "").strip()
+        normalized_route_filter = str(route_filter or "").strip()
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
@@ -7769,6 +7805,7 @@ class PostgresTicketRepository:
                     review_status=normalized_review_status,
                     automation_filter=normalized_automation_filter,
                     route_errors_only=route_errors_only,
+                    route_filter=normalized_route_filter,
                 )
                 query = sql.SQL(
                     """
@@ -7789,9 +7826,11 @@ class PostgresTicketRepository:
         review_status: str | None = None,
         automation_filter: str | None = None,
         route_errors_only: bool = False,
+        route_filter: str | None = None,
     ) -> int:
         normalized_review_status = str(review_status).strip() if review_status else None
         normalized_automation_filter = str(automation_filter or "").strip()
+        normalized_route_filter = str(route_filter or "").strip()
 
         def _operation(conn: psycopg.Connection[Any]) -> int:
             with conn.cursor() as cur:
@@ -7799,6 +7838,7 @@ class PostgresTicketRepository:
                     review_status=normalized_review_status,
                     automation_filter=normalized_automation_filter,
                     route_errors_only=route_errors_only,
+                    route_filter=normalized_route_filter,
                 )
                 query = sql.SQL("SELECT COUNT(*) FROM {} bt {}").format(
                     self._table("support_account_cases"), where_sql
@@ -7815,6 +7855,7 @@ class PostgresTicketRepository:
         review_status: str | None,
         automation_filter: str,
         route_errors_only: bool,
+        route_filter: str,
     ) -> tuple[sql.SQL, tuple[Any, ...]]:
         clauses: list[sql.SQL] = []
         params: list[Any] = []
@@ -7825,6 +7866,10 @@ class PostgresTicketRepository:
             clauses.append(sql.SQL("bt.route_status = 'automated'"))
         elif automation_filter == "not_automated":
             clauses.append(sql.SQL("bt.route_status <> 'automated'"))
+        route_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(route_filter)
+        if route_label:
+            clauses.append(sql.SQL("bt.route_classification ->> 'secondary_label' = %s"))
+            params.append(route_label)
         if route_errors_only:
             clauses.append(
                 sql.SQL(
