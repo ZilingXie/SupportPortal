@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
+    REGISTERED_AUTOMATION_SUBCATEGORIES,
     canonical_automation_subcategory,
     is_registered_automation,
 )
@@ -49,7 +50,6 @@ _INTENT_CLASSES = {"conversation", "support_request", "unclear"}
 _CONVERSATION_ACTIONS = {"resolve", "follow_up", "human_review"}
 _SUPPORT_SCOPES = {"agora", "non_agora", "unclear", "mixed"}
 _AGORA_ROUTES = {"technical", "non_technical", "automation", "unclear", "mixed"}
-_AUTOMATION_SUBCATEGORIES = {"account_verification", "detailed_invoice", "enablement", "unclear"}
 _SENSITIVE_IDENTIFIER_RE = re.compile(
     r"\b(?:bearer\s+)?[A-Za-z0-9_-]{28,}\b",
     re.IGNORECASE,
@@ -826,7 +826,9 @@ def decide_account_route(
     subcategory = canonical_automation_subcategory(automation_payload.get("automation_subcategory"))
     automation_confidence = _safe_confidence(automation_payload.get("confidence"))
     risk_flags = [str(item) for item in list(automation_payload.get("risk_flags") or []) if str(item).strip()]
-    classification["automation_subcategory"] = subcategory if subcategory in _AUTOMATION_SUBCATEGORIES else None
+    classification["automation_subcategory"] = (
+        subcategory if subcategory in REGISTERED_AUTOMATION_SUBCATEGORIES else None
+    )
     classification["stage_confidences"]["automation_subcategory"] = automation_confidence
     classification["stage_reasons"]["automation_subcategory"] = str(
         automation_payload.get("reason_code") or automation_attempt.failure_type or "invalid_automation_output"
@@ -836,8 +838,7 @@ def decide_account_route(
         execution_action=subcategory,
     )
     if (
-        subcategory not in _AUTOMATION_SUBCATEGORIES
-        or subcategory == "unclear"
+        subcategory not in REGISTERED_AUTOMATION_SUBCATEGORIES
         or automation_confidence < threshold
         or not registered
     ):
