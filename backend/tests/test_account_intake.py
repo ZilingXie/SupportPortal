@@ -1407,6 +1407,9 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertIn("created_at", item)
             self.assertIn("route_review_status", item)
             self.assertEqual(item["route_review_status"], "pending")
+            self.assertNotIn("question", item)
+            self.assertNotIn("internal_email_payload", item)
+            self.assertNotIn("evidence_spans", item)
 
     def test_billing_tickets_list_api_paginates_by_filter(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -1448,6 +1451,20 @@ class AccountIntakeApiTests(unittest.TestCase):
         first_ids = {item["billing_ticket_id"] for item in first_payload["tickets"]}
         second_ids = {item["billing_ticket_id"] for item in second_payload["tickets"]}
         self.assertFalse(first_ids & second_ids)
+
+    def test_billing_tickets_list_api_keeps_empty_results_on_page_one(self) -> None:
+        response = self.client.get(
+            "/api/account/billing-tickets?page=99&page_size=30&review_status=reviewed"
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["tickets"], [])
+        self.assertEqual(payload["count"], 0)
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["page"], 1)
+        self.assertEqual(payload["total_pages"], 1)
+        self.assertFalse(payload["has_more"])
 
     def test_billing_tickets_list_api_paginates_status_filters(self) -> None:
         for i in range(33):
@@ -1550,8 +1567,21 @@ class AccountIntakeApiTests(unittest.TestCase):
                 }
             )
 
+        original_page = self.repository.list_account_case_page
         original_batch = self.repository.get_latest_account_reply_jobs
         with patch.object(
+            self.repository,
+            "list_account_case_page",
+            wraps=original_page,
+        ) as page_lookup, patch.object(
+            self.repository,
+            "count_account_cases",
+            side_effect=AssertionError("list API must get total from the page query"),
+        ), patch.object(
+            self.repository,
+            "list_account_cases",
+            side_effect=AssertionError("list API must use the lightweight page query"),
+        ), patch.object(
             self.repository,
             "get_latest_account_reply_jobs",
             wraps=original_batch,
@@ -1563,6 +1593,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             response = self.client.get("/api/account/cases?page_size=30&route_status=automation")
 
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(page_lookup.call_count, 1)
         self.assertEqual(batch_lookup.call_count, 1)
         requested_ids = batch_lookup.call_args.args[0]
         self.assertEqual(set(requested_ids), {"TK-BATCH-0", "TK-BATCH-1"})
