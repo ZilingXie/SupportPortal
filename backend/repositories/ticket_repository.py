@@ -67,15 +67,47 @@ _ACCOUNT_CASE_ROUTE_FILTER_LABELS = {
 }
 
 
+def _account_case_route_label(item: dict[str, Any]) -> str:
+    classification = item.get("route_classification")
+    if isinstance(classification, dict) and classification:
+        intent = str(classification.get("intent_class") or "unclear")
+        if intent == "conversation":
+            action = str(classification.get("conversation_action") or "human_review")
+            return {"resolve": "Resolve", "follow_up": "Follow-up"}.get(action, "Human Review")
+        if intent == "support_request":
+            if str(classification.get("support_scope") or "unclear") == "non_agora":
+                return "Non-Agora"
+            agora_route = str(classification.get("agora_route") or "unclear")
+            if agora_route == "technical":
+                return "Agora Technical"
+            if agora_route == "non_technical":
+                return "Agora Non-technical"
+            if agora_route == "automation" and str(
+                classification.get("automation_subcategory") or ""
+            ).strip():
+                return "Automation"
+            return "Human Review"
+        return "Human Review"
+
+    scope = str(item.get("scope_label") or "").strip().lower()
+    metadata = automation_metadata(
+        route_family=item.get("route_family"),
+        execution_action=item.get("execution_action") or item.get("route"),
+    )
+    if metadata["route_status"] == "automated":
+        return "Automation"
+    return {
+        "ticket_resolution": "Resolve",
+        "small_talk": "Follow-up",
+        "non_agora": "Non-Agora",
+        "agora_technical": "Agora Technical",
+        "agora_non_technical": "Agora Non-technical",
+    }.get(scope, "Human Review")
+
+
 def _account_case_matches_route_filter(item: dict[str, Any], route_filter: str | None) -> bool:
     expected_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(str(route_filter or "").strip())
-    if expected_label is None:
-        return True
-    classification = item.get("route_classification")
-    secondary_label = item.get("secondary_label")
-    if isinstance(classification, dict):
-        secondary_label = classification.get("secondary_label") or secondary_label
-    return str(secondary_label or "").strip() == expected_label
+    return expected_label is None or _account_case_route_label(item) == expected_label
 
 
 def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, Any]:
@@ -7868,7 +7900,51 @@ class PostgresTicketRepository:
             clauses.append(sql.SQL("bt.route_status <> 'automated'"))
         route_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(route_filter)
         if route_label:
-            clauses.append(sql.SQL("bt.route_classification ->> 'secondary_label' = %s"))
+            clauses.append(
+                sql.SQL(
+                    """
+                    CASE
+                        WHEN bt.route_classification <> '{}'::jsonb THEN
+                            CASE COALESCE(bt.route_classification ->> 'intent_class', 'unclear')
+                                WHEN 'conversation' THEN
+                                    CASE COALESCE(bt.route_classification ->> 'conversation_action', 'human_review')
+                                        WHEN 'resolve' THEN 'Resolve'
+                                        WHEN 'follow_up' THEN 'Follow-up'
+                                        ELSE 'Human Review'
+                                    END
+                                WHEN 'support_request' THEN
+                                    CASE
+                                        WHEN COALESCE(bt.route_classification ->> 'support_scope', 'unclear') = 'non_agora'
+                                            THEN 'Non-Agora'
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'unclear') = 'technical'
+                                            THEN 'Agora Technical'
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'unclear') = 'non_technical'
+                                            THEN 'Agora Non-technical'
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'unclear') = 'automation'
+                                             AND COALESCE(bt.route_classification ->> 'automation_subcategory', '') <> ''
+                                            THEN 'Automation'
+                                        ELSE 'Human Review'
+                                    END
+                                ELSE 'Human Review'
+                            END
+                        ELSE
+                            CASE
+                                WHEN bt.route_family IN ('automated', 'billing_automation')
+                                     AND COALESCE(bt.execution_action, bt.route) IN (
+                                         'account_verification', 'account_suspension', 'detailed_invoice', 'enablement'
+                                     )
+                                    THEN 'Automation'
+                                WHEN bt.scope_label = 'ticket_resolution' THEN 'Resolve'
+                                WHEN bt.scope_label = 'small_talk' THEN 'Follow-up'
+                                WHEN bt.scope_label = 'non_agora' THEN 'Non-Agora'
+                                WHEN bt.scope_label = 'agora_technical' THEN 'Agora Technical'
+                                WHEN bt.scope_label = 'agora_non_technical' THEN 'Agora Non-technical'
+                                ELSE 'Human Review'
+                            END
+                    END = %s
+                    """
+                )
+            )
             params.append(route_label)
         if route_errors_only:
             clauses.append(

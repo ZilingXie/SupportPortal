@@ -104,6 +104,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         automation_status: str,
         route_confidence: float = 0.95,
         secondary_label: str | None = None,
+        persist_route_labels: bool = True,
     ) -> None:
         route_classification: dict[str, Any] = {}
         if secondary_label:
@@ -114,9 +115,12 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "Agora Technical": "technical",
                     "Agora Non-technical": "non_technical",
                 }.get(secondary_label, "unclear"),
-                "primary_label": "Support Request",
-                "secondary_label": secondary_label,
             }
+            if persist_route_labels:
+                route_classification.update(
+                    primary_label="Support Request",
+                    secondary_label=secondary_label,
+                )
         self.repository.save_billing_ticket(
             {
                 "billing_ticket_id": f"BT-{ticket_id}",
@@ -1513,7 +1517,12 @@ class AccountIntakeApiTests(unittest.TestCase):
                 ticket_id=f"TK-{route_filter}",
                 automation_status="not_automated",
                 secondary_label=secondary_label,
+                persist_route_labels=False,
             )
+        self._save_billing_ticket(
+            ticket_id="TK-legacy-automation",
+            automation_status="automation",
+        )
 
         for route_filter, secondary_label in route_filters.items():
             response = self.client.get(
