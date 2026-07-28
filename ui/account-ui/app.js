@@ -65,6 +65,18 @@ let isFetchingRouteErrorSummary = false;
 let replyPollTimer = null;
 
 const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "publishing"]);
+const ROUTE_LABEL_FILTERS = new Set([
+  "human_review",
+  "agora_technical",
+  "agora_non_technical",
+  "non_agora",
+]);
+const ROUTE_LABEL_FILTER_MATCHES = {
+  human_review: "Human Review",
+  agora_technical: "Agora Technical",
+  agora_non_technical: "Agora Non-technical",
+  non_agora: "Non-Agora",
+};
 
 const ROUTE_TUPLE_OPTIONS = [
   { scope: "ticket_resolution", action: "resolve_ticket", label: "Conversation / Resolve" },
@@ -297,6 +309,8 @@ async function fetchTickets() {
       params.set("route_status", "not_automated");
     } else if (state.statusFilter === "route_errors") {
       params.set("route_errors", "true");
+    } else if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
+      params.set("route_label", state.statusFilter);
     }
     const response = await fetch(`/api/account/cases?${params.toString()}`);
     if (!response.ok) return;
@@ -443,12 +457,16 @@ function isAutomationStatus(status) {
 function matchesFilter(item) {
   const itemStatus = item.status || item.automation_status || "not_automated";
   const reviewStatus = item.route_review_status || "pending";
+  const { secondary } = classificationLabels(item);
   if (state.statusFilter === "all") return true;
   if (state.statusFilter === "unreviewed") return reviewStatus !== "reviewed";
   if (state.statusFilter === "reviewed") return reviewStatus === "reviewed";
   if (state.statusFilter === "automation") return isAutomationStatus(itemStatus);
   if (state.statusFilter === "not_automated") return !isAutomationStatus(itemStatus);
   if (state.statusFilter === "route_errors") return Boolean(item.route_error);
+  if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
+    return secondary === ROUTE_LABEL_FILTER_MATCHES[state.statusFilter];
+  }
   return true;
 }
 
@@ -460,6 +478,10 @@ function renderFilterControls() {
     { value: "automation", label: "Automation" },
     { value: "not_automated", label: "Not automated" },
     { value: "route_errors", label: "Route errors" },
+    { value: "human_review", label: "Human Review" },
+    { value: "agora_technical", label: "Agora Technical" },
+    { value: "agora_non_technical", label: "Agora Non-technical" },
+    { value: "non_agora", label: "Non-Agora" },
   ];
   return `
     <div class="filter-chips">

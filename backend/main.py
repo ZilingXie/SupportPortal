@@ -3970,6 +3970,10 @@ def list_billing_tickets(
     automation_status: str | None = None,
     route_status: str | None = None,
     route_errors: bool = False,
+    route_label: str | None = Query(
+        default=None,
+        pattern="^(human_review|agora_technical|agora_non_technical|non_agora)$",
+    ),
 ) -> dict[str, Any]:
     requested_page_size = page_size if page_size is not None else limit
     safe_page_size = max(1, min(requested_page_size, 100))
@@ -3980,6 +3984,7 @@ def list_billing_tickets(
         review_status=normalized_review_status,
         route_status=normalized_automation_status,
         route_errors_only=route_errors,
+        route_filter=route_label,
     )
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
     safe_page = min(max(1, page), total_pages)
@@ -3990,6 +3995,7 @@ def list_billing_tickets(
         offset=offset,
         route_status=normalized_automation_status,
         route_errors_only=route_errors,
+        route_filter=route_label,
     )
     billing_ticket_ids = [
         str(item.get("billing_ticket_id") or "").strip()

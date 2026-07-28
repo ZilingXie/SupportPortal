@@ -89,6 +89,11 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('params.set("route_status", "automated")', app_source)
         self.assertIn('params.set("route_status", "not_automated")', app_source)
         self.assertIn('params.set("route_errors", "true")', app_source)
+        self.assertIn('params.set("route_label", state.statusFilter)', app_source)
+        self.assertIn('human_review: "Human Review"', app_source)
+        self.assertIn('agora_technical: "Agora Technical"', app_source)
+        self.assertIn('agora_non_technical: "Agora Non-technical"', app_source)
+        self.assertIn('non_agora: "Non-Agora"', app_source)
         self.assertIn("PAGE_SIZE", app_source)
         self.assertIn("currentPage", app_source)
 
