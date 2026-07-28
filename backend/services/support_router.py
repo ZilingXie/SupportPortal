@@ -258,7 +258,7 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
         return "ticket_resolution", "resolve_ticket", "deterministic_resolution"
     if clean_scope == BILLING_SCOPE_LABEL:
         normalized_action = canonical_automation_subcategory(normalized_action)
-        if normalized_action in {"detailed_invoice", "account_verification"}:
+        if normalized_action in {"account_suspension", "detailed_invoice", "account_verification"}:
             return BILLING_ROUTE_FAMILY, normalized_action, BILLING_TOOLING_PROFILE
         if normalized_action == "human_review_required":
             return "billing_review", "human_review_required", BILLING_TOOLING_PROFILE

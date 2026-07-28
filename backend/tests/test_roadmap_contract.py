@@ -44,7 +44,7 @@ class RoadmapContractTests(unittest.TestCase):
             "限制重复追问",
             "随机延迟 6–10 分钟",
             "不同人设 Prompt 模板",
-            "account suspension / fraud、detailed invoice 和 enablement",
+            "account verification、account suspension、detailed invoice 和 enablement",
             "自动化覆盖率",
             "Automated Cases Dashboard",
             "Route execution + Prompt snapshot",

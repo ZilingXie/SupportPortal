@@ -2044,8 +2044,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "automation")
-        self.assertEqual(payload["route"], "account_verification")
-        self.assertEqual(payload["subcategory"], "account_verification")
+        self.assertEqual(payload["route"], "account_suspension")
+        self.assertEqual(payload["subcategory"], "account_suspension")
+        self.assertEqual(payload["secondary_label"], "Automation / Account Suspension")
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["ai_reply_status"], "scheduled")
         self.assertEqual(payload["internal_email_send_status"], "not_ready")
@@ -2055,9 +2056,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["automation_status"], "automation")
-        self.assertEqual(bt["route"], "account_verification")
-        self.assertEqual(bt["execution_action"], "account_verification")
-        self.assertEqual(bt["subcategory"], "account_verification")
+        self.assertEqual(bt["route"], "account_suspension")
+        self.assertEqual(bt["execution_action"], "account_suspension")
+        self.assertEqual(bt["subcategory"], "account_suspension")
 
     def test_billing_tickets_detail_by_canonical_ticket_id(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
