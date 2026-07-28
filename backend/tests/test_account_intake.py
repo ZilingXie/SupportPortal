@@ -16,6 +16,7 @@ import backend.main as main
 import backend.worker as worker
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.billing_response_flow import hash_billing_response_token
+from backend.services.llm_factory import LlmInvocationError
 from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
 
 
@@ -28,14 +29,26 @@ class AccountIntakeApiTests(unittest.TestCase):
         main.ticket_repository = self.repository
         worker.ticket_repository = self.repository
         self.client = TestClient(main.app)
-        # Patch LLM route decision to return empty attempt so semantic_first falls through to deterministic
+        # Keep API tests deterministic even when the local .env contains live routing credentials.
         self._llm_patcher = patch(
             "backend.services.support_router._llm_route_decision",
             return_value=_LlmRouteAttempt(decision=None, attempted=True),
         )
+        self._account_route_credentials_patcher = patch(
+            "backend.services.account_route_pipeline.profile_has_invocation_credentials",
+            return_value=False,
+        )
+        self._title_model_patcher = patch(
+            "backend.services.ticket_title._invoke_title_model",
+            side_effect=LlmInvocationError("disabled in account intake unit tests"),
+        )
         self._llm_patcher.start()
+        self._account_route_credentials_patcher.start()
+        self._title_model_patcher.start()
 
     def tearDown(self) -> None:
+        self._title_model_patcher.stop()
+        self._account_route_credentials_patcher.stop()
         self._llm_patcher.stop()
         self.client.close()
         main.ticket_repository = self.original_repository
@@ -2988,32 +3001,57 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["ai_reply_scheduled_for"], job["scheduled_for"])
 
     def test_missing_fields_are_asked_only_once_per_ticket(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
-            created = self.client.post(
-                "/account",
-                json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended.",
-                    "customer_email": "customer@example.com",
+        cases = (
+            (
+                "Account verification",
+                "My account has been suspended.",
+                {
+                    "company_name",
+                    "company_location",
+                    "website",
+                    "contact_email",
+                    "phone_number",
+                    "use_case",
                 },
-            ).json()
-
-        first_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
-        assert first_job is not None
-        first_job_id = first_job["job_id"]
-        self.assertTrue(first_job["payload"]["asked_field_keys"])
-        self._publish_latest_account_reply(created["ticket_id"])
-
-        response = self.client.post(
-            f"/api/account/billing-tickets/{created['billing_ticket_id']}/reply",
-            json={"message": "Thank you for checking."},
+            ),
+            (
+                "Detailed invoice",
+                "Please send the detailed invoice.",
+                {"issue_date", "transaction_id", "amount"},
+            ),
+            (
+                "Feature enablement",
+                "Please enable Media Relay from your end.",
+                {"app_id"},
+            ),
         )
-        self.assertEqual(response.status_code, 200, response.text)
-        second_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
-        assert second_job is not None
-        self.assertEqual(second_job["job_id"], first_job_id)
-        self.assertEqual(response.json()["primary_label"], "Conversation")
-        self.assertEqual(response.json()["secondary_label"], "Follow-up")
+        for title, question, expected_asked_fields in cases:
+            with self.subTest(title=title), patch.object(main, "dispatch_event", AsyncMock()):
+                created = self.client.post(
+                    "/account",
+                    json={
+                        "title": title,
+                        "question": question,
+                        "customer_email": "customer@example.com",
+                    },
+                ).json()
+
+                first_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+                assert first_job is not None
+                first_job_id = first_job["job_id"]
+                self.assertEqual(set(first_job["payload"]["asked_field_keys"]), expected_asked_fields)
+                self._publish_latest_account_reply(created["ticket_id"])
+
+                response = self.client.post(
+                    f"/api/account/billing-tickets/{created['billing_ticket_id']}/reply",
+                    json={"message": "Thank you for checking."},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                second_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+                assert second_job is not None
+                self.assertEqual(second_job["job_id"], first_job_id)
+                self.assertEqual(response.json()["primary_label"], "Conversation")
+                self.assertEqual(response.json()["secondary_label"], "Follow-up")
 
     def test_new_customer_message_cancels_pending_reply(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

@@ -4,12 +4,19 @@ import unittest
 
 from backend.services.automation_routing import (
     AUTOMATION_HANDLER_REGISTRY,
+    REGISTERED_AUTOMATION_SUBCATEGORIES,
     automation_metadata,
     is_registered_automation,
 )
 
 
 class AutomationRoutingTests(unittest.TestCase):
+    def test_registered_subcategories_are_derived_from_handler_registry(self) -> None:
+        self.assertEqual(
+            REGISTERED_AUTOMATION_SUBCATEGORIES,
+            frozenset({"account_verification", "detailed_invoice", "enablement"}),
+        )
+
     def test_registered_billing_subcategories_share_automation_category(self) -> None:
         for subcategory in (
             "account_verification",

@@ -21,6 +21,11 @@ AUTOMATION_HANDLER_REGISTRY: dict[str, frozenset[str]] = {
     ),
     ENABLEMENT_AUTOMATION_HANDLER: frozenset({"enablement"}),
 }
+REGISTERED_AUTOMATION_SUBCATEGORIES = frozenset(
+    subcategory
+    for supported_subcategories in AUTOMATION_HANDLER_REGISTRY.values()
+    for subcategory in supported_subcategories
+)
 
 
 def automation_metadata(*, route_family: Any, execution_action: Any) -> dict[str, str | None]:
