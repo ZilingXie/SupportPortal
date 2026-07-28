@@ -12,6 +12,32 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-28 - Separate Account Suspension automation routing
+
+- Area or subsystem: `/account` Automation Router / Billing Automation
+- Prompt or model version: `account-automation-v2`
+- Summary: Restored `account_suspension` as a registered Automation subcategory instead of normalizing it to `account_verification`. Added separate definitions and examples for suspension review/access restoration versus submission of account-verification materials.
+- Reason: Account suspension and account verification use different required fields, internal handoff content, and operational outcomes, so merging them loses routing and execution meaning.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/automation_routing.py`
+  - `backend/services/route_correction.py`
+  - `backend/services/support_router.py`
+  - `backend/services/account_admin.py`
+  - `.env.example`
+  - `ui/account-ui/app.js`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/migrations/2026_07_28_split_account_suspension.sql`
+- Expected behavior change:
+  - Requests to review a suspended/disabled account or restore access route to `Automation / Account Suspension` and the Billing suspension flow.
+  - Requests to submit company, use-case, or contact materials for verification remain `Automation / Account Verification`.
+  - Route correction and Agent Config expose both subcategories; unknown or ambiguous operations continue to fail closed.
+  - Historical Automated Cases are restored only when stored semantic fields explicitly identify `billing.account_suspension`; ambiguous verification history is unchanged.
+- Verification:
+  - `rtk pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_automation_routing.py backend/tests/test_route_correction.py backend/tests/test_account_intake.py backend/tests/test_account_admin_features.py backend/tests/test_account_ui_contract.py backend/tests/test_repository_configuration.py`
+  - `rtk python3 scripts/verify_feature_list.py`
+
 ## 2026-07-23 - Deployment-bound Prompt version management
 
 - Area or subsystem: Agent Config, shared LLM Prompt runtime, EC2 deployment

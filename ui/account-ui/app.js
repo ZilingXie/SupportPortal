@@ -88,6 +88,7 @@ const ROUTE_TUPLE_OPTIONS = [
   { scope: "human_review", action: "human_review_required", label: "Support Request / Human Review" },
   { scope: "unclear", action: "human_review_required", label: "Unclear / Human Review" },
   { scope: "automation", action: "account_verification", label: "Automation / Account verification" },
+  { scope: "automation", action: "account_suspension", label: "Automation / Account suspension" },
   { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "automation", action: "enablement", label: "Automation / Enablement" },
 ];

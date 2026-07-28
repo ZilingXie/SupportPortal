@@ -141,7 +141,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
         self.assertEqual(
             automation["subcategories"],
-            ["account_verification", "detailed_invoice", "enablement"],
+            ["account_verification", "account_suspension", "detailed_invoice", "enablement"],
         )
         self.assertIn("Intent Classifier", payload["system_prompt"])
         self.assertIn("Automation Router", payload["system_prompt"])

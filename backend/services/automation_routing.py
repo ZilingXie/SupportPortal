@@ -8,13 +8,12 @@ AUTOMATED_ROUTE_STATUS = "automated"
 NOT_AUTOMATED_ROUTE_STATUS = "not_automated"
 BILLING_AUTOMATION_HANDLER = "billing"
 ENABLEMENT_AUTOMATION_HANDLER = "enablement"
-AUTOMATION_SUBCATEGORY_ALIASES = {
-    "account_suspension": "account_verification",
-}
+AUTOMATION_SUBCATEGORY_ALIASES: dict[str, str] = {}
 
 AUTOMATION_HANDLER_REGISTRY: dict[str, frozenset[str]] = {
     BILLING_AUTOMATION_HANDLER: frozenset(
         {
+            "account_suspension",
             "account_verification",
             "detailed_invoice",
         }

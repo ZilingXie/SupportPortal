@@ -616,15 +616,15 @@
       <div class="release-copy">
         <p class="release-kicker">Phase 2 Delivery Record</p>
         <h1>确定性 Automation + Controlled Validation</h1>
-        <p class="release-summary">会议第一阶段对应实际 Phase 2：先把 account verification、detailed invoice 和 enablement 三类确定性 case 做稳，再用真实流量验证分层路由、字段收集与自动化覆盖率。</p>
+        <p class="release-summary">会议第一阶段对应实际 Phase 2：先把 account verification、account suspension、detailed invoice 和 enablement 四类确定性 case 做稳，再用真实流量验证分层路由、字段收集与自动化覆盖率。</p>
         <ul class="release-meta">
-          <li>3 类确定性 automation</li>
+          <li>4 类确定性 automation</li>
           <li>6 项会议行动</li>
           <li>目标日期 2026-09-01</li>
         </ul>
       </div>
       <div class="release-visual" aria-label="Phase 2 delivery summary">
-        <div class="visual-cell"><strong>3</strong><span>automation scopes</span></div>
+        <div class="visual-cell"><strong>4</strong><span>automation scopes</span></div>
         <div class="visual-cell"><strong>6–10m</strong><span>reply timing</span></div>
         <div class="visual-cell"><strong>1x</strong><span>bounded clarification</span></div>
         <div class="visual-cell"><strong>%</strong><span>coverage decision</span></div>
@@ -711,7 +711,7 @@
         </article>
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>三类确定性自动化范围</h3><p>Automation 已覆盖 account verification、detailed invoice 和 enablement；Enablement 使用独立 handler 收集 App ID、发送内部开通邮件并接收 Outlook 处理结果。</p></div>
+          <div class="delivery-main"><h3>四类确定性自动化范围</h3><p>Automation 已覆盖 account verification、account suspension、detailed invoice 和 enablement；Verification 与 Suspension 使用 Billing handler 的独立字段与邮件流程，Enablement 使用独立 handler。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
@@ -864,7 +864,7 @@
       </header>
       <div class="flow reveal">
         <div class="flow-step"><span>01</span><strong>Zendesk intake</strong><p>接收真实 ticket，保留 external ID 与幂等判断。</p></div>
-        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>只进入 fraud、detailed invoice 或 enablement。</p></div>
+        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>只进入 account verification、account suspension、detailed invoice 或 enablement。</p></div>
         <div class="flow-step"><span>03</span><strong>Bounded collection</strong><p>按 required / optional 规则收集字段，限制重复追问。</p></div>
         <div class="flow-step"><span>04</span><strong>Human-style reply</strong><p>随机 6–10 分钟，使用受控人设 Prompt 模板。</p></div>
         <div class="flow-step"><span>05</span><strong>Coverage review</strong><p>统计解决率、route accuracy 与失败原因，决定是否扩类。</p></div>
