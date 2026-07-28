@@ -14,11 +14,12 @@ class AutomationRoutingTests(unittest.TestCase):
     def test_registered_subcategories_are_derived_from_handler_registry(self) -> None:
         self.assertEqual(
             REGISTERED_AUTOMATION_SUBCATEGORIES,
-            frozenset({"account_verification", "detailed_invoice", "enablement"}),
+            frozenset({"account_suspension", "account_verification", "detailed_invoice", "enablement"}),
         )
 
     def test_registered_billing_subcategories_share_automation_category(self) -> None:
         for subcategory in (
+            "account_suspension",
             "account_verification",
             "detailed_invoice",
         ):
@@ -38,7 +39,7 @@ class AutomationRoutingTests(unittest.TestCase):
 
         self.assertEqual(
             AUTOMATION_HANDLER_REGISTRY["billing"],
-            frozenset({"account_verification", "detailed_invoice"}),
+            frozenset({"account_suspension", "account_verification", "detailed_invoice"}),
         )
 
     def test_enablement_uses_its_own_handler(self) -> None:
@@ -53,7 +54,7 @@ class AutomationRoutingTests(unittest.TestCase):
         )
         self.assertEqual(AUTOMATION_HANDLER_REGISTRY["enablement"], frozenset({"enablement"}))
 
-    def test_legacy_account_suspension_is_canonicalized_to_account_verification(self) -> None:
+    def test_account_suspension_remains_its_own_registered_subcategory(self) -> None:
         self.assertEqual(
             automation_metadata(
                 route_family="automated",
@@ -61,7 +62,7 @@ class AutomationRoutingTests(unittest.TestCase):
             ),
             {
                 "category": "automation",
-                "subcategory": "account_verification",
+                "subcategory": "account_suspension",
                 "route_status": "automated",
                 "automation_handler": "billing",
             },

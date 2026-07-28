@@ -396,6 +396,21 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("UPDATE support_billing_route_corrections", migration)
         self.assertNotIn("SET original_execution_action", migration)
 
+    def test_account_suspension_split_migration_uses_explicit_semantic_evidence(self) -> None:
+        migration = Path(
+            "backend/sql/migrations/2026_07_28_split_account_suspension.sql"
+        ).read_text(encoding="utf-8")
+        repository = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("semantic_intent = 'billing.account_suspension'", migration)
+        self.assertIn("route_classification ->> 'automation_subcategory'", migration)
+        self.assertIn("route_status = 'automated'", migration)
+        self.assertNotIn("UPDATE support_billing_route_corrections", migration)
+        self.assertNotIn(
+            "WHEN route = 'account_suspension' THEN 'account_verification'",
+            repository,
+        )
+
     def test_ticket_storage_contract_includes_billing_route_corrections(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")

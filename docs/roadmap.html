@@ -1431,7 +1431,7 @@
       <ul class="hero-bullets" aria-label="Roadmap summary">
         <li><strong>项目定位：</strong>建设基于 agent 的工单系统，不把 AI 包装成完全替代真人的 support engineer。</li>
         <li><strong>当前阶段：</strong>Phase 1 已完成；Phase 2 聚焦确定性 automation 与 controlled validation，Phase 3 承接 AI 首次回复和 Slack 工程师流程。</li>
-        <li><strong>Phase 2：</strong>收口 account suspension / fraud、detailed invoice、enablement，完善字段规则、回复节奏、Prompt 模板和 automation coverage。</li>
+        <li><strong>Phase 2：</strong>收口 account verification、account suspension、detailed invoice、enablement，完善字段规则、回复节奏、Prompt 模板和 automation coverage。</li>
         <li><strong>Phase 3：</strong>客户继续从 Zendesk 开单，AI 首次回复后按 Round Robin 分配给工程师，Slack、Guardrail 与 Admin 控制组成内部处理链路。</li>
         <li><strong>长期边界：</strong>Engineer multi-agent 与 AgentRelay 自主调查不占用 Phase 3，继续作为后续长期计划。</li>
       </ul>
@@ -1468,7 +1468,7 @@
             <li><strong>Clarification：</strong>已落地同一规范化字段最多询问一次；未回答时停止重复追问并保留人工处理状态。</li>
             <li><strong>Reply timing：</strong>已为所有 <code>/account</code> 客户消息落地持久化 6–10 分钟随机延迟，AI 回复只发布在 account thread。</li>
             <li><strong>Prompt：</strong>维护不同人设的受控回复模板、发布版本、比较与回滚。</li>
-            <li><strong>Scope：</strong>自动化覆盖 account suspension / fraud、detailed invoice 与 enablement。</li>
+            <li><strong>Scope：</strong>自动化覆盖 account verification、account suspension、detailed invoice 与 enablement。</li>
             <li><strong>Metrics：</strong>以全部 /account ticket 为分母展示 routed-to-Automated 占比，并据此决定是否扩充 category。</li>
             <li><strong>Admin：</strong>新增 Automated Cases、Route Strategy 与 Environment Config 控制面；Agent Config 已支持 Prompt Draft、Scheduled、Active、Diff、Restore 与历史版本，并绑定每日成功部署统一生效。</li>
           </ul>
@@ -2075,12 +2075,12 @@ flowchart TD
         short: "Automation",
         title: "Automated Case intake / routing",
         status: "doing",
-        thesis: "Phase 2 将 `/account` 路由拆成 Intent Classifier、Agora Router 和 Automation Router，并同时记录大标签与小标签。Automation 以 account_verification、detailed_invoice、enablement 作为 subcategory；Billing 与 Enablement 使用独立 handler。非 Automation 当前只打标签，不创建 Account AI reply 或 Engineer Case；`/client` 继续使用原共享 Router。",
+        thesis: "Phase 2 将 `/account` 路由拆成 Intent Classifier、Agora Router 和 Automation Router，并同时记录大标签与小标签。Automation 以 account_verification、account_suspension、detailed_invoice、enablement 作为 subcategory；Billing 与 Enablement 使用独立 handler。非 Automation 当前只打标签，不创建 Account AI reply 或 Engineer Case；`/client` 继续使用原共享 Router。",
         done: [
           { summary: "`/account` 已采用三层分层路由：Intent Classifier 区分 conversation/support request/unclear，Agora Router 区分 technical/non-technical/automation/unclear，Automation Router 只接受已注册 subcategory；mixed、低置信度和未知值 fail closed 到 Human Review。", prs: [] },
-          { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；account_suspension 已合并到 account_verification，Billing 与 Enablement 均通过显式 registry 分发。", prs: [] },
+          { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；account_suspension 与 account_verification 保持独立，Billing 与 Enablement 均通过显式 registry 分发。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
-          { summary: "Billing automation intake 已覆盖 `detailed_invoice` 和 `account_verification`，账户暂停场景归入 `account_verification`，并能追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
+          { summary: "Billing automation intake 已覆盖 `detailed_invoice`、`account_verification` 和 `account_suspension`，并能按子类追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },

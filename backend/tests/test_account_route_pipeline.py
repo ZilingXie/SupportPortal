@@ -132,6 +132,46 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.decision.execution_action, "enablement")
         self.assertEqual(invoke_stage.call_count, 3)
 
+    def test_account_suspension_remains_separate_from_account_verification(self) -> None:
+        attempts = [
+            _attempt(
+                {
+                    "intent_class": "support_request",
+                    "support_scope": "agora",
+                    "intent_confidence": 0.99,
+                    "scope_confidence": 0.98,
+                    "reason_code": "agora_support_request",
+                }
+            ),
+            _attempt(
+                {
+                    "agora_route": "automation",
+                    "confidence": 0.97,
+                    "reason_code": "backend_operation",
+                }
+            ),
+            _attempt(
+                {
+                    "automation_subcategory": "account_suspension",
+                    "confidence": 0.96,
+                    "reason_code": "account_suspension_review",
+                }
+            ),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ):
+            result = decide_account_route(
+                "Our account is suspended. Please review it and restore our access."
+            )
+
+        self.assertEqual(result.primary_label, "Support Request")
+        self.assertEqual(result.secondary_label, "Automation / Account Suspension")
+        self.assertEqual(result.classification["automation_subcategory"], "account_suspension")
+        self.assertEqual(result.decision.execution_action, "account_suspension")
+        self.assertEqual(result.decision.route_family, "automated")
+
     def test_mixed_scope_fails_closed_without_agora_router(self) -> None:
         with patch(
             "backend.services.account_route_pipeline._invoke_stage",

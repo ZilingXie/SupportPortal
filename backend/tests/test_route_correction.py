@@ -58,12 +58,13 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         with self.assertRaises(RouteCorrectionValidationError):
             validate_route_correction(scope_label="billing", execution_action="rag")
 
-    def test_legacy_account_suspension_is_not_a_selectable_correction(self) -> None:
-        with self.assertRaises(RouteCorrectionValidationError):
-            validate_route_correction(
-                scope_label="billing",
-                execution_action="account_suspension",
-            )
+    def test_account_suspension_is_a_selectable_correction(self) -> None:
+        result = validate_route_correction(
+            scope_label="billing",
+            execution_action="account_suspension",
+        )
+        self.assertEqual(result["route_family"], "automated")
+        self.assertEqual(result["automation_handler"], "billing")
 
     def test_whitespace_and_case_normalized(self) -> None:
         result = validate_route_correction(scope_label="  Billing  ", execution_action="DETAILED_INVOICE")
@@ -80,6 +81,7 @@ class RouteCorrectionValidationTests(unittest.TestCase):
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
             ("billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
             ("billing", "account_verification", "automated", "deterministic_billing_intake"),
+            ("billing", "account_suspension", "automated", "deterministic_billing_intake"),
             ("enablement", "enablement", "automated", "deterministic_enablement_intake"),
             ("billing", "human_review_required", "billing_review", "deterministic_billing_intake"),
             ("billing", "refuse", "fallback_or_refuse", "no_agora_docs_refusal"),

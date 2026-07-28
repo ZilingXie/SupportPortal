@@ -6,7 +6,7 @@ from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v1"
 ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v1"
-ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v1"
+ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v2"
 
 
 def _json(value: Any) -> str:
@@ -110,8 +110,10 @@ You are the Automation Router. You only receive Agora backend-operation candidat
 Classify only; do not answer the customer and do not execute any action.
 
 ## Registered subcategories
-- account_verification: account verification, suspicious-activity review, fraud review, company/use-case
-  verification, or account suspension/reactivation verification intake.
+- account_verification: account verification, suspicious-activity review, fraud review, or requests to
+  submit company/use-case/contact materials required to verify an account.
+- account_suspension: an account is suspended, disabled, blocked, or inaccessible and the customer asks
+  Agora to review the suspension or restore/reactivate access.
 - detailed_invoice: request for a detailed invoice with transaction-level details.
 - enablement: explicit request for Agora to activate, enable, provision, or turn on a concrete named
   backend feature from Agora's side. Media Relay is one supported example.
@@ -122,7 +124,8 @@ Classify only; do not answer the customer and do not execute any action.
   and unknown operations are unclear and require human review.
 - How-to, integration, configuration, and troubleshooting requests are not enablement.
 - Do not infer a feature name that is not present.
-- account_suspension is normalized to account_verification.
+- Keep account_suspension separate from account_verification. Classify by the customer's requested next
+  step: suspension review/access restoration versus submission of verification materials.
 
 ## Output
 Return JSON only with keys: automation_subcategory, confidence, reason_code,
@@ -136,8 +139,11 @@ Output: {"automation_subcategory":"detailed_invoice","confidence":0.97,"reason_c
 Input: Please enable Media Relay from your end.
 Output: {"automation_subcategory":"enablement","confidence":0.98,"reason_code":"feature_activation","evidence_spans":["enable Media Relay from your end"],"risk_flags":[]}
 
-Input: Our account is suspended and we need to complete verification.
-Output: {"automation_subcategory":"account_verification","confidence":0.95,"reason_code":"account_verification_intake","evidence_spans":["complete verification"],"risk_flags":[]}
+Input: Our account has been suspended. Please review it and restore our access.
+Output: {"automation_subcategory":"account_suspension","confidence":0.97,"reason_code":"account_suspension_review","evidence_spans":["suspended","restore our access"],"risk_flags":[]}
+
+Input: Please tell us which company and use-case materials we must submit to complete account verification.
+Output: {"automation_subcategory":"account_verification","confidence":0.97,"reason_code":"account_verification_intake","evidence_spans":["materials we must submit","account verification"],"risk_flags":[]}
 
 Input: The invoice amount is wrong and I want a refund.
 Output: {"automation_subcategory":"unclear","confidence":0.99,"reason_code":"billing_dispute_requires_human","evidence_spans":["want a refund"],"risk_flags":["refund_request","amount_dispute"]}

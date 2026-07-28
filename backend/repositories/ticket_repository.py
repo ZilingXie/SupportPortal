@@ -4457,29 +4457,6 @@ class PostgresTicketRepository:
                     ).format(self._table("support_account_cases"))
                 )
                 cur.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {}
-                        SET route = CASE
-                                WHEN route = 'account_suspension' THEN 'account_verification'
-                                ELSE route
-                            END,
-                            execution_action = CASE
-                                WHEN execution_action = 'account_suspension' THEN 'account_verification'
-                                ELSE execution_action
-                            END,
-                            subcategory = 'account_verification'
-                        WHERE route_family = 'automated'
-                          AND route_status = 'automated'
-                          AND (
-                              route = 'account_suspension'
-                              OR execution_action = 'account_suspension'
-                              OR subcategory = 'account_suspension'
-                          )
-                        """
-                    ).format(self._table("support_account_cases"))
-                )
-                cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_handler TEXT").format(
                         self._table("support_account_cases"),
                     )
@@ -4543,6 +4520,34 @@ class PostgresTicketRepository:
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS router_source TEXT").format(
                         self._table("support_account_cases"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET route = 'account_suspension',
+                            execution_action = 'account_suspension',
+                            subcategory = 'account_suspension',
+                            category = 'automation',
+                            automation_handler = 'billing',
+                            route_classification = CASE
+                                WHEN route_classification <> '{{}}'::jsonb
+                                    THEN jsonb_set(
+                                        route_classification,
+                                        '{{automation_subcategory}}',
+                                        '"account_suspension"'::jsonb,
+                                        true
+                                    )
+                                ELSE route_classification
+                            END
+                        WHERE route_family IN ('billing_automation', 'automated')
+                          AND route_status = 'automated'
+                          AND (
+                              semantic_intent = 'billing.account_suspension'
+                              OR route_classification ->> 'automation_subcategory' = 'account_suspension'
+                          )
+                        """
+                    ).format(self._table("support_account_cases"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -4625,25 +4630,6 @@ class PostgresTicketRepository:
                     sql.SQL("ALTER TABLE {} DROP COLUMN IF EXISTS note").format(
                         self._table("support_billing_route_corrections"),
                     )
-                )
-                cur.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {}
-                        SET corrected_execution_action = CASE
-                                WHEN corrected_execution_action = 'account_suspension'
-                                    THEN 'account_verification'
-                                ELSE corrected_execution_action
-                            END,
-                            first_corrected_execution_action = CASE
-                                WHEN first_corrected_execution_action = 'account_suspension'
-                                    THEN 'account_verification'
-                                ELSE first_corrected_execution_action
-                            END
-                        WHERE corrected_execution_action = 'account_suspension'
-                           OR first_corrected_execution_action = 'account_suspension'
-                        """
-                    ).format(self._table("support_billing_route_corrections"))
                 )
                 cur.execute(
                     sql.SQL(

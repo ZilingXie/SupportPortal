@@ -488,6 +488,22 @@ def _legacy_result(
         "legacy_scope_label": decision.scope_label,
     }
     action = canonical_automation_subcategory(decision.execution_action or decision.route)
+    is_deterministic_suspension = (
+        action == "account_verification"
+        and (
+            decision.reason == "billing_account_suspension"
+            or str(decision.semantic_intent or "").strip() == "billing.account_suspension"
+        )
+    )
+    if is_deterministic_suspension:
+        action = "account_suspension"
+        decision = SupportRouteDecision(
+            **{
+                **decision.__dict__,
+                "route": action,
+                "execution_action": action,
+            }
+        )
     if is_registered_automation(route_family=decision.route_family, execution_action=action):
         classification.update(
             agora_route="automation",
