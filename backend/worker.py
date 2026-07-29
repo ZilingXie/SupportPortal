@@ -760,6 +760,11 @@ def handle_enablement_request_reply(reply: Any) -> bool:
             or "feature"
         ),
         resolution_note=note,
+        sensitive_values=(
+            str(collected_fields.get("app_id") or ""),
+            str(canonical_ticket.get("requester") or ""),
+            str(canonical_ticket.get("customer_id") or ""),
+        ),
     )
 
     timestamp = now_iso()

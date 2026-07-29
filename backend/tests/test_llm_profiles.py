@@ -9,15 +9,16 @@ from backend.services.llm_profiles import (
     BENCHMARK_JUDGE_SCENARIO,
     BILLING_REPLY_SCENARIO,
     CLIENT_ACK_SCENARIO,
+    ENABLEMENT_REPLY_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
     INPUT_GUARDRAIL_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
     PRODUCT_SELECTION_SCENARIO,
-    RAG_AGENT_PLANNER_SCENARIO,
     QUERY_EXPANSION_SCENARIO,
-    RAG_CONTEXT_COMPRESSION_SCENARIO,
+    RAG_AGENT_PLANNER_SCENARIO,
     RAG_ANSWER_SCENARIO,
+    RAG_CONTEXT_COMPRESSION_SCENARIO,
     RAG_SUFFICIENCY_SCENARIO,
     REQUEST_BODY_ANALYZER_SCENARIO,
     TICKET_TITLE_SCENARIO,
@@ -47,6 +48,7 @@ class LlmProfileTests(unittest.TestCase):
             request_body_analyzer = resolve_model_profile(REQUEST_BODY_ANALYZER_SCENARIO)
             ticket_title = resolve_model_profile(TICKET_TITLE_SCENARIO)
             billing_reply = resolve_model_profile(BILLING_REPLY_SCENARIO)
+            enablement_reply = resolve_model_profile(ENABLEMENT_REPLY_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
             engineer_investigation_reply = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
             ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
@@ -120,6 +122,13 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(billing_reply.reasoning_effort, "low")
         self.assertEqual(billing_reply.temperature, 0.5)
         self.assertEqual(billing_reply.timeout_seconds, 6.0)
+
+        self.assertEqual(enablement_reply.provider, "openai")
+        self.assertEqual(enablement_reply.api_mode, "openai_responses")
+        self.assertEqual(enablement_reply.model, "gpt-5.4-mini")
+        self.assertEqual(enablement_reply.reasoning_effort, "low")
+        self.assertEqual(enablement_reply.temperature, 0.2)
+        self.assertEqual(enablement_reply.timeout_seconds, 8.0)
 
         self.assertEqual(engineer.provider, "openai")
         self.assertEqual(engineer.api_mode, "openai_responses")
