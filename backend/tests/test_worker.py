@@ -1985,8 +1985,9 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "record_billing_request_reply",
         ) as record_mock:
-            worker.handle_billing_request_reply(reply)
+            handled = worker.handle_billing_request_reply(reply)
 
+        self.assertTrue(handled)
         record_mock.assert_called_once_with(reply)
         repository.get_billing_ticket_by_client_ticket_id.assert_called_once_with("TK-ACC-1")
         repository.get_ticket.assert_called_once_with("TK-ACC-1")
@@ -2023,9 +2024,10 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "record_billing_request_reply",
         ) as record_mock:
-            worker.handle_billing_request_reply(reply)
+            handled = worker.handle_billing_request_reply(reply)
 
-        record_mock.assert_called_once_with(reply)
+        self.assertFalse(handled)
+        record_mock.assert_not_called()
         repository.list_ticket_events.assert_called_once_with("TK-ACC-1", limit=200)
         repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
         repository.get_ticket.assert_not_called()
@@ -2062,8 +2064,9 @@ class WorkerResilienceTests(unittest.TestCase):
         )
 
         with patch.object(worker, "ticket_repository", repository):
-            worker.handle_automation_request_reply(reply)
+            handled = worker.handle_automation_request_reply(reply)
 
+        self.assertTrue(handled)
         saved_ticket = repository.save_ticket.call_args.args[0]
         assistant_message = saved_ticket["messages"][-1]
         self.assertEqual(assistant_message["source"], "enablement_reply_email")
@@ -2075,6 +2078,14 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(repository.record_event.call_count, 2)
         event_payload = repository.record_event.call_args_list[0].args[2]
         self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
+
+    def test_enablement_reply_subject_accepts_numeric_zendesk_ticket_id(self) -> None:
+        self.assertEqual(
+            worker._ticket_id_from_billing_reply_subject(
+                "Re: [Enablement Request] Media Relay - Ticket 12488"
+            ),
+            "12488",
+        )
 
     def test_handle_enablement_request_reply_is_idempotent(self) -> None:
         repository = Mock()
@@ -2088,8 +2099,9 @@ class WorkerResilienceTests(unittest.TestCase):
         )
 
         with patch.object(worker, "ticket_repository", repository):
-            worker.handle_enablement_request_reply(reply)
+            handled = worker.handle_enablement_request_reply(reply)
 
+        self.assertFalse(handled)
         repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
         repository.save_ticket.assert_not_called()
         repository.save_account_case.assert_not_called()

@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
-import json
 import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
 from typing import Any
 
+from backend.services.automation_routing import (
+    AUTOMATED_ROUTE_FAMILY,
+    canonical_automation_subcategory,
+)
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import (
     acquire_graph_access_token,
@@ -20,11 +25,6 @@ from backend.services.graph_mail import (
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, resolve_model_profile
-from backend.services.automation_routing import (
-    AUTOMATED_ROUTE_FAMILY,
-    canonical_automation_subcategory,
-)
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -326,10 +326,12 @@ def poll_billing_request_replies(
     *,
     handler: Any | None = None,
     max_messages: int = 25,
+    lookback_days: int = 7,
 ) -> list[BillingRequestReply]:
     return poll_automation_request_replies(
         handler=handler,
         max_messages=max_messages,
+        lookback_days=lookback_days,
         subject_prefixes=(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,),
     )
 
@@ -338,6 +340,7 @@ def poll_automation_request_replies(
     *,
     handler: Any | None = None,
     max_messages: int = 25,
+    lookback_days: int = 7,
     subject_prefixes: tuple[str, ...] = (BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,),
 ) -> list[BillingRequestReply]:
     graph_config = _load_graph_mail_config()
@@ -348,7 +351,11 @@ def poll_automation_request_replies(
     access_token = _acquire_graph_access_token(graph_config)
     replies: list[BillingRequestReply] = []
     normalized_prefixes = tuple(_clean_text(prefix).lower() for prefix in subject_prefixes if _clean_text(prefix))
-    for summary in _list_unread_inbox_messages(access_token=access_token, max_messages=max_messages):
+    for summary in _list_recent_inbox_messages(
+        access_token=access_token,
+        max_messages=max_messages,
+        lookback_days=lookback_days,
+    ):
         subject = _clean_text(summary.get("subject"))
         message_id = _clean_text(summary.get("id"))
         matched_prefix = next((prefix for prefix in normalized_prefixes if prefix in subject.lower()), "")
@@ -373,10 +380,13 @@ def poll_automation_request_replies(
                     attachment_names=tuple(item.name for item in attachments),
                     attachments=attachments,
                 )
+        handled = True
         if handler is not None:
-            handler(reply)
-        _mark_graph_message_read(access_token=access_token, message_id=reply.message_id)
-        replies.append(reply)
+            handled = handler(reply) is not False
+        if summary.get("isRead") is not True:
+            _mark_graph_message_read(access_token=access_token, message_id=reply.message_id)
+        if handled:
+            replies.append(reply)
     return replies
 
 
@@ -513,12 +523,22 @@ def _send_graph_mail(*, access_token: str, to_address: str, subject: str, body: 
     )
 
 
-def _list_unread_inbox_messages(*, access_token: str, max_messages: int) -> list[dict[str, Any]]:
+def _list_recent_inbox_messages(
+    *,
+    access_token: str,
+    max_messages: int,
+    lookback_days: int,
+) -> list[dict[str, Any]]:
     top = max(1, min(_safe_int(max_messages, 25), 100))
+    days = max(1, min(_safe_int(lookback_days, 7), 30))
+    received_after = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).isoformat(timespec="seconds").replace("+00:00", "Z")
     params = urllib.parse.urlencode(
         {
-            "$filter": "isRead eq false",
-            "$select": "id,subject,from,receivedDateTime,hasAttachments",
+            "$filter": f"receivedDateTime ge {received_after}",
+            "$orderby": "receivedDateTime desc",
+            "$select": "id,subject,from,receivedDateTime,hasAttachments,isRead",
             "$top": str(top),
         }
     )

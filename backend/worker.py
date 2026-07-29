@@ -96,7 +96,10 @@ AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_MESSAGES"
 ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV = "ENGINEER_ASSIGNMENT_POLLER_ENABLED"
 ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV = "ENGINEER_ASSIGNMENT_POLL_INTERVAL_SECONDS"
 ACCOUNT_REPLY_POLL_INTERVAL_ENV = "ACCOUNT_REPLY_POLL_INTERVAL_SECONDS"
-BILLING_REPLY_SUBJECT_TICKET_RE = re.compile(r"\bTicket\s+(TK-[A-Z0-9-]+)\b", re.IGNORECASE)
+BILLING_REPLY_SUBJECT_TICKET_RE = re.compile(
+    r"\bTicket\s+((?:TK-[A-Z0-9-]+)|(?:[0-9]+))\b",
+    re.IGNORECASE,
+)
 
 
 def _safe_positive_int(value: Any, default: int) -> int:
@@ -615,8 +618,7 @@ def _store_billing_reply_pdf_attachments(
     return message_attachments, asset_ids
 
 
-def handle_billing_request_reply(reply: Any) -> None:
-    record_billing_request_reply(reply)
+def handle_billing_request_reply(reply: Any) -> bool:
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
     if not client_ticket_id:
         raise ValueError("billing reply subject does not include client ticket id")
@@ -627,7 +629,8 @@ def handle_billing_request_reply(reply: Any) -> None:
             message_id,
             client_ticket_id,
         )
-        return
+        return False
+    record_billing_request_reply(reply)
 
     billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
     if billing_ticket is None:
@@ -720,9 +723,10 @@ def handle_billing_request_reply(reply: Any) -> None:
         "billing_reply_message_id": message_id,
     }
     ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_AI_FOLLOWUP_EVENT, followup_event)
+    return True
 
 
-def handle_enablement_request_reply(reply: Any) -> None:
+def handle_enablement_request_reply(reply: Any) -> bool:
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
     if not client_ticket_id:
         raise ValueError("enablement reply subject does not include client ticket id")
@@ -733,7 +737,7 @@ def handle_enablement_request_reply(reply: Any) -> None:
             message_id,
             client_ticket_id,
         )
-        return
+        return False
 
     account_case = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
     if account_case is None:
@@ -798,16 +802,15 @@ def handle_enablement_request_reply(reply: Any) -> None:
         "automation_reply_message_id": message_id,
     }
     ticket_repository.record_event(client_ticket_id, followup_event["event"], followup_event)
+    return True
 
 
-def handle_automation_request_reply(reply: Any) -> None:
+def handle_automation_request_reply(reply: Any) -> bool:
     subject = str(getattr(reply, "subject", "") or "")
     if ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX.lower() in subject.lower():
-        handle_enablement_request_reply(reply)
-        return
+        return handle_enablement_request_reply(reply)
     if "[billing request]" in subject.lower():
-        handle_billing_request_reply(reply)
-        return
+        return handle_billing_request_reply(reply)
     raise ValueError("unsupported automation reply subject")
 
 
