@@ -69,6 +69,7 @@ from backend.services.automation_routing import (
 from backend.services.enablement_automation import (
     build_enablement_automation_result,
     build_enablement_automation_result_from_fields,
+    build_enablement_submission_confirmation,
     send_enablement_internal_email,
 )
 from backend.services.enablement_field_extractor import (
@@ -488,6 +489,7 @@ def _create_account_reply_job(
     draft_content: str = "",
     asked_field_keys: list[str] | None = None,
     persona_assignment: dict[str, Any] | None = None,
+    automation_delivery_key: str | None = None,
 ) -> dict[str, Any]:
     created_at = now_iso()
     scheduled_for = (
@@ -507,6 +509,8 @@ def _create_account_reply_job(
                 "effective_prompt": copy.deepcopy(persona_assignment.get("content") or {}),
             }
         )
+    if str(automation_delivery_key or "").strip():
+        payload["automation_delivery_key"] = str(automation_delivery_key).strip()
     job = {
         "job_id": f"account-reply-{uuid4().hex}",
         "ticket_id": ticket_id,
@@ -551,6 +555,9 @@ async def _send_enablement_internal_email_attempt(attempt: dict[str, Any]) -> tu
         )
     try:
         email_send_result = await async_to_thread(send_enablement_internal_email, internal_email_to_send)
+        resolved_to = str(email_send_result.get("resolved_to") or "").strip()
+        if resolved_to:
+            internal_email_to_send["resolved_to"] = resolved_to
         return (
             str(email_send_result.get("status") or "failed"),
             str(email_send_result.get("reason") or ""),
@@ -3675,7 +3682,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     )
     asked_field_keys = list(missing_fields) if customer_reply else []
     reply_job = None
-    if is_automation_route:
+    if is_automation_route and customer_reply:
         reply_job = await async_to_thread(
             _create_account_reply_job,
             ticket_id=ticket_id,
@@ -3703,6 +3710,29 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         )
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
+        billing_ticket["internal_email_payload"] = dict(enablement_email_attempt["internal_email_to_send"])
+        if internal_email_send_status == "sent":
+            confirmation = build_enablement_submission_confirmation(
+                str(collected_fields.get("requested_feature_label") or "feature")
+            )
+            if persona_assignment is None:
+                persona_assignment = await async_to_thread(
+                    ticket_repository.resolve_account_persona,
+                    ticket_id,
+                )
+            confirmation = apply_persona_to_customer_reply(confirmation, persona_assignment)
+            reply_job = await async_to_thread(
+                _create_account_reply_job,
+                ticket_id=ticket_id,
+                trigger_message_created_at=timestamp,
+                draft_content=confirmation,
+                asked_field_keys=[],
+                persona_assignment=persona_assignment,
+                automation_delivery_key=str(
+                    billing_ticket["internal_email_payload"].get("delivery_key") or ""
+                ),
+            )
+            billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
         billing_ticket["updated_at"] = now_iso()
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
@@ -4686,7 +4716,14 @@ async def reply_to_billing_ticket(
             and prior_handler == str(billing_ticket.get("automation_handler") or "").strip()
         )
         prior_send_status = str(billing_ticket.get("internal_email_send_status") or "").strip()
-        should_send_internal_email = not same_automation or prior_send_status in {"", "not_ready"}
+        should_send_internal_email = not same_automation or prior_send_status in {
+            "",
+            "not_ready",
+            "pending",
+            "retry",
+            "failed",
+            "skipped_config_missing",
+        }
         if should_send_internal_email:
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]
@@ -4712,6 +4749,18 @@ async def reply_to_billing_ticket(
         internal_email_send_status, internal_email_send_reason = await send_attempt(automation_attempt)
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
+        if active_handler == "enablement":
+            billing_ticket["internal_email_payload"] = dict(automation_attempt["internal_email_to_send"])
+            if internal_email_send_status == "sent":
+                assistant_reply = build_enablement_submission_confirmation(
+                    str(collected_fields.get("requested_feature_label") or "feature")
+                )
+                if persona_assignment is None:
+                    persona_assignment = await async_to_thread(
+                        ticket_repository.resolve_account_persona,
+                        client_ticket_id,
+                    )
+                assistant_reply = apply_persona_to_customer_reply(assistant_reply, persona_assignment)
         billing_ticket["updated_at"] = now_iso()
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
@@ -4724,7 +4773,20 @@ async def reply_to_billing_ticket(
             draft_content=assistant_reply,
             asked_field_keys=requested_field_keys,
             persona_assignment=persona_assignment,
+            automation_delivery_key=(
+                str((billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or "")
+                if not requested_field_keys
+                else None
+            ),
         )
+        if (
+            str(billing_ticket.get("automation_handler") or "").strip() == "enablement"
+            and str(billing_ticket.get("internal_email_send_status") or "").strip() == "sent"
+            and isinstance(billing_ticket.get("internal_email_payload"), dict)
+        ):
+            billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
+            billing_ticket["updated_at"] = now_iso()
+            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
     # Return refreshed detail view.
     view_model = _build_account_ticket_view_model(billing_ticket)

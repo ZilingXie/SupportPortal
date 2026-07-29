@@ -112,6 +112,33 @@ class EnablementRepairTests(unittest.TestCase):
         self.assertEqual(second["status"], "already_complete")
         sender.assert_called_once()
 
+    def test_complete_case_with_generic_feature_is_reextracted_and_sent(self) -> None:
+        self.repository.case.update(
+            missing_fields=[],
+            collected_fields={
+                "app_id": "project.prod/eu-west#alpha",
+                "requested_feature": "it",
+                "requested_feature_label": "it",
+            },
+            internal_email_send_status="retry",
+        )
+        sender = Mock(return_value={"status": "sent", "reason": ""})
+
+        result = repair_enablement_case(
+            self.repository,
+            account_case_id="AC-12488",
+            apply=True,
+            send_email=True,
+            extractor=lambda **_: self.extraction,
+            email_sender=sender,
+        )
+
+        self.assertTrue(result["applied"])
+        assert self.repository.saved is not None
+        self.assertEqual(self.repository.saved["collected_fields"]["requested_feature"], "media_relay")
+        self.assertEqual(self.repository.saved["internal_email_send_status"], "sent")
+        sender.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,7 +35,15 @@ def repair_enablement_case(
     if subcategory != "enablement":
         return {"account_case_id": account_case_id, "status": "not_enablement"}
     existing_fields = dict(case.get("collected_fields")) if isinstance(case.get("collected_fields"), dict) else {}
-    if existing_fields.get("app_id") and "app_id" not in list(case.get("missing_fields") or []):
+    prior_send_status = str(case.get("internal_email_send_status") or "").strip()
+    feature_label = str(existing_fields.get("requested_feature_label") or "").strip().lower()
+    fields_are_complete = bool(
+        existing_fields.get("app_id")
+        and existing_fields.get("requested_feature")
+        and feature_label not in {"", "it", "this", "that", "feature", "service"}
+        and "app_id" not in list(case.get("missing_fields") or [])
+    )
+    if fields_are_complete and prior_send_status == "sent":
         return {"account_case_id": account_case_id, "status": "already_complete", "app_id_found": True}
     ticket_id = str(case.get("client_ticket_id") or "").strip()
     ticket = repository.get_ticket(ticket_id) if ticket_id else None
@@ -84,7 +92,6 @@ def repair_enablement_case(
         route_classification=classification,
         updated_at=_now_iso(),
     )
-    prior_send_status = str(case.get("internal_email_send_status") or "").strip()
     if send_email and prior_send_status != "sent":
         send_result = email_sender(automation_result.internal_email)
         updated["internal_email_send_status"] = str(send_result.get("status") or "failed")

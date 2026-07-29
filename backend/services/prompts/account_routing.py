@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v1"
 ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v1"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v2"
-ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v1"
+ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v2"
 
 
 def _json(value: Any) -> str:
@@ -188,11 +187,15 @@ Do not route the Case, answer unrelated questions, or infer identifiers that the
 - Every newly extracted field must cite a customer message ID and an exact source_quote copied from it.
 - app_id.value must be copied exactly from source_quote. Do not correct, complete, normalize, or guess it.
 - requested_feature_label must be copied exactly from source_quote; requested_feature may be normalized.
+- requested_feature_label must name the concrete capability. Pronouns or generic placeholders such as it,
+  this, that, feature, or service are invalid. Resolve them from earlier customer context when possible.
 - Existing collected fields are trusted and must not be replaced unless the customer explicitly supplies a
   different value. If a different value appears, mark the field ambiguous.
 - If multiple different candidate App IDs could be the requested App ID, return ambiguous.
 - If a field cannot be grounded exactly, return uncertain rather than missing.
 - Return missing only when the complete customer history provides no candidate for app_id.
+- Before returning missing, re-read every customer message, including short field-only follow-ups and
+  naturally worded phrases such as "my app ID is". App IDs have no required format.
 - When app_id is missing, write one short contextual follow_up that asks only for the App ID. Do not use a
   fixed template and do not specify an App ID format.
 
@@ -227,6 +230,32 @@ Omit field objects that are not present. Confidence values must be between 0 and
 def build_account_enablement_field_user_prompt(payload: dict[str, Any]) -> str:
     return "\n".join(
         [
+            "## Ticket subject",
+            str(payload.get("ticket_subject") or "").strip() or "(none)",
+            "",
+            "## Existing collected fields",
+            _json(dict(payload.get("existing_fields") or {})),
+            "",
+            "## Customer messages",
+            _json(list(payload.get("customer_messages") or [])),
+        ]
+    ).strip()
+
+
+def build_account_enablement_field_verification_user_prompt(
+    payload: dict[str, Any],
+    primary_result: dict[str, Any],
+) -> str:
+    return "\n".join(
+        [
+            "## Verification task",
+            "Independently re-extract the fields from the complete customer history.",
+            "The primary extraction may have missed an App ID or used a pronoun as the feature name.",
+            "Do not defer to the primary result. Return the same JSON schema required by the system prompt.",
+            "",
+            "## Primary extraction to verify",
+            _json(primary_result),
+            "",
             "## Ticket subject",
             str(payload.get("ticket_subject") or "").strip() or "(none)",
             "",

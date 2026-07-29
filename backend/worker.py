@@ -8,7 +8,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -51,6 +51,8 @@ from backend.services.billing_automation import poll_automation_request_replies,
 from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
     build_enablement_customer_followup,
+    build_enablement_submission_confirmation,
+    send_enablement_internal_email,
 )
 from backend.services.billing_response_flow import (
     BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
@@ -96,6 +98,7 @@ AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_MESSAGES"
 ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV = "ENGINEER_ASSIGNMENT_POLLER_ENABLED"
 ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV = "ENGINEER_ASSIGNMENT_POLL_INTERVAL_SECONDS"
 ACCOUNT_REPLY_POLL_INTERVAL_ENV = "ACCOUNT_REPLY_POLL_INTERVAL_SECONDS"
+ENABLEMENT_DELIVERY_RETRY_POLL_INTERVAL_ENV = "ENABLEMENT_DELIVERY_RETRY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_SUBJECT_TICKET_RE = re.compile(
     r"\bTicket\s+((?:TK-[A-Z0-9-]+)|(?:[0-9]+))\b",
     re.IGNORECASE,
@@ -489,6 +492,148 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
         while not SHUTTING_DOWN and time.time() < sleep_until:
             time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
     LOGGER.info("Account reply poller stopped.")
+
+
+def _queue_enablement_submission_confirmation(account_case: dict[str, Any]) -> bool:
+    payload = (
+        dict(account_case.get("internal_email_payload"))
+        if isinstance(account_case.get("internal_email_payload"), dict)
+        else {}
+    )
+    if bool(payload.get("customer_confirmation_queued")):
+        return False
+    ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    delivery_key = str(payload.get("delivery_key") or "").strip()
+    if not ticket_id or not delivery_key:
+        raise ValueError("Enablement delivery is missing ticket or delivery key")
+    latest_job = ticket_repository.get_latest_account_reply_job(ticket_id)
+    latest_payload = (
+        dict(latest_job.get("payload"))
+        if isinstance(latest_job, dict) and isinstance(latest_job.get("payload"), dict)
+        else {}
+    )
+    if str(latest_payload.get("automation_delivery_key") or "").strip() != delivery_key:
+        fields = account_case.get("collected_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        confirmation = build_enablement_submission_confirmation(
+            str(fields.get("requested_feature_label") or fields.get("requested_feature") or "feature")
+        )
+        persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
+        if isinstance(persona_assignment, dict):
+            confirmation = apply_persona_to_customer_reply(confirmation, persona_assignment)
+        created_at = now_iso()
+        ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
+        reply_payload: dict[str, Any] = {
+            "draft_content": confirmation,
+            "asked_field_keys": [],
+            "visibility": "account_only",
+            "automation_delivery_key": delivery_key,
+        }
+        if persona_assignment:
+            reply_payload.update(
+                {
+                    "persona_key": persona_assignment.get("persona_key"),
+                    "persona_version": persona_assignment.get("version"),
+                    "effective_prompt": dict(persona_assignment.get("content") or {}),
+                }
+            )
+        ticket_repository.save_account_reply_job(
+            {
+                "job_id": f"account-reply-{uuid4().hex}",
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": created_at,
+                "status": "scheduled",
+                "scheduled_for": (
+                    datetime.now(timezone.utc) + timedelta(minutes=6)
+                ).isoformat(),
+                "payload": reply_payload,
+                "attempt_count": 0,
+                "claimed_at": None,
+                "published_at": None,
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+        )
+    payload["customer_confirmation_queued"] = True
+    account_case["internal_email_payload"] = payload
+    account_case["updated_at"] = now_iso()
+    ticket_repository.save_account_case(account_case)
+    return True
+
+
+def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, int]:
+    counts = {"examined": 0, "sent": 0, "retried": 0, "confirmations": 0}
+    cases = ticket_repository.list_billing_tickets(limit=max(1, limit))
+    for account_case in cases:
+        if str(account_case.get("automation_handler") or "").strip() != "enablement":
+            continue
+        if list(account_case.get("missing_fields") or []):
+            continue
+        payload = (
+            dict(account_case.get("internal_email_payload"))
+            if isinstance(account_case.get("internal_email_payload"), dict)
+            else {}
+        )
+        status = str(account_case.get("internal_email_send_status") or "").strip()
+        if status == "sent":
+            if payload.get("delivery_key") and not bool(payload.get("customer_confirmation_queued")):
+                counts["confirmations"] += int(_queue_enablement_submission_confirmation(account_case))
+            continue
+        if status not in {"pending", "retry", "failed", "skipped_config_missing"} or not payload:
+            continue
+        updated_at = _parse_iso_datetime(str(account_case.get("updated_at") or ""))
+        if updated_at is not None and (datetime.now(timezone.utc) - updated_at).total_seconds() < 30:
+            continue
+        counts["examined"] += 1
+        result = send_enablement_internal_email(payload)
+        payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
+        payload["last_attempt_at"] = now_iso()
+        resolved_to = str(result.get("resolved_to") or "").strip()
+        if resolved_to:
+            payload["resolved_to"] = resolved_to
+        account_case["internal_email_payload"] = payload
+        account_case["internal_email_send_status"] = str(result.get("status") or "failed")
+        account_case["internal_email_send_reason"] = str(result.get("reason") or "")
+        account_case["updated_at"] = now_iso()
+        ticket_repository.save_account_case(account_case)
+        if account_case["internal_email_send_status"] == "sent":
+            counts["sent"] += 1
+            counts["confirmations"] += int(_queue_enablement_submission_confirmation(account_case))
+        else:
+            counts["retried"] += 1
+    return counts
+
+
+def _run_enablement_delivery_retry_poller(interval_seconds: float) -> None:
+    LOGGER.info("Enablement delivery retry poller started with interval_seconds=%s.", interval_seconds)
+    while not SHUTTING_DOWN:
+        try:
+            counts = retry_enablement_internal_deliveries_once()
+            if counts["examined"] or counts["confirmations"]:
+                LOGGER.info("Enablement delivery retry result: %s", counts)
+        except Exception:
+            LOGGER.exception("Enablement delivery retry poller failed")
+        sleep_until = time.time() + max(interval_seconds, 5.0)
+        while not SHUTTING_DOWN and time.time() < sleep_until:
+            time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
+    LOGGER.info("Enablement delivery retry poller stopped.")
+
+
+def _start_enablement_delivery_retry_poller(task_types: tuple[str, ...]) -> threading.Thread | None:
+    if "ticket_message_sentiment" not in task_types:
+        return None
+    interval_seconds = _safe_positive_float(
+        os.getenv(ENABLEMENT_DELIVERY_RETRY_POLL_INTERVAL_ENV),
+        60.0,
+    )
+    thread = threading.Thread(
+        target=_run_enablement_delivery_retry_poller,
+        args=(interval_seconds,),
+        name="enablement-delivery-retry-poller",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def _ticket_id_from_billing_reply_subject(subject: str) -> str:
@@ -2348,6 +2493,7 @@ def run_worker() -> int:
     _start_billing_reply_poller_if_enabled()
     _start_engineer_assignment_poller_if_enabled()
     _start_account_reply_poller()
+    _start_enablement_delivery_retry_poller(task_types)
     if concurrency <= 1:
         _run_worker_consumer(task_types, 1)
         LOGGER.info("Worker stopped.")

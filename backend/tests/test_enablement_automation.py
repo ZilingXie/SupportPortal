@@ -95,9 +95,22 @@ class EnablementAutomationTests(unittest.TestCase):
         ) as send_mail:
             result = send_enablement_internal_email({"to": "", "subject": "Request", "body": "Body"})
 
-        self.assertEqual(result["status"], "skipped_config_missing")
+        self.assertEqual(result["status"], "retry")
         self.assertEqual(result["reason"], "missing to")
         send_mail.assert_not_called()
+
+    def test_internal_email_resolves_destination_at_send_time(self) -> None:
+        payload = {"to": "stale@example.com", "subject": "Request", "body": "Body"}
+        with patch.dict(
+            "os.environ",
+            {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "current@example.com"},
+            clear=False,
+        ), patch("backend.services.enablement_automation.send_graph_mail") as send_mail:
+            result = send_enablement_internal_email(payload)
+
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(result["resolved_to"], "current@example.com")
+        self.assertEqual(send_mail.call_args.kwargs["to_address"], "current@example.com")
 
     def test_internal_reply_thread_is_rewritten_for_the_customer(self) -> None:
         profile = Mock()

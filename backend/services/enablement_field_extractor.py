@@ -16,13 +16,26 @@ from backend.services.prompts.account_routing import (
     ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
     build_account_enablement_field_system_prompt,
     build_account_enablement_field_user_prompt,
+    build_account_enablement_field_verification_user_prompt,
 )
-
 
 LOGGER = logging.getLogger(__name__)
 
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_KEY = "account-enablement-field-extractor-system"
 DEFAULT_FIELD_CONFIDENCE_THRESHOLD = 0.8
+_GENERIC_FEATURE_LABELS = {
+    "it",
+    "this",
+    "that",
+    "feature",
+    "service",
+    "this feature",
+    "that feature",
+    "the feature",
+    "this service",
+    "that service",
+    "the service",
+}
 
 
 @dataclass(frozen=True)
@@ -54,6 +67,7 @@ class EnablementFieldExtraction:
             "grounding_status": self.grounding_status,
             "failure_type": self.failure_type,
             "prompt_version": ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
+            "verification_status": self.prompt_snapshot.get("verification_status", "not_attempted"),
         }
 
 
@@ -119,6 +133,7 @@ def _uncertain(
     system_prompt: str,
     reason: str,
     failure_type: str,
+    verification_status: str = "not_attempted",
 ) -> EnablementFieldExtraction:
     return EnablementFieldExtraction(
         status="uncertain",
@@ -126,8 +141,64 @@ def _uncertain(
         reason=reason,
         grounding_status="failed",
         failure_type=failure_type,
-        prompt_snapshot={"system_prompt": system_prompt, "user_prompt": "[redacted field extraction input]"},
+        prompt_snapshot={
+            "system_prompt": system_prompt,
+            "user_prompt": "[redacted field extraction input]",
+            "verification_status": verification_status,
+        },
     )
+
+
+def _raw_field(payload: dict[str, Any], field_name: str) -> dict[str, Any]:
+    fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+    candidate = fields.get(field_name)
+    return dict(candidate) if isinstance(candidate, dict) else {}
+
+
+def _feature_label_is_generic(payload: dict[str, Any]) -> bool:
+    label = str(_raw_field(payload, "requested_feature").get("original_label") or "").strip().lower()
+    return bool(label) and label in _GENERIC_FEATURE_LABELS
+
+
+def _requires_verification(payload: dict[str, Any]) -> bool:
+    status = str(payload.get("status") or "").strip().lower()
+    missing = {
+        str(item).strip()
+        for item in payload.get("missing_fields", [])
+        if str(item).strip()
+    } if isinstance(payload.get("missing_fields"), list) else set()
+    return status == "missing" or "app_id" in missing or _feature_label_is_generic(payload)
+
+
+def _reconcile_verified_payload(
+    primary: dict[str, Any],
+    verified: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str, str]:
+    primary_app_id = str(_raw_field(primary, "app_id").get("value") or "").strip()
+    verified_app_id = str(_raw_field(verified, "app_id").get("value") or "").strip()
+    if primary_app_id and verified_app_id and primary_app_id != verified_app_id:
+        return None, "conflict", "field verifier found a different App ID candidate"
+
+    verified_status = str(verified.get("status") or "").strip().lower()
+    if verified_status not in {"complete", "missing", "ambiguous", "uncertain"}:
+        return None, "failed", "field verifier returned an unsupported status"
+
+    if _feature_label_is_generic(verified):
+        return None, "failed", "field verifier returned a generic requested feature"
+
+    primary_status = str(primary.get("status") or "").strip().lower()
+    if primary_status == "missing" or "app_id" in set(primary.get("missing_fields") or []):
+        if verified_status == "complete" and verified_app_id:
+            return verified, "corrected_missing", "field verifier recovered the App ID"
+        if verified_status == "missing" and "app_id" in set(verified.get("missing_fields") or []):
+            return verified, "confirmed_missing", "two extraction passes confirmed the App ID is missing"
+        return None, "conflict", "field verifier did not confirm the missing App ID result"
+
+    if _feature_label_is_generic(primary):
+        if verified_status == "complete" and not _feature_label_is_generic(verified):
+            return verified, "corrected_feature", "field verifier resolved the concrete feature name"
+        return None, "conflict", "field verifier could not resolve a concrete feature name"
+    return primary, "not_required", ""
 
 
 def extract_enablement_fields(
@@ -138,6 +209,9 @@ def extract_enablement_fields(
     invoke: Callable[..., dict[str, Any]] = _invoke_extractor,
 ) -> EnablementFieldExtraction:
     trusted_fields = _clean_existing_fields(existing_fields)
+    if str(trusted_fields.get("requested_feature_label") or "").strip().lower() in _GENERIC_FEATURE_LABELS:
+        trusted_fields.pop("requested_feature", None)
+        trusted_fields.pop("requested_feature_label", None)
     messages = _customer_messages(customer_messages)
     system_prompt = resolve_system_prompt(
         ACCOUNT_ENABLEMENT_FIELD_PROMPT_KEY,
@@ -150,7 +224,11 @@ def extract_enablement_fields(
             "customer_messages": messages,
         }
     )
-    snapshot = {"system_prompt": system_prompt, "user_prompt": "[redacted field extraction input]"}
+    snapshot = {
+        "system_prompt": system_prompt,
+        "user_prompt": "[redacted field extraction input]",
+        "verification_status": "not_attempted",
+    }
     if trusted_fields.get("app_id") and trusted_fields.get("requested_feature"):
         return EnablementFieldExtraction(
             status="complete",
@@ -176,6 +254,50 @@ def extract_enablement_fields(
             reason="field extractor invocation failed",
             failure_type="llm_extraction_failed",
         )
+
+    if _requires_verification(payload):
+        verification_user_prompt = build_account_enablement_field_verification_user_prompt(
+            {
+                "ticket_subject": ticket_subject,
+                "existing_fields": trusted_fields,
+                "customer_messages": messages,
+            },
+            payload,
+        )
+        try:
+            verified_payload = invoke(
+                system_prompt=system_prompt,
+                user_prompt=verification_user_prompt,
+            )
+        except (LlmInvocationError, ValueError, TypeError):
+            LOGGER.warning("Enablement field verification failed", exc_info=True)
+            return _uncertain(
+                existing_fields=trusted_fields,
+                system_prompt=system_prompt,
+                reason="field verifier invocation failed",
+                failure_type="llm_verification_failed",
+                verification_status="failed",
+            )
+        payload, verification_status, verification_reason = _reconcile_verified_payload(
+            payload,
+            verified_payload,
+        )
+        if payload is None:
+            return EnablementFieldExtraction(
+                status="ambiguous" if verification_status == "conflict" else "uncertain",
+                collected_fields=trusted_fields,
+                ambiguous_fields=["app_id"] if verification_status == "conflict" else [],
+                reason=verification_reason,
+                grounding_status="failed",
+                failure_type=f"verification_{verification_status}",
+                prompt_snapshot={
+                    **snapshot,
+                    "verification_status": verification_status,
+                    "verification_user_prompt": "[redacted field verification input]",
+                },
+            )
+        snapshot["verification_status"] = verification_status
+        snapshot["verification_user_prompt"] = "[redacted field verification input]"
 
     status = str(payload.get("status") or "").strip().lower()
     if status not in {"complete", "missing", "ambiguous", "uncertain"}:

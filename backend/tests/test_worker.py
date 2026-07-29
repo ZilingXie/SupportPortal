@@ -2115,6 +2115,80 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_ticket.assert_not_called()
         repository.save_account_case.assert_not_called()
 
+    def test_enablement_delivery_retry_sends_once_and_queues_confirmation(self) -> None:
+        account_case = {
+            "account_case_id": "AC-12495",
+            "client_ticket_id": "12495",
+            "automation_handler": "enablement",
+            "missing_fields": [],
+            "collected_fields": {
+                "app_id": "project-one",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-12495:v1",
+                "subject": "[Enablement Request] Media Relay - Ticket 12495",
+                "body": "Internal request",
+            },
+            "internal_email_send_status": "retry",
+            "updated_at": "2026-07-24T00:00:00+00:00",
+        }
+        repository = Mock()
+        repository.list_billing_tickets.return_value = [account_case]
+        repository.get_latest_account_reply_job.return_value = None
+        repository.resolve_account_persona.return_value = None
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "send_enablement_internal_email",
+            return_value={
+                "status": "sent",
+                "reason": "",
+                "resolved_to": "enablement@example.com",
+            },
+        ) as send_mail:
+            first = worker.retry_enablement_internal_deliveries_once()
+            second = worker.retry_enablement_internal_deliveries_once()
+
+        self.assertEqual(first["sent"], 1)
+        self.assertEqual(first["confirmations"], 1)
+        self.assertEqual(second["sent"], 0)
+        send_mail.assert_called_once()
+        repository.save_account_reply_job.assert_called_once()
+        reply_job = repository.save_account_reply_job.call_args.args[0]
+        self.assertEqual(
+            reply_job["payload"]["automation_delivery_key"],
+            "enablement:AC-12495:v1",
+        )
+        self.assertNotIn("it enablement", reply_job["payload"]["draft_content"])
+        self.assertEqual(account_case["internal_email_send_status"], "sent")
+        self.assertTrue(account_case["internal_email_payload"]["customer_confirmation_queued"])
+
+    def test_enablement_delivery_retry_ignores_legacy_sent_case_without_delivery_key(self) -> None:
+        repository = Mock()
+        repository.list_billing_tickets.return_value = [
+            {
+                "account_case_id": "AC-legacy",
+                "client_ticket_id": "legacy",
+                "automation_handler": "enablement",
+                "missing_fields": [],
+                "internal_email_payload": {"subject": "Legacy request", "body": "Body"},
+                "internal_email_send_status": "sent",
+            }
+        ]
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "send_enablement_internal_email",
+        ) as send_mail:
+            result = worker.retry_enablement_internal_deliveries_once()
+
+        self.assertEqual(result["examined"], 0)
+        self.assertEqual(result["confirmations"], 0)
+        send_mail.assert_not_called()
+        repository.save_account_reply_job.assert_not_called()
+
     def test_handle_billing_request_reply_rejects_empty_body_before_marking_read(self) -> None:
         repository = Mock()
         repository.list_ticket_events.return_value = []
