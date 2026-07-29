@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +17,6 @@ from backend.services.billing_automation import (
     record_billing_request_reply,
     send_billing_internal_email,
 )
-
 
 GRAPH_ENV = {
     "BILLING_AUTOMATION_MAIL_TRANSPORT": "graph",
@@ -220,7 +220,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertEqual(requests[0].full_url, "https://graph.microsoft.com/v1.0/me/sendMail")
         self.assertEqual(requests[0].headers["Authorization"], "Bearer cached-access-token")
 
-    def test_poll_billing_request_replies_reads_matching_unread_messages_and_marks_read(self) -> None:
+    def test_poll_billing_request_replies_reads_recent_messages_without_unread_filter(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"
             cache_path.write_text(
@@ -242,6 +242,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
                                     "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-1",
                                     "from": {"emailAddress": {"address": "billing@example.com"}},
                                     "receivedDateTime": "2026-07-02T06:00:00Z",
+                                    "isRead": True,
                                 },
                                 {
                                     "id": "msg-other",
@@ -285,9 +286,11 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertEqual(replies[0].sender, "billing@example.com")
         self.assertEqual(replies[0].body_text, "Approved. Please proceed.\nThanks & regards.")
         self.assertEqual(handled, replies)
-        self.assertEqual([request.get_method() for request in requests], ["GET", "GET", "PATCH"])
-        patch_payload = _json_request_body(requests[-1])
-        self.assertEqual(patch_payload, {"isRead": True})
+        self.assertEqual([request.get_method() for request in requests], ["GET", "GET"])
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(requests[0].full_url).query)
+        self.assertNotIn("isRead", query["$filter"][0])
+        self.assertIn("receivedDateTime ge ", query["$filter"][0])
+        self.assertEqual(query["$orderby"], ["receivedDateTime desc"])
 
     def test_poll_billing_request_replies_ignores_unmatched_subjects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -339,7 +342,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
             "backend.services.billing_automation._acquire_graph_access_token",
             return_value="access-token",
         ), patch(
-            "backend.services.billing_automation._list_unread_inbox_messages",
+            "backend.services.billing_automation._list_recent_inbox_messages",
             return_value=[summary],
         ), patch(
             "backend.services.billing_automation._get_graph_message",
@@ -358,6 +361,38 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertEqual(replies[0].attachments, ())
         download_mock.assert_not_called()
         mark_read_mock.assert_called_once_with(access_token="access-token", message_id="msg-enablement")
+
+    def test_poll_automation_request_replies_does_not_count_already_processed_message(self) -> None:
+        summary = {
+            "id": "msg-enablement",
+            "subject": "Re: [Enablement Request] Media Relay - Ticket TK-1",
+            "isRead": True,
+        }
+        message = {
+            **summary,
+            "from": {"emailAddress": {"address": "enablement@example.com"}},
+            "body": {"contentType": "text", "content": "Review is complete."},
+        }
+
+        with patch.dict(os.environ, GRAPH_ENV), patch(
+            "backend.services.billing_automation._acquire_graph_access_token",
+            return_value="access-token",
+        ), patch(
+            "backend.services.billing_automation._list_recent_inbox_messages",
+            return_value=[summary],
+        ), patch(
+            "backend.services.billing_automation._get_graph_message",
+            return_value=message,
+        ), patch(
+            "backend.services.billing_automation._mark_graph_message_read",
+        ) as mark_read_mock:
+            replies = poll_automation_request_replies(
+                handler=lambda _reply: False,
+                subject_prefixes=("[Enablement Request]",),
+            )
+
+        self.assertEqual(replies, [])
+        mark_read_mock.assert_not_called()
 
     def test_poll_billing_request_replies_leaves_message_unread_when_handler_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

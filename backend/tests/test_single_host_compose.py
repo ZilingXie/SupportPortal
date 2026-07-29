@@ -128,7 +128,7 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertIn(
-            "AUTOMATION_REPLY_POLL_ENABLED: ${AUTOMATION_REPLY_POLL_ENABLED:-}",
+            "AUTOMATION_REPLY_POLL_ENABLED: ${AUTOMATION_REPLY_POLL_ENABLED:-true}",
             worker_block,
         )
         self.assertIn(
