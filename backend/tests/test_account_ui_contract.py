@@ -189,7 +189,14 @@ class AccountUiContractTests(unittest.TestCase):
             {"route_status": "not_automated", "automation_status": "automation"},
             {"automation_status": "automation"},
         ]
-        script = f"{helpers}\nconsole.log(JSON.stringify({json.dumps(cases)}.map(isAutomatedRoute)));"
+        script = (
+            f"{helpers}\n"
+            f"const cases = {json.dumps(cases)};\n"
+            "console.log(JSON.stringify({"
+            "matches: cases.map(isAutomatedRoute), "
+            "displayStatuses: cases.map(displayRouteStatus)"
+            "}));"
+        )
 
         result = subprocess.run(
             ["node", "-e", script],
@@ -199,7 +206,14 @@ class AccountUiContractTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), [True, False, True])
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "matches": [True, False, True],
+                "displayStatuses": ["automation", "not_automated", "automation"],
+            },
+        )
+        self.assertEqual(app_source.count("const itemStatus = displayRouteStatus(item);"), 2)
 
     def test_account_styles_include_filter_message_reply_classes(self) -> None:
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")

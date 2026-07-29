@@ -461,6 +461,10 @@ function isAutomatedRoute(item) {
   return isAutomationStatus(item?.status || item?.automation_status || "not_automated");
 }
 
+function displayRouteStatus(item) {
+  return isAutomatedRoute(item) ? "automation" : "not_automated";
+}
+
 function matchesFilter(item) {
   const itemStatus = item.status || item.automation_status || "not_automated";
   const reviewStatus = item.route_review_status || "pending";
@@ -615,7 +619,7 @@ function renderHistorySidebar() {
           const activeBillingId = state.activeItem ? (state.activeItem.account_case_id || state.activeItem.billing_ticket_id || "") : "";
           const isActive = (activeBillingId && activeBillingId === itemId) || (activeTicketId && activeTicketId === itemTicketId);
           const itemSource = item.source || "";
-          const itemStatus = item.status || item.automation_status || "not_automated";
+          const itemStatus = displayRouteStatus(item);
           const ticketNumber = accountTicketNumber(item);
           return `
     <button class="history-item ${isActive ? "history-item--active" : ""}" type="button" data-action="open-ticket" data-id="${escapeHtml(itemId)}">
@@ -865,7 +869,7 @@ function renderDetailView() {
   }
 
   const itemSource = item.source || "";
-  const itemStatus = item.status || item.automation_status || "not_automated";
+  const itemStatus = displayRouteStatus(item);
   const ticketId = item.ticket_id || item.client_ticket_id || "";
   const ticketNumber = accountTicketNumber(item);
   const accountCaseId = item.account_case_id || item.billing_ticket_id || "";
