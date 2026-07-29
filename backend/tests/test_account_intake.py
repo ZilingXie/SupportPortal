@@ -285,11 +285,38 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["collected_fields"]["app_id"], "7da36383d624411698e5c0bc1fda6324")
         self.assertEqual(payload["collected_fields"]["requested_feature"], "media_relay")
         self.assertEqual(payload["internal_email_send_status"], "sent")
+        self.assertEqual(payload["ai_reply_status"], "scheduled")
+        reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
+        self.assertIsNotNone(reply_job)
+        assert reply_job is not None
+        self.assertIn("submitted", reply_job["payload"]["draft_content"].lower())
         send_email.assert_called_once()
         email_payload = send_email.call_args.args[0]
-        self.assertEqual(email_payload["to"], "enablement@example.com")
+        self.assertEqual(email_payload["to"], "")
+        self.assertEqual(email_payload["recipient_config_key"], "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL")
         self.assertIn("[Enablement Request]", email_payload["subject"])
         self.assertIn(payload["account_case_id"], email_payload["body"])
+
+    def test_enablement_does_not_claim_submission_when_internal_email_is_retrying(self) -> None:
+        question = "Please enable Media Relay from your end. My App ID is project.prod/eu-west#alpha."
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_enablement_internal_email",
+            return_value={"status": "retry", "reason": "missing to"},
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Enable Media Relay",
+                    "question": question,
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["internal_email_send_status"], "retry")
+        self.assertIsNone(payload["ai_reply_status"])
+        self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
 
     def test_uncertain_enablement_fields_fail_closed_to_human_review(self) -> None:
         uncertain = EnablementFieldExtraction(
@@ -350,6 +377,9 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertEqual(completed.status_code, 200, completed.text)
             self.assertEqual(completed.json()["missing_fields"], [])
             self.assertEqual(completed.json()["internal_email_send_status"], "sent")
+            self.assertTrue(
+                completed.json()["internal_email_payload"]["customer_confirmation_queued"]
+            )
             send_email.assert_called_once()
 
             repeated = self.client.post(

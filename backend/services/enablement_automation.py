@@ -22,6 +22,9 @@ ENABLEMENT_AUTOMATION_HANDLER = "enablement"
 ENABLEMENT_INTERNAL_EMAIL_ENV = "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL"
 ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX = "[Enablement Request]"
 ENABLEMENT_CUSTOMER_REPLY_PROMPT_VERSION = "enablement-customer-reply-v1"
+ENABLEMENT_INTERNAL_EMAIL_PENDING = "pending"
+ENABLEMENT_INTERNAL_EMAIL_RETRY = "retry"
+ENABLEMENT_INTERNAL_EMAIL_SENT = "sent"
 
 _APP_ID_RE = re.compile(
     r"\b(?:app\s*id|appid)\s*(?::|=|#|-)?\s*([0-9a-f]{32})\b",
@@ -208,10 +211,7 @@ def build_enablement_automation_result_from_fields(
     if not required.issubset(fields):
         raise ValueError("grounded Enablement fields are incomplete")
     return EnablementAutomationResult(
-        customer_reply=(
-            f"Thanks for providing the App ID. We’ve sent your {fields['requested_feature_label']} "
-            "enablement request to our internal team. They’ll follow up once it has been reviewed."
-        ),
+        customer_reply="",
         missing_fields=[],
         collected_fields=fields,
         internal_email=_build_internal_email(
@@ -226,19 +226,31 @@ def build_enablement_automation_result_from_fields(
 
 def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict[str, str]:
     payload = dict(email_payload or {})
-    to_address = _clean_text(payload.get("to"))
+    to_address = _clean_text(os.getenv(ENABLEMENT_INTERNAL_EMAIL_ENV))
     subject = _clean_text(payload.get("subject"))
     body = str(payload.get("body") or "").strip()
     missing = [name for name, value in (("to", to_address), ("subject", subject), ("body", body)) if not value]
     if missing:
-        return {"status": "skipped_config_missing", "reason": f"missing {', '.join(missing)}"}
+        return {"status": ENABLEMENT_INTERNAL_EMAIL_RETRY, "reason": f"missing {', '.join(missing)}"}
     try:
         send_graph_mail(to_address=to_address, subject=subject, body=body)
     except (FileNotFoundError, ValueError) as exc:
-        return {"status": "skipped_config_missing", "reason": str(exc)}
+        return {"status": ENABLEMENT_INTERNAL_EMAIL_RETRY, "reason": str(exc)}
     except Exception as exc:
         return {"status": "failed", "reason": str(exc)}
-    return {"status": "sent", "reason": ""}
+    return {
+        "status": ENABLEMENT_INTERNAL_EMAIL_SENT,
+        "reason": "",
+        "resolved_to": to_address,
+    }
+
+
+def build_enablement_submission_confirmation(requested_feature_label: str) -> str:
+    feature = _clean_text(requested_feature_label) or "feature"
+    return (
+        f"Thanks for providing the requested information. We’ve submitted your {feature} "
+        "enablement request to our internal team. They’ll follow up once it has been reviewed."
+    )
 
 
 def build_enablement_customer_followup(
@@ -348,7 +360,9 @@ def _build_internal_email(
     feature_label = collected_fields["requested_feature_label"]
     app_id = collected_fields["app_id"]
     return {
-        "to": _clean_text(os.getenv(ENABLEMENT_INTERNAL_EMAIL_ENV)),
+        "to": "",
+        "recipient_config_key": ENABLEMENT_INTERNAL_EMAIL_ENV,
+        "delivery_key": f"enablement:{_clean_text(account_case_id)}:v1",
         "from": _clean_text(os.getenv("MSGRAPH_USERNAME")) or DEFAULT_USERNAME,
         "subject": f"{ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX} {feature_label} - Ticket {_clean_text(ticket_id)}",
         "body": (

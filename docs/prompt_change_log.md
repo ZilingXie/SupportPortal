@@ -2885,3 +2885,26 @@ For each new entry, record:
 - Verification:
   - `rtk python3 -m unittest backend.tests.test_enablement_automation backend.tests.test_llm_profiles`
   - `rtk uv run --with pytest --with 'psycopg[binary]' python -m pytest backend/tests/test_worker.py -q -k 'enablement_request_reply'`
+
+## 2026-07-29 - Enablement field verification and delivery truthfulness
+
+- Area or subsystem: `/account` Enablement field intake and internal request delivery
+- Prompt or model version: `account-enablement-fields-v2` / existing `intent_router` profile
+- Summary: Strengthened the Enablement field extractor so App IDs have no format constraint, concrete feature names must replace pronouns, and missing App ID or generic feature results receive an independent second LLM extraction pass over the complete customer history.
+- Reason: A one-pass extraction incorrectly asked Case 12494 for an App ID already present and stored `it` as Case 12495's requested feature. Case 12495 also claimed submission even though its internal email destination had been captured as empty.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/enablement_field_extractor.py`
+  - `backend/services/enablement_automation.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/enablement_repair.py`
+  - `ENABLEMENT_AUTOMATION_INTERNAL_EMAIL`
+  - `ENABLEMENT_DELIVERY_RETRY_POLL_INTERVAL_SECONDS`
+- Expected behavior change:
+  - The system asks for an App ID only after two evidence-grounded LLM passes confirm it is absent.
+  - Pronouns such as `it` cannot become the requested feature; unresolved or conflicting results fail closed to Human Review.
+  - The Enablement destination is resolved at send time, failed/config-missing deliveries are retried by the auxiliary worker, and customer submission confirmation is queued only after the internal email is sent.
+  - Delivery and confirmation use a stable per-Case delivery key to avoid duplicate customer confirmation jobs.
+- Verification:
+  - `rtk uv run --with pytest --with 'psycopg[binary]' python -m pytest backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_repair.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_agent_config.py backend/tests/test_single_host_compose.py -q`
