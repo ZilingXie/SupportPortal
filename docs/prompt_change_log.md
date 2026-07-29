@@ -2863,3 +2863,25 @@ For each new entry, record:
 - Verification:
   - `rtk env PYTHONPATH=/tmp/supportportal-test-deps-enablement-extractor-20260729 pytest -q backend/tests/test_account_intake.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_repair.py backend/tests/test_agent_config.py backend/tests/test_prompt_versioning.py` (131 passed, 14 subtests passed)
   - `rtk env PYTHONPATH=/tmp/supportportal-test-deps-enablement-extractor-20260729 pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_account_ui_contract.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_account_admin_features.py backend/tests/test_single_host_compose.py` (task-related tests passed)
+
+## 2026-07-29 - Enablement customer reply composer
+
+- Area or subsystem: `/account` Enablement Automation Outlook reply handling
+- Prompt or model version: `enablement-customer-reply-v1` / `enablement_reply`
+- Summary: Added an LLM composer that identifies the newest internal Enablement resolution in a full Outlook reply thread and rewrites it as a concise customer-facing update.
+- Reason: The previous template inserted the complete internal email body verbatim, exposing signatures, quoted messages, internal identifiers, and contact details to the customer.
+- Affected files or config:
+  - `backend/services/enablement_automation.py`
+  - `backend/services/llm_profiles.py`
+  - `ENABLEMENT_REPLY_MODEL`
+  - `ENABLEMENT_REPLY_REASONING_EFFORT`
+  - `ENABLEMENT_REPLY_TEMPERATURE`
+  - `ENABLEMENT_REPLY_TIMEOUT_SECONDS`
+  - `ENABLEMENT_REPLY_MAX_RETRIES`
+- Expected behavior change:
+  - The model preserves only facts from the newest human-authored internal resolution and does not copy the Outlook quote chain.
+  - Customer replies exclude signatures, staff names, email headers, internal instructions, Case/Ticket/App IDs, email addresses, physical addresses, and community links.
+  - Missing model credentials, invocation failures, empty/oversized output, and detected leakage fail closed so the poller retries instead of sending the internal thread to the customer.
+- Verification:
+  - `rtk python3 -m unittest backend.tests.test_enablement_automation backend.tests.test_llm_profiles`
+  - `rtk uv run --with pytest --with 'psycopg[binary]' python -m pytest backend/tests/test_worker.py -q -k 'enablement_request_reply'`

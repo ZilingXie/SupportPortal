@@ -2063,15 +2063,24 @@ class WorkerResilienceTests(unittest.TestCase):
             received_at="2026-07-24T00:00:00Z",
         )
 
-        with patch.object(worker, "ticket_repository", repository):
+        generated_reply = "Hi there,\n\nPlease add a payment method before activation.\n\nBest Regards,\nSid"
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "build_enablement_customer_followup",
+            return_value=generated_reply,
+        ) as composer_mock:
             handled = worker.handle_automation_request_reply(reply)
 
         self.assertTrue(handled)
         saved_ticket = repository.save_ticket.call_args.args[0]
         assistant_message = saved_ticket["messages"][-1]
         self.assertEqual(assistant_message["source"], "enablement_reply_email")
-        self.assertIn("Here is their update", assistant_message["content"])
+        self.assertEqual(assistant_message["content"], generated_reply)
         self.assertNotIn("has been enabled", assistant_message["content"])
+        self.assertEqual(
+            composer_mock.call_args.kwargs["sensitive_values"],
+            ("7da36383d624411698e5c0bc1fda6324", "", ""),
+        )
         saved_case = repository.save_account_case.call_args.args[0]
         self.assertEqual(saved_case["automation_status"], "customer_notified")
         self.assertEqual(saved_case["route_status"], "automated")
