@@ -455,6 +455,12 @@ function isAutomationStatus(status) {
   return status === "automation" || status === "automated";
 }
 
+function isAutomatedRoute(item) {
+  const routeStatus = String(item?.route_status || "").trim();
+  if (routeStatus) return routeStatus === "automated";
+  return isAutomationStatus(item?.status || item?.automation_status || "not_automated");
+}
+
 function matchesFilter(item) {
   const itemStatus = item.status || item.automation_status || "not_automated";
   const reviewStatus = item.route_review_status || "pending";
@@ -462,8 +468,8 @@ function matchesFilter(item) {
   if (state.statusFilter === "all") return true;
   if (state.statusFilter === "unreviewed") return reviewStatus !== "reviewed";
   if (state.statusFilter === "reviewed") return reviewStatus === "reviewed";
-  if (state.statusFilter === "automation") return isAutomationStatus(itemStatus);
-  if (state.statusFilter === "not_automated") return !isAutomationStatus(itemStatus);
+  if (state.statusFilter === "automation") return isAutomatedRoute(item);
+  if (state.statusFilter === "not_automated") return !isAutomatedRoute(item);
   if (state.statusFilter === "route_errors") return Boolean(item.route_error);
   if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
     return secondary === ROUTE_LABEL_FILTER_MATCHES[state.statusFilter];

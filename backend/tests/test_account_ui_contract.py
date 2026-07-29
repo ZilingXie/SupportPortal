@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -177,6 +178,28 @@ class AccountUiContractTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_account_automation_filter_uses_stable_route_status(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        helper_start = app_source.index("function isAutomationStatus")
+        helper_end = app_source.index("\nfunction matchesFilter", helper_start)
+        helpers = app_source[helper_start:helper_end]
+        cases = [
+            {"route_status": "automated", "automation_status": "customer_notified"},
+            {"route_status": "not_automated", "automation_status": "automation"},
+            {"automation_status": "automation"},
+        ]
+        script = f"{helpers}\nconsole.log(JSON.stringify({json.dumps(cases)}.map(isAutomatedRoute)));"
+
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [True, False, True])
 
     def test_account_styles_include_filter_message_reply_classes(self) -> None:
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
