@@ -28,9 +28,11 @@ from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.prompts.account_routing import (
     ACCOUNT_AGORA_PROMPT_VERSION,
     ACCOUNT_AUTOMATION_PROMPT_VERSION,
+    ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
     ACCOUNT_INTENT_PROMPT_VERSION,
     build_account_agora_system_prompt,
     build_account_automation_system_prompt,
+    build_account_enablement_field_system_prompt,
     build_account_intent_system_prompt,
     build_account_stage_user_prompt,
 )
@@ -97,6 +99,14 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-automation-router",
             "content": build_account_automation_system_prompt(),
             "version": ACCOUNT_AUTOMATION_PROMPT_VERSION,
+        },
+        {
+            "key": "account-enablement-field-extractor-system",
+            "name": "Enablement Field Extractor",
+            "component_key": "account-enablement-field-extractor",
+            "content": build_account_enablement_field_system_prompt(),
+            "version": ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
+            "managed": True,
         },
     ]
 

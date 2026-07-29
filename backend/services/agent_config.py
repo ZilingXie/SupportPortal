@@ -222,7 +222,7 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
             item["component_key"],
             item["content"],
             version=item["version"],
-            metadata={"managed": False, "scope": "/account"},
+            metadata={"managed": bool(item.get("managed", False)), "scope": "/account"},
         )
         for item in account_router_prompt_catalog()
     ]
@@ -248,6 +248,11 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "account-automation-router",
                     "Automation Router",
                     "Selects a registered Account Automation subcategory and handler.",
+                ),
+                _component(
+                    "account-enablement-field-extractor",
+                    "Enablement Field Extractor",
+                    "Extracts grounded Enablement fields from customer-authored /account messages.",
                 ),
                 _component(
                     "route-classifier",

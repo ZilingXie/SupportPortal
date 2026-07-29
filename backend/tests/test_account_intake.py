@@ -16,8 +16,41 @@ import backend.main as main
 import backend.worker as worker
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.billing_response_flow import hash_billing_response_token
+from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.llm_factory import LlmInvocationError
 from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
+
+
+def _fake_enablement_field_extraction(**kwargs: object) -> EnablementFieldExtraction:
+    messages = kwargs.get("customer_messages")
+    text = "\n".join(
+        str(message.get("content") or "")
+        for message in (messages if isinstance(messages, list) else [])
+        if isinstance(message, dict)
+    )
+    existing = kwargs.get("existing_fields")
+    fields = dict(existing) if isinstance(existing, dict) else {}
+    for candidate in (
+        "7da36383d624411698e5c0bc1fda6324",
+        "project.prod/eu-west#alpha",
+    ):
+        if candidate in text:
+            fields["app_id"] = candidate
+    fields.setdefault("requested_feature", "media_relay")
+    fields.setdefault("requested_feature_label", "Media Relay")
+    if fields.get("app_id"):
+        return EnablementFieldExtraction(
+            status="complete",
+            collected_fields={str(key): str(value) for key, value in fields.items()},
+            grounding_status="passed",
+        )
+    return EnablementFieldExtraction(
+        status="missing",
+        collected_fields={str(key): str(value) for key, value in fields.items()},
+        missing_fields=["app_id"],
+        follow_up="Could you share the App ID for this Media Relay request?",
+        grounding_status="passed",
+    )
 
 
 class AccountIntakeApiTests(unittest.TestCase):
@@ -42,11 +75,17 @@ class AccountIntakeApiTests(unittest.TestCase):
             "backend.services.ticket_title._invoke_title_model",
             side_effect=LlmInvocationError("disabled in account intake unit tests"),
         )
+        self._enablement_extractor_patcher = patch(
+            "backend.main.extract_enablement_fields",
+            side_effect=_fake_enablement_field_extraction,
+        )
         self._llm_patcher.start()
         self._account_route_credentials_patcher.start()
         self._title_model_patcher.start()
+        self._enablement_extractor_patcher.start()
 
     def tearDown(self) -> None:
+        self._enablement_extractor_patcher.stop()
         self._title_model_patcher.stop()
         self._account_route_credentials_patcher.stop()
         self._llm_patcher.stop()
@@ -217,7 +256,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_account_intake_routes_enablement_and_sends_internal_request(self) -> None:
         question = (
-            "My App ID: 7da36383d624411698e5c0bc1fda6324. We enabled co-host token authentication "
+            "My App ID is : 7da36383d624411698e5c0bc1fda6324. We enabled co-host token authentication "
             "but PK view does not show, so please enable Media Relay from your end."
         )
         with patch.dict(os.environ, {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "enablement@example.com"}, clear=False), patch.object(
@@ -251,6 +290,38 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(email_payload["to"], "enablement@example.com")
         self.assertIn("[Enablement Request]", email_payload["subject"])
         self.assertIn(payload["account_case_id"], email_payload["body"])
+
+    def test_uncertain_enablement_fields_fail_closed_to_human_review(self) -> None:
+        uncertain = EnablementFieldExtraction(
+            status="uncertain",
+            collected_fields={"requested_feature": "media_relay", "requested_feature_label": "Media Relay"},
+            reason="App ID could not be grounded",
+            grounding_status="failed",
+            failure_type="grounding_failed",
+        )
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.extract_enablement_fields",
+            return_value=uncertain,
+        ), patch("backend.main.send_enablement_internal_email") as send_email:
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Enable Media Relay",
+                    "question": "Please enable Media Relay from your end for one of our applications.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["route_status"], "not_automated")
+        self.assertEqual(payload["route_family"], "human_review")
+        self.assertEqual(payload["secondary_label"], "Human Review")
+        self.assertEqual(payload["missing_fields"], [])
+        self.assertEqual(payload["customer_reply"], "")
+        self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
+        self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
+        send_email.assert_not_called()
 
     def test_enablement_followup_collects_app_id_and_sends_only_once(self) -> None:
         with patch.dict(os.environ, {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "enablement@example.com"}, clear=False), patch.object(
@@ -287,6 +358,52 @@ class AccountIntakeApiTests(unittest.TestCase):
             )
             self.assertEqual(repeated.status_code, 200, repeated.text)
             send_email.assert_called_once()
+
+    def test_uncertain_enablement_followup_fails_closed_to_human_review(self) -> None:
+        uncertain = EnablementFieldExtraction(
+            status="uncertain",
+            collected_fields={"requested_feature": "media_relay", "requested_feature_label": "Media Relay"},
+            reason="App ID could not be grounded",
+            grounding_status="failed",
+            failure_type="grounding_failed",
+        )
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_enablement_internal_email"
+        ) as send_email:
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Enable Media Relay",
+                    "question": "Please enable Media Relay from your end.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+            self.assertEqual(created.status_code, 200, created.text)
+            created_payload = created.json()
+            self.assertEqual(created_payload["missing_fields"], ["app_id"])
+            initial_reply_job = self.repository.get_latest_account_reply_job(created_payload["ticket_id"])
+            self.assertIsNotNone(initial_reply_job)
+            assert initial_reply_job is not None
+
+            with patch("backend.main.extract_enablement_fields", return_value=uncertain):
+                reviewed = self.client.post(
+                    f"/api/account/cases/{created_payload['account_case_id']}/reply",
+                    json={"message": "It belongs to our production application."},
+                )
+
+        self.assertEqual(reviewed.status_code, 200, reviewed.text)
+        payload = reviewed.json()
+        self.assertEqual(payload["route_status"], "not_automated")
+        self.assertEqual(payload["route_family"], "human_review")
+        self.assertEqual(payload["secondary_label"], "Human Review")
+        self.assertEqual(payload["missing_fields"], [])
+        self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
+        latest_reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
+        self.assertIsNotNone(latest_reply_job)
+        assert latest_reply_job is not None
+        self.assertEqual(latest_reply_job["job_id"], initial_reply_job["job_id"])
+        self.assertEqual(latest_reply_job["status"], "cancelled")
+        send_email.assert_not_called()
 
     def test_account_intake_preserves_non_automated_ticket_without_email(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(

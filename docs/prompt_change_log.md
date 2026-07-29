@@ -2840,3 +2840,26 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py backend/tests/test_agent_config.py backend/tests/test_account_ui_contract.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_repository_configuration.py -q`
   - `rtk python3 scripts/verify_feature_list.py`
+
+## 2026-07-29 - Enablement AI field extraction
+
+- Area or subsystem: `/account` Enablement Automation
+- Prompt or model version: `account-enablement-fields-v1`
+- Summary: Added a managed Enablement Field Extractor Prompt that uses the complete customer-authored Account Case history to extract App ID and requested feature with exact source grounding. App IDs no longer have length, character-set, or prefix requirements, and missing-field follow-ups are generated from context.
+- Reason: Enablement Case 12488 included an App ID in natural wording that the previous regex parser did not recognize, causing an unnecessary repeat request. Identifier descriptions vary and should be interpreted by the model rather than encoded as expanding parser patterns.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/enablement_field_extractor.py`
+  - `backend/services/enablement_automation.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/agent_config.py`
+  - `backend/main.py`
+  - Admin Agent Config Prompt registry
+- Expected behavior change:
+  - The Enablement handler consumes only structured, source-grounded fields and does not reparse customer text.
+  - `missing` generates one contextual App ID follow-up without prescribing a format; repeated requests are suppressed.
+  - `uncertain`, ambiguous, low-confidence, or ungrounded extraction fails closed to Human Review, sends no internal email, and cancels any pending automated follow-up.
+  - The new pipeline is invoked only by `/account`; `/client`, background workers, and shared `decide_support_route()` behavior remain unchanged.
+- Verification:
+  - `rtk env PYTHONPATH=/tmp/supportportal-test-deps-enablement-extractor-20260729 pytest -q backend/tests/test_account_intake.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_repair.py backend/tests/test_agent_config.py backend/tests/test_prompt_versioning.py` (131 passed, 14 subtests passed)
+  - `rtk env PYTHONPATH=/tmp/supportportal-test-deps-enablement-extractor-20260729 pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_account_ui_contract.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_account_admin_features.py backend/tests/test_single_host_compose.py` (task-related tests passed)

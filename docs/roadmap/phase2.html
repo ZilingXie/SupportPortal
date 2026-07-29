@@ -701,7 +701,7 @@
         </details>
 
         <details class="delivery-group" data-status-group="complete">
-          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>19 项</span></summary>
+          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>20 项</span></summary>
           <div class="delivery-group-body">
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
@@ -715,9 +715,15 @@
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
+        <article class="delivery-row" data-category="automation" data-status="done">
+          <div class="delivery-category">Automation Scope</div>
+          <div class="delivery-main"><h3>Enablement AI 字段采集</h3><p>LLM 从完整客户消息中提取 App ID 与功能名称并引用原文证据，不限制 App ID 格式；missing 时只追问一次，uncertain、ambiguous 或 grounding 失败时转 Human Review 并取消待发送追问。</p></div>
+          <div class="status-meta"><span class="status-chip done">已完成</span></div>
+          <div class="pr-links"><span class="pr-link">Current implementation</span></div>
+        </article>
         <article class="delivery-row" data-category="reliability" data-status="done">
           <div class="delivery-category">Reliability</div>
-          <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 以只读目录展示 <code>/account</code> 的 Intent Classifier、Agora Router、Automation Router 及原 Client Router Prompt，并继续展示 Client、Engineer、Guardrail Agent、正式 skill 与 MCP 状态。</p></div>
+          <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 展示 <code>/account</code> 的 Intent Classifier、Agora Router、Automation Router 与原 Client Router，并将 Enablement Field Extractor Prompt 纳入 Draft、Publish、Diff、Restore 和版本历史管理。</p></div>
           <div class="pr-links"><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/651">PR #651</a></div>
         </article>
         <article class="delivery-row" data-category="quality" data-status="done">

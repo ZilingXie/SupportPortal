@@ -157,6 +157,51 @@ def build_enablement_automation_result(
     )
 
 
+def build_enablement_automation_result_from_fields(
+    *,
+    collected_fields: dict[str, str],
+    missing_fields: list[str],
+    missing_customer_reply: str,
+    customer_message: str,
+    ticket_id: str,
+    account_case_id: str,
+    customer_email: str | None = None,
+) -> EnablementAutomationResult:
+    fields = {
+        str(key).strip(): str(value).strip()
+        for key, value in collected_fields.items()
+        if str(key).strip() and str(value).strip()
+    }
+    missing = [str(item).strip() for item in missing_fields if str(item).strip()]
+    if missing:
+        if missing != ["app_id"] or not missing_customer_reply.strip():
+            raise ValueError("grounded Enablement fields require an App ID follow-up")
+        return EnablementAutomationResult(
+            customer_reply=missing_customer_reply.strip(),
+            missing_fields=missing,
+            collected_fields=fields,
+            internal_email=None,
+        )
+    required = {"app_id", "requested_feature", "requested_feature_label"}
+    if not required.issubset(fields):
+        raise ValueError("grounded Enablement fields are incomplete")
+    return EnablementAutomationResult(
+        customer_reply=(
+            f"Thanks for providing the App ID. We’ve sent your {fields['requested_feature_label']} "
+            "enablement request to our internal team. They’ll follow up once it has been reviewed."
+        ),
+        missing_fields=[],
+        collected_fields=fields,
+        internal_email=_build_internal_email(
+            ticket_id=ticket_id,
+            account_case_id=account_case_id,
+            customer_email=customer_email,
+            customer_message=customer_message,
+            collected_fields=fields,
+        ),
+    )
+
+
 def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict[str, str]:
     payload = dict(email_payload or {})
     to_address = _clean_text(payload.get("to"))

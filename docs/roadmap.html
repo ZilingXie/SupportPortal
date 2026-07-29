@@ -2080,6 +2080,7 @@ flowchart TD
           { summary: "`/account` 已采用三层分层路由：Intent Classifier 区分 conversation/support request/unclear，Agora Router 区分 technical/non-technical/automation/unclear，Automation Router 只接受已注册 subcategory；mixed、低置信度和未知值 fail closed 到 Human Review。", prs: [] },
           { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；account_suspension 与 account_verification 保持独立，Billing 与 Enablement 均通过显式 registry 分发。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
+          { summary: "Enablement 字段采集已切换为 LLM grounded extraction：App ID 不限制格式，模型必须引用客户原文；missing 只追问一次，uncertain、ambiguous 或 grounding 失败均转 Human Review 并取消待发送追问。", prs: [] },
           { summary: "Billing automation intake 已覆盖 `detailed_invoice`、`account_verification` 和 `account_suspension`，并能按子类追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
@@ -2100,7 +2101,7 @@ flowchart TD
           "Zendesk webhook / N8n 中转已完成为内部来源入口；real Zendesk replay set 与 Outlook 回复轮询已落地，后续重点是 10% 到 100% 切量、人工审核和指标门禁。",
           "内部处理入口只保留 Outlook reply 作为正式流程；worker 读取 `[Billing Request]` 回复正文并把 PDF 附件转发到客户工单，成功处理后才标记邮件已读。",
           "白名单不要扩大过快；当前用 real Zendesk replay set 持续观察 invoice、account suspension、company verification 的 route_accuracy，再决定是否进一步扩展。",
-          "Automated Case 当前处理：`/account` 命中 Automation category 下的已注册 subcategory 后，由 Billing 或 Enablement handler 抽取必填字段；字段齐全后发送内部邮件并等待 Outlook reply。客户可见回复仍受 guardrail 和人工最终确认约束。"
+          "Automated Case 当前处理：`/account` 命中 Automation category 下的已注册 subcategory 后，由 Billing 或 Enablement handler 抽取必填字段；Enablement 仅消费 LLM 从客户原文 grounded 的结构化字段，不确定结果 fail closed 到 Human Review。字段齐全后发送内部邮件并等待 Outlook reply。客户可见回复仍受 guardrail 和人工最终确认约束。"
         ],
         next: [
           { id: "billing-monitor-replay-quality", status: "doing", label: "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。", horizon: "Monitor" },
