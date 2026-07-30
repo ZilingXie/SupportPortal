@@ -17,6 +17,7 @@ import backend.worker as worker
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
+from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
 from backend.services.llm_factory import LlmInvocationError
 from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
 
@@ -53,6 +54,41 @@ def _fake_enablement_field_extraction(**kwargs: object) -> EnablementFieldExtrac
     )
 
 
+def _fake_account_verification_field_extraction(**kwargs: object) -> AccountVerificationFieldExtraction:
+    messages = kwargs.get("customer_messages")
+    text = "\n".join(
+        str(message.get("content") or "")
+        for message in (messages if isinstance(messages, list) else [])
+        if isinstance(message, dict)
+    ).lower()
+    existing = kwargs.get("existing_fields")
+    fields = dict(existing) if isinstance(existing, dict) else {}
+    if "company" in text and any(marker in text for marker in ("location", "registered", "address")):
+        fields["company_information"] = "ExampleCorp; Singapore"
+    if "phone" in text and any(marker in text for marker in ("contact name", "my name", "i am ")):
+        fields["contact_information"] = "Customer contact and company address"
+    if "use case:" in text or "we use agora" in text:
+        fields["use_case"] = "Customer-described Agora use case"
+    if any(marker in text for marker in ("no payment", "free tier", "not applicable")):
+        fields["payment_information"] = "No payment made yet"
+    missing = [
+        group
+        for group in (
+            "company_information",
+            "contact_information",
+            "use_case",
+            "payment_information",
+        )
+        if not fields.get(group)
+    ]
+    return AccountVerificationFieldExtraction(
+        status="missing" if missing else "complete",
+        collected_fields={str(key): str(value) for key, value in fields.items()},
+        missing_fields=missing,
+        grounding_status="passed",
+    )
+
+
 class AccountIntakeApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = InMemoryTicketRepository()
@@ -79,12 +115,29 @@ class AccountIntakeApiTests(unittest.TestCase):
             "backend.main.extract_enablement_fields",
             side_effect=_fake_enablement_field_extraction,
         )
+        self._account_verification_extractor_patcher = patch(
+            "backend.services.account_verification_automation.extract_account_verification_fields",
+            side_effect=_fake_account_verification_field_extraction,
+        )
+        self._account_verification_follow_up_patcher = patch(
+            "backend.services.account_verification_automation.compose_account_verification_follow_up",
+            side_effect=lambda **kwargs: (
+                "Could you share your company name, registered country, and address; your contact name, "
+                "phone number, and company address; your use case; and a safe high-level payment status? "
+                "You may say no payment has been made or payment is not applicable.",
+                {"prompt_version": "test"},
+            ),
+        )
         self._llm_patcher.start()
         self._account_route_credentials_patcher.start()
         self._title_model_patcher.start()
         self._enablement_extractor_patcher.start()
+        self._account_verification_extractor_patcher.start()
+        self._account_verification_follow_up_patcher.start()
 
     def tearDown(self) -> None:
+        self._account_verification_follow_up_patcher.stop()
+        self._account_verification_extractor_patcher.stop()
         self._enablement_extractor_patcher.stop()
         self._title_model_patcher.stop()
         self._account_route_credentials_patcher.stop()
@@ -2551,9 +2604,9 @@ class AccountIntakeApiTests(unittest.TestCase):
                 json={
                     "title": "Account verification",
                     "question": (
-                        "Company: ExampleCorp. Company location: Singapore. "
-                        "Website: https://example.com. Email: admin@example.com. "
-                        "Phone: +65-1234-5678. Use Case: internal video calls."
+                        "Company: ExampleCorp. Company registered country and address: Singapore. "
+                        "My name is Taylor. Phone: +65-1234-5678. Company address: Singapore. "
+                        "Use Case: internal video calls. No payment has been made yet."
                     ),
                     "customer_email": "customer@example.com",
                 },
@@ -2620,9 +2673,9 @@ class AccountIntakeApiTests(unittest.TestCase):
                 json={
                     "title": "Account verification",
                     "question": (
-                        "Company name: ExampleCorp. Company location: Singapore. "
-                        "Website: https://example.com. Contact email: admin@example.com. "
-                        "Phone number: +65-1234-5678."
+                        "Company name: ExampleCorp. Company registered country and address: Singapore. "
+                        "My name is Taylor. Phone number: +65-1234-5678. Company address: Singapore. "
+                        "No payment has been made yet."
                     ),
                     "customer_email": "Taylor",
                 },
@@ -2635,9 +2688,71 @@ class AccountIntakeApiTests(unittest.TestCase):
         job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         assert job is not None
         draft = job["payload"]["draft_content"]
-        self.assertTrue(draft.startswith("Hi Taylor,"))
-        self.assertIn("could you please provide your use case?", draft)
-        self.assertTrue(draft.endswith("Thanks in advance!\nSid"))
+        self.assertTrue(draft.startswith("Hi "))
+        self.assertIn("company name, registered country", draft)
+        self.assertIn("payment is not applicable", draft)
+
+    def test_account_verification_second_incomplete_reply_sends_internal_email_without_reasking(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="account_verification",
+            confidence=0.93,
+            reason="account verification",
+            matched_signals=["company verification"],
+            response_language="en",
+            semantic_intent="billing.account_verification",
+            automation_eligibility="eligible",
+            policy_decision="policy_gate",
+            risk_flags=[],
+            evidence_spans=[],
+            router_source="llm_semantic",
+        )
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "decide_support_route",
+            return_value=decision,
+        ), patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_mock:
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account verification",
+                    "question": "Please help verify our account.",
+                    "customer_email": "Taylor",
+                },
+            ).json()
+            first_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+            assert first_job is not None
+            created_case = self.repository.get_account_case(created["account_case_id"])
+            assert created_case is not None
+            self.assertEqual(created_case["automation_context"]["follow_up_count"], 0)
+            self.assertTrue(created_case["automation_context"]["follow_up_scheduled"])
+            self.assertEqual(
+                set(first_job["payload"]["asked_field_keys"]),
+                {"company_information", "contact_information", "use_case", "payment_information"},
+            )
+            self._publish_latest_account_reply(created["ticket_id"])
+
+            response = self.client.post(
+                f"/api/account/cases/{created['account_case_id']}/reply",
+                json={"message": "I do not have any more information to add."},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["internal_email_send_status"], "sent")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["automation_context"]["follow_up_count"], 1)
+        self.assertTrue(payload["automation_context"]["proceed_with_missing_fields"])
+        send_mock.assert_called_once()
+        email_body = send_mock.call_args.args[0]["body"]
+        self.assertIn("Missing after one follow-up", email_body)
+        latest_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert latest_job is not None
+        self.assertNotEqual(latest_job["job_id"], first_job["job_id"])
+        self.assertEqual(latest_job["payload"]["asked_field_keys"], [])
 
     def test_billing_automation_reply_recomputes_fields(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

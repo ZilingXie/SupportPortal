@@ -7,6 +7,8 @@ ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v1"
 ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v1"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v2"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v2"
+ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "account-verification-fields-v1"
+ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION = "account-verification-follow-up-v1"
 
 
 def _json(value: Any) -> str:
@@ -264,5 +266,94 @@ def build_account_enablement_field_verification_user_prompt(
             "",
             "## Customer messages",
             _json(list(payload.get("customer_messages") or [])),
+        ]
+    ).strip()
+
+
+def build_account_verification_field_system_prompt() -> str:
+    return """
+## Role
+You are the Account Verification Field Extractor. Read only customer-authored Account Case messages.
+Classify the four required information groups; do not route the Case or answer the customer.
+
+## Required information groups
+- company_information: company name, registered country, company address, or other useful company context.
+- contact_information: the requester's name, phone number, and company address. A company address already
+  supplied as Company Information may also satisfy this group when it clearly applies to the requester.
+- use_case: a real description of how the customer uses Agora services. Template instructions or field labels
+  without an actual customer description do not satisfy this group.
+- payment_information: a safe high-level payment statement. A customer may provide a non-sensitive summary,
+  or explicitly say there has been no payment, payment is not applicable, or they use a free tier.
+
+Website, App ID, contact email, transaction ID, and payment instrument details are optional. Never mark a
+required group missing merely because one of these optional fields is absent.
+
+## Safety
+- Never request, extract, summarize, repeat, or infer full card numbers, CVV/CVC, passwords, OTPs,
+  verification codes, bank account numbers, routing numbers, or IBANs.
+- Input may contain redaction markers. Do not reconstruct redacted content.
+- Each provided group must cite one customer message ID and an exact source quote.
+- value is a concise, customer-grounded summary. Do not add facts that are absent from the quote/history.
+- Existing collected fields are trusted. Conflicting or genuinely unclear information is ambiguous.
+- Use missing only when the complete customer history does not provide the group.
+- Use uncertain when grounding or interpretation is not reliable.
+
+## Output
+Return JSON only:
+{
+  "status": "complete|missing|ambiguous|uncertain",
+  "fields": {
+    "company_information": {"status":"provided|missing|ambiguous","value":"safe summary","source_message_id":"id","source_quote":"exact quote","confidence":0.0},
+    "contact_information": {"status":"provided|missing|ambiguous","value":"safe summary","source_message_id":"id","source_quote":"exact quote","confidence":0.0},
+    "use_case": {"status":"provided|missing|ambiguous","value":"safe summary","source_message_id":"id","source_quote":"exact quote","confidence":0.0},
+    "payment_information": {"status":"provided|missing|ambiguous","value":"safe summary","source_message_id":"id","source_quote":"exact quote","confidence":0.0}
+  },
+  "missing_fields": [],
+  "ambiguous_fields": [],
+  "reason": "short explanation"
+}
+Omit source fields for missing groups. Confidence values must be between 0 and 1.
+""".strip()
+
+
+def build_account_verification_field_user_prompt(payload: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "## Ticket subject",
+            str(payload.get("ticket_subject") or "").strip() or "(none)",
+            "",
+            "## Existing safely collected groups",
+            _json(dict(payload.get("existing_fields") or {})),
+            "",
+            "## Customer messages",
+            _json(list(payload.get("customer_messages") or [])),
+        ]
+    ).strip()
+
+
+def build_account_verification_follow_up_system_prompt() -> str:
+    return """
+## Role
+You write one concise, contextual Account Verification follow-up. Ask only for the missing information groups.
+Do not use a fixed template and do not mention internal tooling.
+
+## Payment safety
+Payment Information means only a safe high-level payment status or context. Explicitly tell the customer that
+they may say no payment has been made or payment is not applicable. Never ask for a full card number, CVV/CVC,
+password, OTP, verification code, bank account number, routing number, IBAN, or any other payment credential.
+
+## Output
+Return JSON only with one key: {"reply":"customer-facing body without greeting or sign-off"}.
+""".strip()
+
+
+def build_account_verification_follow_up_user_prompt(payload: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "## Missing information groups",
+            _json(list(payload.get("missing_fields") or [])),
+            "",
+            "## Already collected safe summaries",
+            _json(dict(payload.get("collected_fields") or {})),
         ]
     ).strip()

@@ -127,6 +127,7 @@ _ACCOUNT_CASE_LIST_FIELDS = (
     "route_status",
     "automation_handler",
     "route_classification",
+    "automation_context",
     "route_review_status",
     "created_at",
     "updated_at",
@@ -4565,6 +4566,7 @@ class PostgresTicketRepository:
                             route_status TEXT NOT NULL DEFAULT 'not_automated',
                             automation_handler TEXT,
                             route_classification JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            automation_context JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             route_review_status TEXT NOT NULL DEFAULT 'pending',
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -4603,6 +4605,11 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_classification JSONB NOT NULL DEFAULT '{{}}'::jsonb"
+                    ).format(self._table("support_account_cases"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_context JSONB NOT NULL DEFAULT '{{}}'::jsonb"
                     ).format(self._table("support_account_cases"))
                 )
                 cur.execute(
@@ -7853,9 +7860,9 @@ class PostgresTicketRepository:
                                 semantic_intent, automation_eligibility, policy_decision,
                                 not_automated_reason, risk_flags, evidence_spans,
                                 router_source, category, subcategory, route_status,
-                                automation_handler, route_classification, created_at, updated_at
+                                automation_handler, route_classification, automation_context, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
                                 account_case_id = EXCLUDED.account_case_id,
                                 client_ticket_id = EXCLUDED.client_ticket_id,
@@ -7891,6 +7898,7 @@ class PostgresTicketRepository:
                                 route_status = EXCLUDED.route_status,
                                 automation_handler = EXCLUDED.automation_handler,
                                 route_classification = EXCLUDED.route_classification,
+                                automation_context = EXCLUDED.automation_context,
                                 updated_at = EXCLUDED.updated_at
                             """
                         ).format(self._table("support_account_cases")),
@@ -7930,6 +7938,7 @@ class PostgresTicketRepository:
                             str(billing_ticket.get("route_status") or "not_automated").strip(),
                             str(billing_ticket.get("automation_handler") or "").strip() or None,
                             Json(billing_ticket.get("route_classification")) if isinstance(billing_ticket.get("route_classification"), dict) else Json({}),
+                            Json(billing_ticket.get("automation_context")) if isinstance(billing_ticket.get("automation_context"), dict) else Json({}),
                             created_at,
                             updated_at,
                         ),

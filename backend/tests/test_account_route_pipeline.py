@@ -37,7 +37,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
 
     def test_pipeline_is_scoped_to_account_entrypoints(self) -> None:
         main_source = (Path(__file__).parents[1] / "main.py").read_text(encoding="utf-8")
-        self.assertEqual(main_source.count("decide_account_route("), 2)
+        self.assertEqual(main_source.count("decide_account_route("), 3)
         self.assertIn("route_agent=decide_support_route", main_source)
 
     def test_conversation_stops_after_intent_classifier(self) -> None:

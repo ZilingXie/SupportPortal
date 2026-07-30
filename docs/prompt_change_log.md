@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-30 - Account Verification grounded intake and safe follow-up
+
+- Area or subsystem: `/account` Account Verification Automation
+- Prompt or model version: `account-verification-fields-v1` / `account-verification-follow-up-v1`
+- Summary: Replaced Billing regex field collection for Account Verification with a managed LLM extractor for Company Information, Contact Information, Use Case, and safe Payment Information, plus a contextual one-time follow-up composer.
+- Reason: Customer information is expressed in varied natural language, while Website and similar optional fields were incorrectly blocking handoff. Payment intake also needed explicit protection against collecting credentials.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_verification_field_extractor.py`
+  - `backend/services/account_verification_automation.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/agent_config.py`
+- Expected behavior change:
+  - Only the four required information groups influence Account Verification completeness; Website, App ID, and contact email are optional.
+  - No-payment, free-tier, and not-applicable statements satisfy Payment Information without requesting transaction or payment-instrument data.
+  - Missing groups receive one contextual follow-up. A later reply proceeds to internal handoff with explicit missing groups instead of asking again.
+  - Sensitive card, security-code, credential, and bank-account content is blocked before LLM extraction and sends the Case to Human Review; generated follow-ups are validated before scheduling.
+- Verification:
+  - `rtk pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_agent_config.py backend/tests/test_repository_configuration.py`
+  - `rtk python3 scripts/verify_feature_list.py`
+
 ## 2026-07-28 - Separate Account Suspension automation routing
 
 - Area or subsystem: `/account` Automation Router / Billing Automation

@@ -2081,7 +2081,8 @@ flowchart TD
           { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；account_suspension 与 account_verification 保持独立，Billing 与 Enablement 均通过显式 registry 分发。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Enablement 字段采集已切换为 LLM grounded extraction：App ID 不限制格式，模型必须引用客户原文；missing 只追问一次，uncertain、ambiguous 或 grounding 失败均转 Human Review 并取消待发送追问。", prs: [] },
-          { summary: "Billing automation intake 已覆盖 `detailed_invoice`、`account_verification` 和 `account_suspension`，并能按子类追问缺失字段、生成客户回复和记录 automation 状态。", prs: [409, 412, 426, 488] },
+          { summary: "Account Verification 已使用独立 LLM extractor 收集 Company、Contact、Use Case 与安全 Payment 概况；可选 Website/App ID 不再阻塞，最多追问一次，仍缺失时按现有信息发送内部邮件。", prs: [] },
+          { summary: "Billing automation intake 已覆盖 `detailed_invoice`、`account_verification` 和 `account_suspension`，并通过 Account 专用 handler registry 保持各子类执行规则独立。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
@@ -2090,7 +2091,7 @@ flowchart TD
           { summary: "Account intake 已按 external ID、ticket ID 或 source link 建立幂等记录，已完成请求可安全 replay 原响应。", prs: [] },
           { summary: "Billing internal resolution event 已确认完成：提交后写 `billing_internal_resolution_submitted`，notify customer 时生成 `billing_response_ai` 客户跟进。", prs: [509, 512] },
           { summary: "Account Route errors 能力已确认完成：人工纠正保留 original / first corrected route tuple，并与低置信路由、review/pass 状态一起分析。", prs: [513, 515, 524, 526, 527] },
-          { summary: "Account verification 字段收集已确认完成：Use Case section、Country+Address、个人开发者分支、可选 app_id 和内部邮件发送都已覆盖。", prs: [488] },
+          { summary: "Account Verification 的 Extractor、Follow-up Composer 与输出 validator 已禁止索取或复制卡号、CVV、密码、OTP 和银行凭据；检测到敏感数据时 fail closed 到 Human Review。", prs: [] },
           { summary: "Billing Outlook 回复轮询已落地：worker 可读取 Inbox 中未读且标题含 `[Billing Request]` 的回复正文，将 PDF 附件转发到客户工单，并自动生成客户跟进后标记已读。", prs: [575] },
           { summary: "Account UI 与 API 已同时展示 primary/secondary 两级标签；普通回复重新运行完整分类，等待字段的 Automation 回复在提供新字段时优先继续已绑定 handler。", prs: [] },
           { summary: "real Zendesk replay set 已接入 Billing monitor：invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 已纳入后续质量观察口径。", prs: [] }
@@ -2101,7 +2102,7 @@ flowchart TD
           "Zendesk webhook / N8n 中转已完成为内部来源入口；real Zendesk replay set 与 Outlook 回复轮询已落地，后续重点是 10% 到 100% 切量、人工审核和指标门禁。",
           "内部处理入口只保留 Outlook reply 作为正式流程；worker 读取 `[Billing Request]` 回复正文并把 PDF 附件转发到客户工单，成功处理后才标记邮件已读。",
           "白名单不要扩大过快；当前用 real Zendesk replay set 持续观察 invoice、account suspension、company verification 的 route_accuracy，再决定是否进一步扩展。",
-          "Automated Case 当前处理：`/account` 命中 Automation category 下的已注册 subcategory 后，由 Billing 或 Enablement handler 抽取必填字段；Enablement 仅消费 LLM 从客户原文 grounded 的结构化字段，不确定结果 fail closed 到 Human Review。字段齐全后发送内部邮件并等待 Outlook reply。客户可见回复仍受 guardrail 和人工最终确认约束。"
+          "Automated Case 当前处理：`/account` 命中 Automation category 下的已注册 subcategory 后，由独立执行 handler 抽取字段。Enablement 与 Account Verification 仅消费 LLM 从客户原文 grounded 的结构化字段；Account Verification 最多追问一次，随后允许带缺失项提交，敏感支付信息或不确定结果 fail closed 到 Human Review。"
         ],
         next: [
           { id: "billing-monitor-replay-quality", status: "doing", label: "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。", horizon: "Monitor" },

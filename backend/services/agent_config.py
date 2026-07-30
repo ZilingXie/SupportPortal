@@ -255,6 +255,26 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "Extracts grounded Enablement fields from customer-authored /account messages.",
                 ),
                 _component(
+                    "account-verification-handler",
+                    "Account Verification Handler",
+                    "Controls one follow-up, Human Review, and internal handoff for Account Verification.",
+                ),
+                _component(
+                    "account-verification-field-extractor",
+                    "Account Verification Field Extractor",
+                    "Extracts four grounded, non-sensitive information groups from /account history.",
+                ),
+                _component(
+                    "account-verification-follow-up-composer",
+                    "Account Verification Follow-up Composer",
+                    "Writes the single contextual request for any missing required information groups.",
+                ),
+                _component(
+                    "account-verification-payment-safety",
+                    "Payment Safety Validator",
+                    "Deterministically blocks sensitive payment credentials from derived Automation data.",
+                ),
+                _component(
                     "route-classifier",
                     "Client Route Classifier",
                     "Existing shared classifier used by /client and non-Account workflows.",

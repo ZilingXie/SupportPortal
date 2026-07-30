@@ -701,7 +701,7 @@
         </details>
 
         <details class="delivery-group" data-status-group="complete">
-          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>20 项</span></summary>
+          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>21 项</span></summary>
           <div class="delivery-group-body">
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
@@ -711,7 +711,13 @@
         </article>
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>四类确定性自动化范围</h3><p>Automation 已覆盖 account verification、account suspension、detailed invoice 和 enablement；Verification 与 Suspension 使用 Billing handler 的独立字段与邮件流程，Enablement 使用独立 handler。</p></div>
+          <div class="delivery-main"><h3>四类确定性自动化范围</h3><p>Automation 已覆盖 account verification、account suspension、detailed invoice 和 enablement；Account 专用 registry 显式分派各 subcategory，Verification 使用独立 intake handler，Suspension 与 Invoice 保留 Billing 行为，Enablement 使用独立 handler。</p></div>
+          <div class="status-meta"><span class="status-chip done">已完成</span></div>
+          <div class="pr-links"><span class="pr-link">Current implementation</span></div>
+        </article>
+        <article class="delivery-row" data-category="automation" data-status="done">
+          <div class="delivery-category">Automation Scope</div>
+          <div class="delivery-main"><h3>Account Verification AI 字段采集</h3><p>LLM 从完整客户历史收集 Company、Contact、Use Case 与安全 Payment 概况；Website、App ID 等可选项不阻塞。缺失信息只追问一次，之后带缺失项发送内部邮件；敏感支付凭据在输入、生成和输出三层被阻断并转 Human Review。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
@@ -723,7 +729,7 @@
         </article>
         <article class="delivery-row" data-category="reliability" data-status="done">
           <div class="delivery-category">Reliability</div>
-          <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 展示 <code>/account</code> 的 Intent Classifier、Agora Router、Automation Router 与原 Client Router，并将 Enablement Field Extractor Prompt 纳入 Draft、Publish、Diff、Restore 和版本历史管理。</p></div>
+          <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 展示 <code>/account</code> 的 Intent Classifier、Agora Router、Automation Router、Account Verification Handler/Extractor/Follow-up Composer 与原 Client Router，并将可编辑 Prompt 纳入 Draft、Publish、Diff、Restore 和版本历史管理。</p></div>
           <div class="pr-links"><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/651">PR #651</a></div>
         </article>
         <article class="delivery-row" data-category="quality" data-status="done">
