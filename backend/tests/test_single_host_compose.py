@@ -128,6 +128,10 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertIn(
+            "QUOTA_AUTOMATION_INTERNAL_EMAIL: ${QUOTA_AUTOMATION_INTERNAL_EMAIL:-}",
+            worker_block,
+        )
+        self.assertIn(
             "AUTOMATION_REPLY_POLL_ENABLED: ${AUTOMATION_REPLY_POLL_ENABLED:-true}",
             worker_block,
         )

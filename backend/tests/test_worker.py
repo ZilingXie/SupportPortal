@@ -2096,6 +2096,45 @@ class WorkerResilienceTests(unittest.TestCase):
             "12488",
         )
 
+    def test_handle_quota_request_reply_notifies_customer_and_keeps_automated_route(self) -> None:
+        repository = Mock()
+        repository.list_ticket_events.return_value = []
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-12512",
+            "billing_ticket_id": "AC-12512",
+            "client_ticket_id": "12512",
+            "automation_handler": "quota",
+            "automation_status": "internal_processing",
+            "route_status": "automated",
+            "collected_fields": {"app_ids": ["app-prod"], "products": ["rtc", "rtm", "chat"]},
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "12512",
+            "messages": [{"role": "customer", "content": "Please increase our concurrency limits."}],
+            "customer_id": "customer@example.com",
+        }
+        reply = types.SimpleNamespace(
+            message_id="quota-msg-1",
+            subject="Re: [Quota Request] RTC, RTM, Chat - Ticket 12512",
+            body_text="The requested limits are approved for the event window.",
+        )
+        generated_reply = "Hi there,\n\nThe requested limits are approved for the event window.\n\nBest Regards,\nSid"
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "build_quota_customer_followup",
+            return_value=generated_reply,
+        ):
+            handled = worker.handle_automation_request_reply(reply)
+
+        self.assertTrue(handled)
+        saved_case = repository.save_account_case.call_args.args[0]
+        self.assertEqual(saved_case["automation_status"], "customer_notified")
+        self.assertEqual(saved_case["route_status"], "automated")
+        saved_ticket = repository.save_ticket.call_args.args[0]
+        self.assertEqual(saved_ticket["messages"][-1]["source"], "quota_reply_email")
+        self.assertEqual(repository.record_event.call_count, 2)
+
     def test_handle_enablement_request_reply_is_idempotent(self) -> None:
         repository = Mock()
         repository.list_ticket_events.return_value = [

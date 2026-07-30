@@ -2967,3 +2967,21 @@ For each new entry, record:
   - Troubleshooting requests such as Case 12458 remain `Agora Technical`; feature-name typo tolerance does not change Agora Router priority.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_field_extractor.py backend/tests/test_account_route_pipeline.py -q`
+## 2026-07-30 - Account Quota Automation routing and field extraction
+
+- Area or subsystem: `/account` Agora Router, Automation Router, and Quota handler
+- Prompt or model version: `account-agora-v3`, `account-automation-v4`, `account-quota-fields-v1`, `quota-customer-reply-v1`
+- Summary: Registered `Automation / Quota` for account-level quota review, concurrency increases, and Big Event capacity notifications. Added grounded LLM extraction for products, App IDs, requested capacity, and event details, plus a customer-facing internal-resolution composer.
+- Reason: Case 12512 requested RTC, RTM, and Chat concurrency review and increases before a major campaign, but the prior taxonomy stopped at `Agora / Uncategorized` or `Automation / Unregistered` because quota was not registered.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/quota_field_extractor.py`
+  - `backend/services/quota_automation.py`
+  - `QUOTA_AUTOMATION_INTERNAL_EMAIL`
+- Expected behavior change:
+  - Concrete quota/capacity operations and Big Event notifications route to `Automation / Quota`; concurrency calculation, troubleshooting, and pricing remain Technical or Account & Billing.
+  - Quota intake asks once for missing operational details, then sends the available grounded information without changing `route_status=automated`.
+  - Internal Quota replies are rewritten for customers and never copied verbatim.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_quota_field_extractor.py backend/tests/test_quota_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q`

@@ -18,6 +18,7 @@ from backend.services.enablement_automation import (
     ENABLEMENT_SEMANTIC_INTENT,
     ENABLEMENT_TOOLING_PROFILE,
 )
+from backend.services.quota_automation import QUOTA_SEMANTIC_INTENT, QUOTA_TOOLING_PROFILE
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
     INTENT_ROUTER_SCENARIO,
@@ -29,12 +30,14 @@ from backend.services.prompts.account_routing import (
     ACCOUNT_AGORA_PROMPT_VERSION,
     ACCOUNT_AUTOMATION_PROMPT_VERSION,
     ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
+    ACCOUNT_QUOTA_FIELD_PROMPT_VERSION,
     ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
     ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION,
     ACCOUNT_INTENT_PROMPT_VERSION,
     build_account_agora_system_prompt,
     build_account_automation_system_prompt,
     build_account_enablement_field_system_prompt,
+    build_account_quota_field_system_prompt,
     build_account_verification_field_system_prompt,
     build_account_verification_follow_up_system_prompt,
     build_account_intent_system_prompt,
@@ -78,6 +81,7 @@ _AUTOMATION_REASON_CODES = {
     "registered_account_suspension",
     "registered_detailed_invoice",
     "registered_enablement",
+    "registered_quota",
     "no_registered_subcategory",
     "insufficient_subcategory_information",
 }
@@ -144,6 +148,14 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-verification-field-extractor",
             "content": build_account_verification_field_system_prompt(),
             "version": ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
+            "managed": True,
+        },
+        {
+            "key": "account-quota-field-extractor-system",
+            "name": "Quota Field Extractor",
+            "component_key": "account-quota-field-extractor",
+            "content": build_account_quota_field_system_prompt(),
+            "version": ACCOUNT_QUOTA_FIELD_PROMPT_VERSION,
             "managed": True,
         },
         {
@@ -1020,6 +1032,7 @@ def decide_account_route(
         "account_suspension": "registered_account_suspension",
         "detailed_invoice": "registered_detailed_invoice",
         "enablement": "registered_enablement",
+        "quota": "registered_quota",
         "unregistered": "no_registered_subcategory",
     }
     automation_reason = _controlled_reason(
@@ -1090,6 +1103,10 @@ def decide_account_route(
         scope_label = "enablement"
         semantic_intent = ENABLEMENT_SEMANTIC_INTENT
         tooling_profile = ENABLEMENT_TOOLING_PROFILE
+    elif subcategory == "quota":
+        scope_label = "quota"
+        semantic_intent = QUOTA_SEMANTIC_INTENT
+        tooling_profile = QUOTA_TOOLING_PROFILE
     else:
         scope_label = "billing"
         semantic_intent = f"billing.{subcategory}"

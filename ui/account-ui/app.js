@@ -91,6 +91,7 @@ const ROUTE_TUPLE_OPTIONS = [
   { scope: "automation", action: "account_suspension", label: "Automation / Account suspension" },
   { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "automation", action: "enablement", label: "Automation / Enablement" },
+  { scope: "automation", action: "quota", label: "Automation / Quota" },
   { scope: "automation", action: "unregistered", label: "Automation / Unregistered" },
 ];
 

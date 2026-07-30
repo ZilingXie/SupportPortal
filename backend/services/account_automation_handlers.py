@@ -31,6 +31,11 @@ _HANDLERS = {
         handler="enablement",
         implementation="enablement",
     ),
+    "quota": AccountAutomationHandlerRegistration(
+        subcategory="quota",
+        handler="quota",
+        implementation="quota",
+    ),
 }
 
 

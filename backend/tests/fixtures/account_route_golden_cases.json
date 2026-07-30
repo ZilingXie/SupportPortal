@@ -1,6 +1,6 @@
 [
   {"case_id":"12515","message":"Customer reports black video for two calls while Analytics shows no video freeze and asks for the cause.","primary_label":"Agora","secondary_label":"Agora Technical","reason_code":"technical_request"},
-  {"case_id":"12512","message":"Please review and increase our RTC, RTM, and Chat concurrency limits before a campaign launch.","primary_label":"Agora","secondary_label":"Automation / Unregistered","reason_code":"no_registered_subcategory","automation_candidate":"concurrency_limit_increase"},
+  {"case_id":"12512","message":"Please review and increase our RTC, RTM, and Chat concurrency limits before a campaign launch.","primary_label":"Agora","secondary_label":"Automation / Quota","reason_code":"registered_quota"},
   {"case_id":"12511","message":"A stream ended unexpectedly. Can Agora provide the recording and confirm whether it was pushed using OBS?","primary_label":"Agora","secondary_label":"Agora Technical","reason_code":"technical_request"},
   {"case_id":"12506","message":"Billing cycle usage and quota usage show different minutes. Please clarify the quota warning.","primary_label":"Agora","secondary_label":"Account & Billing","reason_code":"account_billing_request"},
   {"case_id":"12505","message":"Please change our Agora payment method from credit card to invoice billing.","primary_label":"Agora","secondary_label":"Account & Billing","reason_code":"account_billing_request"},

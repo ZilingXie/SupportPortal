@@ -19,6 +19,7 @@ from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
 from backend.services.llm_factory import LlmInvocationError
+from backend.services.quota_field_extractor import QuotaFieldExtraction
 from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
 
 
@@ -362,6 +363,80 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(email_payload["recipient_config_key"], "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL")
         self.assertIn("[Enablement Request]", email_payload["subject"])
         self.assertIn(payload["account_case_id"], email_payload["body"])
+
+    def test_quota_intake_asks_once_then_sends_available_details(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="quota",
+            route="quota",
+            route_family="automated",
+            execution_action="quota",
+            tooling_profile="deterministic_quota_intake",
+            semantic_intent="quota.capacity_request",
+            reason="registered_quota",
+            confidence=0.98,
+        )
+        classification = {
+            "intent_class": "agora",
+            "agora_route": "automation",
+            "automation_subcategory": "quota",
+            "route_target": "automation",
+            "route_reason_code": "registered_quota",
+            "handler_binding_status": "active",
+            "primary_label": "Agora",
+            "secondary_label": "Automation / Quota",
+            "stage_confidences": {"intent_classifier": 0.99, "agora_router": 0.98, "automation_router": 0.98},
+            "stage_reason_codes": {
+                "intent_classifier": "agora_case",
+                "agora_router": "explicit_backend_operation",
+                "automation_router": "registered_quota",
+            },
+        }
+        extraction = QuotaFieldExtraction(
+            status="missing",
+            collected_fields={"request_type": "quota_increase", "products": ["rtc", "rtm", "chat"]},
+            missing_fields=["app_ids", "requested_limits_or_expected_peak_concurrency"],
+            follow_up="Could you share the App ID and expected peak concurrency for each product?",
+            grounding_status="passed",
+        )
+        route_result = SimpleNamespace(
+            decision=decision,
+            classification=classification,
+            prompt_snapshots={},
+        )
+        with patch.object(main, "decide_account_route", return_value=route_result), patch.object(
+            main, "extract_quota_fields", return_value=extraction
+        ), patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "send_quota_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_email:
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Increase RTC, RTM, and Chat concurrency",
+                    "question": "Please review and increase our concurrency limits before launch.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+            self.assertEqual(created.status_code, 200, created.text)
+            created_payload = created.json()
+            self.assertEqual(created_payload["subcategory"], "quota")
+            self.assertEqual(created_payload["automation_handler"], "quota")
+            self.assertEqual(created_payload["route_status"], "automated")
+            self.assertEqual(created_payload["missing_fields"], extraction.missing_fields)
+            send_email.assert_not_called()
+
+            continued = self.client.post(
+                f"/api/account/cases/{created_payload['account_case_id']}/reply",
+                json={"message": "Those are all the details currently available."},
+            )
+
+        self.assertEqual(continued.status_code, 200, continued.text)
+        continued_payload = continued.json()
+        self.assertEqual(continued_payload["internal_email_send_status"], "sent")
+        self.assertEqual(continued_payload["route_status"], "automated")
+        self.assertTrue(continued_payload["automation_context"]["proceed_with_missing_fields"])
+        send_email.assert_called_once()
 
     def test_enablement_does_not_claim_submission_when_internal_email_is_retrying(self) -> None:
         question = "Please enable Media Relay from your end. My App ID is project.prod/eu-west#alpha."
