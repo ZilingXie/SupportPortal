@@ -60,11 +60,14 @@ _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
 _ACCOUNT_CASE_ROUTE_FILTER_LABELS = {
-    "human_review": "Human Review",
     "agora_technical": "Agora Technical",
     "agora_non_technical": "Agora Non-technical",
     "account_billing": "Account & Billing",
     "uncertain": "Uncertain",
+}
+_ACCOUNT_CASE_ROUTE_FILTER_GROUPS = {
+    "human_review": "human_review",
+    "conversation": "conversation",
 }
 
 
@@ -122,7 +125,45 @@ def _account_case_route_label(item: dict[str, Any]) -> str:
 
 
 def _account_case_matches_route_filter(item: dict[str, Any], route_filter: str | None) -> bool:
-    expected_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(str(route_filter or "").strip())
+    normalized_filter = str(route_filter or "").strip()
+    expected_group = _ACCOUNT_CASE_ROUTE_FILTER_GROUPS.get(normalized_filter)
+    if expected_group:
+        classification = item.get("route_classification")
+        if isinstance(classification, dict) and classification:
+            intent = str(classification.get("intent_class") or "unclear").strip().lower()
+            if intent == "conversation":
+                actual_group = "conversation"
+            elif intent in {"uncertain", "unclear"}:
+                actual_group = "human_review"
+            elif intent == "agora":
+                actual_group = (
+                    "human_review"
+                    if str(classification.get("agora_route") or "uncategorized").strip().lower()
+                    == "uncategorized"
+                    else "other"
+                )
+            elif intent == "support_request":
+                support_scope = str(classification.get("support_scope") or "unclear").strip().lower()
+                agora_route = str(classification.get("agora_route") or "unclear").strip().lower()
+                actual_group = (
+                    "human_review"
+                    if support_scope in {"non_agora", "unclear", "mixed"}
+                    or agora_route in {"unclear", "mixed"}
+                    else "other"
+                )
+            else:
+                actual_group = "human_review"
+        else:
+            scope = str(item.get("scope_label") or "").strip().lower()
+            actual_group = (
+                "conversation"
+                if scope in {"ticket_resolution", "small_talk", "conversation"}
+                else "human_review"
+                if scope in {"uncertain", "unclear", "non_agora", "human_review", "uncategorized"}
+                else "other"
+            )
+        return actual_group == expected_group
+    expected_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(normalized_filter)
     return expected_label is None or _account_case_route_label(item) == expected_label
 
 
@@ -8078,8 +8119,47 @@ class PostgresTicketRepository:
             clauses.append(sql.SQL("bt.route_status = 'automated'"))
         elif automation_filter == "not_automated":
             clauses.append(sql.SQL("bt.route_status <> 'automated'"))
+        route_group = _ACCOUNT_CASE_ROUTE_FILTER_GROUPS.get(route_filter)
         route_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(route_filter)
-        if route_label:
+        if route_group:
+            clauses.append(
+                sql.SQL(
+                    """
+                    CASE
+                        WHEN bt.route_classification <> '{}'::jsonb THEN
+                            CASE COALESCE(bt.route_classification ->> 'intent_class', 'unclear')
+                                WHEN 'conversation' THEN 'conversation'
+                                WHEN 'uncertain' THEN 'human_review'
+                                WHEN 'unclear' THEN 'human_review'
+                                WHEN 'agora' THEN
+                                    CASE
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'uncategorized'
+                                            THEN 'human_review'
+                                        ELSE 'other'
+                                    END
+                                WHEN 'support_request' THEN
+                                    CASE
+                                        WHEN COALESCE(bt.route_classification ->> 'support_scope', 'unclear') IN ('non_agora', 'unclear', 'mixed')
+                                             OR COALESCE(bt.route_classification ->> 'agora_route', 'unclear') IN ('unclear', 'mixed')
+                                            THEN 'human_review'
+                                        ELSE 'other'
+                                    END
+                                ELSE 'human_review'
+                            END
+                        ELSE
+                            CASE
+                                WHEN bt.scope_label IN ('ticket_resolution', 'small_talk', 'conversation')
+                                    THEN 'conversation'
+                                WHEN bt.scope_label IN ('uncertain', 'unclear', 'non_agora', 'human_review', 'uncategorized')
+                                    THEN 'human_review'
+                                ELSE 'other'
+                            END
+                    END = %s
+                    """
+                )
+            )
+            params.append(route_group)
+        elif route_label:
             clauses.append(
                 sql.SQL(
                     """

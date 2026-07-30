@@ -46,7 +46,7 @@ const state = {
   activeItem: null,
   error: "",
   composerToolbarState: buildDefaultComposerToolbarState(),
-  statusFilter: "unreviewed",
+  statusFilter: "agora_technical",
   replyMessage: "",
   isSubmittingReply: false,
   replyError: "",
@@ -68,16 +68,14 @@ const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "p
 const ROUTE_LABEL_FILTERS = new Set([
   "human_review",
   "agora_technical",
-  "agora_non_technical",
   "account_billing",
-  "uncertain",
+  "conversation",
 ]);
 const ROUTE_LABEL_FILTER_MATCHES = {
-  human_review: new Set(["Human Review", "Agora / Uncategorized"]),
+  human_review: new Set(["Human Review", "Agora / Uncategorized", "Uncertain"]),
   agora_technical: "Agora Technical",
-  agora_non_technical: "Agora Non-technical",
   account_billing: "Account & Billing",
-  uncertain: "Uncertain",
+  conversation: "Conversation",
 };
 
 const ROUTE_TUPLE_OPTIONS = [
@@ -489,17 +487,11 @@ function matchesFilter(item) {
 
 function renderFilterControls() {
   const filters = [
-    { value: "unreviewed", label: "Unreviewed" },
-    { value: "reviewed", label: "Reviewed" },
-    { value: "all", label: "All" },
-    { value: "automation", label: "Automation" },
-    { value: "not_automated", label: "Not automated" },
-    { value: "route_errors", label: "Route errors" },
-    { value: "human_review", label: "Human Review" },
     { value: "agora_technical", label: "Agora Technical" },
-    { value: "agora_non_technical", label: "Agora Non-technical" },
     { value: "account_billing", label: "Account & Billing" },
-    { value: "uncertain", label: "Uncertain" },
+    { value: "human_review", label: "Human Review" },
+    { value: "automation", label: "Automation" },
+    { value: "conversation", label: "Conversation" },
   ];
   return `
     <div class="filter-chips">
@@ -1165,7 +1157,7 @@ function bind() {
       }
       const filterBtn = event.target.closest("[data-action='set-filter']");
       if (filterBtn) {
-        state.statusFilter = filterBtn.dataset.value || "unreviewed";
+        state.statusFilter = filterBtn.dataset.value || "agora_technical";
         state.currentPage = 1;
         if (state.statusFilter === "route_errors") {
           state.routeErrorSummary = null;

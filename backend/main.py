@@ -4243,7 +4243,7 @@ def list_billing_tickets(
     route_errors: bool = False,
     route_label: str | None = Query(
         default=None,
-        pattern="^(human_review|agora_technical|agora_non_technical|account_billing|uncertain)$",
+        pattern="^(human_review|conversation|agora_technical|agora_non_technical|account_billing|uncertain)$",
     ),
 ) -> dict[str, Any]:
     requested_page_size = page_size if page_size is not None else limit
