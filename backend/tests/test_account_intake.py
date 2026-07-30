@@ -196,21 +196,26 @@ class AccountIntakeApiTests(unittest.TestCase):
         automation_status: str,
         route_confidence: float = 0.95,
         secondary_label: str | None = None,
+        intent_class: str | None = None,
         persist_route_labels: bool = True,
     ) -> None:
         route_classification: dict[str, Any] = {}
         if secondary_label:
+            normalized_intent = intent_class or (
+                "uncertain" if secondary_label == "Human Review" else "agora"
+            )
             route_classification = {
-                "intent_class": "support_request",
-                "support_scope": "non_agora" if secondary_label == "Non-Agora" else "agora",
+                "intent_class": normalized_intent,
                 "agora_route": {
                     "Agora Technical": "technical",
                     "Agora Non-technical": "non_technical",
-                }.get(secondary_label, "unclear"),
+                    "Account & Billing": "account_billing",
+                    "Agora / Uncategorized": "uncategorized",
+                }.get(secondary_label, "uncategorized"),
             }
             if persist_route_labels:
                 route_classification.update(
-                    primary_label="Support Request",
+                    primary_label="Uncertain" if normalized_intent == "uncertain" else "Agora",
                     secondary_label=secondary_label,
                 )
         self.repository.save_billing_ticket(
@@ -294,8 +299,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v1")
-        self.assertEqual(executions[0]["classification"]["intent_class"], "support_request")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v2")
+        self.assertEqual(executions[0]["classification"]["intent_class"], "agora")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn(
             "Detailed invoice request",
@@ -396,7 +401,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["route_status"], "not_automated")
         self.assertEqual(payload["route_family"], "human_review")
-        self.assertEqual(payload["secondary_label"], "Human Review")
+        self.assertEqual(payload["primary_label"], "Agora")
+        self.assertEqual(payload["secondary_label"], "Agora / Uncategorized")
+        self.assertEqual(payload["route_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
@@ -478,7 +485,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = reviewed.json()
         self.assertEqual(payload["route_status"], "not_automated")
         self.assertEqual(payload["route_family"], "human_review")
-        self.assertEqual(payload["secondary_label"], "Human Review")
+        self.assertEqual(payload["primary_label"], "Agora")
+        self.assertEqual(payload["secondary_label"], "Agora / Uncategorized")
+        self.assertEqual(payload["route_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
         latest_reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
@@ -1455,8 +1464,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["status"], "not_automated")
         self.assertEqual(payload["route"], "human_review_required")
         self.assertEqual(payload["route_family"], "human_review")
-        self.assertEqual(payload["primary_label"], "Support Request")
-        self.assertEqual(payload["secondary_label"], "Human Review")
+        self.assertEqual(payload["primary_label"], "Agora")
+        self.assertEqual(payload["secondary_label"], "Account & Billing")
         self.assertEqual(payload["automation_eligibility"], "not_eligible")
         self.assertEqual(payload["policy_decision"], "policy_gate")
         self.assertEqual(payload["not_automated_reason"], "human_review_required")
@@ -1724,16 +1733,18 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_account_cases_list_api_filters_route_labels_before_pagination(self) -> None:
         route_filters = {
-            "human_review": "Human Review",
+            "human_review": "Agora / Uncategorized",
             "agora_technical": "Agora Technical",
             "agora_non_technical": "Agora Non-technical",
-            "non_agora": "Non-Agora",
+            "account_billing": "Account & Billing",
+            "uncertain": "Human Review",
         }
         for route_filter, secondary_label in route_filters.items():
             self._save_billing_ticket(
                 ticket_id=f"TK-{route_filter}",
                 automation_status="not_automated",
                 secondary_label=secondary_label,
+                intent_class="uncertain" if route_filter == "uncertain" else "agora",
                 persist_route_labels=False,
             )
         self._save_billing_ticket(
@@ -1912,8 +1923,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_family"], "billing_review")
         self.assertEqual(payload["execution_action"], "human_review_required")
         self.assertEqual(payload["tooling_profile"], "deterministic_billing_intake")
-        self.assertEqual(payload["primary_label"], "Support Request")
-        self.assertEqual(payload["secondary_label"], "Human Review")
+        self.assertEqual(payload["primary_label"], "Agora")
+        self.assertEqual(payload["secondary_label"], "Account & Billing")
         self.assertEqual(payload["automation_status"], "automation")
         self.assertEqual(payload["route_correction"]["original_execution_action"], "detailed_invoice")
         self.assertEqual(payload["route_correction"]["corrected_execution_action"], "human_review_required")
@@ -1979,7 +1990,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_status"], "automated")
         self.assertEqual(payload["automation_handler"], "billing")
         self.assertEqual(payload["automation_status"], "not_automated")
-        self.assertEqual(payload["primary_label"], "Support Request")
+        self.assertEqual(payload["primary_label"], "Agora")
         self.assertEqual(payload["secondary_label"], "Automation / Account Verification")
         stored = self.repository.get_account_case(account_case_id)
         assert stored is not None
@@ -3489,7 +3500,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         # The credential-free legacy fallback is conservative with conflicting
         # case history, but it must still leave the prior Automation binding.
-        self.assertEqual(payload["primary_label"], "Unclear")
+        self.assertEqual(payload["primary_label"], "Uncertain")
         self.assertEqual(payload["secondary_label"], "Human Review")
         self.assertEqual(payload["automation_status"], "not_automated")
         self.assertIsNone(payload["ai_reply_status"])
@@ -3509,7 +3520,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             ).json()
         job = self.repository.get_latest_account_reply_job(created["ticket_id"])
         self.assertIsNone(job)
-        self.assertEqual(created["primary_label"], "Support Request")
+        self.assertEqual(created["primary_label"], "Agora")
         self.assertEqual(created["secondary_label"], "Agora Non-technical")
         self.assertIsNone(created["ai_reply_status"])
 

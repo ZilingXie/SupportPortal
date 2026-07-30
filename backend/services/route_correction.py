@@ -24,6 +24,30 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "tooling_profile": "classification_only",
     },
     {
+        "scope_label": "uncertain",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
+        "scope_label": "uncategorized",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
+        "scope_label": "account_billing",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
+        "scope_label": "automation",
+        "execution_action": "unregistered",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
         "scope_label": "unclear",
         "execution_action": "human_review_required",
         "route_family": "human_review",

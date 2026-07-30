@@ -136,12 +136,12 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stage_details"]))
         self.assertEqual(
             [category["name"] for category in payload["route_categories"]],
-            ["conversation", "support_request", "agora", "automation"],
+            ["conversation", "intent", "agora", "automation"],
         )
         automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
         self.assertEqual(
             automation["subcategories"],
-            ["account_verification", "account_suspension", "detailed_invoice", "enablement"],
+            ["account_verification", "account_suspension", "detailed_invoice", "enablement", "unregistered"],
         )
         self.assertIn("Intent Classifier", payload["system_prompt"])
         self.assertIn("Automation Router", payload["system_prompt"])

@@ -367,7 +367,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def list_account_cases", repo_source)
         self.assertIn("bt.route_classification ->> 'intent_class'", repo_source)
         self.assertIn("bt.route_classification ->> 'agora_route'", repo_source)
-        self.assertIn("bt.route_classification ->> 'support_scope'", repo_source)
+        self.assertIn("bt.route_classification ->> 'intent_class'", repo_source)
+        self.assertIn("bt.route_classification ->> 'agora_route'", repo_source)
+        self.assertIn("'account_billing'", repo_source)
         self.assertIn("bt.scope_label = 'agora_technical'", repo_source)
 
     def test_account_reply_jobs_support_bulk_latest_lookup(self) -> None:

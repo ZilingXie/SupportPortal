@@ -63,7 +63,8 @@ _ACCOUNT_CASE_ROUTE_FILTER_LABELS = {
     "human_review": "Human Review",
     "agora_technical": "Agora Technical",
     "agora_non_technical": "Agora Non-technical",
-    "non_agora": "Non-Agora",
+    "account_billing": "Account & Billing",
+    "uncertain": "Uncertain",
 }
 
 
@@ -74,6 +75,19 @@ def _account_case_route_label(item: dict[str, Any]) -> str:
         if intent == "conversation":
             action = str(classification.get("conversation_action") or "human_review")
             return {"resolve": "Resolve", "follow_up": "Follow-up"}.get(action, "Human Review")
+        if intent == "agora":
+            agora_route = str(classification.get("agora_route") or "uncategorized")
+            if agora_route == "technical":
+                return "Agora Technical"
+            if agora_route == "non_technical":
+                return "Agora Non-technical"
+            if agora_route == "account_billing":
+                return "Account & Billing"
+            if agora_route == "automation" and str(
+                classification.get("automation_subcategory") or ""
+            ).strip():
+                return "Automation"
+            return "Human Review"
         if intent == "support_request":
             if str(classification.get("support_scope") or "unclear") == "non_agora":
                 return "Non-Agora"
@@ -87,7 +101,7 @@ def _account_case_route_label(item: dict[str, Any]) -> str:
             ).strip():
                 return "Automation"
             return "Human Review"
-        return "Human Review"
+        return "Uncertain" if intent in {"uncertain", "unclear"} else "Human Review"
 
     scope = str(item.get("scope_label") or "").strip().lower()
     metadata = automation_metadata(
@@ -102,6 +116,8 @@ def _account_case_route_label(item: dict[str, Any]) -> str:
         "non_agora": "Non-Agora",
         "agora_technical": "Agora Technical",
         "agora_non_technical": "Agora Non-technical",
+        "account_billing": "Account & Billing",
+        "uncertain": "Uncertain",
     }.get(scope, "Human Review")
 
 
@@ -8076,6 +8092,19 @@ class PostgresTicketRepository:
                                         WHEN 'follow_up' THEN 'Follow-up'
                                         ELSE 'Human Review'
                                     END
+                                WHEN 'agora' THEN
+                                    CASE
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'technical'
+                                            THEN 'Agora Technical'
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'non_technical'
+                                            THEN 'Agora Non-technical'
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'account_billing'
+                                            THEN 'Account & Billing'
+                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'automation'
+                                             AND COALESCE(bt.route_classification ->> 'automation_subcategory', '') <> ''
+                                            THEN 'Automation'
+                                        ELSE 'Human Review'
+                                    END
                                 WHEN 'support_request' THEN
                                     CASE
                                         WHEN COALESCE(bt.route_classification ->> 'support_scope', 'unclear') = 'non_agora'
@@ -8089,6 +8118,7 @@ class PostgresTicketRepository:
                                             THEN 'Automation'
                                         ELSE 'Human Review'
                                     END
+                                WHEN 'uncertain' THEN 'Uncertain'
                                 ELSE 'Human Review'
                             END
                         ELSE
@@ -8103,6 +8133,8 @@ class PostgresTicketRepository:
                                 WHEN bt.scope_label = 'non_agora' THEN 'Non-Agora'
                                 WHEN bt.scope_label = 'agora_technical' THEN 'Agora Technical'
                                 WHEN bt.scope_label = 'agora_non_technical' THEN 'Agora Non-technical'
+                                WHEN bt.scope_label = 'account_billing' THEN 'Account & Billing'
+                                WHEN bt.scope_label = 'uncertain' THEN 'Uncertain'
                                 ELSE 'Human Review'
                             END
                     END = %s

@@ -46,16 +46,42 @@ from backend.services.support_router_prompt import build_route_prompt_hints
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v1"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v2"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_AUTOMATION_PROMPT_KEY = "account-automation-router-system"
 DEFAULT_ACCOUNT_ROUTE_CONFIDENCE_THRESHOLD = 0.7
 
-_INTENT_CLASSES = {"conversation", "support_request", "unclear"}
+_INTENT_CLASSES = {"conversation", "agora", "uncertain"}
 _CONVERSATION_ACTIONS = {"resolve", "follow_up", "human_review"}
-_SUPPORT_SCOPES = {"agora", "non_agora", "unclear", "mixed"}
-_AGORA_ROUTES = {"technical", "non_technical", "automation", "unclear", "mixed"}
+_AGORA_ROUTES = {"technical", "non_technical", "account_billing", "automation", "uncategorized"}
+_AUTOMATION_SUBCATEGORIES = {*REGISTERED_AUTOMATION_SUBCATEGORIES, "unregistered"}
+_INTENT_REASON_CODES = {
+    "conversation_resolution",
+    "conversation_follow_up",
+    "conversation_requires_review",
+    "agora_case",
+    "out_of_scope_or_unknown",
+}
+_AGORA_REASON_CODES = {
+    "technical_request",
+    "non_technical_request",
+    "account_billing_request",
+    "explicit_backend_operation",
+    "no_matching_category",
+    "insufficient_route_information",
+    "insufficient_backend_operation_evidence",
+    "multiple_equal_intents",
+}
+_AUTOMATION_REASON_CODES = {
+    "registered_account_verification",
+    "registered_account_suspension",
+    "registered_detailed_invoice",
+    "registered_enablement",
+    "no_registered_subcategory",
+    "insufficient_subcategory_information",
+}
+_AUTOMATION_CANDIDATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
 _SENSITIVE_IDENTIFIER_RE = re.compile(
     r"\b(?:bearer\s+)?[A-Za-z0-9_-]{28,}\b",
     re.IGNORECASE,
@@ -165,6 +191,32 @@ def _sanitize_evidence(values: Any) -> list[str]:
         if clean not in sanitized:
             sanitized.append(clean)
     return sanitized
+
+
+def _controlled_reason(value: Any, allowed: set[str], fallback: str) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in allowed else fallback
+
+
+def _automation_candidate(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized if _AUTOMATION_CANDIDATE_RE.fullmatch(normalized) else None
+
+
+def _backend_operation(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    action = " ".join(str(value.get("action") or "").split()).strip()
+    target = " ".join(str(value.get("target") or "").split()).strip()
+    evidence = " ".join(str(value.get("evidence") or "").split()).strip()
+    if not action or not target or not evidence:
+        return None
+    sanitized_evidence = _sanitize_evidence([evidence])
+    return {
+        "action": action[:120],
+        "target": target[:160],
+        "evidence": sanitized_evidence[0] if sanitized_evidence else "[redacted_identifier]",
+    }
 
 
 def _resolve_account_prompt(prompt_key: str, fallback: str) -> str:
@@ -278,28 +330,28 @@ def _decision(
 
 
 def _labels(classification: dict[str, Any]) -> tuple[str, str]:
-    intent = str(classification.get("intent_class") or "unclear")
+    intent = str(classification.get("intent_class") or "uncertain")
     if intent == "conversation":
         action = str(classification.get("conversation_action") or "human_review")
         return "Conversation", {
             "resolve": "Resolve",
             "follow_up": "Follow-up",
         }.get(action, "Human Review")
-    if intent == "support_request":
-        scope = str(classification.get("support_scope") or "unclear")
-        if scope == "non_agora":
-            return "Support Request", "Non-Agora"
-        route = str(classification.get("agora_route") or "unclear")
+    if intent == "agora":
+        route = str(classification.get("agora_route") or "uncategorized")
         if route == "technical":
-            return "Support Request", "Agora Technical"
+            return "Agora", "Agora Technical"
         if route == "non_technical":
-            return "Support Request", "Agora Non-technical"
+            return "Agora", "Agora Non-technical"
+        if route == "account_billing":
+            return "Agora", "Account & Billing"
         if route == "automation":
-            subcategory = str(classification.get("automation_subcategory") or "").strip()
-            if subcategory:
-                return "Support Request", f"Automation / {subcategory.replace('_', ' ').title()}"
-        return "Support Request", "Human Review"
-    return "Unclear", "Human Review"
+            subcategory = str(
+                classification.get("automation_subcategory") or "unregistered"
+            ).strip()
+            return "Agora", f"Automation / {subcategory.replace('_', ' ').title()}"
+        return "Agora", "Agora / Uncategorized"
+    return "Uncertain", "Human Review"
 
 
 def classification_labels(classification: Any) -> tuple[str, str]:
@@ -317,13 +369,18 @@ def classification_for_corrected_route(
     classification = dict(previous) if isinstance(previous, dict) else {}
     classification.update(
         {
-            "intent_class": "support_request",
+            "intent_class": "agora",
             "conversation_action": None,
-            "support_scope": "agora",
-            "agora_route": "unclear",
+            "agora_route": "uncategorized",
             "automation_subcategory": None,
+            "automation_candidate": None,
+            "additional_intents": [],
+            "backend_operation": None,
             "route_target": "human_review",
             "human_review_reason": "route_corrected_to_human_review",
+            "route_reason_code": "route_corrected_by_operator",
+            "stage_reason_codes": {"operator_correction": "route_corrected_by_operator"},
+            "stage_reasons": {"operator_correction": "route_corrected_by_operator"},
             "handler_binding_status": None,
             "classification_source": "operator_correction",
             "pipeline_version": ACCOUNT_ROUTE_PIPELINE_VERSION,
@@ -343,7 +400,6 @@ def classification_for_corrected_route(
         classification.update(
             intent_class="conversation",
             conversation_action="resolve",
-            support_scope=None,
             agora_route=None,
             route_target="none",
             human_review_reason=None,
@@ -352,7 +408,6 @@ def classification_for_corrected_route(
         classification.update(
             intent_class="conversation",
             conversation_action="follow_up",
-            support_scope=None,
             agora_route=None,
             route_target="none",
             human_review_reason=None,
@@ -361,24 +416,26 @@ def classification_for_corrected_route(
         classification.update(
             intent_class="conversation",
             conversation_action="human_review",
-            support_scope=None,
             agora_route=None,
             route_target="human_review",
             human_review_reason="route_corrected_to_human_review",
         )
     elif scope_label == "unclear":
         classification.update(
-            intent_class="unclear",
-            support_scope=None,
+            intent_class="uncertain",
             agora_route=None,
-            human_review_reason="unclear_intent",
+            human_review_reason="route_corrected_to_human_review",
         )
     elif scope_label == "non_agora":
         classification.update(
-            support_scope="non_agora",
+            intent_class="uncertain",
             agora_route=None,
-            human_review_reason="non_agora",
+            human_review_reason="route_corrected_to_human_review",
         )
+    elif scope_label == "uncertain":
+        classification.update(intent_class="uncertain", agora_route=None)
+    elif scope_label in {"human_review", "uncategorized"}:
+        classification.update(agora_route="uncategorized")
     elif scope_label == "agora_technical":
         classification.update(
             agora_route="technical",
@@ -390,6 +447,25 @@ def classification_for_corrected_route(
             agora_route="non_technical",
             route_target="web",
             human_review_reason=None,
+        )
+    elif scope_label == "account_billing":
+        classification.update(
+            agora_route="account_billing",
+            route_target="human_review",
+            human_review_reason="route_corrected_to_human_review",
+        )
+    elif scope_label == "billing" and execution_action == "human_review_required":
+        classification.update(
+            agora_route="account_billing",
+            route_target="human_review",
+            human_review_reason="route_corrected_to_human_review",
+        )
+    elif scope_label == "automation" and execution_action == "unregistered":
+        classification.update(
+            agora_route="automation",
+            automation_subcategory="unregistered",
+            route_target="human_review",
+            human_review_reason="route_corrected_to_human_review",
         )
     primary_label, secondary_label = _labels(classification)
     classification["primary_label"] = primary_label
@@ -405,18 +481,20 @@ def account_case_labels(record: dict[str, Any]) -> tuple[str, str]:
     route_family = str(record.get("route_family") or "").strip().lower()
     action = canonical_automation_subcategory(record.get("execution_action") or record.get("route"))
     if is_registered_automation(route_family=route_family, execution_action=action):
-        return "Support Request", f"Automation / {action.replace('_', ' ').title()}"
+        return "Agora", f"Automation / {action.replace('_', ' ').title()}"
     if scope == "ticket_resolution":
         return "Conversation", "Resolve"
     if scope == "small_talk":
         return "Conversation", "Follow-up"
-    if scope == "non_agora":
-        return "Support Request", "Non-Agora"
     if scope == "agora_technical":
-        return "Support Request", "Agora Technical"
+        return "Agora", "Agora Technical"
     if scope == "agora_non_technical":
-        return "Support Request", "Agora Non-technical"
-    return "Unclear", "Human Review"
+        return "Agora", "Agora Non-technical"
+    if scope == "account_billing":
+        return "Agora", "Account & Billing"
+    if scope in {"billing", "human_review", "uncategorized"}:
+        return "Agora", "Agora / Uncategorized"
+    return "Uncertain", "Human Review"
 
 
 def _result(
@@ -433,6 +511,17 @@ def _result(
     classification["pipeline_version"] = ACCOUNT_ROUTE_PIPELINE_VERSION
     classification["primary_label"] = primary_label
     classification["secondary_label"] = secondary_label
+    stage_reason_codes = dict(
+        classification.get("stage_reason_codes")
+        or classification.get("stage_reasons")
+        or {}
+    )
+    classification["stage_reason_codes"] = stage_reason_codes
+    classification["stage_reasons"] = dict(stage_reason_codes)
+    classification.setdefault(
+        "route_reason_code",
+        next(reversed(stage_reason_codes.values()), "legacy_reason_unavailable"),
+    )
     classification.setdefault("handler_binding_status", None)
     return AccountRouteResult(
         decision=decision,
@@ -446,30 +535,33 @@ def _result(
 def _human_review_result(
     *,
     intent_class: str,
-    support_scope: str | None,
     reason: str,
     response_language: str,
     confidence: float,
     attempts: dict[str, AccountRouteStageAttempt],
     conversation_action: str | None = None,
     agora_route: str | None = None,
+    stage_name: str = "intent_classifier",
 ) -> AccountRouteResult:
     classification = {
         "intent_class": intent_class,
         "conversation_action": conversation_action,
-        "support_scope": support_scope,
         "agora_route": agora_route,
         "automation_subcategory": None,
+        "automation_candidate": None,
+        "additional_intents": [],
+        "backend_operation": None,
         "route_target": "human_review",
         "human_review_reason": reason,
-        "stage_confidences": {},
-        "stage_reasons": {},
+        "route_reason_code": reason,
+        "stage_confidences": {stage_name: confidence},
+        "stage_reason_codes": {stage_name: reason},
         "evidence_spans": [],
     }
     return _result(
         classification,
         _decision(
-            scope_label="unclear" if intent_class == "unclear" else "human_review",
+            scope_label="uncertain" if intent_class == "uncertain" else "human_review",
             action="human_review_required",
             confidence=confidence,
             reason=reason,
@@ -504,15 +596,18 @@ def _legacy_result(
         semantic_first=True,
     )
     classification: dict[str, Any] = {
-        "intent_class": "support_request",
+        "intent_class": "agora",
         "conversation_action": None,
-        "support_scope": "agora",
-        "agora_route": "unclear",
+        "agora_route": "uncategorized",
         "automation_subcategory": None,
+        "automation_candidate": None,
+        "additional_intents": [],
+        "backend_operation": None,
         "route_target": "human_review",
         "human_review_reason": None,
+        "route_reason_code": "legacy_reason_unavailable",
         "stage_confidences": {"legacy": decision.confidence},
-        "stage_reasons": {"legacy": decision.reason},
+        "stage_reason_codes": {"legacy": "legacy_reason_unavailable"},
         "evidence_spans": _sanitize_evidence(decision.evidence_spans),
         "handler_binding_status": None,
         "legacy_scope_label": decision.scope_label,
@@ -545,7 +640,6 @@ def _legacy_result(
         classification.update(
             intent_class="conversation",
             conversation_action="resolve",
-            support_scope=None,
             agora_route=None,
             route_target="none",
         )
@@ -553,24 +647,24 @@ def _legacy_result(
         classification.update(
             intent_class="conversation",
             conversation_action="follow_up",
-            support_scope=None,
             agora_route=None,
             route_target="none",
         )
     elif decision.scope_label == "non_agora":
         classification.update(
-            support_scope="non_agora",
+            intent_class="uncertain",
             agora_route=None,
             route_target="human_review",
-            human_review_reason="non_agora",
+            human_review_reason="legacy_reason_unavailable",
         )
     elif decision.scope_label == "agora_technical" and decision.router_source != "conservative_fallback":
         classification.update(agora_route="technical", route_target="rag")
     elif decision.scope_label == "agora_non_technical":
         classification.update(agora_route="non_technical", route_target="web")
-    elif decision.scope_label in {"billing", "enablement"}:
+    elif decision.scope_label == "billing":
         human_reason = decision.not_automated_reason or "human_review_required"
         classification.update(
+            agora_route="account_billing",
             human_review_reason=human_reason,
             route_target="human_review",
         )
@@ -590,18 +684,18 @@ def _legacy_result(
         )
     else:
         classification.update(
-            intent_class="unclear" if decision.router_source == "conservative_fallback" else "support_request",
-            support_scope=None if decision.router_source == "conservative_fallback" else "agora",
-            human_review_reason="legacy_unclear",
+            intent_class="uncertain" if decision.router_source == "conservative_fallback" else "agora",
+            agora_route=None if decision.router_source == "conservative_fallback" else "uncategorized",
+            human_review_reason="legacy_reason_unavailable",
         )
         decision = _decision(
-            scope_label="unclear",
+            scope_label="uncertain",
             action="human_review_required",
             confidence=decision.confidence,
-            reason="legacy_unclear",
+            reason="legacy_reason_unavailable",
             response_language=decision.response_language,
             route_family="human_review",
-            not_automated_reason="legacy_unclear",
+            not_automated_reason="legacy_reason_unavailable",
             router_source="account_legacy_fallback",
         )
     decision = SupportRouteDecision(
@@ -691,9 +785,8 @@ def decide_account_route(
                 attempts=attempts,
             )
         return finish(_human_review_result(
-            intent_class="unclear",
-            support_scope=None,
-            reason=intent_attempt.failure_type or "invalid_intent_output",
+            intent_class="uncertain",
+            reason="invalid_intent_output",
             response_language=response_language,
             confidence=0.0,
             attempts=attempts,
@@ -705,8 +798,7 @@ def decide_account_route(
     threshold = _confidence_threshold()
     if intent_class not in _INTENT_CLASSES:
         return finish(_human_review_result(
-            intent_class="unclear",
-            support_scope=None,
+            intent_class="uncertain",
             reason="invalid_intent_output",
             response_language=response_language,
             confidence=intent_confidence,
@@ -714,41 +806,52 @@ def decide_account_route(
         ))
     if intent_confidence < threshold:
         return finish(_human_review_result(
-            intent_class="unclear",
-            support_scope=None,
+            intent_class="uncertain",
             reason="low_intent_confidence",
             response_language=response_language,
             confidence=intent_confidence,
             attempts=attempts,
         ))
 
-    reason_code = str(intent_payload.get("reason_code") or "intent_classified").strip()
+    reason_code = _controlled_reason(
+        intent_payload.get("reason_code"),
+        _INTENT_REASON_CODES,
+        "out_of_scope_or_unknown" if intent_class == "uncertain" else "agora_case",
+    )
+    if intent_class == "agora":
+        reason_code = "agora_case"
+    elif intent_class == "uncertain":
+        reason_code = "out_of_scope_or_unknown"
     evidence = _sanitize_evidence(intent_payload.get("evidence_spans"))
     classification: dict[str, Any] = {
         "intent_class": intent_class,
         "conversation_action": None,
-        "support_scope": None,
         "agora_route": None,
         "automation_subcategory": None,
+        "automation_candidate": None,
+        "additional_intents": [],
+        "selection_reason": None,
+        "backend_operation": None,
         "route_target": "human_review",
         "human_review_reason": None,
-        "stage_confidences": {"intent": intent_confidence},
-        "stage_reasons": {"intent": reason_code},
+        "route_reason_code": reason_code,
+        "stage_confidences": {"intent_classifier": intent_confidence},
+        "stage_reason_codes": {"intent_classifier": reason_code},
         "evidence_spans": evidence,
     }
 
-    if intent_class == "unclear":
-        classification["human_review_reason"] = "unclear_intent"
+    if intent_class == "uncertain":
+        classification["human_review_reason"] = reason_code
         return finish(_result(
             classification,
             _decision(
-                scope_label="unclear",
+                scope_label="uncertain",
                 action="human_review_required",
                 confidence=intent_confidence,
-                reason="unclear_intent",
+                reason=reason_code,
                 response_language=response_language,
                 route_family="human_review",
-                not_automated_reason="unclear_intent",
+                not_automated_reason=reason_code,
                 evidence_spans=evidence,
             ),
             attempts,
@@ -761,6 +864,18 @@ def decide_account_route(
         if action not in _CONVERSATION_ACTIONS or action_confidence < threshold:
             action = "human_review"
             classification["human_review_reason"] = "low_conversation_action_confidence"
+            classification["route_reason_code"] = "low_conversation_action_confidence"
+            classification["stage_reason_codes"]["conversation_action"] = (
+                "low_conversation_action_confidence"
+            )
+        else:
+            reason_code = {
+                "resolve": "conversation_resolution",
+                "follow_up": "conversation_follow_up",
+                "human_review": "conversation_requires_review",
+            }[action]
+            classification["route_reason_code"] = reason_code
+            classification["stage_reason_codes"]["conversation_action"] = reason_code
         classification["conversation_action"] = action
         classification["route_target"] = "human_review" if action == "human_review" else "none"
         route_action = {
@@ -783,33 +898,6 @@ def decide_account_route(
             attempts,
         ))
 
-    support_scope = str(intent_payload.get("support_scope") or "").strip().lower()
-    scope_confidence = _safe_confidence(intent_payload.get("scope_confidence"))
-    classification["support_scope"] = support_scope if support_scope in _SUPPORT_SCOPES else "unclear"
-    classification["stage_confidences"]["support_scope"] = scope_confidence
-    if support_scope not in _SUPPORT_SCOPES or scope_confidence < threshold:
-        classification["support_scope"] = "unclear"
-        classification["human_review_reason"] = "low_support_scope_confidence"
-    elif support_scope in {"unclear", "mixed"}:
-        classification["human_review_reason"] = f"{support_scope}_scope"
-    elif support_scope == "non_agora":
-        classification["human_review_reason"] = "non_agora"
-    if classification["human_review_reason"]:
-        return finish(_result(
-            classification,
-            _decision(
-                scope_label="non_agora" if support_scope == "non_agora" else "human_review",
-                action="human_review_required",
-                confidence=min(intent_confidence, scope_confidence),
-                reason=classification["human_review_reason"],
-                response_language=response_language,
-                route_family="human_review",
-                not_automated_reason=classification["human_review_reason"],
-                evidence_spans=evidence,
-            ),
-            attempts,
-        ))
-
     agora_attempt = _invoke_stage(
         prompt_key=ACCOUNT_AGORA_PROMPT_KEY,
         fallback_system_prompt=build_account_agora_system_prompt(),
@@ -819,28 +907,60 @@ def decide_account_route(
     agora_payload = agora_attempt.payload or {}
     agora_route = str(agora_payload.get("agora_route") or "").strip().lower()
     agora_confidence = _safe_confidence(agora_payload.get("confidence"))
-    classification["agora_route"] = agora_route if agora_route in _AGORA_ROUTES else "unclear"
-    classification["stage_confidences"]["agora_route"] = agora_confidence
-    classification["stage_reasons"]["agora_route"] = str(
-        agora_payload.get("reason_code") or agora_attempt.failure_type or "invalid_agora_output"
+    agora_reason_defaults = {
+        "technical": "technical_request",
+        "non_technical": "non_technical_request",
+        "account_billing": "account_billing_request",
+        "automation": "explicit_backend_operation",
+        "uncategorized": "no_matching_category",
+    }
+    agora_reason = _controlled_reason(
+        agora_payload.get("reason_code"),
+        _AGORA_REASON_CODES,
+        agora_reason_defaults.get(agora_route, "invalid_agora_output"),
     )
+    if agora_route not in _AGORA_ROUTES:
+        agora_route = "uncategorized"
+        agora_reason = "invalid_agora_output"
+    elif agora_confidence < threshold:
+        agora_route = "uncategorized"
+        agora_reason = "low_agora_route_confidence"
+    elif agora_route != "uncategorized":
+        agora_reason = agora_reason_defaults[agora_route]
+    backend_operation = _backend_operation(agora_payload.get("backend_operation"))
+    if agora_route == "automation" and backend_operation is None:
+        agora_route = "uncategorized"
+        agora_reason = "insufficient_backend_operation_evidence"
+    additional_intents = [
+        str(value).strip().lower()
+        for value in list(agora_payload.get("additional_intents") or [])[:4]
+        if str(value).strip().lower() in _AGORA_ROUTES
+        and str(value).strip().lower() != agora_route
+    ]
+    classification["agora_route"] = agora_route
+    classification["additional_intents"] = list(dict.fromkeys(additional_intents))
+    classification["selection_reason"] = " ".join(
+        str(agora_payload.get("selection_reason") or "").split()
+    ).strip()[:500] or None
+    classification["backend_operation"] = backend_operation if agora_route == "automation" else None
+    classification["stage_confidences"]["agora_router"] = agora_confidence
+    classification["stage_reason_codes"]["agora_router"] = agora_reason
+    classification["route_reason_code"] = agora_reason
     classification["evidence_spans"] = _sanitize_evidence(
         [*classification["evidence_spans"], *_sanitize_evidence(agora_payload.get("evidence_spans"))]
     )
-    if agora_route not in _AGORA_ROUTES or agora_confidence < threshold or agora_route in {"unclear", "mixed"}:
-        classification["human_review_reason"] = (
-            "low_agora_route_confidence" if agora_confidence < threshold else f"{classification['agora_route']}_agora_route"
-        )
+    if agora_route == "uncategorized":
+        classification["human_review_reason"] = agora_reason
         return finish(_result(
             classification,
             _decision(
-                scope_label="human_review",
+                scope_label="uncategorized",
                 action="human_review_required",
-                confidence=min(intent_confidence, scope_confidence, agora_confidence),
-                reason=classification["human_review_reason"],
+                confidence=min(intent_confidence, agora_confidence),
+                reason=agora_reason,
                 response_language=response_language,
                 route_family="human_review",
-                not_automated_reason=classification["human_review_reason"],
+                not_automated_reason=agora_reason,
                 evidence_spans=classification["evidence_spans"],
             ),
             attempts,
@@ -852,11 +972,31 @@ def decide_account_route(
             _decision(
                 scope_label="agora_technical" if agora_route == "technical" else "agora_non_technical",
                 action="rag" if agora_route == "technical" else "web_search",
-                confidence=min(intent_confidence, scope_confidence, agora_confidence),
-                reason=classification["stage_reasons"]["agora_route"],
+                confidence=min(intent_confidence, agora_confidence),
+                reason=agora_reason,
                 response_language=response_language,
                 route_family="rag_product_support" if agora_route == "technical" else "web_company_info",
                 tooling_profile="rag_only" if agora_route == "technical" else "official_web_search",
+                evidence_spans=classification["evidence_spans"],
+            ),
+            attempts,
+        ))
+
+    if agora_route == "account_billing":
+        classification.update(
+            route_target="human_review",
+            human_review_reason=agora_reason,
+        )
+        return finish(_result(
+            classification,
+            _decision(
+                scope_label="account_billing",
+                action="human_review_required",
+                confidence=min(intent_confidence, agora_confidence),
+                reason=agora_reason,
+                response_language=response_language,
+                route_family="human_review",
+                not_automated_reason=agora_reason,
                 evidence_spans=classification["evidence_spans"],
             ),
             attempts,
@@ -869,44 +1009,67 @@ def decide_account_route(
     )
     attempts["automation_router"] = automation_attempt
     automation_payload = automation_attempt.payload or {}
-    subcategory = canonical_automation_subcategory(automation_payload.get("automation_subcategory"))
+    raw_subcategory = canonical_automation_subcategory(
+        automation_payload.get("automation_subcategory")
+    )
+    subcategory = raw_subcategory if raw_subcategory in _AUTOMATION_SUBCATEGORIES else "unregistered"
     automation_confidence = _safe_confidence(automation_payload.get("confidence"))
     risk_flags = [str(item) for item in list(automation_payload.get("risk_flags") or []) if str(item).strip()]
-    classification["automation_subcategory"] = (
-        subcategory if subcategory in REGISTERED_AUTOMATION_SUBCATEGORIES else None
+    automation_reason_defaults = {
+        "account_verification": "registered_account_verification",
+        "account_suspension": "registered_account_suspension",
+        "detailed_invoice": "registered_detailed_invoice",
+        "enablement": "registered_enablement",
+        "unregistered": "no_registered_subcategory",
+    }
+    automation_reason = _controlled_reason(
+        automation_payload.get("reason_code"),
+        _AUTOMATION_REASON_CODES,
+        automation_reason_defaults[subcategory],
     )
-    classification["stage_confidences"]["automation_subcategory"] = automation_confidence
-    classification["stage_reasons"]["automation_subcategory"] = str(
-        automation_payload.get("reason_code") or automation_attempt.failure_type or "invalid_automation_output"
-    )
+    if automation_attempt.payload is None:
+        subcategory = "unregistered"
+        automation_reason = "invalid_automation_output"
+    elif automation_confidence < threshold:
+        subcategory = "unregistered"
+        automation_reason = "low_subcategory_confidence"
+    elif raw_subcategory not in _AUTOMATION_SUBCATEGORIES:
+        subcategory = "unregistered"
+        automation_reason = "no_registered_subcategory"
+    elif subcategory in REGISTERED_AUTOMATION_SUBCATEGORIES:
+        automation_reason = automation_reason_defaults[subcategory]
+    elif automation_reason not in {
+        "no_registered_subcategory",
+        "insufficient_subcategory_information",
+    }:
+        automation_reason = "no_registered_subcategory"
+    candidate = _automation_candidate(automation_payload.get("automation_candidate"))
+    if subcategory == "unregistered" and candidate is None:
+        candidate = _automation_candidate(raw_subcategory)
+    classification["automation_subcategory"] = subcategory
+    classification["automation_candidate"] = candidate if subcategory == "unregistered" else None
+    classification["stage_confidences"]["automation_router"] = automation_confidence
+    classification["stage_reason_codes"]["automation_router"] = automation_reason
+    classification["route_reason_code"] = automation_reason
     registered = is_registered_automation(
         route_family=AUTOMATED_ROUTE_FAMILY,
         execution_action=subcategory,
     )
-    if (
-        subcategory not in REGISTERED_AUTOMATION_SUBCATEGORIES
-        or automation_confidence < threshold
-        or not registered
-    ):
+    if subcategory == "unregistered" or not registered:
         classification.update(
-            automation_subcategory=None,
             route_target="human_review",
-            human_review_reason=(
-                "low_automation_confidence"
-                if automation_confidence < threshold
-                else "no_registered_automation"
-            ),
+            human_review_reason=automation_reason,
         )
         return finish(_result(
             classification,
             _decision(
-                scope_label="human_review",
+                scope_label="automation",
                 action="human_review_required",
-                confidence=min(intent_confidence, scope_confidence, agora_confidence, automation_confidence),
-                reason=classification["human_review_reason"],
+                confidence=min(intent_confidence, agora_confidence, automation_confidence),
+                reason=automation_reason,
                 response_language=response_language,
                 route_family="human_review",
-                not_automated_reason=classification["human_review_reason"],
+                not_automated_reason=automation_reason,
                 risk_flags=risk_flags,
                 evidence_spans=classification["evidence_spans"],
             ),
@@ -918,7 +1081,7 @@ def decide_account_route(
         human_review_reason=None,
         handler_binding_status="active",
     )
-    automation_reason = classification["stage_reasons"]["automation_subcategory"]
+    automation_reason = classification["stage_reason_codes"]["automation_router"]
     automation_evidence = _sanitize_evidence(
         [*classification["evidence_spans"], *_sanitize_evidence(automation_payload.get("evidence_spans"))]
     )
@@ -936,7 +1099,7 @@ def decide_account_route(
         _decision(
             scope_label=scope_label,
             action=subcategory,
-            confidence=min(intent_confidence, scope_confidence, agora_confidence, automation_confidence),
+            confidence=min(intent_confidence, agora_confidence, automation_confidence),
             reason=automation_reason,
             response_language=response_language,
             route_family=AUTOMATED_ROUTE_FAMILY,

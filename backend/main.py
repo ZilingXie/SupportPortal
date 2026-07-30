@@ -468,10 +468,11 @@ def _field_extraction_human_review(
     updated_classification.update(
         {
             "predicted_automation_subcategory": subcategory,
-            "agora_route": "unclear",
+            "agora_route": "uncategorized",
             "automation_subcategory": None,
             "route_target": "human_review",
             "human_review_reason": reason,
+            "route_reason_code": reason,
             "handler_binding_status": "human_review",
             "field_extraction": extraction.audit_payload(),
         }
@@ -3497,6 +3498,19 @@ def _build_account_ticket_view_model(
         normalized_route = metadata["subcategory"]
         normalized_execution_action = metadata["subcategory"]
     primary_label, secondary_label = account_case_labels(ticket)
+    route_classification = (
+        dict(ticket.get("route_classification"))
+        if isinstance(ticket.get("route_classification"), dict)
+        else {}
+    )
+    route_reason_code = str(
+        route_classification.get("route_reason_code") or "legacy_reason_unavailable"
+    ).strip()
+    stage_reason_codes = dict(
+        route_classification.get("stage_reason_codes")
+        or route_classification.get("stage_reasons")
+        or {}
+    )
 
     raw_source = ticket.get("source")
     source_display: str | dict[str, Any]
@@ -3530,6 +3544,8 @@ def _build_account_ticket_view_model(
         "automation_handler": automation_handler,
         "primary_label": primary_label,
         "secondary_label": secondary_label,
+        "route_reason_code": route_reason_code,
+        "stage_reason_codes": stage_reason_codes,
         "source": source_display,
         "status": status,
         "automation_status": status,
@@ -3856,6 +3872,14 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
     primary_label, secondary_label = classification_labels(route_classification)
+    route_reason_code = str(
+        route_classification.get("route_reason_code") or "legacy_reason_unavailable"
+    ).strip()
+    stage_reason_codes = dict(
+        route_classification.get("stage_reason_codes")
+        or route_classification.get("stage_reasons")
+        or {}
+    )
     event = {
         "event": "ticket_created",
         "ticket_id": ticket_id,
@@ -3881,6 +3905,8 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "route_classification": route_classification,
         "primary_label": primary_label,
         "secondary_label": secondary_label,
+        "route_reason_code": route_reason_code,
+        "stage_reason_codes": stage_reason_codes,
         # Router audit fields
         "intent_router_attempted": decision.intent_router_attempted,
         "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
@@ -3919,6 +3945,8 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "route_classification": route_classification,
         "primary_label": primary_label,
         "secondary_label": secondary_label,
+        "route_reason_code": route_reason_code,
+        "stage_reason_codes": stage_reason_codes,
         "intent_router_attempted": decision.intent_router_attempted,
         "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
         "intent_router_model_confidence": decision.intent_router_model_confidence,
@@ -4215,7 +4243,7 @@ def list_billing_tickets(
     route_errors: bool = False,
     route_label: str | None = Query(
         default=None,
-        pattern="^(human_review|agora_technical|agora_non_technical|non_agora)$",
+        pattern="^(human_review|agora_technical|agora_non_technical|account_billing|uncertain)$",
     ),
 ) -> dict[str, Any]:
     requested_page_size = page_size if page_size is not None else limit
@@ -4347,7 +4375,14 @@ async def correct_billing_ticket_route(
         if category != "automation":
             raise HTTPException(status_code=400, detail=f"invalid category: {request.category!r}")
         execution_action = request.subcategory
-        scope_label = "enablement" if str(execution_action or "").strip().lower() == "enablement" else "billing"
+        normalized_action = str(execution_action or "").strip().lower()
+        scope_label = (
+            "enablement"
+            if normalized_action == "enablement"
+            else "automation"
+            if normalized_action == "unregistered"
+            else "billing"
+        )
     if not scope_label or not execution_action:
         raise HTTPException(
             status_code=400,
@@ -4692,7 +4727,7 @@ async def reply_to_billing_ticket(
                 or field_progress
                 or probe_classification.get("intent_class") == "conversation"
                 or (
-                    probe_classification.get("intent_class") == "support_request"
+                    probe_classification.get("intent_class") == "agora"
                     and probe_action == prior_action
                 )
             )
@@ -4851,10 +4886,11 @@ async def reply_to_billing_ticket(
             current_classification.update(
                 {
                     "predicted_automation_subcategory": failed_subcategory,
-                    "agora_route": "unclear",
+                    "agora_route": "uncategorized",
                     "automation_subcategory": None,
                     "route_target": "human_review",
                     "human_review_reason": failure_reason,
+                    "route_reason_code": failure_reason,
                     "handler_binding_status": "human_review",
                     "field_extraction": extraction.audit_payload(),
                 }
