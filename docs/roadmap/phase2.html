@@ -705,13 +705,13 @@
           <div class="delivery-group-body">
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>Account 三层分类</h3><p><code>/account</code> 依次使用 Intent Classifier、Agora Router 和 Automation Router：第一层只输出 Conversation、Agora 或 Uncertain；Agora 下区分 Technical、Non-technical、Account &amp; Billing、Automation 和 Uncategorized；Automation 输出四个已注册 subcategory 或 Unregistered。每层保存稳定 reason code，<code>/client</code> 继续使用原共享 Router。</p></div>
+          <div class="delivery-main"><h3>Account 三层分类</h3><p><code>/account</code> 依次使用 Intent Classifier、Agora Router 和 Automation Router：第一层只输出 Conversation、Agora 或 Uncertain；Agora 下区分 Technical、Non-technical、Account &amp; Billing、Automation 和 Uncategorized；Automation 输出五个已注册 subcategory 或 Unregistered。每层保存稳定 reason code，<code>/client</code> 继续使用原共享 Router。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>四类确定性自动化范围</h3><p>Automation 已覆盖 account verification、account suspension、detailed invoice 和 enablement；Account 专用 registry 显式分派各 subcategory，Verification 使用独立 intake handler，Suspension 与 Invoice 保留 Billing 行为，Enablement 使用独立 handler。</p></div>
+          <div class="delivery-main"><h3>五类确定性自动化范围</h3><p>Automation 已覆盖 account verification、account suspension、detailed invoice、enablement 和 quota；Account 专用 registry 显式分派各 subcategory，Verification 使用独立 intake handler，Suspension 与 Invoice 保留 Billing 行为，Enablement 与 Quota 使用独立 handler。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
@@ -726,6 +726,10 @@
           <div class="delivery-main"><h3>Enablement AI 字段采集</h3><p>LLM 从完整客户消息中提取 App ID 与功能名称并引用原文证据，不限制 App ID 格式；missing 时只追问一次，uncertain、ambiguous 或 grounding 失败时转 Human Review 并取消待发送追问。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
+        </article>
+        <article class="delivery-item">
+          <span class="delivery-state delivery-state--done">Delivered</span>
+          <div class="delivery-main"><h3>Quota AI 字段采集与内部流转</h3><p>Quota handler 处理配额审核、并发提升和 Big Event 容量报备；LLM 从完整客户消息中提取产品、App ID、目标容量与活动信息，最多追问一次后使用现有信息发送内部邮件，内部回复再生成面向客户的更新。</p></div>
         </article>
         <article class="delivery-row" data-category="reliability" data-status="done">
           <div class="delivery-category">Reliability</div>

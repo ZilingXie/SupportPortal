@@ -80,6 +80,7 @@ _ENV_EXACT_DESCRIPTIONS = {
     "BILLING_AUTOMATION_MAIL_TRANSPORT": "Selects the transport used to send billing automation email.",
     "BILLING_AUTOMATION_REPLY_RECORD_PATH": "Filesystem path used to record polled billing reply metadata.",
     "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "Internal destination for backend feature-enablement requests.",
+    "QUOTA_AUTOMATION_INTERNAL_EMAIL": "Internal destination for quota and big-event capacity requests.",
     "AUTOMATION_REPLY_POLL_ENABLED": "Enables polling for registered automation-handler email replies.",
     "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS": "Interval between automation email reply polls.",
     "AUTOMATION_REPLY_POLL_MAX_MESSAGES": "Maximum unread messages inspected by each automation reply poll.",
@@ -98,6 +99,7 @@ _ENV_EXACT_DESCRIPTIONS = {
 
 _ENV_PREFIX_DESCRIPTIONS = (
     ("ENABLEMENT_AUTOMATION_", "enablement automation"),
+    ("QUOTA_AUTOMATION_", "quota automation"),
     ("AUTOMATION_REPLY_", "automation reply polling"),
     ("BILLING_AUTOMATION_", "billing automation"),
     ("ENGINEER_INVESTIGATION_REPLY_", "engineer investigation reply"),

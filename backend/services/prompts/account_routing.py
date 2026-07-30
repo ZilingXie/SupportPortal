@@ -4,9 +4,10 @@ import json
 from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
-ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v2"
-ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v3"
+ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v3"
+ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v4"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
+ACCOUNT_QUOTA_FIELD_PROMPT_VERSION = "account-quota-fields-v1"
 ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "account-verification-fields-v1"
 ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION = "account-verification-follow-up-v1"
 
@@ -90,8 +91,12 @@ Classify only; do not answer the customer.
 - How to enable, configure, integrate, or troubleshoot a feature is technical.
 - An explicit request for Agora to enable a named backend feature from our side is automation.
 - Pricing and billing questions are account_billing. Only concrete backend operations enter automation.
-- Account verification, suspension restoration, detailed invoices, feature activation, and concrete future
-  backend-operation candidates may enter automation.
+- Account verification, suspension restoration, detailed invoices, feature activation, quota/capacity review,
+  quota increases, and big-event capacity notifications may enter automation.
+- A request to review, verify, increase, or escalate account concurrency or quota is a concrete backend
+  operation when the affected product or account-level quota is named. A Big Event Notification that asks
+  Agora to review event capacity is also a concrete backend operation even without the word "increase".
+- Questions about calculating concurrency, pricing, or diagnosing throttling remain technical or account_billing.
 - To output automation, backend_operation.action, backend_operation.target, and backend_operation.evidence
   must all be grounded in the customer message. Otherwise output uncategorized.
 - Select one primary route. Put other Agora intents in additional_intents; never output mixed.
@@ -126,6 +131,12 @@ Output: {"agora_route":"technical","confidence":0.97,"reason_code":"technical_re
 
 Input: Please change something on my account.
 Output: {"agora_route":"uncategorized","confidence":0.91,"reason_code":"insufficient_backend_operation_evidence","additional_intents":[],"selection_reason":"No concrete backend action or target is stated","backend_operation":null,"evidence_spans":["change something on my account"]}
+
+Input: Please review and increase our RTC, RTM, and Chat concurrency limits before our campaign launch.
+Output: {"agora_route":"automation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer requests an account-level concurrency review and increase","backend_operation":{"action":"review_and_increase","target":"multi_product_quota","evidence":"review and increase our RTC, RTM, and Chat concurrency limits"},"evidence_spans":["RTC, RTM, and Chat concurrency limits","campaign launch"]}
+
+Input: How is RTC concurrency calculated and how much does an increase cost?
+Output: {"agora_route":"account_billing","confidence":0.94,"reason_code":"account_billing_request","additional_intents":["technical"],"selection_reason":"The customer asks for pricing and an explanation, not a backend quota operation","backend_operation":null,"evidence_spans":["how much does an increase cost","How is RTC concurrency calculated"]}
 """.strip()
 
 
@@ -143,6 +154,8 @@ Classify only; do not answer the customer and do not execute any action.
 - detailed_invoice: request for a detailed invoice with transaction-level details.
 - enablement: explicit request for Agora to activate, enable, provision, or turn on a concrete named
   backend feature from Agora's side. Media Relay is one supported example.
+- quota: request for Agora to review, verify, increase, or escalate an account-level quota or concurrency
+  limit, or a Big Event Notification requesting capacity readiness review.
 - unregistered: the request is definitely an Agora backend operation, but no registered subcategory
   matches safely. Preserve a concise snake_case automation_candidate when one is grounded.
 
@@ -159,9 +172,9 @@ Return JSON only with keys: automation_subcategory, confidence, reason_code,
 automation_candidate, evidence_spans, risk_flags.
 confidence must be between 0 and 1.
 automation_subcategory must be one of: account_verification, account_suspension,
-detailed_invoice, enablement, unregistered.
+detailed_invoice, enablement, quota, unregistered.
 reason_code must be one of: registered_account_verification, registered_account_suspension,
-registered_detailed_invoice, registered_enablement, no_registered_subcategory,
+registered_detailed_invoice, registered_enablement, registered_quota, no_registered_subcategory,
 insufficient_subcategory_information.
 
 ## Examples
@@ -178,7 +191,10 @@ Input: Please tell us which company and use-case materials we must submit to com
 Output: {"automation_subcategory":"account_verification","confidence":0.97,"reason_code":"registered_account_verification","automation_candidate":null,"evidence_spans":["materials we must submit","account verification"],"risk_flags":[]}
 
 Input: Please review and increase our RTC concurrency limit.
-Output: {"automation_subcategory":"unregistered","confidence":0.97,"reason_code":"no_registered_subcategory","automation_candidate":"concurrency_limit_increase","evidence_spans":["increase our RTC concurrency limit"],"risk_flags":[]}
+Output: {"automation_subcategory":"quota","confidence":0.97,"reason_code":"registered_quota","automation_candidate":null,"evidence_spans":["increase our RTC concurrency limit"],"risk_flags":[]}
+
+Input: Big Event Notification: please review capacity for our livestream next Friday.
+Output: {"automation_subcategory":"quota","confidence":0.96,"reason_code":"registered_quota","automation_candidate":null,"evidence_spans":["Big Event Notification","review capacity"],"risk_flags":[]}
 """.strip()
 
 
@@ -293,6 +309,68 @@ def build_account_enablement_field_verification_user_prompt(
             "## Primary extraction to verify",
             _json(primary_result),
             "",
+            "## Ticket subject",
+            str(payload.get("ticket_subject") or "").strip() or "(none)",
+            "",
+            "## Existing collected fields",
+            _json(dict(payload.get("existing_fields") or {})),
+            "",
+            "## Customer messages",
+            _json(list(payload.get("customer_messages") or [])),
+        ]
+    ).strip()
+
+
+def build_account_quota_field_system_prompt() -> str:
+    return """
+## Role
+You are the Quota Field Extractor. Read only customer-authored Account Case messages. Extract quota and
+capacity intake details; do not route the Case, promise approval, or answer unrelated questions.
+
+## Fields
+- request_type: exactly quota_review, quota_increase, or big_event_notification.
+- products: normalized product names such as rtc, rtm, signaling, chat, or cloud_recording.
+- app_ids: application or project identifiers exactly as supplied. They may use any format.
+- requested_limits: requested quota targets by product when supplied.
+- event_name, event_start, event_timezone, event_duration: event details when supplied.
+- expected_peak_concurrency: expected capacity by product or role when supplied.
+- original_request_labels: concise customer-authored wording describing the quota or event request.
+
+## Required information
+- Every request needs request_type, products, and app_ids.
+- quota_review and quota_increase need either requested_limits or expected_peak_concurrency.
+- big_event_notification needs event_start, event_timezone, and expected_peak_concurrency.
+- Do not invent a field. Preserve identifiers and customer numbers exactly.
+- Each extracted field must cite a customer message ID and an exact source_quote copied from it.
+- Canonical enums and product names may be normalized, but the quote must ground their meaning.
+- Conflicting App IDs, dates, timezones, or requested limits are ambiguous.
+- When required information is missing, create one concise contextual follow_up asking for all missing
+  information at once. Do not impose an App ID format and do not use a fixed template.
+
+## Output
+Return JSON only:
+{
+  "status":"complete|missing|ambiguous|uncertain",
+  "fields": {
+    "field_name": {
+      "value":"scalar, list, or object",
+      "source_message_id":"customer message ID",
+      "source_quote":"exact customer quote",
+      "confidence":0.0
+    }
+  },
+  "missing_fields":[],
+  "ambiguous_fields":[],
+  "follow_up":null,
+  "reason":"short explanation"
+}
+Omit absent field objects. Confidence values must be between 0 and 1.
+""".strip()
+
+
+def build_account_quota_field_user_prompt(payload: dict[str, Any]) -> str:
+    return "\n".join(
+        [
             "## Ticket subject",
             str(payload.get("ticket_subject") or "").strip() or "(none)",
             "",

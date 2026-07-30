@@ -189,7 +189,7 @@ class AccountVerificationAutomationTests(unittest.TestCase):
     def test_all_account_automation_subcategories_are_explicitly_registered(self) -> None:
         self.assertEqual(
             registered_account_automation_subcategories(),
-            frozenset({"account_verification", "account_suspension", "detailed_invoice", "enablement"}),
+            frozenset({"account_verification", "account_suspension", "detailed_invoice", "enablement", "quota"}),
         )
         self.assertEqual(account_automation_handler("account_verification").implementation, "account_verification")
         self.assertIsNone(account_automation_handler("unknown"))

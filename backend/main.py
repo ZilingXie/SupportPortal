@@ -79,6 +79,12 @@ from backend.services.enablement_field_extractor import (
     EnablementFieldExtraction,
     extract_enablement_fields,
 )
+from backend.services.quota_automation import (
+    build_quota_automation_result,
+    build_quota_submission_confirmation,
+    send_quota_internal_email,
+)
+from backend.services.quota_field_extractor import QuotaFieldExtraction, extract_quota_fields
 from backend.services.billing_response_flow import (
     BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
     BILLING_RESPONSE_EVENT,
@@ -409,6 +415,52 @@ def _build_enablement_internal_email_attempt(
     }
 
 
+def _build_quota_internal_email_attempt(
+    *,
+    message: str,
+    ticket_subject: str,
+    customer_messages: list[dict[str, Any]],
+    ticket_id: str,
+    account_case_id: str,
+    customer_email: str | None,
+    existing_fields: dict[str, Any] | None = None,
+    follow_up_count: int = 0,
+) -> dict[str, Any]:
+    extraction = extract_quota_fields(
+        ticket_subject=ticket_subject,
+        customer_messages=customer_messages,
+        existing_fields=existing_fields,
+    )
+    result = build_quota_automation_result(
+        extraction=extraction,
+        customer_message=message,
+        ticket_id=ticket_id,
+        account_case_id=account_case_id,
+        customer_email=customer_email,
+        follow_up_count=follow_up_count,
+    )
+    internal_email_to_send = dict(result.internal_email) if result.internal_email else None
+    return {
+        "customer_reply": result.customer_reply,
+        "missing_fields": list(result.missing_fields),
+        "collected_fields": dict(result.collected_fields),
+        "internal_email_payload": dict(internal_email_to_send) if internal_email_to_send else None,
+        "internal_email_to_send": internal_email_to_send,
+        "internal_email_send_status": "pending" if internal_email_to_send else "not_ready",
+        "internal_email_send_reason": "" if internal_email_to_send else "missing_required_fields",
+        "requires_human_review": extraction.requires_human_review,
+        "field_extraction": extraction,
+        "prompt_snapshots": {"quota_field_extractor": dict(extraction.prompt_snapshot)},
+        "automation_context": {
+            "handler": "quota",
+            "extractor_version": extraction.audit_payload().get("prompt_version"),
+            "extraction_status": extraction.status,
+            "follow_up_count": result.follow_up_count,
+            "proceed_with_missing_fields": result.proceed_with_missing_fields,
+        },
+    }
+
+
 def _build_account_verification_internal_email_attempt(
     *,
     ticket_subject: str,
@@ -460,7 +512,7 @@ def _field_extraction_human_review(
     *,
     decision: SupportRouteDecision,
     classification: dict[str, Any],
-    extraction: EnablementFieldExtraction | AccountVerificationFieldExtraction,
+    extraction: EnablementFieldExtraction | AccountVerificationFieldExtraction | QuotaFieldExtraction,
     subcategory: str,
 ) -> tuple[SupportRouteDecision, dict[str, Any]]:
     reason = f"{subcategory}_field_extraction_{extraction.status}"
@@ -621,6 +673,26 @@ async def _send_enablement_internal_email_attempt(attempt: dict[str, Any]) -> tu
         )
     try:
         email_send_result = await async_to_thread(send_enablement_internal_email, internal_email_to_send)
+        resolved_to = str(email_send_result.get("resolved_to") or "").strip()
+        if resolved_to:
+            internal_email_to_send["resolved_to"] = resolved_to
+        return (
+            str(email_send_result.get("status") or "failed"),
+            str(email_send_result.get("reason") or ""),
+        )
+    except Exception as exc:
+        return "failed", str(exc)
+
+
+async def _send_quota_internal_email_attempt(attempt: dict[str, Any]) -> tuple[str, str]:
+    internal_email_to_send = attempt.get("internal_email_to_send")
+    if not internal_email_to_send:
+        return (
+            str(attempt.get("internal_email_send_status") or "not_ready"),
+            str(attempt.get("internal_email_send_reason") or "missing_required_fields"),
+        )
+    try:
+        email_send_result = await async_to_thread(send_quota_internal_email, internal_email_to_send)
         resolved_to = str(email_send_result.get("resolved_to") or "").strip()
         if resolved_to:
             internal_email_to_send["resolved_to"] = resolved_to
@@ -3650,6 +3722,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
     internal_email_payload: dict[str, Any] | None = None
     billing_email_attempt: dict[str, Any] | None = None
     enablement_email_attempt: dict[str, Any] | None = None
+    quota_email_attempt: dict[str, Any] | None = None
     automation_context: dict[str, Any] = {}
     pending_account_verification_confirmation = ""
     internal_email_send_status = "not_applicable"
@@ -3690,21 +3763,39 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 customer_email=str(request.customer_email or "").strip() or None,
             )
             automation_attempt = enablement_email_attempt
+        elif handler_registration.implementation == "quota":
+            quota_email_attempt = _build_quota_internal_email_attempt(
+                message=route_input,
+                ticket_subject=title,
+                customer_messages=list(ticket.get("messages") or []),
+                ticket_id=ticket_id,
+                account_case_id=account_case_id,
+                customer_email=str(request.customer_email or "").strip() or None,
+            )
+            automation_attempt = quota_email_attempt
         else:
             raise RuntimeError(f"unsupported automation handler: {automation_handler}")
         extraction = automation_attempt.get("field_extraction")
         automation_context = dict(automation_attempt.get("automation_context") or {})
         route_prompt_snapshots.update(dict(automation_attempt.get("prompt_snapshots") or {}))
-        if isinstance(extraction, (EnablementFieldExtraction, AccountVerificationFieldExtraction)):
+        if isinstance(
+            extraction,
+            (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction),
+        ):
             route_classification["field_extraction"] = extraction.audit_payload()
             snapshot_key = (
                 "enablement_field_extractor"
                 if isinstance(extraction, EnablementFieldExtraction)
-                else "account_verification_field_extractor"
+                else (
+                    "quota_field_extractor"
+                    if isinstance(extraction, QuotaFieldExtraction)
+                    else "account_verification_field_extractor"
+                )
             )
             route_prompt_snapshots[snapshot_key] = dict(extraction.prompt_snapshot)
         if automation_attempt.get("requires_human_review") and isinstance(
-            extraction, (EnablementFieldExtraction, AccountVerificationFieldExtraction)
+            extraction,
+            (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction),
         ):
             decision, route_classification = _field_extraction_human_review(
                 decision=decision,
@@ -3856,6 +3947,37 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                     ticket_id,
                 )
             confirmation = apply_persona_to_customer_reply(confirmation, persona_assignment)
+            reply_job = await async_to_thread(
+                _create_account_reply_job,
+                ticket_id=ticket_id,
+                trigger_message_created_at=timestamp,
+                draft_content=confirmation,
+                asked_field_keys=[],
+                persona_assignment=persona_assignment,
+                automation_delivery_key=str(
+                    billing_ticket["internal_email_payload"].get("delivery_key") or ""
+                ),
+            )
+            billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
+        billing_ticket["updated_at"] = now_iso()
+        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+    if quota_email_attempt and quota_email_attempt.get("internal_email_to_send"):
+        internal_email_send_status, internal_email_send_reason = await _send_quota_internal_email_attempt(
+            quota_email_attempt
+        )
+        billing_ticket["internal_email_send_status"] = internal_email_send_status
+        billing_ticket["internal_email_send_reason"] = internal_email_send_reason
+        billing_ticket["internal_email_payload"] = dict(quota_email_attempt["internal_email_to_send"])
+        if internal_email_send_status == "sent":
+            if persona_assignment is None:
+                persona_assignment = await async_to_thread(
+                    ticket_repository.resolve_account_persona,
+                    ticket_id,
+                )
+            confirmation = apply_persona_to_customer_reply(
+                build_quota_submission_confirmation(),
+                persona_assignment,
+            )
             reply_job = await async_to_thread(
                 _create_account_reply_job,
                 ticket_id=ticket_id,
@@ -4379,6 +4501,8 @@ async def correct_billing_ticket_route(
         scope_label = (
             "enablement"
             if normalized_action == "enablement"
+            else "quota"
+            if normalized_action == "quota"
             else "automation"
             if normalized_action == "unregistered"
             else "billing"
@@ -4684,6 +4808,17 @@ async def reply_to_billing_ticket(
                 existing_fields=prior_collected_fields,
                 already_requested_fields=sorted(already_requested_fields),
             )
+        if registration.implementation == "quota":
+            return _build_quota_internal_email_attempt(
+                message=conversation_text,
+                ticket_subject=str(canonical_ticket.get("subject") or billing_ticket.get("title") or ""),
+                customer_messages=list(canonical_ticket.get("messages") or []),
+                ticket_id=client_ticket_id,
+                account_case_id=str(billing_ticket.get("account_case_id") or billing_ticket_id),
+                customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
+                existing_fields=prior_collected_fields,
+                follow_up_count=int(prior_automation_context.get("follow_up_count") or 0),
+            )
         raise HTTPException(status_code=409, detail="account case has no registered automation handler")
 
     automation_attempt: dict[str, Any] | None = None
@@ -4738,6 +4873,7 @@ async def reply_to_billing_ticket(
                     for key, value in candidate_collected.items()
                 )
                 or len(candidate_missing) < len(prior_missing_fields)
+                or bool(candidate_attempt.get("internal_email_to_send"))
             )
         if handler_continued:
             automation_attempt = candidate_attempt
@@ -4805,7 +4941,8 @@ async def reply_to_billing_ticket(
             automation_attempt = build_automation_attempt(new_handler, route)
             extraction = automation_attempt.get("field_extraction")
             if automation_attempt.get("requires_human_review") and isinstance(
-                extraction, (EnablementFieldExtraction, AccountVerificationFieldExtraction)
+                extraction,
+                (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction),
             ):
                 decision, route_classification = _field_extraction_human_review(
                     decision=decision,
@@ -4844,12 +4981,19 @@ async def reply_to_billing_ticket(
             )
         route_prompt_snapshots = dict(route_result.prompt_snapshots)
         extraction = automation_attempt.get("field_extraction") if automation_attempt else None
-        if isinstance(extraction, (EnablementFieldExtraction, AccountVerificationFieldExtraction)):
+        if isinstance(
+            extraction,
+            (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction),
+        ):
             route_classification["field_extraction"] = extraction.audit_payload()
             snapshot_key = (
                 "enablement_field_extractor"
                 if isinstance(extraction, EnablementFieldExtraction)
-                else "account_verification_field_extractor"
+                else (
+                    "quota_field_extractor"
+                    if isinstance(extraction, QuotaFieldExtraction)
+                    else "account_verification_field_extractor"
+                )
             )
             route_prompt_snapshots[snapshot_key] = dict(extraction.prompt_snapshot)
             route_prompt_snapshots.update(dict((automation_attempt or {}).get("prompt_snapshots") or {}))
@@ -4872,10 +5016,13 @@ async def reply_to_billing_ticket(
     if automation_attempt is not None:
         extraction = automation_attempt.get("field_extraction")
         if automation_attempt.get("requires_human_review") and isinstance(
-            extraction, (EnablementFieldExtraction, AccountVerificationFieldExtraction)
+            extraction,
+            (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction),
         ):
             failed_subcategory = (
-                "enablement" if isinstance(extraction, EnablementFieldExtraction) else "account_verification"
+                "enablement"
+                if isinstance(extraction, EnablementFieldExtraction)
+                else ("quota" if isinstance(extraction, QuotaFieldExtraction) else "account_verification")
             )
             failure_reason = f"{failed_subcategory}_field_extraction_{extraction.status}"
             current_classification = (
@@ -4989,11 +5136,13 @@ async def reply_to_billing_ticket(
 
     if should_send_internal_email and automation_attempt and automation_attempt.get("internal_email_to_send"):
         active_handler = str(billing_ticket.get("automation_handler") or "").strip()
-        send_attempt = (
-            _send_billing_internal_email_attempt
-            if active_handler == "billing"
-            else _send_enablement_internal_email_attempt
-        )
+        send_attempt = {
+            "billing": _send_billing_internal_email_attempt,
+            "enablement": _send_enablement_internal_email_attempt,
+            "quota": _send_quota_internal_email_attempt,
+        }.get(active_handler)
+        if send_attempt is None:
+            raise HTTPException(status_code=409, detail="account case has no registered automation sender")
         internal_email_send_status, internal_email_send_reason = await send_attempt(automation_attempt)
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
@@ -5009,6 +5158,15 @@ async def reply_to_billing_ticket(
                         client_ticket_id,
                     )
                 assistant_reply = apply_persona_to_customer_reply(assistant_reply, persona_assignment)
+        elif active_handler == "quota" and internal_email_send_status == "sent":
+            billing_ticket["internal_email_payload"] = dict(automation_attempt["internal_email_to_send"])
+            assistant_reply = build_quota_submission_confirmation()
+            if persona_assignment is None:
+                persona_assignment = await async_to_thread(
+                    ticket_repository.resolve_account_persona,
+                    client_ticket_id,
+                )
+            assistant_reply = apply_persona_to_customer_reply(assistant_reply, persona_assignment)
         elif internal_email_send_status == "sent" and pending_account_verification_confirmation:
             assistant_reply = pending_account_verification_confirmation
             if persona_assignment is None:
@@ -5036,7 +5194,7 @@ async def reply_to_billing_ticket(
             ),
         )
         if (
-            str(billing_ticket.get("automation_handler") or "").strip() == "enablement"
+            str(billing_ticket.get("automation_handler") or "").strip() in {"enablement", "quota"}
             and str(billing_ticket.get("internal_email_send_status") or "").strip() == "sent"
             and isinstance(billing_ticket.get("internal_email_payload"), dict)
         ):

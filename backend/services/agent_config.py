@@ -255,6 +255,11 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "Extracts grounded Enablement fields from customer-authored /account messages.",
                 ),
                 _component(
+                    "account-quota-field-extractor",
+                    "Quota Field Extractor",
+                    "Extracts grounded quota, concurrency, and Big Event capacity details from /account history.",
+                ),
+                _component(
                     "account-verification-handler",
                     "Account Verification Handler",
                     "Controls one follow-up, Human Review, and internal handoff for Account Verification.",

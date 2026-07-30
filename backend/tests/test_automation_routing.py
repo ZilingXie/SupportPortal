@@ -14,7 +14,7 @@ class AutomationRoutingTests(unittest.TestCase):
     def test_registered_subcategories_are_derived_from_handler_registry(self) -> None:
         self.assertEqual(
             REGISTERED_AUTOMATION_SUBCATEGORIES,
-            frozenset({"account_suspension", "account_verification", "detailed_invoice", "enablement"}),
+            frozenset({"account_suspension", "account_verification", "detailed_invoice", "enablement", "quota"}),
         )
 
     def test_registered_billing_subcategories_share_automation_category(self) -> None:
@@ -53,6 +53,18 @@ class AutomationRoutingTests(unittest.TestCase):
             },
         )
         self.assertEqual(AUTOMATION_HANDLER_REGISTRY["enablement"], frozenset({"enablement"}))
+
+    def test_quota_uses_its_own_handler(self) -> None:
+        self.assertEqual(
+            automation_metadata(route_family="automated", execution_action="quota"),
+            {
+                "category": "automation",
+                "subcategory": "quota",
+                "route_status": "automated",
+                "automation_handler": "quota",
+            },
+        )
+        self.assertEqual(AUTOMATION_HANDLER_REGISTRY["quota"], frozenset({"quota"}))
 
     def test_account_suspension_remains_its_own_registered_subcategory(self) -> None:
         self.assertEqual(

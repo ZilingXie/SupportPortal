@@ -54,6 +54,10 @@ from backend.services.enablement_automation import (
     build_enablement_submission_confirmation,
     send_enablement_internal_email,
 )
+from backend.services.quota_automation import (
+    QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX,
+    build_quota_customer_followup,
+)
 from backend.services.billing_response_flow import (
     BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
     BILLING_RESPONSE_EVENT,
@@ -245,7 +249,11 @@ def _run_billing_reply_poller(interval_seconds: float) -> None:
             replies = poll_automation_request_replies(
                 handler=handle_automation_request_reply,
                 max_messages=_billing_reply_poll_max_messages_from_env(),
-                subject_prefixes=("[Billing Request]", ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX),
+                subject_prefixes=(
+                    "[Billing Request]",
+                    ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
+                    QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX,
+                ),
             )
             if replies:
                 LOGGER.info("Automation reply poller handled %s reply message(s).", len(replies))
@@ -982,10 +990,85 @@ def handle_enablement_request_reply(reply: Any) -> bool:
     return True
 
 
+def handle_quota_request_reply(reply: Any) -> bool:
+    client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
+    if not client_ticket_id:
+        raise ValueError("quota reply subject does not include client ticket id")
+    message_id = str(getattr(reply, "message_id", "") or "").strip()
+    if _automation_reply_already_processed(client_ticket_id, message_id):
+        LOGGER.info("Quota reply message %s for ticket %s was already processed.", message_id, client_ticket_id)
+        return False
+    account_case = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
+    if account_case is None:
+        raise ValueError(f"account case not found for {client_ticket_id}")
+    if str(account_case.get("automation_handler") or "").strip() != "quota":
+        raise ValueError(f"account case {client_ticket_id} is not handled by quota automation")
+    canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
+    if canonical_ticket is None:
+        raise ValueError(f"linked support ticket not found for {client_ticket_id}")
+    note = str(getattr(reply, "body_text", "") or "").strip()
+    if not note:
+        raise ValueError("quota reply body is empty")
+    collected_fields = account_case.get("collected_fields")
+    collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
+    app_ids = collected_fields.get("app_ids")
+    app_ids = app_ids if isinstance(app_ids, list) else [app_ids] if app_ids else []
+    customer_reply = build_quota_customer_followup(
+        resolution_note=note,
+        sensitive_values=(
+            *(str(app_id) for app_id in app_ids),
+            str(canonical_ticket.get("requester") or ""),
+            str(canonical_ticket.get("customer_id") or ""),
+        ),
+    )
+    timestamp = now_iso()
+    assistant_message = {
+        "role": "assistant",
+        "content": customer_reply,
+        "created_at": timestamp,
+        "content_format": "plaintext",
+        "source": "quota_reply_email",
+    }
+    initial_message_count = len(canonical_ticket.get("messages", []))
+    canonical_ticket.setdefault("messages", []).append(assistant_message)
+    canonical_ticket["updated_at"] = timestamp
+    account_case["automation_status"] = "customer_notified"
+    account_case["customer_reply"] = customer_reply
+    account_case["updated_at"] = timestamp
+    ticket_repository.save_ticket(
+        canonical_ticket,
+        new_messages=canonical_ticket.get("messages", [])[initial_message_count:],
+    )
+    ticket_repository.save_account_case(account_case)
+    resolution_event = {
+        "event": "quota_internal_resolution_received",
+        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
+        "ticket_id": client_ticket_id,
+        "note": note,
+        "created_at": timestamp,
+        "source": "quota_reply_email",
+        "automation_reply_message_id": message_id,
+    }
+    ticket_repository.record_event(client_ticket_id, resolution_event["event"], resolution_event)
+    followup_event = {
+        "event": "quota_customer_followup_generated",
+        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
+        "ticket_id": client_ticket_id,
+        "customer_reply": customer_reply,
+        "created_at": timestamp,
+        "source": "quota_reply_email",
+        "automation_reply_message_id": message_id,
+    }
+    ticket_repository.record_event(client_ticket_id, followup_event["event"], followup_event)
+    return True
+
+
 def handle_automation_request_reply(reply: Any) -> bool:
     subject = str(getattr(reply, "subject", "") or "")
     if ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX.lower() in subject.lower():
         return handle_enablement_request_reply(reply)
+    if QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX.lower() in subject.lower():
+        return handle_quota_request_reply(reply)
     if "[billing request]" in subject.lower():
         return handle_billing_request_reply(reply)
     raise ValueError("unsupported automation reply subject")

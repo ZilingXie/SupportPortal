@@ -295,7 +295,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         )
         self.assertEqual(invoke_stage.call_count, 2)
 
-    def test_confirmed_unknown_operation_is_automation_unregistered(self) -> None:
+    def test_quota_increase_uses_registered_quota_handler(self) -> None:
         attempts = [
             _attempt(
                 {
@@ -318,10 +318,10 @@ class AccountRoutePipelineTests(unittest.TestCase):
             ),
             _attempt(
                 {
-                    "automation_subcategory": "unregistered",
-                    "automation_candidate": "concurrency_limit_increase",
+                    "automation_subcategory": "quota",
+                    "automation_candidate": None,
                     "confidence": 0.96,
-                    "reason_code": "no_registered_subcategory",
+                    "reason_code": "registered_quota",
                     "risk_flags": [],
                 }
             ),
@@ -333,19 +333,19 @@ class AccountRoutePipelineTests(unittest.TestCase):
             result = decide_account_route("Please increase our RTC concurrency limit.")
 
         self.assertEqual(result.primary_label, "Agora")
-        self.assertEqual(result.secondary_label, "Automation / Unregistered")
-        self.assertEqual(result.classification["automation_subcategory"], "unregistered")
-        self.assertEqual(
-            result.classification["automation_candidate"],
-            "concurrency_limit_increase",
-        )
-        self.assertEqual(result.classification["route_reason_code"], "no_registered_subcategory")
+        self.assertEqual(result.secondary_label, "Automation / Quota")
+        self.assertEqual(result.classification["automation_subcategory"], "quota")
+        self.assertIsNone(result.classification["automation_candidate"])
+        self.assertEqual(result.classification["route_reason_code"], "registered_quota")
+        self.assertEqual(result.decision.scope_label, "quota")
+        self.assertEqual(result.decision.execution_action, "quota")
+        self.assertEqual(result.decision.semantic_intent, "quota.capacity_request")
         self.assertEqual(
             result.classification["stage_reason_codes"],
             {
                 "intent_classifier": "agora_case",
                 "agora_router": "explicit_backend_operation",
-                "automation_router": "no_registered_subcategory",
+                "automation_router": "registered_quota",
             },
         )
 

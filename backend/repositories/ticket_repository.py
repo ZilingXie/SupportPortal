@@ -8205,7 +8205,7 @@ class PostgresTicketRepository:
                             CASE
                                 WHEN bt.route_family IN ('automated', 'billing_automation')
                                      AND COALESCE(bt.execution_action, bt.route) IN (
-                                         'account_verification', 'account_suspension', 'detailed_invoice', 'enablement'
+                                         'account_verification', 'account_suspension', 'detailed_invoice', 'enablement', 'quota'
                                      )
                                     THEN 'Automation'
                                 WHEN bt.scope_label = 'ticket_resolution' THEN 'Resolve'
