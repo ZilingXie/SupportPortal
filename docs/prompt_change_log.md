@@ -12,6 +12,28 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-07-30 - Account route taxonomy v2 and stable reason codes
+
+- Area or subsystem: `/account` Intent Classifier, Agora Router, and Automation Router
+- Prompt or model version: `account-intent-v2` / `account-agora-v2` / `account-automation-v3`
+- Summary: Simplified the first classifier to Conversation, Agora, or Uncertain; added Account & Billing and Uncategorized to the Agora taxonomy; replaced Automation ambiguity with Unregistered; and added controlled terminal and per-stage reason codes.
+- Reason: The previous support-scope and mixed categories over-routed clear Agora technical, billing, and backend-operation requests to Human Review and made missing taxonomy coverage indistinguishable from low-confidence classification.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/account_admin.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/main.py`
+  - `ui/account-ui/app.js`
+- Expected behavior change:
+  - Account Cases use an Agora prior; third-party comparisons and integrations remain Agora-related, while wholly unrelated or indecipherable requests are Uncertain.
+  - Agora Router no longer emits mixed or unclear and selects one primary category with optional additional intents.
+  - Automation requires grounded backend action, target, and evidence before entering Automation Router; confirmed operations without a registered subcategory are Automation / Unregistered.
+  - API and Admin diagnostics expose `route_reason_code` and `stage_reason_codes` as stable fields.
+- Verification:
+  - `rtk python3 -m unittest backend.tests.test_account_route_pipeline backend.tests.test_account_ui_contract backend.tests.test_workspace_admin_ui_contract`
+  - `rtk python3 scripts/verify_feature_list.py`
+
 ## 2026-07-30 - Account Verification grounded intake and safe follow-up
 
 - Area or subsystem: `/account` Account Verification Automation

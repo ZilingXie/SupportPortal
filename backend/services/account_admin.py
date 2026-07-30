@@ -16,11 +16,11 @@ from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-layered-router-v1"
+ROUTER_PROMPT_VERSION = "account-layered-router-v2"
 ROUTING_STAGE_DESCRIPTIONS = {
-    "intent_classifier": "Classifies conversation, support request, support scope, or unclear intent.",
-    "agora_router": "Classifies confirmed Agora requests as technical, non-technical, automation, or unclear.",
-    "automation_router": "Selects a registered Automation subcategory or fails closed to Human Review.",
+    "intent_classifier": "Classifies Account messages as Conversation, Agora, or Uncertain.",
+    "agora_router": "Classifies Agora cases as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+    "automation_router": "Selects a registered Automation subcategory or Unregistered.",
     "final_route": "Records the route target and the primary and secondary Account labels.",
 }
 DEFAULT_PERSONA_KEY = "default-support"
@@ -307,7 +307,11 @@ def route_execution_from_decision(
 ) -> dict[str, Any]:
     if isinstance(classification, dict) and classification:
         stage_confidences = dict(classification.get("stage_confidences") or {})
-        stage_reasons = dict(classification.get("stage_reasons") or {})
+        stage_reasons = dict(
+            classification.get("stage_reason_codes")
+            or classification.get("stage_reasons")
+            or {}
+        )
         stages = [
             {
                 "name": name,
@@ -332,7 +336,7 @@ def route_execution_from_decision(
             "classification": dict(classification),
             "confidence": decision.confidence,
             "confidence_threshold": decision.intent_router_confidence_threshold,
-            "router_prompt_version": str(classification.get("pipeline_version") or "account-layered-router-v1"),
+            "router_prompt_version": str(classification.get("pipeline_version") or "account-layered-router-v2"),
             "prompt_snapshots": snapshots,
             "prompt_snapshot_available": bool(snapshots),
             "stages": stages,
@@ -383,25 +387,25 @@ def routing_config_payload() -> dict[str, Any]:
             "subcategories": [],
         },
         {
-            "name": "support_request",
-            "display_name": "Support Request",
-            "description": "Support requests split into Agora, non-Agora, unclear, or mixed scope.",
-            "execution_actions": ["agora", "non_agora", "unclear", "mixed"],
+            "name": "intent",
+            "display_name": "Intent Classifier",
+            "description": "Account messages are classified as Conversation, Agora, or Uncertain.",
+            "execution_actions": ["conversation", "agora", "uncertain"],
             "subcategories": [],
         },
         {
             "name": "agora",
             "display_name": "Agora Router",
-            "description": "Confirmed Agora requests routed to RAG, Web, Automation, or Human Review.",
-            "execution_actions": ["technical", "non_technical", "automation", "unclear", "mixed"],
+            "description": "Agora cases are classified as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+            "execution_actions": ["technical", "non_technical", "account_billing", "automation", "uncategorized"],
             "subcategories": [],
         },
         {
             "name": "automation",
             "display_name": "Automation",
-            "description": "Account cases handled only by a registered Automation subcategory.",
-            "execution_actions": automation_subcategories,
-            "subcategories": automation_subcategories,
+            "description": "Confirmed backend operations are classified into a registered subcategory or Unregistered.",
+            "execution_actions": [*automation_subcategories, "unregistered"],
+            "subcategories": [*automation_subcategories, "unregistered"],
         },
     ]
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -18,6 +19,20 @@ def _attempt(payload: dict[str, object]) -> AccountRouteStageAttempt:
 
 
 class AccountRoutePipelineTests(unittest.TestCase):
+    def test_human_review_golden_fixture_covers_all_operator_labels(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "account_route_golden_cases.json"
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(cases), 17)
+        self.assertEqual({item["case_id"] for item in cases}, {
+            "12515", "12512", "12511", "12506", "12505", "12502", "12500",
+            "12497", "12496", "12486", "12484", "12480", "12479", "12476",
+            "12460", "12458", "12456",
+        })
+        self.assertTrue(all(item["primary_label"] == "Agora" for item in cases))
+        self.assertNotIn("Support Request", {item["primary_label"] for item in cases})
+        self.assertNotIn("mixed", {item["reason_code"] for item in cases})
+
     def test_route_correction_uses_layered_labels_without_activating_handler(self) -> None:
         conversation = classification_for_corrected_route(
             scope_label="conversation",
@@ -49,7 +64,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
                     "conversation_action": "resolve",
                     "intent_confidence": 0.97,
                     "action_confidence": 0.94,
-                    "reason_code": "explicit_resolution",
+                    "reason_code": "conversation_resolution",
                 }
             ),
         ) as invoke_stage:
@@ -64,18 +79,16 @@ class AccountRoutePipelineTests(unittest.TestCase):
         attempts = [
             _attempt(
                 {
-                    "intent_class": "support_request",
-                    "support_scope": "agora",
+                    "intent_class": "agora",
                     "intent_confidence": 0.98,
-                    "scope_confidence": 0.96,
-                    "reason_code": "agora_support_request",
+                    "reason_code": "agora_case",
                 }
             ),
             _attempt(
                 {
                     "agora_route": "technical",
                     "confidence": 0.95,
-                    "reason_code": "sdk_integration",
+                    "reason_code": "technical_request",
                 }
             ),
         ]
@@ -85,7 +98,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ) as invoke_stage:
             result = decide_account_route("How do I generate an RTC token?")
 
-        self.assertEqual(result.primary_label, "Support Request")
+        self.assertEqual(result.primary_label, "Agora")
         self.assertEqual(result.secondary_label, "Agora Technical")
         self.assertEqual(result.classification["route_target"], "rag")
         self.assertEqual(invoke_stage.call_count, 2)
@@ -94,25 +107,28 @@ class AccountRoutePipelineTests(unittest.TestCase):
         attempts = [
             _attempt(
                 {
-                    "intent_class": "support_request",
-                    "support_scope": "agora",
+                    "intent_class": "agora",
                     "intent_confidence": 0.99,
-                    "scope_confidence": 0.98,
-                    "reason_code": "agora_support_request",
+                    "reason_code": "agora_case",
                 }
             ),
             _attempt(
                 {
                     "agora_route": "automation",
                     "confidence": 0.97,
-                    "reason_code": "backend_operation",
+                    "reason_code": "explicit_backend_operation",
+                    "backend_operation": {
+                        "action": "enable",
+                        "target": "media_relay",
+                        "evidence": "enable Media Relay from your end",
+                    },
                 }
             ),
             _attempt(
                 {
                     "automation_subcategory": "enablement",
                     "confidence": 0.96,
-                    "reason_code": "feature_activation",
+                    "reason_code": "registered_enablement",
                 }
             ),
         ]
@@ -124,7 +140,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
                 "Please enable Media Relay from your end for App ID 7da36383d624411698e5c0bc1fda6324."
             )
 
-        self.assertEqual(result.primary_label, "Support Request")
+        self.assertEqual(result.primary_label, "Agora")
         self.assertEqual(result.secondary_label, "Automation / Enablement")
         self.assertEqual(result.classification["route_target"], "automation")
         self.assertEqual(result.classification["handler_binding_status"], "active")
@@ -136,25 +152,28 @@ class AccountRoutePipelineTests(unittest.TestCase):
         attempts = [
             _attempt(
                 {
-                    "intent_class": "support_request",
-                    "support_scope": "agora",
+                    "intent_class": "agora",
                     "intent_confidence": 0.99,
-                    "scope_confidence": 0.98,
-                    "reason_code": "agora_support_request",
+                    "reason_code": "agora_case",
                 }
             ),
             _attempt(
                 {
                     "agora_route": "automation",
                     "confidence": 0.97,
-                    "reason_code": "backend_operation",
+                    "reason_code": "explicit_backend_operation",
+                    "backend_operation": {
+                        "action": "restore",
+                        "target": "account_access",
+                        "evidence": "restore our access",
+                    },
                 }
             ),
             _attempt(
                 {
                     "automation_subcategory": "account_suspension",
                     "confidence": 0.96,
-                    "reason_code": "account_suspension_review",
+                    "reason_code": "registered_account_suspension",
                 }
             ),
         ]
@@ -166,31 +185,29 @@ class AccountRoutePipelineTests(unittest.TestCase):
                 "Our account is suspended. Please review it and restore our access."
             )
 
-        self.assertEqual(result.primary_label, "Support Request")
+        self.assertEqual(result.primary_label, "Agora")
         self.assertEqual(result.secondary_label, "Automation / Account Suspension")
         self.assertEqual(result.classification["automation_subcategory"], "account_suspension")
         self.assertEqual(result.decision.execution_action, "account_suspension")
         self.assertEqual(result.decision.route_family, "automated")
 
-    def test_mixed_scope_fails_closed_without_agora_router(self) -> None:
+    def test_independent_unrelated_request_is_uncertain_without_agora_router(self) -> None:
         with patch(
             "backend.services.account_route_pipeline._invoke_stage",
             return_value=_attempt(
                 {
-                    "intent_class": "support_request",
-                    "support_scope": "mixed",
+                    "intent_class": "uncertain",
                     "intent_confidence": 0.95,
-                    "scope_confidence": 0.91,
-                    "reason_code": "mixed_scope",
+                    "reason_code": "out_of_scope_or_unknown",
                 }
             ),
         ) as invoke_stage:
             result = decide_account_route("Fix my Agora token and reset my AWS password.")
 
-        self.assertEqual(result.primary_label, "Support Request")
+        self.assertEqual(result.primary_label, "Uncertain")
         self.assertEqual(result.secondary_label, "Human Review")
         self.assertEqual(result.classification["route_target"], "human_review")
-        self.assertEqual(result.classification["human_review_reason"], "mixed_scope")
+        self.assertEqual(result.classification["human_review_reason"], "out_of_scope_or_unknown")
         self.assertEqual(invoke_stage.call_count, 1)
 
     def test_low_intent_confidence_fails_closed(self) -> None:
@@ -198,20 +215,136 @@ class AccountRoutePipelineTests(unittest.TestCase):
             "backend.services.account_route_pipeline._invoke_stage",
             return_value=_attempt(
                 {
-                    "intent_class": "support_request",
-                    "support_scope": "agora",
+                    "intent_class": "agora",
                     "intent_confidence": 0.4,
-                    "scope_confidence": 0.99,
-                    "reason_code": "weak_intent",
+                    "reason_code": "agora_case",
                 }
             ),
         ) as invoke_stage:
             result = decide_account_route("Maybe something is wrong.")
 
-        self.assertEqual(result.primary_label, "Unclear")
+        self.assertEqual(result.primary_label, "Uncertain")
         self.assertEqual(result.secondary_label, "Human Review")
         self.assertEqual(result.classification["human_review_reason"], "low_intent_confidence")
+        self.assertEqual(result.classification["route_reason_code"], "low_intent_confidence")
         self.assertEqual(invoke_stage.call_count, 1)
+
+    def test_account_billing_is_a_stable_agora_classification(self) -> None:
+        attempts = [
+            _attempt(
+                {
+                    "intent_class": "agora",
+                    "intent_confidence": 0.98,
+                    "reason_code": "agora_case",
+                }
+            ),
+            _attempt(
+                {
+                    "agora_route": "account_billing",
+                    "confidence": 0.96,
+                    "reason_code": "account_billing_request",
+                    "additional_intents": [],
+                }
+            ),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ) as invoke_stage:
+            result = decide_account_route("Please change our payment method to invoice billing.")
+
+        self.assertEqual(result.primary_label, "Agora")
+        self.assertEqual(result.secondary_label, "Account & Billing")
+        self.assertEqual(result.classification["agora_route"], "account_billing")
+        self.assertEqual(result.classification["route_reason_code"], "account_billing_request")
+        self.assertEqual(invoke_stage.call_count, 2)
+
+    def test_vague_backend_request_stays_uncategorized(self) -> None:
+        attempts = [
+            _attempt(
+                {
+                    "intent_class": "agora",
+                    "intent_confidence": 0.97,
+                    "reason_code": "agora_case",
+                }
+            ),
+            _attempt(
+                {
+                    "agora_route": "automation",
+                    "confidence": 0.94,
+                    "reason_code": "explicit_backend_operation",
+                    "backend_operation": None,
+                }
+            ),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ) as invoke_stage:
+            result = decide_account_route("Please change something on my account.")
+
+        self.assertEqual(result.primary_label, "Agora")
+        self.assertEqual(result.secondary_label, "Agora / Uncategorized")
+        self.assertEqual(result.classification["agora_route"], "uncategorized")
+        self.assertEqual(
+            result.classification["route_reason_code"],
+            "insufficient_backend_operation_evidence",
+        )
+        self.assertEqual(invoke_stage.call_count, 2)
+
+    def test_confirmed_unknown_operation_is_automation_unregistered(self) -> None:
+        attempts = [
+            _attempt(
+                {
+                    "intent_class": "agora",
+                    "intent_confidence": 0.99,
+                    "reason_code": "agora_case",
+                }
+            ),
+            _attempt(
+                {
+                    "agora_route": "automation",
+                    "confidence": 0.97,
+                    "reason_code": "explicit_backend_operation",
+                    "backend_operation": {
+                        "action": "increase",
+                        "target": "rtc_concurrency_limit",
+                        "evidence": "increase our RTC concurrency limit",
+                    },
+                }
+            ),
+            _attempt(
+                {
+                    "automation_subcategory": "unregistered",
+                    "automation_candidate": "concurrency_limit_increase",
+                    "confidence": 0.96,
+                    "reason_code": "no_registered_subcategory",
+                    "risk_flags": [],
+                }
+            ),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ):
+            result = decide_account_route("Please increase our RTC concurrency limit.")
+
+        self.assertEqual(result.primary_label, "Agora")
+        self.assertEqual(result.secondary_label, "Automation / Unregistered")
+        self.assertEqual(result.classification["automation_subcategory"], "unregistered")
+        self.assertEqual(
+            result.classification["automation_candidate"],
+            "concurrency_limit_increase",
+        )
+        self.assertEqual(result.classification["route_reason_code"], "no_registered_subcategory")
+        self.assertEqual(
+            result.classification["stage_reason_codes"],
+            {
+                "intent_classifier": "agora_case",
+                "agora_router": "explicit_backend_operation",
+                "automation_router": "no_registered_subcategory",
+            },
+        )
 
     def test_shadow_mode_preserves_legacy_route_for_non_automation_result(self) -> None:
         legacy_decision = SupportRouteDecision(
@@ -226,18 +359,16 @@ class AccountRoutePipelineTests(unittest.TestCase):
         attempts = [
             _attempt(
                 {
-                    "intent_class": "support_request",
-                    "support_scope": "agora",
+                    "intent_class": "agora",
                     "intent_confidence": 0.98,
-                    "scope_confidence": 0.97,
-                    "reason_code": "agora_support_request",
+                    "reason_code": "agora_case",
                 }
             ),
             _attempt(
                 {
                     "agora_route": "technical",
                     "confidence": 0.95,
-                    "reason_code": "sdk_integration",
+                    "reason_code": "technical_request",
                 }
             ),
         ]

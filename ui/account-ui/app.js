@@ -69,28 +69,31 @@ const ROUTE_LABEL_FILTERS = new Set([
   "human_review",
   "agora_technical",
   "agora_non_technical",
-  "non_agora",
+  "account_billing",
+  "uncertain",
 ]);
 const ROUTE_LABEL_FILTER_MATCHES = {
-  human_review: "Human Review",
+  human_review: new Set(["Human Review", "Agora / Uncategorized"]),
   agora_technical: "Agora Technical",
   agora_non_technical: "Agora Non-technical",
-  non_agora: "Non-Agora",
+  account_billing: "Account & Billing",
+  uncertain: "Uncertain",
 };
 
 const ROUTE_TUPLE_OPTIONS = [
   { scope: "ticket_resolution", action: "resolve_ticket", label: "Conversation / Resolve" },
   { scope: "conversation", action: "follow_up", label: "Conversation / Follow-up" },
   { scope: "conversation", action: "human_review_required", label: "Conversation / Human Review" },
-  { scope: "non_agora", action: "human_review_required", label: "Support Request / Non-Agora" },
-  { scope: "agora_technical", action: "rag", label: "Support Request / Agora Technical" },
-  { scope: "agora_non_technical", action: "web_search", label: "Support Request / Agora Non-technical" },
-  { scope: "human_review", action: "human_review_required", label: "Support Request / Human Review" },
-  { scope: "unclear", action: "human_review_required", label: "Unclear / Human Review" },
+  { scope: "agora_technical", action: "rag", label: "Agora / Agora Technical" },
+  { scope: "agora_non_technical", action: "web_search", label: "Agora / Agora Non-technical" },
+  { scope: "account_billing", action: "human_review_required", label: "Agora / Account & Billing" },
+  { scope: "uncategorized", action: "human_review_required", label: "Agora / Uncategorized" },
+  { scope: "uncertain", action: "human_review_required", label: "Uncertain / Human Review" },
   { scope: "automation", action: "account_verification", label: "Automation / Account verification" },
   { scope: "automation", action: "account_suspension", label: "Automation / Account suspension" },
   { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "automation", action: "enablement", label: "Automation / Enablement" },
+  { scope: "automation", action: "unregistered", label: "Automation / Unregistered" },
 ];
 
 const DEFAULT_ROUTE_TUPLE_SELECT_VALUE = "scope|action";
@@ -476,7 +479,10 @@ function matchesFilter(item) {
   if (state.statusFilter === "not_automated") return !isAutomatedRoute(item);
   if (state.statusFilter === "route_errors") return Boolean(item.route_error);
   if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
-    return secondary === ROUTE_LABEL_FILTER_MATCHES[state.statusFilter];
+    const { primary } = classificationLabels(item);
+    const expected = ROUTE_LABEL_FILTER_MATCHES[state.statusFilter];
+    if (expected instanceof Set) return expected.has(secondary) || expected.has(primary);
+    return secondary === expected || primary === expected;
   }
   return true;
 }
@@ -492,7 +498,8 @@ function renderFilterControls() {
     { value: "human_review", label: "Human Review" },
     { value: "agora_technical", label: "Agora Technical" },
     { value: "agora_non_technical", label: "Agora Non-technical" },
-    { value: "non_agora", label: "Non-Agora" },
+    { value: "account_billing", label: "Account & Billing" },
+    { value: "uncertain", label: "Uncertain" },
   ];
   return `
     <div class="filter-chips">
@@ -947,8 +954,8 @@ function renderDetailView() {
             : ""
         }
         ${
-          item.route_reason
-            ? `<div class="meta-row"><span class="meta-label">Route reason</span><span class="meta-value">${escapeHtml(item.route_reason)}</span></div>`
+          item.route_reason_code || item.route_reason
+            ? `<div class="meta-row"><span class="meta-label">Route reason</span><span class="meta-value">${escapeHtml(item.route_reason_code || item.route_reason)}</span></div>`
             : ""
         }
         ${
