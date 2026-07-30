@@ -197,6 +197,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         route_confidence: float = 0.95,
         secondary_label: str | None = None,
         intent_class: str | None = None,
+        conversation_action: str | None = None,
         persist_route_labels: bool = True,
     ) -> None:
         route_classification: dict[str, Any] = {}
@@ -212,10 +213,17 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "Account & Billing": "account_billing",
                     "Agora / Uncategorized": "uncategorized",
                 }.get(secondary_label, "uncategorized"),
+                "conversation_action": conversation_action,
             }
             if persist_route_labels:
                 route_classification.update(
-                    primary_label="Uncertain" if normalized_intent == "uncertain" else "Agora",
+                    primary_label=(
+                        "Uncertain"
+                        if normalized_intent == "uncertain"
+                        else "Conversation"
+                        if normalized_intent == "conversation"
+                        else "Agora"
+                    ),
                     secondary_label=secondary_label,
                 )
         self.repository.save_billing_ticket(
@@ -1733,20 +1741,40 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_account_cases_list_api_filters_route_labels_before_pagination(self) -> None:
         route_filters = {
-            "human_review": "Agora / Uncategorized",
             "agora_technical": "Agora Technical",
             "agora_non_technical": "Agora Non-technical",
             "account_billing": "Account & Billing",
-            "uncertain": "Human Review",
         }
         for route_filter, secondary_label in route_filters.items():
             self._save_billing_ticket(
                 ticket_id=f"TK-{route_filter}",
                 automation_status="not_automated",
                 secondary_label=secondary_label,
-                intent_class="uncertain" if route_filter == "uncertain" else "agora",
+                intent_class="agora",
                 persist_route_labels=False,
             )
+        self._save_billing_ticket(
+            ticket_id="TK-human-review-agora",
+            automation_status="not_automated",
+            secondary_label="Agora / Uncategorized",
+            intent_class="agora",
+            persist_route_labels=False,
+        )
+        self._save_billing_ticket(
+            ticket_id="TK-human-review-uncertain",
+            automation_status="not_automated",
+            secondary_label="Human Review",
+            intent_class="uncertain",
+            persist_route_labels=False,
+        )
+        self._save_billing_ticket(
+            ticket_id="TK-conversation",
+            automation_status="not_automated",
+            secondary_label="Follow-up",
+            intent_class="conversation",
+            conversation_action="follow_up",
+            persist_route_labels=False,
+        )
         self._save_billing_ticket(
             ticket_id="TK-legacy-automation",
             automation_status="automation",
@@ -1761,6 +1789,26 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertEqual(payload["total"], 1)
             self.assertEqual(payload["count"], 1)
             self.assertEqual(payload["cases"][0]["secondary_label"], secondary_label)
+
+        human_review = self.client.get(
+            "/api/account/cases?page=1&page_size=10&route_label=human_review"
+        )
+        self.assertEqual(human_review.status_code, 200, human_review.text)
+        human_payload = human_review.json()
+        self.assertEqual(human_payload["total"], 2)
+        self.assertEqual(
+            {item["secondary_label"] for item in human_payload["cases"]},
+            {"Agora / Uncategorized", "Human Review"},
+        )
+
+        conversation = self.client.get(
+            "/api/account/cases?page=1&page_size=10&route_label=conversation"
+        )
+        self.assertEqual(conversation.status_code, 200, conversation.text)
+        conversation_payload = conversation.json()
+        self.assertEqual(conversation_payload["total"], 1)
+        self.assertEqual(conversation_payload["cases"][0]["primary_label"], "Conversation")
+        self.assertEqual(conversation_payload["cases"][0]["secondary_label"], "Follow-up")
 
         invalid = self.client.get("/api/account/cases?route_label=unsupported")
         self.assertEqual(invalid.status_code, 422, invalid.text)
