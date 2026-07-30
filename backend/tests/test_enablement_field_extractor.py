@@ -10,6 +10,91 @@ from backend.services.llm_factory import LlmInvocationError
 
 
 class EnablementFieldExtractorTests(unittest.TestCase):
+    def test_case_12513_misspelled_feature_is_recovered_by_verification(self) -> None:
+        message = "I need to open channel media rele on this app id project-12513"
+        app_id = {
+            "value": "project-12513",
+            "source_message_id": "m1",
+            "source_quote": "app id project-12513",
+            "confidence": 0.99,
+        }
+        responses = iter(
+            [
+                {
+                    "status": "complete",
+                    "fields": {
+                        "app_id": app_id,
+                        "requested_feature": {
+                            "value": "media_relay",
+                            "original_label": "channel media relay",
+                            "source_message_id": "m1",
+                            "source_quote": "open channel media rele",
+                            "confidence": 0.96,
+                        },
+                    },
+                },
+                {
+                    "status": "complete",
+                    "fields": {
+                        "app_id": app_id,
+                        "requested_feature": {
+                            "value": "media_relay",
+                            "original_label": "channel media rele",
+                            "source_message_id": "m1",
+                            "source_quote": "open channel media rele",
+                            "confidence": 0.96,
+                        },
+                    },
+                },
+            ]
+        )
+
+        result = extract_enablement_fields(
+            ticket_subject="I need to open channel media rele",
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": message}],
+            invoke=lambda **_: next(responses),
+        )
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.collected_fields["requested_feature"], "media_relay")
+        self.assertEqual(result.collected_fields["requested_feature_label"], "channel media rele")
+        self.assertEqual(result.audit_payload()["verification_status"], "corrected_feature_grounding")
+
+    def test_misspelled_feature_still_fails_closed_when_verifier_cannot_ground_it(self) -> None:
+        payload = {
+            "status": "complete",
+            "fields": {
+                "app_id": {
+                    "value": "project-12513",
+                    "source_message_id": "m1",
+                    "source_quote": "app id project-12513",
+                    "confidence": 0.99,
+                },
+                "requested_feature": {
+                    "value": "media_relay",
+                    "original_label": "channel media relay",
+                    "source_message_id": "m1",
+                    "source_quote": "open channel media rele",
+                    "confidence": 0.96,
+                },
+            },
+        }
+
+        result = extract_enablement_fields(
+            ticket_subject="I need to open channel media rele",
+            customer_messages=[
+                {
+                    "message_id": "m1",
+                    "role": "customer",
+                    "content": "I need to open channel media rele on this app id project-12513",
+                }
+            ],
+            invoke=lambda **_: payload,
+        )
+
+        self.assertEqual(result.status, "uncertain")
+        self.assertEqual(result.failure_type, "verification_failed")
+
     def test_missing_app_id_is_corrected_by_verification_pass(self) -> None:
         message = "Please enable Media Relay. My app ID is project-alpha."
         responses = iter(

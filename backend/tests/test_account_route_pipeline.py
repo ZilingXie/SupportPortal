@@ -32,6 +32,9 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertTrue(all(item["primary_label"] == "Agora" for item in cases))
         self.assertNotIn("Support Request", {item["primary_label"] for item in cases})
         self.assertNotIn("mixed", {item["reason_code"] for item in cases})
+        by_case_id = {item["case_id"]: item for item in cases}
+        self.assertEqual(by_case_id["12458"]["secondary_label"], "Agora Technical")
+        self.assertEqual(by_case_id["12458"]["reason_code"], "technical_request")
 
     def test_route_correction_uses_layered_labels_without_activating_handler(self) -> None:
         conversation = classification_for_corrected_route(
