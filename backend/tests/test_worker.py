@@ -2136,6 +2136,16 @@ class WorkerResilienceTests(unittest.TestCase):
         }
         repository = Mock()
         repository.list_billing_tickets.return_value = [account_case]
+        repository.get_ticket.return_value = {
+            "ticket_id": "12495",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable Media Relay.",
+                    "created_at": "2026-07-23T23:59:00+00:00",
+                }
+            ],
+        }
         repository.get_latest_account_reply_job.return_value = None
         repository.resolve_account_persona.return_value = None
 
@@ -2161,9 +2171,91 @@ class WorkerResilienceTests(unittest.TestCase):
             reply_job["payload"]["automation_delivery_key"],
             "enablement:AC-12495:v1",
         )
+        self.assertEqual(reply_job["trigger_message_created_at"], "2026-07-23T23:59:00+00:00")
         self.assertNotIn("it enablement", reply_job["payload"]["draft_content"])
         self.assertEqual(account_case["internal_email_send_status"], "sent")
         self.assertTrue(account_case["internal_email_payload"]["customer_confirmation_queued"])
+
+    def test_enablement_delivery_retry_replaces_malformed_cancelled_confirmation(self) -> None:
+        account_case = {
+            "account_case_id": "AC-12513",
+            "client_ticket_id": "12513",
+            "automation_handler": "enablement",
+            "missing_fields": [],
+            "collected_fields": {
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-12513:v1",
+                "customer_confirmation_queued": True,
+            },
+            "internal_email_send_status": "sent",
+        }
+        repository = Mock()
+        repository.list_billing_tickets.return_value = [account_case]
+        repository.get_ticket.return_value = {
+            "ticket_id": "12513",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable Media Relay.",
+                    "created_at": "2026-07-29T19:50:01+00:00",
+                }
+            ],
+        }
+        repository.get_latest_account_reply_job.return_value = {
+            "status": "cancelled",
+            "trigger_message_created_at": "2026-07-30T02:09:35+00:00",
+            "payload": {"automation_delivery_key": "enablement:AC-12513:v1"},
+        }
+        repository.resolve_account_persona.return_value = None
+
+        with patch.object(worker, "ticket_repository", repository):
+            created = worker._queue_enablement_submission_confirmation(
+                account_case,
+                repair_malformed_cancelled=True,
+            )
+
+        self.assertTrue(created)
+        replacement = repository.save_account_reply_job.call_args.args[0]
+        self.assertEqual(replacement["trigger_message_created_at"], "2026-07-29T19:50:01+00:00")
+
+    def test_enablement_delivery_retry_does_not_revive_confirmation_after_customer_reply(self) -> None:
+        account_case = {
+            "account_case_id": "AC-12513",
+            "client_ticket_id": "12513",
+            "automation_handler": "enablement",
+            "missing_fields": [],
+            "collected_fields": {"requested_feature": "media_relay"},
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-12513:v1",
+                "customer_confirmation_queued": True,
+            },
+            "internal_email_send_status": "sent",
+        }
+        repository = Mock()
+        repository.get_ticket.return_value = {
+            "ticket_id": "12513",
+            "messages": [
+                {"role": "customer", "created_at": "2026-07-29T19:50:01+00:00"},
+                {"role": "customer", "created_at": "2026-07-30T03:00:00+00:00"},
+            ],
+        }
+        repository.get_latest_account_reply_job.return_value = {
+            "status": "cancelled",
+            "trigger_message_created_at": "2026-07-29T19:50:01+00:00",
+            "payload": {"automation_delivery_key": "enablement:AC-12513:v1"},
+        }
+
+        with patch.object(worker, "ticket_repository", repository):
+            created = worker._queue_enablement_submission_confirmation(
+                account_case,
+                repair_malformed_cancelled=True,
+            )
+
+        self.assertFalse(created)
+        repository.save_account_reply_job.assert_not_called()
 
     def test_enablement_delivery_retry_ignores_legacy_sent_case_without_delivery_key(self) -> None:
         repository = Mock()
