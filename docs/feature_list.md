@@ -26,6 +26,7 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Automation 类别通过 account_verification、account_suspension、detailed_invoice 和 enablement 子类自动收集字段并交由已注册 handler 处理；账户验证与账户暂停保持独立分类。
 - Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。
+- Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 - Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automation 或非自动化路由。
 - Account 入口可查看 Account Case 历史和详情。
@@ -36,6 +37,7 @@
 - Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。
 - Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。
 - Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。
+- Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
@@ -97,6 +99,7 @@
 - Account 入口通过 Intent Classifier、Agora Router 和 Automation Router 分层分类，并同时展示大标签和小标签；该 pipeline 不影响 Client 路由。
 - Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
+- Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 
 ### 未完成
 - 待补充。

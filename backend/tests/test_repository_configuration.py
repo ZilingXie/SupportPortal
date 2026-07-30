@@ -350,12 +350,14 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("route_status TEXT NOT NULL DEFAULT 'not_automated'", sql_source)
         self.assertIn("automation_handler TEXT", sql_source)
         self.assertIn("route_classification JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
+        self.assertIn("automation_context JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
         self.assertIn("idx_support_account_cases_created", sql_source)
         self.assertIn("support_account_cases", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS semantic_intent TEXT", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS scope_label TEXT", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile TEXT", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_classification JSONB", repo_source)
+        self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_context JSONB", repo_source)
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb", repo_source)
         self.assertIn("def save_billing_ticket", repo_source)
         self.assertIn("def get_billing_ticket", repo_source)
@@ -394,6 +396,14 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIn("ALTER TABLE support_account_cases", migration)
         self.assertIn("ADD COLUMN IF NOT EXISTS route_classification JSONB", migration)
+
+    def test_account_verification_handler_migration_is_idempotent(self) -> None:
+        migration = Path(
+            "backend/sql/migrations/2026_07_30_account_verification_handler.sql"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("ALTER TABLE support_account_cases", migration)
+        self.assertIn("ADD COLUMN IF NOT EXISTS automation_context JSONB", migration)
 
     def test_account_suspension_merge_migration_is_idempotent_and_preserves_original_audit(self) -> None:
         migration = Path(

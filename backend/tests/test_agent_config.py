@@ -51,6 +51,14 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(route_prompts["account-automation-router-system"]["metadata"]["managed"], False)
         self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["metadata"]["managed"], True)
         self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["version"], "account-enablement-fields-v2")
+        self.assertEqual(
+            route_prompts["account-verification-field-extractor-system"]["version"],
+            "account-verification-fields-v1",
+        )
+        self.assertEqual(
+            route_prompts["account-verification-follow-up-composer-system"]["metadata"]["managed"],
+            True,
+        )
         self.assertEqual(route_prompts["route-system"]["version"], "account-router-v2")
         component_keys = {item["key"] for item in agents["route-agent"]["components"]}
         self.assertTrue(
@@ -59,6 +67,10 @@ class AgentConfigTests(unittest.TestCase):
                 "account-agora-router",
                 "account-automation-router",
                 "account-enablement-field-extractor",
+                "account-verification-handler",
+                "account-verification-field-extractor",
+                "account-verification-follow-up-composer",
+                "account-verification-payment-safety",
                 "route-classifier",
             }.issubset(component_keys)
         )
