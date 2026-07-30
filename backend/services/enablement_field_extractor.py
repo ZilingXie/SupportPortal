@@ -160,6 +160,13 @@ def _feature_label_is_generic(payload: dict[str, Any]) -> bool:
     return bool(label) and label in _GENERIC_FEATURE_LABELS
 
 
+def _feature_label_is_exactly_grounded(payload: dict[str, Any]) -> bool:
+    candidate = _raw_field(payload, "requested_feature")
+    label = str(candidate.get("original_label") or "").strip()
+    source_quote = str(candidate.get("source_quote") or "").strip()
+    return bool(label and source_quote and label in source_quote)
+
+
 def _requires_verification(payload: dict[str, Any]) -> bool:
     status = str(payload.get("status") or "").strip().lower()
     missing = {
@@ -167,7 +174,14 @@ def _requires_verification(payload: dict[str, Any]) -> bool:
         for item in payload.get("missing_fields", [])
         if str(item).strip()
     } if isinstance(payload.get("missing_fields"), list) else set()
-    return status == "missing" or "app_id" in missing or _feature_label_is_generic(payload)
+    feature = _raw_field(payload, "requested_feature")
+    feature_needs_grounding = bool(feature) and not _feature_label_is_exactly_grounded(payload)
+    return (
+        status == "missing"
+        or "app_id" in missing
+        or _feature_label_is_generic(payload)
+        or feature_needs_grounding
+    )
 
 
 def _reconcile_verified_payload(
@@ -198,6 +212,14 @@ def _reconcile_verified_payload(
         if verified_status == "complete" and not _feature_label_is_generic(verified):
             return verified, "corrected_feature", "field verifier resolved the concrete feature name"
         return None, "conflict", "field verifier could not resolve a concrete feature name"
+    if not _feature_label_is_exactly_grounded(primary):
+        if verified_status == "complete" and _feature_label_is_exactly_grounded(verified):
+            return (
+                verified,
+                "corrected_feature_grounding",
+                "field verifier preserved the customer's exact feature wording",
+            )
+        return None, "failed", "field verifier could not ground the requested feature exactly"
     return primary, "not_required", ""
 
 

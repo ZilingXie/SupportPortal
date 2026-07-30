@@ -6,7 +6,7 @@ from typing import Any
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
 ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v2"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v3"
-ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v2"
+ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
 ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "account-verification-fields-v1"
 ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION = "account-verification-follow-up-v1"
 
@@ -219,6 +219,9 @@ Do not route the Case, answer unrelated questions, or infer identifiers that the
 - Every newly extracted field must cite a customer message ID and an exact source_quote copied from it.
 - app_id.value must be copied exactly from source_quote. Do not correct, complete, normalize, or guess it.
 - requested_feature_label must be copied exactly from source_quote; requested_feature may be normalized.
+- Preserve the customer's spelling in requested_feature_label, including misspellings such as "media rele".
+  Put the corrected capability name only in requested_feature. For example, customer text "channel media rele"
+  may produce requested_feature="media_relay" and requested_feature_label="channel media rele".
 - requested_feature_label must name the concrete capability. Pronouns or generic placeholders such as it,
   this, that, feature, or service are invalid. Resolve them from earlier customer context when possible.
 - Existing collected fields are trusted and must not be replaced unless the customer explicitly supplies a
@@ -283,6 +286,8 @@ def build_account_enablement_field_verification_user_prompt(
             "## Verification task",
             "Independently re-extract the fields from the complete customer history.",
             "The primary extraction may have missed an App ID or used a pronoun as the feature name.",
+            "It may also have silently corrected a misspelled feature label. Preserve the customer's exact spelling",
+            "in original_label and source_quote; normalize spelling only in the canonical value.",
             "Do not defer to the primary result. Return the same JSON schema required by the system prompt.",
             "",
             "## Primary extraction to verify",

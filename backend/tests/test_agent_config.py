@@ -52,7 +52,7 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(route_prompts["account-agora-router-system"]["metadata"]["scope"], "/account")
         self.assertEqual(route_prompts["account-automation-router-system"]["metadata"]["managed"], False)
         self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["metadata"]["managed"], True)
-        self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["version"], "account-enablement-fields-v2")
+        self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["version"], "account-enablement-fields-v3")
         self.assertEqual(
             route_prompts["account-verification-field-extractor-system"]["version"],
             "account-verification-fields-v1",

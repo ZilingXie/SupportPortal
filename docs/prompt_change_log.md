@@ -2951,3 +2951,19 @@ For each new entry, record:
   - Delivery and confirmation use a stable per-Case delivery key to avoid duplicate customer confirmation jobs.
 - Verification:
   - `rtk uv run --with pytest --with 'psycopg[binary]' python -m pytest backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_repair.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_agent_config.py backend/tests/test_single_host_compose.py -q`
+## 2026-07-30 - Enablement misspelled feature grounding verification
+
+- Area or subsystem: `/account` Enablement field intake
+- Prompt or model version: `account-enablement-fields-v3` / existing `intent_router` profile
+- Summary: Added an independent verification pass when the extractor normalizes or corrects a feature label that is not an exact substring of its cited customer quote. The verifier must preserve customer misspellings in `original_label` while keeping the corrected capability only in the canonical field.
+- Reason: Case 12513 clearly requested Channel Media Relay enablement, but the customer's `rele` misspelling was silently corrected in the extracted label and then rejected by exact grounding validation, incorrectly sending the Case to Human Review.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/enablement_field_extractor.py`
+- Expected behavior change:
+  - Explicit Enablement requests with misspelled feature names can remain `Automation / Enablement` when a second LLM pass returns an exact customer-authored label and quote.
+  - Canonical feature values may correct spelling, while audit labels retain the customer's original wording.
+  - A second ungrounded result still fails closed to Human Review.
+  - Troubleshooting requests such as Case 12458 remain `Agora Technical`; feature-name typo tolerance does not change Agora Router priority.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_field_extractor.py backend/tests/test_account_route_pipeline.py -q`
