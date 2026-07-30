@@ -283,13 +283,18 @@ def _run_engineer_assignment_poller(interval_seconds: float) -> None:
     LOGGER.info("Engineer assignment poller stopped.")
 
 
-def _account_reply_trigger_is_latest(ticket: dict[str, Any], trigger_created_at: str) -> bool:
-    customer_timestamps = [
+def _account_customer_message_timestamps(ticket: dict[str, Any]) -> list[str]:
+    return [
         str(message.get("created_at") or "")
         for message in ticket.get("messages", [])
         if isinstance(message, dict)
         and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+        and str(message.get("created_at") or "").strip()
     ]
+
+
+def _account_reply_trigger_is_latest(ticket: dict[str, Any], trigger_created_at: str) -> bool:
+    customer_timestamps = _account_customer_message_timestamps(ticket)
     return bool(customer_timestamps) and max(customer_timestamps) == str(trigger_created_at)
 
 
@@ -494,66 +499,88 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
     LOGGER.info("Account reply poller stopped.")
 
 
-def _queue_enablement_submission_confirmation(account_case: dict[str, Any]) -> bool:
+def _queue_enablement_submission_confirmation(
+    account_case: dict[str, Any],
+    *,
+    repair_malformed_cancelled: bool = False,
+) -> bool:
     payload = (
         dict(account_case.get("internal_email_payload"))
         if isinstance(account_case.get("internal_email_payload"), dict)
         else {}
     )
-    if bool(payload.get("customer_confirmation_queued")):
-        return False
     ticket_id = str(account_case.get("client_ticket_id") or "").strip()
     delivery_key = str(payload.get("delivery_key") or "").strip()
     if not ticket_id or not delivery_key:
         raise ValueError("Enablement delivery is missing ticket or delivery key")
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if not isinstance(ticket, dict):
+        raise RuntimeError("Enablement delivery is missing its linked ticket")
+    customer_timestamps = _account_customer_message_timestamps(ticket)
+    if not customer_timestamps:
+        raise ValueError("Enablement delivery is missing a customer message timestamp")
+    trigger_message_created_at = max(customer_timestamps)
     latest_job = ticket_repository.get_latest_account_reply_job(ticket_id)
     latest_payload = (
         dict(latest_job.get("payload"))
         if isinstance(latest_job, dict) and isinstance(latest_job.get("payload"), dict)
         else {}
     )
-    if str(latest_payload.get("automation_delivery_key") or "").strip() != delivery_key:
-        fields = account_case.get("collected_fields")
-        fields = fields if isinstance(fields, dict) else {}
-        confirmation = build_enablement_submission_confirmation(
-            str(fields.get("requested_feature_label") or fields.get("requested_feature") or "feature")
-        )
-        persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
-        if isinstance(persona_assignment, dict):
-            confirmation = apply_persona_to_customer_reply(confirmation, persona_assignment)
-        created_at = now_iso()
-        ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
-        reply_payload: dict[str, Any] = {
-            "draft_content": confirmation,
-            "asked_field_keys": [],
-            "visibility": "account_only",
-            "automation_delivery_key": delivery_key,
-        }
-        if persona_assignment:
-            reply_payload.update(
-                {
-                    "persona_key": persona_assignment.get("persona_key"),
-                    "persona_version": persona_assignment.get("version"),
-                    "effective_prompt": dict(persona_assignment.get("content") or {}),
-                }
-            )
-        ticket_repository.save_account_reply_job(
+    latest_delivery_key = str(latest_payload.get("automation_delivery_key") or "").strip()
+    latest_status = str((latest_job or {}).get("status") or "").strip()
+    latest_trigger = str((latest_job or {}).get("trigger_message_created_at") or "").strip()
+    malformed_cancelled_confirmation = bool(
+        latest_delivery_key == delivery_key
+        and latest_status == "cancelled"
+        and latest_trigger not in customer_timestamps
+    )
+    should_repair = malformed_cancelled_confirmation and repair_malformed_cancelled
+    should_create = latest_delivery_key != delivery_key or should_repair
+    if bool(payload.get("customer_confirmation_queued")) and not should_repair:
+        should_create = False
+    if not should_create:
+        return False
+    fields = account_case.get("collected_fields")
+    fields = fields if isinstance(fields, dict) else {}
+    confirmation = build_enablement_submission_confirmation(
+        str(fields.get("requested_feature_label") or fields.get("requested_feature") or "feature")
+    )
+    persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
+    if isinstance(persona_assignment, dict):
+        confirmation = apply_persona_to_customer_reply(confirmation, persona_assignment)
+    created_at = now_iso()
+    ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
+    reply_payload: dict[str, Any] = {
+        "draft_content": confirmation,
+        "asked_field_keys": [],
+        "visibility": "account_only",
+        "automation_delivery_key": delivery_key,
+    }
+    if persona_assignment:
+        reply_payload.update(
             {
-                "job_id": f"account-reply-{uuid4().hex}",
-                "ticket_id": ticket_id,
-                "trigger_message_created_at": created_at,
-                "status": "scheduled",
-                "scheduled_for": (
-                    datetime.now(timezone.utc) + timedelta(minutes=6)
-                ).isoformat(),
-                "payload": reply_payload,
-                "attempt_count": 0,
-                "claimed_at": None,
-                "published_at": None,
-                "created_at": created_at,
-                "updated_at": created_at,
+                "persona_key": persona_assignment.get("persona_key"),
+                "persona_version": persona_assignment.get("version"),
+                "effective_prompt": dict(persona_assignment.get("content") or {}),
             }
         )
+    ticket_repository.save_account_reply_job(
+        {
+            "job_id": f"account-reply-{uuid4().hex}",
+            "ticket_id": ticket_id,
+            "trigger_message_created_at": trigger_message_created_at,
+            "status": "scheduled",
+            "scheduled_for": (
+                datetime.now(timezone.utc) + timedelta(minutes=6)
+            ).isoformat(),
+            "payload": reply_payload,
+            "attempt_count": 0,
+            "claimed_at": None,
+            "published_at": None,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+    )
     payload["customer_confirmation_queued"] = True
     account_case["internal_email_payload"] = payload
     account_case["updated_at"] = now_iso()
