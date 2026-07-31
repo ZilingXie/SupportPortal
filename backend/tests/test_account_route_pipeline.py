@@ -241,12 +241,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
                 {
                     "agora_route": "automation",
                     "confidence": 0.97,
-                    "reason_code": "explicit_backend_operation",
-                    "backend_operation": {
-                        "action": "restore",
-                        "target": "account_access",
-                        "evidence": "restore our access",
-                    },
+                    "reason_code": "classification_only_automation",
+                    "backend_operation": None,
                 }
             ),
             _attempt(
@@ -273,6 +269,42 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.decision.execution_action, "account_suspension")
         self.assertEqual(result.decision.route_family, "automated")
         self.assertEqual(result.decision.tooling_profile, "classification_only")
+        self.assertEqual(
+            result.classification["stage_reason_codes"]["agora_router"],
+            "classification_only_automation",
+        )
+
+    def test_other_automation_without_backend_operation_fails_closed(self) -> None:
+        attempts = [
+            _attempt(
+                {
+                    "intent_class": "agora",
+                    "intent_confidence": 0.99,
+                    "reason_code": "agora_case",
+                }
+            ),
+            _attempt(
+                {
+                    "agora_route": "automation",
+                    "confidence": 0.97,
+                    "reason_code": "explicit_backend_operation",
+                    "backend_operation": None,
+                }
+            ),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ) as invoke_stage:
+            result = decide_account_route("Please change something on my account.")
+
+        self.assertEqual(result.secondary_label, "Agora / Uncategorized")
+        self.assertEqual(result.classification["route_target"], "human_review")
+        self.assertEqual(
+            result.classification["route_reason_code"],
+            "insufficient_backend_operation_evidence",
+        )
+        self.assertEqual(invoke_stage.call_count, 2)
 
     def test_fraud_account_is_separate_from_non_fraud_suspension(self) -> None:
         attempts = [

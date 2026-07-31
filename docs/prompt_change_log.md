@@ -3027,3 +3027,19 @@ For each new entry, record:
   - Classification-only reroute remains side-effect free; a separate targeted repair command can refresh stored Fraud/Suspension fields without sending mail or customer replies.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_intake.py backend/tests/test_account_case_reroute.py backend/tests/test_route_correction.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_suspension_field_extractor.py backend/tests/test_account_automation_state_repair.py backend/tests/test_account_verification_automation.py backend/tests/test_agent_config.py backend/tests/test_account_ui_contract.py backend/tests/test_workspace_admin_ui_contract.py`
+
+## 2026-07-31 - Account Suspension classification-only Agora Router exception
+
+- Area or subsystem: `/account` Agora Router and Account Suspension routing
+- Prompt or model version: `account-agora-v5` / existing `intent_router` profile
+- Summary: Allowed a clearly reported non-fraud account suspension to enter the Automation Router as a classification-only candidate without inventing a backend operation. Added `classification_only_automation` as a stable Agora Router reason code.
+- Reason: Case 12523 clearly reported that the account was stopped after purchasing an extra usage package, but the Agora Router sent it to Human Review because the customer did not request a sufficiently concrete backend action. Account Suspension is intentionally classification-only and should not have that requirement.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+- Expected behavior change:
+  - Explicit non-fraud suspension reports can reach `Automation / Account Suspension` with `backend_operation=null` and `reason_code=classification_only_automation`.
+  - The Automation Router must still confirm `account_suspension`; the exception does not apply to vague account requests or other Automation categories.
+  - Fraud/risk/security-review suspensions remain candidates for `Automation / Fraud Account`, while billing questions without a reported suspension remain `Account & Billing`.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_agent_config.py`

@@ -77,6 +77,7 @@ _AGORA_REASON_CODES = {
     "non_technical_request",
     "account_billing_request",
     "explicit_backend_operation",
+    "classification_only_automation",
     "no_matching_category",
     "insufficient_route_information",
     "insufficient_backend_operation_evidence",
@@ -963,10 +964,16 @@ def decide_account_route(
     elif agora_confidence < threshold:
         agora_route = "uncategorized"
         agora_reason = "low_agora_route_confidence"
+    elif agora_route == "automation" and agora_reason == "classification_only_automation":
+        pass
     elif agora_route != "uncategorized":
         agora_reason = agora_reason_defaults[agora_route]
     backend_operation = _backend_operation(agora_payload.get("backend_operation"))
-    if agora_route == "automation" and backend_operation is None:
+    if (
+        agora_route == "automation"
+        and backend_operation is None
+        and agora_reason != "classification_only_automation"
+    ):
         agora_route = "uncategorized"
         agora_reason = "insufficient_backend_operation_evidence"
     additional_intents = [
