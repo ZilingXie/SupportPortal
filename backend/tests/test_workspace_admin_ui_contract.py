@@ -71,46 +71,62 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn('/api/engineer/tickets?status=all', source)
         self.assertNotIn("/availability", source)
 
-    def test_account_automation_agent_config_route_strategy_and_environment_tabs_are_operational(self) -> None:
+    def test_account_automation_hierarchical_agent_config_and_environment_tabs_are_operational(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
         for marker in (
-            '"automated-cases"', '"agent-config"', '"route-strategy"', '"environment-config"',
+            '"automated-cases"', '"agent-config"', '"environment-config"',
             "/api/workspace/admin/account-automation",
-            "/api/workspace/admin/account-routing/config",
             "/api/workspace/admin/agent-config",
+            "/api/workspace/admin/account-personas",
             "/api/workspace/admin/environment-config",
-            "Automation share", "Route category", "Current route", "Agent Config", "No MCP configured", "Configuration names",
-            "data-agent-entry", "data-env-search", "data-action=\"select-agent-prompt\"",
+            "Automation share", "Current route", "Agent Config", "No MCP configured", "Configuration names",
+            "data-action=\"toggle-agent-tree\"", "data-env-search", "data-action=\"select-agent-prompt\"",
             "environmentLoadError", "loadEnvironmentConfig",
             "agentConfigLoadError", "loadAgentConfig", "data-action=\"retry-agent-config\"",
-            "data-action=\"retry-environment-config\"", "related_services",
+            "data-action=\"retry-environment-config\"", "automation_personas", "route_navigation",
+            "data-persona-draft-form", 'data-action="publish-persona"',
+            'data-action="rollback-persona"', 'data-action="toggle-persona"',
             "description.toLowerCase()", "admin-config-description", "admin-config-copy",
         ):
             self.assertIn(marker, source)
-        for marker in (".admin-metric-strip", ".admin-route-timeline", ".admin-agent-entry", ".admin-agent-prompt-layout", ".admin-config-list", ".admin-config-description", ".admin-config-copy"):
+        for marker in (".admin-metric-strip", ".admin-agent-workspace", ".admin-agent-tree", ".admin-agent-prompt-layout", ".admin-persona-workspace", ".admin-config-list", ".admin-config-description", ".admin-config-copy"):
             self.assertIn(marker, css)
 
         self.run_admin_app_script(
             """
             automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ client_ticket_id: 'TK-1', title: 'Invoice', automation_status: 'automation' }] };
-            routingData = { router_prompt_version: 'account-router-v1', stages: ['semantic_intent', 'policy_gate'], stage_details: [{ name: 'semantic_intent', description: 'Classifies the request.' }, { name: 'policy_gate', description: 'Applies policy.' }], route_categories: [{ name: 'billing', display_name: 'Billing', description: 'Billing requests.', execution_actions: ['detailed_invoice'] }], system_prompt: 'actual prompt' };
             agentConfigData = {
-              agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', components: [{ key: 'route-classifier', name: 'Route classifier', description: 'Classifies requests.', status: 'active' }], prompts: [{ key: 'route-system', name: 'Route classifier', version: 'account-router-v1', component_key: 'route-classifier', content: 'actual prompt', metadata: {} }], skills: [], mcp_servers: [] }],
-              related_services: [{ key: 'billing-automation', kind: 'service', name: 'Billing Automation', description: 'Not an Agent.', status: 'active', components: [{ key: 'persona-registry', name: 'Persona registry', description: 'Versioned prompts.', status: 'active' }], prompts: [{ key: 'persona-default-v1', name: 'Default Support v1', version: '1', component_key: 'persona-registry', content: '{"instruction":"Warm"}', metadata: { status: 'published', is_published: true, change_note: 'Initial' } }], skills: [], mcp_servers: [] }]
+              agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', components: [], prompts: [{ key: 'automation-system', name: 'Automation Router', version: 'v1', component_key: 'automation-router', content: 'actual prompt', metadata: {} }], skills: [], mcp_servers: [] }],
+              route_navigation: { key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', prompt_keys: [], capabilities: [], children: [
+                { key: 'agora-router', kind: 'router', name: 'Agora Router', description: 'Routes Agora.', status: 'active', prompt_keys: [], capabilities: [], children: [
+                  { key: 'automation-router', kind: 'router', name: 'Automation Router', description: 'Routes Automation.', status: 'active', persona_scope: 'account-automation', prompt_keys: ['automation-system'], capabilities: [], children: [
+                    { key: 'detailed-invoice', kind: 'automation', name: 'Detailed Invoice', description: 'Runs invoice behavior.', status: 'active', prompt_keys: [], capabilities: [{ key: 'billing', name: 'Billing Handler', description: 'Deterministic invoice behavior.', status: 'active' }], children: [] }
+                  ] }
+                ] }
+              ] },
+              route_runtime: { router_prompt_version: 'account-router-v1', stage_details: [{ name: 'intent_classifier', description: 'Classifies the request.' }] },
+              automation_personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', opener: '', signoff_name: 'Sid' }, change_note: 'Initial' }] }]
             };
             environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'], items: [
               { name: 'OPENAI_API_KEY', description: 'Credential used by OpenAI.' },
               { name: 'TICKET_DB_DSN', description: 'PostgreSQL connection string for ticket storage.' }
             ] };
             if (!renderAutomatedCases().includes('25.0%')) throw new Error('automation ratio missing');
-            if (!renderRouteStrategy().includes('account-router-v1')) throw new Error('route version missing');
-            if (!renderRouteStrategy().includes('Classifies the request.')) throw new Error('route stage description missing');
-            if (!renderRouteStrategy().includes('Billing requests.')) throw new Error('route category missing');
-            if (renderRouteStrategy().includes('actual prompt')) throw new Error('route strategy still exposes prompt');
-            const agentMarkup = renderAgentConfig();
-            if (!agentMarkup.includes('Route Agent') || !agentMarkup.includes('Billing Automation')) throw new Error('agent catalog missing');
-            if (!agentMarkup.includes('Default Support v1') || !agentMarkup.includes('Published')) throw new Error('read-only persona history missing');
+            selectedAgentPath = [];
+            const catalogMarkup = renderAgentConfig();
+            if (!catalogMarkup.includes('Route Agent') || catalogMarkup.includes('Billing Automation') || catalogMarkup.includes('Related services')) throw new Error('top-level Agent catalog is invalid');
+            selectedAgentPath = ['route-agent'];
+            if (!renderAgentConfig().includes('account-router-v1') || !renderAgentConfig().includes('Classifies the request.')) throw new Error('route runtime missing from Route Agent');
+            selectedAgentPath = ['route-agent', 'agora-router', 'automation-router'];
+            selectedAgentViews['automation-router'] = 'persona';
+            const personaMarkup = renderAgentConfig();
+            if (!personaMarkup.includes('Automation Persona') || !personaMarkup.includes('Default Support')) throw new Error('Automation Persona management missing');
+            selectedAgentPath = ['route-agent', 'agora-router', 'automation-router', 'detailed-invoice'];
+            selectedAgentViews['detailed-invoice'] = 'overview';
+            const behaviorMarkup = renderAgentConfig();
+            if (!behaviorMarkup.includes('Detailed Invoice') || !behaviorMarkup.includes('Billing Handler') || behaviorMarkup.includes('role="tab" aria-selected="false" data-action="select-agent-view" data-agent-key="detailed-invoice" data-agent-view="persona"')) throw new Error('Automation behavior ownership is invalid');
+            selectedAgentPath = ['route-agent'];
             selectedAgentViews['route-agent'] = 'mcp';
             if (!renderAgentConfig().includes('No MCP configured.')) throw new Error('empty MCP state missing');
             if (!renderEnvironmentConfig().includes('OPENAI_API_KEY')) throw new Error('config name missing');
@@ -126,18 +142,22 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (sectionFromHash() !== 'overview') throw new Error('legacy route hash still resolves');
             globalThis.location = { hash: '#persona-prompts' };
             if (sectionFromHash() !== 'overview') throw new Error('legacy persona hash still resolves');
+            globalThis.location = { hash: '#route-strategy' };
+            if (sectionFromHash() !== 'agent-config' || agentPathFromHash()[0] !== 'route-agent') throw new Error('Route Strategy compatibility missing');
+            globalThis.location = { hash: '#agent-config/route-agent/agora-router/automation-router' };
+            if (sectionFromHash() !== 'agent-config' || agentPathFromHash().at(-1) !== 'automation-router') throw new Error('Agent Config deep link missing');
             """
         )
         for removed in (
-            '"route-prompt"', '"persona-prompts"', "/api/workspace/admin/account-personas",
-            "data-persona-draft-form", 'data-action="publish-persona"',
-            'data-action="rollback-persona"', 'data-action="toggle-persona"',
+            '"route-prompt"', '"persona-prompts"', "related_services",
         ):
             self.assertNotIn(removed, source)
+        self.assertNotIn('["route-strategy", "account_tree", "Route Strategy", "RT"]', source)
+        self.assertNotIn("renderRouteStrategy", source)
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260723-prompt-versioning-2", index)
+        self.assertIn("20260731-agent-config-hierarchy-1", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -160,6 +180,10 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "/api/workspace/admin/agent-config",
             core_load[promise_all_start:promise_all_end],
         )
+        self.assertNotIn(
+            "/api/workspace/admin/account-routing/config",
+            core_load[promise_all_start:promise_all_end],
+        )
 
     def test_agent_config_lazy_load_has_local_success_and_error_states(self) -> None:
         self.run_admin_app_script(
@@ -170,7 +194,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             const requestedUrls = [];
             fetch = async (url) => {
               requestedUrls.push(String(url));
-              return { ok: true, status: 200, json: async () => ({ agents: [], related_services: [] }) };
+              return { ok: true, status: 200, json: async () => ({ agents: [], route_navigation: null, route_runtime: {}, automation_personas: [] }) };
             };
             await loadAgentConfig();
             if (requestedUrls.length !== 1 || requestedUrls[0] !== '/api/workspace/admin/agent-config') throw new Error('agent config was not loaded independently');
@@ -180,6 +204,46 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             await loadAgentConfig({ force: true });
             if (agentConfigLoadError !== 'catalog unavailable') throw new Error('agent config error was not scoped locally');
             if (!renderAgentConfig().includes('Retry')) throw new Error('agent config retry state missing');
+            """
+        )
+
+    def test_automation_router_persona_actions_use_persona_lifecycle_api(self) -> None:
+        self.run_admin_app_script(
+            """
+            accessToken = 'admin-token';
+            currentAccount = { account_id: 'admin', role: 'admin' };
+            adminSection = 'agent-config';
+            renderAdmin = () => {};
+            agentConfigData = { agents: [], route_navigation: null, route_runtime: {}, automation_personas: [] };
+            FormData = function FormData(form) { return { get(name) { return form.values[name]; }, entries() { return []; } }; };
+            const requests = [];
+            fetch = async (url, options = {}) => {
+              requests.push({ url: String(url), options });
+              if (String(url) === '/api/workspace/admin/agent-config') {
+                return { ok: true, status: 200, json: async () => agentConfigData };
+              }
+              if (String(url).includes('/drafts')) {
+                return { ok: true, status: 200, json: async () => ({ version: { version: 2, status: 'draft' } }) };
+              }
+              if (String(url).includes('/publish')) {
+                return { ok: true, status: 200, json: async () => ({ version: { version: 2, status: 'published' } }) };
+              }
+              return { ok: true, status: 200, json: async () => ({ persona: { enabled: false } }) };
+            };
+            const form = { dataset: { personaKey: 'default-support' }, values: {
+              instruction: 'Warm and direct', opener: 'Hello', signoff_name: 'Sid', change_note: 'Refine voice', based_on_version: '1'
+            } };
+            await createPersonaDraft(form);
+            const draftRequest = requests.find(item => item.url.includes('/drafts'));
+            const draftBody = JSON.parse(draftRequest.options.body);
+            if (draftBody.content.instruction !== 'Warm and direct' || draftBody.content.opener !== 'Hello' || draftBody.content.signoff_name !== 'Sid') throw new Error('Persona draft did not preserve unified voice fields');
+            if (draftBody.based_on_version !== 1 || draftBody.change_note !== 'Refine voice') throw new Error('Persona draft version contract invalid');
+            await runPersonaVersionAction('publish', 'default-support', 2);
+            if (!requests.some(item => item.url.endsWith('/account-personas/default-support/versions/2/publish'))) throw new Error('Persona publish endpoint missing');
+            await setPersonaEnabled('default-support', false);
+            const toggleRequest = requests.find(item => item.url.endsWith('/account-personas/default-support'));
+            if (toggleRequest.options.method !== 'PATCH' || JSON.parse(toggleRequest.options.body).enabled !== false) throw new Error('Persona enabled PATCH invalid');
+            if (requests.filter(item => item.url === '/api/workspace/admin/agent-config').length < 3) throw new Error('Persona operations did not refresh Agent Config');
             """
         )
 
@@ -196,8 +260,13 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
                 { prompt_key: 'route-system', version: 1, status: 'active', content: 'header\\nold rule\\nfooter', change_note: 'Initial', created_at: '2026-07-22T00:00:00Z' },
               ] }
             };
-            agentConfigData = { agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', components: [], prompts: [managedPrompt], skills: [], mcp_servers: [] }], related_services: [] };
-            expandedAgentKeys.add('route-agent');
+            agentConfigData = {
+              agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', components: [], prompts: [managedPrompt], skills: [], mcp_servers: [] }],
+              route_navigation: { key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', prompt_keys: ['route-system'], capabilities: [], children: [] },
+              route_runtime: { router_prompt_version: 'v1', stage_details: [] }, automation_personas: []
+            };
+            selectedAgentPath = ['route-agent'];
+            selectedAgentViews['route-agent'] = 'prompts';
             selectedPromptVersions['route-system'] = 2;
             promptDiffKeys.add('route-system');
             const diffMarkup = renderAgentConfig();
@@ -380,7 +449,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260723-prompt-versioning-2", html)
+        self.assertIn("20260731-agent-config-hierarchy-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
@@ -428,7 +497,6 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               overview: 'Operations Overview',
               'automated-cases': 'Automated Cases',
               'agent-config': 'Agent Config',
-              'route-strategy': 'Route Strategy',
               'environment-config': 'Environment Config',
               engineers: 'Engineer Management',
               schedule: 'Weekly Schedule',

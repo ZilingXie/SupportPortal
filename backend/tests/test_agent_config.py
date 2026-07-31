@@ -7,7 +7,18 @@ from backend.services.engineer_plan_agent import ENGINEER_PLAN_SKILLS
 
 
 class AgentConfigTests(unittest.TestCase):
-    def test_catalog_groups_real_agents_and_labels_billing_as_a_service(self) -> None:
+    @staticmethod
+    def _navigation_node(node: dict, key: str) -> dict:
+        if node["key"] == key:
+            return node
+        for child in node.get("children", []):
+            try:
+                return AgentConfigTests._navigation_node(child, key)
+            except KeyError:
+                continue
+        raise KeyError(key)
+
+    def test_catalog_groups_real_agents_and_places_personas_on_automation_router(self) -> None:
         payload = build_agent_config_payload(
             [
                 {
@@ -34,12 +45,11 @@ class AgentConfigTests(unittest.TestCase):
             ["route-agent", "client-agent", "engineer-agent", "guardrail-agent"],
         )
         self.assertTrue(all(agent["kind"] == "agent" for agent in payload["agents"]))
-        billing = payload["related_services"][0]
-        self.assertEqual(billing["key"], "billing-automation")
-        self.assertEqual(billing["kind"], "service")
-        self.assertIn("not an autonomous Agent", billing["description"])
-        self.assertEqual(billing["prompts"][0]["metadata"]["status"], "published")
-        self.assertTrue(billing["prompts"][0]["metadata"]["is_published"])
+        self.assertNotIn("related_services", payload)
+        automation = self._navigation_node(payload["route_navigation"], "automation-router")
+        self.assertEqual(automation["persona_scope"], "account-automation")
+        self.assertEqual(payload["automation_personas"][0]["persona_key"], "default-support")
+        self.assertEqual(payload["automation_personas"][0]["published_version"], 1)
 
     def test_catalog_exposes_prompt_skill_and_empty_mcp_contracts(self) -> None:
         payload = build_agent_config_payload([])
@@ -95,12 +105,26 @@ class AgentConfigTests(unittest.TestCase):
             if component["key"] == "engineer-final-guardrail"
         )
         self.assertIn("No prompt", final_guardrail["description"])
-        self.assertTrue(
-            all(
-                not item["mcp_servers"]
-                for item in [*payload["agents"], *payload["related_services"]]
-            )
+        self.assertTrue(all(not item["mcp_servers"] for item in payload["agents"]))
+
+        route_navigation = payload["route_navigation"]
+        self.assertEqual(
+            [item["key"] for item in route_navigation["children"]],
+            ["conversation-action", "agora-router", "intent-uncertain"],
         )
+        agora = self._navigation_node(route_navigation, "agora-router")
+        self.assertEqual(agora["prompt_keys"], ["account-agora-router-system"])
+        automation = self._navigation_node(route_navigation, "automation-router")
+        self.assertEqual(
+            [item["key"] for item in automation["children"]],
+            ["fraud-account", "account-suspension", "detailed-invoice", "enablement", "quota", "unregistered"],
+        )
+        self.assertEqual(automation["prompt_keys"], ["account-automation-router-system"])
+        self.assertFalse(any("persona" in child for child in automation["children"]))
+        fraud = self._navigation_node(route_navigation, "fraud-account")
+        self.assertEqual(len(fraud["prompt_keys"]), 2)
+        self.assertTrue(payload["route_runtime"]["router_prompt_version"])
+        self.assertTrue(payload["route_runtime"]["stage_details"])
 
         serialized = str(payload)
         self.assertNotIn("OPENAI_API_KEY", serialized)
