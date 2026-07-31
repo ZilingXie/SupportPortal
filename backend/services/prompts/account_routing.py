@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
-ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v4"
+ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v5"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v5"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
 ACCOUNT_QUOTA_FIELD_PROMPT_VERSION = "account-quota-fields-v1"
@@ -84,14 +84,18 @@ Classify only; do not answer the customer.
 - non_technical: Agora company, public product information, investor, product portfolio, or public business information.
 - account_billing: account ownership or administration, balances, usage charges, payment methods, top-ups,
   pricing, quotes, refunds, billing disputes, invoice billing, and other non-automated account or billing requests.
-- automation: an explicit, grounded request for Agora to perform a concrete account/backend operation.
+- automation: an explicit, grounded request for Agora to perform a concrete account/backend operation,
+  or a clearly reported non-fraud account suspension accepted by the classification-only suspension flow.
 - uncategorized: an Agora-related request that cannot be assigned safely to the routes above, including
   insufficient information, multiple equally important Agora intents, legal/compliance requests, and rewards.
 
 ## Rules
 - How to enable, configure, integrate, or troubleshoot a feature is technical.
 - An explicit request for Agora to enable a named backend feature from our side is automation.
-- Pricing and billing questions are account_billing. Only concrete backend operations enter automation.
+- Pricing and billing questions are account_billing. Concrete backend operations enter automation.
+- A clearly reported account suspension may also enter automation without a requested backend action when
+  it has no fraud/risk/security-review evidence. This is a classification-only exception. Use
+  reason_code=classification_only_automation and backend_operation=null.
 - Payment methods, invoice billing eligibility, credit terms, refunds, subscriptions, packages, account plans,
   and financial account settings are always account_billing even when the customer says switch, enable, or activate.
 - Fraud/risk account review, non-fraud suspension classification, detailed invoices, feature activation, quota/capacity review,
@@ -100,8 +104,8 @@ Classify only; do not answer the customer.
   operation when the affected product or account-level quota is named. A Big Event Notification that asks
   Agora to review event capacity is also a concrete backend operation even without the word "increase".
 - Questions about calculating concurrency, pricing, or diagnosing throttling remain technical or account_billing.
-- To output automation, backend_operation.action, backend_operation.target, and backend_operation.evidence
-  must all be grounded in the customer message. Otherwise output uncategorized.
+- Except for the classification-only non-fraud suspension rule, automation requires grounded
+  backend_operation.action, backend_operation.target, and backend_operation.evidence. Otherwise output uncategorized.
 - Select one primary route. Put other Agora intents in additional_intents; never output mixed.
 - When troubleshooting and backend activation both appear, technical wins if diagnosing or explaining a
   failure is the primary next step. Automation wins when a concrete activation request is the primary next step.
@@ -112,9 +116,10 @@ selection_reason, backend_operation, evidence_spans.
 confidence must be between 0 and 1.
 agora_route must be one of: technical, non_technical, account_billing, automation, uncategorized.
 reason_code must be one of: technical_request, non_technical_request, account_billing_request,
-explicit_backend_operation, no_matching_category, insufficient_route_information,
+explicit_backend_operation, classification_only_automation, no_matching_category, insufficient_route_information,
 insufficient_backend_operation_evidence, multiple_equal_intents.
-backend_operation must be null unless agora_route=automation.
+backend_operation must be null unless agora_route=automation. It must also be null for
+reason_code=classification_only_automation.
 
 ## Examples
 Input: How do I generate an RTC token?
@@ -134,6 +139,12 @@ Output: {"agora_route":"technical","confidence":0.97,"reason_code":"technical_re
 
 Input: Please change something on my account.
 Output: {"agora_route":"uncategorized","confidence":0.91,"reason_code":"insufficient_backend_operation_evidence","additional_intents":[],"selection_reason":"No concrete backend action or target is stated","backend_operation":null,"evidence_spans":["change something on my account"]}
+
+Input: Our Agora RTC account is suspended even though we purchased an extra usage package. The login page says the account has been stopped.
+Output: {"agora_route":"automation","confidence":0.98,"reason_code":"classification_only_automation","additional_intents":["account_billing"],"selection_reason":"The customer clearly reports a non-fraud account suspension covered by the classification-only flow","backend_operation":null,"evidence_spans":["account is suspended","purchased an extra usage package","account has been stopped"]}
+
+Input: Why was our account charged more than expected after we purchased an extra usage package?
+Output: {"agora_route":"account_billing","confidence":0.97,"reason_code":"account_billing_request","additional_intents":[],"selection_reason":"The customer disputes usage charges but does not report an account suspension","backend_operation":null,"evidence_spans":["charged more than expected","purchased an extra usage package"]}
 
 Input: Please review and increase our RTC, RTM, and Chat concurrency limits before our campaign launch.
 Output: {"agora_route":"automation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer requests an account-level concurrency review and increase","backend_operation":{"action":"review_and_increase","target":"multi_product_quota","evidence":"review and increase our RTC, RTM, and Chat concurrency limits"},"evidence_spans":["RTC, RTM, and Chat concurrency limits","campaign launch"]}
