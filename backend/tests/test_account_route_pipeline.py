@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from backend.services.account_route_pipeline import (
     AccountRouteStageAttempt,
+    ACCOUNT_ROUTE_PIPELINE_VERSION,
+    account_case_labels,
     classification_for_corrected_route,
     decide_account_route,
 )
@@ -56,7 +58,82 @@ class AccountRoutePipelineTests(unittest.TestCase):
     def test_pipeline_is_scoped_to_account_entrypoints(self) -> None:
         main_source = (Path(__file__).parents[1] / "main.py").read_text(encoding="utf-8")
         self.assertEqual(main_source.count("decide_account_route("), 3)
+        self.assertEqual(main_source.count("require_latest=True"), 3)
         self.assertIn("route_agent=decide_support_route", main_source)
+
+    def test_latest_account_route_ignores_legacy_mode(self) -> None:
+        legacy_router = unittest.mock.Mock()
+        with patch.dict(os.environ, {"ACCOUNT_ROUTER_MODE": "legacy"}), patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            return_value=_attempt(
+                {
+                    "intent_class": "conversation",
+                    "conversation_action": "follow_up",
+                    "intent_confidence": 0.97,
+                    "action_confidence": 0.94,
+                    "reason_code": "conversation_follow_up",
+                }
+            ),
+        ):
+            result = decide_account_route(
+                "Thanks",
+                legacy_router=legacy_router,
+                require_latest=True,
+            )
+
+        self.assertEqual(result.secondary_label, "Follow-up")
+        self.assertEqual(result.classification["pipeline_version"], ACCOUNT_ROUTE_PIPELINE_VERSION)
+        legacy_router.assert_not_called()
+
+    def test_latest_account_route_normalizes_missing_credentials_fallback(self) -> None:
+        legacy_router = unittest.mock.Mock(
+            return_value=SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                route_family="rag_product_support",
+                execution_action="rag",
+                confidence=0.88,
+                reason="legacy technical fallback",
+                router_source="llm_semantic",
+            )
+        )
+        missing_credentials = AccountRouteStageAttempt(
+            payload=None,
+            attempted=False,
+            failure_type="missing_credentials",
+            failure_source="intent_classifier",
+        )
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            return_value=missing_credentials,
+        ):
+            result = decide_account_route(
+                "Please help with my Agora account.",
+                legacy_router=legacy_router,
+                require_latest=True,
+            )
+
+        self.assertEqual(result.primary_label, "Agora")
+        self.assertEqual(result.secondary_label, "Agora Technical")
+        self.assertEqual(result.classification["pipeline_version"], ACCOUNT_ROUTE_PIPELINE_VERSION)
+        self.assertEqual(result.decision.router_source, "account_legacy_fallback")
+        legacy_router.assert_called_once()
+
+    def test_legacy_support_request_automation_uses_canonical_automation_labels(self) -> None:
+        labels = account_case_labels(
+            {
+                "route_family": "automated",
+                "execution_action": "account_suspension",
+                "route_classification": {
+                    "pipeline_version": "account-layered-router-v1",
+                    "intent_class": "support_request",
+                    "agora_route": "automation",
+                    "automation_subcategory": "account_suspension",
+                },
+            }
+        )
+
+        self.assertEqual(labels, ("Agora", "Automation / Account Suspension"))
 
     def test_conversation_stops_after_intent_classifier(self) -> None:
         with patch(

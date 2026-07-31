@@ -3691,6 +3691,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         ticket_subject=title,
         ticket_context=ticket_context,
         legacy_router=decide_support_route,
+        require_latest=True,
     )
     decision = account_route_result.decision
     route_classification = dict(account_route_result.classification)
@@ -4850,6 +4851,7 @@ async def reply_to_billing_ticket(
                 latest_assistant_message=latest_assistant_message,
                 current_ticket_status=str(canonical_ticket.get("status") or ""),
                 legacy_router=decide_support_route,
+                require_latest=True,
             )
             probe_classification = route_result.classification
             probe_action = str(route_result.decision.execution_action or route_result.decision.route or "").strip()
@@ -4900,6 +4902,7 @@ async def reply_to_billing_ticket(
                 latest_assistant_message=latest_assistant_message,
                 current_ticket_status=str(canonical_ticket.get("status") or ""),
                 legacy_router=decide_support_route,
+                require_latest=True,
             )
         decision = route_result.decision
         route = str(decision.execution_action or decision.route or "").strip()

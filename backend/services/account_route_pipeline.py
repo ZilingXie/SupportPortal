@@ -486,14 +486,14 @@ def classification_for_corrected_route(
 
 
 def account_case_labels(record: dict[str, Any]) -> tuple[str, str]:
-    classification = record.get("route_classification")
-    if isinstance(classification, dict) and classification:
-        return classification_labels(classification)
-    scope = str(record.get("scope_label") or "").strip().lower()
     route_family = str(record.get("route_family") or "").strip().lower()
     action = canonical_automation_subcategory(record.get("execution_action") or record.get("route"))
     if is_registered_automation(route_family=route_family, execution_action=action):
         return "Agora", f"Automation / {action.replace('_', ' ').title()}"
+    classification = record.get("route_classification")
+    if isinstance(classification, dict) and classification:
+        return classification_labels(classification)
+    scope = str(record.get("scope_label") or "").strip().lower()
     if scope == "ticket_resolution":
         return "Conversation", "Resolve"
     if scope == "small_talk":
@@ -729,10 +729,11 @@ def decide_account_route(
     current_ticket_status: str | None = None,
     has_active_engineer_case: bool = False,
     legacy_router: Callable[..., SupportRouteDecision] = decide_support_route,
+    require_latest: bool = False,
 ) -> AccountRouteResult:
     normalized_message = " ".join(str(message or "").split()).strip()
     response_language = _response_language(normalized_message)
-    mode = _pipeline_mode()
+    mode = "layered" if require_latest else _pipeline_mode()
     if mode == "legacy":
         return _legacy_result(
             normalized_message,

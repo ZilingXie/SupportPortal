@@ -2985,3 +2985,23 @@ For each new entry, record:
   - Internal Quota replies are rewritten for customers and never copied verbatim.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_quota_field_extractor.py backend/tests/test_quota_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q`
+
+## 2026-07-31 - Account latest-route enforcement and historical reroute
+
+- Area or subsystem: `/account` Intent Classifier, Agora Router, and Automation Router invocation mode
+- Prompt or model version: `account-layered-router-v2` with the existing `account-intent-v2`, `account-agora-v3`, and `account-automation-v4` prompts
+- Summary: Account creation, ordinary replies, and active-handler probes now explicitly require the current layered pipeline. Added a classification-only batch reroute that rewrites historical route fields and audit executions without replaying Automation handlers.
+- Reason: Historical `account-layered-router-v1` records used `intent_class=support_request`; the current label mapper interpreted that removed class as Human Review even when canonical route fields still identified a registered Automation.
+- Affected files or config:
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/account_case_reroute.py`
+  - `backend/scripts/reroute_account_cases.py`
+  - `backend/main.py`
+- Expected behavior change:
+  - New `/account` cases cannot be switched to legacy or shadow routing by `ACCOUNT_ROUTER_MODE`; credential-unavailable fallback remains available but is normalized into the current v2 schema.
+  - Historical cases can be rerouted with current prompts while preserving customer replies, collected fields, internal email records, and existing handler lifecycle state.
+  - Newly discovered Automation routes are marked `classification_only`, so the batch cannot send mail or customer replies; normal future customer messages run the standard Account lifecycle.
+  - Registered canonical Automation fields take precedence over incompatible legacy label payloads.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_case_reroute.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py backend/tests/test_account_ui_contract.py backend/tests/test_account_admin_features.py backend/tests/test_prompt_versioning.py backend/tests/test_repository_configuration.py -q` (246 passed, 3 subtests passed)
+  - Full dry-run against 62 Account Cases completed with 0 failures; 9 v1 and 53 v2 records were evaluated for migration to `account-layered-router-v2`.
