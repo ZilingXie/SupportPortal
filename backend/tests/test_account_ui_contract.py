@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260731-full-reroute-1", html)
+        self.assertIn("20260731-cache-pagination-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -123,6 +123,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertNotIn('{ value: "uncertain"', filter_options)
         self.assertIn("PAGE_SIZE", app_source)
         self.assertIn("currentPage", app_source)
+        self.assertIn("const PAGE_SIZE = 10", app_source)
 
         # Reply composer state and flow.
         self.assertIn("replyMessage", app_source)
@@ -141,6 +142,30 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("formatMessageTimestamp", app_source)
         self.assertIn("AI reply scheduled", app_source)
         self.assertNotIn("Customer reply", app_source)
+
+    def test_account_app_uses_memory_only_two_level_cache_and_batch_prefetch(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("const summaryCache = new Map()", app_source)
+        self.assertIn("const detailCache = new Map()", app_source)
+        self.assertIn("const detailInflight = new Map()", app_source)
+        self.assertIn("const SUMMARY_FRESH_MS = 30_000", app_source)
+        self.assertIn("const DETAIL_FRESH_MS = 60_000", app_source)
+        self.assertIn("const CACHE_HARD_EXPIRY_MS = 5 * 60_000", app_source)
+        self.assertIn("const SUMMARY_CACHE_LIMIT = 20", app_source)
+        self.assertIn("const DETAIL_CACHE_LIMIT = 20", app_source)
+        self.assertIn('fetch("/api/account/cases/batch-details"', app_source)
+        self.assertIn("AbortController", app_source)
+        self.assertIn("summaryRequestGeneration", app_source)
+        self.assertIn('window.addEventListener("pagehide"', app_source)
+        self.assertIn('document.addEventListener("visibilitychange"', app_source)
+        self.assertIn('cache: "no-store"', app_source)
+        self.assertNotIn("localStorage", app_source)
+        self.assertNotIn("sessionStorage", app_source)
+        self.assertNotIn("indexedDB", app_source)
+        self.assertIn("detail-loading", app_source)
+        self.assertIn("history-loading", styles)
 
     def test_account_app_contains_route_correction_flow(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
