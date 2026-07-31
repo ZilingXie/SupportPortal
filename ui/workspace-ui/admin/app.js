@@ -14,13 +14,17 @@ const ADMIN_SECTION_TITLES = {
   resolved: "Resolved",
   audit: "Audit",
 };
+const TOP_LEVEL_AGENT_KEYS = new Set(["route-agent", "client-agent", "engineer-agent", "guardrail-agent"]);
+const AUTOMATION_BEHAVIOR_KEYS = new Set(["fraud-account", "account-suspension", "detailed-invoice", "enablement", "quota", "unregistered"]);
 
 const root = document.getElementById("workspace-admin-root");
 
 let accessToken = readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "");
 let currentAccount = readStorage(WORKSPACE_ACCOUNT_KEY, null);
 let adminSection = sectionFromHash();
-let selectedAgentPath = agentPathFromHash();
+const initialAgentSelection = agentSelectionFromHash();
+let selectedAgentPath = initialAgentSelection.path;
+let selectedAutomationBehaviorKey = initialAgentSelection.behaviorKey;
 let accounts = [];
 let adminTickets = [];
 let metrics = null;
@@ -64,11 +68,32 @@ function sectionFromHash() {
     : "overview";
 }
 
-function agentPathFromHash() {
+function agentSelectionFromHash() {
   const hash = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
-  if (hash === "route-strategy") return ["route-agent"];
-  const [section, ...path] = hash.split("/").filter(Boolean);
-  return section === "agent-config" ? path : [];
+  if (hash === "route-strategy") return { path: ["route-agent"], behaviorKey: "" };
+  const [section, ...requestedPath] = hash.split("/").filter(Boolean);
+  if (section !== "agent-config" || !TOP_LEVEL_AGENT_KEYS.has(requestedPath[0])) return { path: [], behaviorKey: "" };
+  if (requestedPath[0] !== "route-agent") return { path: [requestedPath[0]], behaviorKey: "" };
+  const path = ["route-agent"];
+  if (requestedPath[1] !== "agora-router") return { path, behaviorKey: "" };
+  path.push("agora-router");
+  if (requestedPath[2] !== "automation-router") return { path, behaviorKey: "" };
+  path.push("automation-router");
+  return {
+    path,
+    behaviorKey: AUTOMATION_BEHAVIOR_KEYS.has(requestedPath[3]) ? requestedPath[3] : "",
+  };
+}
+
+function agentPathFromHash() {
+  return agentSelectionFromHash().path;
+}
+
+function normalizeAgentLocation(selection) {
+  if (sectionFromHash() !== "agent-config") return;
+  const canonicalHash = agentPathHref(selection.path);
+  const currentHash = String(globalThis.location?.hash || "");
+  if (currentHash !== canonicalHash) globalThis.history?.replaceState?.(null, "", canonicalHash);
 }
 
 function readStorage(key, fallback) {
@@ -985,9 +1010,13 @@ function pathStartsWith(path, prefix) {
   return prefix.every((item, index) => path[index] === item);
 }
 
+function agentRouteChildren(node) {
+  return (node?.children || []).filter(child => child.is_agent === true);
+}
+
 function renderAgentTreeNode(node, path, depth = 0) {
   const selected = pathsMatch(selectedAgentPath.slice(0, path.length), path);
-  const children = node.key === "automation-router" ? [] : (node.children || []);
+  const children = agentRouteChildren(node);
   const expanded = children.length && (expandedAgentKeys.has(node.key) || pathStartsWith(selectedAgentPath, path));
   return `<li class="admin-agent-tree-item" data-depth="${depth}">
     <div class="admin-agent-tree-row ${selected ? "is-path" : ""}">
@@ -1005,7 +1034,7 @@ function renderAgentTree(agents) {
   const routeEntry = agentConfigData.route_navigation;
   return `<nav class="admin-agent-tree" aria-label="Agent configuration"><ul>
     ${agents.map(agent => renderAgentTreeNode(
-      agent.key === "route-agent" && routeEntry ? routeEntry : { ...agent, children: [] },
+      agent.key === "route-agent" && routeEntry ? routeEntry : { ...agent, is_agent: true, children: [] },
       [agent.key]
     )).join("")}
   </ul></nav>`;
@@ -1020,7 +1049,7 @@ function agentBreadcrumbItems(agents) {
   if (agent.key !== "route-agent") return items;
   let node = agentConfigData.route_navigation;
   for (const key of selectedAgentPath.slice(1)) {
-    node = (node?.children || []).find(child => child.key === key);
+    node = agentRouteChildren(node).find(child => child.key === key);
     if (!node) break;
     items.push({ name: node.name, path: selectedAgentPath.slice(0, items.length) });
   }
@@ -1067,10 +1096,37 @@ function renderRouteRuntime() {
   return `<section class="admin-agent-runtime" aria-label="Route runtime"><div><span>Current route</span><strong>${escapeHtml(runtime.router_prompt_version || "unversioned")}</strong></div><ol>${stages.map(stage => `<li><strong>${escapeHtml(stage.name)}</strong><small>${escapeHtml(stage.description)}</small></li>`).join("")}</ol></section>`;
 }
 
-function renderNodeLinks(node, basePath, selectedBehavior = null) {
+function renderNodeLinks(node, basePath) {
   const children = node?.children || [];
   if (!children.length) return "";
-  return `<section class="admin-agent-destinations" aria-labelledby="agent-destinations-title"><header><h3 id="agent-destinations-title">${node.key === "automation-router" ? "Automation behavior" : "Next route"}</h3><span>${children.length}</span></header><div>${children.map(child => `<a href="${agentPathHref([...basePath, child.key])}" class="${selectedBehavior?.key === child.key ? "is-active" : ""}"><span><strong>${escapeHtml(child.name)}</strong><small>${escapeHtml(child.description)}</small></span><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></a>`).join("")}</div></section>`;
+  const renderDestination = (child) => {
+    const copy = `<span class="admin-agent-destination-copy"><span class="admin-agent-destination-title"><strong>${escapeHtml(child.name)}</strong>${child.is_agent ? renderAgentBadge("Agent", "is-agent") : ""}</span><small>${escapeHtml(child.description)}</small></span>`;
+    return child.is_agent
+      ? `<a href="${agentPathHref([...basePath, child.key])}">${copy}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></a>`
+      : `<article class="admin-agent-route-outcome">${copy}</article>`;
+  };
+  return `<section class="admin-agent-destinations" aria-labelledby="agent-destinations-title"><header><h3 id="agent-destinations-title">Next route</h3><span>${children.length}</span></header><div>${children.map(renderDestination).join("")}</div></section>`;
+}
+
+function renderAutomationBehaviorOverview(routeAgent, node) {
+  const behaviors = (node?.children || []).filter(child => !child.is_agent);
+  if (!behaviors.length) return "";
+  return `<section class="admin-automation-behaviors" aria-labelledby="automation-behaviors-title">
+    <header><div><h3 id="automation-behaviors-title">Automation behavior</h3><p>Each behavior loads its own Prompt or deterministic capability before the shared Persona is applied.</p></div><span>${behaviors.length}</span></header>
+    <div class="admin-automation-behavior-list">${behaviors.map((behavior) => {
+      const expanded = selectedAutomationBehaviorKey === behavior.key;
+      const prompts = promptsForRouteNode(routeAgent, behavior);
+      const entry = { ...routeAgent, key: behavior.key, name: behavior.name, prompts, skills: [], mcp_servers: [] };
+      return `<section class="admin-automation-behavior ${expanded ? "is-expanded" : ""}">
+        <button type="button" data-action="toggle-automation-behavior" data-behavior-key="${escapeHtml(behavior.key)}" aria-expanded="${expanded ? "true" : "false"}" aria-controls="automation-behavior-${escapeHtml(behavior.key)}">
+          <span><strong>${escapeHtml(behavior.name)}</strong><small>${escapeHtml(behavior.description)}</small></span>
+          <span class="admin-automation-behavior-meta">${prompts.length ? `${prompts.length} Prompt${prompts.length === 1 ? "" : "s"}` : "Deterministic"}</span>
+          <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
+        </button>
+        ${expanded ? `<div id="automation-behavior-${escapeHtml(behavior.key)}" class="admin-automation-behavior-panel"><div><h4>Capabilities</h4>${renderCapabilities(behavior.capabilities || [], behavior.kind)}</div><div><h4>Behavior Prompt</h4>${renderAgentPromptPanel(entry)}</div></div>` : ""}
+      </section>`;
+    }).join("")}</div>
+  </section>`;
 }
 
 function personaVersions(persona) {
@@ -1146,27 +1202,21 @@ function renderSelectedAgent(agents) {
   const agent = agents.find(item => item.key === selectedAgentPath[0]);
   if (!agent) return renderAgentCatalogOverview(agents);
   let node = agent;
-  let behavior = null;
   if (agent.key === "route-agent") {
-    const automationPath = ["route-agent", "agora-router", "automation-router"];
-    if (pathStartsWith(selectedAgentPath, automationPath) && selectedAgentPath.length > automationPath.length) {
-      const automation = findRouteNode(automationPath);
-      behavior = (automation?.children || []).find(item => item.key === selectedAgentPath[automationPath.length]) || null;
-      node = behavior || automation;
-    } else {
-      node = findRouteNode(selectedAgentPath) || agentConfigData.route_navigation;
-    }
+    node = findRouteNode(selectedAgentPath) || agentConfigData.route_navigation;
   }
   const routeAgent = agents.find(item => item.key === "route-agent");
   const entry = agent.key === "route-agent"
     ? { ...routeAgent, key: node.key, name: node.name, prompts: promptsForRouteNode(routeAgent, node), skills: [], mcp_servers: [] }
     : agent;
-  const basePath = behavior ? selectedAgentPath.slice(0, 3) : selectedAgentPath;
   const capabilities = agent.key === "route-agent" ? (node.capabilities || []) : (agent.components || []);
-  const overview = `${agent.key === "route-agent" && node.key === "route-agent" ? renderRouteRuntime() : ""}${renderCapabilities(capabilities, node.kind || agent.kind)}${renderNodeLinks(behavior ? findRouteNode(basePath) : node, basePath, behavior)}`;
+  const destinations = node.key === "automation-router"
+    ? renderAutomationBehaviorOverview(routeAgent, node)
+    : renderNodeLinks(node, selectedAgentPath);
+  const overview = `${agent.key === "route-agent" && node.key === "route-agent" ? renderRouteRuntime() : ""}${renderCapabilities(capabilities, node.kind || agent.kind)}${destinations}`;
   return `<article class="admin-agent-detail">
-    <header class="admin-agent-detail-header"><div><p class="admin-eyebrow">${escapeHtml((node.kind || agent.kind || "agent").replaceAll("_", " "))}</p><h2>${escapeHtml(node.name || agent.name)}</h2><p>${escapeHtml(node.description || agent.description)}</p></div><div>${renderAgentBadge(agentStatusLabel(node.status || agent.status), (node.status || agent.status) === "feature_gated" ? "is-gated" : "is-active")}${behavior ? renderAgentBadge("Automation behavior") : ""}</div></header>
-    ${renderAgentTabs(entry, node, { persona: node.key === "automation-router" && !behavior, overview })}
+    <header class="admin-agent-detail-header"><div><p class="admin-eyebrow">${escapeHtml((node.kind || agent.kind || "agent").replaceAll("_", " "))}</p><h2>${escapeHtml(node.name || agent.name)}</h2><p>${escapeHtml(node.description || agent.description)}</p></div><div>${renderAgentBadge(agentStatusLabel(node.status || agent.status), (node.status || agent.status) === "feature_gated" ? "is-gated" : "is-active")}</div></header>
+    ${renderAgentTabs(entry, node, { persona: node.key === "automation-router", overview })}
   </article>`;
 }
 
@@ -1174,7 +1224,12 @@ function renderAgentMobileNav(agents) {
   if (!selectedAgentPath.length) return "";
   const items = agentBreadcrumbItems(agents);
   const parent = items.at(-2);
-  return `<div class="admin-agent-mobile-nav">${parent ? `<a href="${agentPathHref(parent.path)}"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>${escapeHtml(parent.name)}</a>` : ""}</div>`;
+  const node = selectedAgentPath[0] === "route-agent" ? findRouteNode(selectedAgentPath) : null;
+  const children = agentRouteChildren(node);
+  return `<nav class="admin-agent-mobile-nav" aria-label="Agent navigation">
+    ${parent ? `<a class="admin-agent-mobile-back" href="${agentPathHref(parent.path)}"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>${escapeHtml(parent.name)}</a>` : ""}
+    ${children.length ? `<div>${children.map(child => `<a href="${agentPathHref([...selectedAgentPath, child.key])}"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>${escapeHtml(child.name)}</a>`).join("")}</div>` : ""}
+  </nav>`;
 }
 
 function renderAgentConfig() {
@@ -1323,6 +1378,7 @@ function signOut(options = {}) {
   agentConfigLoading = false;
   agentConfigLoadError = "";
   expandedAgentKeys = new Set();
+  selectedAutomationBehaviorKey = "";
   selectedAgentViews = {};
   selectedAgentPrompts = {};
   selectedPersonaKey = "";
@@ -1443,6 +1499,7 @@ root.addEventListener("click", (event) => {
     event.preventDefault();
     adminSection = sectionLink.dataset.section;
     selectedAgentPath = adminSection === "agent-config" ? [] : selectedAgentPath;
+    if (adminSection === "agent-config") selectedAutomationBehaviorKey = "";
     selectedEngineerId = "";
     if (adminSection !== "schedule") scheduleNotice = null;
     if (adminSection !== "new-account") invitationResult = null;
@@ -1486,6 +1543,10 @@ root.addEventListener("click", (event) => {
     const button = event.target.closest("[data-agent-key]");
     if (expandedAgentKeys.has(button.dataset.agentKey)) expandedAgentKeys.delete(button.dataset.agentKey);
     else expandedAgentKeys.add(button.dataset.agentKey);
+    renderAdmin();
+  } else if (action === "toggle-automation-behavior") {
+    const behaviorKey = event.target.closest("[data-behavior-key]").dataset.behaviorKey;
+    selectedAutomationBehaviorKey = selectedAutomationBehaviorKey === behaviorKey ? "" : behaviorKey;
     renderAdmin();
   } else if (action === "select-agent-view") {
     const button = event.target.closest("[data-agent-key]");
@@ -1631,11 +1692,15 @@ window.addEventListener?.("hashchange", () => {
   const nextSection = sectionFromHash();
   if (nextSection !== adminSection) selectedEngineerId = "";
   adminSection = nextSection;
-  selectedAgentPath = agentPathFromHash();
+  const selection = agentSelectionFromHash();
+  selectedAgentPath = selection.path;
+  selectedAutomationBehaviorKey = selection.behaviorKey;
+  normalizeAgentLocation(selection);
   renderAdmin();
   if (adminSection === "agent-config") loadAgentConfig();
 });
 
+normalizeAgentLocation(initialAgentSelection);
 renderAdmin();
 if (isAdminAuthenticated()) {
   loadAdminData();

@@ -362,9 +362,10 @@
 5. 上述页面沿用 Admin 的低对比 surface 和紧凑信息密度；移动端改为单列，不允许 Prompt、key 或 route label 横向溢出。
 6. `Agent Config` 的 managed Prompt 使用左侧 Prompt 列表与右侧版本工作区；必须同时显示 Active 与 Next deploy 状态，版本历史用选择控件切换，Diff 使用带行号与增删背景的等宽双栏并在移动端降为单列。
 7. 新建 Draft 必须基于当前 Active version，要求填写 change note；Schedule、Unschedule、Restore 都是明确文字动作。UI 必须说明保存和 Schedule 均不会热更新，只有下一次成功的每日部署才会生效，并原位展示 409 冲突。
-8. `Agent Config` 桌面端使用 context tree + detail workspace：一级仅展示 Route、Client、Engineer、Guardrail Agent，Route Agent 依次展开到 Agora Router 和 Automation Router；选中路径使用面包屑与 tonal active state，不使用嵌套卡片表达层级。
-9. `Automation Router` 是 Persona 的唯一管理入口；Fraud Account、Account Suspension、Detailed Invoice、Enablement、Quota、Unregistered 作为同层行为选择器展示，不创建第五级菜单，也不重复 Persona 配置。
-10. `Agent Config` 窄屏使用逐级进入模式，保留 Back 与面包屑；禁止四层缩进压缩正文。树展开、详情切换和 chevron 反馈统一控制在 180ms 内，并在 reduced-motion 下取消。
+8. `Agent Config` 桌面端使用 Agent-only context tree + detail workspace：一级仅展示 Route、Client、Engineer、Guardrail Agent，Route Agent 只允许依次展开到 Agora Router 和 Automation Router；Conversation Action、Human Review、route outcome、Automation behavior 与 fallback 只能在所属 Agent 的 Overview 中解释，不得生成菜单项或面包屑层级。
+9. Agent Overview 必须同时表达完整 route outcome 与 Agent 边界：Agent 目标使用明确的 `Agent` 文字标签并允许快捷进入，非 Agent 目标为不可导航的信息行，不显示跳转箭头。Agent 身份不得只依赖颜色或图标表达。
+10. `Automation Router` 是 Persona 的唯一管理入口；Fraud Account、Account Suspension、Detailed Invoice、Enablement、Quota、Unregistered 使用单项展开的紧凑行为列表汇总在 Overview，展开后原位展示行为 Prompt 与 deterministic capability，不创建第五级菜单、独立详情路由或重复 Persona 配置。
+11. `Agent Config` 窄屏使用逐级 Agent 进入模式，保留 Back、面包屑和当前 Agent 的直属子 Agent 入口；流程结果继续留在 Overview，禁止四层缩进压缩正文。树展开、详情切换和 chevron 反馈统一控制在 180ms 内，并在 reduced-motion 下取消；所有折叠与导航控件保持至少 `44x44px` 点击区域。
 
 ### 6.8 Account Ticket Conversation (`/account`)
 1. 所有 account ticket 都必须先展示 route 结果，再由 AI 尝试生成仅在 `/account` 内可见的回复；不得把 AI draft 或 assistant message 回传到来源 Zendesk / 客户邮件渠道。

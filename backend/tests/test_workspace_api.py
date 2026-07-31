@@ -362,6 +362,8 @@ class WorkspaceApiTests(unittest.TestCase):
         )
         self.assertNotIn("related_services", payload)
         self.assertEqual(payload["route_navigation"]["key"], "route-agent")
+        self.assertTrue(payload["route_navigation"]["is_agent"])
+        self.assertFalse(payload["route_navigation"]["children"][0]["is_agent"])
         self.assertEqual(payload["automation_personas"][0]["persona_key"], "default-support")
         self.assertNotIn("OPENAI_API_KEY", response.text)
 

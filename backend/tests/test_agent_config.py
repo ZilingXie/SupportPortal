@@ -108,6 +108,21 @@ class AgentConfigTests(unittest.TestCase):
         self.assertTrue(all(not item["mcp_servers"] for item in payload["agents"]))
 
         route_navigation = payload["route_navigation"]
+        all_nodes: list[dict] = []
+
+        def collect_nodes(node: dict) -> None:
+            all_nodes.append(node)
+            for child in node["children"]:
+                collect_nodes(child)
+
+        collect_nodes(route_navigation)
+        self.assertTrue(all(isinstance(node["is_agent"], bool) for node in all_nodes))
+        self.assertEqual(
+            [node["key"] for node in all_nodes if node["is_agent"]],
+            ["route-agent", "agora-router", "automation-router"],
+        )
+        self.assertTrue(all(node["is_agent"] for node in all_nodes if node["kind"] in {"agent", "router"}))
+        self.assertTrue(all(not node["is_agent"] for node in all_nodes if node["kind"] in {"outcome", "handoff", "automation", "fallback"}))
         self.assertEqual(
             [item["key"] for item in route_navigation["children"]],
             ["conversation-action", "agora-router", "intent-uncertain"],
