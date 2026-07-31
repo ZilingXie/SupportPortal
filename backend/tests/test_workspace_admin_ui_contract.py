@@ -13,7 +13,12 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             (async () => {{
               const fs = require("fs");
               const vm = require("vm");
-              const root = {{ innerHTML: "", addEventListener() {{}}, querySelector() {{ return null; }} }};
+              const root = {{
+                innerHTML: "",
+                handlers: {{}},
+                addEventListener(type, handler) {{ this.handlers[type] = handler; }},
+                querySelector() {{ return null; }},
+              }};
               const storage = new Map();
               const sandbox = {{
                 console, Headers, URLSearchParams,
@@ -98,12 +103,16 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ client_ticket_id: 'TK-1', title: 'Invoice', automation_status: 'automation' }] };
             agentConfigData = {
               agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', components: [], prompts: [{ key: 'automation-system', name: 'Automation Router', version: 'v1', component_key: 'automation-router', content: 'actual prompt', metadata: {} }], skills: [], mcp_servers: [] }],
-              route_navigation: { key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', prompt_keys: [], capabilities: [], children: [
-                { key: 'agora-router', kind: 'router', name: 'Agora Router', description: 'Routes Agora.', status: 'active', prompt_keys: [], capabilities: [], children: [
-                  { key: 'automation-router', kind: 'router', name: 'Automation Router', description: 'Routes Automation.', status: 'active', persona_scope: 'account-automation', prompt_keys: ['automation-system'], capabilities: [], children: [
-                    { key: 'detailed-invoice', kind: 'automation', name: 'Detailed Invoice', description: 'Runs invoice behavior.', status: 'active', prompt_keys: [], capabilities: [{ key: 'billing', name: 'Billing Handler', description: 'Deterministic invoice behavior.', status: 'active' }], children: [] }
-                  ] }
-                ] }
+              route_navigation: { key: 'route-agent', kind: 'agent', is_agent: true, name: 'Route Agent', description: 'Routes requests.', status: 'active', prompt_keys: [], capabilities: [], children: [
+                { key: 'conversation-action', kind: 'outcome', is_agent: false, name: 'Conversation Action', description: 'Handles conversation.', status: 'active', prompt_keys: [], capabilities: [], children: [] },
+                { key: 'agora-router', kind: 'router', is_agent: true, name: 'Agora Router', description: 'Routes Agora.', status: 'active', prompt_keys: [], capabilities: [], children: [
+                  { key: 'agora-technical', kind: 'outcome', is_agent: false, name: 'Agora Technical', description: 'Routes technical cases.', status: 'active', prompt_keys: [], capabilities: [], children: [] },
+                  { key: 'automation-router', kind: 'router', is_agent: true, name: 'Automation Router', description: 'Routes Automation.', status: 'active', persona_scope: 'account-automation', prompt_keys: ['automation-system'], capabilities: [], children: [
+                    { key: 'detailed-invoice', kind: 'automation', is_agent: false, name: 'Detailed Invoice', description: 'Runs invoice behavior.', status: 'active', prompt_keys: [], capabilities: [{ key: 'billing', name: 'Billing Handler', description: 'Deterministic invoice behavior.', status: 'active' }], children: [] }
+                  ] },
+                  { key: 'agora-uncategorized', kind: 'handoff', is_agent: false, name: 'Human Review', description: 'Reviews uncertain cases.', status: 'active', prompt_keys: [], capabilities: [], children: [] }
+                ] },
+                { key: 'intent-uncertain', kind: 'handoff', is_agent: false, name: 'Human Review', description: 'Reviews uncertain intent.', status: 'active', prompt_keys: [], capabilities: [], children: [] }
               ] },
               route_runtime: { router_prompt_version: 'account-router-v1', stage_details: [{ name: 'intent_classifier', description: 'Classifies the request.' }] },
               automation_personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', opener: '', signoff_name: 'Sid' }, change_note: 'Initial' }] }]
@@ -117,15 +126,30 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             const catalogMarkup = renderAgentConfig();
             if (!catalogMarkup.includes('Route Agent') || catalogMarkup.includes('Billing Automation') || catalogMarkup.includes('Related services')) throw new Error('top-level Agent catalog is invalid');
             selectedAgentPath = ['route-agent'];
-            if (!renderAgentConfig().includes('account-router-v1') || !renderAgentConfig().includes('Classifies the request.')) throw new Error('route runtime missing from Route Agent');
+            const routeMarkup = renderAgentConfig();
+            if (!routeMarkup.includes('account-router-v1') || !routeMarkup.includes('Classifies the request.')) throw new Error('route runtime missing from Route Agent');
+            if (!routeMarkup.includes('Conversation Action') || !routeMarkup.includes('Human Review') || !routeMarkup.includes('Agent')) throw new Error('Route Agent Overview outcomes missing');
+            const treeMarkup = renderAgentTree(agentConfigData.agents);
+            if (!treeMarkup.includes('Agora Router') || !treeMarkup.includes('Automation Router')) throw new Error('Agent-only tree is incomplete');
+            if (treeMarkup.includes('Conversation Action') || treeMarkup.includes('Human Review') || treeMarkup.includes('Detailed Invoice')) throw new Error('non-Agent node leaked into tree');
+            if (!routeMarkup.includes('admin-agent-route-outcome') || !routeMarkup.includes('admin-agent-badge is-agent')) throw new Error('Agent/outcome route semantics missing');
+            const routeMobileMarkup = renderAgentMobileNav(agentConfigData.agents);
+            if (!routeMobileMarkup.includes('Agora Router') || routeMobileMarkup.includes('Conversation Action') || routeMobileMarkup.includes('Automation Router')) throw new Error('mobile navigation must show only direct child Agents');
             selectedAgentPath = ['route-agent', 'agora-router', 'automation-router'];
             selectedAgentViews['automation-router'] = 'persona';
             const personaMarkup = renderAgentConfig();
             if (!personaMarkup.includes('Automation Persona') || !personaMarkup.includes('Default Support')) throw new Error('Automation Persona management missing');
-            selectedAgentPath = ['route-agent', 'agora-router', 'automation-router', 'detailed-invoice'];
-            selectedAgentViews['detailed-invoice'] = 'overview';
+            selectedAgentViews['automation-router'] = 'overview';
+            selectedAutomationBehaviorKey = 'detailed-invoice';
             const behaviorMarkup = renderAgentConfig();
-            if (!behaviorMarkup.includes('Detailed Invoice') || !behaviorMarkup.includes('Billing Handler') || behaviorMarkup.includes('role="tab" aria-selected="false" data-action="select-agent-view" data-agent-key="detailed-invoice" data-agent-view="persona"')) throw new Error('Automation behavior ownership is invalid');
+            if (!behaviorMarkup.includes('Detailed Invoice') || !behaviorMarkup.includes('Billing Handler') || !behaviorMarkup.includes('aria-expanded="true"')) throw new Error('Automation behavior Overview is invalid');
+            if (behaviorMarkup.includes('#agent-config/route-agent/agora-router/automation-router/detailed-invoice')) throw new Error('Automation behavior still creates a fifth-level URL');
+            root.handlers.click({ target: { closest(selector) {
+              if (selector === '[data-action]') return { dataset: { action: 'toggle-automation-behavior' } };
+              if (selector === '[data-behavior-key]') return { dataset: { behaviorKey: 'detailed-invoice' } };
+              return null;
+            } } });
+            if (selectedAutomationBehaviorKey !== '') throw new Error('Automation behavior disclosure did not collapse');
             selectedAgentPath = ['route-agent'];
             selectedAgentViews['route-agent'] = 'mcp';
             if (!renderAgentConfig().includes('No MCP configured.')) throw new Error('empty MCP state missing');
@@ -146,6 +170,17 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (sectionFromHash() !== 'agent-config' || agentPathFromHash()[0] !== 'route-agent') throw new Error('Route Strategy compatibility missing');
             globalThis.location = { hash: '#agent-config/route-agent/agora-router/automation-router' };
             if (sectionFromHash() !== 'agent-config' || agentPathFromHash().at(-1) !== 'automation-router') throw new Error('Agent Config deep link missing');
+            globalThis.location = { hash: '#agent-config/route-agent/conversation-action' };
+            if (agentPathFromHash().join('/') !== 'route-agent') throw new Error('route outcome deep link was not normalized');
+            let replacedHash = '';
+            globalThis.history = { replaceState(_state, _title, hash) { replacedHash = hash; } };
+            normalizeAgentLocation(agentSelectionFromHash());
+            if (replacedHash !== '#agent-config/route-agent') throw new Error('route outcome deep link did not replace the legacy hash');
+            globalThis.location = { hash: '#agent-config/route-agent/agora-router/automation-router/detailed-invoice' };
+            const behaviorSelection = agentSelectionFromHash();
+            if (behaviorSelection.path.join('/') !== 'route-agent/agora-router/automation-router' || behaviorSelection.behaviorKey !== 'detailed-invoice') throw new Error('Automation behavior compatibility missing');
+            normalizeAgentLocation(behaviorSelection);
+            if (replacedHash !== '#agent-config/route-agent/agora-router/automation-router') throw new Error('Automation behavior deep link kept a fifth-level hash');
             """
         )
         for removed in (
@@ -157,7 +192,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260731-agent-config-hierarchy-1", index)
+        self.assertIn("20260731-agent-only-navigation-1", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -262,7 +297,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             };
             agentConfigData = {
               agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', components: [], prompts: [managedPrompt], skills: [], mcp_servers: [] }],
-              route_navigation: { key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', prompt_keys: ['route-system'], capabilities: [], children: [] },
+              route_navigation: { key: 'route-agent', kind: 'agent', is_agent: true, name: 'Route Agent', description: 'Routes.', status: 'active', prompt_keys: ['route-system'], capabilities: [], children: [] },
               route_runtime: { router_prompt_version: 'v1', stage_details: [] }, automation_personas: []
             };
             selectedAgentPath = ['route-agent'];
@@ -449,7 +484,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260731-agent-config-hierarchy-1", html)
+        self.assertIn("20260731-agent-only-navigation-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

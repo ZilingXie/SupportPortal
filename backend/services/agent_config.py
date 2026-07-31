@@ -188,6 +188,7 @@ def _route_node(
     description: str,
     *,
     kind: str,
+    is_agent: bool,
     prompt_keys: list[str] | None = None,
     capabilities: list[dict[str, str]] | None = None,
     children: list[dict[str, Any]] | None = None,
@@ -198,6 +199,7 @@ def _route_node(
         "name": name,
         "description": description,
         "kind": kind,
+        "is_agent": is_agent,
         "status": "active",
         "prompt_keys": list(prompt_keys or []),
         "capabilities": list(capabilities or []),
@@ -214,12 +216,14 @@ def _route_agent_navigation() -> dict[str, Any]:
         "Human Review",
         description,
         kind="handoff",
+        is_agent=False,
     )
     automation = _route_node(
         "automation-router",
         "Automation Router",
         "Classifies confirmed backend-operation requests and dispatches registered Automation behavior.",
         kind="router",
+        is_agent=True,
         prompt_keys=["account-automation-router-system"],
         persona_scope="account-automation",
         children=[
@@ -228,6 +232,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                 "Fraud Account",
                 "Collects grounded fraud-review information, composes one follow-up, and applies payment safety checks.",
                 kind="automation",
+                is_agent=False,
                 prompt_keys=[
                     "account-verification-field-extractor-system",
                     "account-verification-follow-up-composer-system",
@@ -242,6 +247,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                 "Account Suspension",
                 "Extracts grounded suspension details for classification-only handling.",
                 kind="automation",
+                is_agent=False,
                 prompt_keys=["account-suspension-field-extractor-system"],
                 capabilities=[
                     _component("classification-only", "Classification only", "Does not generate an automated customer resolution."),
@@ -252,6 +258,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                 "Detailed Invoice",
                 "Dispatches detailed invoice requests to the registered billing handler.",
                 kind="automation",
+                is_agent=False,
                 capabilities=[
                     _component("billing-handler", "Billing Handler", "Runs the deterministic detailed-invoice workflow."),
                 ],
@@ -261,6 +268,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                 "Enablement",
                 "Extracts grounded enablement fields and runs the registered feature-enablement workflow.",
                 kind="automation",
+                is_agent=False,
                 prompt_keys=["account-enablement-field-extractor-system"],
                 capabilities=[
                     _component("enablement-handler", "Enablement Handler", "Submits a complete enablement request and prepares confirmation behavior."),
@@ -271,6 +279,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                 "Quota",
                 "Extracts quota and capacity requirements before dispatching the registered quota workflow.",
                 kind="automation",
+                is_agent=False,
                 prompt_keys=["account-quota-field-extractor-system"],
                 capabilities=[
                     _component("quota-handler", "Quota Handler", "Handles quota, concurrency, and Big Event capacity requests."),
@@ -281,6 +290,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                 "Unregistered",
                 "Records an unregistered backend operation and falls back to Human Review.",
                 kind="fallback",
+                is_agent=False,
                 capabilities=[
                     _component("human-review", "Human Review", "Handles Automation requests without a registered behavior."),
                 ],
@@ -292,11 +302,12 @@ def _route_agent_navigation() -> dict[str, Any]:
         "Agora Router",
         "Classifies Agora requests as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
         kind="router",
+        is_agent=True,
         prompt_keys=["account-agora-router-system"],
         children=[
-            _route_node("agora-technical", "Agora Technical", "Routes technical Agora product and SDK questions to technical support.", kind="outcome"),
-            _route_node("agora-non-technical", "Agora Non-technical", "Routes non-technical Agora product questions to the appropriate support workflow.", kind="outcome"),
-            _route_node("account-billing", "Account & Billing", "Routes account and billing requests that do not match a registered Automation behavior.", kind="outcome"),
+            _route_node("agora-technical", "Agora Technical", "Routes technical Agora product and SDK questions to technical support.", kind="outcome", is_agent=False),
+            _route_node("agora-non-technical", "Agora Non-technical", "Routes non-technical Agora product questions to the appropriate support workflow.", kind="outcome", is_agent=False),
+            _route_node("account-billing", "Account & Billing", "Routes account and billing requests that do not match a registered Automation behavior.", kind="outcome", is_agent=False),
             automation,
             human_review("agora-uncategorized", "Handles Agora requests that the router cannot categorize reliably."),
         ],
@@ -306,12 +317,13 @@ def _route_agent_navigation() -> dict[str, Any]:
         "Route Agent",
         "Routes Account Cases through layered classifiers and explicit human-review fallbacks.",
         kind="agent",
+        is_agent=True,
         prompt_keys=["account-intent-classifier-system"],
         capabilities=[
             _component("account-intent-classifier", "Intent Classifier", "Classifies Account messages as Conversation, Agora, or Uncertain."),
         ],
         children=[
-            _route_node("conversation-action", "Conversation Action", "Handles conversation-only messages before Agora support routing.", kind="outcome"),
+            _route_node("conversation-action", "Conversation Action", "Handles conversation-only messages before Agora support routing.", kind="outcome", is_agent=False),
             agora,
             human_review("intent-uncertain", "Handles Account messages whose intent cannot be classified reliably."),
         ],
