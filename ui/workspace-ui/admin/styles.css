@@ -4435,6 +4435,7 @@ p {
 .admin-agent-badge.is-service { background: var(--surface-container-highest); color: var(--ink-soft); }
 .admin-agent-badge.is-active { background: var(--primary-fixed); color: #00344e; }
 .admin-agent-badge.is-gated { background: #ffddb8; color: #633c00; }
+.admin-agent-badge.is-agent { background: var(--secondary-fixed); color: var(--secondary); }
 .admin-agent-entry-body { display: grid; gap: 18px; padding: 20px 22px 24px; border-top: 1px solid var(--ghost-border); }
 .admin-agent-components { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; }
 .admin-agent-components > div { min-width: 0; display: flex; gap: 9px; align-items: flex-start; padding: 8px 0; }
@@ -4796,7 +4797,8 @@ p {
   gap: 8px;
 }
 
-.admin-agent-destinations a {
+.admin-agent-destinations a,
+.admin-agent-destinations article {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -4810,22 +4812,134 @@ p {
   text-decoration: none;
 }
 
-.admin-agent-destinations a:hover,
-.admin-agent-destinations a.is-active {
+.admin-agent-destinations a:hover {
   background: var(--primary-fixed);
   color: #00344e;
 }
 
-.admin-agent-destinations a > span:first-child {
+.admin-agent-destination-copy {
   min-width: 0;
   display: grid;
   gap: 4px;
+}
+
+.admin-agent-destination-title {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+
+.admin-agent-route-outcome {
+  border-left: 2px solid var(--ghost-border);
 }
 
 .admin-agent-destinations small {
   color: var(--ink-muted);
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.admin-automation-behaviors {
+  margin-top: 24px;
+}
+
+.admin-automation-behaviors > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.admin-automation-behaviors > header h3,
+.admin-automation-behaviors > header p,
+.admin-automation-behavior-panel h4 {
+  margin: 0;
+}
+
+.admin-automation-behaviors > header p {
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.admin-automation-behavior-list {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-automation-behavior {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--surface-container-low);
+}
+
+.admin-automation-behavior > button {
+  width: 100%;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 24px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.admin-automation-behavior > button:hover,
+.admin-automation-behavior.is-expanded > button {
+  background: var(--primary-fixed);
+  color: #00344e;
+}
+
+.admin-automation-behavior > button > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.admin-automation-behavior > button small {
+  color: var(--ink-muted);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.admin-automation-behavior-meta {
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.admin-automation-behavior > button > .material-symbols-outlined {
+  font-size: 20px;
+  transition: transform 180ms ease;
+}
+
+.admin-automation-behavior > button[aria-expanded="true"] > .material-symbols-outlined {
+  transform: rotate(180deg);
+}
+
+.admin-automation-behavior-panel {
+  min-width: 0;
+  display: grid;
+  gap: 20px;
+  padding: 18px 16px 20px;
+  border-top: 1px solid var(--ghost-border);
+  background: var(--surface-lowest);
+}
+
+.admin-automation-behavior-panel > div {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
 }
 
 .admin-persona-workspace {
@@ -5005,6 +5119,11 @@ p {
   display: none;
 }
 
+.admin-agent-mobile-nav a { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; color: var(--secondary); font-size: 12px; font-weight: 750; }
+.admin-agent-mobile-nav > div { display: grid; gap: 4px; }
+.admin-agent-mobile-nav > div a { padding: 8px 10px; border-radius: 6px; background: var(--surface-container-low); text-decoration: none; }
+.admin-agent-mobile-nav .material-symbols-outlined { font-size: 18px; }
+
 .admin-config-search { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
 .admin-config-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .admin-config-item { min-width: 0; min-height: 64px; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 6px; background: #edf3f1; }
@@ -5044,9 +5163,11 @@ p {
   }
 
   .admin-agent-workspace {
-    grid-template-columns: 240px minmax(0, 1fr);
-    gap: 16px;
+    display: block;
   }
+
+  .admin-agent-tree { display: none; }
+  .admin-agent-mobile-nav { display: grid; gap: 8px; }
 }
 
 @media (max-width: 720px) {
@@ -5180,9 +5301,7 @@ p {
 
   .admin-agent-workspace { display: block; }
   .admin-agent-tree { display: none; }
-  .admin-agent-mobile-nav { display: flex; }
-  .admin-agent-mobile-nav a { display: inline-flex; align-items: center; gap: 6px; color: var(--secondary); font-size: 12px; font-weight: 750; }
-  .admin-agent-mobile-nav .material-symbols-outlined { font-size: 18px; }
+  .admin-agent-mobile-nav { display: grid; gap: 8px; }
   .admin-agent-detail-header { flex-direction: column; }
   .admin-agent-detail-header > div:last-child { justify-content: flex-start; }
   .admin-agent-directory > a { grid-template-columns: 40px minmax(0, 1fr) 22px; }
@@ -5203,6 +5322,9 @@ p {
   .admin-prompt-diff { grid-template-columns: 1fr; }
   .admin-prompt-toolbar label { width: 100%; }
   .admin-prompt-version-meta { flex-direction: column; gap: 3px; }
+  .admin-automation-behavior > button { grid-template-columns: minmax(0, 1fr) 24px; }
+  .admin-automation-behavior-meta { grid-column: 1; grid-row: 2; white-space: normal; }
+  .admin-automation-behavior > button > .material-symbols-outlined { grid-column: 2; grid-row: 1 / span 2; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5212,7 +5334,8 @@ p {
   .admin-editor-backdrop,
   .admin-schedule-editor,
   .admin-agent-summary-chevron,
-  .admin-agent-tree-row > button .material-symbols-outlined {
+  .admin-agent-tree-row > button .material-symbols-outlined,
+  .admin-automation-behavior > button > .material-symbols-outlined {
     animation: none;
     transition: none;
   }
