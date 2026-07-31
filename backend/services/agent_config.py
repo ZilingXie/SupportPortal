@@ -237,17 +237,17 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component(
                     "account-intent-classifier",
                     "Intent Classifier",
-                    "Classifies /account messages as conversation, support request, or unclear and determines support scope.",
+                    "Classifies /account messages as Conversation, Agora, or Uncertain.",
                 ),
                 _component(
                     "account-agora-router",
                     "Agora Router",
-                    "Classifies confirmed Agora requests as technical, non-technical, automation, or unclear.",
+                    "Classifies Agora requests as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
                 ),
                 _component(
                     "account-automation-router",
                     "Automation Router",
-                    "Selects a registered Account Automation subcategory and handler.",
+                    "Selects Fraud Account, Account Suspension, Detailed Invoice, Enablement, Quota, or Unregistered.",
                 ),
                 _component(
                     "account-enablement-field-extractor",
@@ -260,19 +260,24 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "Extracts grounded quota, concurrency, and Big Event capacity details from /account history.",
                 ),
                 _component(
-                    "account-verification-handler",
-                    "Account Verification Handler",
-                    "Controls one follow-up, Human Review, and internal handoff for Account Verification.",
+                    "fraud-account-handler",
+                    "Fraud Account Handler",
+                    "Controls one follow-up, Human Review, and internal handoff for fraud/risk account review.",
                 ),
                 _component(
                     "account-verification-field-extractor",
-                    "Account Verification Field Extractor",
-                    "Extracts four grounded, non-sensitive information groups from /account history.",
+                    "Fraud Account Field Extractor",
+                    "Extracts four grounded, non-sensitive fraud-review information groups from /account history.",
                 ),
                 _component(
                     "account-verification-follow-up-composer",
-                    "Account Verification Follow-up Composer",
+                    "Fraud Account Follow-up Composer",
                     "Writes the single contextual request for any missing required information groups.",
+                ),
+                _component(
+                    "account-suspension-field-extractor",
+                    "Account Suspension Field Extractor",
+                    "Best-effort extraction for classification-only non-fraud suspension cases.",
                 ),
                 _component(
                     "account-verification-payment-safety",

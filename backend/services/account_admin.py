@@ -16,7 +16,7 @@ from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-layered-router-v2"
+ROUTER_PROMPT_VERSION = "account-layered-router-v3"
 ROUTING_STAGE_DESCRIPTIONS = {
     "intent_classifier": "Classifies Account messages as Conversation, Agora, or Uncertain.",
     "agora_router": "Classifies Agora cases as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
@@ -338,7 +338,7 @@ def route_execution_from_decision(
             "classification": dict(classification),
             "confidence": decision.confidence,
             "confidence_threshold": decision.intent_router_confidence_threshold,
-            "router_prompt_version": str(classification.get("pipeline_version") or "account-layered-router-v2"),
+            "router_prompt_version": str(classification.get("pipeline_version") or "account-layered-router-v3"),
             "prompt_snapshots": snapshots,
             "prompt_snapshot_available": bool(snapshots),
             "stages": stages,
@@ -378,7 +378,7 @@ def routing_config_payload() -> dict[str, Any]:
     automation_subcategories = [
         route["execution_action"]
         for route in VALID_ROUTE_TUPLES
-        if route["route_family"] == "automated"
+        if route["route_family"] == "automated" and route["execution_action"] != "account_verification"
     ]
     route_categories = [
         {
@@ -408,6 +408,12 @@ def routing_config_payload() -> dict[str, Any]:
             "description": "Confirmed backend operations are classified into a registered subcategory or Unregistered.",
             "execution_actions": [*automation_subcategories, "unregistered"],
             "subcategories": [*automation_subcategories, "unregistered"],
+            "handler_modes": {
+                action: (
+                    "classification_only" if action == "account_suspension" else "active"
+                )
+                for action in automation_subcategories
+            },
         },
     ]
 

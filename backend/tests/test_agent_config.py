@@ -47,8 +47,8 @@ class AgentConfigTests(unittest.TestCase):
 
         route_prompts = {item["key"]: item for item in agents["route-agent"]["prompts"]}
         self.assertEqual(route_prompts["account-intent-classifier-system"]["version"], "account-intent-v2")
-        self.assertEqual(route_prompts["account-agora-router-system"]["version"], "account-agora-v3")
-        self.assertEqual(route_prompts["account-automation-router-system"]["version"], "account-automation-v4")
+        self.assertEqual(route_prompts["account-agora-router-system"]["version"], "account-agora-v4")
+        self.assertEqual(route_prompts["account-automation-router-system"]["version"], "account-automation-v5")
         self.assertEqual(route_prompts["account-agora-router-system"]["metadata"]["scope"], "/account")
         self.assertEqual(route_prompts["account-automation-router-system"]["metadata"]["managed"], False)
         self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["metadata"]["managed"], True)
@@ -56,7 +56,11 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(route_prompts["account-quota-field-extractor-system"]["version"], "account-quota-fields-v1")
         self.assertEqual(
             route_prompts["account-verification-field-extractor-system"]["version"],
-            "account-verification-fields-v1",
+            "fraud-account-fields-v2",
+        )
+        self.assertEqual(
+            route_prompts["account-suspension-field-extractor-system"]["version"],
+            "account-suspension-fields-v1",
         )
         self.assertEqual(
             route_prompts["account-verification-follow-up-composer-system"]["metadata"]["managed"],
@@ -71,7 +75,8 @@ class AgentConfigTests(unittest.TestCase):
                 "account-automation-router",
                 "account-enablement-field-extractor",
                 "account-quota-field-extractor",
-                "account-verification-handler",
+                "fraud-account-handler",
+                "account-suspension-field-extractor",
                 "account-verification-field-extractor",
                 "account-verification-follow-up-composer",
                 "account-verification-payment-safety",

@@ -66,16 +66,22 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "tooling_profile": "deterministic_resolution",
     },
     {
+        "scope_label": "fraud_account",
+        "execution_action": "fraud_account",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
+        "tooling_profile": "deterministic_billing_intake",
+    },
+    {
         "scope_label": "billing",
         "execution_action": "account_verification",
         "route_family": AUTOMATED_ROUTE_FAMILY,
         "tooling_profile": "deterministic_billing_intake",
     },
     {
-        "scope_label": "billing",
+        "scope_label": "account_suspension",
         "execution_action": "account_suspension",
         "route_family": AUTOMATED_ROUTE_FAMILY,
-        "tooling_profile": "deterministic_billing_intake",
+        "tooling_profile": "classification_only",
     },
     {
         "scope_label": "billing",

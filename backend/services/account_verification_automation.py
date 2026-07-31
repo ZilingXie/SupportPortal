@@ -52,18 +52,18 @@ def _internal_email(
     missing_lines = [f"- {_GROUP_LABELS[group]}" for group in missing_fields]
     body_parts = [
         "Hi team,",
-        "A customer has requested an account verification review.",
+        "A customer has requested a fraud/risk account review.",
         f"Account Case ID: {account_case_id}\nTicket ID: {ticket_id}\nCustomer email: {customer_email or '(not provided)'}",
         "Provided information:\n" + ("\n".join(provided_lines) or "(none safely collected)"),
     ]
     if missing_lines:
         body_parts.append("Missing after one follow-up:\n" + "\n".join(missing_lines))
     body_parts.append("Please reply directly to this email with a customer-shareable handling update.")
-    delivery_key = hashlib.sha256(f"account-verification:{account_case_id}".encode("utf-8")).hexdigest()
+    delivery_key = hashlib.sha256(f"fraud-account:{account_case_id}".encode("utf-8")).hexdigest()
     return {
         "to": os.getenv(ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV, "").strip()
         or DEFAULT_ACCOUNT_VERIFICATION_INTERNAL_EMAIL,
-        "subject": f"[Billing Request] Account verification - Ticket {ticket_id}",
+        "subject": f"[Billing Request] Fraud account review - Ticket {ticket_id}",
         "body": "\n\n".join(body_parts),
         "delivery_key": delivery_key,
     }
@@ -139,7 +139,7 @@ def build_account_verification_automation_result(
     )
     return AccountVerificationAutomationResult(
         customer_reply=(
-            "Thanks for the information. We have sent your account verification request to our internal "
+            "Thanks for the information. We have sent your fraud/risk account review request to our internal "
             "team for review. They will follow up after reviewing the available details."
         ),
         missing_fields=list(extraction.missing_fields),

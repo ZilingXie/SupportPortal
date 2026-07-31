@@ -92,7 +92,7 @@ class AccountCaseRerouteTests(unittest.TestCase):
             result.account_case["route_classification"]["previous_pipeline_version"],
             "account-layered-router-v1",
         )
-        self.assertEqual(result.account_case["route_classification"]["handler_binding_status"], "active")
+        self.assertEqual(result.account_case["route_classification"]["handler_binding_status"], "classification_only")
         self.assertEqual(result.account_case["missing_fields"], ["company_name"])
         self.assertEqual(result.account_case["customer_reply"], "Existing reply")
         self.assertEqual(result.route_execution["trigger"], "bulk_latest_reroute")
@@ -119,7 +119,7 @@ class AccountCaseRerouteTests(unittest.TestCase):
             "classification_only",
         )
         self.assertEqual(result.account_case["route_status"], "automated")
-        self.assertEqual(result.account_case["automation_status"], "automation")
+        self.assertEqual(result.account_case["automation_status"], "classified_only")
 
     def test_cli_is_dry_run_by_default_and_apply_persists_route_and_audit(self) -> None:
         item = {
