@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -18,9 +19,48 @@ from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
+from backend.services.account_route_pipeline import AccountRouteResult
 from backend.services.llm_factory import LlmInvocationError
 from backend.services.quota_field_extractor import QuotaFieldExtraction
 from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
+
+
+def _fraud_account_route_result() -> AccountRouteResult:
+    decision = SupportRouteDecision(
+        scope_label="fraud_account",
+        route="fraud_account",
+        route_family="automated",
+        execution_action="fraud_account",
+        confidence=0.97,
+        reason="registered_fraud_account",
+        semantic_intent="automation.fraud_account_review",
+        automation_eligibility="eligible",
+        tooling_profile="deterministic_billing_intake",
+        router_source="account_layered_llm",
+    )
+    classification = {
+        "pipeline_version": "account-layered-router-v3",
+        "intent_class": "agora",
+        "agora_route": "automation",
+        "automation_subcategory": "fraud_account",
+        "route_target": "automation",
+        "route_reason_code": "registered_fraud_account",
+        "stage_confidences": {"intent_classifier": 0.99, "agora_router": 0.98, "automation_router": 0.97},
+        "stage_reason_codes": {
+            "intent_classifier": "agora_case",
+            "agora_router": "explicit_backend_operation",
+            "automation_router": "registered_fraud_account",
+        },
+        "handler_binding_status": "active",
+        "primary_label": "Agora",
+        "secondary_label": "Automation / Fraud Account",
+    }
+    return AccountRouteResult(
+        decision=decision,
+        classification=classification,
+        primary_label="Agora",
+        secondary_label="Automation / Fraud Account",
+    )
 
 
 def _fake_enablement_field_extraction(**kwargs: object) -> EnablementFieldExtraction:
@@ -308,7 +348,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v2")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v3")
         self.assertEqual(executions[0]["classification"]["intent_class"], "agora")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn(
@@ -2102,25 +2142,25 @@ class AccountIntakeApiTests(unittest.TestCase):
         with patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 f"/api/account/cases/{account_case_id}/route-correction",
-                json={"category": "automation", "subcategory": "account_verification"},
+                json={"category": "automation", "subcategory": "fraud_account"},
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["category"], "automation")
-        self.assertEqual(payload["subcategory"], "account_verification")
+        self.assertEqual(payload["subcategory"], "fraud_account")
         self.assertEqual(payload["route_family"], "automated")
         self.assertEqual(payload["route_status"], "automated")
         self.assertEqual(payload["automation_handler"], "billing")
         self.assertEqual(payload["automation_status"], "not_automated")
         self.assertEqual(payload["primary_label"], "Agora")
-        self.assertEqual(payload["secondary_label"], "Automation / Account Verification")
+        self.assertEqual(payload["secondary_label"], "Automation / Fraud Account")
         stored = self.repository.get_account_case(account_case_id)
         assert stored is not None
         self.assertEqual(stored["route_classification"]["agora_route"], "automation")
         self.assertEqual(
             stored["route_classification"]["automation_subcategory"],
-            "account_verification",
+            "fraud_account",
         )
         self.assertEqual(stored["route_classification"]["classification_source"], "operator_correction")
 
@@ -2457,19 +2497,22 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["status"], "classified_only")
         self.assertEqual(payload["route"], "account_suspension")
         self.assertEqual(payload["subcategory"], "account_suspension")
         self.assertEqual(payload["secondary_label"], "Automation / Account Suspension")
         self.assertEqual(payload["customer_reply"], "")
-        self.assertEqual(payload["ai_reply_status"], "scheduled")
-        self.assertEqual(payload["internal_email_send_status"], "not_ready")
+        self.assertIsNone(payload["ai_reply_status"])
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertEqual(payload["internal_email_send_reason"], "classification_only")
+        self.assertEqual(payload["automation_handler"], "account_suspension")
+        self.assertEqual(payload["automation_mode"], "classification_only")
         self.assertNotIn("support_ticket_id", payload)
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
-        self.assertEqual(bt["automation_status"], "automation")
+        self.assertEqual(bt["automation_status"], "classified_only")
         self.assertEqual(bt["route"], "account_suspension")
         self.assertEqual(bt["execution_action"], "account_suspension")
         self.assertEqual(bt["subcategory"], "account_suspension")
@@ -2765,21 +2808,18 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["status"], "automation")
-        # Account suspension with no field info should have missing fields.
-        self.assertTrue(len(payload["missing_fields"]) > 0)
-        self.assertIn("company_name", payload["missing_fields"])
+        self.assertEqual(payload["status"], "classified_only")
+        self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
-        self.assertEqual(payload["ai_reply_status"], "scheduled")
+        self.assertIsNone(payload["ai_reply_status"])
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
-        self.assertTrue(len(bt["missing_fields"]) > 0)
+        self.assertEqual(bt["missing_fields"], [])
         self.assertIsNone(bt["customer_reply"])
         job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
-        assert job is not None
-        self.assertIn("provide the following details", job["payload"]["draft_content"].lower())
+        self.assertIsNone(job)
 
     def test_account_verification_missing_use_case_uses_customer_name_email_style(self) -> None:
         decision = SupportRouteDecision(
@@ -2817,7 +2857,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["route"], "account_verification")
+        self.assertEqual(payload["route"], "fraud_account")
         self.assertEqual(payload["missing_fields"], ["use_case"])
         job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         assert job is not None
@@ -2889,12 +2929,17 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest_job["payload"]["asked_field_keys"], [])
 
     def test_billing_automation_reply_recomputes_fields(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_fraud_account_route_result()
+        ):
             create_response = self.client.post(
                 "/account",
                 json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended. I cannot log in.",
+                    "title": "Suspicious activity verification",
+                    "question": (
+                        "The fraud review asks us to submit company, contact, use case, and payment "
+                        "information to verify and restore our account."
+                    ),
                     "customer_email": "customer@example.com",
                 },
             )
@@ -2924,12 +2969,10 @@ class AccountIntakeApiTests(unittest.TestCase):
             f"/api/account/billing-tickets/{bt_id}/reply",
             json={
                 "message": (
-                    "Company name: Acme Corp. "
-                    "Company location: Singapore. "
-                    "Website: https://acme.example.com. "
-                    "Contact email: acme@example.com. "
+                    "Company name: Acme Corp. Company registered country and address: Singapore. "
+                    "My name is Taylor. Company address: Singapore. "
                     "Phone number: +65-12345678. "
-                    "Use case: live streaming."
+                    "Use case: live streaming. No payment has been made yet."
                 ),
             },
         )
@@ -2939,7 +2982,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(reply_payload["status"], "automation")
         self.assertEqual(reply_payload["missing_fields"], [])
         self.assertEqual(reply_payload["customer_reply"], None)
-        self.assertEqual(reply_payload["ai_reply_status"], "scheduled")
+        self.assertIsNone(reply_payload["ai_reply_status"])
 
         # Only the customer message is visible until the scheduled publication.
         self.assertEqual(saved_new_message_counts, [1])
@@ -2947,24 +2990,23 @@ class AccountIntakeApiTests(unittest.TestCase):
         ticket = self.repository.get_ticket(create_payload["ticket_id"])
         self.assertEqual(len(ticket["messages"]), 2)
         self.assertEqual(ticket["messages"][1]["role"], "customer")
-        self._publish_latest_account_reply(create_payload["ticket_id"])
-        ticket = self.repository.get_ticket(create_payload["ticket_id"])
-        assert ticket is not None
-        self.assertEqual(ticket["messages"][2]["role"], "assistant")
-        self.assertIn("escalated", ticket["messages"][2]["content"].lower())
-
         # Check billing ticket was updated.
         bt = self.repository.get_billing_ticket(bt_id)
         self.assertEqual(bt["missing_fields"], [])
-        self.assertIn("company_name", bt["collected_fields"])
+        self.assertIn("company_information", bt["collected_fields"])
 
     def test_billing_automation_reply_sends_internal_email_when_fields_complete(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_fraud_account_route_result()
+        ):
             create_response = self.client.post(
                 "/account",
                 json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended. I cannot log in.",
+                    "title": "Suspicious activity verification",
+                    "question": (
+                        "The fraud review asks us to submit company, contact, use case, and payment "
+                        "information to verify and restore our account."
+                    ),
                     "customer_email": "customer@example.com",
                 },
             )
@@ -2987,12 +3029,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 f"/api/account/billing-tickets/{bt_id}/reply",
                 json={
                     "message": (
-                        "Company name: Acme Corp. "
-                        "Company location: Singapore. "
-                        "Website: https://acme.example.com. "
-                        "Contact email: acme@example.com. "
+                        "Company name: Acme Corp. Company registered country and address: Singapore. "
+                        "My name is Taylor. Company address: Singapore. "
                         "Phone number: +65-12345678. "
-                        "Use case: live streaming."
+                        "Use case: live streaming. No payment has been made yet."
                     ),
                 },
             )
@@ -3004,7 +3044,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(reply_payload["internal_email_send_reason"], "")
         self.assertTrue(captured_payloads)
         self.assertEqual(captured_payloads[0]["to"], "xieziling@agora.io")
-        self.assertIn("reply directly to this email in Outlook", captured_payloads[0]["body"])
+        self.assertIn("reply directly to this email", captured_payloads[0]["body"])
         self.assertNotIn("/response?token=", captured_payloads[0]["body"])
 
         bt = self.repository.get_billing_ticket(bt_id)
@@ -3014,12 +3054,17 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn("/response?token=", bt["internal_email_payload"]["body"])
 
     def test_billing_automation_reply_records_outlook_email_failure_without_response_token(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_fraud_account_route_result()
+        ):
             create_response = self.client.post(
                 "/account",
                 json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended. I cannot log in.",
+                    "title": "Suspicious activity verification",
+                    "question": (
+                        "The fraud review asks us to submit company, contact, use case, and payment "
+                        "information to verify and restore our account."
+                    ),
                     "customer_email": "customer@example.com",
                 },
             )
@@ -3040,12 +3085,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 f"/api/account/billing-tickets/{bt_id}/reply",
                 json={
                     "message": (
-                        "Company name: Acme Corp. "
-                        "Company location: Singapore. "
-                        "Website: https://acme.example.com. "
-                        "Contact email: acme@example.com. "
+                        "Company name: Acme Corp. Company registered country and address: Singapore. "
+                        "My name is Taylor. Company address: Singapore. "
                         "Phone number: +65-12345678. "
-                        "Use case: live streaming."
+                        "Use case: live streaming. No payment has been made yet."
                     ),
                 },
             )
@@ -3055,7 +3098,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(reply_payload["internal_email_send_status"], "failed")
         self.assertEqual(reply_payload["internal_email_send_reason"], "smtp down")
         self.assertTrue(captured_payloads)
-        self.assertIn("reply directly to this email in Outlook", captured_payloads[0]["body"])
+        self.assertIn("reply directly to this email", captured_payloads[0]["body"])
         self.assertNotIn("/response?token=", captured_payloads[0]["body"])
 
         bt = self.repository.get_billing_ticket(bt_id)
@@ -3513,8 +3556,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             response = self.client.post(
                 "/account",
                 json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended.",
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
                     "customer_email": "customer@example.com",
                 },
             )
@@ -3530,15 +3573,16 @@ class AccountIntakeApiTests(unittest.TestCase):
     def test_missing_fields_are_asked_only_once_per_ticket(self) -> None:
         cases = (
             (
-                "Account verification",
-                "My account has been suspended.",
+                "Suspicious activity verification",
+                (
+                    "The fraud review asks us to submit company, contact, use case, and payment "
+                    "information to verify and restore our account."
+                ),
                 {
-                    "company_name",
-                    "company_location",
-                    "website",
-                    "contact_email",
-                    "phone_number",
+                    "company_information",
+                    "contact_information",
                     "use_case",
+                    "payment_information",
                 },
             ),
             (
@@ -3553,7 +3597,12 @@ class AccountIntakeApiTests(unittest.TestCase):
             ),
         )
         for title, question, expected_asked_fields in cases:
-            with self.subTest(title=title), patch.object(main, "dispatch_event", AsyncMock()):
+            route_patch = (
+                patch.object(main, "decide_account_route", return_value=_fraud_account_route_result())
+                if title == "Suspicious activity verification"
+                else nullcontext()
+            )
+            with self.subTest(title=title), patch.object(main, "dispatch_event", AsyncMock()), route_patch:
                 created = self.client.post(
                     "/account",
                     json={
@@ -3577,8 +3626,12 @@ class AccountIntakeApiTests(unittest.TestCase):
                 second_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
                 assert second_job is not None
                 self.assertEqual(second_job["job_id"], first_job_id)
-                self.assertEqual(response.json()["primary_label"], "Conversation")
-                self.assertEqual(response.json()["secondary_label"], "Follow-up")
+                if title == "Suspicious activity verification":
+                    self.assertEqual(response.json()["primary_label"], "Agora")
+                    self.assertEqual(response.json()["secondary_label"], "Automation / Fraud Account")
+                else:
+                    self.assertEqual(response.json()["primary_label"], "Conversation")
+                    self.assertEqual(response.json()["secondary_label"], "Follow-up")
 
     def test_new_customer_message_cancels_pending_reply(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -3608,8 +3661,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             created = self.client.post(
                 "/account",
                 json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended.",
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
                     "customer_email": "customer@example.com",
                 },
             ).json()
@@ -3652,8 +3705,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             created = self.client.post(
                 "/account",
                 json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended.",
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
                     "customer_email": "customer@example.com",
                 },
             ).json()
@@ -3677,8 +3730,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             created = self.client.post(
                 "/account",
                 json={
-                    "title": "Account suspended",
-                    "question": "My account has been suspended.",
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
                     "customer_email": "customer@example.com",
                 },
             ).json()

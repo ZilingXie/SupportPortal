@@ -3005,3 +3005,25 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_case_reroute.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py backend/tests/test_account_ui_contract.py backend/tests/test_account_admin_features.py backend/tests/test_prompt_versioning.py backend/tests/test_repository_configuration.py -q` (246 passed, 3 subtests passed)
   - Full dry-run against 62 Account Cases completed with 0 failures; 9 v1 and 53 v2 records were evaluated for migration to `account-layered-router-v2`.
+
+## 2026-07-31 - Fraud Account and classification-only Account Suspension split
+
+- Area or subsystem: `/account` Agora Router, Automation Router, Fraud Account intake, and Account Suspension extraction
+- Prompt or model version: `account-layered-router-v3`, `account-agora-v4`, `account-automation-v5`, `fraud-account-fields-v2`, `fraud-account-follow-up-v2`, `account-suspension-fields-v1`
+- Summary: Replaced the risk-oriented Account Verification route with `fraud_account` and redefined `account_suspension` as a non-fraud, classification-only subcategory. Added grounded extraction for the reported suspension state, known reason, and customer actions, plus explicit Billing exclusions for Enablement.
+- Reason: Cases 12523, 12529, and 12532 were non-fraud suspensions but inherited the fraud-review field checklist; Case 12505 was financial invoice-billing configuration but was attracted to Enablement wording; historical Case 12475 still treated Website as required.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/account_automation_handlers.py`
+  - `backend/services/account_suspension_field_extractor.py`
+  - `backend/services/account_automation_state_repair.py`
+  - `backend/main.py`
+  - Account UI and Admin Agent Config contracts
+- Expected behavior change:
+  - Explicit fraud, suspicious-activity, or risk-review evidence routes to `Automation / Fraud Account` and retains the safe four-group, one-follow-up workflow; Website remains optional.
+  - Balance, payment, free-tier, package, quota, plan, or usage-related suspension routes to `Automation / Account Suspension`, extracts optional context, and never asks, emails, or replies automatically.
+  - Invoice billing, payment methods, credit terms, refunds, pricing, subscriptions, packages, plans, and financial settings stay `Account & Billing` rather than Enablement.
+  - Classification-only reroute remains side-effect free; a separate targeted repair command can refresh stored Fraud/Suspension fields without sending mail or customer replies.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_intake.py backend/tests/test_account_case_reroute.py backend/tests/test_route_correction.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_suspension_field_extractor.py backend/tests/test_account_automation_state_repair.py backend/tests/test_account_verification_automation.py backend/tests/test_agent_config.py backend/tests/test_account_ui_contract.py backend/tests/test_workspace_admin_ui_contract.py`

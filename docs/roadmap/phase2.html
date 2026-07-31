@@ -616,7 +616,7 @@
       <div class="release-copy">
         <p class="release-kicker">Phase 2 Delivery Record</p>
         <h1>确定性 Automation + Controlled Validation</h1>
-        <p class="release-summary">会议第一阶段对应实际 Phase 2：先把 account verification、account suspension、detailed invoice 和 enablement 四类确定性 case 做稳，再用真实流量验证分层路由、字段收集与自动化覆盖率。</p>
+        <p class="release-summary">会议第一阶段对应实际 Phase 2：先把 fraud account、account suspension、detailed invoice、enablement 和 quota 分类做稳，再用真实流量验证分层路由、字段收集与自动化覆盖率。</p>
         <ul class="release-meta">
           <li>4 类确定性 automation</li>
           <li>6 项会议行动</li>
@@ -711,7 +711,7 @@
         </article>
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>五类确定性自动化范围</h3><p>Automation 已覆盖 account verification、account suspension、detailed invoice、enablement 和 quota；Account 专用 registry 显式分派各 subcategory，Verification 使用独立 intake handler，Suspension 与 Invoice 保留 Billing 行为，Enablement 与 Quota 使用独立 handler。</p></div>
+          <div class="delivery-main"><h3>五类 Automation 范围</h3><p>Automation 已覆盖 fraud account、account suspension、detailed invoice、enablement 和 quota；Fraud Account 使用独立安全 intake，Account Suspension 仅由 LLM 提取暂停状态、已知原因和客户已采取动作，不追问、不发邮件也不自动回复，其他子类继续使用各自已注册 handler。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
@@ -733,7 +733,7 @@
         </article>
         <article class="delivery-row" data-category="reliability" data-status="done">
           <div class="delivery-category">Reliability</div>
-          <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 展示 <code>/account</code> 的 Intent Classifier、Agora Router、Automation Router、Account Verification Handler/Extractor/Follow-up Composer 与原 Client Router，并将可编辑 Prompt 纳入 Draft、Publish、Diff、Restore 和版本历史管理。</p></div>
+          <div class="delivery-main"><h3>Agent Config 与 Route Strategy 管理面</h3><p>Admin 展示 <code>/account</code> 的 Intent Classifier、Agora Router、Automation Router、Fraud Account Handler/Extractor/Follow-up Composer、Account Suspension classification-only extractor 与原 Client Router，并将可编辑 Prompt 纳入 Draft、Publish、Diff、Restore 和版本历史管理。</p></div>
           <div class="pr-links"><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/651">PR #651</a></div>
         </article>
         <article class="delivery-row" data-category="quality" data-status="done">
@@ -880,7 +880,7 @@
       </header>
       <div class="flow reveal">
         <div class="flow-step"><span>01</span><strong>Zendesk intake</strong><p>接收真实 ticket，保留 external ID 与幂等判断。</p></div>
-        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>只进入 account verification、account suspension、detailed invoice 或 enablement。</p></div>
+        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>进入 fraud account、account suspension、detailed invoice、enablement 或 quota。</p></div>
         <div class="flow-step"><span>03</span><strong>Bounded collection</strong><p>按 required / optional 规则收集字段，限制重复追问。</p></div>
         <div class="flow-step"><span>04</span><strong>Human-style reply</strong><p>随机 6–10 分钟，使用受控人设 Prompt 模板。</p></div>
         <div class="flow-step"><span>05</span><strong>Coverage review</strong><p>统计解决率、route accuracy 与失败原因，决定是否扩类。</p></div>

@@ -11,15 +11,21 @@ class AccountAutomationHandlerRegistration:
 
 
 _HANDLERS = {
+    # Deprecated execution alias retained for stored Cases and external corrections.
     "account_verification": AccountAutomationHandlerRegistration(
         subcategory="account_verification",
         handler="billing",
         implementation="account_verification",
     ),
+    "fraud_account": AccountAutomationHandlerRegistration(
+        subcategory="fraud_account",
+        handler="billing",
+        implementation="account_verification",
+    ),
     "account_suspension": AccountAutomationHandlerRegistration(
         subcategory="account_suspension",
-        handler="billing",
-        implementation="billing",
+        handler="account_suspension",
+        implementation="classification_only",
     ),
     "detailed_invoice": AccountAutomationHandlerRegistration(
         subcategory="detailed_invoice",
@@ -44,4 +50,4 @@ def account_automation_handler(subcategory: str) -> AccountAutomationHandlerRegi
 
 
 def registered_account_automation_subcategories() -> frozenset[str]:
-    return frozenset(_HANDLERS)
+    return frozenset(key for key in _HANDLERS if key != "account_verification")

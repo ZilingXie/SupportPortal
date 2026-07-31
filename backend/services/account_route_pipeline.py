@@ -13,6 +13,7 @@ from backend.services.automation_routing import (
     canonical_automation_subcategory,
     is_registered_automation,
 )
+from backend.services.account_automation_handlers import registered_account_automation_subcategories
 from backend.services.billing_automation import BILLING_TOOLING_PROFILE
 from backend.services.enablement_automation import (
     ENABLEMENT_SEMANTIC_INTENT,
@@ -31,6 +32,7 @@ from backend.services.prompts.account_routing import (
     ACCOUNT_AUTOMATION_PROMPT_VERSION,
     ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
     ACCOUNT_QUOTA_FIELD_PROMPT_VERSION,
+    ACCOUNT_SUSPENSION_FIELD_PROMPT_VERSION,
     ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
     ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION,
     ACCOUNT_INTENT_PROMPT_VERSION,
@@ -38,6 +40,7 @@ from backend.services.prompts.account_routing import (
     build_account_automation_system_prompt,
     build_account_enablement_field_system_prompt,
     build_account_quota_field_system_prompt,
+    build_account_suspension_field_system_prompt,
     build_account_verification_field_system_prompt,
     build_account_verification_follow_up_system_prompt,
     build_account_intent_system_prompt,
@@ -49,7 +52,7 @@ from backend.services.support_router_prompt import build_route_prompt_hints
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v2"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v3"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_AUTOMATION_PROMPT_KEY = "account-automation-router-system"
@@ -58,7 +61,10 @@ DEFAULT_ACCOUNT_ROUTE_CONFIDENCE_THRESHOLD = 0.7
 _INTENT_CLASSES = {"conversation", "agora", "uncertain"}
 _CONVERSATION_ACTIONS = {"resolve", "follow_up", "human_review"}
 _AGORA_ROUTES = {"technical", "non_technical", "account_billing", "automation", "uncategorized"}
-_AUTOMATION_SUBCATEGORIES = {*REGISTERED_AUTOMATION_SUBCATEGORIES, "unregistered"}
+_AUTOMATION_SUBCATEGORIES = {
+    *(registered_account_automation_subcategories() - {"account_verification"}),
+    "unregistered",
+}
 _INTENT_REASON_CODES = {
     "conversation_resolution",
     "conversation_follow_up",
@@ -77,7 +83,7 @@ _AGORA_REASON_CODES = {
     "multiple_equal_intents",
 }
 _AUTOMATION_REASON_CODES = {
-    "registered_account_verification",
+    "registered_fraud_account",
     "registered_account_suspension",
     "registered_detailed_invoice",
     "registered_enablement",
@@ -143,8 +149,16 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "managed": True,
         },
         {
+            "key": "account-suspension-field-extractor-system",
+            "name": "Account Suspension Field Extractor",
+            "component_key": "account-suspension-field-extractor",
+            "content": build_account_suspension_field_system_prompt(),
+            "version": ACCOUNT_SUSPENSION_FIELD_PROMPT_VERSION,
+            "managed": True,
+        },
+        {
             "key": "account-verification-field-extractor-system",
-            "name": "Account Verification Field Extractor",
+            "name": "Fraud Account Field Extractor",
             "component_key": "account-verification-field-extractor",
             "content": build_account_verification_field_system_prompt(),
             "version": ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
@@ -160,7 +174,7 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
         },
         {
             "key": "account-verification-follow-up-composer-system",
-            "name": "Account Verification Follow-up Composer",
+            "name": "Fraud Account Follow-up Composer",
             "component_key": "account-verification-follow-up-composer",
             "content": build_account_verification_follow_up_system_prompt(),
             "version": ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION,
@@ -641,6 +655,17 @@ def _legacy_result(
                 "execution_action": action,
             }
         )
+    elif action == "account_verification":
+        action = "fraud_account"
+        decision = SupportRouteDecision(
+            **{
+                **decision.__dict__,
+                "scope_label": "fraud_account",
+                "route": action,
+                "execution_action": action,
+                "semantic_intent": "automation.fraud_account_review",
+            }
+        )
     if is_registered_automation(route_family=decision.route_family, execution_action=action):
         classification.update(
             agora_route="automation",
@@ -1029,7 +1054,7 @@ def decide_account_route(
     automation_confidence = _safe_confidence(automation_payload.get("confidence"))
     risk_flags = [str(item) for item in list(automation_payload.get("risk_flags") or []) if str(item).strip()]
     automation_reason_defaults = {
-        "account_verification": "registered_account_verification",
+        "fraud_account": "registered_fraud_account",
         "account_suspension": "registered_account_suspension",
         "detailed_invoice": "registered_detailed_invoice",
         "enablement": "registered_enablement",
@@ -1093,8 +1118,12 @@ def decide_account_route(
     classification.update(
         route_target="automation",
         human_review_reason=None,
-        handler_binding_status="active",
+        handler_binding_status=(
+            "classification_only" if subcategory == "account_suspension" else "active"
+        ),
     )
+    if subcategory == "account_suspension":
+        classification["automation_mode"] = "classification_only"
     automation_reason = classification["stage_reason_codes"]["automation_router"]
     automation_evidence = _sanitize_evidence(
         [*classification["evidence_spans"], *_sanitize_evidence(automation_payload.get("evidence_spans"))]
@@ -1108,6 +1137,14 @@ def decide_account_route(
         scope_label = "quota"
         semantic_intent = QUOTA_SEMANTIC_INTENT
         tooling_profile = QUOTA_TOOLING_PROFILE
+    elif subcategory == "account_suspension":
+        scope_label = "account_suspension"
+        semantic_intent = "automation.account_suspension_classification"
+        tooling_profile = "classification_only"
+    elif subcategory == "fraud_account":
+        scope_label = "fraud_account"
+        semantic_intent = "automation.fraud_account_review"
+        tooling_profile = BILLING_TOOLING_PROFILE
     else:
         scope_label = "billing"
         semantic_intent = f"billing.{subcategory}"

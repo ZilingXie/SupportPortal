@@ -87,7 +87,7 @@ const ROUTE_TUPLE_OPTIONS = [
   { scope: "account_billing", action: "human_review_required", label: "Agora / Account & Billing" },
   { scope: "uncategorized", action: "human_review_required", label: "Agora / Uncategorized" },
   { scope: "uncertain", action: "human_review_required", label: "Uncertain / Human Review" },
-  { scope: "automation", action: "account_verification", label: "Automation / Account verification" },
+  { scope: "fraud_account", action: "fraud_account", label: "Automation / Fraud account" },
   { scope: "automation", action: "account_suspension", label: "Automation / Account suspension" },
   { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "automation", action: "enablement", label: "Automation / Enablement" },
@@ -110,6 +110,7 @@ function statusLabel(status) {
   const labels = {
     automation: "Automation",
     automated: "Automated",
+    classified_only: "Classification only",
     needs_more_info: "Needs more info",
     not_automated: "Not automated",
   };
@@ -119,6 +120,7 @@ function statusLabel(status) {
 function routeClass(route) {
   if (route === "detailed_invoice") return "route-invoice";
   if (route === "account_suspension") return "route-suspension";
+  if (route === "fraud_account") return "route-suspension";
   return "route-other";
 }
 
@@ -874,6 +876,10 @@ function renderDetailView() {
   const ticketNumber = accountTicketNumber(item);
   const accountCaseId = item.account_case_id || item.billing_ticket_id || "";
   const hasDifferentInternalTicketId = Boolean(ticketId && ticketNumber && String(ticketId) !== ticketNumber);
+  const routeClassification =
+    typeof item.route_classification === "object" && item.route_classification !== null
+      ? item.route_classification
+      : {};
 
   return `
     <div class="panel detail-stack">
@@ -903,6 +909,11 @@ function renderDetailView() {
           <span class="meta-label">Status</span>
           <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         </div>
+        ${
+          routeClassification.automation_mode
+            ? `<div class="meta-row"><span class="meta-label">Automation mode</span><span class="meta-value">${escapeHtml(String(routeClassification.automation_mode).replaceAll("_", " "))}</span></div>`
+            : ""
+        }
         <div class="meta-row meta-row--route-result">
           <span class="meta-label">Route result</span>
           <div class="meta-row--route-result-value">
@@ -957,6 +968,11 @@ function renderDetailView() {
             : ""
         }
       </div>
+      ${
+        routeClassification.superseded_automation_response
+          ? `<div class="detail-section warning"><div class="detail-section-title">Prior automation response superseded</div></div>`
+          : ""
+      }
       ${renderRouteCorrectionPanel()}
       ${
         missingFields.length

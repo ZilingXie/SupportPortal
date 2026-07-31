@@ -64,6 +64,10 @@ from backend.services.billing_automation import build_billing_automation_result,
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.account_verification_automation import build_account_verification_automation_result
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
+from backend.services.account_suspension_field_extractor import (
+    AccountSuspensionFieldExtraction,
+    extract_account_suspension_fields,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     automation_metadata,
@@ -498,12 +502,43 @@ def _build_account_verification_internal_email_attempt(
         "field_extraction": result.extraction,
         "prompt_snapshots": dict(result.prompt_snapshots),
         "automation_context": {
-            "handler": "account_verification",
+            "handler": "fraud_account",
             "extractor_version": result.extraction.audit_payload().get("prompt_version"),
             "extraction_status": result.extraction.status,
             "follow_up_count": persisted_follow_up_count,
             "follow_up_scheduled": follow_up_scheduled,
             "proceed_with_missing_fields": result.proceed_with_missing_fields,
+        },
+    }
+
+
+def _build_account_suspension_classification_attempt(
+    *,
+    ticket_subject: str,
+    customer_messages: list[dict[str, Any]],
+    existing_fields: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    extraction = extract_account_suspension_fields(
+        ticket_subject=ticket_subject,
+        customer_messages=customer_messages,
+        existing_fields=existing_fields,
+    )
+    return {
+        "customer_reply": "",
+        "missing_fields": [],
+        "collected_fields": dict(extraction.collected_fields),
+        "internal_email_payload": None,
+        "internal_email_to_send": None,
+        "internal_email_send_status": "not_applicable",
+        "internal_email_send_reason": "classification_only",
+        "requires_human_review": False,
+        "field_extraction": extraction,
+        "prompt_snapshots": {"account_suspension_field_extractor": dict(extraction.prompt_snapshot)},
+        "automation_context": {
+            "handler": "account_suspension",
+            "handler_mode": "classification_only",
+            "extractor_version": extraction.audit_payload().get("prompt_version"),
+            "extraction_status": extraction.status,
         },
     }
 
@@ -3614,6 +3649,10 @@ def _build_account_ticket_view_model(
         "route": normalized_route,
         "execution_action": normalized_execution_action,
         "automation_handler": automation_handler,
+        "automation_mode": route_classification.get("automation_mode") or (
+            "classification_only" if subcategory == "account_suspension" else "active"
+            if route_status == "automated" else None
+        ),
         "primary_label": primary_label,
         "secondary_label": secondary_label,
         "route_reason_code": route_reason_code,
@@ -3743,6 +3782,11 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 customer_email=str(request.customer_email or "").strip() or None,
             )
             automation_attempt = billing_email_attempt
+        elif handler_registration.implementation == "classification_only":
+            automation_attempt = _build_account_suspension_classification_attempt(
+                ticket_subject=title,
+                customer_messages=list(ticket.get("messages") or []),
+            )
         elif handler_registration.implementation == "billing":
             billing_email_attempt = _build_billing_internal_email_attempt(
                 action=route,
@@ -3781,7 +3825,12 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         route_prompt_snapshots.update(dict(automation_attempt.get("prompt_snapshots") or {}))
         if isinstance(
             extraction,
-            (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction),
+            (
+                EnablementFieldExtraction,
+                AccountVerificationFieldExtraction,
+                QuotaFieldExtraction,
+                AccountSuspensionFieldExtraction,
+            ),
         ):
             route_classification["field_extraction"] = extraction.audit_payload()
             snapshot_key = (
@@ -3790,7 +3839,11 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 else (
                     "quota_field_extractor"
                     if isinstance(extraction, QuotaFieldExtraction)
-                    else "account_verification_field_extractor"
+                    else (
+                        "account_suspension_field_extractor"
+                        if isinstance(extraction, AccountSuspensionFieldExtraction)
+                        else "account_verification_field_extractor"
+                    )
                 )
             )
             route_prompt_snapshots[snapshot_key] = dict(extraction.prompt_snapshot)
@@ -3821,6 +3874,10 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
             internal_email_send_status = str(automation_attempt["internal_email_send_status"])
             internal_email_send_reason = str(automation_attempt["internal_email_send_reason"])
             route_classification["handler_binding_status"] = "active" if missing_fields else "completed"
+            if handler_registration.implementation == "classification_only":
+                response_status = "classified_only"
+                route_classification["handler_binding_status"] = "classification_only"
+                route_classification["automation_mode"] = "classification_only"
             if automation_attempt.get("internal_email_to_send"):
                 route_classification["handler_binding_status"] = "completed"
             if (
@@ -4026,6 +4083,9 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "not_automated_reason": decision.not_automated_reason or None,
         "router_source": decision.router_source,
         "route_classification": route_classification,
+        "automation_mode": route_classification.get("automation_mode") or (
+            "active" if route_metadata.get("route_status") == "automated" else None
+        ),
         "primary_label": primary_label,
         "secondary_label": secondary_label,
         "route_reason_code": route_reason_code,
@@ -4066,6 +4126,9 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "evidence_spans": list(decision.evidence_spans),
         "router_source": decision.router_source,
         "route_classification": route_classification,
+        "automation_mode": route_classification.get("automation_mode") or (
+            "active" if route_metadata.get("route_status") == "automated" else None
+        ),
         "primary_label": primary_label,
         "secondary_label": secondary_label,
         "route_reason_code": route_reason_code,
@@ -4504,6 +4567,10 @@ async def correct_billing_ticket_route(
             if normalized_action == "enablement"
             else "quota"
             if normalized_action == "quota"
+            else "fraud_account"
+            if normalized_action == "fraud_account"
+            else "account_suspension"
+            if normalized_action == "account_suspension"
             else "automation"
             if normalized_action == "unregistered"
             else "billing"
@@ -4788,6 +4855,12 @@ async def reply_to_billing_ticket(
                 existing_fields=prior_collected_fields,
                 follow_up_count=persisted_follow_up_count,
             )
+        if registration.implementation == "classification_only":
+            return _build_account_suspension_classification_attempt(
+                ticket_subject=str(canonical_ticket.get("subject") or billing_ticket.get("title") or ""),
+                customer_messages=list(canonical_ticket.get("messages") or []),
+                existing_fields=prior_collected_fields,
+            )
         if registration.implementation == "billing":
             return _build_billing_internal_email_attempt(
                 action=action,
@@ -4971,7 +5044,12 @@ async def reply_to_billing_ticket(
                     **route_metadata,
                 )
             else:
-                billing_ticket["automation_status"] = "automation"
+                registration = account_automation_handler(route)
+                billing_ticket["automation_status"] = (
+                    "classified_only"
+                    if registration and registration.implementation == "classification_only"
+                    else "automation"
+                )
         else:
             billing_ticket.update(
                 automation_status="not_automated",
@@ -4986,7 +5064,12 @@ async def reply_to_billing_ticket(
         extraction = automation_attempt.get("field_extraction") if automation_attempt else None
         if isinstance(
             extraction,
-            (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction),
+            (
+                EnablementFieldExtraction,
+                AccountVerificationFieldExtraction,
+                QuotaFieldExtraction,
+                AccountSuspensionFieldExtraction,
+            ),
         ):
             route_classification["field_extraction"] = extraction.audit_payload()
             snapshot_key = (
@@ -4995,7 +5078,11 @@ async def reply_to_billing_ticket(
                 else (
                     "quota_field_extractor"
                     if isinstance(extraction, QuotaFieldExtraction)
-                    else "account_verification_field_extractor"
+                    else (
+                        "account_suspension_field_extractor"
+                        if isinstance(extraction, AccountSuspensionFieldExtraction)
+                        else "account_verification_field_extractor"
+                    )
                 )
             )
             route_prompt_snapshots[snapshot_key] = dict(extraction.prompt_snapshot)
@@ -5089,6 +5176,13 @@ async def reply_to_billing_ticket(
             else prior_classification
         )
         current_classification["handler_binding_status"] = "active" if missing_fields else "completed"
+        active_registration = account_automation_handler(
+            str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "")
+        )
+        if active_registration and active_registration.implementation == "classification_only":
+            current_classification["handler_binding_status"] = "classification_only"
+            current_classification["automation_mode"] = "classification_only"
+            billing_ticket["automation_status"] = "classified_only"
         if automation_attempt.get("internal_email_to_send"):
             current_classification["handler_binding_status"] = "completed"
         billing_ticket.update(
@@ -5115,9 +5209,6 @@ async def reply_to_billing_ticket(
         if should_send_internal_email:
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]
-        active_registration = account_automation_handler(
-            str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "")
-        )
         if (
             active_registration
             and active_registration.implementation == "account_verification"

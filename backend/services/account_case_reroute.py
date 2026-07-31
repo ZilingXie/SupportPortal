@@ -64,7 +64,10 @@ def reroute_account_case(
         and str(current.get("automation_handler") or "").strip()
         == str(metadata.get("automation_handler") or "").strip()
     )
-    if same_active_automation:
+    if action == "account_suspension" and metadata["route_status"] == "automated":
+        classification["handler_binding_status"] = "classification_only"
+        classification["automation_mode"] = "classification_only"
+    elif same_active_automation:
         classification["handler_binding_status"] = previous_classification.get(
             "handler_binding_status"
         ) or classification.get("handler_binding_status")
@@ -99,9 +102,10 @@ def reroute_account_case(
     )
     if str(current.get("automation_status") or "").strip() in {"", "automation", "not_automated"}:
         updated["automation_status"] = (
-            "automation" if metadata["route_status"] == "automated" else "not_automated"
+            "classified_only"
+            if action == "account_suspension" and metadata["route_status"] == "automated"
+            else "automation" if metadata["route_status"] == "automated" else "not_automated"
         )
-
     compared_fields = {
         "route",
         "scope_label",
