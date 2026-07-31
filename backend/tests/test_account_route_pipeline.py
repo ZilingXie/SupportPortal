@@ -13,6 +13,7 @@ from backend.services.account_route_pipeline import (
     classification_for_corrected_route,
     decide_account_route,
 )
+from backend.services.prompts.account_routing import build_account_automation_system_prompt
 from backend.services.support_router import SupportRouteDecision
 
 
@@ -21,6 +22,14 @@ def _attempt(payload: dict[str, object]) -> AccountRouteStageAttempt:
 
 
 class AccountRoutePipelineTests(unittest.TestCase):
+    def test_automation_prompt_treats_complete_suspension_review_template_as_fraud_evidence(self) -> None:
+        prompt = build_account_automation_system_prompt()
+
+        self.assertIn("Company Information, Contact Information", prompt)
+        self.assertIn("Use Case, and Payment Information", prompt)
+        self.assertIn("strong fraud-review workflow evidence", prompt)
+        self.assertIn("without that template are Account Suspension", prompt)
+
     def test_human_review_golden_fixture_covers_all_operator_labels(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "account_route_golden_cases.json"
         cases = json.loads(fixture_path.read_text(encoding="utf-8"))

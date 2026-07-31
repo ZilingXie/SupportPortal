@@ -3043,3 +3043,17 @@ For each new entry, record:
   - Fraud/risk/security-review suspensions remain candidates for `Automation / Fraud Account`, while billing questions without a reported suspension remain `Account & Billing`.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_agent_config.py`
+
+## 2026-07-31 - Fraud suspension-review template recognition
+
+- Area or subsystem: `/account` Automation Router
+- Prompt or model version: `account-automation-v6` / existing `intent_router` profile
+- Summary: Added the complete Agora suspension-review information request as strong `fraud_account` workflow evidence: Company Information, Contact Information, Use Case, and Payment Information must all be present in the quoted notice.
+- Reason: Case 12475 included Agora's standard suspension notice and supplied all four requested groups, but did not contain the literal words fraud or risk. The Router therefore misclassified it as the classification-only Account Suspension route.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+- Expected behavior change:
+  - Suspensions containing the complete four-group Agora review template route to `Automation / Fraud Account` even without literal fraud terminology.
+  - The word suspended alone remains insufficient; balance, package, payment, quota, free-tier, and usage-related suspensions without the complete template remain `Automation / Account Suspension`.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_agent_config.py backend/tests/test_account_automation_state_repair.py`

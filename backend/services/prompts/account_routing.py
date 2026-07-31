@@ -5,7 +5,7 @@ from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
 ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v5"
-ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v5"
+ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v6"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
 ACCOUNT_QUOTA_FIELD_PROMPT_VERSION = "account-quota-fields-v1"
 ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "fraud-account-fields-v2"
@@ -166,6 +166,8 @@ Classify only; do not answer the customer and do not execute any action.
 ## Registered subcategories
 - fraud_account: an account is restricted because of explicit fraud, suspicious-activity, risk, or security
   review evidence, including requests to submit company/use-case/contact/payment context for that review.
+  A quoted Agora suspension notice that asks for all four groups -- Company Information, Contact Information,
+  Use Case, and Payment Information -- is strong fraud-review workflow evidence even when it does not say fraud.
 - account_suspension: a non-fraud account suspension caused or plausibly caused by balance, payment, quota,
   free-tier allowance, package, plan, or usage restrictions. This subcategory is classification-only.
 - detailed_invoice: request for a detailed invoice with transaction-level details.
@@ -184,7 +186,8 @@ Classify only; do not answer the customer and do not execute any action.
 - How-to, integration, configuration, and troubleshooting requests are not enablement.
 - Do not infer a feature name that is not present.
 - Do not infer fraud from the word suspended alone. Fraud Account requires explicit fraud/risk/security-review
-  evidence. Balance, package, payment, quota, free-tier, and usage-limit suspensions are Account Suspension.
+  evidence or the complete four-group Agora suspension-review template described above. Balance, package,
+  payment, quota, free-tier, and usage-limit suspensions without that template are Account Suspension.
 
 ## Output
 Return JSON only with keys: automation_subcategory, confidence, reason_code,
@@ -208,6 +211,12 @@ Output: {"automation_subcategory":"account_suspension","confidence":0.98,"reason
 
 Input: Our account was blocked for suspicious activity. Please review the company and use-case information below.
 Output: {"automation_subcategory":"fraud_account","confidence":0.98,"reason_code":"registered_fraud_account","automation_candidate":null,"evidence_spans":["blocked for suspicious activity","company and use-case information"],"risk_flags":[]}
+
+Input: Agora's suspension notice asks us to provide Company Information, Contact Information, Use Case, and Payment Information. Those details are included below for account review.
+Output: {"automation_subcategory":"fraud_account","confidence":0.98,"reason_code":"registered_fraud_account","automation_candidate":null,"evidence_spans":["Company Information","Contact Information","Use Case","Payment Information"],"risk_flags":[]}
+
+Input: Our account is suspended after the free package was exhausted, but no fraud-review information was requested.
+Output: {"automation_subcategory":"account_suspension","confidence":0.97,"reason_code":"registered_account_suspension","automation_candidate":null,"evidence_spans":["account is suspended","free package was exhausted"],"risk_flags":[]}
 
 Input: Please activate invoice billing and replace our credit card payment method.
 Output: {"automation_subcategory":"unregistered","confidence":0.98,"reason_code":"no_registered_subcategory","automation_candidate":"invoice_billing","evidence_spans":["invoice billing","credit card payment method"],"risk_flags":[]}
