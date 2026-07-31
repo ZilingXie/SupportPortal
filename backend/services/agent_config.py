@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
+from backend.services.account_admin import routing_config_payload
 from backend.services.account_route_pipeline import account_router_prompt_catalog
 from backend.services.engineer_plan_agent import ENGINEER_PLAN_SKILLS
 from backend.services.openai_input_guardrail import (
@@ -182,36 +182,140 @@ def _client_prompts() -> list[dict[str, Any]]:
     return prompts
 
 
-def _persona_prompts(personas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    prompts: list[dict[str, Any]] = []
-    for persona in personas:
-        persona_key = str(persona.get("persona_key") or "").strip()
-        display_name = str(persona.get("display_name") or persona_key or "Persona").strip()
-        published_version = persona.get("published_version")
-        for version in list(persona.get("versions") or []):
-            if not isinstance(version, dict):
-                continue
-            version_number = version.get("version")
-            prompts.append(
-                _prompt(
-                    f"persona-{persona_key}-v{version_number}",
-                    f"{display_name} v{version_number}",
-                    "persona-registry",
-                    json.dumps(version.get("content") or {}, ensure_ascii=False, indent=2, sort_keys=True),
-                    version=str(version_number),
-                    metadata={
-                        "persona_key": persona_key,
-                        "persona_name": display_name,
-                        "enabled": bool(persona.get("enabled")),
-                        "status": str(version.get("status") or "unknown"),
-                        "is_published": str(version_number) == str(published_version),
-                        "change_note": str(version.get("change_note") or ""),
-                        "created_at": version.get("created_at"),
-                        "published_at": version.get("published_at"),
-                    },
-                )
-            )
-    return prompts
+def _route_node(
+    key: str,
+    name: str,
+    description: str,
+    *,
+    kind: str,
+    prompt_keys: list[str] | None = None,
+    capabilities: list[dict[str, str]] | None = None,
+    children: list[dict[str, Any]] | None = None,
+    persona_scope: str | None = None,
+) -> dict[str, Any]:
+    node: dict[str, Any] = {
+        "key": key,
+        "name": name,
+        "description": description,
+        "kind": kind,
+        "status": "active",
+        "prompt_keys": list(prompt_keys or []),
+        "capabilities": list(capabilities or []),
+        "children": list(children or []),
+    }
+    if persona_scope:
+        node["persona_scope"] = persona_scope
+    return node
+
+
+def _route_agent_navigation() -> dict[str, Any]:
+    human_review = lambda key, description: _route_node(
+        key,
+        "Human Review",
+        description,
+        kind="handoff",
+    )
+    automation = _route_node(
+        "automation-router",
+        "Automation Router",
+        "Classifies confirmed backend-operation requests and dispatches registered Automation behavior.",
+        kind="router",
+        prompt_keys=["account-automation-router-system"],
+        persona_scope="account-automation",
+        children=[
+            _route_node(
+                "fraud-account",
+                "Fraud Account",
+                "Collects grounded fraud-review information, composes one follow-up, and applies payment safety checks.",
+                kind="automation",
+                prompt_keys=[
+                    "account-verification-field-extractor-system",
+                    "account-verification-follow-up-composer-system",
+                ],
+                capabilities=[
+                    _component("fraud-account-handler", "Fraud Account Handler", "Controls follow-up and internal handoff."),
+                    _component("account-verification-payment-safety", "Payment Safety Validator", "Blocks sensitive payment credentials deterministically."),
+                ],
+            ),
+            _route_node(
+                "account-suspension",
+                "Account Suspension",
+                "Extracts grounded suspension details for classification-only handling.",
+                kind="automation",
+                prompt_keys=["account-suspension-field-extractor-system"],
+                capabilities=[
+                    _component("classification-only", "Classification only", "Does not generate an automated customer resolution."),
+                ],
+            ),
+            _route_node(
+                "detailed-invoice",
+                "Detailed Invoice",
+                "Dispatches detailed invoice requests to the registered billing handler.",
+                kind="automation",
+                capabilities=[
+                    _component("billing-handler", "Billing Handler", "Runs the deterministic detailed-invoice workflow."),
+                ],
+            ),
+            _route_node(
+                "enablement",
+                "Enablement",
+                "Extracts grounded enablement fields and runs the registered feature-enablement workflow.",
+                kind="automation",
+                prompt_keys=["account-enablement-field-extractor-system"],
+                capabilities=[
+                    _component("enablement-handler", "Enablement Handler", "Submits a complete enablement request and prepares confirmation behavior."),
+                ],
+            ),
+            _route_node(
+                "quota",
+                "Quota",
+                "Extracts quota and capacity requirements before dispatching the registered quota workflow.",
+                kind="automation",
+                prompt_keys=["account-quota-field-extractor-system"],
+                capabilities=[
+                    _component("quota-handler", "Quota Handler", "Handles quota, concurrency, and Big Event capacity requests."),
+                ],
+            ),
+            _route_node(
+                "unregistered",
+                "Unregistered",
+                "Records an unregistered backend operation and falls back to Human Review.",
+                kind="fallback",
+                capabilities=[
+                    _component("human-review", "Human Review", "Handles Automation requests without a registered behavior."),
+                ],
+            ),
+        ],
+    )
+    agora = _route_node(
+        "agora-router",
+        "Agora Router",
+        "Classifies Agora requests as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+        kind="router",
+        prompt_keys=["account-agora-router-system"],
+        children=[
+            _route_node("agora-technical", "Agora Technical", "Routes technical Agora product and SDK questions to technical support.", kind="outcome"),
+            _route_node("agora-non-technical", "Agora Non-technical", "Routes non-technical Agora product questions to the appropriate support workflow.", kind="outcome"),
+            _route_node("account-billing", "Account & Billing", "Routes account and billing requests that do not match a registered Automation behavior.", kind="outcome"),
+            automation,
+            human_review("agora-uncategorized", "Handles Agora requests that the router cannot categorize reliably."),
+        ],
+    )
+    return _route_node(
+        "route-agent",
+        "Route Agent",
+        "Routes Account Cases through layered classifiers and explicit human-review fallbacks.",
+        kind="agent",
+        prompt_keys=["account-intent-classifier-system"],
+        capabilities=[
+            _component("account-intent-classifier", "Intent Classifier", "Classifies Account messages as Conversation, Agora, or Uncertain."),
+        ],
+        children=[
+            _route_node("conversation-action", "Conversation Action", "Handles conversation-only messages before Agora support routing.", kind="outcome"),
+            agora,
+            human_review("intent-uncertain", "Handles Account messages whose intent cannot be classified reliably."),
+        ],
+    )
 
 
 def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any]:
@@ -374,22 +478,16 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
             "mcp_servers": [],
         },
     ]
-    related_services = [
-        {
-            "key": "billing-automation",
-            "kind": "service",
-            "name": "Billing Automation",
-            "description": "Deterministic billing intake and response workflow. It is not an autonomous Agent.",
-            "status": "active",
-            "components": [
-                _component("persona-registry", "Persona registry", "Versioned reply voice configuration for /account tickets.")
-            ],
-            "prompts": _persona_prompts(personas),
-            "skills": [],
-            "mcp_servers": [],
-        }
-    ]
-    return {"agents": agents, "related_services": related_services}
+    route_runtime = routing_config_payload()
+    return {
+        "agents": agents,
+        "route_navigation": _route_agent_navigation(),
+        "route_runtime": {
+            "router_prompt_version": route_runtime["router_prompt_version"],
+            "stage_details": route_runtime["stage_details"],
+        },
+        "automation_personas": list(personas),
+    }
 
 
 def build_managed_prompt_catalog() -> list[dict[str, Any]]:

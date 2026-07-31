@@ -356,12 +356,15 @@
 
 ### 6.7 Account Automation Admin Surfaces
 1. `Automated Cases` 使用单行 metric strip 加紧凑 case table；占比文案必须明确表示 routed-to-Automated，不得暗示已解决。
-2. `Route & Prompt` 使用纵向 route timeline 和独立等宽 Prompt inspector。历史记录缺少 snapshot 时显示明确 unavailable state，deterministic route 显示未使用 LLM。
-3. `Persona Prompt Template` 使用左右 workspace：Persona/version 列表作为上下文，编辑器作为主工作区；Draft、Publish、Rollback 必须通过文字状态与确认动作区分。
+2. `Route Strategy` 不再作为 Admin 一级页面；route pipeline、分类出口和 Prompt version 统一归入 `Agent Config > Route Agent`。
+3. `Persona Prompt Template` 归入 `Agent Config > Route Agent > Agora Router > Automation Router`，使用左右 workspace：Persona/version 列表作为上下文，编辑器作为主工作区；Draft、Publish、Rollback 必须通过文字状态与确认动作区分。Persona 只管理统一人设，具体 Automation 节点只管理行为 Prompt 或 deterministic capability。
 4. `Environment Config` 只能显示可搜索的配置名 inventory，并为每个配置名显示一条仅由 key 名决定的静态用途说明；说明不得读取或推断 value、set/unset、长度、哈希或来源。每行使用独立的 copy-name icon command，搜索同时匹配 key 和用途说明。
 5. 上述页面沿用 Admin 的低对比 surface 和紧凑信息密度；移动端改为单列，不允许 Prompt、key 或 route label 横向溢出。
 6. `Agent Config` 的 managed Prompt 使用左侧 Prompt 列表与右侧版本工作区；必须同时显示 Active 与 Next deploy 状态，版本历史用选择控件切换，Diff 使用带行号与增删背景的等宽双栏并在移动端降为单列。
 7. 新建 Draft 必须基于当前 Active version，要求填写 change note；Schedule、Unschedule、Restore 都是明确文字动作。UI 必须说明保存和 Schedule 均不会热更新，只有下一次成功的每日部署才会生效，并原位展示 409 冲突。
+8. `Agent Config` 桌面端使用 context tree + detail workspace：一级仅展示 Route、Client、Engineer、Guardrail Agent，Route Agent 依次展开到 Agora Router 和 Automation Router；选中路径使用面包屑与 tonal active state，不使用嵌套卡片表达层级。
+9. `Automation Router` 是 Persona 的唯一管理入口；Fraud Account、Account Suspension、Detailed Invoice、Enablement、Quota、Unregistered 作为同层行为选择器展示，不创建第五级菜单，也不重复 Persona 配置。
+10. `Agent Config` 窄屏使用逐级进入模式，保留 Back 与面包屑；禁止四层缩进压缩正文。树展开、详情切换和 chevron 反馈统一控制在 180ms 内，并在 reduced-motion 下取消。
 
 ### 6.8 Account Ticket Conversation (`/account`)
 1. 所有 account ticket 都必须先展示 route 结果，再由 AI 尝试生成仅在 `/account` 内可见的回复；不得把 AI draft 或 assistant message 回传到来源 Zendesk / 客户邮件渠道。

@@ -5,7 +5,6 @@ const ADMIN_SECTION_TITLES = {
   overview: "Operations Overview",
   "automated-cases": "Automated Cases",
   "agent-config": "Agent Config",
-  "route-strategy": "Route Strategy",
   "environment-config": "Environment Config",
   engineers: "Engineer Management",
   schedule: "Weekly Schedule",
@@ -21,6 +20,7 @@ const root = document.getElementById("workspace-admin-root");
 let accessToken = readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "");
 let currentAccount = readStorage(WORKSPACE_ACCOUNT_KEY, null);
 let adminSection = sectionFromHash();
+let selectedAgentPath = agentPathFromHash();
 let accounts = [];
 let adminTickets = [];
 let metrics = null;
@@ -28,7 +28,6 @@ let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let automationData = { metrics: {}, cases: [] };
 let automationRouteStatus = "automated";
-let routingData = { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
 let agentConfigData = null;
 let agentConfigLoading = false;
 let agentConfigLoadError = "";
@@ -41,6 +40,12 @@ let promptDiffKeys = new Set();
 let promptOperationNotice = {};
 let promptOperationBusy = false;
 let promptDraftValues = {};
+let selectedPersonaKey = "";
+let comparePersonaVersions = [];
+let personaDraftValues = {};
+let personaOperationNotice = "";
+let personaOperationBusy = false;
+let personaCreateOpen = false;
 let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
 let environmentQuery = "";
@@ -52,9 +57,18 @@ let loadError = "";
 
 function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
-  return ["overview", "automated-cases", "agent-config", "route-strategy", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(section)
-    ? section
+  if (section === "route-strategy") return "agent-config";
+  const rootSection = section.split("/")[0];
+  return ["overview", "automated-cases", "agent-config", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(rootSection)
+    ? rootSection
     : "overview";
+}
+
+function agentPathFromHash() {
+  const hash = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
+  if (hash === "route-strategy") return ["route-agent"];
+  const [section, ...path] = hash.split("/").filter(Boolean);
+  return section === "agent-config" ? path : [];
 }
 
 function readStorage(key, fallback) {
@@ -220,7 +234,6 @@ function renderAdminShell(content) {
     ["overview", "dashboard", "Operations Overview", "OV"],
     ["automated-cases", "automation", "Automated Cases", "AC"],
     ["agent-config", "smart_toy", "Agent Config", "AG"],
-    ["route-strategy", "account_tree", "Route Strategy", "RT"],
     ["environment-config", "settings", "Environment Config", "EC"],
     ["engineers", "groups", "Engineer Management", "EN"],
     ["schedule", "calendar_month", "Schedule", "SC"],
@@ -675,20 +688,6 @@ function renderAutomatedCases() {
     <section class="admin-ops-surface"><table class="admin-work-table"><thead><tr><th>Account Case</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Route status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.account_case_id || item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(item.category === "automation" ? "Automation" : item.category || "-")}</td><td>${escapeHtml(String(item.subcategory || "-").replaceAll("_", " "))}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="6">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
-function renderRouteStrategy() {
-  const stages = Array.isArray(routingData.stage_details) && routingData.stage_details.length
-    ? routingData.stage_details
-    : (Array.isArray(routingData.stages) ? routingData.stages : []);
-  const categories = Array.isArray(routingData.route_categories) ? routingData.route_categories : [];
-  return `
-    <header class="admin-main-header"><div><p class="admin-eyebrow">ROUTING CONFIGURATION</p><p>Review the active route stages and supported route categories.</p></div></header>
-    <section class="admin-route-layout">
-      <div class="admin-ops-surface"><h2>Current route</h2><p><strong>${escapeHtml(routingData.router_prompt_version || "unversioned")}</strong></p><ol class="admin-route-timeline">${stages.map(stage => `<li><strong>${escapeHtml(stage.name || stage)}</strong>${stage.description ? `<small>${escapeHtml(stage.description)}</small>` : ""}</li>`).join("")}</ol></div>
-      <div class="admin-ops-surface"><h2>Route category</h2><p class="admin-section-note">Categories currently recognized by the support router.</p><div class="admin-route-categories">${categories.length ? categories.map(category => `<article><div><strong>${escapeHtml(category.display_name || category.name)}</strong><code>${escapeHtml(category.name)}</code></div><p>${escapeHtml(category.description)}</p><small>${category.name === "automation" ? "Subcategories" : "Actions"}: ${escapeHtml((category.execution_actions || []).join(", "))}</small></article>`).join("") : `<p>No route categories configured.</p>`}</div></div>
-    </section>
-  `;
-}
-
 function agentStatusLabel(status) {
   return String(status || "unknown").replaceAll("_", " ");
 }
@@ -837,6 +836,113 @@ async function createPromptDraft(form) {
   }
 }
 
+async function refreshAgentConfigAfterPersonaOperation(message) {
+  personaOperationNotice = message;
+  await loadAgentConfig({ force: true, render: false });
+}
+
+async function createPersona(form) {
+  const values = new FormData(form);
+  personaOperationBusy = true;
+  personaOperationNotice = "";
+  renderAdmin();
+  try {
+    const payload = await fetchJson("/api/workspace/admin/account-personas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        persona_key: String(values.get("persona_key") || "").trim(),
+        display_name: String(values.get("display_name") || "").trim(),
+        content: {
+          instruction: String(values.get("instruction") || "").trim(),
+          opener: "",
+          signoff_name: "Sid",
+        },
+      }),
+    });
+    selectedPersonaKey = String(values.get("persona_key") || "").trim();
+    personaCreateOpen = false;
+    await refreshAgentConfigAfterPersonaOperation(`Persona v${payload.version.version} created and published.`);
+  } catch (error) {
+    personaOperationNotice = error.message;
+  } finally {
+    personaOperationBusy = false;
+    renderAdmin();
+  }
+}
+
+async function createPersonaDraft(form) {
+  const personaKey = form.dataset.personaKey;
+  const values = new FormData(form);
+  personaDraftValues[personaKey] = {
+    instruction: String(values.get("instruction") || ""),
+    opener: String(values.get("opener") || ""),
+    signoff_name: String(values.get("signoff_name") || "Sid"),
+    change_note: String(values.get("change_note") || ""),
+  };
+  personaOperationBusy = true;
+  personaOperationNotice = "";
+  renderAdmin();
+  try {
+    const payload = await fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(personaKey)}/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: {
+          instruction: values.get("instruction"),
+          opener: values.get("opener"),
+          signoff_name: values.get("signoff_name"),
+        },
+        change_note: values.get("change_note"),
+        based_on_version: Number(values.get("based_on_version")) || null,
+      }),
+    });
+    delete personaDraftValues[personaKey];
+    await refreshAgentConfigAfterPersonaOperation(`Persona draft v${payload.version.version} saved.`);
+  } catch (error) {
+    personaOperationNotice = error.message;
+  } finally {
+    personaOperationBusy = false;
+    renderAdmin();
+  }
+}
+
+async function runPersonaVersionAction(action, personaKey, version) {
+  personaOperationBusy = true;
+  personaOperationNotice = "";
+  renderAdmin();
+  try {
+    const payload = await fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(personaKey)}/versions/${version}/${action}`, { method: "POST" });
+    delete personaDraftValues[personaKey];
+    comparePersonaVersions = [];
+    await refreshAgentConfigAfterPersonaOperation(`${action === "publish" ? "Published" : "Rolled back"} as v${payload.version.version}.`);
+  } catch (error) {
+    personaOperationNotice = error.message;
+  } finally {
+    personaOperationBusy = false;
+    renderAdmin();
+  }
+}
+
+async function setPersonaEnabled(personaKey, enabled) {
+  personaOperationBusy = true;
+  personaOperationNotice = "";
+  renderAdmin();
+  try {
+    await fetchJson(`/api/workspace/admin/account-personas/${encodeURIComponent(personaKey)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    await refreshAgentConfigAfterPersonaOperation(`Persona ${enabled ? "enabled" : "disabled"}.`);
+  } catch (error) {
+    personaOperationNotice = error.message;
+  } finally {
+    personaOperationBusy = false;
+    renderAdmin();
+  }
+}
+
 function renderAgentSkillsPanel(entry) {
   const skills = Array.isArray(entry.skills) ? entry.skills : [];
   if (!skills.length) {
@@ -853,27 +959,222 @@ function renderAgentMcpPanel(entry) {
   return `<div class="admin-agent-capability-list">${servers.map(server => `<div><code>${escapeHtml(server.key || server.name)}</code><strong>${escapeHtml(server.name)}</strong><p>${escapeHtml(server.description || "")}</p></div>`).join("")}</div>`;
 }
 
-function renderAgentEntry(entry) {
-  const view = ["prompts", "skills", "mcp"].includes(selectedAgentViews[entry.key]) ? selectedAgentViews[entry.key] : "prompts";
-  const components = Array.isArray(entry.components) ? entry.components : [];
-  const isService = entry.kind === "service";
-  return `
-    <details class="admin-agent-entry" data-agent-entry="${escapeHtml(entry.key)}" ${expandedAgentKeys.has(entry.key) ? "open" : ""}>
-      <summary>
-        <span class="admin-agent-summary-icon material-symbols-outlined" aria-hidden="true">${isService ? "settings_suggest" : "smart_toy"}</span>
-        <span class="admin-agent-summary-copy"><span><strong>${escapeHtml(entry.name)}</strong>${renderAgentBadge(isService ? "Service" : "Agent", isService ? "is-service" : "")}${renderAgentBadge(agentStatusLabel(entry.status), entry.status === "feature_gated" ? "is-gated" : "is-active")}</span><small>${escapeHtml(entry.description)}</small></span>
-        <span class="admin-agent-summary-count">${components.length} component${components.length === 1 ? "" : "s"}</span>
-        <span class="admin-agent-summary-chevron material-symbols-outlined" aria-hidden="true">expand_more</span>
-      </summary>
-      <div class="admin-agent-entry-body">
-        <div class="admin-agent-components" aria-label="Components">${components.map(component => `<div><span class="material-symbols-outlined" aria-hidden="true">${component.status === "feature_gated" ? "lock_clock" : "check_circle"}</span><span><strong>${escapeHtml(component.name)}</strong><small>${escapeHtml(component.description)}</small></span></div>`).join("")}</div>
-        <div class="admin-agent-tabs" role="tablist" aria-label="${escapeHtml(entry.name)} configuration">
-          ${[["prompts", "Prompts"], ["skills", "Skills"], ["mcp", "MCP"]].map(([id, label]) => `<button type="button" role="tab" aria-selected="${view === id ? "true" : "false"}" data-action="select-agent-view" data-agent-key="${escapeHtml(entry.key)}" data-agent-view="${id}" class="${view === id ? "is-active" : ""}">${label}<span>${id === "prompts" ? (entry.prompts || []).length : id === "skills" ? (entry.skills || []).length : (entry.mcp_servers || []).length}</span></button>`).join("")}
-        </div>
-        <div class="admin-agent-panel" role="tabpanel">${view === "skills" ? renderAgentSkillsPanel(entry) : view === "mcp" ? renderAgentMcpPanel(entry) : renderAgentPromptPanel(entry)}</div>
-      </div>
-    </details>
-  `;
+function agentConfigAgents() {
+  return Array.isArray(agentConfigData?.agents) ? agentConfigData.agents : [];
+}
+
+function findRouteNode(path) {
+  if (path[0] !== "route-agent" || !agentConfigData?.route_navigation) return null;
+  let node = agentConfigData.route_navigation;
+  for (const key of path.slice(1)) {
+    node = (node.children || []).find(child => child.key === key);
+    if (!node) return null;
+  }
+  return node;
+}
+
+function agentPathHref(path) {
+  return `#agent-config${path.length ? `/${path.map(encodeURIComponent).join("/")}` : ""}`;
+}
+
+function pathsMatch(left, right) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function pathStartsWith(path, prefix) {
+  return prefix.every((item, index) => path[index] === item);
+}
+
+function renderAgentTreeNode(node, path, depth = 0) {
+  const selected = pathsMatch(selectedAgentPath.slice(0, path.length), path);
+  const children = node.key === "automation-router" ? [] : (node.children || []);
+  const expanded = children.length && (expandedAgentKeys.has(node.key) || pathStartsWith(selectedAgentPath, path));
+  return `<li class="admin-agent-tree-item" data-depth="${depth}">
+    <div class="admin-agent-tree-row ${selected ? "is-path" : ""}">
+      <a href="${agentPathHref(path)}" class="${pathsMatch(selectedAgentPath, path) ? "is-active" : ""}" ${pathsMatch(selectedAgentPath, path) ? 'aria-current="page"' : ""}>
+        <span class="material-symbols-outlined" aria-hidden="true">${node.kind === "agent" ? "smart_toy" : node.kind === "router" ? "account_tree" : node.kind === "handoff" ? "person_alert" : "arrow_outward"}</span>
+        <span><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.description)}</small></span>
+      </a>
+      ${children.length ? `<button type="button" data-action="toggle-agent-tree" data-agent-key="${escapeHtml(node.key)}" aria-expanded="${expanded ? "true" : "false"}" title="${expanded ? "Collapse" : "Expand"} ${escapeHtml(node.name)}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>` : ""}
+    </div>
+    ${children.length ? `<ul ${expanded ? "" : "hidden"}>${children.map(child => renderAgentTreeNode(child, [...path, child.key], depth + 1)).join("")}</ul>` : ""}
+  </li>`;
+}
+
+function renderAgentTree(agents) {
+  const routeEntry = agentConfigData.route_navigation;
+  return `<nav class="admin-agent-tree" aria-label="Agent configuration"><ul>
+    ${agents.map(agent => renderAgentTreeNode(
+      agent.key === "route-agent" && routeEntry ? routeEntry : { ...agent, children: [] },
+      [agent.key]
+    )).join("")}
+  </ul></nav>`;
+}
+
+function agentBreadcrumbItems(agents) {
+  const items = [{ name: "Agent Config", path: [] }];
+  if (!selectedAgentPath.length) return items;
+  const agent = agents.find(item => item.key === selectedAgentPath[0]);
+  if (!agent) return items;
+  items.push({ name: agent.name, path: [agent.key] });
+  if (agent.key !== "route-agent") return items;
+  let node = agentConfigData.route_navigation;
+  for (const key of selectedAgentPath.slice(1)) {
+    node = (node?.children || []).find(child => child.key === key);
+    if (!node) break;
+    items.push({ name: node.name, path: selectedAgentPath.slice(0, items.length) });
+  }
+  return items;
+}
+
+function renderAgentBreadcrumbs(agents) {
+  const items = agentBreadcrumbItems(agents);
+  return `<nav class="admin-agent-breadcrumbs" aria-label="Agent configuration path">${items.map((item, index) => index === items.length - 1
+    ? `<span aria-current="page">${escapeHtml(item.name)}</span>`
+    : `<a href="${agentPathHref(item.path)}">${escapeHtml(item.name)}</a><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>`).join("")}</nav>`;
+}
+
+function renderAgentCatalogOverview(agents) {
+  return `<section class="admin-agent-overview" aria-labelledby="agent-catalog-title">
+    <header><p class="admin-eyebrow">RUNTIME INVENTORY</p><h2 id="agent-catalog-title">Configured Agents</h2><p>Select an Agent to inspect its responsibilities, routing, Prompt, skill, and MCP configuration.</p></header>
+    <div class="admin-agent-directory">${agents.map(agent => `<a href="${agentPathHref([agent.key])}">
+      <span class="admin-agent-summary-icon material-symbols-outlined" aria-hidden="true">smart_toy</span>
+      <span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(agent.description)}</small></span>
+      ${renderAgentBadge(agentStatusLabel(agent.status), agent.status === "feature_gated" ? "is-gated" : "is-active")}
+      <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+    </a>`).join("")}</div>
+  </section>`;
+}
+
+function promptsForRouteNode(routeAgent, node) {
+  const promptKeys = new Set(node?.prompt_keys || []);
+  return (routeAgent?.prompts || []).filter(prompt => promptKeys.has(prompt.key));
+}
+
+function renderCapabilities(capabilities, kind) {
+  if (!capabilities.length) {
+    const message = kind === "router"
+      ? "Routing responsibilities are represented by the destinations and Prompt configuration below."
+      : "This node is a routing outcome with no independent configuration.";
+    return `<p class="admin-agent-detail-note">${message}</p>`;
+  }
+  return `<div class="admin-agent-components" aria-label="Capabilities">${capabilities.map(component => `<div><span class="material-symbols-outlined" aria-hidden="true">${component.status === "feature_gated" ? "lock_clock" : "check_circle"}</span><span><strong>${escapeHtml(component.name)}</strong><small>${escapeHtml(component.description)}</small></span></div>`).join("")}</div>`;
+}
+
+function renderRouteRuntime() {
+  const runtime = agentConfigData.route_runtime || {};
+  const stages = Array.isArray(runtime.stage_details) ? runtime.stage_details : [];
+  return `<section class="admin-agent-runtime" aria-label="Route runtime"><div><span>Current route</span><strong>${escapeHtml(runtime.router_prompt_version || "unversioned")}</strong></div><ol>${stages.map(stage => `<li><strong>${escapeHtml(stage.name)}</strong><small>${escapeHtml(stage.description)}</small></li>`).join("")}</ol></section>`;
+}
+
+function renderNodeLinks(node, basePath, selectedBehavior = null) {
+  const children = node?.children || [];
+  if (!children.length) return "";
+  return `<section class="admin-agent-destinations" aria-labelledby="agent-destinations-title"><header><h3 id="agent-destinations-title">${node.key === "automation-router" ? "Automation behavior" : "Next route"}</h3><span>${children.length}</span></header><div>${children.map(child => `<a href="${agentPathHref([...basePath, child.key])}" class="${selectedBehavior?.key === child.key ? "is-active" : ""}"><span><strong>${escapeHtml(child.name)}</strong><small>${escapeHtml(child.description)}</small></span><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></a>`).join("")}</div></section>`;
+}
+
+function personaVersions(persona) {
+  return Array.isArray(persona?.versions) ? persona.versions : [];
+}
+
+function publishedPersonaVersion(persona) {
+  const versions = personaVersions(persona);
+  return versions.find(item => Number(item.version) === Number(persona?.published_version)) || versions.at(-1) || null;
+}
+
+function renderAutomationPersonaPanel() {
+  const personas = Array.isArray(agentConfigData.automation_personas) ? agentConfigData.automation_personas : [];
+  const persona = personas.find(item => item.persona_key === selectedPersonaKey) || personas[0];
+  if (!persona) return `<div class="admin-agent-empty"><p>No Automation Persona configured.</p></div>`;
+  const versions = personaVersions(persona);
+  const published = publishedPersonaVersion(persona);
+  const draft = {
+    instruction: published?.content?.instruction || "",
+    opener: published?.content?.opener || "",
+    signoff_name: published?.content?.signoff_name || "Sid",
+    change_note: "",
+    ...(personaDraftValues[persona.persona_key] || {}),
+  };
+  const leftVersion = comparePersonaVersions[0] || persona.published_version || versions[0]?.version;
+  const rightVersion = comparePersonaVersions[1] || versions.at(-1)?.version;
+  const compared = [leftVersion, rightVersion].map(version => versions.find(item => Number(item.version) === Number(version)));
+  return `<section class="admin-persona-workspace" aria-label="Automation Persona management">
+    <aside class="admin-persona-context">
+      <header><div><p class="admin-eyebrow">UNIFIED VOICE</p><h3>Automation Persona</h3></div><button class="admin-icon-btn" type="button" data-action="toggle-persona-create" title="Create Persona" aria-label="Create Persona"><span class="material-symbols-outlined" aria-hidden="true">add</span></button></header>
+      <p>Applied after the selected Automation behavior generates its business response.</p>
+      ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
+      <nav class="admin-persona-list" aria-label="Automation Personas">${personas.map(item => `<button type="button" data-action="select-persona" data-persona-key="${escapeHtml(item.persona_key)}" class="${item.persona_key === persona.persona_key ? "is-active" : ""}"><strong>${escapeHtml(item.display_name)}</strong><small>${item.enabled ? "Enabled" : "Disabled"} · Published v${escapeHtml(item.published_version || "-")}</small></button>`).join("")}</nav>
+      <button class="btn btn-ghost" type="button" data-action="toggle-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-enabled="${persona.enabled ? "false" : "true"}" ${personaOperationBusy ? "disabled" : ""}>${persona.enabled ? "Disable Persona" : "Enable Persona"}</button>
+      <div class="admin-version-list"><h4>Version history</h4>${versions.map(item => `<button type="button" data-action="rollback-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" ${item.status === "draft" || personaOperationBusy ? "disabled" : ""}><strong>v${item.version}</strong><span>${escapeHtml(item.status)}</span><small>${escapeHtml(item.change_note || "No change note")}</small></button>`).join("")}</div>
+    </aside>
+    <div class="admin-persona-editor">
+      ${personaOperationNotice ? `<p class="admin-prompt-notice" role="status">${escapeHtml(personaOperationNotice)}</p>` : ""}
+      <form class="admin-prompt-editor" data-persona-draft-form data-persona-key="${escapeHtml(persona.persona_key)}">
+        <div class="admin-persona-editor-heading"><div><p class="admin-eyebrow">PUBLISHED v${escapeHtml(persona.published_version || "-")}</p><h3>${escapeHtml(persona.display_name)}</h3></div>${renderAgentBadge(persona.enabled ? "Enabled" : "Disabled", persona.enabled ? "is-active" : "is-gated")}</div>
+        <label><span>Persona instruction</span><textarea name="instruction" rows="8" required data-persona-draft-field="instruction">${escapeHtml(draft.instruction)}</textarea></label>
+        <label><span>Opener</span><input name="opener" value="${escapeHtml(draft.opener)}" data-persona-draft-field="opener" placeholder="Optional opening line" /></label>
+        <label><span>Signoff name</span><input name="signoff_name" value="${escapeHtml(draft.signoff_name)}" required data-persona-draft-field="signoff_name" /></label>
+        <label><span>Change note</span><input name="change_note" value="${escapeHtml(draft.change_note)}" required maxlength="500" data-persona-draft-field="change_note" /></label>
+        <input type="hidden" name="based_on_version" value="${escapeHtml(persona.published_version || "")}" />
+        <div class="admin-editor-actions"><button class="btn btn-ghost" type="submit" ${personaOperationBusy ? "disabled" : ""}>Save draft</button>${versions.filter(item => item.status === "draft").map(item => `<button class="btn btn-primary" type="button" data-action="publish-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" ${personaOperationBusy ? "disabled" : ""}>Publish v${item.version}</button>`).join("")}</div>
+      </form>
+      <section class="admin-version-compare"><header><h4>Compare versions</h4><div>${[0, 1].map(index => `<select data-version-compare="${index}" aria-label="Compare Persona version ${index + 1}">${versions.map(item => `<option value="${item.version}" ${Number(item.version) === Number(compared[index]?.version) ? "selected" : ""}>v${item.version} · ${escapeHtml(item.status)}</option>`).join("")}</select>`).join("")}</div></header><div class="admin-compare-grid">${compared.map(item => `<pre>${escapeHtml(JSON.stringify(item?.content || {}, null, 2))}</pre>`).join("")}</div></section>
+    </div>
+  </section>`;
+}
+
+function renderAgentTabs(entry, node, options = {}) {
+  const available = ["overview", ...(options.persona ? ["persona"] : []), "prompts", "skills", "mcp"];
+  const view = available.includes(selectedAgentViews[entry.key]) ? selectedAgentViews[entry.key] : "overview";
+  const tabs = [
+    ["overview", "Overview", ""],
+    ...(options.persona ? [["persona", "Persona", (agentConfigData.automation_personas || []).length]] : []),
+    ["prompts", "Prompts", (entry.prompts || []).length],
+    ["skills", "Skills", (entry.skills || []).length],
+    ["mcp", "MCP", (entry.mcp_servers || []).length],
+  ];
+  let panel = options.overview;
+  if (view === "persona") panel = renderAutomationPersonaPanel();
+  else if (view === "prompts") panel = renderAgentPromptPanel(entry);
+  else if (view === "skills") panel = renderAgentSkillsPanel(entry);
+  else if (view === "mcp") panel = renderAgentMcpPanel(entry);
+  return `<div class="admin-agent-tabs" role="tablist" aria-label="${escapeHtml(node.name)} configuration">${tabs.map(([id, label, count]) => `<button type="button" role="tab" aria-selected="${view === id ? "true" : "false"}" data-action="select-agent-view" data-agent-key="${escapeHtml(entry.key)}" data-agent-view="${id}" class="${view === id ? "is-active" : ""}">${label}${count === "" ? "" : `<span>${count}</span>`}</button>`).join("")}</div><div class="admin-agent-panel" role="tabpanel">${panel}</div>`;
+}
+
+function renderSelectedAgent(agents) {
+  if (!selectedAgentPath.length) return renderAgentCatalogOverview(agents);
+  const agent = agents.find(item => item.key === selectedAgentPath[0]);
+  if (!agent) return renderAgentCatalogOverview(agents);
+  let node = agent;
+  let behavior = null;
+  if (agent.key === "route-agent") {
+    const automationPath = ["route-agent", "agora-router", "automation-router"];
+    if (pathStartsWith(selectedAgentPath, automationPath) && selectedAgentPath.length > automationPath.length) {
+      const automation = findRouteNode(automationPath);
+      behavior = (automation?.children || []).find(item => item.key === selectedAgentPath[automationPath.length]) || null;
+      node = behavior || automation;
+    } else {
+      node = findRouteNode(selectedAgentPath) || agentConfigData.route_navigation;
+    }
+  }
+  const routeAgent = agents.find(item => item.key === "route-agent");
+  const entry = agent.key === "route-agent"
+    ? { ...routeAgent, key: node.key, name: node.name, prompts: promptsForRouteNode(routeAgent, node), skills: [], mcp_servers: [] }
+    : agent;
+  const basePath = behavior ? selectedAgentPath.slice(0, 3) : selectedAgentPath;
+  const capabilities = agent.key === "route-agent" ? (node.capabilities || []) : (agent.components || []);
+  const overview = `${agent.key === "route-agent" && node.key === "route-agent" ? renderRouteRuntime() : ""}${renderCapabilities(capabilities, node.kind || agent.kind)}${renderNodeLinks(behavior ? findRouteNode(basePath) : node, basePath, behavior)}`;
+  return `<article class="admin-agent-detail">
+    <header class="admin-agent-detail-header"><div><p class="admin-eyebrow">${escapeHtml((node.kind || agent.kind || "agent").replaceAll("_", " "))}</p><h2>${escapeHtml(node.name || agent.name)}</h2><p>${escapeHtml(node.description || agent.description)}</p></div><div>${renderAgentBadge(agentStatusLabel(node.status || agent.status), (node.status || agent.status) === "feature_gated" ? "is-gated" : "is-active")}${behavior ? renderAgentBadge("Automation behavior") : ""}</div></header>
+    ${renderAgentTabs(entry, node, { persona: node.key === "automation-router" && !behavior, overview })}
+  </article>`;
+}
+
+function renderAgentMobileNav(agents) {
+  if (!selectedAgentPath.length) return "";
+  const items = agentBreadcrumbItems(agents);
+  const parent = items.at(-2);
+  return `<div class="admin-agent-mobile-nav">${parent ? `<a href="${agentPathHref(parent.path)}"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>${escapeHtml(parent.name)}</a>` : ""}</div>`;
 }
 
 function renderAgentConfig() {
@@ -885,14 +1186,10 @@ function renderAgentConfig() {
   } else if (!agentConfigData) {
     content = `<div class="admin-agent-loading"><p>Agent configuration has not been loaded.</p></div>`;
   } else {
-    const agents = Array.isArray(agentConfigData.agents) ? agentConfigData.agents : [];
-    const services = Array.isArray(agentConfigData.related_services) ? agentConfigData.related_services : [];
-    content = `
-      <section class="admin-agent-group" aria-labelledby="agent-config-agents"><header><h2 id="agent-config-agents">Agents</h2><span>${agents.length}</span></header>${agents.length ? agents.map(renderAgentEntry).join("") : `<p class="admin-empty-state">No Agents configured.</p>`}</section>
-      <section class="admin-agent-group" aria-labelledby="agent-config-services"><header><div><h2 id="agent-config-services">Related services</h2><p>Deterministic systems shown here because they own related prompt configuration.</p></div><span>${services.length}</span></header>${services.length ? services.map(renderAgentEntry).join("") : `<p class="admin-empty-state">No related services configured.</p>`}</section>
-    `;
+    const agents = agentConfigAgents();
+    content = `<div class="admin-agent-workspace">${renderAgentTree(agents)}<section class="admin-agent-main">${renderAgentBreadcrumbs(agents)}${renderAgentMobileNav(agents)}${renderSelectedAgent(agents)}</section></div>`;
   }
-  return `<header class="admin-main-header"><div><p class="admin-eyebrow">RUNTIME INVENTORY</p><p>Prompt drafts are isolated from runtime. Scheduled versions become active only after the next successful daily deployment.</p></div></header><div class="admin-agent-catalog">${content}</div>`;
+  return `<header class="admin-main-header"><div><p>Inspect Agent responsibilities, routing, runtime configuration, and deployment-bound Prompts. Scheduled Prompt versions become active after the next successful daily deployment.</p></div></header><div class="admin-agent-catalog">${content}</div>`;
 }
 
 function renderEnvironmentConfig() {
@@ -942,8 +1239,6 @@ function renderAdmin() {
     ? renderAutomatedCases()
     : adminSection === "agent-config"
     ? renderAgentConfig()
-    : adminSection === "route-strategy"
-    ? renderRouteStrategy()
     : adminSection === "environment-config"
     ? renderEnvironmentConfig()
     : renderOverview();
@@ -970,7 +1265,7 @@ async function loadAgentConfig({ render = true, force = false } = {}) {
   if (render) renderAdmin();
   try {
     const payload = await fetchJson("/api/workspace/admin/agent-config");
-    agentConfigData = payload || { agents: [], related_services: [] };
+    agentConfigData = payload || { agents: [], route_navigation: null, route_runtime: {}, automation_personas: [] };
   } catch (error) {
     agentConfigData = null;
     agentConfigLoadError = error.message;
@@ -989,14 +1284,13 @@ async function loadAdminData() {
   const automationParams = new URLSearchParams();
   if (automationRouteStatus) automationParams.set("route_status", automationRouteStatus);
   try {
-    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload, routingPayload] = await Promise.all([
+    const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload] = await Promise.all([
       fetchJson("/api/workspace/admin/accounts"),
       fetchJson("/api/workspace/cases?assignment_status=all"),
       fetchJson("/api/workspace/admin/metrics"),
       fetchJson("/api/workspace/admin/audit?limit=200"),
       fetchJson("/api/workspace/admin/engineer-schedules"),
       fetchJson(`/api/workspace/admin/account-automation?${automationParams}`),
-      fetchJson("/api/workspace/admin/account-routing/config"),
     ]);
     accounts = Array.isArray(accountPayload.accounts) ? accountPayload.accounts : [];
     adminTickets = Array.isArray(casePayload.cases) ? casePayload.cases.map(normalizeAdminTicket) : [];
@@ -1004,7 +1298,6 @@ async function loadAdminData() {
     auditEvents = Array.isArray(auditPayload.events) ? auditPayload.events : [];
     scheduleData = schedulePayload || { timezone: "Asia/Shanghai", engineers: [] };
     automationData = automationPayload || { metrics: {}, cases: [] };
-    routingData = routingPayload || { stages: [], stage_details: [], route_categories: [], system_prompt: "" };
   } catch (error) {
     loadError = error.message;
   } finally {
@@ -1032,6 +1325,12 @@ function signOut(options = {}) {
   expandedAgentKeys = new Set();
   selectedAgentViews = {};
   selectedAgentPrompts = {};
+  selectedPersonaKey = "";
+  comparePersonaVersions = [];
+  personaDraftValues = {};
+  personaOperationNotice = "";
+  personaOperationBusy = false;
+  personaCreateOpen = false;
   environmentData = { names: [], items: [] };
   environmentLoadError = "";
   selectedEngineerId = "";
@@ -1143,6 +1442,7 @@ root.addEventListener("click", (event) => {
   if (sectionLink) {
     event.preventDefault();
     adminSection = sectionLink.dataset.section;
+    selectedAgentPath = adminSection === "agent-config" ? [] : selectedAgentPath;
     selectedEngineerId = "";
     if (adminSection !== "schedule") scheduleNotice = null;
     if (adminSection !== "new-account") invitationResult = null;
@@ -1182,6 +1482,11 @@ root.addEventListener("click", (event) => {
   } else if (action === "copy-config-name") {
     const name = event.target.closest("[data-config-name]")?.dataset.configName || "";
     globalThis.navigator?.clipboard?.writeText(name);
+  } else if (action === "toggle-agent-tree") {
+    const button = event.target.closest("[data-agent-key]");
+    if (expandedAgentKeys.has(button.dataset.agentKey)) expandedAgentKeys.delete(button.dataset.agentKey);
+    else expandedAgentKeys.add(button.dataset.agentKey);
+    renderAdmin();
   } else if (action === "select-agent-view") {
     const button = event.target.closest("[data-agent-key]");
     selectedAgentViews[button.dataset.agentKey] = button.dataset.agentView;
@@ -1192,7 +1497,7 @@ root.addEventListener("click", (event) => {
     renderAdmin();
   } else if (action === "edit-prompt") {
     const promptKey = event.target.closest("[data-prompt-key]").dataset.promptKey;
-    const selectedPrompt = [...(agentConfigData?.agents || []), ...(agentConfigData?.related_services || [])]
+    const selectedPrompt = (agentConfigData?.agents || [])
       .flatMap(entry => entry.prompts || []).find(prompt => prompt.key === promptKey);
     promptDraftValues[promptKey] = {
       content: selectedPrompt?.content || "",
@@ -1215,6 +1520,22 @@ root.addEventListener("click", (event) => {
     const button = event.target.closest("[data-prompt-key]");
     const apiAction = action.replace("-prompt-version", "");
     runPromptVersionAction(apiAction, button.dataset.promptKey, button.dataset.promptVersion);
+  } else if (action === "toggle-persona-create") {
+    personaCreateOpen = !personaCreateOpen;
+    renderAdmin();
+  } else if (action === "select-persona") {
+    selectedPersonaKey = event.target.closest("[data-persona-key]").dataset.personaKey;
+    comparePersonaVersions = [];
+    personaOperationNotice = "";
+    renderAdmin();
+  } else if (action === "toggle-persona") {
+    const button = event.target.closest("[data-persona-key]");
+    setPersonaEnabled(button.dataset.personaKey, button.dataset.enabled === "true");
+  } else if (action === "publish-persona" || action === "rollback-persona") {
+    const button = event.target.closest("[data-persona-key]");
+    const operation = action === "publish-persona" ? "publish" : "rollback";
+    if (operation === "rollback" && !globalThis.confirm?.(`Create a new published version from v${button.dataset.version}?`)) return;
+    runPersonaVersionAction(operation, button.dataset.personaKey, button.dataset.version);
   }
 });
 
@@ -1223,6 +1544,12 @@ root.addEventListener("change", (event) => {
   if (versionSelect) {
     selectedPromptVersions[versionSelect.dataset.promptVersionSelect] = Number(versionSelect.value);
     promptDiffKeys.delete(versionSelect.dataset.promptVersionSelect);
+    renderAdmin();
+    return;
+  }
+  const personaCompare = event.target.closest("[data-version-compare]");
+  if (personaCompare) {
+    comparePersonaVersions[Number(personaCompare.dataset.versionCompare)] = Number(personaCompare.value);
     renderAdmin();
     return;
   }
@@ -1236,13 +1563,6 @@ root.addEventListener("change", (event) => {
   minuteSelect.disabled = isEndOfDay;
 });
 
-root.addEventListener("toggle", (event) => {
-  const entry = event.target.closest?.("[data-agent-entry]");
-  if (!entry) return;
-  if (entry.open) expandedAgentKeys.add(entry.dataset.agentEntry);
-  else expandedAgentKeys.delete(entry.dataset.agentEntry);
-}, true);
-
 root.addEventListener("input", (event) => {
   const draftContent = event.target.closest("[data-prompt-draft-content]");
   const draftNote = event.target.closest("[data-prompt-draft-note]");
@@ -1253,6 +1573,14 @@ root.addEventListener("input", (event) => {
       content: draftContent ? draftContent.value : current.content,
       change_note: draftNote ? draftNote.value : current.change_note,
     };
+    return;
+  }
+  const personaDraftField = event.target.closest("[data-persona-draft-field]");
+  if (personaDraftField) {
+    const form = personaDraftField.closest("[data-persona-draft-form]");
+    const personaKey = form.dataset.personaKey;
+    const current = personaDraftValues[personaKey] || {};
+    personaDraftValues[personaKey] = { ...current, [personaDraftField.dataset.personaDraftField]: personaDraftField.value };
     return;
   }
   if (!event.target.matches("[data-env-search]")) return;
@@ -1289,12 +1617,21 @@ root.addEventListener("submit", (event) => {
     createPromptDraft(form);
     return;
   }
+  if (form.matches("[data-persona-create-form]")) {
+    createPersona(form);
+    return;
+  }
+  if (form.matches("[data-persona-draft-form]")) {
+    createPersonaDraft(form);
+    return;
+  }
 });
 
 window.addEventListener?.("hashchange", () => {
   const nextSection = sectionFromHash();
   if (nextSection !== adminSection) selectedEngineerId = "";
   adminSection = nextSection;
+  selectedAgentPath = agentPathFromHash();
   renderAdmin();
   if (adminSection === "agent-config") loadAgentConfig();
 });
