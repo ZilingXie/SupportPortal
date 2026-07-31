@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 from contextlib import nullcontext
@@ -229,6 +230,149 @@ class AccountIntakeApiTests(unittest.TestCase):
             }
         )
         return payload, raw_token
+
+    def test_account_full_reroute_job_is_persisted_and_duplicate_active_run_is_rejected(self) -> None:
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            response = self.client.post("/api/account/reroute-jobs")
+
+            self.assertEqual(response.status_code, 202, response.text)
+            created = response.json()
+            self.assertEqual(created["status"], "queued")
+            self.assertTrue(created["job_id"].startswith("account-reroute-"))
+            runner.assert_awaited_once_with(created["job_id"])
+
+            latest = self.client.get("/api/account/reroute-jobs/latest")
+            self.assertEqual(latest.status_code, 200, latest.text)
+            self.assertEqual(latest.json()["job_id"], created["job_id"])
+
+            detail = self.client.get(f"/api/account/reroute-jobs/{created['job_id']}")
+            self.assertEqual(detail.status_code, 200, detail.text)
+            self.assertEqual(detail.json()["status"], "queued")
+
+            duplicate = self.client.post("/api/account/reroute-jobs")
+            self.assertEqual(duplicate.status_code, 409, duplicate.text)
+
+    def test_full_reroute_preserves_only_matching_pending_automation_confirmation(self) -> None:
+        account_case = {
+            "route_status": "automated",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "delivery-1"},
+        }
+        matching = {
+            "status": "scheduled",
+            "payload": {"automation_delivery_key": "delivery-1"},
+        }
+        wrong_binding = {
+            "status": "scheduled",
+            "payload": {"automation_delivery_key": "delivery-2"},
+        }
+
+        self.assertTrue(main._preserve_account_reroute_reply_job(account_case, matching))
+        self.assertFalse(main._preserve_account_reroute_reply_job(account_case, wrong_binding))
+        self.assertFalse(
+            main._preserve_account_reroute_reply_job(
+                {**account_case, "route_status": "not_automated"},
+                matching,
+            )
+        )
+
+    def test_full_reroute_runner_saves_extraction_sends_once_and_schedules_confirmation(self) -> None:
+        ticket = {
+            "ticket_id": "12513",
+            "customer_id": "customer@example.com",
+            "requester": "customer@example.com",
+            "subject": "Enable media relay",
+            "status": "open",
+            "messages": [{"role": "customer", "content": "Please enable media relay for alpha."}],
+        }
+        account_case = {
+            "account_case_id": "AC-12513",
+            "billing_ticket_id": "AC-12513",
+            "client_ticket_id": "12513",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+        }
+        self.repository.save_ticket(ticket, new_messages=ticket["messages"])
+        self.repository.save_account_case(account_case)
+        created_at = main.now_iso()
+        main._save_account_full_reroute_job(
+            {
+                "job_id": "account-reroute-test",
+                "status": "queued",
+                "total": 0,
+                "processed": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "changed": 0,
+                "route_counts": {},
+                "handler_counts": {},
+                "emails_sent": 0,
+                "emails_skipped": 0,
+                "emails_failed": 0,
+                "replies_scheduled": 0,
+                "failures": [],
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+        )
+        updated_case = {
+            **account_case,
+            "route": "enablement",
+            "execution_action": "enablement",
+            "route_family": "automated",
+            "route_status": "automated",
+            "category": "automation",
+            "subcategory": "enablement",
+            "automation_handler": "enablement",
+            "internal_email_send_status": "pending",
+            "internal_email_payload": {"delivery_key": "delivery-12513"},
+            "collected_fields": {
+                "app_id": "alpha",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "route_classification": {
+                "primary_label": "Agora",
+                "secondary_label": "Automation / Enablement",
+            },
+        }
+        result = SimpleNamespace(
+            account_case=updated_case,
+            route_execution={"ticket_id": "12513", "classification": updated_case["route_classification"]},
+            changed=True,
+            handler_status="completed",
+            internal_email_to_send={
+                "to": "internal@example.com",
+                "subject": "Enablement",
+                "body": "Request",
+                "delivery_key": "delivery-12513",
+            },
+            email_handler="enablement",
+            customer_reply="",
+            reply_kind="submission_confirmation",
+            asked_field_keys=(),
+        )
+
+        with patch.object(main, "reprocess_account_case", return_value=result), patch.object(
+            main,
+            "_send_enablement_internal_email_attempt",
+            AsyncMock(return_value=("sent", "")),
+        ) as sender:
+            asyncio.run(main._run_account_full_reroute_job("account-reroute-test"))
+
+        sender.assert_awaited_once()
+        stored = self.repository.get_account_case("AC-12513")
+        assert stored is not None
+        self.assertEqual(stored["internal_email_send_status"], "sent")
+        self.assertTrue(stored["internal_email_payload"]["customer_confirmation_queued"])
+        reply_job = self.repository.get_latest_account_reply_job("12513")
+        assert reply_job is not None
+        self.assertEqual(reply_job["payload"]["automation_delivery_key"], "delivery-12513")
+        latest_job = main._account_full_reroute_job("account-reroute-test")
+        assert latest_job is not None
+        self.assertEqual(latest_job["status"], "completed")
+        self.assertEqual(latest_job["emails_sent"], 1)
+        self.assertEqual(latest_job["replies_scheduled"], 1)
 
     def _save_billing_ticket(
         self,
