@@ -195,6 +195,35 @@ def _account_case_list_record(item: dict[str, Any]) -> dict[str, Any]:
     return {field: copy.deepcopy(item.get(field)) for field in _ACCOUNT_CASE_LIST_FIELDS}
 
 
+def _account_case_detail_revision(
+    account_case: dict[str, Any],
+    ticket: dict[str, Any] | None,
+    latest_reply_job: dict[str, Any] | None,
+    route_correction: dict[str, Any] | None,
+    *,
+    message_count: int | None = None,
+    latest_message_at: Any = None,
+) -> str:
+    messages = ticket.get("messages", []) if isinstance(ticket, dict) else []
+    if message_count is None:
+        message_count = len(messages) if isinstance(messages, list) else 0
+    if latest_message_at is None and isinstance(messages, list):
+        latest_message_at = max(
+            (str(message.get("created_at") or "") for message in messages if isinstance(message, dict)),
+            default="",
+        )
+    parts = (
+        account_case.get("updated_at"),
+        ticket.get("updated_at") if isinstance(ticket, dict) else None,
+        message_count,
+        latest_message_at,
+        latest_reply_job.get("updated_at") if isinstance(latest_reply_job, dict) else None,
+        route_correction.get("updated_at") if isinstance(route_correction, dict) else None,
+    )
+    material = "|".join(_to_iso(value) if value is not None else "" for value in parts)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
 def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(account_case)
     billing_ticket_id = str(
@@ -1282,6 +1311,11 @@ class TicketRepository(Protocol):
     def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
         ...
 
+    def get_account_case_details(
+        self, identifiers: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        ...
+
     def list_account_cases(
         self,
         limit: int = 30,
@@ -1433,7 +1467,68 @@ class InMemoryTicketRepository:
         last_page_offset = ((total - 1) // safe_limit) * safe_limit
         safe_offset = min(requested_offset, last_page_offset)
         items = all_items[safe_offset : safe_offset + safe_limit]
-        return [_account_case_list_record(item) for item in items], total
+        client_ticket_ids = [
+            str(item.get("client_ticket_id") or "").strip()
+            for item in items
+            if str(item.get("client_ticket_id") or "").strip()
+        ]
+        billing_ticket_ids = [
+            str(item.get("billing_ticket_id") or "").strip()
+            for item in items
+            if str(item.get("billing_ticket_id") or "").strip()
+        ]
+        latest_reply_jobs = self.get_latest_account_reply_jobs(client_ticket_ids)
+        corrections = self.get_billing_route_corrections_for_tickets(billing_ticket_ids)
+        enriched_items: list[dict[str, Any]] = []
+        for item in items:
+            record = _account_case_list_record(item)
+            billing_ticket_id = str(record.get("billing_ticket_id") or "").strip()
+            client_ticket_id = str(record.get("client_ticket_id") or "").strip()
+            correction = corrections.get(billing_ticket_id)
+            latest_reply_job = latest_reply_jobs.get(client_ticket_id)
+            ticket = self.get_ticket(client_ticket_id)
+            record["_route_correction"] = correction
+            record["_latest_reply_job"] = latest_reply_job
+            record["_detail_revision"] = _account_case_detail_revision(
+                record,
+                ticket,
+                latest_reply_job,
+                correction,
+            )
+            enriched_items.append(record)
+        return enriched_items, total
+
+    def get_account_case_details(
+        self, identifiers: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for raw_identifier in dict.fromkeys(identifiers):
+            identifier = str(raw_identifier or "").strip()
+            if not identifier:
+                continue
+            account_case = self.get_account_case(identifier)
+            if account_case is None:
+                account_case = self.get_account_case_by_ticket_id(identifier)
+            if account_case is None:
+                continue
+            ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+            billing_ticket_id = str(account_case.get("billing_ticket_id") or "").strip()
+            ticket = self.get_ticket(ticket_id)
+            latest_reply_job = self.get_latest_account_reply_job(ticket_id)
+            correction = self.get_billing_route_correction(billing_ticket_id)
+            result[identifier] = {
+                "account_case": account_case,
+                "ticket": ticket,
+                "latest_reply_job": latest_reply_job,
+                "route_correction": correction,
+                "detail_revision": _account_case_detail_revision(
+                    account_case,
+                    ticket,
+                    latest_reply_job,
+                    correction,
+                ),
+            }
+        return result
 
     def count_account_cases(
         self,
@@ -3264,6 +3359,130 @@ class PostgresTicketRepository:
     def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
         return self.get_billing_ticket_by_client_ticket_id(ticket_id)
 
+    def get_account_case_details(
+        self, identifiers: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        normalized_ids = list(
+            dict.fromkeys(
+                str(identifier or "").strip()
+                for identifier in identifiers
+                if str(identifier or "").strip()
+            )
+        )
+        if not normalized_ids:
+            return {}
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        WITH requested AS (
+                            SELECT identifier, ordinal
+                            FROM UNNEST(%s::TEXT[]) WITH ORDINALITY AS item(identifier, ordinal)
+                        )
+                        SELECT
+                            requested.identifier,
+                            matched.account_case,
+                            TO_JSONB(ticket_row) AS ticket,
+                            message_row.id,
+                            message_row.role,
+                            message_row.content,
+                            message_row.created_at,
+                            message_row.sentiment_label,
+                            message_row.sources,
+                            message_row.citations,
+                            message_row.meta,
+                            latest_reply.reply_job,
+                            TO_JSONB(correction_row) AS route_correction
+                        FROM requested
+                        LEFT JOIN LATERAL (
+                            SELECT
+                                TO_JSONB(account_case_row) AS account_case,
+                                account_case_row.client_ticket_id,
+                                account_case_row.billing_ticket_id
+                            FROM {} account_case_row
+                            WHERE account_case_row.account_case_id = requested.identifier
+                               OR account_case_row.billing_ticket_id = requested.identifier
+                               OR account_case_row.client_ticket_id = requested.identifier
+                            ORDER BY CASE
+                                WHEN account_case_row.account_case_id = requested.identifier THEN 0
+                                WHEN account_case_row.billing_ticket_id = requested.identifier THEN 1
+                                ELSE 2
+                            END
+                            LIMIT 1
+                        ) matched ON TRUE
+                        LEFT JOIN {} ticket_row
+                          ON ticket_row.ticket_id = matched.client_ticket_id
+                        LEFT JOIN {} message_row
+                          ON message_row.ticket_id = matched.client_ticket_id
+                        LEFT JOIN LATERAL (
+                            SELECT TO_JSONB(reply_row) AS reply_job
+                            FROM {} reply_row
+                            WHERE reply_row.ticket_id = matched.client_ticket_id
+                            ORDER BY reply_row.created_at DESC
+                            LIMIT 1
+                        ) latest_reply ON TRUE
+                        LEFT JOIN {} correction_row
+                          ON correction_row.billing_ticket_id = matched.billing_ticket_id
+                        ORDER BY requested.ordinal, message_row.created_at, message_row.id
+                        """
+                    ).format(
+                        self._table("support_account_cases"),
+                        self._table("support_tickets"),
+                        self._table("support_ticket_messages"),
+                        self._table("support_account_reply_jobs"),
+                        self._table("support_billing_route_corrections"),
+                    ),
+                    (normalized_ids,),
+                )
+                result: dict[str, dict[str, Any]] = {}
+                for row in cur.fetchall():
+                    identifier = str(row[0])
+                    account_case = dict(row[1]) if isinstance(row[1], dict) else None
+                    if account_case is None:
+                        continue
+                    bundle = result.get(identifier)
+                    if bundle is None:
+                        ticket = dict(row[2]) if isinstance(row[2], dict) else None
+                        if ticket is not None:
+                            ticket["messages"] = []
+                        latest_reply_job = dict(row[11]) if isinstance(row[11], dict) else None
+                        correction = dict(row[12]) if isinstance(row[12], dict) else None
+                        bundle = {
+                            "account_case": account_case,
+                            "ticket": ticket,
+                            "latest_reply_job": latest_reply_job,
+                            "route_correction": correction,
+                        }
+                        result[identifier] = bundle
+                    ticket = bundle.get("ticket")
+                    if row[3] is not None and isinstance(ticket, dict):
+                        ticket["messages"].append(
+                            _ticket_message_row_to_payload(
+                                (
+                                    ticket.get("ticket_id"),
+                                    row[4],
+                                    row[5],
+                                    row[6],
+                                    row[7],
+                                    row[8],
+                                    row[9],
+                                    row[10],
+                                )
+                            )
+                        )
+                for bundle in result.values():
+                    bundle["detail_revision"] = _account_case_detail_revision(
+                        bundle["account_case"],
+                        bundle.get("ticket"),
+                        bundle.get("latest_reply_job"),
+                        bundle.get("route_correction"),
+                    )
+                return result
+
+        return self._run_with_connection_retry("get_account_case_details", _operation)
+
     def list_account_cases(
         self,
         limit: int = 30,
@@ -3317,7 +3536,14 @@ class PostgresTicketRepository:
                     ), page_meta AS (
                         SELECT COUNT(*)::BIGINT AS total FROM filtered
                     )
-                    SELECT page.*, page_meta.total AS _total
+                    SELECT
+                        page.*,
+                        page_meta.total AS _total,
+                        TO_JSONB(correction_row) AS _route_correction,
+                        latest_reply.reply_job AS _latest_reply_job,
+                        ticket_row.updated_at AS _ticket_updated_at,
+                        message_meta.message_count AS _message_count,
+                        message_meta.latest_message_at AS _latest_message_at
                     FROM page_meta
                     LEFT JOIN LATERAL (
                         SELECT * FROM filtered
@@ -3331,11 +3557,31 @@ class PostgresTicketRepository:
                             END
                         )
                     ) page ON TRUE
+                    LEFT JOIN {} ticket_row
+                      ON ticket_row.ticket_id = page.client_ticket_id
+                    LEFT JOIN LATERAL (
+                        SELECT COUNT(*)::INTEGER AS message_count, MAX(created_at) AS latest_message_at
+                        FROM {} message_row
+                        WHERE message_row.ticket_id = page.client_ticket_id
+                    ) message_meta ON TRUE
+                    LEFT JOIN LATERAL (
+                        SELECT TO_JSONB(reply_row) AS reply_job
+                        FROM {} reply_row
+                        WHERE reply_row.ticket_id = page.client_ticket_id
+                        ORDER BY reply_row.created_at DESC
+                        LIMIT 1
+                    ) latest_reply ON TRUE
+                    LEFT JOIN {} correction_row
+                      ON correction_row.billing_ticket_id = page.billing_ticket_id
                     """
                 ).format(
                     selected_columns,
                     self._table("support_account_cases"),
                     where_sql,
+                    self._table("support_tickets"),
+                    self._table("support_ticket_messages"),
+                    self._table("support_account_reply_jobs"),
+                    self._table("support_billing_route_corrections"),
                 )
                 cur.execute(
                     query,
@@ -3351,6 +3597,14 @@ class PostgresTicketRepository:
                     record = dict(zip(col_names, row))
                     record.pop("_total", None)
                     if record.get("client_ticket_id") is not None:
+                        record["_detail_revision"] = _account_case_detail_revision(
+                            record,
+                            {"updated_at": record.pop("_ticket_updated_at", None)},
+                            record.get("_latest_reply_job"),
+                            record.get("_route_correction"),
+                            message_count=int(record.pop("_message_count", 0) or 0),
+                            latest_message_at=record.pop("_latest_message_at", None),
+                        )
                         items.append(record)
                 return items, total
 

@@ -2120,6 +2120,90 @@ class AccountIntakeApiTests(unittest.TestCase):
         }
         self.assertEqual(statuses, {"TK-BATCH-0": "scheduled", "TK-BATCH-1": "scheduled"})
 
+    def test_account_case_summary_is_no_store_and_excludes_customer_detail_fields(self) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-SAFE-SUMMARY",
+                "client_ticket_id": "TK-SAFE-SUMMARY",
+                "title": "Safe summary",
+                "question": "private customer message",
+                "customer_email": "private@example.com",
+                "collected_fields": {"transaction_id": "secret"},
+                "internal_email_payload": {"body": "private body"},
+                "automation_status": "not_automated",
+                "route": "human_review_required",
+                "scope_label": "account_billing",
+                "route_family": "billing_review",
+                "execution_action": "human_review_required",
+            }
+        )
+
+        response = self.client.get("/api/account/cases?page=1&page_size=10")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store, max-age=0")
+        self.assertEqual(response.headers["pragma"], "no-cache")
+        summary = response.json()["cases"][0]
+        self.assertEqual(summary["client_ticket_id"], "TK-SAFE-SUMMARY")
+        self.assertTrue(summary["detail_revision"])
+        for sensitive_field in (
+            "question",
+            "messages",
+            "customer_email",
+            "customer_id",
+            "requester",
+            "collected_fields",
+            "internal_email_payload",
+        ):
+            self.assertNotIn(sensitive_field, summary)
+
+    def test_account_case_batch_details_limits_size_and_reports_unknown_ids(self) -> None:
+        self._save_billing_ticket(
+            ticket_id="TK-BATCH-DETAIL",
+            automation_status="not_automated",
+        )
+
+        response = self.client.post(
+            "/api/account/cases/batch-details",
+            json={"case_ids": ["BT-TK-BATCH-DETAIL", "BT-UNKNOWN"]},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store, max-age=0")
+        payload = response.json()
+        self.assertEqual(len(payload["details"]), 1)
+        self.assertEqual(payload["details"][0]["billing_ticket_id"], "BT-TK-BATCH-DETAIL")
+        self.assertEqual(payload["missing_case_ids"], ["BT-UNKNOWN"])
+
+        too_many = self.client.post(
+            "/api/account/cases/batch-details",
+            json={"case_ids": [f"BT-{index}" for index in range(11)]},
+        )
+        self.assertEqual(too_many.status_code, 422, too_many.text)
+
+        too_long = self.client.post(
+            "/api/account/cases/batch-details",
+            json={"case_ids": ["A" * 129]},
+        )
+        self.assertEqual(too_long.status_code, 422, too_long.text)
+
+    def test_account_case_batch_and_single_detail_are_consistent(self) -> None:
+        self._save_billing_ticket(
+            ticket_id="TK-DETAIL-CONSISTENCY",
+            automation_status="automation",
+        )
+        case_id = "BT-TK-DETAIL-CONSISTENCY"
+
+        single = self.client.get(f"/api/account/cases/{case_id}")
+        batch = self.client.post(
+            "/api/account/cases/batch-details",
+            json={"case_ids": [case_id]},
+        )
+
+        self.assertEqual(single.status_code, 200, single.text)
+        self.assertEqual(batch.status_code, 200, batch.text)
+        self.assertEqual(batch.json()["details"], [single.json()])
+
     def test_delete_all_billing_tickets_is_not_allowed_and_preserves_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             for i in range(2):

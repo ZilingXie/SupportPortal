@@ -872,6 +872,10 @@ class BillingRouteReviewRequest(BaseModel):
     reviewer: str | None = Field(default=None, max_length=160)
 
 
+class AccountCaseBatchDetailRequest(BaseModel):
+    case_ids: list[str] = Field(min_length=1, max_length=10)
+
+
 class AssetUploadIntentRequest(BaseModel):
     ticket_id: str = Field(min_length=1, max_length=128)
     customer_id: str = Field(min_length=1, max_length=128)
@@ -1081,6 +1085,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def disable_account_http_caching(request: Request, call_next: Any) -> Any:
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/account" or path.startswith("/account/") or path == "/api/account" or path.startswith("/api/account/"):
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
@@ -3667,6 +3682,84 @@ def _build_account_ticket_view_model(
     }
 
 
+_ACCOUNT_CASE_SUMMARY_FIELDS = (
+    "ticket_id",
+    "account_case_id",
+    "billing_ticket_id",
+    "client_ticket_id",
+    "title",
+    "source",
+    "status",
+    "automation_status",
+    "category",
+    "subcategory",
+    "route_status",
+    "route_family",
+    "route",
+    "execution_action",
+    "automation_handler",
+    "automation_mode",
+    "primary_label",
+    "secondary_label",
+    "route_review_status",
+    "route_corrected",
+    "route_low_confidence",
+    "route_error",
+    "route_correction",
+    "created_at",
+    "updated_at",
+)
+
+
+def _build_account_case_summary(ticket: dict[str, Any]) -> dict[str, Any]:
+    correction = ticket.get("_route_correction")
+    view_model = _build_account_ticket_view_model(
+        ticket,
+        correction=correction if isinstance(correction, dict) else None,
+    )
+    summary = {field: view_model.get(field) for field in _ACCOUNT_CASE_SUMMARY_FIELDS}
+    summary["detail_revision"] = str(ticket.get("_detail_revision") or "")
+    summary.update(
+        _account_reply_job_public(
+            ticket.get("_latest_reply_job")
+            if isinstance(ticket.get("_latest_reply_job"), dict)
+            else None
+        )
+    )
+    return summary
+
+
+def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
+    account_case = bundle.get("account_case")
+    if not isinstance(account_case, dict):
+        raise ValueError("account case detail bundle is missing account_case")
+    correction = bundle.get("route_correction")
+    view_model = _build_account_ticket_view_model(
+        account_case,
+        correction=correction if isinstance(correction, dict) else None,
+    )
+    canonical_ticket = bundle.get("ticket")
+    if isinstance(canonical_ticket, dict):
+        view_model["messages"] = canonical_ticket.get("messages", [])
+        view_model["customer_id"] = canonical_ticket.get("customer_id")
+        view_model["requester"] = canonical_ticket.get("requester")
+        view_model["support_ticket_status"] = canonical_ticket.get("status")
+    else:
+        view_model["messages"] = []
+        view_model["customer_id"] = account_case.get("client_ticket_id") or ""
+        view_model["requester"] = account_case.get("client_ticket_id") or ""
+        view_model["support_ticket_status"] = ""
+    view_model.update(
+        _account_reply_job_public(
+            bundle.get("latest_reply_job")
+            if isinstance(bundle.get("latest_reply_job"), dict)
+            else None
+        )
+    )
+    view_model["detail_revision"] = str(bundle.get("detail_revision") or "")
+    return {**account_case, **view_model}
+
+
 @app.post("/account")
 async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]:
     title = " ".join(str(request.title or "").split()).strip()
@@ -4450,40 +4543,7 @@ def list_billing_tickets(
     )
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
     safe_page = min(requested_page, total_pages)
-    billing_ticket_ids = [
-        str(item.get("billing_ticket_id") or "").strip()
-        for item in tickets
-        if item.get("billing_ticket_id")
-    ]
-    corrections = (
-        ticket_repository.get_billing_route_corrections_for_tickets(billing_ticket_ids)
-        if billing_ticket_ids
-        else {}
-    )
-    client_ticket_ids = [
-        str(item.get("client_ticket_id") or "").strip()
-        for item in tickets
-        if item.get("client_ticket_id")
-    ]
-    latest_reply_jobs = (
-        ticket_repository.get_latest_account_reply_jobs(client_ticket_ids)
-        if client_ticket_ids
-        else {}
-    )
-    items = [
-        {
-            **_build_account_ticket_view_model(
-                item,
-                correction=corrections.get(str(item.get("billing_ticket_id") or "").strip()),
-            ),
-            "billing_ticket_id": item.get("billing_ticket_id"),
-            "client_ticket_id": item.get("client_ticket_id"),
-            **_account_reply_job_public(
-                latest_reply_jobs.get(str(item.get("client_ticket_id") or "").strip())
-            ),
-        }
-        for item in tickets
-    ]
+    items = [_build_account_case_summary(item) for item in tickets]
     return {
         "cases": items,
         "tickets": items,
@@ -4779,32 +4839,35 @@ def get_account_full_reroute_job(job_id: str) -> dict[str, Any]:
 @app.get("/api/account/cases/{billing_ticket_id}")
 @app.get("/api/account/billing-tickets/{billing_ticket_id}", deprecated=True)
 def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
-    ticket = ticket_repository.get_account_case(billing_ticket_id)
-    if ticket is None and not str(billing_ticket_id).startswith("BT-"):
-        ticket = ticket_repository.get_account_case_by_ticket_id(billing_ticket_id)
-    if ticket is None:
+    details = ticket_repository.get_account_case_details([billing_ticket_id])
+    bundle = details.get(str(billing_ticket_id).strip())
+    if bundle is None:
         raise HTTPException(status_code=404, detail="ticket not found")
-    view_model = _build_account_ticket_view_model(ticket)
-    canonical_ticket_id = view_model.get("ticket_id")
-    canonical_ticket = ticket_repository.get_ticket(canonical_ticket_id) if canonical_ticket_id else None
-    if canonical_ticket:
-        view_model["messages"] = canonical_ticket.get("messages", [])
-        view_model["customer_id"] = canonical_ticket.get("customer_id")
-        view_model["requester"] = canonical_ticket.get("requester")
-        view_model["support_ticket_status"] = canonical_ticket.get("status")
-    else:
-        view_model["messages"] = []
-        view_model["customer_id"] = ticket.get("client_ticket_id") or ""
-        view_model["requester"] = ticket.get("client_ticket_id") or ""
-        view_model["support_ticket_status"] = ""
-    view_model.update(
-        _account_reply_job_public(
-            ticket_repository.get_latest_account_reply_job(str(canonical_ticket_id or ""))
+    return _build_account_case_detail(bundle)
+
+
+@app.post("/api/account/cases/batch-details")
+def get_account_case_batch_details(request: AccountCaseBatchDetailRequest) -> dict[str, Any]:
+    if any(len(str(case_id or "").strip()) > 128 for case_id in request.case_ids):
+        raise HTTPException(status_code=422, detail="account case ids must not exceed 128 characters")
+    case_ids = list(
+        dict.fromkeys(
+            str(case_id or "").strip()
+            for case_id in request.case_ids
+            if str(case_id or "").strip()
         )
     )
+    if not case_ids:
+        raise HTTPException(status_code=422, detail="at least one account case id is required")
+    bundles = ticket_repository.get_account_case_details(case_ids)
+    details = [
+        _build_account_case_detail(bundles[case_id])
+        for case_id in case_ids
+        if case_id in bundles
+    ]
     return {
-        **ticket,
-        **view_model,
+        "details": details,
+        "missing_case_ids": [case_id for case_id in case_ids if case_id not in bundles],
     }
 
 

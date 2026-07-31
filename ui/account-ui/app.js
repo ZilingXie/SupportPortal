@@ -25,7 +25,12 @@ const renderSharedComposerFormattingToolbarButtons =
 const applySharedComposerToolbarStateToButtons =
   SharedComposer.applyComposerToolbarStateToButtons || (() => {});
 
-const PAGE_SIZE = 30;
+const PAGE_SIZE = 10;
+const SUMMARY_FRESH_MS = 30_000;
+const DETAIL_FRESH_MS = 60_000;
+const CACHE_HARD_EXPIRY_MS = 5 * 60_000;
+const SUMMARY_CACHE_LIMIT = 20;
+const DETAIL_CACHE_LIMIT = 20;
 
 const state = {
   view: "create",
@@ -35,6 +40,8 @@ const state = {
   source: "manual",
   isSubmitting: false,
   history: [],
+  isLoadingHistory: true,
+  detailLoading: false,
   currentPage: 1,
   pagination: {
     page: 1,
@@ -68,6 +75,13 @@ let composerRuntime = null;
 let isFetchingRouteErrorSummary = false;
 let replyPollTimer = null;
 let reroutePollTimer = null;
+let summaryRequestController = null;
+let summaryRequestGeneration = 0;
+let detailOpenGeneration = 0;
+const summaryCache = new Map();
+const detailCache = new Map();
+const detailInflight = new Map();
+const detailRequestControllers = new Set();
 
 const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "publishing"]);
 const ROUTE_LABEL_FILTERS = new Set([
@@ -293,7 +307,7 @@ function updateReplyPolling() {
       return;
     }
     const ticketId = state.activeItem.ticket_id || state.activeItem.client_ticket_id || "";
-    const detail = ticketId ? await fetchTicketDetail(ticketId) : null;
+    const detail = ticketId ? await fetchTicketDetail(ticketId, { force: true }) : null;
     if (detail) {
       state.activeItem = detail;
       render();
@@ -303,46 +317,216 @@ function updateReplyPolling() {
   }, 12000);
 }
 
-async function fetchTickets() {
-  try {
-    const params = new URLSearchParams({
-      page: String(state.currentPage),
-      page_size: String(PAGE_SIZE),
-    });
-    if (state.statusFilter === "unreviewed") {
-      params.set("review_status", "pending");
-    } else if (state.statusFilter === "reviewed") {
-      params.set("review_status", "reviewed");
-    } else if (state.statusFilter === "automation") {
-      params.set("route_status", "automated");
-    } else if (state.statusFilter === "not_automated") {
-      params.set("route_status", "not_automated");
-    } else if (state.statusFilter === "route_errors") {
-      params.set("route_errors", "true");
-    } else if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
-      params.set("route_label", state.statusFilter);
+function accountCaseIdentifier(item) {
+  return String(item?.account_case_id || item?.billing_ticket_id || item?.ticket_id || item?.client_ticket_id || "").trim();
+}
+
+function accountCaseAliases(item) {
+  return new Set(
+    [item?.account_case_id, item?.billing_ticket_id, item?.ticket_id, item?.client_ticket_id]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+}
+
+function touchCacheEntry(cache, key, entry, limit) {
+  cache.delete(key);
+  cache.set(key, entry);
+  while (cache.size > limit) {
+    cache.delete(cache.keys().next().value);
+  }
+}
+
+function currentSummaryKey() {
+  return `${state.statusFilter}:${state.currentPage}`;
+}
+
+function buildTicketListUrl() {
+  const params = new URLSearchParams({
+    page: String(state.currentPage),
+    page_size: String(PAGE_SIZE),
+  });
+  if (state.statusFilter === "unreviewed") {
+    params.set("review_status", "pending");
+  } else if (state.statusFilter === "reviewed") {
+    params.set("review_status", "reviewed");
+  } else if (state.statusFilter === "automation") {
+    params.set("route_status", "automated");
+  } else if (state.statusFilter === "not_automated") {
+    params.set("route_status", "not_automated");
+  } else if (state.statusFilter === "route_errors") {
+    params.set("route_errors", "true");
+  } else if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
+    params.set("route_label", state.statusFilter);
+  }
+  return `/api/account/cases?${params.toString()}`;
+}
+
+function applyTicketPage(data) {
+  state.history = data.cases || data.tickets || data.billing_tickets || [];
+  state.pagination = {
+    page: Number(data.page || state.currentPage || 1),
+    pageSize: Number(data.page_size || PAGE_SIZE),
+    total: Number(data.total || 0),
+    totalPages: Math.max(1, Number(data.total_pages || 1)),
+    hasMore: Boolean(data.has_more),
+  };
+  state.currentPage = state.pagination.page;
+}
+
+function invalidateSummaryCache() {
+  summaryCache.clear();
+}
+
+function findDetailCacheEntry(identifier, expectedRevision = "") {
+  const normalized = String(identifier || "").trim();
+  const now = Date.now();
+  for (const [key, entry] of detailCache.entries()) {
+    if (!entry.aliases.has(normalized)) continue;
+    if (now - entry.cachedAt >= CACHE_HARD_EXPIRY_MS || (expectedRevision && entry.revision !== expectedRevision)) {
+      detailCache.delete(key);
+      return null;
     }
-    const response = await fetch(`/api/account/cases?${params.toString()}`);
-    if (!response.ok) return;
+    touchCacheEntry(detailCache, key, entry, DETAIL_CACHE_LIMIT);
+    return entry;
+  }
+  return null;
+}
+
+function cacheDetail(detail) {
+  const key = accountCaseIdentifier(detail);
+  if (!key) return;
+  touchCacheEntry(
+    detailCache,
+    key,
+    {
+      data: detail,
+      aliases: accountCaseAliases(detail),
+      revision: String(detail.detail_revision || ""),
+      cachedAt: Date.now(),
+    },
+    DETAIL_CACHE_LIMIT
+  );
+}
+
+function invalidateDetailCache(identifier = "") {
+  if (!identifier) {
+    detailCache.clear();
+    return;
+  }
+  const aliases = accountCaseAliases(
+    state.activeItem && accountCaseAliases(state.activeItem).has(String(identifier))
+      ? state.activeItem
+      : { account_case_id: identifier }
+  );
+  aliases.add(String(identifier));
+  for (const [key, entry] of detailCache.entries()) {
+    if ([...aliases].some((alias) => entry.aliases.has(alias))) detailCache.delete(key);
+  }
+}
+
+function prefetchTicketDetails(items) {
+  const requested = items
+    .slice(0, PAGE_SIZE)
+    .filter((item) => {
+      const identifier = accountCaseIdentifier(item);
+      return identifier && !findDetailCacheEntry(identifier, String(item.detail_revision || "")) && !detailInflight.has(identifier);
+    });
+  const caseIds = requested.map(accountCaseIdentifier);
+  if (!caseIds.length) return;
+
+  const controller = new AbortController();
+  detailRequestControllers.add(controller);
+  const batchPromise = fetch("/api/account/cases/batch-details", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ case_ids: caseIds }),
+    cache: "no-store",
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error("Could not preload Account Case details.");
+      const payload = await response.json();
+      const details = Array.isArray(payload.details) ? payload.details : [];
+      details.forEach(cacheDetail);
+      return details;
+    })
+    .catch((error) => {
+      if (error?.name !== "AbortError") console.warn("Account detail prefetch failed", error);
+      return [];
+    })
+    .finally(() => {
+      detailRequestControllers.delete(controller);
+      caseIds.forEach((caseId) => detailInflight.delete(caseId));
+    });
+  caseIds.forEach((caseId) => {
+    detailInflight.set(
+      caseId,
+      batchPromise.then((details) => details.find((detail) => accountCaseAliases(detail).has(caseId)) || null)
+    );
+  });
+}
+
+async function fetchTickets({ force = false, renderOnUpdate = false } = {}) {
+  summaryRequestController?.abort();
+  const controller = new AbortController();
+  summaryRequestController = controller;
+  const generation = ++summaryRequestGeneration;
+  const cacheKey = currentSummaryKey();
+  let cached = summaryCache.get(cacheKey);
+  let age = cached ? Date.now() - cached.cachedAt : Infinity;
+  if (cached && age >= CACHE_HARD_EXPIRY_MS) {
+    summaryCache.delete(cacheKey);
+    cached = null;
+    age = Infinity;
+  }
+
+  if (!force && cached && age < CACHE_HARD_EXPIRY_MS) {
+    touchCacheEntry(summaryCache, cacheKey, cached, SUMMARY_CACHE_LIMIT);
+    applyTicketPage(cached.data);
+    state.isLoadingHistory = false;
+    prefetchTicketDetails(state.history);
+    if (renderOnUpdate) render();
+    if (age < SUMMARY_FRESH_MS) return;
+  } else {
+    state.isLoadingHistory = !cached;
+    if (!cached) {
+      state.history = [];
+      state.pagination = {
+        page: state.currentPage,
+        pageSize: PAGE_SIZE,
+        total: 0,
+        totalPages: 1,
+        hasMore: false,
+      };
+    }
+    if (renderOnUpdate) render();
+  }
+
+  try {
+    const response = await fetch(buildTicketListUrl(), { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error("Could not load Account Cases.");
     const data = await response.json();
-    state.history = data.cases || data.tickets || data.billing_tickets || [];
-    state.pagination = {
-      page: Number(data.page || state.currentPage || 1),
-      pageSize: Number(data.page_size || PAGE_SIZE),
-      total: Number(data.total || 0),
-      totalPages: Math.max(1, Number(data.total_pages || 1)),
-      hasMore: Boolean(data.has_more),
-    };
-    state.currentPage = state.pagination.page;
-  } catch {
-    state.history = [];
-    state.pagination = {
-      page: state.currentPage,
-      pageSize: PAGE_SIZE,
-      total: 0,
-      totalPages: 1,
-      hasMore: false,
-    };
+    if (generation !== summaryRequestGeneration || cacheKey !== currentSummaryKey()) return;
+    touchCacheEntry(summaryCache, cacheKey, { data, cachedAt: Date.now() }, SUMMARY_CACHE_LIMIT);
+    applyTicketPage(data);
+    state.isLoadingHistory = false;
+    prefetchTicketDetails(state.history);
+    if (renderOnUpdate) render();
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    if (!cached) {
+      state.history = [];
+      state.pagination = {
+        page: state.currentPage,
+        pageSize: PAGE_SIZE,
+        total: 0,
+        totalPages: 1,
+        hasMore: false,
+      };
+    }
+    state.isLoadingHistory = false;
+    if (renderOnUpdate) render();
   }
 }
 
@@ -351,7 +535,9 @@ function isActiveRerouteJob(job = state.rerouteJob) {
 }
 
 async function refreshAfterReroute() {
-  await fetchTickets();
+  invalidateSummaryCache();
+  invalidateDetailCache();
+  await fetchTickets({ force: true });
   if (state.view === "detail" && state.activeItem) {
     const ticketId = state.activeItem.ticket_id || state.activeItem.client_ticket_id || "";
     if (ticketId) state.activeItem = (await fetchTicketDetail(ticketId)) || state.activeItem;
@@ -416,14 +602,35 @@ async function startFullReroute() {
   }
 }
 
-async function fetchTicketDetail(ticketId) {
+async function fetchTicketDetail(ticketId, { force = false } = {}) {
+  const summary = state.history.find((item) => accountCaseAliases(item).has(String(ticketId))) || null;
+  const expectedRevision = String(summary?.detail_revision || "");
+  const cached = !force ? findDetailCacheEntry(ticketId, expectedRevision) : null;
+  if (cached && Date.now() - cached.cachedAt < DETAIL_FRESH_MS) return cached.data;
+  if (!force && detailInflight.has(ticketId)) return detailInflight.get(ticketId);
+
+  const controller = new AbortController();
+  detailRequestControllers.add(controller);
+  const request = (async () => {
   try {
-    const response = await fetch(`/api/account/cases/${ticketId}`);
+    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketId)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
     if (!response.ok) return null;
-    return await response.json();
-  } catch {
+    const detail = await response.json();
+    cacheDetail(detail);
+    return detail;
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
     return null;
+  } finally {
+    detailRequestControllers.delete(controller);
+    detailInflight.delete(ticketId);
   }
+  })();
+  detailInflight.set(ticketId, request);
+  return request;
 }
 
 async function fetchRouteErrorSummary() {
@@ -458,21 +665,36 @@ function resetCorrectionState(item = null) {
 }
 
 async function openTicket(ticketId) {
-  const detail = await fetchTicketDetail(ticketId);
+  const generation = ++detailOpenGeneration;
+  const summary = state.history.find((item) => accountCaseAliases(item).has(String(ticketId))) || null;
+  const cached = findDetailCacheEntry(ticketId, String(summary?.detail_revision || ""));
+  state.view = "detail";
+  state.activeItem = cached?.data || null;
+  state.detailLoading = !cached;
+  state.replyMessage = "";
+  state.replyError = "";
+  resetCorrectionState(cached?.data || null);
+  render();
+
+  if (cached && Date.now() - cached.cachedAt < DETAIL_FRESH_MS) return;
+  const detail = await fetchTicketDetail(ticketId, { force: Boolean(cached) });
+  if (generation !== detailOpenGeneration) return;
   if (!detail) {
+    state.detailLoading = false;
     showToast("Failed to load Account Case details.");
+    render();
     return;
   }
   state.activeItem = detail;
-  state.view = "detail";
-  state.replyMessage = "";
-  state.replyError = "";
+  state.detailLoading = false;
   resetCorrectionState(detail);
   render();
 }
 
 function openCreateView() {
+  detailOpenGeneration += 1;
   state.activeItem = null;
+  state.detailLoading = false;
   state.view = "create";
   state.error = "";
   state.replyMessage = "";
@@ -515,7 +737,8 @@ async function submitAccountIntake(event) {
       throw new Error(payload.detail || "Account intake failed.");
     }
     showToast(payload.ticket_id ? `Ticket ${payload.ticket_id} created` : "Ticket created");
-    await fetchTickets();
+    invalidateSummaryCache();
+    await fetchTickets({ force: true });
     if (payload.ticket_id) {
       await openTicket(payload.ticket_id);
     }
@@ -660,6 +883,14 @@ function renderPaginationControls() {
 }
 
 function renderHistorySidebar() {
+  if (state.isLoadingHistory && !state.history.length) {
+    return `
+      ${renderFilterControls()}
+      <div class="history-loading" role="status" aria-label="Loading Account Cases">
+        ${Array.from({ length: 5 }, () => '<span class="loading-line"></span>').join("")}
+      </div>
+    `;
+  }
   const visibleItems = state.history.filter(matchesFilter);
   if (!state.history.length) {
     return `
@@ -932,6 +1163,17 @@ function renderRouteErrorSummaryPanel() {
 
 function renderDetailView() {
   const item = state.activeItem;
+  if (!item && state.detailLoading) {
+    return `
+      <div class="panel detail-stack detail-loading" role="status" aria-label="Loading Account Case details">
+        <span class="loading-line loading-line--title"></span>
+        <span class="loading-line"></span>
+        <span class="loading-line"></span>
+        <span class="loading-line loading-line--wide"></span>
+        <span class="loading-line loading-line--wide"></span>
+      </div>
+    `;
+  }
   if (!item) return "";
 
   let missingFields = [];
@@ -1102,9 +1344,11 @@ async function submitRouteCorrection() {
       throw new Error(payload.detail || "Route correction failed.");
     }
     state.activeItem = payload;
+    cacheDetail(payload);
+    invalidateSummaryCache();
     resetCorrectionState(payload);
     showToast("Route correction saved");
-    await fetchTickets();
+    await fetchTickets({ force: true });
     if (state.statusFilter === "route_errors") {
       await fetchRouteErrorSummary();
     }
@@ -1139,8 +1383,10 @@ async function submitRouteReview(reviewStatus) {
       throw new Error(payload.detail || "Route review failed.");
     }
     state.activeItem = payload;
+    cacheDetail(payload);
+    invalidateSummaryCache();
     showToast(reviewStatus === "reviewed" ? "Route marked as reviewed" : "Route moved back to unreviewed");
-    await fetchTickets();
+    await fetchTickets({ force: true });
   } catch (err) {
     state.reviewError = err instanceof Error ? err.message : "Route review failed.";
   } finally {
@@ -1176,10 +1422,12 @@ async function submitReply() {
       throw new Error(payload.detail || "Message failed.");
     }
     state.activeItem = payload;
+    cacheDetail(payload);
+    invalidateSummaryCache();
 
     state.replyMessage = "";
     showToast("Customer message added");
-    await fetchTickets();
+    await fetchTickets({ force: true });
   } catch (err) {
     state.replyError = err instanceof Error ? err.message : "Reply failed.";
   } finally {
@@ -1301,8 +1549,34 @@ function render() {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     updateReplyPolling();
+    void fetchTickets({ force: true, renderOnUpdate: true });
+    if (state.view === "detail" && state.activeItem) {
+      const ticketId = accountCaseIdentifier(state.activeItem);
+      const generation = detailOpenGeneration;
+      if (ticketId) {
+        void fetchTicketDetail(ticketId, { force: true }).then((detail) => {
+          if (
+            detail
+            && state.view === "detail"
+            && generation === detailOpenGeneration
+            && accountCaseIdentifier(state.activeItem) === ticketId
+          ) {
+            state.activeItem = detail;
+            render();
+          }
+        });
+      }
+    }
     if (isActiveRerouteJob()) void fetchLatestRerouteJob({ refreshCasesOnCompletion: true }).then(render);
   }
+});
+
+window.addEventListener("pagehide", () => {
+  summaryRequestController?.abort();
+  detailRequestControllers.forEach((controller) => controller.abort());
+  summaryCache.clear();
+  detailCache.clear();
+  detailInflight.clear();
 });
 
 document.addEventListener("keydown", (event) => {
@@ -1334,7 +1608,7 @@ function bind() {
           state.routeErrorSummary = null;
           void fetchRouteErrorSummary();
         }
-        void fetchTickets().then(() => render());
+        void fetchTickets({ renderOnUpdate: true });
         return;
       }
       const pageBtn = event.target.closest("[data-action='set-page']");
@@ -1342,7 +1616,7 @@ function bind() {
         const targetPage = Number(pageBtn.dataset.page || "1");
         const totalPages = Math.max(1, state.pagination.totalPages || 1);
         state.currentPage = Math.min(Math.max(1, targetPage), totalPages);
-        void fetchTickets().then(() => render());
+        void fetchTickets({ renderOnUpdate: true });
         return;
       }
     });
