@@ -60,7 +60,7 @@ class AgentConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             route_prompts["account-suspension-field-extractor-system"]["version"],
-            "account-suspension-fields-v1",
+            "account-suspension-fields-v2",
         )
         self.assertEqual(
             route_prompts["account-verification-follow-up-composer-system"]["metadata"]["managed"],

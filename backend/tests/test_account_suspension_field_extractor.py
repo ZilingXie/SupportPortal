@@ -3,9 +3,18 @@ from __future__ import annotations
 import unittest
 
 from backend.services.account_suspension_field_extractor import extract_account_suspension_fields
+from backend.services.prompts.account_routing import build_account_suspension_field_system_prompt
 
 
 class AccountSuspensionFieldExtractorTests(unittest.TestCase):
+    def test_prompt_accepts_normalized_customer_summaries_and_requires_contiguous_quotes(self) -> None:
+        prompt = build_account_suspension_field_system_prompt()
+
+        self.assertIn("third-person case summary", prompt)
+        self.assertIn("still valid grounding evidence", prompt)
+        self.assertIn("shortest useful contiguous substring", prompt)
+        self.assertIn("join phrases across lines", prompt)
+
     def test_extracts_grounded_optional_context_without_missing_fields(self) -> None:
         message = (
             "Our free package reached 10,000 minutes and the account is suspended. "
