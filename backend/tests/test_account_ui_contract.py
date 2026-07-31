@@ -29,7 +29,23 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260731-fraud-suspension-route", html)
+        self.assertIn("20260731-full-reroute-1", html)
+
+    def test_account_app_contains_full_reroute_job_controls(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("Re-run all routes", app_source)
+        self.assertIn('fetch("/api/account/reroute-jobs"', app_source)
+        self.assertIn('fetch("/api/account/reroute-jobs/latest"', app_source)
+        self.assertIn("Reprocess all Account Cases?", app_source)
+        self.assertIn("Field Extractors", app_source)
+        self.assertIn("Previously sent internal emails will not be sent again", app_source)
+        self.assertIn("Account Suspension remains classification-only", app_source)
+        self.assertIn('aria-live="polite"', app_source)
+        self.assertIn('role="progressbar"', app_source)
+        self.assertIn("reroute-modal", styles)
+        self.assertIn("reroute-progress", styles)
 
     def test_account_app_posts_title_and_question_to_account_endpoint(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")

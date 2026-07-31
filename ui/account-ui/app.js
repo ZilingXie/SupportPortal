@@ -58,11 +58,16 @@ const state = {
   routeCorrectionExpanded: false,
   isSubmittingReview: false,
   reviewError: "",
+  rerouteJob: null,
+  rerouteConfirmationOpen: false,
+  isStartingReroute: false,
+  rerouteError: "",
 };
 
 let composerRuntime = null;
 let isFetchingRouteErrorSummary = false;
 let replyPollTimer = null;
+let reroutePollTimer = null;
 
 const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "publishing"]);
 const ROUTE_LABEL_FILTERS = new Set([
@@ -338,6 +343,76 @@ async function fetchTickets() {
       totalPages: 1,
       hasMore: false,
     };
+  }
+}
+
+function isActiveRerouteJob(job = state.rerouteJob) {
+  return ["queued", "running"].includes(String(job?.status || ""));
+}
+
+async function refreshAfterReroute() {
+  await fetchTickets();
+  if (state.view === "detail" && state.activeItem) {
+    const ticketId = state.activeItem.ticket_id || state.activeItem.client_ticket_id || "";
+    if (ticketId) state.activeItem = (await fetchTicketDetail(ticketId)) || state.activeItem;
+  }
+}
+
+async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) {
+  const wasActive = isActiveRerouteJob();
+  try {
+    const response = await fetch("/api/account/reroute-jobs/latest");
+    if (!response.ok) throw new Error("Could not load reroute status.");
+    state.rerouteJob = await response.json();
+    state.rerouteError = "";
+    if (refreshCasesOnCompletion && wasActive && !isActiveRerouteJob()) {
+      await refreshAfterReroute();
+      showToast(
+        state.rerouteJob.status === "completed"
+          ? "All Account Cases were reprocessed"
+          : "Account Case reprocessing finished with issues"
+      );
+    }
+  } catch (err) {
+    state.rerouteError = err instanceof Error ? err.message : "Could not load reroute status.";
+  }
+}
+
+function updateReroutePolling() {
+  if (reroutePollTimer) {
+    window.clearTimeout(reroutePollTimer);
+    reroutePollTimer = null;
+  }
+  if (!isActiveRerouteJob()) return;
+  reroutePollTimer = window.setTimeout(async () => {
+    await fetchLatestRerouteJob({ refreshCasesOnCompletion: true });
+    render();
+  }, 3000);
+}
+
+async function startFullReroute() {
+  if (state.isStartingReroute || isActiveRerouteJob()) return;
+  state.isStartingReroute = true;
+  state.rerouteConfirmationOpen = false;
+  state.rerouteError = "";
+  render();
+  try {
+    const response = await fetch("/api/account/reroute-jobs", { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 409) {
+        await fetchLatestRerouteJob();
+        return;
+      }
+      throw new Error(payload.detail || "Could not start Account Case reprocessing.");
+    }
+    state.rerouteJob = payload;
+    showToast("Account Case reprocessing started");
+  } catch (err) {
+    state.rerouteError = err instanceof Error ? err.message : "Could not start Account Case reprocessing.";
+  } finally {
+    state.isStartingReroute = false;
+    render();
   }
 }
 
@@ -1113,6 +1188,63 @@ async function submitReply() {
   }
 }
 
+function renderRerouteStatus() {
+  const job = state.rerouteJob;
+  if ((!job || job.status === "not_started") && !state.rerouteError) return "";
+  if (state.rerouteError) {
+    return `<div class="reroute-status reroute-status--error" role="alert">${escapeHtml(state.rerouteError)}</div>`;
+  }
+  const total = Number(job.total || 0);
+  const processed = Number(job.processed || 0);
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  if (isActiveRerouteJob(job)) {
+    return `
+      <div class="reroute-status" role="status" aria-live="polite">
+        <div class="reroute-status__line">
+          <span>${job.status === "queued" ? "Queued" : "Reprocessing"}</span>
+          <strong>${processed}${total ? ` of ${total}` : ""}</strong>
+        </div>
+        <div class="reroute-progress" aria-label="Reroute progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}" role="progressbar">
+          <span style="width: ${percent}%"></span>
+        </div>
+      </div>
+    `;
+  }
+  const failed = Number(job.failed || 0);
+  return `
+    <div class="reroute-status ${failed || job.status === "failed" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
+      <strong>${job.status === "failed" ? "Reprocessing failed" : "Reprocessing complete"}</strong>
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${Number(job.changed || 0)} changed</span>
+    </div>
+  `;
+}
+
+function renderRerouteConfirmation() {
+  if (!state.rerouteConfirmationOpen) return "";
+  return `
+    <div class="reroute-modal-backdrop" data-action="close-reroute-confirmation">
+      <section class="reroute-modal" role="dialog" aria-modal="true" aria-labelledby="reroute-dialog-title" data-reroute-dialog>
+        <div class="reroute-modal__heading">
+          <span class="material-symbols-outlined" aria-hidden="true">sync</span>
+          <div>
+            <h2 id="reroute-dialog-title">Reprocess all Account Cases?</h2>
+            <p>This runs the latest Router, Field Extractors, and registered Automation handlers for every case.</p>
+          </div>
+        </div>
+        <ul>
+          <li>Previously sent internal emails will not be sent again for the same automation binding.</li>
+          <li>Newly complete Automation requests may send an internal email and schedule an Account-only customer reply.</li>
+          <li>Account Suspension remains classification-only and never sends an email or customer reply.</li>
+        </ul>
+        <div class="reroute-modal__actions">
+          <button class="ghost-button" type="button" data-action="close-reroute-confirmation">Cancel</button>
+          <button class="primary-button" type="button" data-action="confirm-reroute">Reprocess all cases</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function render() {
   appRoot.innerHTML = `
     <main class="account-shell">
@@ -1129,7 +1261,17 @@ function render() {
             <span class="material-symbols-outlined">add</span>
             New Account Case
           </button>
+          <button
+            class="reroute-button"
+            type="button"
+            data-action="open-reroute-confirmation"
+            ${state.isStartingReroute || isActiveRerouteJob() ? "disabled" : ""}
+          >
+            <span class="material-symbols-outlined">sync</span>
+            Re-run all routes
+          </button>
         </div>
+        ${renderRerouteStatus()}
         <div class="history-stack" id="history-list">
           ${renderHistorySidebar()}
         </div>
@@ -1149,13 +1291,25 @@ function render() {
         </div>
       </section>
     </main>
+    ${renderRerouteConfirmation()}
   `;
   bind();
   updateReplyPolling();
+  updateReroutePolling();
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) updateReplyPolling();
+  if (!document.hidden) {
+    updateReplyPolling();
+    if (isActiveRerouteJob()) void fetchLatestRerouteJob({ refreshCasesOnCompletion: true }).then(render);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.rerouteConfirmationOpen) {
+    state.rerouteConfirmationOpen = false;
+    render();
+  }
 });
 
 function bind() {
@@ -1199,6 +1353,26 @@ function bind() {
   document.querySelectorAll("[data-action='back-to-create']").forEach((el) => {
     el.addEventListener("click", openCreateView);
   });
+  document.querySelectorAll("[data-action='open-reroute-confirmation']").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.rerouteConfirmationOpen = true;
+      render();
+      document.querySelector("[data-reroute-dialog] [data-action='confirm-reroute']")?.focus();
+    });
+  });
+  document.querySelectorAll("[data-action='close-reroute-confirmation']").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (
+        event.currentTarget.classList.contains("reroute-modal-backdrop")
+        && event.target.closest("[data-reroute-dialog]")
+      ) return;
+      state.rerouteConfirmationOpen = false;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-action='confirm-reroute']").forEach((el) => {
+    el.addEventListener("click", () => void startFullReroute());
+  });
   document.querySelectorAll("[data-action='submit-reply']").forEach((el) => {
     el.addEventListener("click", submitReply);
   });
@@ -1239,6 +1413,6 @@ renderSharedComposerFormattingToolbarButtons(state.composerToolbarState);
 serializeRichComposerHtmlToMarkdown("");
 void composerRuntime;
 (async () => {
-  await fetchTickets();
+  await Promise.all([fetchTickets(), fetchLatestRerouteJob()]);
   render();
 })();

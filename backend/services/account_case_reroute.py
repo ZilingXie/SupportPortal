@@ -25,20 +25,42 @@ class AccountCaseReroute:
 def reroute_account_case(
     account_case: dict[str, Any],
     *,
+    canonical_ticket: dict[str, Any] | None = None,
     route_agent: Callable[..., AccountRouteResult] = decide_account_route,
     created_at: str | None = None,
 ) -> AccountCaseReroute:
     current = dict(account_case)
     title = str(current.get("title") or "").strip()
     question = str(current.get("question") or "").strip()
-    route_input = "\n\n".join(part for part in (title, question) if part)
+    ticket_messages = [
+        dict(message)
+        for message in list((canonical_ticket or {}).get("messages") or [])
+        if isinstance(message, dict)
+    ]
+    customer_messages = [
+        message
+        for message in ticket_messages
+        if str(message.get("role") or "").strip().lower() in {"customer", "user"}
+        and str(message.get("content") or "").strip()
+    ]
+    latest_customer_message = str((customer_messages[-1] if customer_messages else {}).get("content") or "").strip()
+    route_input = latest_customer_message or "\n\n".join(part for part in (title, question) if part)
     if not route_input:
         raise ValueError("account case has no title or question to reroute")
 
     result = route_agent(
         route_input,
         ticket_subject=title,
-        ticket_context=[{"role": "customer", "content": question}] if question else [],
+        ticket_context=ticket_messages or ([{"role": "customer", "content": question}] if question else []),
+        latest_assistant_message=next(
+            (
+                message
+                for message in reversed(ticket_messages)
+                if str(message.get("role") or "").strip().lower() == "assistant"
+            ),
+            None,
+        ),
+        current_ticket_status=str((canonical_ticket or {}).get("status") or ""),
         legacy_router=decide_support_route,
         require_latest=True,
     )
