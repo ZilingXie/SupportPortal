@@ -3057,3 +3057,18 @@ For each new entry, record:
   - The word suspended alone remains insufficient; balance, package, payment, quota, free-tier, and usage-related suspensions without the complete template remain `Automation / Account Suspension`.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_agent_config.py backend/tests/test_account_automation_state_repair.py`
+
+## 2026-07-31 - Account Suspension field grounding for normalized summaries
+
+- Area or subsystem: `/account` Account Suspension field extractor
+- Prompt or model version: `account-suspension-fields-v2` / existing `intent_router` profile
+- Summary: Clarified that every record passed under Customer messages is approved customer-source evidence even when ingestion normalized it into third-person wording. Required the extractor to cite short, byte-exact, contiguous source quotes without joining across line breaks.
+- Reason: Case 12523's customer-source record began with `Customer reports`, causing the LLM to reject all fields as a non-customer summary. Case 12532 contained line-wrapped quota text, and synthesized whitespace caused otherwise correct fields to fail grounding validation.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+- Expected behavior change:
+  - Normalized customer-source summaries can provide suspension status, known reason, and customer actions.
+  - Line-wrapped customer text remains extractable through short contiguous quotes while the existing exact-grounding validator continues to reject invented evidence.
+  - Extraction remains optional and classification-only: missing or uncertain fields never trigger a follow-up, email, or Human Review.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_suspension_field_extractor.py backend/tests/test_account_automation_state_repair.py backend/tests/test_agent_config.py`
