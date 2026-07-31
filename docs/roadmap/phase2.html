@@ -705,7 +705,7 @@
           <div class="delivery-group-body">
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>Account 三层分类</h3><p><code>/account</code> 依次使用 Intent Classifier、Agora Router 和 Automation Router：第一层只输出 Conversation、Agora 或 Uncertain；Agora 下区分 Technical、Non-technical、Account &amp; Billing、Automation 和 Uncategorized；Automation 输出五个已注册 subcategory 或 Unregistered。每层保存稳定 reason code，<code>/client</code> 继续使用原共享 Router。</p></div>
+          <div class="delivery-main"><h3>Account 三层分类</h3><p><code>/account</code> 强制使用当前 Intent Classifier、Agora Router 和 Automation Router，不受 legacy/shadow 配置影响；第一层只输出 Conversation、Agora 或 Uncertain，后续保存二级标签、稳定 reason code 和 pipeline 版本。历史 Account Case 可通过 classification-only 批处理重跑，且不会发送客户回复、内部邮件或重放 Automation handler；<code>/client</code> 继续使用原共享 Router。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
