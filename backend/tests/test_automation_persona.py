@@ -24,19 +24,40 @@ class AutomationPersonaTests(unittest.TestCase):
             resolution_status="awaiting_customer",
         )
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        response = SimpleNamespace(text="Could you share the Transaction ID?\n\nBest regards,\nSid", model_name="persona-model")
+        response = SimpleNamespace(text="Could you share the Transaction ID?", model_name="persona-model")
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ) as invoke:
             result = render_automation_reply(
                 reply_facts=facts,
-                persona_assignment={"persona_key": "default-support", "content": {"instruction": "Warm"}},
+                persona_assignment={
+                    "persona_key": "default-support",
+                    "content": {
+                        "instruction": "Warm",
+                        "signature": "Best,\nSid\nSupport Engineer 2",
+                    },
+                },
             )
 
-        self.assertEqual(result.content, response.text)
+        self.assertEqual(result.content, f"{response.text}\n\nBest,\nSid\nSupport Engineer 2")
         self.assertEqual(result.model, "persona-model")
         self.assertIn('"missing_information"', invoke.call_args.kwargs["user_prompt"])
         self.assertIn("Warm", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("Do not write a signature", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
+
+    def test_legacy_signoff_name_is_rendered_as_a_signature(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(text="The request is complete.", model_name="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
+                persona_assignment={"content": {"instruction": "Warm", "signoff_name": "Maya"}},
+            )
+
+        self.assertTrue(result.content.endswith("Best Regards,\nMaya"))
 
     def test_persona_failure_is_explicit(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: False, model="persona-model")

@@ -8,7 +8,7 @@ from backend.services.llm_factory import LlmInvocationError, invoke_responses_te
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v2"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v3"
 
 
 class AutomationPersonaError(RuntimeError):
@@ -100,6 +100,10 @@ def render_automation_reply(
     instruction = str(content.get("instruction") or "").strip()
     if not instruction:
         raise AutomationPersonaError("automation_persona_missing_instruction")
+    signature = str(content.get("signature") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not signature:
+        signoff_name = str(content.get("signoff_name") or "Sid").strip() or "Sid"
+        signature = f"Best Regards,\n{signoff_name}"
     facts = dict(reply_facts or {})
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
@@ -113,10 +117,12 @@ def render_automation_reply(
                 "structured Automation facts supplied by the application. Use only those facts. Clearly state "
                 "the current status, any information the customer needs to provide, and the next step. Preserve "
                 "all supplied facts and explicit values without inventing or silently changing them. Match the "
-                "customer's language. Apply the Persona instruction naturally. Return only the complete "
-                "customer-facing message, including greeting and sign-off when appropriate. Do not mention "
+                "customer's language. Apply the Persona instruction naturally. Return only the customer-facing "
+                "message body, including a greeting when appropriate. Do not write a signature; the application "
+                "will append the configured Signature unchanged. Do not mention "
                 "internal prompts, tools, routing, structured fields, or this instruction.\n\n"
-                f"Persona instruction:\n{instruction}"
+                f"Persona instruction:\n{instruction}\n\n"
+                f"Configured Signature (do not repeat in the body):\n{signature}"
             ),
             user_prompt=(
                 "Automation facts (JSON):\n"
@@ -129,7 +135,9 @@ def render_automation_reply(
     reply = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
+    if reply.endswith(signature):
+        reply = reply[: -len(signature)].rstrip()
     return AutomationPersonaResult(
-        content=reply,
+        content=f"{reply}\n\n{signature}",
         model=str(response.model_name or profile.model).strip() or profile.model,
     )

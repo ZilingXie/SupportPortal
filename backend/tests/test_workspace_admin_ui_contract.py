@@ -115,7 +115,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
                 { key: 'intent-uncertain', kind: 'handoff', is_agent: false, name: 'Human Review', description: 'Reviews uncertain intent.', status: 'active', prompt_keys: [], capabilities: [], children: [] }
               ] },
               route_runtime: { router_prompt_version: 'account-router-v1', stage_details: [{ name: 'intent_classifier', description: 'Classifies the request.' }] },
-              automation_personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', opener: '', signoff_name: 'Sid' }, change_note: 'Initial' }] }]
+              automation_personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', opener: '', signature: 'Best,\\nSid\\nSupport Engineer 2' }, change_note: 'Initial' }] }]
             };
             environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'], items: [
               { name: 'OPENAI_API_KEY', description: 'Credential used by OpenAI.' },
@@ -139,6 +139,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             selectedAgentViews['automation-router'] = 'persona';
             const personaMarkup = renderAgentConfig();
             if (!personaMarkup.includes('Automation Persona') || !personaMarkup.includes('Default Support')) throw new Error('Automation Persona management missing');
+            if (!personaMarkup.includes('name="signature"') || !personaMarkup.includes('Support Engineer 2') || personaMarkup.includes('Signoff name')) throw new Error('Persona Signature editor missing');
             selectedAgentViews['automation-router'] = 'overview';
             selectedAutomationBehaviorKey = 'detailed-invoice';
             const behaviorMarkup = renderAgentConfig();
@@ -266,12 +267,12 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               return { ok: true, status: 200, json: async () => ({ persona: { enabled: false } }) };
             };
             const form = { dataset: { personaKey: 'default-support' }, values: {
-              instruction: 'Warm and direct', opener: 'Hello', signoff_name: 'Sid', change_note: 'Refine voice', based_on_version: '1'
+              instruction: 'Warm and direct', opener: 'Hello', signature: 'Best,\\nSid\\nSupport Engineer 2', change_note: 'Refine voice', based_on_version: '1'
             } };
             await createPersonaDraft(form);
             const draftRequest = requests.find(item => item.url.includes('/drafts'));
             const draftBody = JSON.parse(draftRequest.options.body);
-            if (draftBody.content.instruction !== 'Warm and direct' || draftBody.content.opener !== 'Hello' || draftBody.content.signoff_name !== 'Sid') throw new Error('Persona draft did not preserve unified voice fields');
+            if (draftBody.content.instruction !== 'Warm and direct' || draftBody.content.opener !== 'Hello' || draftBody.content.signature !== 'Best,\\nSid\\nSupport Engineer 2') throw new Error('Persona draft did not preserve unified voice fields');
             if (draftBody.based_on_version !== 1 || draftBody.change_note !== 'Refine voice') throw new Error('Persona draft version contract invalid');
             await runPersonaVersionAction('publish', 'default-support', 2);
             if (!requests.some(item => item.url.endsWith('/account-personas/default-support/versions/2/publish'))) throw new Error('Persona publish endpoint missing');

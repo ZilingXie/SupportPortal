@@ -24,14 +24,14 @@ ROUTING_STAGE_DESCRIPTIONS = {
     "final_route": "Records the route target and the primary and secondary Account labels.",
 }
 DEFAULT_PERSONA_KEY = "default-support"
+DEFAULT_PERSONA_SIGNATURE = "Best,\nSid\nSupport Engineer 2"
 DEFAULT_PERSONA_CONTENT = {
     "instruction": (
         "You are Sid, a friendly and helpful support agent. "
-        "Match the customer's language. "
-        "Always end every customer-facing reply with a signature using the name Sid."
+        "Match the customer's language."
     ),
     "opener": "",
-    "signoff_name": "Sid",
+    "signature": DEFAULT_PERSONA_SIGNATURE,
 }
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -442,6 +442,7 @@ def routing_config_payload() -> dict[str, Any]:
 def apply_persona_to_customer_reply(reply: str, persona: dict[str, Any]) -> str:
     content = persona.get("content") if isinstance(persona.get("content"), dict) else {}
     signoff_name = str(content.get("signoff_name") or "Sid").strip() or "Sid"
+    signature = str(content.get("signature") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     opener = str(content.get("opener") or "").strip()
     normalized = str(reply or "").strip()
     if opener and opener not in normalized:
@@ -456,6 +457,15 @@ def apply_persona_to_customer_reply(reply: str, persona: dict[str, Any]) -> str:
     signoff_pattern = re.compile(r"(\n\n(?:Best [Rr]egards,|此致)\n)[^\n]+\s*$")
     if signoff_name != "Sid" and signoff_pattern.search(normalized):
         normalized = signoff_pattern.sub(lambda match: f"{match.group(1)}{signoff_name}", normalized)
-    if re.search(r"\n(?:Sid|" + re.escape(signoff_name) + r")\s*$", normalized):
-        return normalized
-    return ensure_customer_reply_email_style(body=normalized, opener=opener or None, signoff_name=signoff_name)
+    styled = (
+        normalized
+        if re.search(r"\n(?:Sid|" + re.escape(signoff_name) + r")\s*$", normalized)
+        else ensure_customer_reply_email_style(body=normalized, opener=opener or None, signoff_name=signoff_name)
+    )
+    if not signature:
+        return styled
+    legacy_suffix = re.compile(r"\n\n(?:Best [Rr]egards,|此致)\n" + re.escape(signoff_name) + r"\s*$")
+    body = legacy_suffix.sub("", styled).rstrip()
+    if body.endswith(signature):
+        body = body[: -len(signature)].rstrip()
+    return f"{body}\n\n{signature}"

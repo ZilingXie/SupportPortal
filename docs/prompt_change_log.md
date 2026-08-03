@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-03 - Separately managed Automation Persona Signature
+
+- Area or subsystem: `/account` Automation Persona and Workspace Admin Agent Config
+- Prompt or model version: `automation-persona-v3` / default Persona signature schema
+- Summary: Moved the customer signature out of the Persona instruction and replaced the single-line `signoff_name` editor with a manually managed multiline `Signature` field.
+- Reason: Operators need exact control over closings, names, and job titles without asking the LLM to infer or rewrite them.
+- Affected files or config:
+  - `backend/services/account_admin.py`
+  - `backend/services/automation_persona.py`
+  - `backend/repositories/ticket_repository.py`
+  - `ui/workspace-ui/admin/app.js`
+  - `ui/workspace-ui/admin/styles.css`
+- Expected behavior change:
+  - The Persona LLM generates the localized message body without a signature; the application appends the published multiline Signature unchanged.
+  - New Persona drafts store `signature`; existing versions with only `signoff_name` remain readable and render as `Best Regards,` plus the saved name.
+  - Untouched system default Personas are upgraded to a new published version containing `Best,`, `Sid`, and `Support Engineer 2` on separate lines.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_automation_persona backend.tests.test_account_admin_features.AccountAdminFeatureTests.test_persona_draft_publish_assignment_and_rollback_are_versioned backend.tests.test_account_admin_features.AccountAdminFeatureTests.test_persona_opener_and_reply_execution_are_auditable backend.tests.test_workspace_admin_ui_contract backend.tests.test_workspace_api.WorkspaceApiTests.test_account_persona_api_publishes_and_rolls_back_without_overwriting_history backend.tests.test_repository_configuration -q`
+  - `rtk node --check ui/workspace-ui/admin/app.js`
+  - `rtk git diff --check`
+
 ## 2026-08-03 - Default Automation Persona identity and signature
 
 - Area or subsystem: `/account` Automation Persona
