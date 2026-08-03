@@ -25,7 +25,11 @@ ROUTING_STAGE_DESCRIPTIONS = {
 }
 DEFAULT_PERSONA_KEY = "default-support"
 DEFAULT_PERSONA_CONTENT = {
-    "instruction": "Use a calm, warm, polished concierge-style support voice. Match the customer's language.",
+    "instruction": (
+        "You are Sid, a friendly and helpful support agent. "
+        "Match the customer's language. "
+        "Always end every customer-facing reply with a signature using the name Sid."
+    ),
     "opener": "",
     "signoff_name": "Sid",
 }

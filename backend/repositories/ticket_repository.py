@@ -4475,7 +4475,98 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((status)) WHERE status='active'").format(sql.Identifier("idx_support_prompt_releases_one_active"), self._table("support_prompt_releases")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT NOT NULL REFERENCES {}(release_id) ON DELETE CASCADE, prompt_key TEXT NOT NULL, prompt_version INTEGER NOT NULL, PRIMARY KEY (release_id, prompt_key), FOREIGN KEY (prompt_key, prompt_version) REFERENCES {}(prompt_key, version))").format(self._table("support_prompt_release_items"), self._table("support_prompt_releases"), self._table("support_prompt_versions")))
                 cur.execute(sql.SQL("INSERT INTO {} (persona_key, display_name, enabled, published_version, created_at, updated_at) VALUES ('default-support','Default Support',TRUE,1,NOW(),NOW()) ON CONFLICT (persona_key) DO NOTHING").format(self._table("support_account_personas")))
-                cur.execute(sql.SQL("INSERT INTO {} (persona_key, version, status, content, change_note, created_by, created_at, published_by, published_at) VALUES ('default-support',1,'published',%s,'Seeded from the pre-registry customer reply behavior','system',NOW(),'system',NOW()) ON CONFLICT (persona_key, version) DO NOTHING").format(self._table("support_account_prompt_versions")), (Json({"instruction": "Use a calm, warm, polished concierge-style support voice. Match the customer's language.", "signoff_name": "Sid"}),))
+                default_persona_content = {
+                    "instruction": (
+                        "You are Sid, a friendly and helpful support agent. "
+                        "Match the customer's language. "
+                        "Always end every customer-facing reply with a signature using the name Sid."
+                    ),
+                    "opener": "",
+                    "signoff_name": "Sid",
+                }
+                cur.execute(sql.SQL("INSERT INTO {} (persona_key, version, status, content, change_note, created_by, created_at, published_by, published_at) VALUES ('default-support',1,'published',%s,'Seeded from the pre-registry customer reply behavior','system',NOW(),'system',NOW()) ON CONFLICT (persona_key, version) DO NOTHING").format(self._table("support_account_prompt_versions")), (Json(default_persona_content),))
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            persona_key, version, status, content, change_note, based_on_version,
+                            created_by, created_at, published_by, published_at
+                        )
+                        SELECT
+                            'default-support', 2, 'published', %s,
+                            'Updated default Persona identity, language matching, and required Sid signature',
+                            1, 'system', NOW(), 'system', NOW()
+                        FROM {} persona
+                        JOIN {} version
+                          ON version.persona_key = persona.persona_key
+                         AND version.version = persona.published_version
+                        WHERE persona.persona_key = 'default-support'
+                          AND persona.published_version = 1
+                          AND version.created_by = 'system'
+                          AND version.content ->> 'instruction' = %s
+                          AND NOT EXISTS (
+                              SELECT 1 FROM {} later
+                              WHERE later.persona_key = 'default-support' AND later.version > 1
+                          )
+                        ON CONFLICT (persona_key, version) DO NOTHING
+                        """
+                    ).format(
+                        self._table("support_account_prompt_versions"),
+                        self._table("support_account_personas"),
+                        self._table("support_account_prompt_versions"),
+                        self._table("support_account_prompt_versions"),
+                    ),
+                    (
+                        Json(default_persona_content),
+                        "Use a calm, warm, polished concierge-style support voice. Match the customer's language.",
+                    ),
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {} version
+                        SET status = 'superseded'
+                        FROM {} persona
+                        WHERE version.persona_key = 'default-support'
+                          AND version.version = 1
+                          AND version.status = 'published'
+                          AND persona.persona_key = version.persona_key
+                          AND persona.published_version = 1
+                          AND EXISTS (
+                              SELECT 1 FROM {} replacement
+                              WHERE replacement.persona_key = 'default-support'
+                                AND replacement.version = 2
+                                AND replacement.created_by = 'system'
+                                AND replacement.change_note = 'Updated default Persona identity, language matching, and required Sid signature'
+                          )
+                        """
+                    ).format(
+                        self._table("support_account_prompt_versions"),
+                        self._table("support_account_personas"),
+                        self._table("support_account_prompt_versions"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {} persona
+                        SET published_version = 2, updated_at = NOW()
+                        WHERE persona.persona_key = 'default-support'
+                          AND persona.published_version = 1
+                          AND EXISTS (
+                              SELECT 1 FROM {} replacement
+                              WHERE replacement.persona_key = persona.persona_key
+                                AND replacement.version = 2
+                                AND replacement.status = 'published'
+                                AND replacement.created_by = 'system'
+                                AND replacement.change_note = 'Updated default Persona identity, language matching, and required Sid signature'
+                          )
+                        """
+                    ).format(
+                        self._table("support_account_personas"),
+                        self._table("support_account_prompt_versions"),
+                    )
+                )
                 cur.execute(
                     sql.SQL(
                         """

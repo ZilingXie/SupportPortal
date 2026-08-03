@@ -12,6 +12,22 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-03 - Default Automation Persona identity and signature
+
+- Area or subsystem: `/account` Automation Persona
+- Prompt or model version: `default-support-v2`
+- Summary: Changed the default Persona to Sid, a friendly and helpful support agent who matches the customer's language and always signs every customer-facing reply as Sid.
+- Reason: The default voice should be approachable and consistent, while making the support identity and signature requirement explicit.
+- Affected files or config:
+  - `backend/services/account_admin.py`
+  - `backend/repositories/ticket_repository.py`
+- Expected behavior change:
+  - New Automation replies using the default Persona are written in the customer's language with a friendly, helpful tone and a Sid signature.
+  - Existing databases still using the untouched system-seeded v1 default are upgraded to v2; custom Persona versions and historical pinned assignments remain unchanged.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_admin_features.AccountAdminFeatureTests.test_persona_draft_publish_assignment_and_rollback_are_versioned backend.tests.test_repository_configuration -q`
+  - `rtk git diff --check`
+
 ## 2026-07-30 - Account route taxonomy v2 and stable reason codes
 
 - Area or subsystem: `/account` Intent Classifier, Agora Router, and Automation Router
