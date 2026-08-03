@@ -6,6 +6,7 @@ from pathlib import Path
 
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.account_admin import (
+    DEFAULT_PERSONA_CONTENT,
     DEFAULT_PERSONA_KEY,
     ROUTER_PROMPT_VERSION,
     apply_persona_to_customer_reply,
@@ -150,6 +151,12 @@ class AccountAdminFeatureTests(unittest.TestCase):
         personas = self.repository.list_account_personas()
         self.assertEqual(personas[0]["persona_key"], DEFAULT_PERSONA_KEY)
         self.assertEqual(personas[0]["published_version"], 1)
+        default_instruction = personas[0]["versions"][0]["content"]["instruction"]
+        self.assertEqual(personas[0]["versions"][0]["content"], DEFAULT_PERSONA_CONTENT)
+        self.assertIn("friendly and helpful support agent", default_instruction)
+        self.assertIn("Match the customer's language", default_instruction)
+        self.assertIn("You are Sid", default_instruction)
+        self.assertIn("Always end every customer-facing reply with a signature", default_instruction)
 
         draft = self.repository.create_account_persona_draft(
             DEFAULT_PERSONA_KEY,
