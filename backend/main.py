@@ -688,6 +688,7 @@ def _create_account_reply_job(
     asked_field_keys: list[str] | None = None,
     persona_assignment: dict[str, Any] | None = None,
     automation_delivery_key: str | None = None,
+    rerun_job_id: str | None = None,
 ) -> dict[str, Any]:
     created_at = now_iso()
     scheduled_for = (
@@ -711,6 +712,9 @@ def _create_account_reply_job(
         )
     if str(automation_delivery_key or "").strip():
         payload["automation_delivery_key"] = str(automation_delivery_key).strip()
+    if str(rerun_job_id or "").strip():
+        payload["rerun_job_id"] = str(rerun_job_id).strip()
+        payload["replace_existing_reply"] = True
     job = {
         "job_id": f"account-reply-{uuid4().hex}",
         "ticket_id": ticket_id,
@@ -3863,7 +3867,15 @@ def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
     )
     canonical_ticket = bundle.get("ticket")
     if isinstance(canonical_ticket, dict):
-        view_model["messages"] = canonical_ticket.get("messages", [])
+        view_model["messages"] = [
+            message
+            for message in canonical_ticket.get("messages", [])
+            if not (
+                isinstance(message, dict)
+                and isinstance(message.get("meta"), dict)
+                and message["meta"].get("superseded") is True
+            )
+        ]
         view_model["customer_id"] = canonical_ticket.get("customer_id")
         view_model["requester"] = canonical_ticket.get("requester")
         view_model["support_ticket_status"] = canonical_ticket.get("status")
@@ -4732,28 +4744,38 @@ def _save_account_full_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _preserve_account_reroute_reply_job(
-    account_case: dict[str, Any],
-    reply_job: dict[str, Any] | None,
-) -> bool:
-    if not reply_job or str(reply_job.get("status") or "") not in {
-        "queued",
-        "preparing",
-        "scheduled",
-        "publishing",
-    }:
-        return False
-    if str(account_case.get("route_status") or "") != "automated":
-        return False
-    if str(account_case.get("internal_email_send_status") or "") != "sent":
-        return False
-    email_payload = account_case.get("internal_email_payload")
-    job_payload = reply_job.get("payload")
-    if not isinstance(email_payload, dict) or not isinstance(job_payload, dict):
-        return False
-    delivery_key = str(email_payload.get("delivery_key") or "").strip()
-    job_delivery_key = str(job_payload.get("automation_delivery_key") or "").strip()
-    return bool(delivery_key and job_delivery_key == delivery_key)
+def _fresh_rerun_delivery_key(payload: dict[str, Any], rerun_job_id: str) -> str:
+    base_key = str(payload.get("delivery_key") or "automation").strip() or "automation"
+    return f"{base_key}:rerun:{rerun_job_id}"
+
+
+def _account_rerun_reply_wait_timeout_seconds() -> float:
+    return max(30.0, _safe_float_env("ACCOUNT_RERUN_REPLY_WAIT_TIMEOUT_SECONDS", 900.0))
+
+
+async def _wait_for_account_rerun_replies(job: dict[str, Any]) -> None:
+    reply_job_ids = [str(item).strip() for item in job.get("reply_job_ids") or [] if str(item).strip()]
+    if not reply_job_ids or not bool(job.get("wait_for_replies")):
+        job["reply_jobs_pending"] = 0
+        return
+    terminal_statuses = {"published", "manual_attention", "cancelled"}
+    deadline = time.monotonic() + _account_rerun_reply_wait_timeout_seconds()
+    while True:
+        jobs = [ticket_repository.get_account_reply_job(item) for item in reply_job_ids]
+        pending = [item for item in jobs if item is not None and str(item.get("status") or "") not in terminal_statuses]
+        missing = [item for item in jobs if item is None]
+        job["reply_jobs_pending"] = len(pending) + len(missing)
+        job["reply_jobs_published"] = sum(1 for item in jobs if item and item.get("status") == "published")
+        job["reply_jobs_manual_attention"] = sum(1 for item in jobs if item and item.get("status") == "manual_attention")
+        job["updated_at"] = now_iso()
+        _save_account_full_reroute_job(job)
+        if not pending and not missing:
+            return
+        if time.monotonic() >= deadline:
+            job["reply_wait_timed_out"] = True
+            job["failures"].append({"scope": "replies", "error": "reply jobs did not reach a terminal state before timeout"})
+            return
+        await asyncio.sleep(2)
 
 
 async def _run_account_full_reroute_job(job_id: str) -> None:
@@ -4761,7 +4783,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
     if job is None:
         return
     started_at = now_iso()
-    job.update(status="running", started_at=started_at, updated_at=started_at)
+    job.update(status="running", phase="Routing and extracting", started_at=started_at, updated_at=started_at)
     _save_account_full_reroute_job(job)
     try:
         cases = await async_to_thread(
@@ -4784,24 +4806,34 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 canonical_ticket = await async_to_thread(ticket_repository.get_ticket, client_ticket_id)
                 if canonical_ticket is None:
                     raise ValueError("canonical support ticket not found")
-                latest_reply_job = await async_to_thread(
-                    ticket_repository.get_latest_account_reply_job,
-                    client_ticket_id,
-                )
                 result = await async_to_thread(
                     reprocess_account_case,
                     account_case,
                     ticket=canonical_ticket,
+                    fresh=True,
                 )
                 timestamp = now_iso()
                 updated_case = dict(result.account_case)
-                if not _preserve_account_reroute_reply_job(updated_case, latest_reply_job):
-                    await async_to_thread(
-                        ticket_repository.cancel_pending_account_reply_jobs,
-                        client_ticket_id,
-                        updated_at=timestamp,
-                    )
+                updated_case["automation_context"] = {
+                    **dict(updated_case.get("automation_context") or {}),
+                    "rerun_job_id": job_id,
+                    "rerun_mode": "fresh_case_rerun",
+                }
+                result.route_execution["rerun_job_id"] = job_id
+                result.route_execution["rerun_mode"] = "fresh_case_rerun"
+                await async_to_thread(
+                    ticket_repository.cancel_pending_account_reply_jobs,
+                    client_ticket_id,
+                    updated_at=timestamp,
+                )
                 await async_to_thread(ticket_repository.save_account_case, updated_case)
+                if not result.reply_kind and not result.internal_email_to_send:
+                    job["replies_superseded"] = int(job.get("replies_superseded") or 0) + await async_to_thread(
+                        ticket_repository.supersede_account_ai_messages,
+                        client_ticket_id,
+                        except_job_id=job_id,
+                        superseded_at=timestamp,
+                    )
                 await async_to_thread(
                     ticket_repository.save_account_route_execution,
                     result.route_execution,
@@ -4810,6 +4842,12 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 reply_ready = result.reply_kind == "field_follow_up"
                 delivery_key = ""
                 if result.internal_email_to_send and result.email_handler:
+                    job["phase"] = "Sending internal emails"
+                    job["updated_at"] = now_iso()
+                    _save_account_full_reroute_job(job)
+                    fresh_email = copy.deepcopy(result.internal_email_to_send)
+                    fresh_email["delivery_key"] = _fresh_rerun_delivery_key(fresh_email, job_id)
+                    updated_case["internal_email_payload"] = fresh_email
                     sender = {
                         "billing": _send_billing_internal_email_attempt,
                         "enablement": _send_enablement_internal_email_attempt,
@@ -4818,25 +4856,27 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     if sender is None:
                         raise ValueError(f"registered handler has no sender: {result.email_handler}")
                     attempt = {
-                        "internal_email_to_send": result.internal_email_to_send,
+                        "internal_email_to_send": fresh_email,
                         "internal_email_send_status": updated_case.get("internal_email_send_status"),
                         "internal_email_send_reason": updated_case.get("internal_email_send_reason"),
                     }
                     send_status, send_reason = await sender(attempt)
-                    updated_case["internal_email_payload"] = dict(result.internal_email_to_send)
                     updated_case["internal_email_send_status"] = send_status
                     updated_case["internal_email_send_reason"] = send_reason
                     updated_case["updated_at"] = now_iso()
                     if send_status == "sent":
                         job["emails_sent"] += 1
                         reply_ready = result.reply_kind == "submission_confirmation"
-                        delivery_key = str(result.internal_email_to_send.get("delivery_key") or "")
+                        delivery_key = str(fresh_email.get("delivery_key") or "")
                     else:
                         job["emails_failed"] += 1
                 elif str(updated_case.get("internal_email_send_status") or "") == "sent":
                     job["emails_skipped"] += 1
 
                 if reply_ready:
+                    job["phase"] = "Scheduling Persona replies"
+                    job["updated_at"] = now_iso()
+                    _save_account_full_reroute_job(job)
                     persona = await async_to_thread(
                         ticket_repository.resolve_account_persona,
                         client_ticket_id,
@@ -4849,7 +4889,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                         submitted=result.reply_kind == "submission_confirmation",
                         customer_name=str(updated_case.get("customer_name") or ""),
                     )
-                    await async_to_thread(
+                    reply_job = await async_to_thread(
                         _create_account_reply_job,
                         ticket_id=client_ticket_id,
                         trigger_message_created_at=timestamp,
@@ -4858,7 +4898,9 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                         asked_field_keys=list(result.asked_field_keys),
                         persona_assignment=persona,
                         automation_delivery_key=delivery_key or None,
+                        rerun_job_id=job_id,
                     )
+                    job.setdefault("reply_job_ids", []).append(str(reply_job.get("job_id") or ""))
                     job["replies_scheduled"] += 1
                     if delivery_key and isinstance(updated_case.get("internal_email_payload"), dict):
                         updated_case["internal_email_payload"]["customer_confirmation_queued"] = True
@@ -4890,9 +4932,13 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 job["processed"] += 1
                 job["updated_at"] = now_iso()
                 _save_account_full_reroute_job(job)
+        job["phase"] = "Waiting for replies"
+        job["updated_at"] = now_iso()
+        _save_account_full_reroute_job(job)
+        await _wait_for_account_rerun_replies(job)
         completed_at = now_iso()
         job.update(
-            status="completed_with_errors" if job["failed"] else "completed",
+            status="completed_with_errors" if job["failed"] or job.get("reply_wait_timed_out") else "completed",
             completed_at=completed_at,
             updated_at=completed_at,
         )
@@ -4909,14 +4955,16 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
         _save_account_full_reroute_job(job)
 
 
-@app.post("/api/account/reroute-jobs", status_code=202)
-async def create_account_full_reroute_job(background_tasks: BackgroundTasks) -> dict[str, Any]:
+@app.post("/api/account/rerun-jobs", status_code=202)
+@app.post("/api/account/reroute-jobs", status_code=202, include_in_schema=False)
+async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> dict[str, Any]:
     latest = next(iter(_account_full_reroute_jobs(limit=1)), None)
     if _account_full_reroute_job_is_active(latest):
         raise HTTPException(status_code=409, detail="an Account full reroute job is already running")
     created_at = now_iso()
     job = {
-        "job_id": f"account-reroute-{uuid4().hex}",
+        "job_id": f"account-rerun-{uuid4().hex}",
+        "mode": "fresh_case_rerun",
         "status": "queued",
         "total": 0,
         "processed": 0,
@@ -4929,6 +4977,13 @@ async def create_account_full_reroute_job(background_tasks: BackgroundTasks) -> 
         "emails_skipped": 0,
         "emails_failed": 0,
         "replies_scheduled": 0,
+        "replies_superseded": 0,
+        "reply_job_ids": [],
+        "reply_jobs_pending": 0,
+        "reply_jobs_published": 0,
+        "reply_jobs_manual_attention": 0,
+        "reply_wait_timed_out": False,
+        "wait_for_replies": True,
         "failures": [],
         "created_at": created_at,
         "started_at": None,
@@ -4940,16 +4995,18 @@ async def create_account_full_reroute_job(background_tasks: BackgroundTasks) -> 
     return job
 
 
-@app.get("/api/account/reroute-jobs/latest")
-def get_latest_account_full_reroute_job() -> dict[str, Any]:
+@app.get("/api/account/rerun-jobs/latest")
+@app.get("/api/account/reroute-jobs/latest", include_in_schema=False)
+def get_latest_account_rerun_job() -> dict[str, Any]:
     return next(iter(_account_full_reroute_jobs(limit=1)), {"status": "not_started"})
 
 
-@app.get("/api/account/reroute-jobs/{job_id}")
-def get_account_full_reroute_job(job_id: str) -> dict[str, Any]:
+@app.get("/api/account/rerun-jobs/{job_id}")
+@app.get("/api/account/reroute-jobs/{job_id}", include_in_schema=False)
+def get_account_rerun_job(job_id: str) -> dict[str, Any]:
     job = _account_full_reroute_job(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="reroute job not found")
+        raise HTTPException(status_code=404, detail="rerun job not found")
     return job
 
 

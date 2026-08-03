@@ -137,6 +137,7 @@ def reprocess_account_case(
     account_case: dict[str, Any],
     *,
     ticket: dict[str, Any],
+    fresh: bool = False,
     reroute: Callable[..., AccountCaseReroute] = reroute_account_case,
     extract_suspension: Callable[..., AccountSuspensionFieldExtraction] = extract_account_suspension_fields,
     extract_enablement: Callable[..., EnablementFieldExtraction] = extract_enablement_fields,
@@ -166,14 +167,14 @@ def reprocess_account_case(
     ticket_id = str(current.get("client_ticket_id") or current.get("ticket_id") or "")
     account_case_id = str(current.get("account_case_id") or current.get("billing_ticket_id") or "")
     customer_email = str(ticket.get("customer_id") or "").strip() or None
-    asked = _asked_field_keys(ticket)
+    asked = set() if fresh else _asked_field_keys(ticket)
     same_original_binding = (
         str(original.get("execution_action") or original.get("route") or "").strip() == action
         and str(original.get("automation_handler") or "").strip()
         == str(current.get("automation_handler") or "").strip()
     )
     asked_for_handler = asked if same_original_binding else set()
-    prior_context = dict(original.get("automation_context") or {})
+    prior_context = {} if fresh else dict(original.get("automation_context") or {})
     extraction: Any = None
     internal_email: dict[str, Any] | None = None
     customer_reply = ""
@@ -328,7 +329,7 @@ def reprocess_account_case(
     if extraction is not None:
         classification["field_extraction"] = extraction.audit_payload()
 
-    already_sent = bool(internal_email) and _email_already_sent(original, current, internal_email)
+    already_sent = bool(internal_email) and not fresh and _email_already_sent(original, current, internal_email)
     old_payload = original.get("internal_email_payload")
     if already_sent:
         persisted_email = dict(old_payload) if isinstance(old_payload, dict) else internal_email

@@ -233,48 +233,25 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_account_full_reroute_job_is_persisted_and_duplicate_active_run_is_rejected(self) -> None:
         with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
-            response = self.client.post("/api/account/reroute-jobs")
+            response = self.client.post("/api/account/rerun-jobs")
 
             self.assertEqual(response.status_code, 202, response.text)
             created = response.json()
             self.assertEqual(created["status"], "queued")
-            self.assertTrue(created["job_id"].startswith("account-reroute-"))
+            self.assertEqual(created["mode"], "fresh_case_rerun")
+            self.assertTrue(created["job_id"].startswith("account-rerun-"))
             runner.assert_awaited_once_with(created["job_id"])
 
-            latest = self.client.get("/api/account/reroute-jobs/latest")
+            latest = self.client.get("/api/account/rerun-jobs/latest")
             self.assertEqual(latest.status_code, 200, latest.text)
             self.assertEqual(latest.json()["job_id"], created["job_id"])
 
-            detail = self.client.get(f"/api/account/reroute-jobs/{created['job_id']}")
+            detail = self.client.get(f"/api/account/rerun-jobs/{created['job_id']}")
             self.assertEqual(detail.status_code, 200, detail.text)
             self.assertEqual(detail.json()["status"], "queued")
 
-            duplicate = self.client.post("/api/account/reroute-jobs")
+            duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
-
-    def test_full_reroute_preserves_only_matching_pending_automation_confirmation(self) -> None:
-        account_case = {
-            "route_status": "automated",
-            "internal_email_send_status": "sent",
-            "internal_email_payload": {"delivery_key": "delivery-1"},
-        }
-        matching = {
-            "status": "scheduled",
-            "payload": {"automation_delivery_key": "delivery-1"},
-        }
-        wrong_binding = {
-            "status": "scheduled",
-            "payload": {"automation_delivery_key": "delivery-2"},
-        }
-
-        self.assertTrue(main._preserve_account_reroute_reply_job(account_case, matching))
-        self.assertFalse(main._preserve_account_reroute_reply_job(account_case, wrong_binding))
-        self.assertFalse(
-            main._preserve_account_reroute_reply_job(
-                {**account_case, "route_status": "not_automated"},
-                matching,
-            )
-        )
 
     def test_full_reroute_runner_saves_extraction_sends_once_and_schedules_confirmation(self) -> None:
         ticket = {
@@ -291,6 +268,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             "client_ticket_id": "12513",
             "route_status": "automated",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "enablement:AC-12513:v1"},
         }
         self.repository.save_ticket(ticket, new_messages=ticket["messages"])
         self.repository.save_account_case(account_case)
@@ -367,7 +346,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(stored["internal_email_payload"]["customer_confirmation_queued"])
         reply_job = self.repository.get_latest_account_reply_job("12513")
         assert reply_job is not None
-        self.assertEqual(reply_job["payload"]["automation_delivery_key"], "delivery-12513")
+        self.assertIn(":rerun:account-reroute-test", reply_job["payload"]["automation_delivery_key"])
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None
         self.assertEqual(latest_job["status"], "completed")

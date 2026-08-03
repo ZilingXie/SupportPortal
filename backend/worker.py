@@ -509,11 +509,18 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
                 "persona_key": payload.get("persona_key"),
                 "persona_version": payload.get("persona_version"),
                 "persona_render_status": payload.get("persona_render_status"),
+                "rerun_job_id": payload.get("rerun_job_id"),
             },
         }
         ticket.setdefault("messages", []).append(assistant_message)
         ticket["updated_at"] = published_at
         ticket_repository.save_ticket(ticket, new_messages=[assistant_message])
+        if payload.get("replace_existing_reply"):
+            ticket_repository.supersede_account_ai_messages(
+                ticket_id,
+                except_job_id=job_id,
+                superseded_at=published_at,
+            )
 
     billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(ticket_id)
     if billing_ticket is not None:
