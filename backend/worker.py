@@ -658,6 +658,7 @@ def _render_case_persona_reply(
             if extracted_resolution
             else resolution_status
         ),
+        customer_name=str(case.get("customer_name") or ""),
     )
     try:
         return render_automation_reply(reply_facts=facts, persona_assignment=persona).content
@@ -771,6 +772,7 @@ def _queue_enablement_submission_confirmation(
         performed_actions=["Submitted the enablement request to the internal team for review."],
         next_step="The internal team will follow up after reviewing the request.",
         resolution_status="submitted_for_review",
+        customer_name=str(account_case.get("customer_name") or ""),
     )
     persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
     created_at = now_iso()

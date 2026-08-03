@@ -2219,6 +2219,7 @@ class WorkerResilienceTests(unittest.TestCase):
         account_case = {
             "account_case_id": "AC-12513",
             "client_ticket_id": "12513",
+            "customer_name": "Jack Gold",
             "automation_handler": "enablement",
             "missing_fields": [],
             "collected_fields": {
@@ -2259,6 +2260,7 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertTrue(created)
         replacement = repository.save_account_reply_job.call_args.args[0]
         self.assertEqual(replacement["trigger_message_created_at"], "2026-07-29T19:50:01+00:00")
+        self.assertEqual(replacement["payload"]["reply_facts"]["customer_first_name"], "Jack")
 
     def test_enablement_delivery_retry_does_not_revive_confirmation_after_customer_reply(self) -> None:
         account_case = {

@@ -4920,6 +4920,7 @@ class PostgresTicketRepository:
                             source TEXT NOT NULL,
                             external_id TEXT,
                             created_by TEXT,
+                            customer_name TEXT,
                             title TEXT NOT NULL,
                             question TEXT NOT NULL,
                             route TEXT,
@@ -4962,6 +4963,11 @@ class PostgresTicketRepository:
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS account_case_id TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS customer_name TEXT").format(
                         self._table("support_account_cases"),
                     )
                 )
@@ -8234,7 +8240,7 @@ class PostgresTicketRepository:
                             """
                             INSERT INTO {} (
                                 account_case_id, billing_ticket_id, client_ticket_id, source, external_id,
-                                created_by, title, question, route, scope_label,
+                                created_by, customer_name, title, question, route, scope_label,
                                 route_family, execution_action, tooling_profile,
                                 route_reason, route_confidence, matched_signals,
                                 automation_status, missing_fields, collected_fields,
@@ -8245,13 +8251,14 @@ class PostgresTicketRepository:
                                 router_source, category, subcategory, route_status,
                                 automation_handler, route_classification, automation_context, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
                                 account_case_id = EXCLUDED.account_case_id,
                                 client_ticket_id = EXCLUDED.client_ticket_id,
                                 source = EXCLUDED.source,
                                 external_id = EXCLUDED.external_id,
                                 created_by = EXCLUDED.created_by,
+                                customer_name = EXCLUDED.customer_name,
                                 title = EXCLUDED.title,
                                 question = EXCLUDED.question,
                                 route = EXCLUDED.route,
@@ -8292,6 +8299,7 @@ class PostgresTicketRepository:
                             str(billing_ticket.get("source") or "").strip(),
                             str(billing_ticket.get("external_id") or "").strip() or None,
                             str(billing_ticket.get("created_by") or "").strip() or None,
+                            str(billing_ticket.get("customer_name") or "").strip() or None,
                             str(billing_ticket.get("title") or "").strip(),
                             str(billing_ticket.get("question") or "").strip(),
                             str(billing_ticket.get("route") or "").strip() or None,

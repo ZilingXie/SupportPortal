@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS support_account_cases (
     source TEXT NOT NULL,
     external_id TEXT,
     created_by TEXT,
+    customer_name TEXT,
     title TEXT NOT NULL,
     question TEXT NOT NULL,
     route TEXT,

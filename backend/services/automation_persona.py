@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -8,7 +9,25 @@ from backend.services.llm_factory import LlmInvocationError, invoke_responses_te
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v3"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v4"
+
+_INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
+
+
+def customer_first_name(customer_name: Any) -> str:
+    """Return a safe first-name greeting value or the Customer fallback."""
+    normalized = " ".join(str(customer_name or "").split()).strip()
+    if normalized.lower() in _INVALID_CUSTOMER_NAMES or "@" in normalized or "://" in normalized:
+        return "Customer"
+    first_name = normalized.split(" ", 1)[0].strip(".,;:!?()[]{}<>\"'")
+    if (
+        not first_name
+        or len(first_name) > 80
+        or not any(character.isalpha() for character in first_name)
+        or not all(character.isalpha() or character in {"-", "'"} for character in first_name)
+    ):
+        return "Customer"
+    return first_name
 
 
 class AutomationPersonaError(RuntimeError):
@@ -71,6 +90,7 @@ def build_automation_reply_facts(
     resolution_status: str | None = None,
     customer_language: str | None = None,
     source_facts: list[str] | None = None,
+    customer_name: str | None = None,
 ) -> dict[str, Any]:
     """Build the small, customer-facing fact packet consumed by the Persona."""
     return {
@@ -83,6 +103,7 @@ def build_automation_reply_facts(
         "resolution_status": str(resolution_status or "").strip() or None,
         "customer_language": str(customer_language or "").strip() or "en",
         "source_facts": [str(item).strip() for item in (source_facts or []) if str(item).strip()],
+        "customer_first_name": customer_first_name(customer_name),
     }
 
 
@@ -108,6 +129,7 @@ def render_automation_reply(
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
 
+    greeting = f"Hi {customer_first_name(facts.get('customer_first_name'))},"
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -117,11 +139,14 @@ def render_automation_reply(
                 "structured Automation facts supplied by the application. Use only those facts. Clearly state "
                 "the current status, any information the customer needs to provide, and the next step. Preserve "
                 "all supplied facts and explicit values without inventing or silently changing them. Match the "
-                "customer's language. Apply the Persona instruction naturally. Return only the customer-facing "
-                "message body, including a greeting when appropriate. Do not write a signature; the application "
-                "will append the configured Signature unchanged. Do not mention "
+                "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
+                "engineer replying personally, with warm, natural sentences rather than labels, fragments, canned "
+                "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
+                "Return only the customer-facing body after the greeting. Do not write a greeting or signature; "
+                "the application will add both unchanged. Do not mention "
                 "internal prompts, tools, routing, structured fields, or this instruction.\n\n"
                 f"Persona instruction:\n{instruction}\n\n"
+                f"Configured Greeting (do not repeat in the body):\n{greeting}\n\n"
                 f"Configured Signature (do not repeat in the body):\n{signature}"
             ),
             user_prompt=(
@@ -135,9 +160,12 @@ def render_automation_reply(
     reply = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
+    reply = re.sub(r"^(?:hi|hello|hey)\b[^,\n]{0,80},\s*", "", reply, count=1, flags=re.IGNORECASE).strip()
     if reply.endswith(signature):
         reply = reply[: -len(signature)].rstrip()
+    if not reply:
+        raise AutomationPersonaError("automation_persona_empty_response")
     return AutomationPersonaResult(
-        content=f"{reply}\n\n{signature}",
+        content=f"{greeting}\n\n{reply}\n\n{signature}",
         model=str(response.model_name or profile.model).strip() or profile.model,
     )
