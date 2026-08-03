@@ -68,6 +68,8 @@ def _mark_customer_confirmation_queued(case: dict[str, Any], delivery_key: str) 
     updated_payload["delivery_key"] = delivery_key
     updated_payload["customer_confirmation_queued"] = True
     case["internal_email_payload"] = updated_payload
+    case["internal_email_send_status"] = "sent"
+    case["internal_email_send_reason"] = "recovery_reused_existing_delivery"
     case["updated_at"] = _now()
     ticket_repository.save_account_case(case)
 

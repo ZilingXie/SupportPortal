@@ -4885,6 +4885,10 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     updated_case["internal_email_send_status"] = send_status
                     updated_case["internal_email_send_reason"] = send_reason
                     updated_case["updated_at"] = now_iso()
+                    # Persist a successful delivery before creating the reply job. If Persona
+                    # preparation or job creation fails, the delivery retry poller must not send
+                    # the same internal email again.
+                    await async_to_thread(ticket_repository.save_account_case, updated_case)
                     if send_status == "sent":
                         job["emails_sent"] += 1
                         reply_ready = result.reply_kind == "submission_confirmation"
