@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from backend.services.account_case_reroute import AccountCaseReroute
@@ -59,6 +60,38 @@ def _reroute_result(case: dict[str, object]) -> AccountCaseReroute:
 
 
 class AccountFullRerouteTests(unittest.TestCase):
+    def test_fresh_rerun_ignores_previous_follow_up_and_email_state(self) -> None:
+        original = {
+            **_case(),
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "enablement:AC-1:v1"},
+            "automation_context": {"follow_up_count": 4},
+        }
+        extraction = EnablementFieldExtraction(
+            status="complete",
+            collected_fields={"app_id": "alpha", "requested_feature": "media_relay"},
+        )
+        build_enablement = Mock(
+            return_value=SimpleNamespace(
+                missing_fields=[],
+                collected_fields=dict(extraction.collected_fields),
+                internal_email={"delivery_key": "enablement:AC-1:v1"},
+            )
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            fresh=True,
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_enablement=Mock(return_value=extraction),
+            build_enablement=build_enablement,
+        )
+
+        self.assertEqual(result.reply_kind, "submission_confirmation")
+        self.assertIsNotNone(result.internal_email_to_send)
+        self.assertNotIn("follow_up_count", result.account_case["automation_context"])
+
     def test_detailed_invoice_reroute_uses_llm_fields_and_defers_customer_copy(self) -> None:
         original = {
             **_case(action="detailed_invoice"),

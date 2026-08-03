@@ -1142,6 +1142,9 @@ class TicketRepository(Protocol):
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
+    def supersede_account_ai_messages(
+        self, ticket_id: str, *, except_job_id: str, superseded_at: str
+    ) -> int: ...
     def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None: ...
     def get_latest_account_reply_job(self, ticket_id: str) -> dict[str, Any] | None: ...
     def get_latest_account_reply_jobs(
@@ -1639,6 +1642,29 @@ class InMemoryTicketRepository:
         with self._assignment_lock:
             self._account_reply_jobs[str(saved["job_id"])] = saved
         return copy.deepcopy(saved)
+
+    def supersede_account_ai_messages(
+        self, ticket_id: str, *, except_job_id: str, superseded_at: str
+    ) -> int:
+        ticket = self._tickets.get(str(ticket_id).strip())
+        if ticket is None:
+            return 0
+        changed = 0
+        for message in ticket.get("messages", []):
+            if not isinstance(message, dict) or str(message.get("role") or "").lower() != "assistant":
+                continue
+            meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+            if str(meta.get("source") or message.get("source") or "") != "account_ai":
+                continue
+            if str(meta.get("account_reply_job_id") or message.get("account_reply_job_id") or "") == str(except_job_id):
+                continue
+            if meta.get("superseded") is True:
+                continue
+            message_meta = dict(meta)
+            message_meta.update({"superseded": True, "superseded_at": superseded_at, "superseded_by_job_id": except_job_id})
+            message["meta"] = message_meta
+            changed += 1
+        return changed
 
     def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None:
         with self._assignment_lock:
@@ -6142,6 +6168,38 @@ class PostgresTicketRepository:
                         )
 
         self._run_with_connection_retry("save_ticket", _operation)
+
+    def supersede_account_ai_messages(
+        self, ticket_id: str, *, except_job_id: str, superseded_at: str
+    ) -> int:
+        replacement_meta = Json(
+            {
+                "superseded": True,
+                "superseded_at": superseded_at,
+                "superseded_by_job_id": str(except_job_id),
+            }
+        )
+
+        def _operation(conn: psycopg.Connection[Any]) -> int:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET meta = COALESCE(meta, '{}'::jsonb) || %s
+                            WHERE ticket_id = %s
+                              AND role = 'assistant'
+                              AND COALESCE(meta->>'source', '') = 'account_ai'
+                              AND COALESCE(meta->>'account_reply_job_id', '') <> %s
+                              AND COALESCE(meta->>'superseded', 'false') <> 'true'
+                            """
+                        ).format(self._table("support_ticket_messages")),
+                        (replacement_meta, str(ticket_id), str(except_job_id)),
+                    )
+                    return int(cur.rowcount or 0)
+
+        return self._run_with_connection_retry("supersede_account_ai_messages", _operation)
 
     def update_message_sentiment_label(
         self,

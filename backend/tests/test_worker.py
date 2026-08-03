@@ -2550,6 +2550,8 @@ class WorkerResilienceTests(unittest.TestCase):
                 "persona_key": "default-support",
                 "persona_version": 1,
                 "effective_prompt": {"instruction": "Warm"},
+                "replace_existing_reply": True,
+                "rerun_job_id": "account-rerun-1",
             },
         }
         ticket = {
@@ -2559,7 +2561,14 @@ class WorkerResilienceTests(unittest.TestCase):
                     "role": "customer",
                     "content": "Please increase quota",
                     "created_at": "2026-03-22T00:00:00+00:00",
-                }
+                },
+                {
+                    "role": "assistant",
+                    "content": "Old reply",
+                    "created_at": "2026-03-22T00:01:00+00:00",
+                    "source": "account_ai",
+                    "meta": {"account_reply_job_id": "account-reply-old", "source": "account_ai"},
+                },
             ],
         }
         repository = Mock()
@@ -2575,6 +2584,11 @@ class WorkerResilienceTests(unittest.TestCase):
         render.assert_not_called()
         self.assertEqual(job["status"], "published")
         self.assertEqual(ticket["messages"][-1]["content"], "The request has been submitted.")
+        repository.supersede_account_ai_messages.assert_called_once_with(
+            "TK-PERSONA-RETRY",
+            except_job_id="account-reply-persona-retry",
+            superseded_at=job["published_at"],
+        )
 
     def test_persona_failure_moves_reply_job_to_human_review_without_sending(self) -> None:
         job = {

@@ -54,6 +54,35 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(filtered["cases"][0]["category"], "automation")
         self.assertEqual(filtered["cases"][0]["subcategory"], "detailed_invoice")
 
+    def test_account_reply_supersede_marks_old_account_message(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "TK-RERUN",
+                "messages": [
+                    {"role": "customer", "content": "Request", "created_at": "2026-08-03T00:00:00+00:00"},
+                    {
+                        "role": "assistant",
+                        "content": "Old reply",
+                        "source": "account_ai",
+                        "meta": {"account_reply_job_id": "old-job"},
+                        "created_at": "2026-08-03T00:01:00+00:00",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(
+            self.repository.supersede_account_ai_messages(
+                "TK-RERUN",
+                except_job_id="new-job",
+                superseded_at="2026-08-03T00:02:00+00:00",
+            ),
+            1,
+        )
+        message = self.repository.get_ticket("TK-RERUN")["messages"][1]
+        self.assertTrue(message["meta"]["superseded"])
+        self.assertEqual(message["meta"]["superseded_by_job_id"], "new-job")
+
     def test_environment_config_returns_names_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

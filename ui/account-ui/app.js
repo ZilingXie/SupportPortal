@@ -547,8 +547,8 @@ async function refreshAfterReroute() {
 async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) {
   const wasActive = isActiveRerouteJob();
   try {
-    const response = await fetch("/api/account/reroute-jobs/latest");
-    if (!response.ok) throw new Error("Could not load reroute status.");
+    const response = await fetch("/api/account/rerun-jobs/latest");
+    if (!response.ok) throw new Error("Could not load rerun status.");
     state.rerouteJob = await response.json();
     state.rerouteError = "";
     if (refreshCasesOnCompletion && wasActive && !isActiveRerouteJob()) {
@@ -560,7 +560,7 @@ async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) 
       );
     }
   } catch (err) {
-    state.rerouteError = err instanceof Error ? err.message : "Could not load reroute status.";
+    state.rerouteError = err instanceof Error ? err.message : "Could not load rerun status.";
   }
 }
 
@@ -583,7 +583,7 @@ async function startFullReroute() {
   state.rerouteError = "";
   render();
   try {
-    const response = await fetch("/api/account/reroute-jobs", { method: "POST" });
+    const response = await fetch("/api/account/rerun-jobs", { method: "POST" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (response.status === 409) {
@@ -595,7 +595,7 @@ async function startFullReroute() {
     state.rerouteJob = payload;
     showToast("Account Case reprocessing started");
   } catch (err) {
-    state.rerouteError = err instanceof Error ? err.message : "Could not start Account Case reprocessing.";
+    state.rerouteError = err instanceof Error ? err.message : "Could not start Account Case rerun.";
   } finally {
     state.isStartingReroute = false;
     render();
@@ -1449,7 +1449,7 @@ function renderRerouteStatus() {
     return `
       <div class="reroute-status" role="status" aria-live="polite">
         <div class="reroute-status__line">
-          <span>${job.status === "queued" ? "Queued" : "Reprocessing"}</span>
+          <span>${job.status === "queued" ? "Queued" : escapeHtml(job.phase || "Rerunning")}</span>
           <strong>${processed}${total ? ` of ${total}` : ""}</strong>
         </div>
         <div class="reroute-progress" aria-label="Reroute progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}" role="progressbar">
@@ -1461,8 +1461,8 @@ function renderRerouteStatus() {
   const failed = Number(job.failed || 0);
   return `
     <div class="reroute-status ${failed || job.status === "failed" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
-      <strong>${job.status === "failed" ? "Reprocessing failed" : "Reprocessing complete"}</strong>
-      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${Number(job.changed || 0)} changed</span>
+      <strong>${job.status === "failed" ? "Rerun failed" : "Rerun complete"}</strong>
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_superseded || 0)} old replies archived</span>
     </div>
   `;
 }
@@ -1475,18 +1475,18 @@ function renderRerouteConfirmation() {
         <div class="reroute-modal__heading">
           <span class="material-symbols-outlined" aria-hidden="true">sync</span>
           <div>
-            <h2 id="reroute-dialog-title">Reprocess all Account Cases?</h2>
-            <p>This runs the latest Router, Field Extractors, and registered Automation handlers for every case.</p>
+            <h2 id="reroute-dialog-title">Rerun all Account Cases?</h2>
+            <p>This starts each case again with the latest Router, Field Extractors, Automation handlers, and Persona.</p>
           </div>
         </div>
         <ul>
-          <li>Previously sent internal emails will not be sent again for the same automation binding.</li>
-          <li>Newly complete Automation requests may send an internal email and schedule an Account-only customer reply.</li>
+          <li>Previously sent internal emails will be sent again as a new rerun execution.</li>
+          <li>Existing Account-only AI replies will be replaced after the new Persona reply is published.</li>
           <li>Account Suspension remains classification-only and never sends an email or customer reply.</li>
         </ul>
         <div class="reroute-modal__actions">
           <button class="ghost-button" type="button" data-action="close-reroute-confirmation">Cancel</button>
-          <button class="primary-button" type="button" data-action="confirm-reroute">Reprocess all cases</button>
+          <button class="primary-button" type="button" data-action="confirm-reroute">Rerun all cases</button>
         </div>
       </section>
     </div>
@@ -1516,7 +1516,7 @@ function render() {
             ${state.isStartingReroute || isActiveRerouteJob() ? "disabled" : ""}
           >
             <span class="material-symbols-outlined">sync</span>
-            Re-run all routes
+            Rerun
           </button>
         </div>
         ${renderRerouteStatus()}
