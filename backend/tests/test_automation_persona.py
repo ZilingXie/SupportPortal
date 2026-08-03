@@ -8,6 +8,7 @@ from unittest.mock import patch
 from backend.services.automation_persona import (
     AutomationPersonaError,
     build_automation_reply_facts,
+    customer_first_name,
     extract_automation_resolution_facts,
     render_automation_reply,
 )
@@ -22,6 +23,7 @@ class AutomationPersonaTests(unittest.TestCase):
             reply_intent="request_missing_information",
             missing_information=["Transaction ID"],
             resolution_status="awaiting_customer",
+            customer_name="Jack Gold",
         )
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(text="Could you share the Transaction ID?", model_name="persona-model")
@@ -39,12 +41,39 @@ class AutomationPersonaTests(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(result.content, f"{response.text}\n\nBest,\nSid\nSupport Engineer 2")
+        self.assertEqual(result.content, f"Hi Jack,\n\n{response.text}\n\nBest,\nSid\nSupport Engineer 2")
         self.assertEqual(result.model, "persona-model")
         self.assertIn('"missing_information"', invoke.call_args.kwargs["user_prompt"])
         self.assertIn("Warm", invoke.call_args.kwargs["system_prompt"])
-        self.assertIn("Do not write a signature", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("Do not write a greeting or signature", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("Hi Jack,", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("warm, natural sentences", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
+
+    def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
+        self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")
+        self.assertEqual(customer_first_name("陈小明"), "陈小明")
+        self.assertEqual(customer_first_name("Mary-Jane Watson"), "Mary-Jane")
+        self.assertEqual(customer_first_name("customer@example.com"), "Customer")
+        self.assertEqual(customer_first_name("Jack<script>"), "Customer")
+        self.assertEqual(customer_first_name(""), "Customer")
+
+    def test_render_removes_model_generated_greeting_before_adding_configured_greeting(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(text="Hi Jack, Thanks for reaching out.", model_name="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts={
+                    "behavior": "enablement",
+                    "reply_intent": "submission_confirmation",
+                    "customer_first_name": "Jack",
+                },
+                persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+            )
+
+        self.assertEqual(result.content, "Hi Jack,\n\nThanks for reaching out.\n\nBest,\nSid")
 
     def test_legacy_signoff_name_is_rendered_as_a_signature(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")

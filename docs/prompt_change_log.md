@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-03 - Customer-aware, natural Automation greetings
+
+- Area or subsystem: `/account` intake, Automation reply facts, and Automation Persona
+- Prompt or model version: `automation-persona-v4`
+- Summary: Added the persisted `customer_name` intake field, deterministic first-name greetings with a `Customer` fallback, and a less templated support-writing instruction for Persona-generated reply bodies.
+- Reason: Automation replies should address the customer personally and read like an experienced support engineer instead of beginning with robotic status text.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/automation_persona.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/sql/migrations/2026_08_03_account_customer_name.sql`
+- Expected behavior change:
+  - `customer_name="Jack Gold"` is persisted on the Account case and becomes the exact greeting `Hi Jack,`; missing, placeholder, URL-like, or email-like values become `Hi Customer,`.
+  - The application owns the greeting and Signature while the Persona writes only the intervening body in a warm, natural voice without labels, fragments, canned status wording, or repetitive corporate filler.
+  - Existing cases without `customer_name` remain compatible and use the fallback greeting.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_automation_persona backend.tests.test_account_intake.AccountIntakeApiTests.test_account_intake_routes_enablement_and_sends_internal_request backend.tests.test_account_intake.AccountIntakeApiTests.test_account_case_summary_is_no_store_and_excludes_customer_detail_fields backend.tests.test_worker.WorkerResilienceTests.test_enablement_delivery_retry_replaces_malformed_cancelled_confirmation backend.tests.test_worker.WorkerResilienceTests.test_published_persona_content_is_reused_on_retry backend.tests.test_worker.WorkerResilienceTests.test_persona_failure_moves_reply_job_to_human_review_without_sending backend.tests.test_repository_configuration -q`
+  - `rtk git diff --check`
+
 ## 2026-08-03 - Separately managed Automation Persona Signature
 
 - Area or subsystem: `/account` Automation Persona and Workspace Admin Agent Config

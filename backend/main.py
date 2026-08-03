@@ -596,6 +596,7 @@ def _automation_reply_facts(
     collected_fields: dict[str, Any],
     submitted: bool = False,
     resolution_facts: list[str] | None = None,
+    customer_name: str | None = None,
 ) -> dict[str, Any]:
     """Build Persona input without making the Behavior layer write customer copy."""
     if submitted:
@@ -607,6 +608,7 @@ def _automation_reply_facts(
             next_step="The internal team will follow up after reviewing the request.",
             resolution_status="submitted_for_review",
             source_facts=resolution_facts,
+            customer_name=customer_name,
         )
     return build_automation_reply_facts(
         behavior=action or handler,
@@ -620,6 +622,7 @@ def _automation_reply_facts(
         ),
         resolution_status="awaiting_customer",
         source_facts=resolution_facts,
+        customer_name=customer_name,
     )
 
 
@@ -868,6 +871,7 @@ class AccountIntakeRequest(BaseModel):
     title: str = Field(default="", max_length=300)
     question: str = Field(default="", max_length=12000)
     customer_email: str | None = Field(default=None, max_length=320)
+    customer_name: str | None = Field(default=None, max_length=160)
     external_id: str | None = Field(default=None, max_length=160)
     source: str | dict[str, Any] | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=160)
@@ -2182,12 +2186,14 @@ def resolve_support_message(
         )
     if not missing_fields and not send_status == "sent":
         return resolution
+    account_case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
     facts = _automation_reply_facts(
         handler=action,
         action=action,
         missing_fields=[str(item) for item in missing_fields],
         collected_fields=collected_fields,
         submitted=send_status == "sent",
+        customer_name=str((account_case or {}).get("customer_name") or ""),
     )
     persona = ticket_repository.resolve_account_persona(ticket_id)
     try:
@@ -3910,6 +3916,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
 
     account_source = _normalize_account_source(request.source)
     customer_id = str(request.customer_email or "").strip() or "account-intake"
+    customer_name = " ".join(str(request.customer_name or "").split()).strip()
     timestamp = now_iso()
     ticket: dict[str, Any] = {
         "ticket_id": ticket_id,
@@ -4091,6 +4098,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 missing_fields=missing_fields,
                 collected_fields=collected_fields,
                 submitted=bool(automation_attempt.get("internal_email_to_send")),
+                customer_name=customer_name,
             )
             internal_email_payload = automation_attempt["internal_email_payload"]
             internal_email_send_status = str(automation_attempt["internal_email_send_status"])
@@ -4112,6 +4120,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "source": _serialize_billing_ticket_source(request.source, account_source),
         "external_id": str(request.external_id or "").strip() or _zendesk_ticket_id_from_source(request.source) or None,
         "created_by": str(request.created_by).strip() or None,
+        "customer_name": customer_name or None,
         "title": title,
         "question": question,
         "route": route or None,
@@ -4186,6 +4195,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 missing_fields=[],
                 collected_fields=collected_fields,
                 submitted=True,
+                customer_name=customer_name,
             )
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -4213,6 +4223,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 missing_fields=[],
                 collected_fields=collected_fields,
                 submitted=True,
+                customer_name=customer_name,
             )
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -4243,6 +4254,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
                 missing_fields=[],
                 collected_fields=collected_fields,
                 submitted=True,
+                customer_name=customer_name,
             )
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -4317,6 +4329,7 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "ticket_id": ticket_id,
         "account_case_id": account_case_id,
         "billing_ticket_id": billing_ticket_id,
+        "customer_name": customer_name or None,
         "engineer_case_id": engineer_case_id,
         "rollout_position": rollout_position,
         "rollout_selected": rollout_selected,
@@ -4428,6 +4441,7 @@ def _render_billing_resolution_customer_reply(
             resolution_status=resolution.get("status"),
             customer_language=detect_customer_reply_language(customer_message, note),
             source_facts=[str(item) for item in source_facts if str(item).strip()],
+            customer_name=str(billing_ticket.get("customer_name") or ""),
         )
         return render_automation_reply(
             reply_facts=facts,
@@ -4833,6 +4847,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                         missing_fields=list(updated_case.get("missing_fields") or []),
                         collected_fields=dict(updated_case.get("collected_fields") or {}),
                         submitted=result.reply_kind == "submission_confirmation",
+                        customer_name=str(updated_case.get("customer_name") or ""),
                     )
                     await async_to_thread(
                         _create_account_reply_job,
@@ -5632,6 +5647,7 @@ async def reply_to_billing_ticket(
             missing_fields=missing_fields,
             collected_fields=collected_fields,
             submitted=bool(automation_attempt.get("internal_email_to_send")),
+            customer_name=str(billing_ticket.get("customer_name") or ""),
         )
         current_classification = (
             dict(billing_ticket.get("route_classification"))
@@ -5697,6 +5713,7 @@ async def reply_to_billing_ticket(
                 missing_fields=[],
                 collected_fields=collected_fields,
                 submitted=True,
+                customer_name=str(billing_ticket.get("customer_name") or ""),
             )
             reply_ready = True
         billing_ticket["updated_at"] = now_iso()

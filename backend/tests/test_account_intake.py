@@ -522,6 +522,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "title": "Enable Media Relay Feature",
                     "question": question,
                     "customer_email": "customer@example.com",
+                    "customer_name": "Jack Gold",
                 },
             )
 
@@ -532,6 +533,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_family"], "automated")
         self.assertEqual(payload["route_status"], "automated")
         self.assertEqual(payload["automation_handler"], "enablement")
+        self.assertEqual(payload["customer_name"], "Jack Gold")
         self.assertEqual(payload["semantic_intent"], "enablement.feature_activation")
         self.assertEqual(payload["collected_fields"]["app_id"], "7da36383d624411698e5c0bc1fda6324")
         self.assertEqual(payload["collected_fields"]["requested_feature"], "media_relay")
@@ -540,7 +542,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(reply_job)
         assert reply_job is not None
-        self.assertIn("submitted", reply_job["payload"]["draft_content"].lower())
+        self.assertEqual(reply_job["payload"]["reply_facts"]["customer_first_name"], "Jack")
+        self.assertIn("Submitted", reply_job["payload"]["reply_facts"]["performed_actions"][0])
         send_email.assert_called_once()
         email_payload = send_email.call_args.args[0]
         self.assertEqual(email_payload["to"], "")
