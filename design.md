@@ -375,6 +375,7 @@
 5. 同一规范化缺失字段在同一 ticket 中最多询问一次。客户未回答时不得换措辞重复追问；后续状态显示继续处理或 manual attention。
 6. Zendesk 来源的 Account case 必须在列表和详情中优先展示来源 ticket number（例如 `#11830`）；若历史记录的内部 Ticket ID 与 Zendesk number 不一致，详情需同时保留 Internal Ticket ID 供追踪。
 7. `manual_attention / failed` 必须作为文字状态显示并使用 `aria-live="polite"`，不能只靠颜色。客户在等待期间追加消息时，旧 scheduled reply 必须取消并由最新上下文替代。
+8. Automation Behavior 只保存结构化字段、路由状态、内部动作和发送时机；客户可见文案必须在最终发送入口由统一 Automation Persona 生成。Persona 失败、缺少人设或事实抽取失败时显示 Human Review，不发送 Behavior 兜底文案。
 
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：

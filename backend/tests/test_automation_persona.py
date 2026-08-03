@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import json
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from backend.services.automation_persona import (
+    AutomationPersonaError,
+    build_automation_reply_facts,
+    extract_automation_resolution_facts,
+    render_automation_reply,
+)
+from backend.services.detailed_invoice_field_extractor import extract_detailed_invoice_fields
+from backend.services.billing_automation import build_billing_automation_result
+
+
+class AutomationPersonaTests(unittest.TestCase):
+    def test_render_uses_facts_and_pinned_persona(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="detailed_invoice",
+            reply_intent="request_missing_information",
+            missing_information=["Transaction ID"],
+            resolution_status="awaiting_customer",
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(text="Could you share the Transaction ID?\n\nBest regards,\nSid", model_name="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"persona_key": "default-support", "content": {"instruction": "Warm"}},
+            )
+
+        self.assertEqual(result.content, response.text)
+        self.assertEqual(result.model, "persona-model")
+        self.assertIn('"missing_information"', invoke.call_args.kwargs["user_prompt"])
+        self.assertIn("Warm", invoke.call_args.kwargs["system_prompt"])
+
+    def test_persona_failure_is_explicit(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: False, model="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile):
+            with self.assertRaises(AutomationPersonaError):
+                render_automation_reply(
+                    reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                )
+
+    def test_internal_resolution_facts_are_extracted_before_persona(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="extractor-model")
+        response = SimpleNamespace(
+            text=json.dumps(
+                {
+                    "status": "completed",
+                    "customer_shareable_facts": ["The request was completed."],
+                    "customer_action": None,
+                    "next_step": None,
+                }
+            )
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = extract_automation_resolution_facts(
+                behavior="quota",
+                source_text="Internal resolution: completed.",
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["customer_shareable_facts"], ["The request was completed."])
+
+
+class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
+    def test_extracts_invoice_fields_from_structured_model_output(self) -> None:
+        response = SimpleNamespace(
+            text=json.dumps(
+                {
+                    "status": "complete",
+                    "fields": {
+                        "issue_date": {"value": "6 May 2026"},
+                        "transaction_id": {"value": "TX-123"},
+                        "amount": {"value": "USD 10.00"},
+                    },
+                }
+            )
+        )
+        result = extract_detailed_invoice_fields(
+            message="Issue date 6 May 2026, transaction TX-123, amount USD 10.00",
+            invoke=lambda **_: response,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.collected_fields["transaction_id"], "TX-123")
+        self.assertFalse(result.requires_human_review)
+
+    def test_behavior_builder_returns_facts_without_customer_copy(self) -> None:
+        result = build_billing_automation_result(
+            action="detailed_invoice",
+            message="Please send a detailed invoice. Issue date: 6 May 2026.",
+            ticket_id="TK-123",
+            customer_email="customer@example.com",
+            generate_customer_reply=False,
+        )
+        self.assertEqual(result.customer_reply, "")
+        self.assertEqual(result.missing_fields, ["transaction_id", "amount"])
+
+
+if __name__ == "__main__":
+    unittest.main()

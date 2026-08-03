@@ -81,6 +81,9 @@ def build_account_verification_automation_result(
     extract: Callable[..., AccountVerificationFieldExtraction] | None = None,
     compose_follow_up: Callable[..., tuple[str, dict[str, str]]] | None = None,
 ) -> AccountVerificationAutomationResult:
+    # Customer copy is intentionally deferred to Automation Persona. Keep the
+    # legacy argument for callers that still pass it while migrating tests/data.
+    del compose_follow_up
     extraction = (extract or extract_account_verification_fields)(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
@@ -98,37 +101,14 @@ def build_account_verification_automation_result(
             requires_human_review=True,
         )
     if extraction.missing_fields and safe_count < 1:
-        try:
-            body, follow_up_snapshot = (compose_follow_up or compose_account_verification_follow_up)(
-                missing_fields=extraction.missing_fields,
-                collected_fields=extraction.collected_fields,
-            )
-        except (LlmInvocationError, ValueError, TypeError):
-            uncertain = AccountVerificationFieldExtraction(
-                status="uncertain",
-                collected_fields=dict(extraction.collected_fields),
-                reason="follow-up composer failed safety validation",
-                grounding_status=extraction.grounding_status,
-                failure_type="follow_up_composer_failed",
-                prompt_snapshot=dict(extraction.prompt_snapshot),
-            )
-            return AccountVerificationAutomationResult(
-                customer_reply="",
-                missing_fields=[],
-                collected_fields=dict(extraction.collected_fields),
-                internal_email=None,
-                extraction=uncertain,
-                follow_up_count=safe_count,
-                requires_human_review=True,
-            )
         return AccountVerificationAutomationResult(
-            customer_reply=compose_customer_reply_email(body=body, language="en"),
+            customer_reply="",
             missing_fields=list(extraction.missing_fields),
             collected_fields=dict(extraction.collected_fields),
             internal_email=None,
             extraction=extraction,
             follow_up_count=1,
-            prompt_snapshots={"account_verification_follow_up": follow_up_snapshot},
+            prompt_snapshots={},
         )
     internal_email = _internal_email(
         ticket_id=ticket_id,
@@ -138,10 +118,7 @@ def build_account_verification_automation_result(
         missing_fields=extraction.missing_fields,
     )
     return AccountVerificationAutomationResult(
-        customer_reply=(
-            "Thanks for the information. We have sent your fraud/risk account review request to our internal "
-            "team for review. They will follow up after reviewing the available details."
-        ),
+        customer_reply="",
         missing_fields=list(extraction.missing_fields),
         collected_fields=dict(extraction.collected_fields),
         internal_email=internal_email,

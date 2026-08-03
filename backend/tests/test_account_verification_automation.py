@@ -16,7 +16,6 @@ from backend.services.account_verification_field_extractor import (
     extract_account_verification_fields,
     validate_account_verification_follow_up,
 )
-from backend.services.llm_factory import LlmInvocationError
 
 
 def _provided(group: str, value: str, quote: str) -> dict[str, object]:
@@ -168,7 +167,7 @@ class AccountVerificationAutomationTests(unittest.TestCase):
         )
         self.assertEqual(first.follow_up_count, 1)
         self.assertIsNone(first.internal_email)
-        self.assertIn("payment is not applicable", first.customer_reply)
+        self.assertEqual(first.customer_reply, "")
 
         second = build_account_verification_automation_result(
             ticket_subject="Verification",
@@ -195,7 +194,7 @@ class AccountVerificationAutomationTests(unittest.TestCase):
         self.assertEqual(account_automation_handler("account_suspension").implementation, "classification_only")
         self.assertIsNone(account_automation_handler("unknown"))
 
-    def test_follow_up_model_failure_fails_closed(self) -> None:
+    def test_follow_up_composer_is_not_called(self) -> None:
         extraction = AccountVerificationFieldExtraction(
             status="missing",
             collected_fields={},
@@ -209,10 +208,11 @@ class AccountVerificationAutomationTests(unittest.TestCase):
             account_case_id="AC-12500",
             customer_email="customer@example.com",
             extract=lambda **_: extraction,
-            compose_follow_up=lambda **_: (_ for _ in ()).throw(LlmInvocationError("timeout")),
+            compose_follow_up=lambda **_: self.fail("Automation Behavior must not compose customer copy"),
         )
-        self.assertTrue(result.requires_human_review)
-        self.assertEqual(result.extraction.failure_type, "follow_up_composer_failed")
+        self.assertFalse(result.requires_human_review)
+        self.assertEqual(result.customer_reply, "")
+        self.assertEqual(result.follow_up_count, 1)
 
 
 if __name__ == "__main__":

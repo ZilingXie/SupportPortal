@@ -1479,6 +1479,7 @@ def resolve_support_message(
             ticket_id=ticket_id or "{{ticket_id}}",
             account_case_id=f"AC-{ticket_id}" if ticket_id else "{{account_case_id}}",
             customer_email=customer_id,
+            generate_customer_reply=not bool(ticket_id),
         )
         email_send_result = (
             send_enablement_internal_email(enablement_result.internal_email)
@@ -1503,6 +1504,9 @@ def resolve_support_message(
             evidence_summary={
                 "enablement_missing_fields": list(enablement_result.missing_fields),
                 "enablement_collected_fields": dict(enablement_result.collected_fields),
+                "enablement_requires_human_review": bool(
+                    getattr(enablement_result, "requires_human_review", False)
+                ),
                 "enablement_internal_email_send_status": str(email_send_result.get("status") or ""),
                 "enablement_internal_email_send_reason": str(email_send_result.get("reason") or ""),
                 **({"enablement_internal_email": dict(enablement_result.internal_email)} if enablement_result.internal_email else {}),
@@ -1510,12 +1514,18 @@ def resolve_support_message(
             **_route_audit_kwargs_from_decision(decision),
         )
     if decision.route_family == BILLING_ROUTE_FAMILY:
+        billing_action = str(decision.execution_action or decision.route)
         billing_result = build_billing_automation_result(
-            action=str(decision.execution_action or decision.route),
+            action=billing_action,
             message=message,
             ticket_id=ticket_id,
             customer_email=customer_id,
             requester=customer_id,
+            # The ticket-backed path owns the managed LLM extraction. Keep the
+            # ticket-less compatibility helper deterministic for callers that
+            # only need a route preview and have no publication context.
+            use_llm_field_extractor=billing_action == "detailed_invoice" and bool(ticket_id),
+            generate_customer_reply=not bool(ticket_id),
         )
         email_send_result = (
             send_billing_internal_email(billing_result.internal_email)
@@ -1538,12 +1548,22 @@ def resolve_support_message(
             search_used=False,
             matched_signals=list(decision.matched_signals),
             evidence_summary={
-                "billing_action": str(decision.execution_action or decision.route),
+                "billing_action": billing_action,
                 "billing_missing_fields": list(billing_result.missing_fields),
                 "billing_collected_fields": dict(billing_result.collected_fields),
+                "billing_requires_human_review": bool(billing_result.requires_human_review),
                 "billing_internal_email_send_status": str(email_send_result.get("status") or ""),
                 "billing_internal_email_send_reason": str(email_send_result.get("reason") or ""),
-                **({"billing_internal_email": dict(billing_result.internal_email)} if billing_result.internal_email else {}),
+                **(
+                    {"billing_internal_email": dict(billing_result.internal_email)}
+                    if billing_result.internal_email
+                    else {}
+                ),
+                **(
+                    {"billing_field_extraction": billing_result.field_extraction.audit_payload()}
+                    if billing_result.field_extraction is not None
+                    else {}
+                ),
             },
             **_route_audit_kwargs_from_decision(decision),
         )

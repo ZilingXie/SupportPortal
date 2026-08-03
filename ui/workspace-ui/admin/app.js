@@ -1112,7 +1112,7 @@ function renderAutomationBehaviorOverview(routeAgent, node) {
   const behaviors = (node?.children || []).filter(child => !child.is_agent);
   if (!behaviors.length) return "";
   return `<section class="admin-automation-behaviors" aria-labelledby="automation-behaviors-title">
-    <header><div><h3 id="automation-behaviors-title">Automation behavior</h3><p>Each behavior loads its own Prompt or deterministic capability before the shared Persona is applied.</p></div><span>${behaviors.length}</span></header>
+    <header><div><h3 id="automation-behaviors-title">Automation behavior</h3><p>Each behavior extracts business facts; the shared Automation Persona generates the final customer reply.</p></div><span>${behaviors.length}</span></header>
     <div class="admin-automation-behavior-list">${behaviors.map((behavior) => {
       const expanded = selectedAutomationBehaviorKey === behavior.key;
       const prompts = promptsForRouteNode(routeAgent, behavior);

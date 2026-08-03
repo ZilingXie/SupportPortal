@@ -27,6 +27,12 @@ from backend.main import (
     ticket_repository,
 )
 from backend.services.account_admin import apply_persona_to_customer_reply
+from backend.services.automation_persona import (
+    AutomationPersonaError,
+    build_automation_reply_facts,
+    extract_automation_resolution_facts,
+    render_automation_reply,
+)
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, create_asset_id, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -62,8 +68,8 @@ from backend.services.billing_response_flow import (
     BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
     BILLING_RESPONSE_EVENT,
     BILLING_RESPONSE_RESULT_COMPLETED,
-    build_billing_internal_resolution_event,
     build_customer_followup_from_resolution,
+    build_billing_internal_resolution_event,
 )
 from backend.services.client_ticket_agent_runtime import (
     TicketExecutionResult,
@@ -312,6 +318,29 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     ticket = ticket_repository.get_ticket(ticket_id)
     if not job_id or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
+    payload = dict(job.get("payload") or {})
+    if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
+        if not payload.get("persona_key") or not payload.get("effective_prompt"):
+            persona = ticket_repository.resolve_account_persona(ticket_id)
+            if not isinstance(persona, dict):
+                _move_automation_reply_to_human_review(
+                    job,
+                    ticket,
+                    "automation_persona_missing_assignment",
+                )
+                return
+            payload.update(
+                {
+                    "persona_key": persona.get("persona_key"),
+                    "persona_version": persona.get("version"),
+                    "effective_prompt": dict(persona.get("content") or {}),
+                }
+            )
+        job["payload"] = payload
+        job["status"] = "scheduled"
+        job["updated_at"] = now_iso()
+        ticket_repository.save_account_reply_job(job)
+        return
     if not _account_reply_trigger_is_latest(ticket, str(job.get("trigger_message_created_at") or "")):
         job["status"] = "cancelled"
         job["updated_at"] = now_iso()
@@ -355,15 +384,25 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         has_active_engineer_case=bool(ticket_repository.get_active_engineer_case(ticket_id)),
     )
     draft = str(resolution.answer or "").strip()
-    payload = dict(job.get("payload") or {})
     if not draft:
+        if str(resolution.route_family or "").strip() == "human_review":
+            _move_automation_reply_to_human_review(
+                job,
+                ticket,
+                str(resolution.route_reason or "automation_persona_human_review").strip(),
+            )
+            return
         payload["error"] = "AI could not prepare a reliable account-only reply."
         job["status"] = "manual_attention"
     else:
         persona = ticket_repository.resolve_account_persona(ticket_id)
+        rendered_by_automation_persona = bool(
+            isinstance(resolution.evidence_summary, dict)
+            and resolution.evidence_summary.get("automation_persona_render_status") == "generated"
+        )
         payload.update(
             {
-                "draft_content": apply_persona_to_customer_reply(draft, persona),
+                "draft_content": draft if rendered_by_automation_persona else apply_persona_to_customer_reply(draft, persona),
                 "persona_key": persona.get("persona_key"),
                 "persona_version": persona.get("version"),
                 "effective_prompt": dict(persona.get("content") or {}),
@@ -408,7 +447,42 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         ticket_repository.save_account_reply_job(current_job)
         return
 
-    content = str((existing_message or {}).get("content") or payload.get("draft_content") or "").strip()
+    if (
+        existing_message is None
+        and isinstance(payload.get("reply_facts"), dict)
+        and payload.get("reply_facts")
+        and not str(payload.get("generated_content") or "").strip()
+    ):
+        persona_assignment = {
+            "persona_key": payload.get("persona_key"),
+            "version": payload.get("persona_version"),
+            "content": dict(payload.get("effective_prompt") or {}),
+        }
+        try:
+            rendered = render_automation_reply(
+                reply_facts=dict(payload["reply_facts"]),
+                persona_assignment=persona_assignment,
+            )
+        except AutomationPersonaError as exc:
+            _move_automation_reply_to_human_review(
+                current_job,
+                ticket,
+                str(exc),
+            )
+            return
+        payload["generated_content"] = rendered.content
+        payload["persona_render_status"] = "generated"
+        payload["persona_model"] = rendered.model
+        payload["persona_prompt_version"] = rendered.prompt_version
+        current_job["payload"] = payload
+        ticket_repository.save_account_reply_job(current_job)
+
+    content = str(
+        (existing_message or {}).get("content")
+        or payload.get("generated_content")
+        or payload.get("draft_content")
+        or ""
+    ).strip()
     if not content:
         payload["error"] = "AI reply draft is unavailable."
         current_job["status"] = "manual_attention"
@@ -434,6 +508,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
                 "asked_field_keys": list(payload.get("asked_field_keys") or []),
                 "persona_key": payload.get("persona_key"),
                 "persona_version": payload.get("persona_version"),
+                "persona_render_status": payload.get("persona_render_status"),
             },
         }
         ticket.setdefault("messages", []).append(assistant_message)
@@ -464,6 +539,145 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     current_job["published_at"] = published_at
     current_job["updated_at"] = published_at
     ticket_repository.save_account_reply_job(current_job)
+
+
+def _move_automation_reply_to_human_review(
+    job: dict[str, Any],
+    ticket: dict[str, Any],
+    reason: str,
+) -> None:
+    """Stop an Automation send when Persona generation is unavailable."""
+    timestamp = now_iso()
+    payload = dict(job.get("payload") or {})
+    payload["error"] = reason
+    payload["persona_render_status"] = "human_review"
+    job["payload"] = payload
+    job["status"] = "manual_attention"
+    job["updated_at"] = timestamp
+    ticket_repository.save_account_reply_job(job)
+    billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(
+        str(ticket.get("ticket_id") or job.get("ticket_id") or "")
+    )
+    if billing_ticket is not None:
+        classification = dict(billing_ticket.get("route_classification") or {})
+        classification.update(
+            {
+                "route_target": "human_review",
+                "human_review_reason": reason,
+                "route_reason_code": reason,
+                "handler_binding_status": "human_review",
+            }
+        )
+        billing_ticket.update(
+            {
+                "route": "human_review_required",
+                "scope_label": "human_review",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "automation_status": "not_automated",
+                "not_automated_reason": reason,
+                "route_classification": classification,
+                "internal_email_send_status": str(
+                    billing_ticket.get("internal_email_send_status") or "not_applicable"
+                ),
+                "internal_email_send_reason": reason,
+                "updated_at": timestamp,
+            }
+        )
+        ticket_repository.save_billing_ticket(billing_ticket)
+        ticket_repository.record_event(
+            str(ticket.get("ticket_id") or job.get("ticket_id") or ""),
+            "automation_persona_human_review",
+            {
+                "event": "automation_persona_human_review",
+                "ticket_id": str(ticket.get("ticket_id") or job.get("ticket_id") or ""),
+                "job_id": str(job.get("job_id") or ""),
+                "reason": reason,
+                "created_at": timestamp,
+            },
+        )
+
+
+def _render_case_persona_reply(
+    *,
+    ticket_id: str,
+    case: dict[str, Any],
+    behavior: str,
+    reply_intent: str,
+    known_information: dict[str, Any] | None = None,
+    source_facts: list[str] | None = None,
+    performed_actions: list[str] | None = None,
+    next_step: str | None = None,
+    resolution_status: str | None = None,
+    save_case: Any,
+) -> str:
+    persona = ticket_repository.resolve_account_persona(ticket_id)
+    extracted_resolution: dict[str, Any] | None = None
+    if source_facts:
+        try:
+            extracted_resolution = extract_automation_resolution_facts(
+                behavior=behavior,
+                source_text="\n".join(source_facts),
+                known_information=known_information,
+            )
+        except AutomationPersonaError as exc:
+            timestamp = now_iso()
+            reason = str(exc)
+            case.update(
+                {
+                    "route": "human_review_required",
+                    "scope_label": "human_review",
+                    "route_family": "human_review",
+                    "execution_action": "human_review_required",
+                    "automation_status": "not_automated",
+                    "not_automated_reason": reason,
+                    "internal_email_send_reason": reason,
+                    "updated_at": timestamp,
+                }
+            )
+            save_case(case)
+            return ""
+        resolution_facts = extracted_resolution.get("customer_shareable_facts")
+        resolution_facts = resolution_facts if isinstance(resolution_facts, list) else []
+        known_information = {
+            **dict(known_information or {}),
+            "resolution_status": extracted_resolution.get("status"),
+            "customer_action": extracted_resolution.get("customer_action"),
+        }
+        source_facts = [str(item) for item in resolution_facts if str(item).strip()]
+        next_step = str(extracted_resolution.get("next_step") or next_step or "").strip() or None
+    facts = build_automation_reply_facts(
+        behavior=behavior,
+        reply_intent=reply_intent,
+        known_information=known_information,
+        source_facts=source_facts,
+        performed_actions=performed_actions,
+        next_step=next_step,
+        resolution_status=(
+            str(extracted_resolution.get("status") or "").strip()
+            if extracted_resolution
+            else resolution_status
+        ),
+    )
+    try:
+        return render_automation_reply(reply_facts=facts, persona_assignment=persona).content
+    except AutomationPersonaError as exc:
+        timestamp = now_iso()
+        reason = str(exc)
+        case.update(
+            {
+                "route": "human_review_required",
+                "scope_label": "human_review",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "automation_status": "not_automated",
+                "not_automated_reason": reason,
+                "internal_email_send_reason": reason,
+                "updated_at": timestamp,
+            }
+        )
+        save_case(case)
+        return ""
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:
@@ -550,16 +764,20 @@ def _queue_enablement_submission_confirmation(
         return False
     fields = account_case.get("collected_fields")
     fields = fields if isinstance(fields, dict) else {}
-    confirmation = build_enablement_submission_confirmation(
-        str(fields.get("requested_feature_label") or fields.get("requested_feature") or "feature")
+    reply_facts = build_automation_reply_facts(
+        behavior="enablement",
+        reply_intent="submission_confirmation",
+        known_information=fields,
+        performed_actions=["Submitted the enablement request to the internal team for review."],
+        next_step="The internal team will follow up after reviewing the request.",
+        resolution_status="submitted_for_review",
     )
     persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
-    if isinstance(persona_assignment, dict):
-        confirmation = apply_persona_to_customer_reply(confirmation, persona_assignment)
     created_at = now_iso()
     ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
     reply_payload: dict[str, Any] = {
-        "draft_content": confirmation,
+        "draft_content": "",
+        "reply_facts": reply_facts,
         "asked_field_keys": [],
         "visibility": "account_only",
         "automation_delivery_key": delivery_key,
@@ -829,20 +1047,31 @@ def handle_billing_request_reply(reply: Any) -> bool:
     billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
     title = str(billing_ticket.get("title") or canonical_ticket.get("subject") or "").strip()
     original_question = str(billing_ticket.get("question") or "").strip()
-    customer_messages = [
-        str(message.get("content") or "").strip()
-        for message in canonical_ticket.get("messages", [])
-        if isinstance(message, dict)
-        and str(message.get("role") or "").strip().lower() in {"customer", "user"}
-    ]
-    customer_message = "\n".join(part for part in [original_question, *customer_messages] if part)
-    customer_reply = build_customer_followup_from_resolution(
-        result=BILLING_RESPONSE_RESULT_COMPLETED,
-        note=note,
-        customer_message=customer_message,
-        title=title,
-        has_attachments=bool(_reply_pdf_attachments(reply)),
+    customer_reply = _render_case_persona_reply(
+        ticket_id=client_ticket_id,
+        case=billing_ticket,
+        behavior="billing",
+        reply_intent="resolution_update",
+        known_information={"title": title},
+        source_facts=[note],
+        resolution_status="completed",
+        save_case=ticket_repository.save_billing_ticket,
     )
+    if not customer_reply:
+        ticket_repository.record_event(
+            client_ticket_id,
+            "automation_persona_human_review",
+            {
+                "event": "automation_persona_human_review",
+                "ticket_id": client_ticket_id,
+                "account_case_id": billing_ticket.get("account_case_id") or billing_ticket_id,
+                "billing_reply_message_id": message_id,
+                "reason": str(billing_ticket.get("not_automated_reason") or "automation_persona_human_review"),
+                "created_at": now_iso(),
+                "source": "billing_reply_email",
+            },
+        )
+        return True
     message_attachments, attached_asset_ids = _store_billing_reply_pdf_attachments(
         reply=reply,
         ticket_id=client_ticket_id,
@@ -933,19 +1162,37 @@ def handle_enablement_request_reply(reply: Any) -> bool:
         raise ValueError("enablement reply body is empty")
     collected_fields = account_case.get("collected_fields")
     collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
-    customer_reply = build_enablement_customer_followup(
-        requested_feature_label=str(
-            collected_fields.get("requested_feature_label")
-            or collected_fields.get("requested_feature")
-            or "feature"
-        ),
-        resolution_note=note,
-        sensitive_values=(
-            str(collected_fields.get("app_id") or ""),
-            str(canonical_ticket.get("requester") or ""),
-            str(canonical_ticket.get("customer_id") or ""),
-        ),
+    customer_reply = _render_case_persona_reply(
+        ticket_id=client_ticket_id,
+        case=account_case,
+        behavior="enablement",
+        reply_intent="resolution_update",
+        known_information={
+            "requested_feature": str(
+                collected_fields.get("requested_feature_label")
+                or collected_fields.get("requested_feature")
+                or "feature"
+            )
+        },
+        source_facts=[note],
+        resolution_status="completed",
+        save_case=ticket_repository.save_account_case,
     )
+    if not customer_reply:
+        ticket_repository.record_event(
+            client_ticket_id,
+            "automation_persona_human_review",
+            {
+                "event": "automation_persona_human_review",
+                "ticket_id": client_ticket_id,
+                "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
+                "automation_reply_message_id": message_id,
+                "reason": str(account_case.get("not_automated_reason") or "automation_persona_human_review"),
+                "created_at": now_iso(),
+                "source": "enablement_reply_email",
+            },
+        )
+        return True
 
     timestamp = now_iso()
     assistant_message = {
@@ -1013,14 +1260,31 @@ def handle_quota_request_reply(reply: Any) -> bool:
     collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
     app_ids = collected_fields.get("app_ids")
     app_ids = app_ids if isinstance(app_ids, list) else [app_ids] if app_ids else []
-    customer_reply = build_quota_customer_followup(
-        resolution_note=note,
-        sensitive_values=(
-            *(str(app_id) for app_id in app_ids),
-            str(canonical_ticket.get("requester") or ""),
-            str(canonical_ticket.get("customer_id") or ""),
-        ),
+    customer_reply = _render_case_persona_reply(
+        ticket_id=client_ticket_id,
+        case=account_case,
+        behavior="quota",
+        reply_intent="resolution_update",
+        known_information={"products": collected_fields.get("products") or []},
+        source_facts=[note],
+        resolution_status="completed",
+        save_case=ticket_repository.save_account_case,
     )
+    if not customer_reply:
+        ticket_repository.record_event(
+            client_ticket_id,
+            "automation_persona_human_review",
+            {
+                "event": "automation_persona_human_review",
+                "ticket_id": client_ticket_id,
+                "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
+                "automation_reply_message_id": message_id,
+                "reason": str(account_case.get("not_automated_reason") or "automation_persona_human_review"),
+                "created_at": now_iso(),
+                "source": "quota_reply_email",
+            },
+        )
+        return True
     timestamp = now_iso()
     assistant_message = {
         "role": "assistant",

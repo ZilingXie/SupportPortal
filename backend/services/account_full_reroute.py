@@ -231,11 +231,14 @@ def reprocess_account_case(
             customer_email=customer_email,
             requester=str(ticket.get("requester") or "").strip() or None,
             already_requested_fields=sorted(asked_for_handler),
+            use_llm_field_extractor=registration.subcategory == "detailed_invoice",
+            generate_customer_reply=False,
         )
+        extraction = result.field_extraction
         missing_fields = list(result.missing_fields)
         collected_fields = dict(result.collected_fields)
         internal_email = dict(result.internal_email) if result.internal_email else None
-        customer_reply = result.customer_reply
+        requires_human_review = result.requires_human_review
     elif registration.implementation == "enablement":
         extraction = extract_enablement(
             ticket_subject=subject,
@@ -252,11 +255,11 @@ def reprocess_account_case(
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=customer_email,
+                generate_customer_reply=False,
             )
             missing_fields = list(result.missing_fields)
             collected_fields = dict(result.collected_fields)
             internal_email = dict(result.internal_email) if result.internal_email else None
-            customer_reply = "" if "app_id" in asked_for_handler and result.missing_fields else result.customer_reply
         else:
             collected_fields = dict(extraction.collected_fields)
         automation_context.update(
@@ -279,12 +282,12 @@ def reprocess_account_case(
             account_case_id=account_case_id,
             customer_email=customer_email,
             follow_up_count=follow_up_count,
+            generate_customer_reply=False,
         )
         requires_human_review = extraction.requires_human_review
         missing_fields = list(result.missing_fields)
         collected_fields = dict(result.collected_fields)
         internal_email = dict(result.internal_email) if result.internal_email else None
-        customer_reply = result.customer_reply
         automation_context.update(
             extraction_status=extraction.status,
             extractor_version=extraction.audit_payload().get("prompt_version"),
@@ -357,12 +360,13 @@ def reprocess_account_case(
     requested_fields = tuple(field for field in missing_fields if field not in asked_for_handler)
     reply_kind = None
     reply = ""
-    if customer_reply and not internal_email and requested_fields:
+    if not internal_email and requested_fields:
         reply_kind = "field_follow_up"
-        reply = customer_reply
+        # The reply body is generated from these fields by Automation Persona.
+        reply = "reply_pending"
     elif internal_email and not already_sent:
         reply_kind = "submission_confirmation"
-        reply = customer_reply
+        reply = "reply_pending"
 
     execution = dict(rerouted.route_execution)
     execution["classification"] = classification

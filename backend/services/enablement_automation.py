@@ -131,6 +131,7 @@ def build_enablement_automation_result(
     account_case_id: str,
     customer_email: str | None = None,
     already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
+    generate_customer_reply: bool = True,
 ) -> EnablementAutomationResult:
     route_match = detect_enablement_route(message)
     if route_match is None:
@@ -159,7 +160,13 @@ def build_enablement_automation_result(
             )
         )
         return EnablementAutomationResult(
-            customer_reply=customer_reply,
+            customer_reply=(
+                "Thanks for the update. We’ve added it to this request and will continue the review "
+                "with the information currently available."
+                if "app_id" in (already_requested_fields or [])
+                else "Thanks for reaching out. To submit this feature enablement request to our internal team, "
+                "could you please provide the 32-character Agora App ID?"
+            ) if generate_customer_reply else "",
             missing_fields=["app_id"],
             collected_fields=collected_fields,
             internal_email=None,
@@ -169,7 +176,7 @@ def build_enablement_automation_result(
         customer_reply=(
             f"Thanks for providing the App ID. We’ve sent your {route_match.requested_feature_label} "
             "enablement request to our internal team. They’ll follow up once it has been reviewed."
-        ),
+        ) if generate_customer_reply else "",
         missing_fields=[],
         collected_fields=collected_fields,
         internal_email=_build_internal_email(
@@ -191,6 +198,7 @@ def build_enablement_automation_result_from_fields(
     ticket_id: str,
     account_case_id: str,
     customer_email: str | None = None,
+    generate_customer_reply: bool = False,
 ) -> EnablementAutomationResult:
     fields = {
         str(key).strip(): str(value).strip()
@@ -202,7 +210,7 @@ def build_enablement_automation_result_from_fields(
         if missing != ["app_id"] or not missing_customer_reply.strip():
             raise ValueError("grounded Enablement fields require an App ID follow-up")
         return EnablementAutomationResult(
-            customer_reply=missing_customer_reply.strip(),
+            customer_reply=(missing_customer_reply.strip() if generate_customer_reply else ""),
             missing_fields=missing,
             collected_fields=fields,
             internal_email=None,
