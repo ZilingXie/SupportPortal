@@ -2262,6 +2262,43 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(replacement["trigger_message_created_at"], "2026-07-29T19:50:01+00:00")
         self.assertEqual(replacement["payload"]["reply_facts"]["customer_first_name"], "Jack")
 
+    def test_enablement_delivery_retry_does_not_duplicate_existing_rerun_confirmation(self) -> None:
+        account_case = {
+            "account_case_id": "AC-12570",
+            "client_ticket_id": "12570",
+            "automation_handler": "enablement",
+            "missing_fields": [],
+            "collected_fields": {"requested_feature": "media_relay"},
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-12570:v1",
+            },
+            "internal_email_send_status": "sent",
+        }
+        repository = Mock()
+        repository.get_ticket.return_value = {
+            "ticket_id": "12570",
+            "messages": [
+                {
+                    "role": "customer",
+                    "created_at": "2026-08-02T14:04:29.472437+00:00",
+                }
+            ],
+        }
+        repository.get_latest_account_reply_job.return_value = {
+            "status": "cancelled",
+            "trigger_message_created_at": "2026-08-02T14:04:29.472437+00:00",
+            "payload": {
+                "rerun_job_id": "account-rerun-1:recovery",
+                "automation_delivery_key": "enablement:AC-12570:v1:rerun:account-rerun-1",
+            },
+        }
+
+        with patch.object(worker, "ticket_repository", repository):
+            created = worker._queue_enablement_submission_confirmation(account_case)
+
+        self.assertFalse(created)
+        repository.save_account_reply_job.assert_not_called()
+
     def test_enablement_delivery_retry_does_not_revive_confirmation_after_customer_reply(self) -> None:
         account_case = {
             "account_case_id": "AC-12513",

@@ -737,13 +737,27 @@ def _queue_enablement_submission_confirmation(
     latest_delivery_key = str(latest_payload.get("automation_delivery_key") or "").strip()
     latest_status = str((latest_job or {}).get("status") or "").strip()
     latest_trigger = str((latest_job or {}).get("trigger_message_created_at") or "").strip()
+    delivery_base = delivery_key.split(":rerun:", 1)[0]
+    latest_delivery_base = latest_delivery_key.split(":rerun:", 1)[0]
+    latest_is_rerun_for_delivery = bool(
+        latest_payload.get("rerun_job_id")
+        and latest_delivery_base
+        and latest_delivery_base == delivery_base
+    )
     malformed_cancelled_confirmation = bool(
         latest_delivery_key == delivery_key
         and latest_status == "cancelled"
         and latest_trigger not in customer_timestamps
     )
     should_repair = malformed_cancelled_confirmation and repair_malformed_cancelled
-    should_create = latest_delivery_key != delivery_key or should_repair
+    same_trigger_delivery_exists = bool(
+        latest_trigger == trigger_message_created_at
+        and (
+            latest_delivery_key == delivery_key
+            or latest_is_rerun_for_delivery
+        )
+    )
+    should_create = (not same_trigger_delivery_exists) or should_repair
     if bool(payload.get("customer_confirmation_queued")) and not should_repair:
         should_create = False
     if not should_create:
