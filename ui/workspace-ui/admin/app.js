@@ -881,7 +881,7 @@ async function createPersona(form) {
         content: {
           instruction: String(values.get("instruction") || "").trim(),
           opener: "",
-          signoff_name: "Sid",
+          signature: String(values.get("signature") || "").trim(),
         },
       }),
     });
@@ -902,7 +902,7 @@ async function createPersonaDraft(form) {
   personaDraftValues[personaKey] = {
     instruction: String(values.get("instruction") || ""),
     opener: String(values.get("opener") || ""),
-    signoff_name: String(values.get("signoff_name") || "Sid"),
+    signature: String(values.get("signature") || ""),
     change_note: String(values.get("change_note") || ""),
   };
   personaOperationBusy = true;
@@ -916,7 +916,7 @@ async function createPersonaDraft(form) {
         content: {
           instruction: values.get("instruction"),
           opener: values.get("opener"),
-          signoff_name: values.get("signoff_name"),
+          signature: values.get("signature"),
         },
         change_note: values.get("change_note"),
         based_on_version: Number(values.get("based_on_version")) || null,
@@ -1138,6 +1138,12 @@ function publishedPersonaVersion(persona) {
   return versions.find(item => Number(item.version) === Number(persona?.published_version)) || versions.at(-1) || null;
 }
 
+function personaSignature(content = {}) {
+  const signature = String(content.signature || "").trim();
+  if (signature) return signature;
+  return `Best Regards,\n${String(content.signoff_name || "Sid").trim() || "Sid"}`;
+}
+
 function renderAutomationPersonaPanel() {
   const personas = Array.isArray(agentConfigData.automation_personas) ? agentConfigData.automation_personas : [];
   const persona = personas.find(item => item.persona_key === selectedPersonaKey) || personas[0];
@@ -1147,7 +1153,7 @@ function renderAutomationPersonaPanel() {
   const draft = {
     instruction: published?.content?.instruction || "",
     opener: published?.content?.opener || "",
-    signoff_name: published?.content?.signoff_name || "Sid",
+    signature: personaSignature(published?.content),
     change_note: "",
     ...(personaDraftValues[persona.persona_key] || {}),
   };
@@ -1158,7 +1164,7 @@ function renderAutomationPersonaPanel() {
     <aside class="admin-persona-context">
       <header><div><p class="admin-eyebrow">UNIFIED VOICE</p><h3>Automation Persona</h3></div><button class="admin-icon-btn" type="button" data-action="toggle-persona-create" title="Create Persona" aria-label="Create Persona"><span class="material-symbols-outlined" aria-hidden="true">add</span></button></header>
       <p>Applied after the selected Automation behavior generates its business response.</p>
-      ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
+      ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><label><span>Signature</span><textarea name="signature" rows="4" required placeholder="Best,&#10;Sid&#10;Support Engineer 2"></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
       <nav class="admin-persona-list" aria-label="Automation Personas">${personas.map(item => `<button type="button" data-action="select-persona" data-persona-key="${escapeHtml(item.persona_key)}" class="${item.persona_key === persona.persona_key ? "is-active" : ""}"><strong>${escapeHtml(item.display_name)}</strong><small>${item.enabled ? "Enabled" : "Disabled"} · Published v${escapeHtml(item.published_version || "-")}</small></button>`).join("")}</nav>
       <button class="btn btn-ghost" type="button" data-action="toggle-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-enabled="${persona.enabled ? "false" : "true"}" ${personaOperationBusy ? "disabled" : ""}>${persona.enabled ? "Disable Persona" : "Enable Persona"}</button>
       <div class="admin-version-list"><h4>Version history</h4>${versions.map(item => `<button type="button" data-action="rollback-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" ${item.status === "draft" || personaOperationBusy ? "disabled" : ""}><strong>v${item.version}</strong><span>${escapeHtml(item.status)}</span><small>${escapeHtml(item.change_note || "No change note")}</small></button>`).join("")}</div>
@@ -1169,7 +1175,7 @@ function renderAutomationPersonaPanel() {
         <div class="admin-persona-editor-heading"><div><p class="admin-eyebrow">PUBLISHED v${escapeHtml(persona.published_version || "-")}</p><h3>${escapeHtml(persona.display_name)}</h3></div>${renderAgentBadge(persona.enabled ? "Enabled" : "Disabled", persona.enabled ? "is-active" : "is-gated")}</div>
         <label><span>Persona instruction</span><textarea name="instruction" rows="8" required data-persona-draft-field="instruction">${escapeHtml(draft.instruction)}</textarea></label>
         <label><span>Opener</span><input name="opener" value="${escapeHtml(draft.opener)}" data-persona-draft-field="opener" placeholder="Optional opening line" /></label>
-        <label><span>Signoff name</span><input name="signoff_name" value="${escapeHtml(draft.signoff_name)}" required data-persona-draft-field="signoff_name" /></label>
+        <label><span>Signature</span><textarea class="admin-persona-signature" name="signature" rows="4" required data-persona-draft-field="signature" placeholder="Best,&#10;Sid&#10;Support Engineer 2">${escapeHtml(draft.signature)}</textarea></label>
         <label><span>Change note</span><input name="change_note" value="${escapeHtml(draft.change_note)}" required maxlength="500" data-persona-draft-field="change_note" /></label>
         <input type="hidden" name="based_on_version" value="${escapeHtml(persona.published_version || "")}" />
         <div class="admin-editor-actions"><button class="btn btn-ghost" type="submit" ${personaOperationBusy ? "disabled" : ""}>Save draft</button>${versions.filter(item => item.status === "draft").map(item => `<button class="btn btn-primary" type="button" data-action="publish-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" ${personaOperationBusy ? "disabled" : ""}>Publish v${item.version}</button>`).join("")}</div>

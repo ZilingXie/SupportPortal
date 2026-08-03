@@ -156,7 +156,10 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertIn("friendly and helpful support agent", default_instruction)
         self.assertIn("Match the customer's language", default_instruction)
         self.assertIn("You are Sid", default_instruction)
-        self.assertIn("Always end every customer-facing reply with a signature", default_instruction)
+        self.assertEqual(
+            personas[0]["versions"][0]["content"]["signature"],
+            "Best,\nSid\nSupport Engineer 2",
+        )
 
         draft = self.repository.create_account_persona_draft(
             DEFAULT_PERSONA_KEY,
@@ -194,12 +197,12 @@ class AccountAdminFeatureTests(unittest.TestCase):
             "content": {
                 "instruction": "Be concise",
                 "opener": "Thanks for contacting the billing team.",
-                "signoff_name": "Maya",
+                "signature": "Best,\nMaya\nSupport Engineer 1",
             },
         }
         rendered = apply_persona_to_customer_reply("Hi Taylor,\n\nPlease send the transaction ID.\n\nBest Regards,\nSid", persona)
         self.assertIn("Thanks for contacting the billing team.", rendered)
-        self.assertTrue(rendered.endswith("Best Regards,\nMaya"))
+        self.assertTrue(rendered.endswith("Best,\nMaya\nSupport Engineer 1"))
 
         saved = self.repository.save_account_reply_execution({
             "execution_id": "reply-1",

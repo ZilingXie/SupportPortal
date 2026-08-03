@@ -365,6 +365,7 @@
 8. `Agent Config` 桌面端使用 Agent-only context tree + detail workspace：一级仅展示 Route、Client、Engineer、Guardrail Agent，Route Agent 只允许依次展开到 Agora Router 和 Automation Router；Conversation Action、Human Review、route outcome、Automation behavior 与 fallback 只能在所属 Agent 的 Overview 中解释，不得生成菜单项或面包屑层级。
 9. Agent Overview 必须同时表达完整 route outcome 与 Agent 边界：Agent 目标使用明确的 `Agent` 文字标签并允许快捷进入，非 Agent 目标为不可导航的信息行，不显示跳转箭头。Agent 身份不得只依赖颜色或图标表达。
 10. `Automation Router` 是 Persona 的唯一管理入口；Fraud Account、Account Suspension、Detailed Invoice、Enablement、Quota、Unregistered 使用单项展开的紧凑行为列表汇总在 Overview，展开后原位展示行为 Prompt 与 deterministic capability，不创建第五级菜单、独立详情路由或重复 Persona 配置。
+11. Automation Persona 的签名必须作为独立的多行 `Signature` 字段管理，不混入 Persona instruction；编辑器按原始换行展示，最终客户消息逐字使用已发布签名，不翻译或改写签名内容。旧版 `signoff_name` 仅作为读取兼容，不再作为新版本的编辑字段。
 11. `Agent Config` 窄屏使用逐级 Agent 进入模式，保留 Back、面包屑和当前 Agent 的直属子 Agent 入口；流程结果继续留在 Overview，禁止四层缩进压缩正文。树展开、详情切换和 chevron 反馈统一控制在 180ms 内，并在 reduced-motion 下取消；所有折叠与导航控件保持至少 `44x44px` 点击区域。
 
 ### 6.8 Account Ticket Conversation (`/account`)

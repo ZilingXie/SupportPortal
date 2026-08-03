@@ -415,9 +415,14 @@ class WorkspaceApiTests(unittest.TestCase):
         draft = self.client.post(
             "/api/workspace/admin/account-personas/default-support/drafts",
             headers=headers,
-            json={"content": {"instruction": "Direct", "signoff_name": "Sid"}, "change_note": "Direct voice", "based_on_version": 1},
+            json={
+                "content": {"instruction": "Direct", "signature": "Best,\nSid\nSupport Engineer 2"},
+                "change_note": "Direct voice and signature",
+                "based_on_version": 1,
+            },
         )
         self.assertEqual(draft.status_code, 200, draft.text)
+        self.assertEqual(draft.json()["version"]["content"]["signature"], "Best,\nSid\nSupport Engineer 2")
         version = draft.json()["version"]["version"]
         published = self.client.post(
             f"/api/workspace/admin/account-personas/default-support/versions/{version}/publish", headers=headers

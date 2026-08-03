@@ -4478,94 +4478,75 @@ class PostgresTicketRepository:
                 default_persona_content = {
                     "instruction": (
                         "You are Sid, a friendly and helpful support agent. "
-                        "Match the customer's language. "
-                        "Always end every customer-facing reply with a signature using the name Sid."
+                        "Match the customer's language."
                     ),
                     "opener": "",
-                    "signoff_name": "Sid",
+                    "signature": "Best,\nSid\nSupport Engineer 2",
                 }
                 cur.execute(sql.SQL("INSERT INTO {} (persona_key, version, status, content, change_note, created_by, created_at, published_by, published_at) VALUES ('default-support',1,'published',%s,'Seeded from the pre-registry customer reply behavior','system',NOW(),'system',NOW()) ON CONFLICT (persona_key, version) DO NOTHING").format(self._table("support_account_prompt_versions")), (Json(default_persona_content),))
                 cur.execute(
                     sql.SQL(
                         """
-                        INSERT INTO {} (
-                            persona_key, version, status, content, change_note, based_on_version,
-                            created_by, created_at, published_by, published_at
+                        WITH candidate AS (
+                            SELECT persona.persona_key, persona.published_version
+                            FROM {} persona
+                            JOIN {} version
+                              ON version.persona_key = persona.persona_key
+                             AND version.version = persona.published_version
+                            WHERE persona.persona_key = 'default-support'
+                              AND version.status = 'published'
+                              AND version.created_by = 'system'
+                              AND version.content ->> 'instruction' IN (%s, %s)
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM {} later
+                                  WHERE later.persona_key = persona.persona_key
+                                    AND later.version > persona.published_version
+                              )
+                        ),
+                        inserted AS (
+                            INSERT INTO {} (
+                                persona_key, version, status, content, change_note, based_on_version,
+                                created_by, created_at, published_by, published_at
+                            )
+                            SELECT persona_key, published_version + 1, 'published', %s,
+                                   'Added separately managed multiline Signature', published_version,
+                                   'system', NOW(), 'system', NOW()
+                            FROM candidate
+                            ON CONFLICT (persona_key, version) DO NOTHING
+                            RETURNING persona_key, version
+                        ),
+                        superseded AS (
+                            UPDATE {} old_version
+                            SET status = 'superseded'
+                            FROM candidate, inserted
+                            WHERE old_version.persona_key = candidate.persona_key
+                              AND old_version.version = candidate.published_version
+                              AND inserted.persona_key = candidate.persona_key
+                            RETURNING old_version.persona_key
                         )
-                        SELECT
-                            'default-support', 2, 'published', %s,
-                            'Updated default Persona identity, language matching, and required Sid signature',
-                            1, 'system', NOW(), 'system', NOW()
-                        FROM {} persona
-                        JOIN {} version
-                          ON version.persona_key = persona.persona_key
-                         AND version.version = persona.published_version
-                        WHERE persona.persona_key = 'default-support'
-                          AND persona.published_version = 1
-                          AND version.created_by = 'system'
-                          AND version.content ->> 'instruction' = %s
-                          AND NOT EXISTS (
-                              SELECT 1 FROM {} later
-                              WHERE later.persona_key = 'default-support' AND later.version > 1
-                          )
-                        ON CONFLICT (persona_key, version) DO NOTHING
+                        UPDATE {} persona
+                        SET published_version = inserted.version, updated_at = NOW()
+                        FROM inserted, superseded
+                        WHERE persona.persona_key = inserted.persona_key
+                          AND superseded.persona_key = persona.persona_key
                         """
                     ).format(
-                        self._table("support_account_prompt_versions"),
                         self._table("support_account_personas"),
                         self._table("support_account_prompt_versions"),
                         self._table("support_account_prompt_versions"),
+                        self._table("support_account_prompt_versions"),
+                        self._table("support_account_prompt_versions"),
+                        self._table("support_account_personas"),
                     ),
                     (
-                        Json(default_persona_content),
                         "Use a calm, warm, polished concierge-style support voice. Match the customer's language.",
+                        (
+                            "You are Sid, a friendly and helpful support agent. "
+                            "Match the customer's language. "
+                            "Always end every customer-facing reply with a signature using the name Sid."
+                        ),
+                        Json(default_persona_content),
                     ),
-                )
-                cur.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {} version
-                        SET status = 'superseded'
-                        FROM {} persona
-                        WHERE version.persona_key = 'default-support'
-                          AND version.version = 1
-                          AND version.status = 'published'
-                          AND persona.persona_key = version.persona_key
-                          AND persona.published_version = 1
-                          AND EXISTS (
-                              SELECT 1 FROM {} replacement
-                              WHERE replacement.persona_key = 'default-support'
-                                AND replacement.version = 2
-                                AND replacement.created_by = 'system'
-                                AND replacement.change_note = 'Updated default Persona identity, language matching, and required Sid signature'
-                          )
-                        """
-                    ).format(
-                        self._table("support_account_prompt_versions"),
-                        self._table("support_account_personas"),
-                        self._table("support_account_prompt_versions"),
-                    )
-                )
-                cur.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {} persona
-                        SET published_version = 2, updated_at = NOW()
-                        WHERE persona.persona_key = 'default-support'
-                          AND persona.published_version = 1
-                          AND EXISTS (
-                              SELECT 1 FROM {} replacement
-                              WHERE replacement.persona_key = persona.persona_key
-                                AND replacement.version = 2
-                                AND replacement.status = 'published'
-                                AND replacement.created_by = 'system'
-                                AND replacement.change_note = 'Updated default Persona identity, language matching, and required Sid signature'
-                          )
-                        """
-                    ).format(
-                        self._table("support_account_personas"),
-                        self._table("support_account_prompt_versions"),
-                    )
                 )
                 cur.execute(
                     sql.SQL(
