@@ -25,6 +25,10 @@ from backend.services.graph_mail import (
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, resolve_model_profile
+from backend.services.detailed_invoice_field_extractor import (
+    DetailedInvoiceFieldExtraction,
+    extract_detailed_invoice_fields,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +85,8 @@ class BillingAutomationResult:
     missing_fields: list[str]
     collected_fields: dict[str, str]
     internal_email: dict[str, str] | None
+    requires_human_review: bool = False
+    field_extraction: DetailedInvoiceFieldExtraction | None = None
 
 
 @dataclass(frozen=True)
@@ -202,12 +208,28 @@ def build_billing_automation_result(
     response_link: str | None = None,
     persona_instruction: str | None = None,
     already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
+    use_llm_field_extractor: bool = False,
+    generate_customer_reply: bool = True,
 ) -> BillingAutomationResult:
     normalized_action = canonical_automation_subcategory(action)
     if normalized_action not in _FIELD_ALIASES:
         raise ValueError(f"unsupported billing automation action: {action}")
 
-    collected_fields = _extract_fields(message, _FIELD_ALIASES[normalized_action])
+    field_extraction = None
+    if normalized_action == BILLING_ACTION_DETAILED_INVOICE and use_llm_field_extractor:
+        field_extraction = extract_detailed_invoice_fields(message=message)
+        if field_extraction.requires_human_review:
+            return BillingAutomationResult(
+                customer_reply="",
+                missing_fields=list(field_extraction.missing_fields),
+                collected_fields=dict(field_extraction.collected_fields),
+                internal_email=None,
+                requires_human_review=True,
+                field_extraction=field_extraction,
+            )
+        collected_fields = dict(field_extraction.collected_fields)
+    else:
+        collected_fields = _extract_fields(message, _FIELD_ALIASES[normalized_action])
     missing_fields = [
         field_name for field_name in _FIELD_ALIASES[normalized_action] if not collected_fields.get(field_name)
     ]
@@ -219,23 +241,25 @@ def build_billing_automation_result(
         }
         fields_to_request = [field_name for field_name in missing_fields if field_name not in requested_before]
         if fields_to_request:
-            customer_reply = _build_missing_fields_reply(
-                normalized_action,
-                fields_to_request,
-                requester=requester,
-                customer_id=customer_email,
-                persona_instruction=persona_instruction,
+            customer_reply = (
+                _build_missing_fields_reply(
+                    normalized_action,
+                    fields_to_request,
+                    requester=requester,
+                    customer_id=customer_email,
+                    persona_instruction=persona_instruction,
+                )
+                if generate_customer_reply
+                else ""
             )
         else:
-            customer_reply = (
-                "Thanks for the update. We’ve added it to this request and will continue the review "
-                "with the information currently available."
-            )
+            customer_reply = ""
         return BillingAutomationResult(
             customer_reply=customer_reply,
             missing_fields=missing_fields,
             collected_fields=collected_fields,
             internal_email=None,
+            field_extraction=field_extraction,
         )
 
     internal_email = _build_internal_email(
@@ -248,10 +272,11 @@ def build_billing_automation_result(
         response_link=response_link,
     )
     return BillingAutomationResult(
-        customer_reply=_build_escalation_reply(normalized_action),
+        customer_reply=_build_escalation_reply(normalized_action) if generate_customer_reply else "",
         missing_fields=[],
         collected_fields=collected_fields,
         internal_email=internal_email,
+        field_extraction=field_extraction,
     )
 
 

@@ -2535,6 +2535,95 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertTrue(started_threads[0].daemon)
         self.assertEqual(started_threads[0].kwargs["args"], (7.0,))
 
+    def test_published_persona_content_is_reused_on_retry(self) -> None:
+        job = {
+            "job_id": "account-reply-persona-retry",
+            "ticket_id": "TK-PERSONA-RETRY",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "scheduled_for": "2026-03-22T00:01:00+00:00",
+            "payload": {
+                "reply_facts": {"behavior": "quota", "reply_intent": "submission_confirmation"},
+                "generated_content": "The request has been submitted.",
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-PERSONA-RETRY",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please increase quota",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_billing_ticket_by_client_ticket_id.return_value = None
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply"
+        ) as render:
+            worker._publish_account_reply_job(job)
+
+        render.assert_not_called()
+        self.assertEqual(job["status"], "published")
+        self.assertEqual(ticket["messages"][-1]["content"], "The request has been submitted.")
+
+    def test_persona_failure_moves_reply_job_to_human_review_without_sending(self) -> None:
+        job = {
+            "job_id": "account-reply-persona-human-review",
+            "ticket_id": "TK-PERSONA-HR",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "scheduled_for": "2026-03-22T00:01:00+00:00",
+            "payload": {
+                "reply_facts": {"behavior": "quota", "reply_intent": "submission_confirmation"},
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-PERSONA-HR",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please increase quota",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        billing_ticket = {
+            "account_case_id": "AC-TK-PERSONA-HR",
+            "route": "quota",
+            "route_family": "automated",
+            "execution_action": "quota",
+            "automation_status": "automation",
+            "internal_email_send_status": "sent",
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_billing_ticket_by_client_ticket_id.return_value = billing_ticket
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "render_automation_reply",
+            side_effect=worker.AutomationPersonaError("automation_persona_missing_credentials"),
+        ):
+            worker._publish_account_reply_job(job)
+
+        self.assertEqual(job["status"], "manual_attention")
+        self.assertEqual(billing_ticket["route"], "human_review_required")
+        self.assertEqual(billing_ticket["internal_email_send_status"], "sent")
+        self.assertEqual(len(ticket["messages"]), 1)
+        repository.record_event.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

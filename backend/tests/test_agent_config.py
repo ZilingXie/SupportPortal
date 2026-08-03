@@ -73,8 +73,12 @@ class AgentConfigTests(unittest.TestCase):
             "account-suspension-fields-v2",
         )
         self.assertEqual(
-            route_prompts["account-verification-follow-up-composer-system"]["metadata"]["managed"],
+            route_prompts["account-detailed-invoice-field-extractor-system"]["metadata"]["managed"],
             True,
+        )
+        self.assertEqual(
+            route_prompts["account-detailed-invoice-field-extractor-system"]["version"],
+            "detailed-invoice-fields-v1",
         )
         self.assertEqual(route_prompts["route-system"]["version"], "account-router-v2")
         component_keys = {item["key"] for item in agents["route-agent"]["components"]}
@@ -88,7 +92,6 @@ class AgentConfigTests(unittest.TestCase):
                 "fraud-account-handler",
                 "account-suspension-field-extractor",
                 "account-verification-field-extractor",
-                "account-verification-follow-up-composer",
                 "account-verification-payment-safety",
                 "route-classifier",
             }.issubset(component_keys)
@@ -137,7 +140,7 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(automation["prompt_keys"], ["account-automation-router-system"])
         self.assertFalse(any("persona" in child for child in automation["children"]))
         fraud = self._navigation_node(route_navigation, "fraud-account")
-        self.assertEqual(len(fraud["prompt_keys"]), 2)
+        self.assertEqual(fraud["prompt_keys"], ["account-verification-field-extractor-system"])
         self.assertTrue(payload["route_runtime"]["router_prompt_version"])
         self.assertTrue(payload["route_runtime"]["stage_details"])
 

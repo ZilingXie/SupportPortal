@@ -34,6 +34,38 @@ For each new entry, record:
   - `rtk python3 -m unittest backend.tests.test_account_route_pipeline backend.tests.test_account_ui_contract backend.tests.test_workspace_admin_ui_contract`
   - `rtk python3 scripts/verify_feature_list.py`
 
+## 2026-08-03 - Automation facts extraction and unified Persona rendering
+
+- Area or subsystem: `/account` Automation Behavior, delayed reply jobs, Outlook resolution follow-up, and client automation route replies
+- Prompt or model version: `automation-persona-v2` / `detailed-invoice-fields-v2`
+- Summary: Removed customer-copy generation from the real Automation Behavior path. LLM field extractors now produce structured intake or resolution facts, while the assigned Automation Persona generates the final customer message immediately before publication.
+- Reason: Multiple behavior-specific customer-copy prompts created overlapping instructions and inconsistent voice. A single Persona should own final wording after deterministic routing, field collection, internal actions, and send timing are complete.
+- Affected files or config:
+  - `backend/services/automation_persona.py`
+  - `backend/services/detailed_invoice_field_extractor.py`
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/support_router.py`
+  - `backend/services/account_full_reroute.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/account_verification_automation.py`
+  - `backend/services/billing_automation.py`
+  - `backend/services/enablement_automation.py`
+  - `backend/services/quota_automation.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+- Expected behavior change:
+  - Intake replies persist structured `reply_facts`; no base customer message is generated before the delayed send job.
+  - Billing, Enablement, Quota, and Fraud Account internal replies use an LLM facts extractor followed by one Persona render.
+  - Detailed Invoice uses the managed LLM field extractor for issue date, transaction ID, amount, and currency values.
+  - A missing Persona assignment, unavailable credentials, failed extraction, or empty Persona response stops the send and marks the case for Human Review; no fallback customer copy is sent.
+  - A successful render is persisted on the reply job and reused on retries, preventing a second Persona call for the same publication.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_automation_persona backend.tests.test_account_full_reroute backend.tests.test_account_verification_automation backend.tests.test_billing_automation_email backend.tests.test_enablement_automation backend.tests.test_quota_automation backend.tests.test_worker.WorkerResilienceTests.test_published_persona_content_is_reused_on_retry backend.tests.test_worker.WorkerResilienceTests.test_persona_failure_moves_reply_job_to_human_review_without_sending -q` (49 tests)
+  - `rtk python -m py_compile backend/main.py backend/worker.py backend/services/*.py`
+  - `rtk git diff --check`
+  - `rtk python3 scripts/verify_feature_list.py`
+
 ## 2026-07-30 - Account Verification grounded intake and safe follow-up
 
 - Area or subsystem: `/account` Account Verification Automation

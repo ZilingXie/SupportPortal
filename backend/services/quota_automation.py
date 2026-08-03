@@ -52,13 +52,14 @@ def build_quota_automation_result(
     account_case_id: str,
     customer_email: str | None,
     follow_up_count: int = 0,
+    generate_customer_reply: bool = True,
 ) -> QuotaAutomationResult:
     count = max(0, int(follow_up_count or 0))
     if extraction.requires_human_review:
         return QuotaAutomationResult("", [], dict(extraction.collected_fields), None, count, False)
     if extraction.missing_fields and count == 0:
         return QuotaAutomationResult(
-            extraction.follow_up,
+            extraction.follow_up if generate_customer_reply else "",
             list(extraction.missing_fields),
             dict(extraction.collected_fields),
             None,

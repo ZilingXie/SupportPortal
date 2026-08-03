@@ -235,7 +235,6 @@ def _route_agent_navigation() -> dict[str, Any]:
                 is_agent=False,
                 prompt_keys=[
                     "account-verification-field-extractor-system",
-                    "account-verification-follow-up-composer-system",
                 ],
                 capabilities=[
                     _component("fraud-account-handler", "Fraud Account Handler", "Controls follow-up and internal handoff."),
@@ -256,11 +255,12 @@ def _route_agent_navigation() -> dict[str, Any]:
             _route_node(
                 "detailed-invoice",
                 "Detailed Invoice",
-                "Dispatches detailed invoice requests to the registered billing handler.",
+                "Extracts detailed invoice fields and lets the Automation Persona generate the customer reply.",
                 kind="automation",
                 is_agent=False,
+                prompt_keys=["account-detailed-invoice-field-extractor-system"],
                 capabilities=[
-                    _component("billing-handler", "Billing Handler", "Runs the deterministic detailed-invoice workflow."),
+                    _component("billing-handler", "Billing Handler", "Runs the detailed-invoice workflow and internal handoff."),
                 ],
             ),
             _route_node(
@@ -384,11 +384,6 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "account-verification-field-extractor",
                     "Fraud Account Field Extractor",
                     "Extracts four grounded, non-sensitive fraud-review information groups from /account history.",
-                ),
-                _component(
-                    "account-verification-follow-up-composer",
-                    "Fraud Account Follow-up Composer",
-                    "Writes the single contextual request for any missing required information groups.",
                 ),
                 _component(
                     "account-suspension-field-extractor",

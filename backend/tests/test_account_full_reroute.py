@@ -6,6 +6,8 @@ from unittest.mock import Mock
 from backend.services.account_case_reroute import AccountCaseReroute
 from backend.services.account_full_reroute import reprocess_account_case
 from backend.services.account_suspension_field_extractor import AccountSuspensionFieldExtraction
+from backend.services.billing_automation import BillingAutomationResult
+from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 
 
@@ -57,6 +59,44 @@ def _reroute_result(case: dict[str, object]) -> AccountCaseReroute:
 
 
 class AccountFullRerouteTests(unittest.TestCase):
+    def test_detailed_invoice_reroute_uses_llm_fields_and_defers_customer_copy(self) -> None:
+        original = {
+            **_case(action="detailed_invoice"),
+            "automation_handler": "billing",
+            "category": "automation",
+            "subcategory": "detailed_invoice",
+        }
+        extraction = DetailedInvoiceFieldExtraction(
+            status="complete",
+            collected_fields={
+                "issue_date": "6 May 2026",
+                "transaction_id": "TX-123",
+                "amount": "USD 10.00",
+            },
+        )
+        build_billing = Mock(
+            return_value=BillingAutomationResult(
+                customer_reply="",
+                missing_fields=[],
+                collected_fields=dict(extraction.collected_fields),
+                internal_email={"delivery_key": "billing:AC-1:v1"},
+                requires_human_review=False,
+                field_extraction=extraction,
+            )
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            reroute=Mock(return_value=_reroute_result(original)),
+            build_billing=build_billing,
+        )
+
+        self.assertEqual(build_billing.call_args.kwargs["use_llm_field_extractor"], True)
+        self.assertEqual(build_billing.call_args.kwargs["generate_customer_reply"], False)
+        self.assertEqual(result.account_case["collected_fields"]["transaction_id"], "TX-123")
+        self.assertEqual(result.reply_kind, "submission_confirmation")
+
     def test_non_automation_clears_stale_handler_state(self) -> None:
         original = {
             **_case(),
