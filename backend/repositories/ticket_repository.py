@@ -1142,6 +1142,15 @@ class TicketRepository(Protocol):
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
+    def publish_account_reply(
+        self,
+        job: dict[str, Any],
+        *,
+        content: str,
+        payload: dict[str, Any],
+        published_at: str,
+        reply_execution: dict[str, Any],
+    ) -> dict[str, Any]: ...
     def supersede_account_ai_messages(
         self, ticket_id: str, *, except_job_id: str, superseded_at: str
     ) -> int: ...
@@ -1159,6 +1168,7 @@ class TicketRepository(Protocol):
     def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]: ...
     def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]: ...
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
+    def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
     def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]: ...
     def list_managed_prompts(self) -> list[dict[str, Any]]: ...
     def get_managed_prompt(self, prompt_key: str) -> dict[str, Any] | None: ...
@@ -1643,6 +1653,83 @@ class InMemoryTicketRepository:
             self._account_reply_jobs[str(saved["job_id"])] = saved
         return copy.deepcopy(saved)
 
+    def publish_account_reply(
+        self,
+        job: dict[str, Any],
+        *,
+        content: str,
+        payload: dict[str, Any],
+        published_at: str,
+        reply_execution: dict[str, Any],
+    ) -> dict[str, Any]:
+        ticket_id = str(job.get("ticket_id") or "").strip()
+        job_id = str(job.get("job_id") or "").strip()
+        ticket = self._tickets.get(ticket_id)
+        if ticket is None:
+            raise ValueError("ticket not found")
+        existing = next(
+            (
+                message
+                for message in ticket.get("messages", [])
+                if isinstance(message, dict)
+                and str(message.get("role") or "").lower() == "assistant"
+                and str(
+                    (message.get("meta") if isinstance(message.get("meta"), dict) else {}).get(
+                        "account_reply_job_id"
+                    )
+                    or message.get("account_reply_job_id")
+                    or ""
+                )
+                == job_id
+            ),
+            None,
+        )
+        if existing is None:
+            message = {
+                "role": "assistant",
+                "content": str(content).strip(),
+                "created_at": published_at,
+                "content_format": "plaintext",
+                "source": "account_ai",
+                "meta": {
+                    "account_reply_job_id": job_id,
+                    "visibility": "account_only",
+                    "trigger_message_created_at": job.get("trigger_message_created_at"),
+                    "scheduled_for": job.get("scheduled_for"),
+                    "published_at": published_at,
+                    "asked_field_keys": list(payload.get("asked_field_keys") or []),
+                    "persona_key": payload.get("persona_key"),
+                    "persona_version": payload.get("persona_version"),
+                    "persona_render_status": payload.get("persona_render_status"),
+                    "rerun_job_id": payload.get("rerun_job_id"),
+                    "source": "account_ai",
+                },
+            }
+            ticket.setdefault("messages", []).append(message)
+        else:
+            message = existing
+
+        if payload.get("replace_existing_reply"):
+            self.supersede_account_ai_messages(
+                ticket_id,
+                except_job_id=job_id,
+                superseded_at=published_at,
+            )
+        ticket["updated_at"] = published_at
+        billing_ticket = self.get_billing_ticket_by_client_ticket_id(ticket_id)
+        if billing_ticket is not None:
+            billing_ticket["customer_reply"] = str(message.get("content") or content).strip()
+            billing_ticket["updated_at"] = published_at
+            self.save_billing_ticket(billing_ticket)
+        self.save_account_reply_execution(reply_execution)
+        saved_job = copy.deepcopy(job)
+        saved_job["payload"] = copy.deepcopy(payload)
+        saved_job["status"] = "published"
+        saved_job["published_at"] = published_at
+        saved_job["updated_at"] = published_at
+        self.save_account_reply_job(saved_job)
+        return {"content": str(message.get("content") or content).strip(), "published_at": published_at}
+
     def supersede_account_ai_messages(
         self, ticket_id: str, *, except_job_id: str, superseded_at: str
     ) -> int:
@@ -1814,6 +1901,30 @@ class InMemoryTicketRepository:
         assigned = {"ticket_id": normalized_ticket_id, "persona_key": persona["persona_key"], "version": version["version"], "content": copy.deepcopy(version["content"]), "assigned_at": _utc_now()}
         self._account_persona_assignments[normalized_ticket_id] = assigned
         return copy.deepcopy(assigned)
+
+    def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]:
+        normalized_ticket_id = str(ticket_id).strip()
+        choices = sorted(
+            (item for item in self._account_personas.values() if item.get("enabled") and item.get("published_version")),
+            key=lambda item: str(item.get("persona_key") or ""),
+        )
+        if not choices:
+            raise ValueError("no enabled published persona")
+        import hashlib
+
+        persona = choices[int(hashlib.sha256(normalized_ticket_id.encode()).hexdigest(), 16) % len(choices)]
+        version = next(
+            item
+            for item in self._account_persona_versions[persona["persona_key"]]
+            if int(item["version"]) == int(persona["published_version"])
+        )
+        return {
+            "ticket_id": normalized_ticket_id,
+            "persona_key": persona["persona_key"],
+            "version": version["version"],
+            "content": copy.deepcopy(version["content"]),
+            "assigned_at": _utc_now(),
+        }
 
     def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]:
         with self._assignment_lock:
@@ -4472,8 +4583,7 @@ class PostgresTicketRepository:
                             claimed_at TIMESTAMPTZ,
                             published_at TIMESTAMPTZ,
                             created_at TIMESTAMPTZ NOT NULL,
-                            updated_at TIMESTAMPTZ NOT NULL,
-                            UNIQUE (ticket_id, trigger_message_created_at)
+                            updated_at TIMESTAMPTZ NOT NULL
                         )
                         """
                     ).format(self._table("support_account_reply_jobs"), self._table("support_tickets"))
@@ -4488,6 +4598,35 @@ class PostgresTicketRepository:
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (ticket_id, created_at DESC)").format(
                         sql.Identifier("idx_support_account_reply_jobs_ticket_created"),
                         self._table("support_account_reply_jobs"),
+                    )
+                )
+                reply_jobs_table = self._table("support_account_reply_jobs")
+                cur.execute(
+                    """
+                    SELECT constraint_row.conname
+                    FROM pg_constraint constraint_row
+                    WHERE constraint_row.conrelid = to_regclass(%s)
+                      AND constraint_row.contype = 'u'
+                      AND pg_get_constraintdef(constraint_row.oid) =
+                          'UNIQUE (ticket_id, trigger_message_created_at)'
+                    """,
+                    (f"{self._schema}.support_account_reply_jobs",),
+                )
+                for (constraint_name,) in cur.fetchall():
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+                            reply_jobs_table,
+                            sql.Identifier(str(constraint_name)),
+                        )
+                    )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} "
+                        "(ticket_id, trigger_message_created_at, "
+                        "(COALESCE(payload->>'rerun_job_id', '')))"
+                    ).format(
+                        sql.Identifier("idx_support_account_reply_jobs_ticket_trigger_rerun"),
+                        reply_jobs_table,
                     )
                 )
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, published_version INTEGER, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)").format(self._table("support_account_personas")))
@@ -6187,7 +6326,7 @@ class PostgresTicketRepository:
                         sql.SQL(
                             """
                             UPDATE {}
-                            SET meta = COALESCE(meta, '{{}}'::jsonb) || %s
+                            SET meta = COALESCE(meta, '{{}}'::jsonb) || %s::jsonb
                             WHERE ticket_id = %s
                               AND role = 'assistant'
                               AND COALESCE(meta->>'source', '') = 'account_ai'
@@ -9126,6 +9265,134 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("save_account_reply_job", _operation)
 
+    def publish_account_reply(
+        self,
+        job: dict[str, Any],
+        *,
+        content: str,
+        payload: dict[str, Any],
+        published_at: str,
+        reply_execution: dict[str, Any],
+    ) -> dict[str, Any]:
+        ticket_id = str(job.get("ticket_id") or "").strip()
+        job_id = str(job.get("job_id") or "").strip()
+        normalized_content = str(content or "").strip()
+        if not ticket_id or not job_id or not normalized_content:
+            raise ValueError("ticket_id, job_id and content are required")
+        replacement_meta = Json(
+            {
+                "superseded": True,
+                "superseded_at": published_at,
+                "superseded_by_job_id": job_id,
+            }
+        )
+        message_meta = Json(
+            {
+                "account_reply_job_id": job_id,
+                "visibility": "account_only",
+                "trigger_message_created_at": job.get("trigger_message_created_at"),
+                "scheduled_for": job.get("scheduled_for"),
+                "published_at": published_at,
+                "asked_field_keys": list(payload.get("asked_field_keys") or []),
+                "persona_key": payload.get("persona_key"),
+                "persona_version": payload.get("persona_version"),
+                "persona_render_status": payload.get("persona_render_status"),
+                "rerun_job_id": payload.get("rerun_job_id"),
+                "source": "account_ai",
+            }
+        )
+        execution_payload = Json(dict(reply_execution))
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id FROM {} WHERE job_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (job_id,),
+                )
+                if cur.fetchone() is None:
+                    raise KeyError(job_id)
+                cur.execute(
+                    sql.SQL(
+                        "SELECT id,content,created_at FROM {} "
+                        "WHERE ticket_id=%s AND role='assistant' "
+                        "AND COALESCE(meta->>'source','')='account_ai' "
+                        "AND COALESCE(meta->>'account_reply_job_id','')=%s "
+                        "ORDER BY id DESC LIMIT 1 FOR UPDATE"
+                    ).format(self._table("support_ticket_messages")),
+                    (ticket_id, job_id),
+                )
+                existing = cur.fetchone()
+                if existing is None:
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (ticket_id,role,content,created_at,meta) "
+                            "VALUES (%s,'assistant',%s,%s,%s::jsonb) RETURNING id,created_at"
+                        ).format(self._table("support_ticket_messages")),
+                        (ticket_id, normalized_content, published_at, message_meta),
+                    )
+                    message_id, effective_published_at = cur.fetchone()
+                    effective_content = normalized_content
+                else:
+                    message_id, existing_content, effective_published_at = existing
+                    effective_content = str(existing_content or normalized_content).strip()
+
+                if payload.get("replace_existing_reply"):
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET meta=COALESCE(meta,'{{}}'::jsonb) || %s::jsonb "
+                            "WHERE ticket_id=%s AND role='assistant' "
+                            "AND COALESCE(meta->>'source','')='account_ai' "
+                            "AND COALESCE(meta->>'account_reply_job_id','')<>%s "
+                            "AND COALESCE(meta->>'superseded','false')<>'true'"
+                        ).format(self._table("support_ticket_messages")),
+                        (replacement_meta, ticket_id, job_id),
+                    )
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET meta=COALESCE(meta,'{{}}'::jsonb) || %s::jsonb "
+                        "WHERE ticket_id=%s AND role='assistant' "
+                        "AND COALESCE(meta->>'source','')='account_ai' "
+                        "AND COALESCE(meta->>'account_reply_job_id','')=%s AND id<>%s"
+                    ).format(self._table("support_ticket_messages")),
+                    (
+                        Json({
+                            "superseded": True,
+                            "superseded_at": published_at,
+                            "superseded_by_job_id": job_id,
+                        }),
+                        ticket_id,
+                        job_id,
+                        message_id,
+                    ),
+                )
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET customer_reply=%s,updated_at=%s WHERE client_ticket_id=%s"
+                    ).format(self._table("support_account_cases")),
+                    (effective_content, published_at, ticket_id),
+                )
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (execution_id,ticket_id,payload,created_at) VALUES (%s,%s,%s,%s) "
+                        "ON CONFLICT (execution_id) DO UPDATE SET payload=EXCLUDED.payload,created_at=EXCLUDED.created_at"
+                    ).format(self._table("support_account_reply_executions")),
+                    (str(reply_execution["execution_id"]), ticket_id, execution_payload, published_at),
+                )
+                saved_payload = dict(payload)
+                saved_payload["generated_content"] = effective_content
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='published',published_at=%s,payload=%s::jsonb,updated_at=%s "
+                        "WHERE job_id=%s"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (effective_published_at, Json(saved_payload), effective_published_at, job_id),
+                )
+                return {"content": effective_content, "published_at": _to_iso(effective_published_at)}
+
+        return self._run_with_connection_retry("publish_account_reply", _operation)
+
     def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None:
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
             with conn.cursor() as cur:
@@ -9307,6 +9574,38 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("INSERT INTO {} (ticket_id,persona_key,version,assigned_at) VALUES (%s,%s,%s,%s)").format(self._table("support_account_persona_assignments")),(normalized,choice[0],choice[1],assigned_at))
                 return {"ticket_id":normalized,"persona_key":str(choice[0]),"version":int(choice[1]),"content":dict(choice[2]),"assigned_at":assigned_at}
         return self._run_with_connection_retry("resolve_account_persona", _operation)
+
+    def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]:
+        normalized = str(ticket_id).strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT p.persona_key,p.published_version,v.content "
+                        "FROM {} p JOIN {} v ON v.persona_key=p.persona_key "
+                        "AND v.version=p.published_version WHERE p.enabled=TRUE "
+                        "AND p.published_version IS NOT NULL ORDER BY p.persona_key"
+                    ).format(
+                        self._table("support_account_personas"),
+                        self._table("support_account_prompt_versions"),
+                    )
+                )
+                choices = cur.fetchall()
+            if not choices:
+                raise ValueError("no enabled published persona")
+            import hashlib
+
+            choice = choices[int(hashlib.sha256(normalized.encode()).hexdigest(), 16) % len(choices)]
+            return {
+                "ticket_id": normalized,
+                "persona_key": str(choice[0]),
+                "version": int(choice[1]),
+                "content": dict(choice[2]),
+                "assigned_at": _utc_now(),
+            }
+
+        return self._run_with_connection_retry("resolve_published_account_persona", _operation)
 
     @staticmethod
     def _prompt_version_from_row(prompt_key: str, row: tuple[Any, ...]) -> dict[str, Any]:

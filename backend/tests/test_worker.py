@@ -2575,6 +2575,17 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = ticket
         repository.get_billing_ticket_by_client_ticket_id.return_value = None
+        repository.publish_account_reply.side_effect = lambda current_job, **kwargs: (
+            current_job.update({"status": "published", "published_at": "2026-03-22T00:02:00+00:00"})
+            or ticket["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": kwargs["content"],
+                    "created_at": "2026-03-22T00:02:00+00:00",
+                }
+            )
+            or {"content": kwargs["content"], "published_at": "2026-03-22T00:02:00+00:00"}
+        )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "render_automation_reply"
@@ -2584,11 +2595,7 @@ class WorkerResilienceTests(unittest.TestCase):
         render.assert_not_called()
         self.assertEqual(job["status"], "published")
         self.assertEqual(ticket["messages"][-1]["content"], "The request has been submitted.")
-        repository.supersede_account_ai_messages.assert_called_once_with(
-            "TK-PERSONA-RETRY",
-            except_job_id="account-reply-persona-retry",
-            superseded_at=job["published_at"],
-        )
+        repository.publish_account_reply.assert_called_once()
 
     def test_persona_failure_moves_reply_job_to_human_review_without_sending(self) -> None:
         job = {

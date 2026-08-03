@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -224,6 +225,114 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(len(cursor.executed), 1)
         query = cursor.executed[0][0][0]
         self.assertIn("COALESCE(meta, '{}'::jsonb)", query.as_string())
+
+    def test_account_reply_job_uniqueness_is_scoped_to_rerun_payload(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("UNIQUE (ticket_id, trigger_message_created_at)", sql_source)
+        self.assertIn("idx_support_account_reply_jobs_ticket_trigger_rerun", sql_source)
+        self.assertIn("COALESCE(payload->>'rerun_job_id', '')", sql_source)
+        self.assertIn("DROP CONSTRAINT IF EXISTS", repo_source)
+        self.assertIn("pg_get_constraintdef", repo_source)
+
+    def test_publish_account_reply_inserts_and_commits_all_account_state_together(self) -> None:
+        published_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        cursor = _ReusableCursor(
+            fetchone_results=[
+                ("account-reply-new",),
+                None,
+                (42, published_at),
+            ]
+        )
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+        job = {
+            "job_id": "account-reply-new",
+            "ticket_id": "TK-ACCOUNT-1",
+            "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+            "scheduled_for": "2026-08-03T00:01:00+00:00",
+        }
+        payload = {
+            "replace_existing_reply": True,
+            "rerun_job_id": "account-rerun-1",
+            "persona_key": "default-support",
+            "persona_version": 3,
+        }
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.publish_account_reply(
+                job,
+                content="Hi Customer, your request is being reviewed.",
+                payload=payload,
+                published_at="2026-08-03T00:02:00+00:00",
+                reply_execution={
+                    "execution_id": "reply-account-reply-new",
+                    "ticket_id": "TK-ACCOUNT-1",
+                    "reply_kind": "enablement",
+                },
+            )
+
+        self.assertEqual(result["content"], "Hi Customer, your request is being reviewed.")
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+        rendered_queries = "\n".join(
+            query.as_string() if hasattr(query, "as_string") else str(query)
+            for args, _kwargs in cursor.executed
+            if args
+            for query in [args[0]]
+        )
+        self.assertIn("INSERT INTO", rendered_queries)
+        self.assertIn("VALUES (%s,'assistant',%s,%s,%s::jsonb)", rendered_queries)
+        self.assertIn("COALESCE(meta,'{}'::jsonb) || %s::jsonb", rendered_queries)
+        self.assertIn("payload=%s::jsonb", rendered_queries)
+
+    def test_publish_account_reply_retry_reuses_existing_job_message_without_insert(self) -> None:
+        published_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        cursor = _ReusableCursor(
+            fetchone_results=[
+                ("account-reply-existing",),
+                (42, "Previously generated reply", published_at),
+            ]
+        )
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+        job = {
+            "job_id": "account-reply-existing",
+            "ticket_id": "TK-ACCOUNT-1",
+            "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+        }
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.publish_account_reply(
+                job,
+                content="A different retry candidate",
+                payload={"replace_existing_reply": True, "rerun_job_id": "account-rerun-1"},
+                published_at="2026-08-03T00:02:00+00:00",
+                reply_execution={
+                    "execution_id": "reply-account-reply-existing",
+                    "ticket_id": "TK-ACCOUNT-1",
+                },
+            )
+
+        self.assertEqual(result["content"], "Previously generated reply")
+        rendered_queries = "\n".join(
+            query.as_string() if hasattr(query, "as_string") else str(query)
+            for args, _kwargs in cursor.executed
+            if args
+            for query in [args[0]]
+        )
+        self.assertNotIn("INSERT INTO supportportal.support_ticket_messages", rendered_queries)
+        self.assertIn("id<>%s", rendered_queries)
+        self.assertEqual(connection.commit_count, 1)
 
     def test_ticket_storage_contract_removes_priority_column_and_index(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")

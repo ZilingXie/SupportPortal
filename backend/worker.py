@@ -312,6 +312,11 @@ def _account_reply_trigger_is_latest(ticket: dict[str, Any], trigger_created_at:
     return bool(customer_timestamps) and max(customer_timestamps) == str(trigger_created_at)
 
 
+def _account_reply_message_job_id(message: dict[str, Any]) -> str:
+    meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+    return str(meta.get("account_reply_job_id") or message.get("account_reply_job_id") or "").strip()
+
+
 def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
@@ -434,8 +439,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
             message
             for message in ticket.get("messages", [])
             if isinstance(message, dict)
-            and isinstance(message.get("meta"), dict)
-            and str(message["meta"].get("account_reply_job_id") or "") == job_id
+            and _account_reply_message_job_id(message) == job_id
         ),
         None,
     )
@@ -492,60 +496,26 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         return
 
     published_at = str((existing_message or {}).get("created_at") or now_iso())
-    if existing_message is None:
-        assistant_message = {
-            "role": "assistant",
-            "content": content,
-            "created_at": published_at,
-            "content_format": "plaintext",
-            "source": "account_ai",
-            "meta": {
-                "account_reply_job_id": job_id,
-                "visibility": "account_only",
-                "trigger_message_created_at": current_job.get("trigger_message_created_at"),
-                "scheduled_for": current_job.get("scheduled_for"),
-                "published_at": published_at,
-                "asked_field_keys": list(payload.get("asked_field_keys") or []),
-                "persona_key": payload.get("persona_key"),
-                "persona_version": payload.get("persona_version"),
-                "persona_render_status": payload.get("persona_render_status"),
-                "rerun_job_id": payload.get("rerun_job_id"),
-            },
-        }
-        ticket.setdefault("messages", []).append(assistant_message)
-        ticket["updated_at"] = published_at
-        ticket_repository.save_ticket(ticket, new_messages=[assistant_message])
-        if payload.get("replace_existing_reply"):
-            ticket_repository.supersede_account_ai_messages(
-                ticket_id,
-                except_job_id=job_id,
-                superseded_at=published_at,
-            )
-
     billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(ticket_id)
-    if billing_ticket is not None:
-        billing_ticket["customer_reply"] = content
-        billing_ticket["updated_at"] = published_at
-        ticket_repository.save_billing_ticket(billing_ticket)
-
-    ticket_repository.save_account_reply_execution(
-        {
-            "execution_id": f"reply-{job_id}",
-            "ticket_id": ticket_id,
-            "reply_kind": str((billing_ticket or {}).get("route") or payload.get("answer_route") or "account_reply"),
-            "persona_key": payload.get("persona_key"),
-            "persona_version": payload.get("persona_version"),
-            "effective_prompt": dict(payload.get("effective_prompt") or {}),
-            "visibility": "account_only",
-            "scheduled_for": current_job.get("scheduled_for"),
-            "published_at": published_at,
-            "created_at": published_at,
-        }
+    reply_execution = {
+        "execution_id": f"reply-{job_id}",
+        "ticket_id": ticket_id,
+        "reply_kind": str((billing_ticket or {}).get("route") or payload.get("answer_route") or "account_reply"),
+        "persona_key": payload.get("persona_key"),
+        "persona_version": payload.get("persona_version"),
+        "effective_prompt": dict(payload.get("effective_prompt") or {}),
+        "visibility": "account_only",
+        "scheduled_for": current_job.get("scheduled_for"),
+        "published_at": published_at,
+        "created_at": published_at,
+    }
+    ticket_repository.publish_account_reply(
+        current_job,
+        content=content,
+        payload=payload,
+        published_at=published_at,
+        reply_execution=reply_execution,
     )
-    current_job["status"] = "published"
-    current_job["published_at"] = published_at
-    current_job["updated_at"] = published_at
-    ticket_repository.save_account_reply_job(current_job)
 
 
 def _move_automation_reply_to_human_review(
@@ -703,10 +673,14 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                     current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
                     if current is not None and str(current.get("status") or "") == "cancelled":
                         continue
-                    job["status"] = "queued" if int(job.get("attempt_count") or 0) < 3 else "failed"
-                    job["payload"] = {**dict(job.get("payload") or {}), "error": str(exc)}
-                    job["updated_at"] = now_iso()
-                    ticket_repository.save_account_reply_job(job)
+                    failed_job = current if current is not None else job
+                    failed_job["status"] = "queued" if int(failed_job.get("attempt_count") or 0) < 3 else "failed"
+                    failed_job["payload"] = {
+                        **dict(failed_job.get("payload") or {}),
+                        "error": str(exc),
+                    }
+                    failed_job["updated_at"] = now_iso()
+                    ticket_repository.save_account_reply_job(failed_job)
             for job in ticket_repository.claim_account_reply_jobs(
                 from_status="scheduled", to_status="publishing", now_value=now_iso(), limit=10, due_only=True
             ):
@@ -717,10 +691,14 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                     current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
                     if current is not None and str(current.get("status") or "") == "cancelled":
                         continue
-                    job["status"] = "scheduled" if int(job.get("attempt_count") or 0) < 4 else "failed"
-                    job["payload"] = {**dict(job.get("payload") or {}), "error": str(exc)}
-                    job["updated_at"] = now_iso()
-                    ticket_repository.save_account_reply_job(job)
+                    failed_job = current if current is not None else job
+                    failed_job["status"] = "scheduled" if int(failed_job.get("attempt_count") or 0) < 4 else "failed"
+                    failed_job["payload"] = {
+                        **dict(failed_job.get("payload") or {}),
+                        "error": str(exc),
+                    }
+                    failed_job["updated_at"] = now_iso()
+                    ticket_repository.save_account_reply_job(failed_job)
         except Exception:
             LOGGER.exception("Account reply poller failed")
         sleep_until = time.time() + max(interval_seconds, 1.0)
