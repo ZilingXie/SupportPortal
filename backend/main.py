@@ -4778,7 +4778,7 @@ async def _wait_for_account_rerun_replies(job: dict[str, Any]) -> None:
     if not reply_job_ids or not bool(job.get("wait_for_replies")):
         job["reply_jobs_pending"] = 0
         return
-    terminal_statuses = {"published", "manual_attention", "cancelled"}
+    terminal_statuses = {"published", "manual_attention", "cancelled", "failed"}
     deadline = time.monotonic() + _account_rerun_reply_wait_timeout_seconds()
     while True:
         jobs = [ticket_repository.get_account_reply_job(item) for item in reply_job_ids]
@@ -4787,6 +4787,7 @@ async def _wait_for_account_rerun_replies(job: dict[str, Any]) -> None:
         job["reply_jobs_pending"] = len(pending) + len(missing)
         job["reply_jobs_published"] = sum(1 for item in jobs if item and item.get("status") == "published")
         job["reply_jobs_manual_attention"] = sum(1 for item in jobs if item and item.get("status") == "manual_attention")
+        job["reply_jobs_failed"] = sum(1 for item in jobs if item and item.get("status") == "failed")
         job["updated_at"] = now_iso()
         _save_account_full_reroute_job(job)
         if not pending and not missing:
@@ -4903,7 +4904,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                             "latest customer message created_at is required to schedule Persona reply"
                         )
                     persona = await async_to_thread(
-                        ticket_repository.resolve_account_persona,
+                        ticket_repository.resolve_published_account_persona,
                         client_ticket_id,
                     )
                     reply_facts = _automation_reply_facts(
@@ -4963,7 +4964,16 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
         await _wait_for_account_rerun_replies(job)
         completed_at = now_iso()
         job.update(
-            status="completed_with_errors" if job["failed"] or job.get("reply_wait_timed_out") else "completed",
+            status=(
+                "completed_with_errors"
+                if (
+                    job["failed"]
+                    or job.get("reply_wait_timed_out")
+                    or job.get("reply_jobs_manual_attention")
+                    or job.get("reply_jobs_failed")
+                )
+                else "completed"
+            ),
             completed_at=completed_at,
             updated_at=completed_at,
         )
@@ -5007,6 +5017,7 @@ async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> di
         "reply_jobs_pending": 0,
         "reply_jobs_published": 0,
         "reply_jobs_manual_attention": 0,
+        "reply_jobs_failed": 0,
         "reply_wait_timed_out": False,
         "wait_for_replies": True,
         "failures": [],

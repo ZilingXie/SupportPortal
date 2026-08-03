@@ -154,8 +154,7 @@ CREATE TABLE IF NOT EXISTS support_account_reply_jobs (
     claimed_at TIMESTAMPTZ,
     published_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (ticket_id, trigger_message_created_at)
+    updated_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_support_account_reply_jobs_status_due
@@ -163,6 +162,13 @@ CREATE INDEX IF NOT EXISTS idx_support_account_reply_jobs_status_due
 
 CREATE INDEX IF NOT EXISTS idx_support_account_reply_jobs_ticket_created
     ON support_account_reply_jobs (ticket_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_reply_jobs_ticket_trigger_rerun
+    ON support_account_reply_jobs (
+        ticket_id,
+        trigger_message_created_at,
+        (COALESCE(payload->>'rerun_job_id', ''))
+    );
 
 CREATE TABLE IF NOT EXISTS support_account_personas (
     persona_key TEXT PRIMARY KEY,
