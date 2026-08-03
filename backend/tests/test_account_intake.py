@@ -260,7 +260,13 @@ class AccountIntakeApiTests(unittest.TestCase):
             "requester": "customer@example.com",
             "subject": "Enable media relay",
             "status": "open",
-            "messages": [{"role": "customer", "content": "Please enable media relay for alpha."}],
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable media relay for alpha.",
+                    "created_at": "2026-07-31T08:30:00+00:00",
+                }
+            ],
         }
         account_case = {
             "account_case_id": "AC-12513",
@@ -346,6 +352,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(stored["internal_email_payload"]["customer_confirmation_queued"])
         reply_job = self.repository.get_latest_account_reply_job("12513")
         assert reply_job is not None
+        self.assertEqual(reply_job["trigger_message_created_at"], "2026-07-31T08:30:00+00:00")
         self.assertIn(":rerun:account-reroute-test", reply_job["payload"]["automation_delivery_key"])
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None

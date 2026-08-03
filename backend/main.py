@@ -1325,6 +1325,26 @@ def latest_customer_message(ticket: dict[str, Any]) -> str:
     return ""
 
 
+def latest_customer_message_created_at(ticket: dict[str, Any]) -> str:
+    messages = ticket.get("messages", [])
+    if not isinstance(messages, list):
+        return ""
+    customer_messages = [
+        message
+        for message in messages
+        if isinstance(message, dict)
+        and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+        and str(message.get("created_at") or "").strip()
+    ]
+    if not customer_messages:
+        return ""
+    latest_message = max(
+        customer_messages,
+        key=lambda message: str(message["created_at"]),
+    )
+    return str(latest_message["created_at"])
+
+
 def _engineer_evidence_ticket_context(ticket: dict[str, Any]) -> list[dict[str, str]]:
     messages = ticket.get("messages")
     if not isinstance(messages, list):
@@ -4877,6 +4897,11 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     job["phase"] = "Scheduling Persona replies"
                     job["updated_at"] = now_iso()
                     _save_account_full_reroute_job(job)
+                    trigger_message_created_at = latest_customer_message_created_at(canonical_ticket)
+                    if not trigger_message_created_at:
+                        raise ValueError(
+                            "latest customer message created_at is required to schedule Persona reply"
+                        )
                     persona = await async_to_thread(
                         ticket_repository.resolve_account_persona,
                         client_ticket_id,
@@ -4892,7 +4917,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     reply_job = await async_to_thread(
                         _create_account_reply_job,
                         ticket_id=client_ticket_id,
-                        trigger_message_created_at=timestamp,
+                        trigger_message_created_at=trigger_message_created_at,
                         draft_content="",
                         reply_facts=reply_facts,
                         asked_field_keys=list(result.asked_field_keys),

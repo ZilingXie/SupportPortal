@@ -6187,7 +6187,7 @@ class PostgresTicketRepository:
                         sql.SQL(
                             """
                             UPDATE {}
-                            SET meta = COALESCE(meta, '{}'::jsonb) || %s
+                            SET meta = COALESCE(meta, '{{}}'::jsonb) || %s
                             WHERE ticket_id = %s
                               AND role = 'assistant'
                               AND COALESCE(meta->>'source', '') = 'account_ai'

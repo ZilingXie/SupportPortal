@@ -87,6 +87,12 @@ class _ReusableCursor:
         return False
 
 
+class _RowcountCursor(_ReusableCursor):
+    def __init__(self, *, rowcount: int) -> None:
+        super().__init__()
+        self.rowcount = rowcount
+
+
 class _ExecuteFailsOnceCursor(_ReusableCursor):
     def __init__(self, *, error: Exception, fetchall_results=None, fetchone_results=None) -> None:
         super().__init__(fetchall_results=fetchall_results, fetchone_results=fetchone_results)
@@ -198,6 +204,27 @@ class _BorrowingPool(_FakePool):
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_supersede_account_ai_messages_formats_jsonb_default_literal(self) -> None:
+        cursor = _RowcountCursor(rowcount=2)
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            updated = repository.supersede_account_ai_messages(
+                "TK-ACCOUNT-1",
+                except_job_id="account-reply-new",
+                superseded_at="2026-08-03T00:00:00+00:00",
+            )
+
+        self.assertEqual(updated, 2)
+        self.assertEqual(len(cursor.executed), 1)
+        query = cursor.executed[0][0][0]
+        self.assertIn("COALESCE(meta, '{}'::jsonb)", query.as_string())
+
     def test_ticket_storage_contract_removes_priority_column_and_index(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
