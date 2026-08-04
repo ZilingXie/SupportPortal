@@ -7,7 +7,13 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any
+
+# Allow direct execution from the repository root or from another working directory.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from backend.main import (
     _account_full_reroute_job,
@@ -39,25 +45,31 @@ def _latest_customer_message_created_at(ticket: dict[str, Any]) -> str:
     return max(timestamps)
 
 
-def _resume_existing_recovery_job(job: dict[str, Any], ticket: dict[str, Any]) -> dict[str, Any]:
-    resumed = dict(job)
-    payload = dict(resumed.get("payload") or {})
-    payload.pop("error", None)
-    payload.pop("persona_render_status", None)
-    payload.pop("generated_content", None)
-    resumed.update(
-        {
-            "trigger_message_created_at": _latest_customer_message_created_at(ticket),
-            "status": "scheduled",
-            "scheduled_for": _now(),
-            "payload": payload,
-            "attempt_count": 0,
-            "claimed_at": None,
-            "published_at": None,
-            "updated_at": _now(),
-        }
+def _reset_case_reply_state_preserving_delivery(
+    ticket_id: str,
+    *,
+    recovery_id: str,
+) -> dict[str, Any]:
+    case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
+    if case is None:
+        raise RuntimeError(f"account case not found for {ticket_id}")
+    preserved = {
+        "internal_email_payload": case.get("internal_email_payload"),
+        "internal_email_send_status": case.get("internal_email_send_status"),
+        "internal_email_send_reason": case.get("internal_email_send_reason"),
+    }
+    ticket_repository.reset_account_rerun_state(
+        ticket_id,
+        reset_at=_now(),
+        rerun_job_id=recovery_id,
     )
-    return ticket_repository.save_account_reply_job(resumed)
+    refreshed = ticket_repository.get_account_case_by_ticket_id(ticket_id)
+    if refreshed is None:
+        raise RuntimeError(f"account case disappeared during reply recovery: {ticket_id}")
+    refreshed.update(preserved)
+    refreshed["updated_at"] = _now()
+    ticket_repository.save_account_case(refreshed)
+    return refreshed
 
 
 def _mark_customer_confirmation_queued(case: dict[str, Any], delivery_key: str) -> None:
@@ -109,32 +121,14 @@ def build_recovery_plan(job_id: str) -> dict[str, Any]:
         is_automation = str(case.get("route_family") or "").strip() == "automated"
         if ticket_id and email_was_sent and is_automation:
             existing_job = latest_reply_jobs.get(ticket_id)
-            existing_payload = (
-                existing_job.get("payload")
-                if isinstance(existing_job, dict) and isinstance(existing_job.get("payload"), dict)
-                else {}
-            )
-            existing_recovery_job_id = (
-                str(existing_payload.get("rerun_job_id") or "").strip()
-                if existing_job
-                else ""
-            )
             reply_cases.append(
                 {
                     "account_case_id": case.get("account_case_id"),
                     "ticket_id": ticket_id,
                     "delivery_key": str(email_payload.get("delivery_key") or ""),
                     "handler": str(case.get("automation_handler") or "automation"),
-                    "existing_reply_job_id": (
-                        str(existing_job.get("job_id") or "").strip()
-                        if existing_recovery_job_id == recovery_id
-                        else ""
-                    ),
-                    "existing_reply_job_status": (
-                        str(existing_job.get("status") or "").strip()
-                        if existing_recovery_job_id == recovery_id
-                        else ""
-                    ),
+                    "existing_reply_job_id": str(existing_job.get("job_id") or "").strip() if existing_job else "",
+                    "existing_reply_job_status": str(existing_job.get("status") or "").strip() if existing_job else "",
                 }
             )
         elif ticket_id:
@@ -153,40 +147,23 @@ def apply_recovery(plan: dict[str, Any]) -> dict[str, Any]:
     job_id = str(plan["rerun_job_id"])
     recovery_id = str(plan.get("recovery_job_id") or f"{job_id}:recovery")
     created_jobs: list[str] = []
-    reused_jobs: list[str] = []
-    requeued_jobs: list[str] = []
+    deleted_jobs: list[str] = []
     archived_cases: list[str] = []
     for ticket_id in plan["archive_cases"]:
-        ticket_repository.supersede_account_ai_messages(
+        _reset_case_reply_state_preserving_delivery(
             str(ticket_id),
-            except_job_id=recovery_id,
-            superseded_at=_now(),
+            recovery_id=recovery_id,
         )
         archived_cases.append(str(ticket_id))
 
     for item in plan["reply_cases"]:
         ticket_id = str(item["ticket_id"])
-        existing_job_id = str(item.get("existing_reply_job_id") or "").strip()
-        if existing_job_id:
-            existing_job = ticket_repository.get_account_reply_job(existing_job_id)
-            ticket = ticket_repository.get_ticket(ticket_id)
-            if existing_job is None or ticket is None:
-                raise RuntimeError(f"existing recovery reply job is missing its linked ticket: {ticket_id}")
-            if str(existing_job.get("status") or "").strip() in {
-                "manual_attention",
-                "failed",
-                "cancelled",
-            }:
-                _resume_existing_recovery_job(existing_job, ticket)
-                requeued_jobs.append(existing_job_id)
-            case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
-            if case is not None:
-                _mark_customer_confirmation_queued(case, str(item["delivery_key"]))
-            reused_jobs.append(existing_job_id)
-            continue
-        case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
-        if case is None:
-            raise RuntimeError(f"account case not found for {ticket_id}")
+        if str(item.get("existing_reply_job_id") or "").strip():
+            deleted_jobs.append(str(item["existing_reply_job_id"]))
+        case = _reset_case_reply_state_preserving_delivery(
+            ticket_id,
+            recovery_id=recovery_id,
+        )
         persona = ticket_repository.resolve_published_account_persona(ticket_id)
         reply_facts = _automation_reply_facts(
             handler=str(item.get("handler") or "automation"),
@@ -197,29 +174,16 @@ def apply_recovery(plan: dict[str, Any]) -> dict[str, Any]:
             customer_name=str(case.get("customer_name") or ""),
         )
         ticket = ticket_repository.get_ticket(ticket_id) or {}
-        try:
-            job = _create_account_reply_job(
-                ticket_id=ticket_id,
-                trigger_message_created_at=str(_latest_customer_message_created_at(ticket)),
-                draft_content="",
-                reply_facts=reply_facts,
-                asked_field_keys=[],
-                persona_assignment=persona,
-                automation_delivery_key=str(item["delivery_key"]),
-                rerun_job_id=recovery_id,
-            )
-        except Exception:
-            existing_job = ticket_repository.get_latest_account_reply_job(ticket_id)
-            existing_payload = (
-                existing_job.get("payload")
-                if isinstance(existing_job, dict) and isinstance(existing_job.get("payload"), dict)
-                else {}
-            )
-            if str(existing_payload.get("rerun_job_id") or "").strip() != recovery_id:
-                raise
-            job = _resume_existing_recovery_job(existing_job, ticket)
-            reused_jobs.append(str(job.get("job_id") or ""))
-            requeued_jobs.append(str(job.get("job_id") or ""))
+        job = _create_account_reply_job(
+            ticket_id=ticket_id,
+            trigger_message_created_at=str(_latest_customer_message_created_at(ticket)),
+            draft_content="",
+            reply_facts=reply_facts,
+            asked_field_keys=[],
+            persona_assignment=persona,
+            automation_delivery_key=str(item["delivery_key"]),
+            rerun_job_id=recovery_id,
+        )
         case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
         if case is not None:
             _mark_customer_confirmation_queued(case, str(item["delivery_key"]))
@@ -228,8 +192,7 @@ def apply_recovery(plan: dict[str, Any]) -> dict[str, Any]:
         **plan,
         "recovery_job_id": recovery_id,
         "created_reply_job_ids": created_jobs,
-        "reused_reply_job_ids": reused_jobs,
-        "requeued_reply_job_ids": requeued_jobs,
+        "deleted_reply_job_ids": deleted_jobs,
         "archived_ticket_ids": archived_cases,
         "email_resend_count": 0,
     }

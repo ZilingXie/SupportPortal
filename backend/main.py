@@ -141,6 +141,13 @@ from backend.services.account_admin import (
     route_execution_from_decision,
     routing_config_payload,
 )
+from backend.services.account_reply_jobs import (
+    ACCOUNT_REPLY_PERSONA_PIPELINE,
+    ACCOUNT_REPLY_PERSONA_PREPARING,
+    ACCOUNT_REPLY_PERSONA_PUBLISHING,
+    ACCOUNT_REPLY_PERSONA_QUEUED,
+    ACCOUNT_REPLY_PERSONA_SCHEDULED,
+)
 from backend.services.automation_persona import (
     AutomationPersonaError,
     build_automation_reply_facts,
@@ -671,8 +678,15 @@ def _account_reply_job_public(job: dict[str, Any] | None) -> dict[str, Any]:
             "ai_reply_error": None,
         }
     payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    status = str(job.get("status") or "")
+    status = {
+        ACCOUNT_REPLY_PERSONA_QUEUED: "queued",
+        ACCOUNT_REPLY_PERSONA_PREPARING: "preparing",
+        ACCOUNT_REPLY_PERSONA_SCHEDULED: "scheduled",
+        ACCOUNT_REPLY_PERSONA_PUBLISHING: "publishing",
+    }.get(status, status)
     return {
-        "ai_reply_status": str(job.get("status") or "") or None,
+        "ai_reply_status": status or None,
         "ai_reply_scheduled_for": job.get("scheduled_for"),
         "ai_reply_published_at": job.get("published_at"),
         "ai_reply_error": str(payload.get("error") or "") or None,
@@ -703,6 +717,7 @@ def _create_account_reply_job(
     }
     if isinstance(reply_facts, dict) and reply_facts:
         payload["reply_facts"] = copy.deepcopy(reply_facts)
+        payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
     if persona_assignment:
         payload.update(
             {
@@ -720,9 +735,13 @@ def _create_account_reply_job(
         "job_id": f"account-reply-{uuid4().hex}",
         "ticket_id": ticket_id,
         "trigger_message_created_at": trigger_message_created_at,
-        # Persona-backed replies must be prepared before they become publishable. Keeping
-        # them queued prevents a content-less scheduled job from reaching the publisher.
-        "status": "scheduled" if payload["draft_content"] else "queued",
+        # Persona-backed replies use a private status namespace so older workers cannot
+        # claim them through the legacy queued/scheduled poller.
+        "status": (
+            ACCOUNT_REPLY_PERSONA_QUEUED
+            if payload.get("reply_pipeline") == ACCOUNT_REPLY_PERSONA_PIPELINE
+            else ("scheduled" if payload["draft_content"] else "queued")
+        ),
         "scheduled_for": scheduled_for,
         "payload": payload,
         "attempt_count": 0,

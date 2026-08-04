@@ -236,7 +236,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         job = self.repository.get_latest_account_reply_job(ticket_id)
         self.assertIsNotNone(job)
         assert job is not None
-        job["status"] = "publishing"
+        job["status"] = (
+            worker.ACCOUNT_REPLY_PERSONA_PUBLISHING
+            if (job.get("payload") or {}).get("reply_pipeline") == worker.ACCOUNT_REPLY_PERSONA_PIPELINE
+            else "publishing"
+        )
         self.repository.save_account_reply_job(job)
         worker._publish_account_reply_job(job)
         published = self.repository.get_account_reply_job(str(job["job_id"]))
@@ -617,6 +621,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(reply_job)
         assert reply_job is not None
+        self.assertEqual(reply_job["status"], worker.ACCOUNT_REPLY_PERSONA_QUEUED)
+        self.assertEqual(reply_job["payload"]["reply_pipeline"], worker.ACCOUNT_REPLY_PERSONA_PIPELINE)
         self.assertEqual(reply_job["payload"]["reply_facts"]["customer_first_name"], "Jack")
         self.assertIn("Submitted", reply_job["payload"]["reply_facts"]["performed_actions"][0])
         send_email.assert_called_once()
@@ -4242,24 +4248,87 @@ class AccountIntakeApiTests(unittest.TestCase):
         job = self.repository.get_latest_account_reply_job(created["ticket_id"])
         assert job is not None
 
+        persona_pipeline = (job.get("payload") or {}).get("reply_pipeline") == worker.ACCOUNT_REPLY_PERSONA_PIPELINE
+        from_status = worker.ACCOUNT_REPLY_PERSONA_QUEUED if persona_pipeline else "scheduled"
+        to_status = worker.ACCOUNT_REPLY_PERSONA_PREPARING if persona_pipeline else "publishing"
         not_due = self.repository.claim_account_reply_jobs(
-            from_status="scheduled",
-            to_status="publishing",
+            from_status=from_status,
+            to_status=to_status,
             now_value="2000-01-01T00:00:00+00:00",
-            due_only=True,
+            due_only=not persona_pipeline,
         )
         self.assertEqual(not_due, [])
         claimed = self.repository.claim_account_reply_jobs(
-            from_status="scheduled",
-            to_status="publishing",
+            from_status=from_status,
+            to_status=to_status,
             now_value="2999-01-01T00:00:00+00:00",
-            due_only=True,
+            due_only=not persona_pipeline,
         )
         self.assertEqual([item["job_id"] for item in claimed], [job["job_id"]])
         claimed_again = self.repository.claim_account_reply_jobs(
-            from_status="scheduled",
-            to_status="publishing",
+            from_status=from_status,
+            to_status=to_status,
             now_value="2999-01-01T00:00:00+00:00",
-            due_only=True,
+            due_only=not persona_pipeline,
         )
         self.assertEqual(claimed_again, [])
+
+    def test_account_reply_job_claims_are_isolated_by_pipeline_status(self) -> None:
+        legacy_job = {
+            "job_id": "account-reply-legacy-claim",
+            "ticket_id": "TK-LEGACY-CLAIM",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "queued",
+            "scheduled_for": "2026-03-22T00:00:00+00:00",
+            "payload": {"draft_content": "legacy"},
+            "attempt_count": 0,
+            "created_at": "2026-03-22T00:00:00+00:00",
+            "updated_at": "2026-03-22T00:00:00+00:00",
+        }
+        persona_job = {
+            "job_id": "account-reply-persona-claim",
+            "ticket_id": "TK-PERSONA-CLAIM",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": worker.ACCOUNT_REPLY_PERSONA_QUEUED,
+            "scheduled_for": "2026-03-22T00:00:00+00:00",
+            "payload": {
+                "draft_content": "",
+                "reply_pipeline": worker.ACCOUNT_REPLY_PERSONA_PIPELINE,
+            },
+            "attempt_count": 0,
+            "created_at": "2026-03-22T00:00:01+00:00",
+            "updated_at": "2026-03-22T00:00:01+00:00",
+        }
+        self.repository.save_account_reply_job(legacy_job)
+        self.repository.save_account_reply_job(persona_job)
+
+        legacy_claim = self.repository.claim_account_reply_jobs(
+            from_status="queued",
+            to_status="preparing",
+            now_value="2026-03-22T00:01:00+00:00",
+        )
+        self.assertEqual([item["job_id"] for item in legacy_claim], [legacy_job["job_id"]])
+
+        persona_claim = self.repository.claim_account_reply_jobs(
+            from_status=worker.ACCOUNT_REPLY_PERSONA_QUEUED,
+            to_status=worker.ACCOUNT_REPLY_PERSONA_PREPARING,
+            now_value="2026-03-22T00:01:00+00:00",
+        )
+        self.assertEqual([item["job_id"] for item in persona_claim], [persona_job["job_id"]])
+
+        self.assertEqual(
+            self.repository.claim_account_reply_jobs(
+                from_status="queued",
+                to_status="preparing",
+                now_value="2026-03-22T00:01:00+00:00",
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.repository.claim_account_reply_jobs(
+                from_status=worker.ACCOUNT_REPLY_PERSONA_QUEUED,
+                to_status=worker.ACCOUNT_REPLY_PERSONA_PREPARING,
+                now_value="2026-03-22T00:01:00+00:00",
+            ),
+            [],
+        )

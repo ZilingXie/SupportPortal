@@ -83,7 +83,10 @@ const detailCache = new Map();
 const detailInflight = new Map();
 const detailRequestControllers = new Set();
 
-const ACTIVE_AI_REPLY_STATUSES = new Set(["queued", "preparing", "scheduled", "publishing"]);
+const ACTIVE_AI_REPLY_STATUSES = new Set([
+  "queued", "preparing", "scheduled", "publishing",
+  "persona_queued", "persona_preparing", "persona_scheduled", "persona_publishing",
+]);
 const ROUTE_LABEL_FILTERS = new Set([
   "human_review",
   "agora_technical",
