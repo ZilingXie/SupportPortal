@@ -2634,6 +2634,49 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(ticket["messages"][-1]["content"], "The request has been submitted.")
         repository.publish_account_reply.assert_called_once()
 
+    def test_persona_reply_facts_are_rendered_before_scheduling(self) -> None:
+        job = {
+            "job_id": "account-reply-persona-prepare",
+            "ticket_id": "TK-PERSONA-PREPARE",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "scheduled_for": "2026-03-22T00:07:00+00:00",
+            "payload": {
+                "reply_facts": {"behavior": "enablement", "reply_intent": "request_missing_information"},
+                "persona_key": "default-support",
+                "persona_version": 3,
+                "effective_prompt": {"instruction": "Warm", "signature": "Best,\\nSid"},
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-PERSONA-PREPARE",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_ticket.return_value = ticket
+        rendered = types.SimpleNamespace(
+            content="Hi Customer,\\n\\nPlease share the App ID.\\n\\nBest,\\nSid",
+            model="persona-model",
+            prompt_version="automation-persona-v4",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply", return_value=rendered
+        ) as render:
+            worker._prepare_account_reply_job(job)
+
+        render.assert_called_once()
+        self.assertEqual(job["status"], "scheduled")
+        self.assertEqual(job["payload"]["generated_content"], rendered.content)
+        self.assertEqual(job["payload"]["persona_render_status"], "generated")
+        repository.save_account_reply_job.assert_called_once_with(job)
+
     def test_persona_failure_moves_reply_job_to_human_review_without_sending(self) -> None:
         job = {
             "job_id": "account-reply-persona-human-review",

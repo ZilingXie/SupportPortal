@@ -446,7 +446,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
-        self.assertEqual(payload["ai_reply_status"], "scheduled")
+        self.assertEqual(payload["ai_reply_status"], "queued")
         self.assertEqual(payload["internal_email_send_status"], "skipped_config_missing")
         self.assertIn("missing", payload["internal_email_send_reason"])
 
@@ -524,7 +524,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["collected_fields"]["app_id"], "7da36383d624411698e5c0bc1fda6324")
         self.assertEqual(payload["collected_fields"]["requested_feature"], "media_relay")
         self.assertEqual(payload["internal_email_send_status"], "sent")
-        self.assertEqual(payload["ai_reply_status"], "scheduled")
+        self.assertEqual(payload["ai_reply_status"], "queued")
         reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(reply_job)
         assert reply_job is not None
@@ -2945,7 +2945,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "automation")
         self.assertEqual(payload["customer_reply"], "")
-        self.assertEqual(payload["ai_reply_status"], "scheduled")
+        self.assertEqual(payload["ai_reply_status"], "queued")
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)
@@ -3165,9 +3165,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         create_payload = create_response.json()
         bt_id = create_payload["billing_ticket_id"]
 
-        # Initial state: missing fields exist and the reply remains scheduled.
+        # Initial state: missing fields exist and the Persona reply is queued for preparation.
         self.assertTrue(len(create_payload["missing_fields"]) > 0)
-        self.assertEqual(create_payload["ai_reply_status"], "scheduled")
+        self.assertEqual(create_payload["ai_reply_status"], "queued")
 
         ticket = self.repository.get_ticket(create_payload["ticket_id"])
         self.assertEqual(len(ticket["messages"]), 1)
@@ -3786,6 +3786,27 @@ class AccountIntakeApiTests(unittest.TestCase):
         scheduled = datetime.fromisoformat(job["scheduled_for"])
         self.assertEqual((scheduled - trigger).total_seconds(), 417)
         self.assertEqual(payload["ai_reply_scheduled_for"], job["scheduled_for"])
+
+    def test_account_intake_accepts_n8n_customer_name_aliases(self) -> None:
+        for field_name in ("cx_name", "cx name", "cxName", "requester_name"):
+            with self.subTest(field_name=field_name):
+                request = main.AccountIntakeRequest.model_validate(
+                    {
+                        "title": "Enablement",
+                        "question": "Please enable the feature.",
+                        field_name: "Jack Gold",
+                    }
+                )
+                self.assertEqual(main._account_intake_customer_name(request), "Jack Gold")
+
+        nested = main.AccountIntakeRequest.model_validate(
+            {
+                "title": "Enablement",
+                "question": "Please enable the feature.",
+                "requester": {"name": "Jack Gold"},
+            }
+        )
+        self.assertEqual(main._account_intake_customer_name(nested), "Jack Gold")
 
     def test_missing_fields_are_asked_only_once_per_ticket(self) -> None:
         cases = (
