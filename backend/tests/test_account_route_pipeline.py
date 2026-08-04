@@ -28,7 +28,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertIn("Company Information, Contact Information", prompt)
         self.assertIn("Use Case, and Payment Information", prompt)
         self.assertIn("strong fraud-review workflow evidence", prompt)
-        self.assertIn("without that template are Account Suspension", prompt)
+        self.assertIn("Non-fraud suspension", prompt)
+        self.assertNotIn("account_suspension:", prompt)
 
     def test_human_review_golden_fixture_covers_all_operator_labels(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "account_route_golden_cases.json"
@@ -63,6 +64,20 @@ class AccountRoutePipelineTests(unittest.TestCase):
         )
         self.assertEqual(automation["secondary_label"], "Automation / Detailed Invoice")
         self.assertEqual(automation["handler_binding_status"], "completed")
+
+        account_billing = classification_for_corrected_route(
+            scope_label="account_billing",
+            route_family="human_review",
+            execution_action="human_review_required",
+            subcategory="account_suspension",
+            previous={"automation_mode": "classification_only"},
+        )
+        self.assertEqual(
+            account_billing["secondary_label"],
+            "Account & Billing / Account Suspension",
+        )
+        self.assertEqual(account_billing["account_billing_subcategory"], "account_suspension")
+        self.assertIsNone(account_billing["automation_mode"])
 
     def test_pipeline_is_scoped_to_account_entrypoints(self) -> None:
         main_source = (Path(__file__).parents[1] / "main.py").read_text(encoding="utf-8")
@@ -127,6 +142,40 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.classification["pipeline_version"], ACCOUNT_ROUTE_PIPELINE_VERSION)
         self.assertEqual(result.decision.router_source, "account_legacy_fallback")
         legacy_router.assert_called_once()
+
+    def test_missing_credentials_suspension_fallback_uses_account_billing_contract(self) -> None:
+        legacy_router = unittest.mock.Mock(
+            return_value=SupportRouteDecision(
+                scope_label="billing",
+                route="account_verification",
+                route_family="automated",
+                execution_action="account_verification",
+                confidence=0.94,
+                reason="billing_account_suspension",
+                semantic_intent="billing.account_suspension",
+                router_source="deterministic_billing",
+            )
+        )
+        missing_credentials = AccountRouteStageAttempt(
+            payload=None,
+            attempted=False,
+            failure_type="missing_credentials",
+            failure_source="intent_classifier",
+        )
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            return_value=missing_credentials,
+        ):
+            result = decide_account_route(
+                "Our balance ran out and the account was suspended.",
+                legacy_router=legacy_router,
+                require_latest=True,
+            )
+
+        self.assertEqual(result.secondary_label, "Account & Billing / Account Suspension")
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.semantic_intent, "account_billing.account_suspension")
 
     def test_legacy_support_request_automation_uses_canonical_automation_labels(self) -> None:
         labels = account_case_labels(
@@ -237,7 +286,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.decision.execution_action, "enablement")
         self.assertEqual(invoke_stage.call_count, 3)
 
-    def test_non_fraud_account_suspension_is_classification_only(self) -> None:
+    def test_non_fraud_account_suspension_routes_to_account_billing(self) -> None:
         attempts = [
             _attempt(
                 {
@@ -248,40 +297,72 @@ class AccountRoutePipelineTests(unittest.TestCase):
             ),
             _attempt(
                 {
-                    "agora_route": "automation",
+                    "agora_route": "account_billing",
                     "confidence": 0.97,
-                    "reason_code": "classification_only_automation",
+                    "reason_code": "account_billing_request",
                     "backend_operation": None,
                 }
             ),
             _attempt(
                 {
-                    "automation_subcategory": "account_suspension",
+                    "account_billing_subcategory": "account_suspension",
                     "confidence": 0.96,
                     "reason_code": "registered_account_suspension",
+                    "additional_intents": ["refund"],
                 }
             ),
         ]
         with patch(
             "backend.services.account_route_pipeline._invoke_stage",
             side_effect=attempts,
-        ):
+        ) as invoke_stage:
             result = decide_account_route(
                 "Our account is suspended. Please review it and restore our access."
             )
 
         self.assertEqual(result.primary_label, "Agora")
-        self.assertEqual(result.secondary_label, "Automation / Account Suspension")
-        self.assertEqual(result.classification["automation_subcategory"], "account_suspension")
-        self.assertEqual(result.classification["handler_binding_status"], "classification_only")
-        self.assertEqual(result.classification["automation_mode"], "classification_only")
-        self.assertEqual(result.decision.execution_action, "account_suspension")
-        self.assertEqual(result.decision.route_family, "automated")
-        self.assertEqual(result.decision.tooling_profile, "classification_only")
+        self.assertEqual(result.secondary_label, "Account & Billing / Account Suspension")
+        self.assertEqual(result.classification["account_billing_subcategory"], "account_suspension")
+        self.assertEqual(result.classification["account_billing_additional_intents"], ["refund"])
+        self.assertIsNone(result.classification["automation_subcategory"])
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.semantic_intent, "account_billing.account_suspension")
         self.assertEqual(
-            result.classification["stage_reason_codes"]["agora_router"],
-            "classification_only_automation",
+            result.classification["stage_reason_codes"]["account_billing_router"],
+            "registered_account_suspension",
         )
+        self.assertEqual(invoke_stage.call_count, 3)
+        self.assertEqual(
+            [call.kwargs["prompt_key"] for call in invoke_stage.call_args_list],
+            [
+                "account-intent-classifier-system",
+                "account-agora-router-system",
+                "account-account-billing-router-system",
+            ],
+        )
+
+    def test_invalid_account_billing_output_falls_back_to_other_with_reason(self) -> None:
+        attempts = [
+            _attempt({"intent_class": "agora", "intent_confidence": 0.99, "reason_code": "agora_case"}),
+            _attempt({
+                "agora_route": "account_billing",
+                "confidence": 0.97,
+                "reason_code": "account_billing_request",
+            }),
+            _attempt({
+                "account_billing_subcategory": "refund",
+                "confidence": 0.96,
+                "reason_code": "account_billing_other",
+            }),
+        ]
+        with patch("backend.services.account_route_pipeline._invoke_stage", side_effect=attempts):
+            result = decide_account_route("Please refund our unused balance.")
+
+        self.assertEqual(result.secondary_label, "Account & Billing / Other")
+        self.assertEqual(result.classification["account_billing_subcategory"], "other")
+        self.assertEqual(result.classification["route_reason_code"], "invalid_account_billing_output")
+        self.assertEqual(result.decision.semantic_intent, "account_billing.other")
 
     def test_other_automation_without_backend_operation_fails_closed(self) -> None:
         attempts = [
@@ -398,6 +479,14 @@ class AccountRoutePipelineTests(unittest.TestCase):
                     "additional_intents": [],
                 }
             ),
+            _attempt(
+                {
+                    "account_billing_subcategory": "other",
+                    "confidence": 0.95,
+                    "reason_code": "account_billing_other",
+                    "additional_intents": ["payment_method"],
+                }
+            ),
         ]
         with patch(
             "backend.services.account_route_pipeline._invoke_stage",
@@ -406,10 +495,11 @@ class AccountRoutePipelineTests(unittest.TestCase):
             result = decide_account_route("Please change our payment method to invoice billing.")
 
         self.assertEqual(result.primary_label, "Agora")
-        self.assertEqual(result.secondary_label, "Account & Billing")
+        self.assertEqual(result.secondary_label, "Account & Billing / Other")
         self.assertEqual(result.classification["agora_route"], "account_billing")
-        self.assertEqual(result.classification["route_reason_code"], "account_billing_request")
-        self.assertEqual(invoke_stage.call_count, 2)
+        self.assertEqual(result.classification["route_reason_code"], "account_billing_other")
+        self.assertEqual(result.classification["account_billing_subcategory"], "other")
+        self.assertEqual(invoke_stage.call_count, 3)
 
     def test_vague_backend_request_stays_uncategorized(self) -> None:
         attempts = [

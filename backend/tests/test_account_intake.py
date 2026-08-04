@@ -20,6 +20,7 @@ from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
+from backend.services.account_suspension_field_extractor import AccountSuspensionFieldExtraction
 from backend.services.account_route_pipeline import AccountRouteResult
 from backend.services.llm_factory import LlmInvocationError
 from backend.services.quota_field_extractor import QuotaFieldExtraction
@@ -61,6 +62,48 @@ def _fraud_account_route_result() -> AccountRouteResult:
         classification=classification,
         primary_label="Agora",
         secondary_label="Automation / Fraud Account",
+    )
+
+
+def _account_suspension_route_result() -> AccountRouteResult:
+    decision = SupportRouteDecision(
+        scope_label="account_billing",
+        route="human_review_required",
+        route_family="human_review",
+        execution_action="human_review_required",
+        confidence=0.96,
+        reason="registered_account_suspension",
+        semantic_intent="account_billing.account_suspension",
+        automation_eligibility="not_eligible",
+        router_source="account_layered_llm",
+    )
+    classification = {
+        "pipeline_version": "account-layered-router-v4",
+        "intent_class": "agora",
+        "agora_route": "account_billing",
+        "account_billing_subcategory": "account_suspension",
+        "automation_subcategory": None,
+        "route_target": "human_review",
+        "route_reason_code": "registered_account_suspension",
+        "stage_confidences": {
+            "intent_classifier": 0.99,
+            "agora_router": 0.98,
+            "account_billing_router": 0.96,
+        },
+        "stage_reason_codes": {
+            "intent_classifier": "agora_case",
+            "agora_router": "account_billing_request",
+            "account_billing_router": "registered_account_suspension",
+        },
+        "handler_binding_status": None,
+        "primary_label": "Agora",
+        "secondary_label": "Account & Billing / Account Suspension",
+    }
+    return AccountRouteResult(
+        decision=decision,
+        classification=classification,
+        primary_label="Agora",
+        secondary_label="Account & Billing / Account Suspension",
     )
 
 
@@ -2700,8 +2743,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn("support_ticket_id", detail)
         self.assertEqual(detail["source"], "api")
 
-    def test_account_intake_suspension_route_marks_automation(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
+    def test_account_intake_suspension_route_is_account_billing_classification_only(self) -> None:
+        extraction = AccountSuspensionFieldExtraction(
+            status="partial",
+            collected_fields={"suspension_status_or_error": "account suspended"},
+            grounding_status="passed",
+        )
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_account_suspension_route_result()
+        ), patch.object(main, "extract_account_suspension_fields", return_value=extraction):
             response = self.client.post(
                 "/account",
                 json={
@@ -2714,25 +2764,78 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "classified_only")
-        self.assertEqual(payload["route"], "account_suspension")
+        self.assertEqual(payload["status"], "not_automated")
+        self.assertEqual(payload["route"], "human_review_required")
+        self.assertEqual(payload["category"], "account_billing")
         self.assertEqual(payload["subcategory"], "account_suspension")
-        self.assertEqual(payload["secondary_label"], "Automation / Account Suspension")
+        self.assertEqual(payload["secondary_label"], "Account & Billing / Account Suspension")
         self.assertEqual(payload["customer_reply"], "")
         self.assertIsNone(payload["ai_reply_status"])
         self.assertEqual(payload["internal_email_send_status"], "not_applicable")
-        self.assertEqual(payload["internal_email_send_reason"], "classification_only")
-        self.assertEqual(payload["automation_handler"], "account_suspension")
-        self.assertEqual(payload["automation_mode"], "classification_only")
+        self.assertEqual(payload["internal_email_send_reason"], "account_billing_classification_only")
+        self.assertIsNone(payload["automation_handler"])
         self.assertNotIn("support_ticket_id", payload)
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
-        self.assertEqual(bt["automation_status"], "classified_only")
-        self.assertEqual(bt["route"], "account_suspension")
-        self.assertEqual(bt["execution_action"], "account_suspension")
+        self.assertEqual(bt["automation_status"], "not_automated")
+        self.assertEqual(bt["route"], "human_review_required")
+        self.assertEqual(bt["execution_action"], "human_review_required")
         self.assertEqual(bt["subcategory"], "account_suspension")
+        self.assertEqual(
+            bt["collected_fields"],
+            {"suspension_status_or_error": "account suspended"},
+        )
+        self.assertEqual(bt["automation_context"], {})
+
+    def test_account_suspension_customer_reply_reextracts_without_automation_side_effects(self) -> None:
+        extractions = [
+            AccountSuspensionFieldExtraction(
+                status="partial",
+                collected_fields={"suspension_status_or_error": "account suspended"},
+                grounding_status="passed",
+            ),
+            AccountSuspensionFieldExtraction(
+                status="partial",
+                collected_fields={
+                    "suspension_status_or_error": "account suspended",
+                    "known_reason": "balance",
+                    "customer_actions_taken": "topped up",
+                },
+                grounding_status="passed",
+            ),
+        ]
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_account_suspension_route_result()
+        ), patch.object(
+            main, "extract_account_suspension_fields", side_effect=extractions
+        ) as extractor:
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "Our account is suspended.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+            response = self.client.post(
+                f"/api/account/cases/{created['account_case_id']}/reply",
+                json={"message": "The balance was exhausted, and we topped up."},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(extractor.call_count, 2)
+        self.assertEqual(payload["category"], "account_billing")
+        self.assertEqual(payload["subcategory"], "account_suspension")
+        self.assertEqual(payload["route_status"], "not_automated")
+        self.assertEqual(payload["automation_status"], "not_automated")
+        self.assertEqual(payload["collected_fields"]["known_reason"], "balance")
+        self.assertEqual(payload["collected_fields"]["customer_actions_taken"], "topped up")
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertIsNone(payload["automation_handler"])
+        self.assertIsNone(payload["ai_reply_status"])
 
     def test_billing_tickets_detail_by_canonical_ticket_id(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

@@ -8,6 +8,7 @@ from uuid import uuid4
 from backend.services.support_router import SupportRouteDecision
 from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
+    build_account_billing_system_prompt,
     build_account_automation_system_prompt,
     build_account_intent_system_prompt,
 )
@@ -16,10 +17,11 @@ from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-layered-router-v3"
+ROUTER_PROMPT_VERSION = "account-layered-router-v4"
 ROUTING_STAGE_DESCRIPTIONS = {
     "intent_classifier": "Classifies Account messages as Conversation, Agora, or Uncertain.",
     "agora_router": "Classifies Agora cases as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+    "account_billing_router": "Classifies Account & Billing cases as Account Suspension or Other.",
     "automation_router": "Selects a registered Automation subcategory or Unregistered.",
     "final_route": "Records the route target and the primary and secondary Account labels.",
 }
@@ -407,17 +409,23 @@ def routing_config_payload() -> dict[str, Any]:
             "subcategories": [],
         },
         {
+            "name": "account_billing",
+            "display_name": "Account & Billing Router",
+            "description": "Account and billing requests are classified as Account Suspension or Other.",
+            "execution_actions": ["account_suspension", "other"],
+            "subcategories": ["account_suspension", "other"],
+            "handler_modes": {
+                "account_suspension": "classification_only",
+                "other": "none",
+            },
+        },
+        {
             "name": "automation",
             "display_name": "Automation",
             "description": "Confirmed backend operations are classified into a registered subcategory or Unregistered.",
             "execution_actions": [*automation_subcategories, "unregistered"],
             "subcategories": [*automation_subcategories, "unregistered"],
-            "handler_modes": {
-                action: (
-                    "classification_only" if action == "account_suspension" else "active"
-                )
-                for action in automation_subcategories
-            },
+            "handler_modes": {action: "active" for action in automation_subcategories},
         },
     ]
 
@@ -427,6 +435,7 @@ def routing_config_payload() -> dict[str, Any]:
             [
                 build_account_intent_system_prompt(),
                 build_account_agora_system_prompt(),
+                build_account_billing_system_prompt(),
                 build_account_automation_system_prompt(),
             ]
         ),

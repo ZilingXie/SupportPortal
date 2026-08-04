@@ -5,7 +5,8 @@ from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
 ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v5"
-ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v6"
+ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v1"
+ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v7"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
 ACCOUNT_QUOTA_FIELD_PROMPT_VERSION = "account-quota-fields-v1"
 ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "fraud-account-fields-v2"
@@ -115,8 +116,7 @@ Classify only; do not answer the customer.
 - non_technical: Agora company, public product information, investor, product portfolio, or public business information.
 - account_billing: account ownership or administration, balances, usage charges, payment methods, top-ups,
   pricing, quotes, refunds, billing disputes, invoice billing, and other non-automated account or billing requests.
-- automation: an explicit, grounded request for Agora to perform a concrete account/backend operation,
-  or a clearly reported non-fraud account suspension accepted by the classification-only suspension flow.
+- automation: an explicit, grounded request for Agora to perform a concrete account/backend operation.
 - uncategorized: an Agora-related request that cannot be assigned safely to the routes above, including
   insufficient information, multiple equally important Agora intents, legal/compliance requests, and rewards.
 
@@ -124,18 +124,17 @@ Classify only; do not answer the customer.
 - How to enable, configure, integrate, or troubleshoot a feature is technical.
 - An explicit request for Agora to enable a named backend feature from our side is automation.
 - Pricing and billing questions are account_billing. Concrete backend operations enter automation.
-- A clearly reported account suspension may also enter automation without a requested backend action when
-  it has no fraud/risk/security-review evidence. This is a classification-only exception. Use
-  reason_code=classification_only_automation and backend_operation=null.
+- A clearly reported non-fraud account suspension belongs to account_billing. Fraud, risk, suspicious-activity,
+  security-review evidence, or the standard four-group review template may enter automation.
 - Payment methods, invoice billing eligibility, credit terms, refunds, subscriptions, packages, account plans,
   and financial account settings are always account_billing even when the customer says switch, enable, or activate.
-- Fraud/risk account review, non-fraud suspension classification, detailed invoices, feature activation, quota/capacity review,
+- Fraud/risk account review, detailed invoices, feature activation, quota/capacity review,
   quota increases, and big-event capacity notifications may enter automation.
 - A request to review, verify, increase, or escalate account concurrency or quota is a concrete backend
   operation when the affected product or account-level quota is named. A Big Event Notification that asks
   Agora to review event capacity is also a concrete backend operation even without the word "increase".
 - Questions about calculating concurrency, pricing, or diagnosing throttling remain technical or account_billing.
-- Except for the classification-only non-fraud suspension rule, automation requires grounded
+- Automation requires grounded
   backend_operation.action, backend_operation.target, and backend_operation.evidence. Otherwise output uncategorized.
 - Select one primary route. Put other Agora intents in additional_intents; never output mixed.
 - When troubleshooting and backend activation both appear, technical wins if diagnosing or explaining a
@@ -147,10 +146,9 @@ selection_reason, backend_operation, evidence_spans.
 confidence must be between 0 and 1.
 agora_route must be one of: technical, non_technical, account_billing, automation, uncategorized.
 reason_code must be one of: technical_request, non_technical_request, account_billing_request,
-explicit_backend_operation, classification_only_automation, no_matching_category, insufficient_route_information,
+explicit_backend_operation, no_matching_category, insufficient_route_information,
 insufficient_backend_operation_evidence, multiple_equal_intents.
-backend_operation must be null unless agora_route=automation. It must also be null for
-reason_code=classification_only_automation.
+backend_operation must be null unless agora_route=automation.
 
 ## Examples
 Input: How do I generate an RTC token?
@@ -172,7 +170,7 @@ Input: Please change something on my account.
 Output: {"agora_route":"uncategorized","confidence":0.91,"reason_code":"insufficient_backend_operation_evidence","additional_intents":[],"selection_reason":"No concrete backend action or target is stated","backend_operation":null,"evidence_spans":["change something on my account"]}
 
 Input: Our Agora RTC account is suspended even though we purchased an extra usage package. The login page says the account has been stopped.
-Output: {"agora_route":"automation","confidence":0.98,"reason_code":"classification_only_automation","additional_intents":["account_billing"],"selection_reason":"The customer clearly reports a non-fraud account suspension covered by the classification-only flow","backend_operation":null,"evidence_spans":["account is suspended","purchased an extra usage package","account has been stopped"]}
+Output: {"agora_route":"account_billing","confidence":0.98,"reason_code":"account_billing_request","additional_intents":[],"selection_reason":"The customer reports a non-fraud account suspension associated with a package and needs account review","backend_operation":null,"evidence_spans":["account is suspended","purchased an extra usage package","account has been stopped"]}
 
 Input: Why was our account charged more than expected after we purchased an extra usage package?
 Output: {"agora_route":"account_billing","confidence":0.97,"reason_code":"account_billing_request","additional_intents":[],"selection_reason":"The customer disputes usage charges but does not report an account suspension","backend_operation":null,"evidence_spans":["charged more than expected","purchased an extra usage package"]}
@@ -188,6 +186,44 @@ Output: {"agora_route":"account_billing","confidence":0.98,"reason_code":"accoun
 """.strip()
 
 
+def build_account_billing_system_prompt() -> str:
+    return """
+## Role
+You are the Account & Billing Router. You only receive requests already classified as Account & Billing.
+Classify only; do not answer the customer and do not perform any action.
+
+## Subcategories
+- account_suspension: the customer clearly reports that an Agora account is suspended, disabled, stopped,
+  or inaccessible because of balance, payment, package, quota, plan, usage, or another non-fraud account state.
+- other: refunds, balances, payment methods, pricing, account administration, invoice billing, billing disputes,
+  and all other Account & Billing requests.
+
+## Rules
+- Fraud, risk, suspicious activity, security review, or the standard four-group fraud-review template must not
+  be classified as account_suspension. If such an unexpected request reaches this Router, return other.
+- A technical failure remains outside this Router when suspension is only incidental context.
+- When a non-fraud suspension and another billing request are both substantive, choose account_suspension and
+  preserve the other intent in additional_intents.
+- All fields extracted later are optional. Do not infer a cause that the customer did not state.
+
+## Output
+Return JSON only with keys: account_billing_subcategory, confidence, reason_code,
+additional_intents, evidence_spans.
+account_billing_subcategory must be one of: account_suspension, other.
+reason_code must be one of: registered_account_suspension, account_billing_other.
+
+## Examples
+Input: Our account was suspended after the balance ran out. We topped up yesterday but it still says stopped.
+Output: {"account_billing_subcategory":"account_suspension","confidence":0.98,"reason_code":"registered_account_suspension","additional_intents":[],"evidence_spans":["account was suspended","balance ran out","topped up yesterday","still says stopped"]}
+
+Input: Our account is suspended and we also want a refund for the unused package.
+Output: {"account_billing_subcategory":"account_suspension","confidence":0.97,"reason_code":"registered_account_suspension","additional_intents":["refund"],"evidence_spans":["account is suspended","refund for the unused package"]}
+
+Input: Please refund the unused balance and change our payment method.
+Output: {"account_billing_subcategory":"other","confidence":0.98,"reason_code":"account_billing_other","additional_intents":["refund","payment_method"],"evidence_spans":["refund the unused balance","change our payment method"]}
+""".strip()
+
+
 def build_account_automation_system_prompt() -> str:
     return """
 ## Role
@@ -199,8 +235,6 @@ Classify only; do not answer the customer and do not execute any action.
   review evidence, including requests to submit company/use-case/contact/payment context for that review.
   A quoted Agora suspension notice that asks for all four groups -- Company Information, Contact Information,
   Use Case, and Payment Information -- is strong fraud-review workflow evidence even when it does not say fraud.
-- account_suspension: a non-fraud account suspension caused or plausibly caused by balance, payment, quota,
-  free-tier allowance, package, plan, or usage restrictions. This subcategory is classification-only.
 - detailed_invoice: request for a detailed invoice with transaction-level details.
 - enablement: explicit request for Agora to activate, enable, provision, or turn on a concrete named
   backend feature from Agora's side. Media Relay is one supported example.
@@ -217,16 +251,16 @@ Classify only; do not answer the customer and do not execute any action.
 - How-to, integration, configuration, and troubleshooting requests are not enablement.
 - Do not infer a feature name that is not present.
 - Do not infer fraud from the word suspended alone. Fraud Account requires explicit fraud/risk/security-review
-  evidence or the complete four-group Agora suspension-review template described above. Balance, package,
-  payment, quota, free-tier, and usage-limit suspensions without that template are Account Suspension.
+  evidence or the complete four-group Agora suspension-review template described above. Non-fraud suspension
+  requests should not reach this Router; classify unexpected inputs as unregistered.
 
 ## Output
 Return JSON only with keys: automation_subcategory, confidence, reason_code,
 automation_candidate, evidence_spans, risk_flags.
 confidence must be between 0 and 1.
-automation_subcategory must be one of: fraud_account, account_suspension,
+automation_subcategory must be one of: fraud_account,
 detailed_invoice, enablement, quota, unregistered.
-reason_code must be one of: registered_fraud_account, registered_account_suspension,
+reason_code must be one of: registered_fraud_account,
 registered_detailed_invoice, registered_enablement, registered_quota, no_registered_subcategory,
 insufficient_subcategory_information.
 
@@ -237,17 +271,11 @@ Output: {"automation_subcategory":"detailed_invoice","confidence":0.97,"reason_c
 Input: Please enable Media Relay from your end.
 Output: {"automation_subcategory":"enablement","confidence":0.98,"reason_code":"registered_enablement","automation_candidate":null,"evidence_spans":["enable Media Relay from your end"],"risk_flags":[]}
 
-Input: Our free package reached 10,000 minutes and the account was suspended. We topped up $10; please restore access.
-Output: {"automation_subcategory":"account_suspension","confidence":0.98,"reason_code":"registered_account_suspension","automation_candidate":null,"evidence_spans":["free package reached 10,000 minutes","topped up $10","restore access"],"risk_flags":[]}
-
 Input: Our account was blocked for suspicious activity. Please review the company and use-case information below.
 Output: {"automation_subcategory":"fraud_account","confidence":0.98,"reason_code":"registered_fraud_account","automation_candidate":null,"evidence_spans":["blocked for suspicious activity","company and use-case information"],"risk_flags":[]}
 
 Input: Agora's suspension notice asks us to provide Company Information, Contact Information, Use Case, and Payment Information. Those details are included below for account review.
 Output: {"automation_subcategory":"fraud_account","confidence":0.98,"reason_code":"registered_fraud_account","automation_candidate":null,"evidence_spans":["Company Information","Contact Information","Use Case","Payment Information"],"risk_flags":[]}
-
-Input: Our account is suspended after the free package was exhausted, but no fraud-review information was requested.
-Output: {"automation_subcategory":"account_suspension","confidence":0.97,"reason_code":"registered_account_suspension","automation_candidate":null,"evidence_spans":["account is suspended","free package was exhausted"],"risk_flags":[]}
 
 Input: Please activate invoice billing and replace our credit card payment method.
 Output: {"automation_subcategory":"unregistered","confidence":0.98,"reason_code":"no_registered_subcategory","automation_candidate":"invoice_billing","evidence_spans":["invoice billing","credit card payment method"],"risk_flags":[]}

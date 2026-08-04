@@ -15,40 +15,41 @@ def _route_result(*, action: str = "account_suspension") -> AccountRouteResult:
         "pipeline_version": ACCOUNT_ROUTE_PIPELINE_VERSION,
         "intent_class": "agora",
         "conversation_action": None,
-        "agora_route": "automation",
-        "automation_subcategory": action,
-        "route_target": "automation",
+        "agora_route": "account_billing",
+        "automation_subcategory": None,
+        "account_billing_subcategory": action,
+        "route_target": "human_review",
         "route_reason_code": f"registered_{action}",
         "stage_confidences": {
             "intent_classifier": 0.99,
             "agora_router": 0.98,
-            "automation_router": 0.97,
+            "account_billing_router": 0.97,
         },
         "stage_reason_codes": {
             "intent_classifier": "agora_case",
-            "agora_router": "explicit_backend_operation",
-            "automation_router": f"registered_{action}",
+            "agora_router": "account_billing_request",
+            "account_billing_router": f"registered_{action}",
         },
         "primary_label": "Agora",
-        "secondary_label": "Automation / Account Suspension",
-        "handler_binding_status": "active",
+        "secondary_label": "Account & Billing / Account Suspension",
+        "handler_binding_status": None,
     }
     decision = SupportRouteDecision(
-        scope_label="billing",
-        route=action,
-        route_family="automated",
-        execution_action=action,
+        scope_label="account_billing",
+        route="human_review_required",
+        route_family="human_review",
+        execution_action="human_review_required",
         confidence=0.97,
         reason=f"registered_{action}",
-        semantic_intent=f"billing.{action}",
-        automation_eligibility="eligible",
+        semantic_intent=f"account_billing.{action}",
+        automation_eligibility="not_eligible",
         router_source="account_layered_llm",
     )
     return AccountRouteResult(
         decision=decision,
         classification=classification,
         primary_label="Agora",
-        secondary_label="Automation / Account Suspension",
+        secondary_label="Account & Billing / Account Suspension",
         prompt_snapshots={"intent_classifier": {"system_prompt": "system", "user_prompt": "user"}},
     )
 
@@ -92,14 +93,18 @@ class AccountCaseRerouteTests(unittest.TestCase):
             result.account_case["route_classification"]["previous_pipeline_version"],
             "account-layered-router-v1",
         )
-        self.assertEqual(result.account_case["route_classification"]["handler_binding_status"], "classification_only")
+        self.assertIsNone(result.account_case["route_classification"]["handler_binding_status"])
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertEqual(result.account_case["subcategory"], "account_suspension")
+        self.assertEqual(result.account_case["route_status"], "not_automated")
+        self.assertIsNone(result.account_case["automation_handler"])
         self.assertEqual(result.account_case["missing_fields"], ["company_name"])
         self.assertEqual(result.account_case["customer_reply"], "Existing reply")
         self.assertEqual(result.route_execution["trigger"], "bulk_latest_reroute")
         self.assertNotIn("internal_email", result.route_execution)
         self.assertTrue(route_agent.call_args.kwargs["require_latest"])
 
-    def test_new_automation_route_is_classification_only(self) -> None:
+    def test_new_account_billing_suspension_route_is_not_automated(self) -> None:
         original = {
             "account_case_id": "AC-1",
             "billing_ticket_id": "AC-1",
@@ -114,12 +119,9 @@ class AccountCaseRerouteTests(unittest.TestCase):
 
         result = reroute_account_case(original, route_agent=Mock(return_value=_route_result()))
 
-        self.assertEqual(
-            result.account_case["route_classification"]["handler_binding_status"],
-            "classification_only",
-        )
-        self.assertEqual(result.account_case["route_status"], "automated")
-        self.assertEqual(result.account_case["automation_status"], "classified_only")
+        self.assertIsNone(result.account_case["route_classification"]["handler_binding_status"])
+        self.assertEqual(result.account_case["route_status"], "not_automated")
+        self.assertEqual(result.account_case["automation_status"], "not_automated")
 
     def test_cli_is_dry_run_by_default_and_apply_persists_route_and_audit(self) -> None:
         item = {

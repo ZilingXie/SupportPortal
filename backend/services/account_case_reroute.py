@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.services.account_admin import route_execution_from_decision
+from backend.services.account_billing_handlers import account_billing_metadata
 from backend.services.account_route_pipeline import (
     ACCOUNT_ROUTE_PIPELINE_VERSION,
     AccountRouteResult,
@@ -74,9 +75,16 @@ def reroute_account_case(
     previous_pipeline_version = str(previous_classification.get("pipeline_version") or "").strip() or None
     timestamp = created_at or datetime.now(timezone.utc).isoformat()
     action = str(decision.execution_action or decision.route or "").strip()
-    metadata = automation_metadata(
-        route_family=decision.route_family,
-        execution_action=action,
+    account_billing_subcategory = str(
+        classification.get("account_billing_subcategory") or ""
+    ).strip()
+    metadata = (
+        account_billing_metadata(account_billing_subcategory)
+        if classification.get("agora_route") == "account_billing"
+        else automation_metadata(
+            route_family=decision.route_family,
+            execution_action=action,
+        )
     )
 
     same_active_automation = (
@@ -86,10 +94,7 @@ def reroute_account_case(
         and str(current.get("automation_handler") or "").strip()
         == str(metadata.get("automation_handler") or "").strip()
     )
-    if action == "account_suspension" and metadata["route_status"] == "automated":
-        classification["handler_binding_status"] = "classification_only"
-        classification["automation_mode"] = "classification_only"
-    elif same_active_automation:
+    if same_active_automation:
         classification["handler_binding_status"] = previous_classification.get(
             "handler_binding_status"
         ) or classification.get("handler_binding_status")
@@ -124,9 +129,7 @@ def reroute_account_case(
     )
     if str(current.get("automation_status") or "").strip() in {"", "automation", "not_automated"}:
         updated["automation_status"] = (
-            "classified_only"
-            if action == "account_suspension" and metadata["route_status"] == "automated"
-            else "automation" if metadata["route_status"] == "automated" else "not_automated"
+            "automation" if metadata["route_status"] == "automated" else "not_automated"
         )
     compared_fields = {
         "route",

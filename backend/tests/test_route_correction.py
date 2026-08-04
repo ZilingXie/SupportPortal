@@ -61,10 +61,13 @@ class RouteCorrectionValidationTests(unittest.TestCase):
     def test_account_suspension_is_a_selectable_correction(self) -> None:
         result = validate_route_correction(
             scope_label="account_suspension",
-            execution_action="account_suspension",
+            execution_action="human_review_required",
         )
-        self.assertEqual(result["route_family"], "automated")
-        self.assertEqual(result["automation_handler"], "account_suspension")
+        self.assertEqual(result["scope_label"], "account_billing")
+        self.assertEqual(result["route_family"], "human_review")
+        self.assertEqual(result["category"], "account_billing")
+        self.assertEqual(result["subcategory"], "account_suspension")
+        self.assertIsNone(result["automation_handler"])
         self.assertEqual(result["tooling_profile"], "classification_only")
 
     def test_whitespace_and_case_normalized(self) -> None:
@@ -86,7 +89,7 @@ class RouteCorrectionValidationTests(unittest.TestCase):
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
             ("billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
             ("billing", "account_verification", "automated", "deterministic_billing_intake"),
-            ("account_suspension", "account_suspension", "automated", "classification_only"),
+            ("account_suspension", "human_review_required", "human_review", "classification_only"),
             ("fraud_account", "fraud_account", "automated", "deterministic_billing_intake"),
             ("enablement", "enablement", "automated", "deterministic_enablement_intake"),
             ("quota", "quota", "automated", "deterministic_quota_intake"),

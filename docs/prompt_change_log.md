@@ -3162,3 +3162,27 @@ For each new entry, record:
   - Extraction remains optional and classification-only: missing or uncertain fields never trigger a follow-up, email, or Human Review.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_suspension_field_extractor.py backend/tests/test_account_automation_state_repair.py backend/tests/test_agent_config.py`
+
+## 2026-08-04 - Account Suspension moved to Account & Billing
+
+- Area or subsystem: `/account` Agora Router, Account & Billing Router, Automation Router, and Account Suspension extraction
+- Prompt or model version: `account-layered-router-v4`, `account-billing-v1`, `account-automation-v7` / existing `intent_router` profile
+- Summary: Added an Account & Billing sub-router with `account_suspension` and `other`, routed non-fraud suspension reports away from Automation, and removed Account Suspension from the Account-only Automation taxonomy. The existing grounded suspension extractor now runs as a classification-only Account & Billing handler.
+- Reason: Non-fraud account suspension currently has no automated operation, customer follow-up, or internal handoff. Keeping it under Automation made `route_status=automated` and lifecycle state imply execution that never occurs.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/account_billing_handlers.py`
+  - `backend/services/account_automation_handlers.py`
+  - `backend/services/account_case_reroute.py`
+  - `backend/services/account_full_reroute.py`
+  - `backend/main.py`
+  - Account UI and Admin Agent Config contracts
+- Expected behavior change:
+  - Balance, payment, package, quota, plan, or usage-related suspension reports route to `Agora / Account & Billing / Account Suspension` with `route_status=not_automated` and `automation_handler=null`.
+  - Refunds, balances, payment methods, pricing, account administration, and other financial requests route to `Agora / Account & Billing / Other`.
+  - Fraud/risk/security-review suspensions remain `Automation / Fraud Account`.
+  - New cases, ordinary replies, and full reruns re-extract optional suspension status, known reason, and customer actions without asking, emailing, or generating a customer reply.
+  - `/client` and the shared legacy Automation registry remain unchanged.
+- Verification:
+  - Targeted Account route, intake, reroute, correction, UI, Admin, prompt, and feature-list checks.

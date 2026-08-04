@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.account_billing_handlers import account_billing_handler
 from backend.services.account_case_reroute import AccountCaseReroute, reroute_account_case
 from backend.services.account_suspension_field_extractor import (
     AccountSuspensionFieldExtraction,
@@ -151,6 +152,48 @@ def reprocess_account_case(
     rerouted = reroute(original, canonical_ticket=ticket)
     current = dict(rerouted.account_case)
     action = str(current.get("execution_action") or current.get("route") or "").strip()
+    account_billing_subcategory = str(
+        (current.get("route_classification") or {}).get("account_billing_subcategory")
+        if isinstance(current.get("route_classification"), dict)
+        else ""
+    ).strip()
+    account_billing_registration = account_billing_handler(account_billing_subcategory)
+    if (
+        account_billing_registration is not None
+        and account_billing_registration.implementation == "classification_only"
+    ):
+        updated = _clear_automation_state(
+            current,
+            reason="account_billing_classification_only",
+        )
+        extraction = extract_suspension(
+            ticket_subject=str(ticket.get("subject") or current.get("title") or ""),
+            customer_messages=_customer_messages(ticket),
+            existing_fields={},
+        )
+        classification = dict(updated.get("route_classification") or {})
+        classification.update(
+            field_extraction=extraction.audit_payload(),
+            account_billing_extractor_reprocessed=True,
+        )
+        updated.update(
+            collected_fields=dict(extraction.collected_fields),
+            automation_context={},
+            route_classification=classification,
+        )
+        execution = dict(rerouted.route_execution)
+        execution["classification"] = classification
+        prompt_snapshots = dict(execution.get("prompt_snapshots") or {})
+        prompt_snapshots["account_suspension_field_extractor"] = dict(
+            extraction.prompt_snapshot
+        )
+        execution["prompt_snapshots"] = prompt_snapshots
+        return AccountFullRerouteResult(
+            updated,
+            execution,
+            updated != original,
+            "account_billing_classification_only",
+        )
     registration = account_automation_handler(action)
     if registration is None or str(current.get("route_status") or "") != "automated":
         updated = _clear_automation_state(current, reason="full_reroute_not_automation")
@@ -186,19 +229,7 @@ def reprocess_account_case(
     }
     requires_human_review = False
 
-    if registration.implementation == "classification_only":
-        extraction = extract_suspension(
-            ticket_subject=subject,
-            customer_messages=customer_messages,
-            existing_fields={},
-        )
-        collected_fields = dict(extraction.collected_fields)
-        automation_context.update(
-            handler_mode="classification_only",
-            extraction_status=extraction.status,
-            extractor_version=extraction.audit_payload().get("prompt_version"),
-        )
-    elif registration.implementation == "account_verification":
+    if registration.implementation == "account_verification":
         follow_up_count = int(prior_context.get("follow_up_count") or 0) if same_original_binding else 0
         if asked_for_handler:
             follow_up_count = max(1, follow_up_count)
@@ -317,15 +348,11 @@ def reprocess_account_case(
         )
 
     classification = dict(current.get("route_classification") or {})
-    binding = "classification_only" if registration.implementation == "classification_only" else (
-        "completed" if internal_email else "active" if missing_fields else "completed"
-    )
+    binding = "completed" if internal_email else "active" if missing_fields else "completed"
     classification.update(
         handler_binding_status=binding,
         automation_reprocessed=True,
     )
-    if registration.implementation == "classification_only":
-        classification["automation_mode"] = "classification_only"
     if extraction is not None:
         classification["field_extraction"] = extraction.audit_payload()
 
@@ -339,16 +366,16 @@ def reprocess_account_case(
     else:
         persisted_email = internal_email
         email_status = "pending" if internal_email else (
-            "not_applicable" if registration.implementation == "classification_only" else "not_ready"
+            "not_ready"
         )
         email_reason = "" if internal_email else (
-            "classification_only" if registration.implementation == "classification_only" else "missing_required_fields"
+            "missing_required_fields"
         )
         email_to_send = internal_email
 
     updated = {
         **current,
-        "automation_status": "classified_only" if registration.implementation == "classification_only" else "automation",
+        "automation_status": "automation",
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,
         "customer_reply": None,

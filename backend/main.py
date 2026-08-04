@@ -64,6 +64,10 @@ from backend.services.agora_service_events import get_agora_service_events_paylo
 from backend.services.billing_automation import build_billing_automation_result, send_billing_internal_email
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.account_billing_handlers import (
+    account_billing_handler,
+    account_billing_metadata,
+)
 from backend.services.account_verification_automation import build_account_verification_automation_result
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
 from backend.services.account_suspension_field_extractor import (
@@ -536,16 +540,11 @@ def _build_account_suspension_classification_attempt(
         "internal_email_payload": None,
         "internal_email_to_send": None,
         "internal_email_send_status": "not_applicable",
-        "internal_email_send_reason": "classification_only",
+        "internal_email_send_reason": "account_billing_classification_only",
         "requires_human_review": False,
         "field_extraction": extraction,
         "prompt_snapshots": {"account_suspension_field_extractor": dict(extraction.prompt_snapshot)},
-        "automation_context": {
-            "handler": "account_suspension",
-            "handler_mode": "classification_only",
-            "extractor_version": extraction.audit_payload().get("prompt_version"),
-            "extraction_status": extraction.status,
-        },
+        "automation_context": {},
     }
 
 
@@ -4046,7 +4045,14 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
     route_prompt_snapshots = dict(account_route_result.prompt_snapshots)
     route = str(decision.execution_action or decision.route or "").strip()
     route_family = str(decision.route_family or "").strip()
-    route_metadata = automation_metadata(route_family=route_family, execution_action=route)
+    account_billing_subcategory = str(
+        route_classification.get("account_billing_subcategory") or ""
+    ).strip()
+    route_metadata = (
+        account_billing_metadata(account_billing_subcategory)
+        if route_classification.get("agora_route") == "account_billing"
+        else automation_metadata(route_family=route_family, execution_action=route)
+    )
     is_automation_route = is_registered_automation(
         route_family=route_family,
         execution_action=route,
@@ -4076,6 +4082,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
     assistant_reply_facts: dict[str, Any] | None = None
     internal_email_send_status = "not_applicable"
     internal_email_send_reason = ""
+    account_billing_registration = account_billing_handler(account_billing_subcategory)
 
     if is_automation_route:
         response_status = "automation"
@@ -4091,11 +4098,6 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
                 customer_email=str(request.customer_email or "").strip() or None,
             )
             automation_attempt = billing_email_attempt
-        elif handler_registration.implementation == "classification_only":
-            automation_attempt = _build_account_suspension_classification_attempt(
-                ticket_subject=title,
-                customer_messages=list(ticket.get("messages") or []),
-            )
         elif handler_registration.implementation == "billing":
             billing_email_attempt = _build_billing_internal_email_attempt(
                 action=route,
@@ -4195,12 +4197,22 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
             internal_email_send_status = str(automation_attempt["internal_email_send_status"])
             internal_email_send_reason = str(automation_attempt["internal_email_send_reason"])
             route_classification["handler_binding_status"] = "active" if missing_fields else "completed"
-            if handler_registration.implementation == "classification_only":
-                response_status = "classified_only"
-                route_classification["handler_binding_status"] = "classification_only"
-                route_classification["automation_mode"] = "classification_only"
             if automation_attempt.get("internal_email_to_send"):
                 route_classification["handler_binding_status"] = "completed"
+    elif (
+        account_billing_registration is not None
+        and account_billing_registration.implementation == "classification_only"
+    ):
+        classification_attempt = _build_account_suspension_classification_attempt(
+            ticket_subject=title,
+            customer_messages=list(ticket.get("messages") or []),
+        )
+        extraction = classification_attempt["field_extraction"]
+        collected_fields = dict(classification_attempt["collected_fields"])
+        internal_email_send_status = "not_applicable"
+        internal_email_send_reason = "account_billing_classification_only"
+        route_classification["field_extraction"] = extraction.audit_payload()
+        route_prompt_snapshots.update(dict(classification_attempt["prompt_snapshots"]))
     if not ticket_saved:
         await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
 
@@ -5176,23 +5188,29 @@ async def correct_billing_ticket_route(
     scope_label = request.scope_label
     execution_action = request.execution_action
     if category:
-        if category != "automation":
+        if category not in {"automation", "account_billing"}:
             raise HTTPException(status_code=400, detail=f"invalid category: {request.category!r}")
         execution_action = request.subcategory
         normalized_action = str(execution_action or "").strip().lower()
-        scope_label = (
-            "enablement"
-            if normalized_action == "enablement"
-            else "quota"
-            if normalized_action == "quota"
-            else "fraud_account"
-            if normalized_action == "fraud_account"
-            else "account_suspension"
-            if normalized_action == "account_suspension"
-            else "automation"
-            if normalized_action == "unregistered"
-            else "billing"
-        )
+        if category == "account_billing":
+            execution_action = "human_review_required"
+            scope_label = (
+                "account_suspension"
+                if normalized_action == "account_suspension"
+                else "account_billing"
+            )
+        else:
+            scope_label = (
+                "enablement"
+                if normalized_action == "enablement"
+                else "quota"
+                if normalized_action == "quota"
+                else "fraud_account"
+                if normalized_action == "fraud_account"
+                else "automation"
+                if normalized_action == "unregistered"
+                else "billing"
+            )
     if not scope_label or not execution_action:
         raise HTTPException(
             status_code=400,
@@ -5246,6 +5264,7 @@ async def correct_billing_ticket_route(
             scope_label=corrected["scope_label"],
             route_family=corrected["route_family"],
             execution_action=corrected["execution_action"],
+            subcategory=corrected.get("account_billing_subcategory"),
             previous=billing_ticket.get("route_classification"),
         ),
         "updated_at": timestamp,
@@ -5475,12 +5494,6 @@ async def reply_to_billing_ticket(
                 existing_fields=prior_collected_fields,
                 follow_up_count=persisted_follow_up_count,
             )
-        if registration.implementation == "classification_only":
-            return _build_account_suspension_classification_attempt(
-                ticket_subject=str(canonical_ticket.get("subject") or billing_ticket.get("title") or ""),
-                customer_messages=list(canonical_ticket.get("messages") or []),
-                existing_fields=prior_collected_fields,
-            )
         if registration.implementation == "billing":
             return _build_billing_internal_email_attempt(
                 action=action,
@@ -5516,6 +5529,7 @@ async def reply_to_billing_ticket(
         raise HTTPException(status_code=409, detail="account case has no registered automation handler")
 
     automation_attempt: dict[str, Any] | None = None
+    classification_attempt: dict[str, Any] | None = None
     handler_continued = False
     route_result = None
     if prior_classification.get("handler_binding_status") == "active" and prior_handler:
@@ -5599,11 +5613,18 @@ async def reply_to_billing_ticket(
             )
         decision = route_result.decision
         route = str(decision.execution_action or decision.route or "").strip()
-        route_metadata = automation_metadata(
-            route_family=decision.route_family,
-            execution_action=route,
-        )
         route_classification = dict(route_result.classification)
+        account_billing_subcategory = str(
+            route_classification.get("account_billing_subcategory") or ""
+        ).strip()
+        route_metadata = (
+            account_billing_metadata(account_billing_subcategory)
+            if route_classification.get("agora_route") == "account_billing"
+            else automation_metadata(
+                route_family=decision.route_family,
+                execution_action=route,
+            )
+        )
         if prior_classification.get("handler_binding_status") == "active":
             route_classification["superseded_automation_handler"] = prior_handler or None
             route_classification["previous_handler_binding_status"] = "superseded"
@@ -5665,22 +5686,45 @@ async def reply_to_billing_ticket(
                 )
             else:
                 registration = account_automation_handler(route)
-                billing_ticket["automation_status"] = (
-                    "classified_only"
-                    if registration and registration.implementation == "classification_only"
-                    else "automation"
-                )
+                billing_ticket["automation_status"] = "automation"
         else:
+            account_billing_registration = account_billing_handler(account_billing_subcategory)
+            if (
+                account_billing_registration is not None
+                and account_billing_registration.implementation == "classification_only"
+            ):
+                classification_attempt = _build_account_suspension_classification_attempt(
+                    ticket_subject=str(
+                        canonical_ticket.get("subject") or billing_ticket.get("title") or ""
+                    ),
+                    customer_messages=list(canonical_ticket.get("messages") or []),
+                )
+                extraction = classification_attempt["field_extraction"]
+                route_classification["field_extraction"] = extraction.audit_payload()
             billing_ticket.update(
                 automation_status="not_automated",
                 missing_fields=[],
-                collected_fields={},
+                collected_fields=(
+                    dict(classification_attempt["collected_fields"])
+                    if classification_attempt is not None
+                    else {}
+                ),
                 customer_reply=None,
                 internal_email_payload=None,
                 internal_email_send_status="not_applicable",
-                internal_email_send_reason="",
+                internal_email_send_reason=(
+                    "account_billing_classification_only"
+                    if classification_attempt is not None
+                    else ""
+                ),
+                automation_context={},
+                route_classification=route_classification,
             )
         route_prompt_snapshots = dict(route_result.prompt_snapshots)
+        if classification_attempt is not None:
+            route_prompt_snapshots.update(
+                dict(classification_attempt.get("prompt_snapshots") or {})
+            )
         extraction = automation_attempt.get("field_extraction") if automation_attempt else None
         if isinstance(
             extraction,
@@ -5813,13 +5857,6 @@ async def reply_to_billing_ticket(
             else prior_classification
         )
         current_classification["handler_binding_status"] = "active" if missing_fields else "completed"
-        active_registration = account_automation_handler(
-            str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "")
-        )
-        if active_registration and active_registration.implementation == "classification_only":
-            current_classification["handler_binding_status"] = "classification_only"
-            current_classification["automation_mode"] = "classification_only"
-            billing_ticket["automation_status"] = "classified_only"
         if automation_attempt.get("internal_email_to_send"):
             current_classification["handler_binding_status"] = "completed"
         billing_ticket.update(
