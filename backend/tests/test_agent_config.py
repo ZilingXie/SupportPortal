@@ -58,7 +58,8 @@ class AgentConfigTests(unittest.TestCase):
         route_prompts = {item["key"]: item for item in agents["route-agent"]["prompts"]}
         self.assertEqual(route_prompts["account-intent-classifier-system"]["version"], "account-intent-v2")
         self.assertEqual(route_prompts["account-agora-router-system"]["version"], "account-agora-v5")
-        self.assertEqual(route_prompts["account-automation-router-system"]["version"], "account-automation-v6")
+        self.assertEqual(route_prompts["account-automation-router-system"]["version"], "account-automation-v7")
+        self.assertEqual(route_prompts["account-account-billing-router-system"]["version"], "account-billing-v1")
         self.assertEqual(route_prompts["account-agora-router-system"]["metadata"]["scope"], "/account")
         self.assertEqual(route_prompts["account-automation-router-system"]["metadata"]["managed"], False)
         self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["metadata"]["managed"], True)
@@ -78,7 +79,7 @@ class AgentConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             route_prompts["account-detailed-invoice-field-extractor-system"]["version"],
-            "detailed-invoice-fields-v1",
+            "detailed-invoice-fields-v2",
         )
         self.assertEqual(route_prompts["route-system"]["version"], "account-router-v2")
         component_keys = {item["key"] for item in agents["route-agent"]["components"]}
@@ -122,7 +123,7 @@ class AgentConfigTests(unittest.TestCase):
         self.assertTrue(all(isinstance(node["is_agent"], bool) for node in all_nodes))
         self.assertEqual(
             [node["key"] for node in all_nodes if node["is_agent"]],
-            ["route-agent", "agora-router", "automation-router"],
+            ["route-agent", "agora-router", "account-billing-router", "automation-router"],
         )
         self.assertTrue(all(node["is_agent"] for node in all_nodes if node["kind"] in {"agent", "router"}))
         self.assertTrue(all(not node["is_agent"] for node in all_nodes if node["kind"] in {"outcome", "handoff", "automation", "fallback"}))
@@ -135,7 +136,16 @@ class AgentConfigTests(unittest.TestCase):
         automation = self._navigation_node(route_navigation, "automation-router")
         self.assertEqual(
             [item["key"] for item in automation["children"]],
-            ["fraud-account", "account-suspension", "detailed-invoice", "enablement", "quota", "unregistered"],
+            ["fraud-account", "detailed-invoice", "enablement", "quota", "unregistered"],
+        )
+        account_billing = self._navigation_node(route_navigation, "account-billing-router")
+        self.assertEqual(
+            [item["key"] for item in account_billing["children"]],
+            ["account-suspension", "account-billing-other"],
+        )
+        self.assertEqual(
+            account_billing["prompt_keys"],
+            ["account-account-billing-router-system"],
         )
         self.assertEqual(automation["prompt_keys"], ["account-automation-router-system"])
         self.assertFalse(any("persona" in child for child in automation["children"]))

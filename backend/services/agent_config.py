@@ -242,17 +242,6 @@ def _route_agent_navigation() -> dict[str, Any]:
                 ],
             ),
             _route_node(
-                "account-suspension",
-                "Account Suspension",
-                "Extracts grounded suspension details for classification-only handling.",
-                kind="automation",
-                is_agent=False,
-                prompt_keys=["account-suspension-field-extractor-system"],
-                capabilities=[
-                    _component("classification-only", "Classification only", "Does not generate an automated customer resolution."),
-                ],
-            ),
-            _route_node(
                 "detailed-invoice",
                 "Detailed Invoice",
                 "Extracts detailed invoice fields and lets the Automation Persona generate the customer reply.",
@@ -297,6 +286,34 @@ def _route_agent_navigation() -> dict[str, Any]:
             ),
         ],
     )
+    account_billing = _route_node(
+        "account-billing-router",
+        "Account & Billing Router",
+        "Classifies Account & Billing requests as Account Suspension or Other.",
+        kind="router",
+        is_agent=True,
+        prompt_keys=["account-account-billing-router-system"],
+        children=[
+            _route_node(
+                "account-suspension",
+                "Account Suspension",
+                "Extracts optional suspension details without sending email or customer replies.",
+                kind="classification",
+                is_agent=False,
+                prompt_keys=["account-suspension-field-extractor-system"],
+                capabilities=[
+                    _component("classification-only", "Classification only", "Runs best-effort field extraction only."),
+                ],
+            ),
+            _route_node(
+                "account-billing-other",
+                "Other",
+                "Classifies other account and billing requests for downstream human handling.",
+                kind="outcome",
+                is_agent=False,
+            ),
+        ],
+    )
     agora = _route_node(
         "agora-router",
         "Agora Router",
@@ -307,7 +324,7 @@ def _route_agent_navigation() -> dict[str, Any]:
         children=[
             _route_node("agora-technical", "Agora Technical", "Routes technical Agora product and SDK questions to technical support.", kind="outcome", is_agent=False),
             _route_node("agora-non-technical", "Agora Non-technical", "Routes non-technical Agora product questions to the appropriate support workflow.", kind="outcome", is_agent=False),
-            _route_node("account-billing", "Account & Billing", "Routes account and billing requests that do not match a registered Automation behavior.", kind="outcome", is_agent=False),
+            account_billing,
             automation,
             human_review("agora-uncategorized", "Handles Agora requests that the router cannot categorize reliably."),
         ],
@@ -361,9 +378,14 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "Classifies Agora requests as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
                 ),
                 _component(
+                    "account-account-billing-router",
+                    "Account & Billing Router",
+                    "Classifies /account billing requests as Account Suspension or Other.",
+                ),
+                _component(
                     "account-automation-router",
                     "Automation Router",
-                    "Selects Fraud Account, Account Suspension, Detailed Invoice, Enablement, Quota, or Unregistered.",
+                    "Selects Fraud Account, Detailed Invoice, Enablement, Quota, or Unregistered.",
                 ),
                 _component(
                     "account-enablement-field-extractor",

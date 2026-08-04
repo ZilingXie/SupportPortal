@@ -166,14 +166,22 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stage_details"]))
         self.assertEqual(
             [category["name"] for category in payload["route_categories"]],
-            ["conversation", "intent", "agora", "automation"],
+            ["conversation", "intent", "agora", "account_billing", "automation"],
         )
+        account_billing = next(
+            category
+            for category in payload["route_categories"]
+            if category["name"] == "account_billing"
+        )
+        self.assertEqual(account_billing["subcategories"], ["account_suspension", "other"])
+        self.assertEqual(account_billing["handler_modes"]["account_suspension"], "classification_only")
         automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
         self.assertEqual(
             automation["subcategories"],
-            ["account_verification", "account_suspension", "detailed_invoice", "enablement", "quota", "unregistered"],
+            ["fraud_account", "detailed_invoice", "enablement", "quota", "unregistered"],
         )
         self.assertIn("Intent Classifier", payload["system_prompt"])
+        self.assertIn("Account & Billing Router", payload["system_prompt"])
         self.assertIn("Automation Router", payload["system_prompt"])
 
     def test_persona_draft_publish_assignment_and_rollback_are_versioned(self) -> None:

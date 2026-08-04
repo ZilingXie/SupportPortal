@@ -178,18 +178,42 @@ class AccountFullRerouteTests(unittest.TestCase):
                 grounding_status="passed",
             )
         )
+        rerouted = {
+            **original,
+            "route": "human_review_required",
+            "execution_action": "human_review_required",
+            "route_family": "human_review",
+            "route_status": "not_automated",
+            "category": "account_billing",
+            "subcategory": "account_suspension",
+            "automation_handler": None,
+            "route_classification": {
+                "primary_label": "Agora",
+                "secondary_label": "Account & Billing / Account Suspension",
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "account_suspension",
+            },
+        }
 
         result = reprocess_account_case(
             original,
             ticket=_ticket(),
-            reroute=Mock(return_value=_reroute_result(original)),
+            reroute=Mock(return_value=_reroute_result(rerouted)),
             extract_suspension=extractor,
         )
 
         self.assertEqual(extractor.call_args.kwargs["existing_fields"], {})
         self.assertEqual(result.account_case["collected_fields"], {"known_reason": "balance"})
-        self.assertEqual(result.account_case["automation_status"], "classified_only")
+        self.assertEqual(result.account_case["automation_status"], "not_automated")
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertIsNone(result.account_case["automation_handler"])
         self.assertEqual(result.account_case["internal_email_send_status"], "not_applicable")
+        self.assertEqual(result.account_case["automation_context"], {})
+        self.assertIn("field_extraction", result.route_execution["classification"])
+        self.assertIn(
+            "account_suspension_field_extractor",
+            result.route_execution["prompt_snapshots"],
+        )
         self.assertIsNone(result.internal_email_to_send)
         self.assertFalse(result.customer_reply)
 

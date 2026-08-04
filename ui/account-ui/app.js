@@ -93,7 +93,7 @@ const ROUTE_LABEL_FILTERS = new Set([
 const ROUTE_LABEL_FILTER_MATCHES = {
   human_review: new Set(["Human Review", "Agora / Uncategorized", "Uncertain"]),
   agora_technical: "Agora Technical",
-  account_billing: "Account & Billing",
+  account_billing: "Account & Billing /",
   conversation: "Conversation",
 };
 
@@ -103,11 +103,11 @@ const ROUTE_TUPLE_OPTIONS = [
   { scope: "conversation", action: "human_review_required", label: "Conversation / Human Review" },
   { scope: "agora_technical", action: "rag", label: "Agora / Agora Technical" },
   { scope: "agora_non_technical", action: "web_search", label: "Agora / Agora Non-technical" },
-  { scope: "account_billing", action: "human_review_required", label: "Agora / Account & Billing" },
+  { scope: "account_suspension", action: "human_review_required", label: "Agora / Account & Billing / Account Suspension" },
+  { scope: "account_billing", action: "human_review_required", label: "Agora / Account & Billing / Other" },
   { scope: "uncategorized", action: "human_review_required", label: "Agora / Uncategorized" },
   { scope: "uncertain", action: "human_review_required", label: "Uncertain / Human Review" },
   { scope: "fraud_account", action: "fraud_account", label: "Automation / Fraud account" },
-  { scope: "automation", action: "account_suspension", label: "Automation / Account suspension" },
   { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
   { scope: "automation", action: "enablement", label: "Automation / Enablement" },
   { scope: "automation", action: "quota", label: "Automation / Quota" },
@@ -781,7 +781,9 @@ function matchesFilter(item) {
     const { primary } = classificationLabels(item);
     const expected = ROUTE_LABEL_FILTER_MATCHES[state.statusFilter];
     if (expected instanceof Set) return expected.has(secondary) || expected.has(primary);
-    return secondary === expected || primary === expected;
+    return state.statusFilter === "account_billing"
+      ? secondary.startsWith(expected)
+      : secondary === expected || primary === expected;
   }
   return true;
 }
@@ -1482,7 +1484,7 @@ function renderRerouteConfirmation() {
         <ul>
           <li>Previously sent internal emails will be sent again as a new rerun execution.</li>
           <li>Existing Account-only AI replies will be replaced after the new Persona reply is published.</li>
-          <li>Account Suspension remains classification-only and never sends an email or customer reply.</li>
+          <li>Account & Billing classification extractors also run again; they never send email or customer replies.</li>
         </ul>
         <div class="reroute-modal__actions">
           <button class="ghost-button" type="button" data-action="close-reroute-confirmation">Cancel</button>

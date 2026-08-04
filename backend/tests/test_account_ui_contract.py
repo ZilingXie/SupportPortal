@@ -41,7 +41,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("Rerun all Account Cases?", app_source)
         self.assertIn("Field Extractors", app_source)
         self.assertIn("Previously sent internal emails will be sent again", app_source)
-        self.assertIn("Account Suspension remains classification-only", app_source)
+        self.assertIn("Account & Billing classification extractors also run again", app_source)
         self.assertIn('aria-live="polite"', app_source)
         self.assertIn('role="progressbar"', app_source)
         self.assertIn("reroute-modal", styles)
@@ -105,7 +105,10 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('params.set("route_label", state.statusFilter)', app_source)
         self.assertIn('human_review: new Set(["Human Review", "Agora / Uncategorized", "Uncertain"])', app_source)
         self.assertIn('agora_technical: "Agora Technical"', app_source)
-        self.assertIn('account_billing: "Account & Billing"', app_source)
+        self.assertIn('account_billing: "Account & Billing /"', app_source)
+        self.assertIn("Account & Billing / Account Suspension", app_source)
+        self.assertIn("Account & Billing / Other", app_source)
+        self.assertNotIn("Automation / Account suspension", app_source)
         self.assertIn('conversation: "Conversation"', app_source)
         self.assertNotIn('non_agora: "Non-Agora"', app_source)
         filter_options = app_source.split("function renderFilterControls()", 1)[1].split("return `", 1)[0]
@@ -182,9 +185,10 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("routeErrorSummary", app_source)
         self.assertIn("ROUTE_TUPLE_OPTIONS", app_source)
         self.assertIn(
-            '{ scope: "automation", action: "account_suspension", label: "Automation / Account suspension" }',
+            '{ scope: "account_suspension", action: "human_review_required", label: "Agora / Account & Billing / Account Suspension" }',
             app_source,
         )
+        self.assertNotIn("Automation / Account suspension", app_source)
         self.assertIn(
             '{ scope: "automation", action: "enablement", label: "Automation / Enablement" }',
             app_source,

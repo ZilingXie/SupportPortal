@@ -22,11 +22,6 @@ _HANDLERS = {
         handler="billing",
         implementation="account_verification",
     ),
-    "account_suspension": AccountAutomationHandlerRegistration(
-        subcategory="account_suspension",
-        handler="account_suspension",
-        implementation="classification_only",
-    ),
     "detailed_invoice": AccountAutomationHandlerRegistration(
         subcategory="detailed_invoice",
         handler="billing",

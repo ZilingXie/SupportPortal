@@ -2076,15 +2076,15 @@ flowchart TD
         short: "Automation",
         title: "Automated Case intake / routing",
         status: "doing",
-        thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router 和 Automation Router，并同时记录大标签、小标签与稳定 reason code。Automation 以 fraud_account、account_suspension、detailed_invoice、enablement、quota 作为规范 subcategory；Account Suspension 本期为 classification-only，其他子类由已注册 handler 处理。`/client` 继续使用原共享 Router。",
+        thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router 和 Automation Router，并同时记录大标签、小标签与稳定 reason code。Account & Billing 以 account_suspension、other 为子类；Automation 以 fraud_account、detailed_invoice、enablement、quota 作为规范 subcategory。`/client` 继续使用原共享 Router。",
         done: [
           { summary: "`/account` 已强制采用当前三层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行三层路由、Field Extractor 与 Automation handler reconciliation，保留 route execution 审计并按 delivery binding 防止重复内部邮件。", prs: [] },
-          { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；Fraud Account 与非风控 Account Suspension 分开，Suspension 仅分类和提取上下文，不触发追问、邮件或客户回复。", prs: [] },
+          { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；非风控 Account Suspension 已迁移到 `category=account_billing`，由 Account & Billing Router 分类并仅提取上下文，不触发追问、邮件或客户回复。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Quota handler 已支持配额审核、并发提升和 Big Event 容量报备；系统以 LLM 收集产品、App ID、目标容量与活动信息，最多追问一次后发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Enablement 字段采集已切换为 LLM grounded extraction：App ID 不限制格式，模型必须引用客户原文；missing 只追问一次，uncertain、ambiguous 或 grounding 失败均转 Human Review 并取消待发送追问。", prs: [] },
           { summary: "Account Verification 已使用独立 LLM extractor 收集 Company、Contact、Use Case 与安全 Payment 概况；可选 Website/App ID 不再阻塞，最多追问一次，仍缺失时按现有信息发送内部邮件。", prs: [] },
-          { summary: "Billing automation intake 已覆盖 `detailed_invoice`、`account_verification` 和 `account_suspension`，并通过 Account 专用 handler registry 保持各子类执行规则独立。", prs: [409, 412, 426, 488] },
+          { summary: "Account Automation intake 已覆盖 `fraud_account`、`detailed_invoice`、`enablement` 和 `quota`；Account & Billing registry 单独注册 classification-only 的 `account_suspension` extractor，避免产生 Automation 副作用。", prs: [409, 412, 426, 488] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
@@ -2104,7 +2104,7 @@ flowchart TD
           "Zendesk webhook / N8n 中转已完成为内部来源入口；real Zendesk replay set 与 Outlook 回复轮询已落地，后续重点是 10% 到 100% 切量、人工审核和指标门禁。",
           "内部处理入口只保留 Outlook reply 作为正式流程；worker 读取 `[Billing Request]` 回复正文并把 PDF 附件转发到客户工单，成功处理后才标记邮件已读。",
           "白名单不要扩大过快；当前用 real Zendesk replay set 持续观察 invoice、account suspension、company verification 的 route_accuracy，再决定是否进一步扩展。",
-          "Automated Case 当前处理：`/account` 命中 Automation category 后按 subcategory 分派。Enablement 与 Fraud Account 仅消费 LLM 从客户原文 grounded 的结构化字段；Fraud Account 最多追问一次且 Website 可选，Account Suspension 仅提取状态、原因和客户动作，不执行后续操作。"
+          "Automated Case 当前处理：`/account` 命中 Automation category 后按 subcategory 分派。Enablement 与 Fraud Account 仅消费 LLM 从客户原文 grounded 的结构化字段；Fraud Account 最多追问一次且 Website 可选。非风控 Account Suspension 属于 Account & Billing，并仅提取状态、原因和客户动作。"
         ],
         next: [
           { id: "billing-monitor-replay-quality", status: "doing", label: "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。", horizon: "Monitor" },

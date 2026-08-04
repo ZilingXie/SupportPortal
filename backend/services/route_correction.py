@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
+from backend.services.account_billing_handlers import account_billing_metadata
 
 VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
@@ -40,6 +41,15 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "execution_action": "human_review_required",
         "route_family": "human_review",
         "tooling_profile": "classification_only",
+        "account_billing_subcategory": "other",
+    },
+    {
+        "scope_label": "account_suspension",
+        "canonical_scope_label": "account_billing",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+        "account_billing_subcategory": "account_suspension",
     },
     {
         "scope_label": "automation",
@@ -76,12 +86,6 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "execution_action": "account_verification",
         "route_family": AUTOMATED_ROUTE_FAMILY,
         "tooling_profile": "deterministic_billing_intake",
-    },
-    {
-        "scope_label": "account_suspension",
-        "execution_action": "account_suspension",
-        "route_family": AUTOMATED_ROUTE_FAMILY,
-        "tooling_profile": "classification_only",
     },
     {
         "scope_label": "billing",
@@ -175,15 +179,21 @@ def validate_route_correction(
         raise RouteCorrectionValidationError(
             f"invalid execution_action {execution_action!r} for scope_label {normalized_scope!r}"
         )
-    metadata = automation_metadata(
-        route_family=match["route_family"],
-        execution_action=match["execution_action"],
+    account_billing_subcategory = match.get("account_billing_subcategory")
+    metadata = (
+        account_billing_metadata(account_billing_subcategory)
+        if account_billing_subcategory
+        else automation_metadata(
+            route_family=match["route_family"],
+            execution_action=match["execution_action"],
+        )
     )
     return {
-        "scope_label": match["scope_label"],
+        "scope_label": match.get("canonical_scope_label", match["scope_label"]),
         "execution_action": match["execution_action"],
         "route_family": match["route_family"],
         "tooling_profile": match["tooling_profile"],
+        "account_billing_subcategory": account_billing_subcategory,
         **metadata,
     }
 

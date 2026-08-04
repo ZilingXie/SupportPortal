@@ -14,6 +14,7 @@ from backend.services.automation_routing import (
     is_registered_automation,
 )
 from backend.services.account_automation_handlers import registered_account_automation_subcategories
+from backend.services.account_billing_handlers import ACCOUNT_BILLING_SUBCATEGORIES
 from backend.services.billing_automation import BILLING_TOOLING_PROFILE
 from backend.services.enablement_automation import (
     ENABLEMENT_SEMANTIC_INTENT,
@@ -29,6 +30,7 @@ from backend.services.llm_profiles import (
 from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.prompts.account_routing import (
     ACCOUNT_AGORA_PROMPT_VERSION,
+    ACCOUNT_BILLING_PROMPT_VERSION,
     ACCOUNT_AUTOMATION_PROMPT_VERSION,
     ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
     ACCOUNT_DETAILED_INVOICE_FIELD_PROMPT_VERSION,
@@ -37,6 +39,7 @@ from backend.services.prompts.account_routing import (
     ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
     ACCOUNT_INTENT_PROMPT_VERSION,
     build_account_agora_system_prompt,
+    build_account_billing_system_prompt,
     build_account_automation_system_prompt,
     build_account_enablement_field_system_prompt,
     build_account_detailed_invoice_field_system_prompt,
@@ -52,9 +55,10 @@ from backend.services.support_router_prompt import build_route_prompt_hints
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v3"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v4"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
+ACCOUNT_BILLING_PROMPT_KEY = "account-account-billing-router-system"
 ACCOUNT_AUTOMATION_PROMPT_KEY = "account-automation-router-system"
 DEFAULT_ACCOUNT_ROUTE_CONFIDENCE_THRESHOLD = 0.7
 
@@ -64,6 +68,10 @@ _AGORA_ROUTES = {"technical", "non_technical", "account_billing", "automation", 
 _AUTOMATION_SUBCATEGORIES = {
     *(registered_account_automation_subcategories() - {"account_verification"}),
     "unregistered",
+}
+_ACCOUNT_BILLING_REASON_CODES = {
+    "registered_account_suspension",
+    "account_billing_other",
 }
 _INTENT_REASON_CODES = {
     "conversation_resolution",
@@ -77,7 +85,6 @@ _AGORA_REASON_CODES = {
     "non_technical_request",
     "account_billing_request",
     "explicit_backend_operation",
-    "classification_only_automation",
     "no_matching_category",
     "insufficient_route_information",
     "insufficient_backend_operation_evidence",
@@ -85,7 +92,6 @@ _AGORA_REASON_CODES = {
 }
 _AUTOMATION_REASON_CODES = {
     "registered_fraud_account",
-    "registered_account_suspension",
     "registered_detailed_invoice",
     "registered_enablement",
     "registered_quota",
@@ -140,6 +146,13 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-automation-router",
             "content": build_account_automation_system_prompt(),
             "version": ACCOUNT_AUTOMATION_PROMPT_VERSION,
+        },
+        {
+            "key": ACCOUNT_BILLING_PROMPT_KEY,
+            "name": "Account & Billing Router",
+            "component_key": "account-account-billing-router",
+            "content": build_account_billing_system_prompt(),
+            "version": ACCOUNT_BILLING_PROMPT_VERSION,
         },
         {
             "key": "account-enablement-field-extractor-system",
@@ -371,7 +384,10 @@ def _labels(classification: dict[str, Any]) -> tuple[str, str]:
         if route == "non_technical":
             return "Agora", "Agora Non-technical"
         if route == "account_billing":
-            return "Agora", "Account & Billing"
+            subcategory = str(
+                classification.get("account_billing_subcategory") or "other"
+            ).strip()
+            return "Agora", f"Account & Billing / {subcategory.replace('_', ' ').title()}"
         if route == "automation":
             subcategory = str(
                 classification.get("automation_subcategory") or "unregistered"
@@ -390,6 +406,7 @@ def classification_for_corrected_route(
     scope_label: str,
     route_family: str,
     execution_action: str,
+    subcategory: str | None = None,
     previous: Any = None,
 ) -> dict[str, Any]:
     """Build the canonical layered labels for an operator route correction."""
@@ -400,6 +417,7 @@ def classification_for_corrected_route(
             "conversation_action": None,
             "agora_route": "uncategorized",
             "automation_subcategory": None,
+            "account_billing_subcategory": None,
             "automation_candidate": None,
             "additional_intents": [],
             "backend_operation": None,
@@ -409,6 +427,7 @@ def classification_for_corrected_route(
             "stage_reason_codes": {"operator_correction": "route_corrected_by_operator"},
             "stage_reasons": {"operator_correction": "route_corrected_by_operator"},
             "handler_binding_status": None,
+            "automation_mode": None,
             "classification_source": "operator_correction",
             "pipeline_version": ACCOUNT_ROUTE_PIPELINE_VERSION,
         }
@@ -476,8 +495,14 @@ def classification_for_corrected_route(
             human_review_reason=None,
         )
     elif scope_label == "account_billing":
+        account_billing_subcategory = (
+            str(subcategory or "").strip().lower()
+            if str(subcategory or "").strip().lower() in ACCOUNT_BILLING_SUBCATEGORIES
+            else "other"
+        )
         classification.update(
             agora_route="account_billing",
+            account_billing_subcategory=account_billing_subcategory,
             route_target="human_review",
             human_review_reason="route_corrected_to_human_review",
         )
@@ -518,7 +543,8 @@ def account_case_labels(record: dict[str, Any]) -> tuple[str, str]:
     if scope == "agora_non_technical":
         return "Agora", "Agora Non-technical"
     if scope == "account_billing":
-        return "Agora", "Account & Billing"
+        subcategory = str(record.get("subcategory") or "other").strip()
+        return "Agora", f"Account & Billing / {subcategory.replace('_', ' ').title()}"
     if scope in {"billing", "human_review", "uncategorized"}:
         return "Agora", "Agora / Uncategorized"
     return "Uncertain", "Human Review"
@@ -575,6 +601,7 @@ def _human_review_result(
         "conversation_action": conversation_action,
         "agora_route": agora_route,
         "automation_subcategory": None,
+        "account_billing_subcategory": None,
         "automation_candidate": None,
         "additional_intents": [],
         "backend_operation": None,
@@ -648,13 +675,25 @@ def _legacy_result(
         )
     )
     if is_deterministic_suspension:
-        action = "account_suspension"
-        decision = SupportRouteDecision(
-            **{
-                **decision.__dict__,
-                "route": action,
-                "execution_action": action,
-            }
+        action = "human_review_required"
+        classification.update(
+            agora_route="account_billing",
+            account_billing_subcategory="account_suspension",
+            route_reason_code="registered_account_suspension",
+            stage_reason_codes={"legacy": "registered_account_suspension"},
+        )
+        decision = _decision(
+            scope_label="account_billing",
+            action=action,
+            confidence=decision.confidence,
+            reason="registered_account_suspension",
+            response_language=decision.response_language,
+            route_family="human_review",
+            semantic_intent="account_billing.account_suspension",
+            not_automated_reason="registered_account_suspension",
+            risk_flags=decision.risk_flags,
+            evidence_spans=_sanitize_evidence(decision.evidence_spans),
+            router_source="account_legacy_fallback",
         )
     elif action == "account_verification":
         action = "fraud_account"
@@ -699,10 +738,13 @@ def _legacy_result(
         classification.update(agora_route="technical", route_target="rag")
     elif decision.scope_label == "agora_non_technical":
         classification.update(agora_route="non_technical", route_target="web")
-    elif decision.scope_label == "billing":
+    elif decision.scope_label in {"billing", "account_billing"}:
         human_reason = decision.not_automated_reason or "human_review_required"
         classification.update(
             agora_route="account_billing",
+            account_billing_subcategory=(
+                classification.get("account_billing_subcategory") or "other"
+            ),
             human_review_reason=human_reason,
             route_target="human_review",
         )
@@ -867,6 +909,7 @@ def decide_account_route(
         "conversation_action": None,
         "agora_route": None,
         "automation_subcategory": None,
+        "account_billing_subcategory": None,
         "automation_candidate": None,
         "additional_intents": [],
         "selection_reason": None,
@@ -964,15 +1007,12 @@ def decide_account_route(
     elif agora_confidence < threshold:
         agora_route = "uncategorized"
         agora_reason = "low_agora_route_confidence"
-    elif agora_route == "automation" and agora_reason == "classification_only_automation":
-        pass
     elif agora_route != "uncategorized":
         agora_reason = agora_reason_defaults[agora_route]
     backend_operation = _backend_operation(agora_payload.get("backend_operation"))
     if (
         agora_route == "automation"
         and backend_operation is None
-        and agora_reason != "classification_only_automation"
     ):
         agora_route = "uncategorized"
         agora_reason = "insufficient_backend_operation_evidence"
@@ -1028,20 +1068,77 @@ def decide_account_route(
         ))
 
     if agora_route == "account_billing":
+        account_billing_attempt = _invoke_stage(
+            prompt_key=ACCOUNT_BILLING_PROMPT_KEY,
+            fallback_system_prompt=build_account_billing_system_prompt(),
+            payload={**base_payload, "parent_classification": classification},
+        )
+        attempts["account_billing_router"] = account_billing_attempt
+        account_billing_payload = account_billing_attempt.payload or {}
+        raw_subcategory = str(
+            account_billing_payload.get("account_billing_subcategory") or ""
+        ).strip().lower()
+        account_billing_confidence = _safe_confidence(account_billing_payload.get("confidence"))
+        if account_billing_attempt.payload is None:
+            subcategory = "other"
+            account_billing_reason = "invalid_account_billing_output"
+        elif account_billing_confidence < threshold:
+            subcategory = "other"
+            account_billing_reason = "low_account_billing_subcategory_confidence"
+        elif raw_subcategory not in ACCOUNT_BILLING_SUBCATEGORIES:
+            subcategory = "other"
+            account_billing_reason = "invalid_account_billing_output"
+        elif (
+            str(account_billing_payload.get("reason_code") or "").strip().lower()
+            not in _ACCOUNT_BILLING_REASON_CODES
+        ):
+            subcategory = "other"
+            account_billing_reason = "invalid_account_billing_output"
+        else:
+            subcategory = raw_subcategory
+            account_billing_reason = _controlled_reason(
+                account_billing_payload.get("reason_code"),
+                _ACCOUNT_BILLING_REASON_CODES,
+                "registered_account_suspension"
+                if subcategory == "account_suspension"
+                else "account_billing_other",
+            )
+        billing_additional_intents = [
+            " ".join(str(value or "").split()).strip()[:120]
+            for value in list(account_billing_payload.get("additional_intents") or [])[:4]
+            if " ".join(str(value or "").split()).strip()
+        ]
         classification.update(
+            account_billing_subcategory=subcategory,
+            account_billing_additional_intents=list(dict.fromkeys(billing_additional_intents)),
+            additional_intents=list(
+                dict.fromkeys(
+                    [*classification.get("additional_intents", []), *billing_additional_intents]
+                )
+            ),
             route_target="human_review",
-            human_review_reason=agora_reason,
+            human_review_reason=account_billing_reason,
+            route_reason_code=account_billing_reason,
+        )
+        classification["stage_confidences"]["account_billing_router"] = account_billing_confidence
+        classification["stage_reason_codes"]["account_billing_router"] = account_billing_reason
+        classification["evidence_spans"] = _sanitize_evidence(
+            [
+                *classification["evidence_spans"],
+                *_sanitize_evidence(account_billing_payload.get("evidence_spans")),
+            ]
         )
         return finish(_result(
             classification,
             _decision(
                 scope_label="account_billing",
                 action="human_review_required",
-                confidence=min(intent_confidence, agora_confidence),
-                reason=agora_reason,
+                confidence=min(intent_confidence, agora_confidence, account_billing_confidence),
+                reason=account_billing_reason,
                 response_language=response_language,
                 route_family="human_review",
-                not_automated_reason=agora_reason,
+                semantic_intent=f"account_billing.{subcategory}",
+                not_automated_reason=account_billing_reason,
                 evidence_spans=classification["evidence_spans"],
             ),
             attempts,
@@ -1062,7 +1159,6 @@ def decide_account_route(
     risk_flags = [str(item) for item in list(automation_payload.get("risk_flags") or []) if str(item).strip()]
     automation_reason_defaults = {
         "fraud_account": "registered_fraud_account",
-        "account_suspension": "registered_account_suspension",
         "detailed_invoice": "registered_detailed_invoice",
         "enablement": "registered_enablement",
         "quota": "registered_quota",
@@ -1125,12 +1221,8 @@ def decide_account_route(
     classification.update(
         route_target="automation",
         human_review_reason=None,
-        handler_binding_status=(
-            "classification_only" if subcategory == "account_suspension" else "active"
-        ),
+        handler_binding_status="active",
     )
-    if subcategory == "account_suspension":
-        classification["automation_mode"] = "classification_only"
     automation_reason = classification["stage_reason_codes"]["automation_router"]
     automation_evidence = _sanitize_evidence(
         [*classification["evidence_spans"], *_sanitize_evidence(automation_payload.get("evidence_spans"))]
@@ -1144,10 +1236,6 @@ def decide_account_route(
         scope_label = "quota"
         semantic_intent = QUOTA_SEMANTIC_INTENT
         tooling_profile = QUOTA_TOOLING_PROFILE
-    elif subcategory == "account_suspension":
-        scope_label = "account_suspension"
-        semantic_intent = "automation.account_suspension_classification"
-        tooling_profile = "classification_only"
     elif subcategory == "fraud_account":
         scope_label = "fraud_account"
         semantic_intent = "automation.fraud_account_review"
