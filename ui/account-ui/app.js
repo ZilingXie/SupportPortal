@@ -1491,10 +1491,11 @@ function renderRerouteStatus() {
     `;
   }
   const failed = Number(job.failed || 0);
+  const recovered = Number(job.recovered || 0);
   return `
     <div class="reroute-status ${failed || job.status === "failed" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
       <strong>${job.status === "failed" ? "Rerun failed" : "Rerun complete"}</strong>
-      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted</span>
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted</span>
     </div>
   `;
 }

@@ -482,6 +482,135 @@ class AccountIntakeApiTests(unittest.TestCase):
             ["customer"],
         )
 
+    def test_account_rerun_storage_call_retries_transient_pool_failure(self) -> None:
+        attempts = 0
+
+        def flaky_operation() -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise psycopg.OperationalError("ticket db pool acquire budget exhausted")
+            return "ok"
+
+        with patch.object(main.asyncio, "sleep", new=AsyncMock()) as sleep:
+            result = asyncio.run(main._account_rerun_storage_call(flaky_operation))
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(attempts, 2)
+        sleep.assert_awaited_once_with(1.0)
+
+    def test_account_rerun_cancellation_is_scoped_to_rerun_job(self) -> None:
+        for job_id, payload in (
+            ("reply-current-message", {}),
+            ("reply-rerun-message", {"rerun_job_id": "account-rerun-scope-test"}),
+        ):
+            self.repository.save_account_reply_job(
+                {
+                    "job_id": job_id,
+                    "ticket_id": "12555",
+                    "trigger_message_created_at": "2026-08-01T09:19:38+00:00",
+                    "status": "scheduled",
+                    "scheduled_for": "2026-08-04T10:16:52+00:00",
+                    "payload": payload,
+                }
+            )
+
+        cancelled = self.repository.cancel_pending_account_reply_jobs(
+            "12555",
+            updated_at="2026-08-04T10:17:00+00:00",
+            rerun_job_id="account-rerun-scope-test",
+        )
+
+        self.assertEqual(cancelled, 1)
+        self.assertEqual(self.repository.get_account_reply_job("reply-current-message")["status"], "scheduled")
+        self.assertEqual(self.repository.get_account_reply_job("reply-rerun-message")["status"], "cancelled")
+
+    def test_account_rerun_reconciles_case_that_finished_after_final_save_failure(self) -> None:
+        job_id = "account-rerun-reconcile-test"
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12555",
+                "customer_id": "customer@example.com",
+                "requester": "customer@example.com",
+                "subject": "Enable media relay",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable media relay.",
+                        "created_at": "2026-08-01T09:19:38+00:00",
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12555",
+                "billing_ticket_id": "AC-12555",
+                "client_ticket_id": "12555",
+                "route_family": "automated",
+                "route_status": "automated",
+                "category": "automation",
+                "subcategory": "enablement",
+                "automation_handler": "enablement",
+                "internal_email_send_status": "sent",
+                "internal_email_payload": {
+                    "delivery_key": f"enablement:AC-12555:v1:rerun:{job_id}",
+                },
+            }
+        )
+        self.repository.save_account_route_execution(
+            {
+                "ticket_id": "12555",
+                "rerun_job_id": job_id,
+                "route": "enablement",
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                "job_id": "account-reply-reconcile-test",
+                "ticket_id": "12555",
+                "trigger_message_created_at": "2026-08-01T09:19:38+00:00",
+                "status": "published",
+                "scheduled_for": "2026-08-04T10:16:52+00:00",
+                "payload": {"rerun_job_id": job_id},
+            }
+        )
+        job = {
+            "job_id": job_id,
+            "failed": 1,
+            "succeeded": 43,
+            "recovered": 0,
+            "changed": 43,
+            "route_counts": {},
+            "handler_counts": {},
+            "reply_job_ids": ["account-reply-reconcile-test"],
+            "failures": [
+                {
+                    "account_case_id": "AC-12555",
+                    "client_ticket_id": "12555",
+                    "error": "ticket db pool acquire budget exhausted after 20.00 sec",
+                    "retryable": True,
+                    "stage": "finalizing",
+                    "reply_expected": True,
+                    "email_expected": True,
+                    "reply_job_id": "account-reply-reconcile-test",
+                    "changed": True,
+                    "route_key": "Agora / Automation / Enablement",
+                    "handler_status": "active",
+                }
+            ],
+        }
+
+        asyncio.run(main._reconcile_account_rerun_failures(job))
+
+        self.assertEqual(job["failed"], 0)
+        self.assertEqual(job["succeeded"], 44)
+        self.assertEqual(job["recovered"], 1)
+        self.assertEqual(job["changed"], 44)
+        self.assertEqual(job["recovered_cases"], ["AC-12555"])
+        self.assertTrue(job["failures"][0]["recovered"])
+
     def _save_billing_ticket(
         self,
         *,
