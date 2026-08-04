@@ -1170,7 +1170,13 @@ class TicketRepository(Protocol):
     def get_latest_account_reply_jobs(
         self, ticket_ids: list[str]
     ) -> dict[str, dict[str, Any]]: ...
-    def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int: ...
+    def cancel_pending_account_reply_jobs(
+        self,
+        ticket_id: str,
+        *,
+        updated_at: str,
+        rerun_job_id: str | None = None,
+    ) -> int: ...
     def claim_account_reply_jobs(self, *, from_status: str, to_status: str, now_value: str, limit: int = 10, due_only: bool = False) -> list[dict[str, Any]]: ...
     def list_account_personas(self) -> list[dict[str, Any]]: ...
     def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]: ...
@@ -1865,11 +1871,22 @@ class InMemoryTicketRepository:
                     latest_jobs[ticket_id] = copy.deepcopy(job)
         return latest_jobs
 
-    def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int:
+    def cancel_pending_account_reply_jobs(
+        self,
+        ticket_id: str,
+        *,
+        updated_at: str,
+        rerun_job_id: str | None = None,
+    ) -> int:
+        normalized_rerun_job_id = str(rerun_job_id or "").strip()
         cancelled = 0
         with self._assignment_lock:
             for job in self._account_reply_jobs.values():
                 if str(job.get("ticket_id") or "") != str(ticket_id):
+                    continue
+                if normalized_rerun_job_id and str(
+                    (job.get("payload") if isinstance(job.get("payload"), dict) else {}).get("rerun_job_id") or ""
+                ) != normalized_rerun_job_id:
                     continue
                 if str(job.get("status") or "") not in {
                     "queued", "preparing", "scheduled",
@@ -9644,7 +9661,14 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("get_latest_account_reply_jobs", _operation)
 
-    def cancel_pending_account_reply_jobs(self, ticket_id: str, *, updated_at: str) -> int:
+    def cancel_pending_account_reply_jobs(
+        self,
+        ticket_id: str,
+        *,
+        updated_at: str,
+        rerun_job_id: str | None = None,
+    ) -> int:
+        normalized_rerun_job_id = str(rerun_job_id or "").strip()
         def _operation(conn: psycopg.Connection[Any]) -> int:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
@@ -9653,9 +9677,9 @@ class PostgresTicketRepository:
                         "WHERE ticket_id=%s AND status IN ("
                         "'queued','preparing','scheduled',"
                         "'persona_queued','persona_preparing','persona_scheduled'"
-                        ")"
+                        ") AND (%s = '' OR COALESCE(payload->>'rerun_job_id','')=%s)"
                     ).format(self._table("support_account_reply_jobs")),
-                    (updated_at, str(ticket_id)),
+                    (updated_at, str(ticket_id), normalized_rerun_job_id, normalized_rerun_job_id),
                 )
                 return int(cur.rowcount or 0)
         return self._run_with_connection_retry("cancel_pending_account_reply_jobs", _operation)
