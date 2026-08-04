@@ -537,6 +537,28 @@ function isActiveRerouteJob(job = state.rerouteJob) {
   return ["queued", "running"].includes(String(job?.status || ""));
 }
 
+async function readResponsePayload(response) {
+  const raw = await response.text();
+  if (!raw.trim()) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return { detail: raw.trim() };
+  }
+}
+
+function responseErrorMessage(payload, fallback) {
+  const detail = payload?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (detail && typeof detail.message === "string" && detail.message.trim()) {
+    return detail.message.trim();
+  }
+  if (typeof payload?.message === "string" && payload.message.trim()) {
+    return payload.message.trim();
+  }
+  return fallback;
+}
+
 async function refreshAfterReroute() {
   invalidateSummaryCache();
   invalidateDetailCache();
@@ -551,8 +573,11 @@ async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) 
   const wasActive = isActiveRerouteJob();
   try {
     const response = await fetch("/api/account/rerun-jobs/latest");
-    if (!response.ok) throw new Error("Could not load rerun status.");
-    state.rerouteJob = await response.json();
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Could not load rerun status."));
+    }
+    state.rerouteJob = payload;
     state.rerouteError = "";
     if (refreshCasesOnCompletion && wasActive && !isActiveRerouteJob()) {
       await refreshAfterReroute();
@@ -587,13 +612,15 @@ async function startFullReroute() {
   render();
   try {
     const response = await fetch("/api/account/rerun-jobs", { method: "POST" });
-    const payload = await response.json().catch(() => ({}));
+    const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
         await fetchLatestRerouteJob();
         return;
       }
-      throw new Error(payload.detail || "Could not start Account Case reprocessing.");
+      throw new Error(
+        responseErrorMessage(payload, "Could not start Account Case reprocessing.")
+      );
     }
     state.rerouteJob = payload;
     showToast("Account Case reprocessing started");

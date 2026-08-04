@@ -4850,6 +4850,24 @@ def list_billing_tickets(
 ACCOUNT_FULL_REROUTE_JOB_TICKET_ID = "__account-full-reroute__"
 ACCOUNT_FULL_REROUTE_JOB_EVENT = "account_full_reroute_job"
 ACCOUNT_FULL_REROUTE_STALE_AFTER = timedelta(hours=2)
+ACCOUNT_RERUN_STORAGE_ERROR_CODE = "account_storage_temporarily_unavailable"
+ACCOUNT_RERUN_STORAGE_ERROR_MESSAGE = (
+    "Account Case reprocessing is temporarily unavailable because the ticket database "
+    "cannot be reached. Please retry in a moment."
+)
+
+
+def _account_rerun_storage_http_exception(exc: Exception) -> HTTPException:
+    LOGGER.warning("Account rerun could not access the ticket database: %s", exc)
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": ACCOUNT_RERUN_STORAGE_ERROR_CODE,
+            "message": ACCOUNT_RERUN_STORAGE_ERROR_MESSAGE,
+            "retryable": True,
+        },
+        headers={"Retry-After": "5"},
+    )
 
 
 def _account_full_reroute_jobs(*, limit: int = 500) -> list[dict[str, Any]]:
@@ -5134,7 +5152,10 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
 @app.post("/api/account/rerun-jobs", status_code=202)
 @app.post("/api/account/reroute-jobs", status_code=202, include_in_schema=False)
 async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> dict[str, Any]:
-    latest = next(iter(_account_full_reroute_jobs(limit=1)), None)
+    try:
+        latest = next(iter(_account_full_reroute_jobs(limit=1)), None)
+    except (psycopg.Error, OSError, TimeoutError) as exc:
+        raise _account_rerun_storage_http_exception(exc) from exc
     if _account_full_reroute_job_is_active(latest):
         raise HTTPException(status_code=409, detail="an Account full reroute job is already running")
     created_at = now_iso()
@@ -5171,7 +5192,10 @@ async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> di
         "updated_at": created_at,
         "completed_at": None,
     }
-    _save_account_full_reroute_job(job)
+    try:
+        _save_account_full_reroute_job(job)
+    except (psycopg.Error, OSError, TimeoutError) as exc:
+        raise _account_rerun_storage_http_exception(exc) from exc
     background_tasks.add_task(_run_account_full_reroute_job, job["job_id"])
     return job
 

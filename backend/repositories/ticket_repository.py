@@ -23,6 +23,14 @@ except ImportError:  # pragma: no cover - exercised in environments without pool
 
 LOGGER = logging.getLogger(__name__)
 
+
+class _TicketPoolAcquireError(psycopg.OperationalError):
+    """Retryable pool error that retains the pool instance that failed."""
+
+    def __init__(self, message: str, *, pool: Any | None = None) -> None:
+        super().__init__(message)
+        self.pool = pool
+
 _VALID_STATUSES = {"open", "communicating", "escalated", "investigating", "resolved"}
 _VALID_ASSIGNMENT_STATUSES = {"pending", "assigned", "resolved"}
 _VALID_DISPATCH_STATUSES = {"pending", "assigned", "failed", "resolved"}
@@ -3983,6 +3991,16 @@ class PostgresTicketRepository:
             self._pool = None
         self._close_pool_instance(pool)
 
+    def _invalidate_pool_if_current(self, pool: Any | None) -> bool:
+        if pool is None:
+            return False
+        with self._pool_lock:
+            if self._pool is not pool:
+                return False
+            self._pool = None
+        self._close_pool_instance(pool)
+        return True
+
     def _classify_pool_timeout(
         self,
         exc: Exception,
@@ -4039,7 +4057,7 @@ class PostgresTicketRepository:
                 detail = f"{detail} ({', '.join(stats_parts)})"
         if message:
             detail = f"{detail}: {message}"
-        return psycopg.OperationalError(detail)
+        return _TicketPoolAcquireError(detail, pool=pool)
 
     def _classify_pool_acquire_budget_exhausted(self) -> psycopg.OperationalError:
         return psycopg.OperationalError(
@@ -4051,12 +4069,22 @@ class PostgresTicketRepository:
             return None
         return time.monotonic() + self._pool_acquire_budget_seconds
 
-    def _remaining_pool_acquire_timeout(self, acquire_deadline: float | None) -> float:
+    def _remaining_pool_acquire_timeout(
+        self,
+        acquire_deadline: float | None,
+        *,
+        reserve_recovery_window: bool = False,
+    ) -> float:
         if acquire_deadline is None:
             return self._pool_timeout_seconds
         remaining_timeout_seconds = acquire_deadline - time.monotonic()
         if remaining_timeout_seconds <= 0:
             raise self._classify_pool_acquire_budget_exhausted()
+        if reserve_recovery_window:
+            recovery_window = min(self._pool_timeout_seconds, float(self._connect_timeout))
+            remaining_timeout_seconds -= recovery_window
+            if remaining_timeout_seconds <= 0:
+                raise self._classify_pool_acquire_budget_exhausted()
         return min(self._pool_timeout_seconds, remaining_timeout_seconds)
 
     def _sleep_pool_connect_retry(self, acquire_deadline: float | None) -> None:
@@ -4104,7 +4132,12 @@ class PostgresTicketRepository:
         return self._pool
 
     @contextmanager
-    def _borrow_connection(self, *, acquire_deadline: float | None = None) -> Any:
+    def _borrow_connection(
+        self,
+        *,
+        acquire_deadline: float | None = None,
+        reserve_recovery_window: bool = False,
+    ) -> Any:
         pool = self._connection_pool(acquire_deadline=acquire_deadline)
         if pool is None:
             connection = self._connect()
@@ -4117,7 +4150,10 @@ class PostgresTicketRepository:
                     except Exception:
                         LOGGER.debug("Failed to close direct ticket repository connection cleanly.", exc_info=True)
             return
-        timeout_seconds = self._remaining_pool_acquire_timeout(acquire_deadline)
+        timeout_seconds = self._remaining_pool_acquire_timeout(
+            acquire_deadline,
+            reserve_recovery_window=reserve_recovery_window,
+        )
         try:
             with pool.connection(timeout=timeout_seconds) as connection:
                 yield connection
@@ -4170,7 +4206,10 @@ class PostgresTicketRepository:
         acquire_deadline = self._pool_acquire_deadline()
         while True:
             try:
-                with self._borrow_connection(acquire_deadline=acquire_deadline) as conn:
+                with self._borrow_connection(
+                    acquire_deadline=acquire_deadline,
+                    reserve_recovery_window=pool_retry_attempt == 0,
+                ) as conn:
                     try:
                         return action(conn)
                     except Exception as exc:
@@ -4195,7 +4234,7 @@ class PostgresTicketRepository:
                     operation_name,
                     exc,
                 )
-                self.close()
+                self._invalidate_pool_if_current(getattr(exc, "pool", None))
 
     def initialize(self) -> None:
         runtime_role = self._runtime_database_role()
