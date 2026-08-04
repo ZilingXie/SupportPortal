@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import importlib.util
 import json
 import logging
@@ -10,7 +11,7 @@ import random
 import re
 import time
 import urllib.parse
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -913,46 +914,78 @@ class PromptDraftRequest(BaseModel):
     based_on_version: int = Field(ge=1)
 
 
-_ACCOUNT_NAME_KEYS = ("name", "display_name", "full_name", "customer_name", "cx_name")
+_ACCOUNT_TOP_LEVEL_NAME_KEYS = ("customer_name", "cx_name", "cx name", "cxName", "requester_name")
+_ACCOUNT_NESTED_NAME_KEYS = ("name", "display_name", "full_name", "customer_name", "cx_name")
+_ACCOUNT_CUSTOMER_NAME_MAX_LENGTH = 160
 
 
-def _nested_intake_name(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if not isinstance(value, dict):
-        return ""
-    for key in _ACCOUNT_NAME_KEYS:
-        candidate = str(value.get(key) or "").strip()
-        if candidate:
-            return candidate
-    return ""
+@dataclass(frozen=True)
+class AccountIntakeIdentity:
+    customer_name: str
+    customer_email: str
+    customer_id: str
+    customer_name_source: str | None
+    customer_email_source: str | None
+    customer_email_status: str
 
 
-def _account_intake_customer_name(request: AccountIntakeRequest) -> str:
-    for candidate in (
-        request.customer_name,
-        _nested_intake_name(request.requester),
-        _nested_intake_name(request.customer),
-    ):
-        normalized = " ".join(str(candidate or "").split()).strip()
-        if normalized:
-            return normalized
-    return ""
+def _normalized_account_intake_name(value: Any) -> str:
+    raw = str(value or "")
+    if len(raw) > _ACCOUNT_CUSTOMER_NAME_MAX_LENGTH:
+        raise HTTPException(status_code=422, detail="customer name must not exceed 160 characters")
+    return " ".join(raw.split()).strip()
 
 
-def _account_intake_customer_name_source(payload: Any) -> str | None:
+def _account_intake_name_and_source(payload: Any) -> tuple[str, str | None]:
     if not isinstance(payload, dict):
-        return None
-    for key in ("customer_name", "cx_name", "cx name", "cxName", "requester_name"):
-        if str(payload.get(key) or "").strip():
-            return key
+        return "", None
+    for key in _ACCOUNT_TOP_LEVEL_NAME_KEYS:
+        candidate = _normalized_account_intake_name(payload.get(key))
+        if candidate:
+            return candidate, key
     for parent_key in ("requester", "customer"):
         nested = payload.get(parent_key)
-        if isinstance(nested, dict):
-            for key in _ACCOUNT_NAME_KEYS:
-                if str(nested.get(key) or "").strip():
-                    return f"{parent_key}.{key}"
-    return None
+        if isinstance(nested, str):
+            candidate = _normalized_account_intake_name(nested)
+            if candidate:
+                return candidate, parent_key
+        elif isinstance(nested, dict):
+            for key in _ACCOUNT_NESTED_NAME_KEYS:
+                candidate = _normalized_account_intake_name(nested.get(key))
+                if candidate:
+                    return candidate, f"{parent_key}.{key}"
+    return "", None
+
+
+def _normalized_account_intake_email(value: Any) -> tuple[str, str]:
+    normalized = str(value or "").strip().casefold()
+    if not normalized:
+        return "", "missing"
+    if normalized.count("@") != 1 or any(character.isspace() for character in normalized):
+        return "", "invalid"
+    local_part, domain = normalized.split("@", 1)
+    if not local_part or not domain:
+        return "", "invalid"
+    return normalized, "valid"
+
+
+def _account_intake_identity(
+    request: AccountIntakeRequest,
+    *,
+    payload: Any,
+    ticket_id: str,
+) -> AccountIntakeIdentity:
+    customer_name, customer_name_source = _account_intake_name_and_source(payload)
+    customer_email, customer_email_status = _normalized_account_intake_email(request.customer_email)
+    anonymous_digest = hashlib.sha256(ticket_id.encode("utf-8")).hexdigest()[:20]
+    return AccountIntakeIdentity(
+        customer_name=customer_name,
+        customer_email=customer_email,
+        customer_id=customer_email or f"account-intake:{anonymous_digest}",
+        customer_name_source=customer_name_source,
+        customer_email_source="customer_email" if customer_email_status != "missing" else None,
+        customer_email_status=customer_email_status,
+    )
 
 
 class AccountPersonaEnabledRequest(BaseModel):
@@ -3980,6 +4013,9 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
     if not title:
         title = derive_ticket_title(question)
 
+    ticket_id = _resolve_account_ticket_id(request)
+    intake_payload = await http_request.json()
+    intake_identity = _account_intake_identity(request, payload=intake_payload, ticket_id=ticket_id)
     request_started_at = now_iso()
     idempotency_key = _account_intake_idempotency_key(request)
     if idempotency_key:
@@ -3995,7 +4031,6 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
                 return {**replay_payload, "idempotent_replay": True}
             raise HTTPException(status_code=409, detail="account intake request is already processing")
 
-    ticket_id = _resolve_account_ticket_id(request)
     account_case_id = f"AC-{ticket_id}"
     billing_ticket_id = account_case_id
     existing_ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
@@ -4003,10 +4038,8 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         raise HTTPException(status_code=409, detail="ticket_id already exists")
 
     account_source = _normalize_account_source(request.source)
-    customer_id = str(request.customer_email or "").strip() or "account-intake"
-    customer_name = _account_intake_customer_name(request)
-    intake_payload = await http_request.json()
-    customer_name_source = _account_intake_customer_name_source(intake_payload)
+    customer_id = intake_identity.customer_id
+    customer_name = intake_identity.customer_name
     timestamp = now_iso()
     ticket: dict[str, Any] = {
         "ticket_id": ticket_id,
@@ -4390,7 +4423,10 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         "status": ticket["status"],
         "source": account_source,
         "customer_name_present": bool(customer_name),
-        "customer_name_source": customer_name_source,
+        "customer_name_source": intake_identity.customer_name_source,
+        "customer_email_present": bool(intake_identity.customer_email),
+        "customer_email_source": intake_identity.customer_email_source,
+        "customer_email_status": intake_identity.customer_email_status,
         "message": question[:200],
         "created_at": now_iso(),
         "answer_route": resolution.answer_route if resolution is not None else None,
