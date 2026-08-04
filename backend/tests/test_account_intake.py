@@ -318,11 +318,43 @@ class AccountIntakeApiTests(unittest.TestCase):
             "client_ticket_id": "12513",
             "route_status": "automated",
             "automation_handler": "enablement",
+            "customer_reply": "Old Account reply",
             "internal_email_send_status": "sent",
             "internal_email_payload": {"delivery_key": "enablement:AC-12513:v1"},
         }
-        self.repository.save_ticket(ticket, new_messages=ticket["messages"])
+        self.repository.save_ticket(
+            {
+                **ticket,
+                "messages": [
+                    *ticket["messages"],
+                    {
+                        "role": "assistant",
+                        "content": "Old Account reply",
+                        "source": "account_ai",
+                        "meta": {"account_reply_job_id": "old-account-reply"},
+                        "created_at": "2026-07-31T08:31:00+00:00",
+                    },
+                ],
+            }
+        )
         self.repository.save_account_case(account_case)
+        self.repository.save_account_reply_job(
+            {
+                "job_id": "old-account-reply",
+                "ticket_id": "12513",
+                "trigger_message_created_at": "2026-07-31T08:30:00+00:00",
+                "status": "published",
+                "scheduled_for": "2026-07-31T08:36:00+00:00",
+                "payload": {},
+            }
+        )
+        self.repository.save_account_reply_execution(
+            {
+                "execution_id": "reply-old-account-reply",
+                "ticket_id": "12513",
+                "payload": {"content": "Old Account reply"},
+            }
+        )
         created_at = main.now_iso()
         main._save_account_full_reroute_job(
             {
@@ -353,6 +385,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             "category": "automation",
             "subcategory": "enablement",
             "automation_handler": "enablement",
+            "customer_reply": None,
             "internal_email_send_status": "pending",
             "internal_email_payload": {"delivery_key": "delivery-12513"},
             "collected_fields": {
@@ -403,6 +436,18 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest_job["status"], "completed")
         self.assertEqual(latest_job["emails_sent"], 1)
         self.assertEqual(latest_job["replies_scheduled"], 1)
+        self.assertEqual(latest_job["replies_deleted"], 1)
+        self.assertEqual(latest_job["reply_jobs_deleted"], 1)
+        self.assertEqual(latest_job["reply_executions_deleted"], 1)
+        self.assertEqual(latest_job["customer_replies_cleared"], 1)
+        self.assertIsNone(self.repository.get_account_reply_job("old-account-reply"))
+        self.assertEqual(self.repository.list_account_reply_executions("12513"), [])
+        stored_ticket = self.repository.get_ticket("12513")
+        assert stored_ticket is not None
+        self.assertEqual(
+            [message["role"] for message in stored_ticket["messages"]],
+            ["customer"],
+        )
 
     def _save_billing_ticket(
         self,

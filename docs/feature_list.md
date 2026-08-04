@@ -98,7 +98,7 @@
 - Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automation 或非自动化路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
-- Account 入口强制使用最新三层分类并记录 pipeline 版本，支持以全新 Case 执行语义异步 Rerun 全部历史 Case，重新执行路由、字段提取、Automation、内部邮件和 Persona 回复并保留审计历史。
+- Account 入口强制使用最新三层分类并记录 pipeline 版本，支持以全新 Case 执行语义异步 Rerun 全部历史 Case；每个 Case 会保留客户消息和路由审计，删除旧 Account AI 回复、reply job、reply execution 后再重建内部邮件与 Persona 回复。
 - Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 - Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。

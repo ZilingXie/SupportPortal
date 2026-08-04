@@ -83,6 +83,105 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertTrue(message["meta"]["superseded"])
         self.assertEqual(message["meta"]["superseded_by_job_id"], "new-job")
 
+    def test_account_rerun_reset_deletes_ai_state_but_keeps_customer_messages(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "TK-RESET",
+                "updated_at": "2026-08-03T00:00:00+00:00",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Keep this request",
+                        "created_at": "2026-08-03T00:00:00+00:00",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Delete this Account reply",
+                        "source": "account_ai",
+                        "meta": {"account_reply_job_id": "old-job"},
+                        "created_at": "2026-08-03T00:01:00+00:00",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Keep this engineer note",
+                        "source": "engineer",
+                        "created_at": "2026-08-03T00:02:00+00:00",
+                    },
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "AC-RESET",
+                "account_case_id": "AC-RESET",
+                "client_ticket_id": "TK-RESET",
+                "title": "Request",
+                "question": "Keep this request",
+                "automation_status": "automation",
+                "customer_reply": "Delete this Account reply",
+                "internal_email_payload": {"delivery_key": "old-delivery"},
+                "internal_email_send_status": "sent",
+                "internal_email_send_reason": "sent",
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                "job_id": "old-job",
+                "ticket_id": "TK-RESET",
+                "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+                "status": "published",
+                "scheduled_for": "2026-08-03T00:01:00+00:00",
+                "payload": {},
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                "job_id": "old-job-2",
+                "ticket_id": "TK-RESET",
+                "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+                "status": "failed",
+                "scheduled_for": "2026-08-03T00:01:00+00:00",
+                "payload": {},
+            }
+        )
+        self.repository.save_account_reply_execution(
+            {
+                "execution_id": "reply-old-job",
+                "ticket_id": "TK-RESET",
+                "payload": {"content": "Delete this Account reply"},
+            }
+        )
+
+        counts = self.repository.reset_account_rerun_state(
+            "TK-RESET",
+            reset_at="2026-08-04T00:00:00+00:00",
+            rerun_job_id="rerun-1",
+        )
+
+        self.assertEqual(
+            counts,
+            {
+                "ai_messages_deleted": 1,
+                "reply_jobs_deleted": 2,
+                "reply_executions_deleted": 1,
+                "customer_replies_cleared": 1,
+            },
+        )
+        ticket = self.repository.get_ticket("TK-RESET")
+        assert ticket is not None
+        self.assertEqual([message["content"] for message in ticket["messages"]], [
+            "Keep this request",
+            "Keep this engineer note",
+        ])
+        self.assertEqual(self.repository.list_account_reply_executions("TK-RESET"), [])
+        self.assertIsNone(self.repository.get_account_reply_job("old-job"))
+        self.assertIsNone(self.repository.get_account_reply_job("old-job-2"))
+        case = self.repository.get_billing_ticket("AC-RESET")
+        assert case is not None
+        self.assertIsNone(case["customer_reply"])
+        self.assertIsNone(case["internal_email_payload"])
+        self.assertIsNone(case["internal_email_send_status"])
+
     def test_environment_config_returns_names_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

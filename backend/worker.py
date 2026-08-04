@@ -317,9 +317,16 @@ def _account_reply_message_job_id(message: dict[str, Any]) -> str:
     return str(meta.get("account_reply_job_id") or message.get("account_reply_job_id") or "").strip()
 
 
+def _account_reply_job_still_exists(job: dict[str, Any]) -> bool:
+    job_id = str(job.get("job_id") or "").strip()
+    return bool(job_id) and ticket_repository.get_account_reply_job(job_id) is not None
+
+
 def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
+    if not _account_reply_job_still_exists(job):
+        return
     ticket = ticket_repository.get_ticket(ticket_id)
     if not job_id or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
@@ -366,12 +373,14 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         job["payload"] = payload
         job["status"] = "scheduled"
         job["updated_at"] = now_iso()
-        ticket_repository.save_account_reply_job(job)
+        if _account_reply_job_still_exists(job):
+            ticket_repository.save_account_reply_job(job)
         return
     if not _account_reply_trigger_is_latest(ticket, str(job.get("trigger_message_created_at") or "")):
         job["status"] = "cancelled"
         job["updated_at"] = now_iso()
-        ticket_repository.save_account_reply_job(job)
+        if _account_reply_job_still_exists(job):
+            ticket_repository.save_account_reply_job(job)
         return
 
     trigger_message = next(
@@ -439,7 +448,10 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         )
         job["status"] = "scheduled"
     current_job = ticket_repository.get_account_reply_job(job_id)
-    if current_job is None or str(current_job.get("status") or "") != "preparing":
+    if current_job is None or (
+        isinstance(current_job, dict)
+        and str(current_job.get("status") or "") != "preparing"
+    ):
         return
     job["payload"] = payload
     job["updated_at"] = now_iso()
@@ -546,6 +558,8 @@ def _move_automation_reply_to_human_review(
     reason: str,
 ) -> None:
     """Stop an Automation send when Persona generation is unavailable."""
+    if not _account_reply_job_still_exists(job):
+        return
     timestamp = now_iso()
     payload = dict(job.get("payload") or {})
     payload["error"] = reason
@@ -693,6 +707,8 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                 except Exception as exc:
                     LOGGER.exception("Account reply preparation failed for %s", job.get("job_id"))
                     current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
+                    if current is None:
+                        continue
                     if current is not None and str(current.get("status") or "") == "cancelled":
                         continue
                     failed_job = current if current is not None else job
@@ -711,6 +727,8 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                 except Exception as exc:
                     LOGGER.exception("Account reply publication failed for %s", job.get("job_id"))
                     current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
+                    if current is None:
+                        continue
                     if current is not None and str(current.get("status") or "") == "cancelled":
                         continue
                     failed_job = current if current is not None else job
@@ -857,6 +875,13 @@ def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, 
             continue
         if status not in {"pending", "retry", "failed", "skipped_config_missing"} or not payload:
             continue
+        account_case_id = str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip()
+        latest_case = ticket_repository.get_account_case(account_case_id) if account_case_id else None
+        if isinstance(latest_case, dict) and str(latest_case.get("updated_at") or "") != str(
+            account_case.get("updated_at") or ""
+        ):
+            # A fresh rerun may have reset this delivery while this poller was reading it.
+            continue
         updated_at = _parse_iso_datetime(str(account_case.get("updated_at") or ""))
         if updated_at is not None and (datetime.now(timezone.utc) - updated_at).total_seconds() < 30:
             continue
@@ -867,6 +892,11 @@ def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, 
         resolved_to = str(result.get("resolved_to") or "").strip()
         if resolved_to:
             payload["resolved_to"] = resolved_to
+        latest_case = ticket_repository.get_account_case(account_case_id) if account_case_id else None
+        if isinstance(latest_case, dict) and str(latest_case.get("updated_at") or "") != str(
+            account_case.get("updated_at") or ""
+        ):
+            continue
         account_case["internal_email_payload"] = payload
         account_case["internal_email_send_status"] = str(result.get("status") or "failed")
         account_case["internal_email_send_reason"] = str(result.get("reason") or "")

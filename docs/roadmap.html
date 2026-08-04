@@ -2078,7 +2078,7 @@ flowchart TD
         status: "doing",
         thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router 和 Automation Router，并同时记录大标签、小标签与稳定 reason code。Account & Billing 以 account_suspension、other 为子类；Automation 以 fraud_account、detailed_invoice、enablement、quota 作为规范 subcategory。`/client` 继续使用原共享 Router。",
         done: [
-          { summary: "`/account` 已强制采用当前三层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行三层路由、Field Extractor 与 Automation handler reconciliation，保留 route execution 审计并按 delivery binding 防止重复内部邮件。", prs: [] },
+          { summary: "`/account` 已强制采用当前三层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行三层路由、Field Extractor 与 Automation handler reconciliation。每个 Case 保留客户消息和路由审计，旧 Account AI 回复、reply job 与 reply execution 会先物理删除，再按 delivery binding 重建内部邮件与 Persona 回复。", prs: [] },
           { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；非风控 Account Suspension 已迁移到 `category=account_billing`，由 Account & Billing Router 分类并仅提取上下文，不触发追问、邮件或客户回复。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Quota handler 已支持配额审核、并发提升和 Big Event 容量报备；系统以 LLM 收集产品、App ID、目标容量与活动信息，最多追问一次后发送内部邮件并处理 Outlook 回复。", prs: [] },

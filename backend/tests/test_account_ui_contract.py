@@ -41,6 +41,8 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("Rerun all Account Cases?", app_source)
         self.assertIn("Field Extractors", app_source)
         self.assertIn("Previously sent internal emails will be sent again", app_source)
+        self.assertIn("Existing Account-only AI replies and reply jobs will be deleted", app_source)
+        self.assertNotIn("old replies archived", app_source)
         self.assertIn("Account & Billing classification extractors also run again", app_source)
         self.assertIn('aria-live="polite"', app_source)
         self.assertIn('role="progressbar"', app_source)
