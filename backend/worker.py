@@ -341,6 +341,28 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                     "effective_prompt": dict(persona.get("content") or {}),
                 }
             )
+        if not str(payload.get("generated_content") or "").strip():
+            persona_assignment = {
+                "persona_key": payload.get("persona_key"),
+                "version": payload.get("persona_version"),
+                "content": dict(payload.get("effective_prompt") or {}),
+            }
+            try:
+                rendered = render_automation_reply(
+                    reply_facts=dict(payload["reply_facts"]),
+                    persona_assignment=persona_assignment,
+                )
+            except AutomationPersonaError as exc:
+                _move_automation_reply_to_human_review(job, ticket, str(exc))
+                return
+            payload.update(
+                {
+                    "generated_content": rendered.content,
+                    "persona_render_status": "generated",
+                    "persona_model": rendered.model,
+                    "persona_prompt_version": rendered.prompt_version,
+                }
+            )
         job["payload"] = payload
         job["status"] = "scheduled"
         job["updated_at"] = now_iso()
