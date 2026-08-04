@@ -9,6 +9,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import psycopg
+
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -300,6 +302,33 @@ class AccountIntakeApiTests(unittest.TestCase):
 
             duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
+
+    def test_account_full_reroute_returns_retryable_503_when_storage_is_unavailable(self) -> None:
+        with patch.object(
+            main,
+            "_account_full_reroute_jobs",
+            side_effect=psycopg.OperationalError("ticket db pool acquire budget exhausted"),
+        ), patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            response = self.client.post("/api/account/rerun-jobs")
+
+        self.assertEqual(response.status_code, 503, response.text)
+        payload = response.json()
+        self.assertEqual(payload["detail"]["code"], "account_storage_temporarily_unavailable")
+        self.assertTrue(payload["detail"]["retryable"])
+        self.assertIn("Retry-After", response.headers)
+        runner.assert_not_awaited()
+
+    def test_account_full_reroute_does_not_schedule_when_job_persistence_fails(self) -> None:
+        with patch.object(main, "_account_full_reroute_jobs", return_value=[]), patch.object(
+            main,
+            "_save_account_full_reroute_job",
+            side_effect=psycopg.OperationalError("ticket db pool acquire budget exhausted"),
+        ), patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            response = self.client.post("/api/account/rerun-jobs")
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "account_storage_temporarily_unavailable")
+        runner.assert_not_awaited()
 
     def test_full_reroute_runner_saves_extraction_sends_once_and_schedules_confirmation(self) -> None:
         ticket = {

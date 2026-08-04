@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import unittest
@@ -1521,6 +1522,34 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIs(repository._pool, healthy_pool)
         self.assertEqual(healthy_pool.open_calls, [(False, None)])
 
+    def test_ticket_repository_does_not_close_replacement_pool_for_late_failure(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            use_connection_pool=True,
+        )
+        failed_pool = _BorrowingPool()
+        replacement_pool = _BorrowingPool()
+        repository._pool = replacement_pool
+
+        self.assertFalse(repository._invalidate_pool_if_current(failed_pool))
+        self.assertIs(repository._pool, replacement_pool)
+        self.assertEqual(failed_pool.close_calls, 0)
+        self.assertEqual(replacement_pool.close_calls, 0)
+
+    def test_ticket_repository_concurrent_pool_invalidation_closes_once(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            use_connection_pool=True,
+        )
+        failed_pool = _BorrowingPool()
+        repository._pool = failed_pool
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(repository._invalidate_pool_if_current, [failed_pool, failed_pool]))
+
+        self.assertEqual(sorted(results), [False, True])
+        self.assertEqual(failed_pool.close_calls, 1)
+
     def test_ticket_repository_pool_retry_uses_remaining_shared_acquire_budget(self) -> None:
         repository = PostgresTicketRepository(
             dsn="postgresql://example",
@@ -1549,7 +1578,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
                     tickets = repository.list_tickets(include_messages=False)
 
         self.assertEqual(tickets, [])
-        self.assertEqual(stale_pool.connection_calls, [15.0])
+        self.assertEqual(stale_pool.connection_calls, [10.0])
         self.assertEqual(healthy_pool.open_calls, [(False, None)])
         self.assertEqual(len(healthy_pool.connection_calls), 1)
         self.assertAlmostEqual(healthy_pool.connection_calls[0], 7.5)
