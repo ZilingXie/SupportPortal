@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import unittest
 from contextlib import nullcontext
@@ -3890,26 +3891,143 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual((scheduled - trigger).total_seconds(), 417)
         self.assertEqual(payload["ai_reply_scheduled_for"], job["scheduled_for"])
 
-    def test_account_intake_accepts_n8n_customer_name_aliases(self) -> None:
-        for field_name in ("cx_name", "cx name", "cxName", "requester_name"):
+    def test_account_intake_identity_uses_name_value_and_source_from_same_field(self) -> None:
+        for field_name in ("customer_name", "cx_name", "cx name", "cxName", "requester_name"):
             with self.subTest(field_name=field_name):
-                request = main.AccountIntakeRequest.model_validate(
-                    {
-                        "title": "Enablement",
-                        "question": "Please enable the feature.",
-                        field_name: "Jack Gold",
-                    }
-                )
-                self.assertEqual(main._account_intake_customer_name(request), "Jack Gold")
+                payload = {
+                    "title": "Enablement",
+                    "question": "Please enable the feature.",
+                    field_name: "Jack Gold",
+                }
+                request = main.AccountIntakeRequest.model_validate(payload)
+                identity = main._account_intake_identity(request, payload=payload, ticket_id="TK-NAME")
+                self.assertEqual(identity.customer_name, "Jack Gold")
+                self.assertEqual(identity.customer_name_source, field_name)
 
-        nested = main.AccountIntakeRequest.model_validate(
-            {
-                "title": "Enablement",
-                "question": "Please enable the feature.",
-                "requester": {"name": "Jack Gold"},
-            }
+        payload = {
+            "title": "Enablement",
+            "question": "Please enable the feature.",
+            "customer_name": "",
+            "cx_name": "Alias Winner",
+            "requester": {"name": "Nested Loser"},
+        }
+        request = main.AccountIntakeRequest.model_validate(payload)
+        identity = main._account_intake_identity(request, payload=payload, ticket_id="TK-PRECEDENCE")
+        self.assertEqual(identity.customer_name, "Alias Winner")
+        self.assertEqual(identity.customer_name_source, "cx_name")
+
+        for parent_key in ("requester", "customer"):
+            with self.subTest(parent_key=parent_key):
+                nested_payload = {
+                    "title": "Enablement",
+                    "question": "Please enable the feature.",
+                    parent_key: {"display_name": "Nested Name"},
+                }
+                nested_request = main.AccountIntakeRequest.model_validate(nested_payload)
+                nested_identity = main._account_intake_identity(
+                    nested_request,
+                    payload=nested_payload,
+                    ticket_id="TK-NESTED",
+                )
+                self.assertEqual(nested_identity.customer_name, "Nested Name")
+                self.assertEqual(nested_identity.customer_name_source, f"{parent_key}.display_name")
+
+    def test_account_intake_normalizes_current_n8n_identity_and_redacts_audit_values(self) -> None:
+        source_url = "https://agoraio.zendesk.com/api/v2/tickets/12598.json"
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "General support question",
+                    "question": "Can someone explain this product behavior?",
+                    "customer_email": " Customer@Example.COM ",
+                    "source": source_url,
+                    "customer_name": "Jack Gold",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ticket_id"], "12598")
+        self.assertEqual(payload["customer_name"], "Jack Gold")
+        ticket = self.repository.get_ticket("12598")
+        self.assertIsNotNone(ticket)
+        assert ticket is not None
+        self.assertEqual(ticket["customer_id"], "customer@example.com")
+        self.assertEqual(ticket["requester"], "customer@example.com")
+        self.assertEqual(ticket["source"], "api")
+        account_case = self.repository.get_account_case("AC-12598")
+        self.assertIsNotNone(account_case)
+        assert account_case is not None
+        self.assertEqual(account_case["customer_name"], "Jack Gold")
+
+        event = next(
+            item["payload"]
+            for item in self.repository.list_ticket_events("12598")
+            if item["event_type"] == "ticket_created"
         )
-        self.assertEqual(main._account_intake_customer_name(nested), "Jack Gold")
+        self.assertTrue(event["customer_name_present"])
+        self.assertEqual(event["customer_name_source"], "customer_name")
+        self.assertTrue(event["customer_email_present"])
+        self.assertEqual(event["customer_email_source"], "customer_email")
+        self.assertEqual(event["customer_email_status"], "valid")
+        serialized_event = json.dumps(event)
+        self.assertNotIn("Jack Gold", serialized_event)
+        self.assertNotIn("customer@example.com", serialized_event)
+
+    def test_account_intake_invalid_or_missing_email_uses_ticket_scoped_anonymous_identity(self) -> None:
+        identities: list[str] = []
+        for ticket_id, customer_email, expected_status in (
+            ("TK-INVALID-EMAIL", "not an email", "invalid"),
+            ("TK-MISSING-EMAIL", "", "missing"),
+        ):
+            with self.subTest(ticket_id=ticket_id), patch.object(main, "dispatch_event", AsyncMock()):
+                response = self.client.post(
+                    "/account",
+                    json={
+                        "ticket_id": ticket_id,
+                        "title": "General support question",
+                        "question": "Can someone explain this product behavior?",
+                        "customer_email": customer_email,
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                ticket = self.repository.get_ticket(ticket_id)
+                self.assertIsNotNone(ticket)
+                assert ticket is not None
+                identities.append(str(ticket["customer_id"]))
+                self.assertTrue(str(ticket["customer_id"]).startswith("account-intake:"))
+                self.assertEqual(ticket["requester"], ticket["customer_id"])
+                event = next(
+                    item["payload"]
+                    for item in self.repository.list_ticket_events(ticket_id)
+                    if item["event_type"] == "ticket_created"
+                )
+                self.assertFalse(event["customer_email_present"])
+                self.assertEqual(
+                    event["customer_email_source"],
+                    "customer_email" if expected_status == "invalid" else None,
+                )
+                self.assertEqual(event["customer_email_status"], expected_status)
+                if customer_email:
+                    self.assertNotIn(customer_email, json.dumps(event))
+
+        self.assertNotEqual(identities[0], identities[1])
+
+    def test_account_intake_rejects_overlong_nested_customer_name(self) -> None:
+        response = self.client.post(
+            "/account",
+            json={
+                "ticket_id": "TK-OVERLONG-NAME",
+                "title": "General support question",
+                "question": "Can someone explain this product behavior?",
+                "requester": {"name": "x" * 161},
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["detail"], "customer name must not exceed 160 characters")
+        self.assertIsNone(self.repository.get_ticket("TK-OVERLONG-NAME"))
 
     def test_missing_fields_are_asked_only_once_per_ticket(self) -> None:
         cases = (
