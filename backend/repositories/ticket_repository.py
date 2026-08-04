@@ -1863,7 +1863,10 @@ class InMemoryTicketRepository:
             for job in self._account_reply_jobs.values():
                 if str(job.get("ticket_id") or "") != str(ticket_id):
                     continue
-                if str(job.get("status") or "") not in {"queued", "preparing", "scheduled"}:
+                if str(job.get("status") or "") not in {
+                    "queued", "preparing", "scheduled",
+                    "persona_queued", "persona_preparing", "persona_scheduled",
+                }:
                     continue
                 job["status"] = "cancelled"
                 job["updated_at"] = updated_at
@@ -4643,7 +4646,7 @@ class PostgresTicketRepository:
                             job_id TEXT PRIMARY KEY,
                             ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
                             trigger_message_created_at TIMESTAMPTZ NOT NULL,
-                            status TEXT NOT NULL CHECK (status IN ('queued','preparing','scheduled','publishing','published','manual_attention','cancelled','failed')),
+                            status TEXT NOT NULL CHECK (status IN ('queued','preparing','scheduled','publishing','persona_queued','persona_preparing','persona_scheduled','persona_publishing','published','manual_attention','cancelled','failed')),
                             scheduled_for TIMESTAMPTZ NOT NULL,
                             payload JSONB NOT NULL,
                             attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -4654,6 +4657,16 @@ class PostgresTicketRepository:
                         )
                         """
                     ).format(self._table("support_account_reply_jobs"), self._table("support_tickets"))
+                )
+                reply_jobs_table = self._table("support_account_reply_jobs")
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS support_account_reply_jobs_status_check").format(reply_jobs_table)
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD CONSTRAINT support_account_reply_jobs_status_check "
+                        "CHECK (status IN ('queued','preparing','scheduled','publishing','persona_queued','persona_preparing','persona_scheduled','persona_publishing','published','manual_attention','cancelled','failed'))"
+                    ).format(reply_jobs_table)
                 )
                 cur.execute(
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, scheduled_for, created_at)").format(
@@ -4667,7 +4680,6 @@ class PostgresTicketRepository:
                         self._table("support_account_reply_jobs"),
                     )
                 )
-                reply_jobs_table = self._table("support_account_reply_jobs")
                 cur.execute(
                     """
                     SELECT constraint_row.conname
@@ -9597,7 +9609,13 @@ class PostgresTicketRepository:
         def _operation(conn: psycopg.Connection[Any]) -> int:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
-                    sql.SQL("UPDATE {} SET status='cancelled', updated_at=%s WHERE ticket_id=%s AND status IN ('queued','preparing','scheduled')").format(self._table("support_account_reply_jobs")),
+                    sql.SQL(
+                        "UPDATE {} SET status='cancelled', updated_at=%s "
+                        "WHERE ticket_id=%s AND status IN ("
+                        "'queued','preparing','scheduled',"
+                        "'persona_queued','persona_preparing','persona_scheduled'"
+                        ")"
+                    ).format(self._table("support_account_reply_jobs")),
                     (updated_at, str(ticket_id)),
                 )
                 return int(cur.rowcount or 0)

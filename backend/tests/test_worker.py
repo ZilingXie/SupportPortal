@@ -2574,6 +2574,36 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertTrue(started_threads[0].daemon)
         self.assertEqual(started_threads[0].kwargs["args"], (7.0,))
 
+    def test_account_reply_poller_is_disabled_without_explicit_owner_flag(self) -> None:
+        with patch.dict(os.environ, {"ACCOUNT_REPLY_POLLER_ENABLED": "false"}, clear=False):
+            self.assertFalse(worker._account_reply_poller_enabled_from_env())
+            self.assertIsNone(worker._start_account_reply_poller())
+
+    def test_account_reply_poller_owner_flag_starts_only_the_configured_worker(self) -> None:
+        started_threads = []
+
+        class _FakeThread:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def start(self) -> None:
+                started_threads.append(self)
+
+        with patch.dict(
+            os.environ,
+            {
+                "ACCOUNT_REPLY_POLLER_ENABLED": "true",
+                "ACCOUNT_REPLY_POLL_INTERVAL_SECONDS": "3",
+            },
+            clear=False,
+        ), patch.object(worker.threading, "Thread", _FakeThread):
+            thread = worker._start_account_reply_poller()
+
+        self.assertIsNotNone(thread)
+        self.assertEqual(len(started_threads), 1)
+        self.assertEqual(started_threads[0].kwargs["args"], (3.0,))
+        self.assertEqual(started_threads[0].kwargs["name"], "account-reply-poller")
+
     def test_published_persona_content_is_reused_on_retry(self) -> None:
         job = {
             "job_id": "account-reply-persona-retry",
@@ -2668,11 +2698,12 @@ class WorkerResilienceTests(unittest.TestCase):
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "render_automation_reply", return_value=rendered
-        ) as render:
+        ) as render, patch.object(worker, "resolve_support_message") as legacy_resolver:
             worker._prepare_account_reply_job(job)
 
         render.assert_called_once()
-        self.assertEqual(job["status"], "scheduled")
+        legacy_resolver.assert_not_called()
+        self.assertEqual(job["status"], worker.ACCOUNT_REPLY_PERSONA_SCHEDULED)
         self.assertEqual(job["payload"]["generated_content"], rendered.content)
         self.assertEqual(job["payload"]["persona_render_status"], "generated")
         repository.save_account_reply_job.assert_called_once_with(job)

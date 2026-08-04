@@ -27,6 +27,13 @@ from backend.main import (
     ticket_repository,
 )
 from backend.services.account_admin import apply_persona_to_customer_reply
+from backend.services.account_reply_jobs import (
+    ACCOUNT_REPLY_PERSONA_PIPELINE,
+    ACCOUNT_REPLY_PERSONA_PREPARING,
+    ACCOUNT_REPLY_PERSONA_PUBLISHING,
+    ACCOUNT_REPLY_PERSONA_QUEUED,
+    ACCOUNT_REPLY_PERSONA_SCHEDULED,
+)
 from backend.services.automation_persona import (
     AutomationPersonaError,
     build_automation_reply_facts,
@@ -108,6 +115,8 @@ AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_MESSAGES"
 ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV = "ENGINEER_ASSIGNMENT_POLLER_ENABLED"
 ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV = "ENGINEER_ASSIGNMENT_POLL_INTERVAL_SECONDS"
 ACCOUNT_REPLY_POLL_INTERVAL_ENV = "ACCOUNT_REPLY_POLL_INTERVAL_SECONDS"
+ACCOUNT_REPLY_POLLER_ENABLED_ENV = "ACCOUNT_REPLY_POLLER_ENABLED"
+ACCOUNT_REPLY_LEGACY_POLLER_ENABLED_ENV = "ACCOUNT_REPLY_LEGACY_POLLER_ENABLED"
 ENABLEMENT_DELIVERY_RETRY_POLL_INTERVAL_ENV = "ENABLEMENT_DELIVERY_RETRY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_SUBJECT_TICKET_RE = re.compile(
     r"\bTicket\s+((?:TK-[A-Z0-9-]+)|(?:[0-9]+))\b",
@@ -238,6 +247,24 @@ def _account_reply_poll_interval_from_env() -> float:
     return _safe_positive_float(os.getenv(ACCOUNT_REPLY_POLL_INTERVAL_ENV), 2.0)
 
 
+def _account_reply_poller_enabled_from_env() -> bool:
+    return str(os.getenv(ACCOUNT_REPLY_POLLER_ENABLED_ENV) or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _account_reply_legacy_poller_enabled_from_env() -> bool:
+    return str(os.getenv(ACCOUNT_REPLY_LEGACY_POLLER_ENABLED_ENV) or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _install_signal_handlers() -> None:
     def _handle_signal(signum: int, _frame: Any) -> None:
         global SHUTTING_DOWN
@@ -332,6 +359,9 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         raise RuntimeError("account reply job is missing its linked ticket")
     payload = dict(job.get("payload") or {})
     if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
+        if payload.get("reply_pipeline") not in {None, ACCOUNT_REPLY_PERSONA_PIPELINE}:
+            raise RuntimeError("unsupported Account reply pipeline")
+        payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
         if not payload.get("persona_key") or not payload.get("effective_prompt"):
             persona = ticket_repository.resolve_account_persona(ticket_id)
             if not isinstance(persona, dict):
@@ -371,7 +401,11 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                 }
             )
         job["payload"] = payload
-        job["status"] = "scheduled"
+        job["status"] = (
+            ACCOUNT_REPLY_PERSONA_SCHEDULED
+            if payload.get("reply_pipeline") == ACCOUNT_REPLY_PERSONA_PIPELINE
+            else "scheduled"
+        )
         job["updated_at"] = now_iso()
         if _account_reply_job_still_exists(job):
             ticket_repository.save_account_reply_job(job)
@@ -450,7 +484,8 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     current_job = ticket_repository.get_account_reply_job(job_id)
     if current_job is None or (
         isinstance(current_job, dict)
-        and str(current_job.get("status") or "") != "preparing"
+        and str(current_job.get("status") or "")
+        not in {"preparing", ACCOUNT_REPLY_PERSONA_PREPARING}
     ):
         return
     job["payload"] = payload
@@ -465,7 +500,10 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     ticket = ticket_repository.get_ticket(ticket_id)
     if current_job is None or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
-    if str(current_job.get("status") or "") != "publishing":
+    if str(current_job.get("status") or "") not in {
+        "publishing",
+        ACCOUNT_REPLY_PERSONA_PUBLISHING,
+    }:
         return
     payload = dict(current_job.get("payload") or {})
     existing_message = next(
@@ -694,51 +732,79 @@ def _render_case_persona_reply(
         return ""
 
 
+def _process_claimed_account_reply_jobs(
+    *,
+    from_status: str,
+    to_status: str,
+    due_only: bool,
+    limit: int,
+) -> None:
+    retry_status = from_status
+    if from_status == ACCOUNT_REPLY_PERSONA_QUEUED:
+        retry_status = ACCOUNT_REPLY_PERSONA_QUEUED
+    elif from_status == ACCOUNT_REPLY_PERSONA_SCHEDULED:
+        retry_status = ACCOUNT_REPLY_PERSONA_SCHEDULED
+    elif from_status == "queued":
+        retry_status = "queued"
+    elif from_status == "scheduled":
+        retry_status = "scheduled"
+    for job in ticket_repository.claim_account_reply_jobs(
+        from_status=from_status,
+        to_status=to_status,
+        now_value=now_iso(),
+        limit=limit,
+        due_only=due_only,
+    ):
+        try:
+            if to_status in {ACCOUNT_REPLY_PERSONA_PREPARING, "preparing"}:
+                _prepare_account_reply_job(job)
+            else:
+                _publish_account_reply_job(job)
+        except Exception as exc:
+            operation = "preparation" if to_status in {ACCOUNT_REPLY_PERSONA_PREPARING, "preparing"} else "publication"
+            LOGGER.exception("Account reply %s failed for %s", operation, job.get("job_id"))
+            current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
+            if current is None or str(current.get("status") or "") == "cancelled":
+                continue
+            failed_job = current
+            failed_job["status"] = retry_status if int(failed_job.get("attempt_count") or 0) < (3 if operation == "preparation" else 4) else "failed"
+            failed_job["payload"] = {
+                **dict(failed_job.get("payload") or {}),
+                "error": str(exc),
+            }
+            failed_job["updated_at"] = now_iso()
+            ticket_repository.save_account_reply_job(failed_job)
+
+
 def _run_account_reply_poller(interval_seconds: float) -> None:
     LOGGER.info("Account reply poller started with interval_seconds=%s.", interval_seconds)
     while not SHUTTING_DOWN:
         try:
-            now_value = now_iso()
-            for job in ticket_repository.claim_account_reply_jobs(
-                from_status="queued", to_status="preparing", now_value=now_value, limit=5
-            ):
-                try:
-                    _prepare_account_reply_job(job)
-                except Exception as exc:
-                    LOGGER.exception("Account reply preparation failed for %s", job.get("job_id"))
-                    current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
-                    if current is None:
-                        continue
-                    if current is not None and str(current.get("status") or "") == "cancelled":
-                        continue
-                    failed_job = current if current is not None else job
-                    failed_job["status"] = "queued" if int(failed_job.get("attempt_count") or 0) < 3 else "failed"
-                    failed_job["payload"] = {
-                        **dict(failed_job.get("payload") or {}),
-                        "error": str(exc),
-                    }
-                    failed_job["updated_at"] = now_iso()
-                    ticket_repository.save_account_reply_job(failed_job)
-            for job in ticket_repository.claim_account_reply_jobs(
-                from_status="scheduled", to_status="publishing", now_value=now_iso(), limit=10, due_only=True
-            ):
-                try:
-                    _publish_account_reply_job(job)
-                except Exception as exc:
-                    LOGGER.exception("Account reply publication failed for %s", job.get("job_id"))
-                    current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
-                    if current is None:
-                        continue
-                    if current is not None and str(current.get("status") or "") == "cancelled":
-                        continue
-                    failed_job = current if current is not None else job
-                    failed_job["status"] = "scheduled" if int(failed_job.get("attempt_count") or 0) < 4 else "failed"
-                    failed_job["payload"] = {
-                        **dict(failed_job.get("payload") or {}),
-                        "error": str(exc),
-                    }
-                    failed_job["updated_at"] = now_iso()
-                    ticket_repository.save_account_reply_job(failed_job)
+            _process_claimed_account_reply_jobs(
+                from_status=ACCOUNT_REPLY_PERSONA_QUEUED,
+                to_status=ACCOUNT_REPLY_PERSONA_PREPARING,
+                due_only=False,
+                limit=5,
+            )
+            _process_claimed_account_reply_jobs(
+                from_status=ACCOUNT_REPLY_PERSONA_SCHEDULED,
+                to_status=ACCOUNT_REPLY_PERSONA_PUBLISHING,
+                due_only=True,
+                limit=10,
+            )
+            if _account_reply_legacy_poller_enabled_from_env():
+                _process_claimed_account_reply_jobs(
+                    from_status="queued",
+                    to_status="preparing",
+                    due_only=False,
+                    limit=5,
+                )
+                _process_claimed_account_reply_jobs(
+                    from_status="scheduled",
+                    to_status="publishing",
+                    due_only=True,
+                    limit=10,
+                )
         except Exception:
             LOGGER.exception("Account reply poller failed")
         sleep_until = time.time() + max(interval_seconds, 1.0)
@@ -819,6 +885,7 @@ def _queue_enablement_submission_confirmation(
     reply_payload: dict[str, Any] = {
         "draft_content": "",
         "reply_facts": reply_facts,
+        "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
         "asked_field_keys": [],
         "visibility": "account_only",
         "automation_delivery_key": delivery_key,
@@ -836,7 +903,7 @@ def _queue_enablement_submission_confirmation(
             "job_id": f"account-reply-{uuid4().hex}",
             "ticket_id": ticket_id,
             "trigger_message_created_at": trigger_message_created_at,
-            "status": "scheduled",
+            "status": ACCOUNT_REPLY_PERSONA_QUEUED,
             "scheduled_for": (
                 datetime.now(timezone.utc) + timedelta(minutes=6)
             ).isoformat(),
@@ -1418,7 +1485,9 @@ def _start_engineer_assignment_poller_if_enabled() -> threading.Thread | None:
     return thread
 
 
-def _start_account_reply_poller() -> threading.Thread:
+def _start_account_reply_poller() -> threading.Thread | None:
+    if not _account_reply_poller_enabled_from_env():
+        return None
     thread = threading.Thread(
         target=_run_account_reply_poller,
         args=(_account_reply_poll_interval_from_env(),),
