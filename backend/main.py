@@ -4895,6 +4895,7 @@ async def _wait_for_account_rerun_replies(job: dict[str, Any]) -> None:
         missing = [item for item in jobs if item is None]
         job["reply_jobs_pending"] = len(pending) + len(missing)
         job["reply_jobs_published"] = sum(1 for item in jobs if item and item.get("status") == "published")
+        job["new_replies_published"] = job["reply_jobs_published"]
         job["reply_jobs_manual_attention"] = sum(1 for item in jobs if item and item.get("status") == "manual_attention")
         job["reply_jobs_failed"] = sum(1 for item in jobs if item and item.get("status") == "failed")
         job["updated_at"] = now_iso()
@@ -4936,6 +4937,26 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 canonical_ticket = await async_to_thread(ticket_repository.get_ticket, client_ticket_id)
                 if canonical_ticket is None:
                     raise ValueError("canonical support ticket not found")
+                reset_counts = await async_to_thread(
+                    ticket_repository.reset_account_rerun_state,
+                    client_ticket_id,
+                    reset_at=now_iso(),
+                    rerun_job_id=job_id,
+                )
+                for stat_name, count_key in (
+                    ("replies_deleted", "ai_messages_deleted"),
+                    ("reply_jobs_deleted", "reply_jobs_deleted"),
+                    ("reply_executions_deleted", "reply_executions_deleted"),
+                    ("customer_replies_cleared", "customer_replies_cleared"),
+                ):
+                    job[stat_name] = int(job.get(stat_name) or 0) + int(
+                        reset_counts.get(count_key) or 0
+                    )
+                # Reset removes Account AI messages before routing so the latest
+                # assistant context cannot influence the fresh classification.
+                canonical_ticket = await async_to_thread(ticket_repository.get_ticket, client_ticket_id)
+                if canonical_ticket is None:
+                    raise ValueError("canonical support ticket disappeared during rerun reset")
                 result = await async_to_thread(
                     reprocess_account_case,
                     account_case,
@@ -4951,19 +4972,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 }
                 result.route_execution["rerun_job_id"] = job_id
                 result.route_execution["rerun_mode"] = "fresh_case_rerun"
-                await async_to_thread(
-                    ticket_repository.cancel_pending_account_reply_jobs,
-                    client_ticket_id,
-                    updated_at=timestamp,
-                )
                 await async_to_thread(ticket_repository.save_account_case, updated_case)
-                if not result.reply_kind and not result.internal_email_to_send:
-                    job["replies_superseded"] = int(job.get("replies_superseded") or 0) + await async_to_thread(
-                        ticket_repository.supersede_account_ai_messages,
-                        client_ticket_id,
-                        except_job_id=job_id,
-                        superseded_at=timestamp,
-                    )
                 await async_to_thread(
                     ticket_repository.save_account_route_execution,
                     result.route_execution,
@@ -5125,7 +5134,11 @@ async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> di
         "emails_skipped": 0,
         "emails_failed": 0,
         "replies_scheduled": 0,
-        "replies_superseded": 0,
+        "replies_deleted": 0,
+        "reply_jobs_deleted": 0,
+        "reply_executions_deleted": 0,
+        "customer_replies_cleared": 0,
+        "new_replies_published": 0,
         "reply_job_ids": [],
         "reply_jobs_pending": 0,
         "reply_jobs_published": 0,

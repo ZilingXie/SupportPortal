@@ -1141,6 +1141,9 @@ class TicketRepository(Protocol):
     def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
+    def reset_account_rerun_state(
+        self, ticket_id: str, *, reset_at: str, rerun_job_id: str | None = None
+    ) -> dict[str, int]: ...
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
     def publish_account_reply(
         self,
@@ -1643,6 +1646,70 @@ class InMemoryTicketRepository:
             [copy.deepcopy(item) for items in self._account_reply_executions.values() for item in items],
             key=lambda item: str(item.get("created_at") or ""), reverse=True,
         )
+
+    def reset_account_rerun_state(
+        self, ticket_id: str, *, reset_at: str, rerun_job_id: str | None = None
+    ) -> dict[str, int]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        ticket = self._tickets.get(normalized_ticket_id)
+        empty_result = {
+            "ai_messages_deleted": 0,
+            "reply_jobs_deleted": 0,
+            "reply_executions_deleted": 0,
+            "customer_replies_cleared": 0,
+        }
+        if ticket is None:
+            return empty_result
+
+        ai_messages_deleted = 0
+        retained_messages: list[dict[str, Any]] = []
+        for message in ticket.get("messages", []):
+            if not isinstance(message, dict):
+                retained_messages.append(message)
+                continue
+            role = str(message.get("role") or "").strip().lower()
+            meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+            is_account_ai = role == "assistant" and (
+                str(meta.get("source") or message.get("source") or "").strip() == "account_ai"
+                or bool(meta.get("account_reply_job_id") or message.get("account_reply_job_id"))
+                or str(meta.get("visibility") or "").strip() == "account_only"
+            )
+            if is_account_ai:
+                ai_messages_deleted += 1
+            else:
+                retained_messages.append(message)
+        ticket["messages"] = retained_messages
+        ticket["updated_at"] = reset_at
+
+        with self._assignment_lock:
+            old_job_ids = {
+                str(job_id)
+                for job_id, job in self._account_reply_jobs.items()
+                if str(job.get("ticket_id") or "").strip() == normalized_ticket_id
+            }
+            for job_id in old_job_ids:
+                self._account_reply_jobs.pop(job_id, None)
+
+        reply_executions = self._account_reply_executions.pop(normalized_ticket_id, [])
+        account_case = self.get_billing_ticket_by_client_ticket_id(normalized_ticket_id)
+        customer_replies_cleared = 0
+        if account_case is not None:
+            if str(account_case.get("customer_reply") or "").strip():
+                customer_replies_cleared = 1
+            account_case.update(
+                customer_reply=None,
+                internal_email_payload=None,
+                internal_email_send_status=None,
+                internal_email_send_reason=None,
+                updated_at=reset_at,
+            )
+            self.save_billing_ticket(account_case)
+        return {
+            "ai_messages_deleted": ai_messages_deleted,
+            "reply_jobs_deleted": len(old_job_ids),
+            "reply_executions_deleted": len(reply_executions),
+            "customer_replies_cleared": customer_replies_cleared,
+        }
 
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]:
         saved = copy.deepcopy(job)
@@ -9210,6 +9277,87 @@ class PostgresTicketRepository:
                     cur.execute(sql.SQL("SELECT payload FROM {} WHERE ticket_id=%s ORDER BY created_at").format(self._table("support_account_reply_executions")), (str(ticket_id),))
                 return [dict(row[0]) for row in cur.fetchall()]
         return self._run_with_connection_retry("list_account_reply_executions", _operation)
+
+    def reset_account_rerun_state(
+        self, ticket_id: str, *, reset_at: str, rerun_job_id: str | None = None
+    ) -> dict[str, int]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        empty_result = {
+            "ai_messages_deleted": 0,
+            "reply_jobs_deleted": 0,
+            "reply_executions_deleted": 0,
+            "customer_replies_cleared": 0,
+        }
+        if not normalized_ticket_id:
+            return empty_result
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, int]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT ticket_id FROM {} WHERE ticket_id=%s FOR UPDATE").format(
+                        self._table("support_tickets")
+                    ),
+                    (normalized_ticket_id,),
+                )
+                if cur.fetchone() is None:
+                    return empty_result
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE ticket_id=%s AND role='assistant' AND ("
+                        "COALESCE(meta->>'source','')='account_ai' OR "
+                        "meta ? 'account_reply_job_id' OR "
+                        "meta->>'visibility'='account_only'"
+                        ") RETURNING id"
+                    ).format(self._table("support_ticket_messages")),
+                    (normalized_ticket_id,),
+                )
+                ai_messages_deleted = len(cur.fetchall())
+                cur.execute(
+                    sql.SQL("DELETE FROM {} WHERE ticket_id=%s RETURNING execution_id").format(
+                        self._table("support_account_reply_executions")
+                    ),
+                    (normalized_ticket_id,),
+                )
+                reply_executions_deleted = len(cur.fetchall())
+                cur.execute(
+                    sql.SQL("DELETE FROM {} WHERE ticket_id=%s RETURNING job_id").format(
+                        self._table("support_account_reply_jobs")
+                    ),
+                    (normalized_ticket_id,),
+                )
+                reply_jobs_deleted = len(cur.fetchall())
+                cur.execute(
+                    sql.SQL(
+                        "SELECT customer_reply FROM {} WHERE client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_ticket_id,),
+                )
+                case_row = cur.fetchone()
+                customer_replies_cleared = int(
+                    case_row is not None and bool(str(case_row[0] or "").strip())
+                )
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET customer_reply=NULL, internal_email_payload=NULL, "
+                        "internal_email_send_status=NULL, internal_email_send_reason=NULL, "
+                        "updated_at=%s WHERE client_ticket_id=%s"
+                    ).format(self._table("support_account_cases")),
+                    (reset_at, normalized_ticket_id),
+                )
+                cur.execute(
+                    sql.SQL("UPDATE {} SET updated_at=%s WHERE ticket_id=%s").format(
+                        self._table("support_tickets")
+                    ),
+                    (reset_at, normalized_ticket_id),
+                )
+                return {
+                    "ai_messages_deleted": ai_messages_deleted,
+                    "reply_jobs_deleted": reply_jobs_deleted,
+                    "reply_executions_deleted": reply_executions_deleted,
+                    "customer_replies_cleared": customer_replies_cleared,
+                }
+
+        return self._run_with_connection_retry("reset_account_rerun_state", _operation)
 
     @staticmethod
     def _account_reply_job_from_row(row: tuple[Any, ...]) -> dict[str, Any]:

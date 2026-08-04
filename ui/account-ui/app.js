@@ -1464,7 +1464,7 @@ function renderRerouteStatus() {
   return `
     <div class="reroute-status ${failed || job.status === "failed" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
       <strong>${job.status === "failed" ? "Rerun failed" : "Rerun complete"}</strong>
-      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_superseded || 0)} old replies archived</span>
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted</span>
     </div>
   `;
 }
@@ -1483,7 +1483,7 @@ function renderRerouteConfirmation() {
         </div>
         <ul>
           <li>Previously sent internal emails will be sent again as a new rerun execution.</li>
-          <li>Existing Account-only AI replies will be replaced after the new Persona reply is published.</li>
+          <li>Existing Account-only AI replies and reply jobs will be deleted before each case starts again.</li>
           <li>Account & Billing classification extractors also run again; they never send email or customer replies.</li>
         </ul>
         <div class="reroute-modal__actions">
