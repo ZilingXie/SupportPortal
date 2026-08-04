@@ -690,9 +690,10 @@ def _create_account_reply_job(
     rerun_job_id: str | None = None,
 ) -> dict[str, Any]:
     created_at = now_iso()
-    scheduled_for = (
-        datetime.fromisoformat(trigger_message_created_at) + timedelta(seconds=_account_reply_delay_seconds())
-    ).astimezone(timezone.utc).isoformat()
+    trigger_at = datetime.fromisoformat(trigger_message_created_at).astimezone(timezone.utc)
+    created_at_value = datetime.fromisoformat(created_at).astimezone(timezone.utc)
+    delay_base = max(trigger_at, created_at_value)
+    scheduled_for = (delay_base + timedelta(seconds=_account_reply_delay_seconds())).isoformat()
     ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
     payload: dict[str, Any] = {
         "draft_content": str(draft_content or "").strip(),
@@ -718,7 +719,9 @@ def _create_account_reply_job(
         "job_id": f"account-reply-{uuid4().hex}",
         "ticket_id": ticket_id,
         "trigger_message_created_at": trigger_message_created_at,
-        "status": "scheduled" if (payload["draft_content"] or payload.get("reply_facts")) else "queued",
+        # Persona-backed replies must be prepared before they become publishable. Keeping
+        # them queued prevents a content-less scheduled job from reaching the publisher.
+        "status": "scheduled" if payload["draft_content"] else "queued",
         "scheduled_for": scheduled_for,
         "payload": payload,
         "attempt_count": 0,
@@ -874,7 +877,19 @@ class AccountIntakeRequest(BaseModel):
     title: str = Field(default="", max_length=300)
     question: str = Field(default="", max_length=12000)
     customer_email: str | None = Field(default=None, max_length=320)
-    customer_name: str | None = Field(default=None, max_length=160)
+    customer_name: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices(
+            "customer_name",
+            "cx_name",
+            "cx name",
+            "cxName",
+            "requester_name",
+        ),
+    )
+    requester: str | dict[str, Any] | None = Field(default=None)
+    customer: str | dict[str, Any] | None = Field(default=None)
     external_id: str | None = Field(default=None, max_length=160)
     source: str | dict[str, Any] | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=160)
@@ -896,6 +911,48 @@ class PromptDraftRequest(BaseModel):
     content: str = Field(min_length=1, max_length=100_000)
     change_note: str = Field(min_length=1, max_length=500)
     based_on_version: int = Field(ge=1)
+
+
+_ACCOUNT_NAME_KEYS = ("name", "display_name", "full_name", "customer_name", "cx_name")
+
+
+def _nested_intake_name(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict):
+        return ""
+    for key in _ACCOUNT_NAME_KEYS:
+        candidate = str(value.get(key) or "").strip()
+        if candidate:
+            return candidate
+    return ""
+
+
+def _account_intake_customer_name(request: AccountIntakeRequest) -> str:
+    for candidate in (
+        request.customer_name,
+        _nested_intake_name(request.requester),
+        _nested_intake_name(request.customer),
+    ):
+        normalized = " ".join(str(candidate or "").split()).strip()
+        if normalized:
+            return normalized
+    return ""
+
+
+def _account_intake_customer_name_source(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("customer_name", "cx_name", "cx name", "cxName", "requester_name"):
+        if str(payload.get(key) or "").strip():
+            return key
+    for parent_key in ("requester", "customer"):
+        nested = payload.get(parent_key)
+        if isinstance(nested, dict):
+            for key in _ACCOUNT_NAME_KEYS:
+                if str(nested.get(key) or "").strip():
+                    return f"{parent_key}.{key}"
+    return None
 
 
 class AccountPersonaEnabledRequest(BaseModel):
@@ -3915,7 +3972,7 @@ def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.post("/account")
-async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]:
+async def create_account_intake(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
     title = " ".join(str(request.title or "").split()).strip()
     question = str(request.question or "").strip()
     if not question:
@@ -3947,7 +4004,9 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
 
     account_source = _normalize_account_source(request.source)
     customer_id = str(request.customer_email or "").strip() or "account-intake"
-    customer_name = " ".join(str(request.customer_name or "").split()).strip()
+    customer_name = _account_intake_customer_name(request)
+    intake_payload = await http_request.json()
+    customer_name_source = _account_intake_customer_name_source(intake_payload)
     timestamp = now_iso()
     ticket: dict[str, Any] = {
         "ticket_id": ticket_id,
@@ -4330,6 +4389,8 @@ async def create_account_intake(request: AccountIntakeRequest) -> dict[str, Any]
         "ticket_id": ticket_id,
         "status": ticket["status"],
         "source": account_source,
+        "customer_name_present": bool(customer_name),
+        "customer_name_source": customer_name_source,
         "message": question[:200],
         "created_at": now_iso(),
         "answer_route": resolution.answer_route if resolution is not None else None,
