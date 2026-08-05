@@ -287,13 +287,26 @@ button:disabled {
   gap: 10px;
 }
 
-/* --- Filter chips --- */
+/* --- Route filters --- */
 
-.filter-chips {
+.filter-groups {
+  display: grid;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+
+.filter-group {
   display: flex;
+  align-items: center;
   gap: 6px;
-  padding: 0 0 8px 0;
   flex-wrap: wrap;
+}
+
+.filter-child-list {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .filter-chip {
@@ -320,6 +333,29 @@ button:disabled {
 .filter-chip--active:hover {
   background: var(--primary);
   color: white;
+}
+
+.filter-chip--group {
+  font-weight: 700;
+}
+
+.filter-chip--child {
+  background: var(--surface-container-low);
+  font-size: 11px;
+  padding-inline: 9px;
+}
+
+.filter-count {
+  display: inline-flex;
+  min-width: 1.35em;
+  justify-content: center;
+  margin-left: 5px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-size: 10px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- Sidebar history list --- */

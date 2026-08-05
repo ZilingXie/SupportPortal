@@ -32,6 +32,50 @@ const CACHE_HARD_EXPIRY_MS = 5 * 60_000;
 const SUMMARY_CACHE_LIMIT = 20;
 const DETAIL_CACHE_LIMIT = 20;
 
+const DEFAULT_FILTER_DEFINITIONS = [
+  { id: "all", label: "All", children: [] },
+  {
+    id: "automation",
+    label: "Automation",
+    children: [
+      { id: "fraud_account", label: "Fraud Account" },
+      { id: "detailed_invoice", label: "Detailed Invoice" },
+      { id: "enablement", label: "Enablement" },
+      { id: "quota", label: "Quota" },
+      { id: "unregistered", label: "Unregistered" },
+    ],
+  },
+  {
+    id: "account_billing",
+    label: "Account & Billing",
+    children: [
+      { id: "account_suspension", label: "Account Suspension" },
+      { id: "other", label: "Other" },
+    ],
+  },
+  { id: "agora_technical", label: "Agora Technical", children: [] },
+  { id: "agora_non_technical", label: "Agora Non-technical", children: [] },
+  {
+    id: "conversation",
+    label: "Conversation",
+    children: [
+      { id: "resolve", label: "Resolve" },
+      { id: "follow_up", label: "Follow-up" },
+      { id: "human_review", label: "Human Review" },
+    ],
+  },
+  {
+    id: "human_review",
+    label: "Human Review",
+    children: [
+      { id: "uncategorized", label: "Uncategorized" },
+      { id: "uncertain", label: "Uncertain" },
+      { id: "non_agora", label: "Non-Agora" },
+      { id: "other", label: "Other" },
+    ],
+  },
+];
+
 const state = {
   view: "create",
   title: "",
@@ -53,7 +97,10 @@ const state = {
   activeItem: null,
   error: "",
   composerToolbarState: buildDefaultComposerToolbarState(),
-  statusFilter: "agora_technical",
+  statusFilter: "all",
+  filterDefinitions: DEFAULT_FILTER_DEFINITIONS,
+  filterCounts: {},
+  filterCountsVersion: 0,
   replyMessage: "",
   isSubmittingReply: false,
   replyError: "",
@@ -87,19 +134,6 @@ const ACTIVE_AI_REPLY_STATUSES = new Set([
   "queued", "preparing", "scheduled", "publishing",
   "persona_queued", "persona_preparing", "persona_scheduled", "persona_publishing",
 ]);
-const ROUTE_LABEL_FILTERS = new Set([
-  "human_review",
-  "agora_technical",
-  "account_billing",
-  "conversation",
-]);
-const ROUTE_LABEL_FILTER_MATCHES = {
-  human_review: new Set(["Human Review", "Agora / Uncategorized", "Uncertain"]),
-  agora_technical: "Agora Technical",
-  account_billing: "Account & Billing /",
-  conversation: "Conversation",
-};
-
 const ROUTE_TUPLE_OPTIONS = [
   { scope: "ticket_resolution", action: "resolve_ticket", label: "Conversation / Resolve" },
   { scope: "conversation", action: "follow_up", label: "Conversation / Follow-up" },
@@ -344,6 +378,16 @@ function currentSummaryKey() {
   return `${state.statusFilter}:${state.currentPage}`;
 }
 
+function selectedFilterParts() {
+  const [group, leaf] = String(state.statusFilter || "all").split(":", 2);
+  return { group: group || "all", leaf: leaf || "" };
+}
+
+function filterCount(key) {
+  const value = state.filterCounts?.[key];
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
 function buildTicketListUrl() {
   const params = new URLSearchParams({
     page: String(state.currentPage),
@@ -353,19 +397,19 @@ function buildTicketListUrl() {
     params.set("review_status", "pending");
   } else if (state.statusFilter === "reviewed") {
     params.set("review_status", "reviewed");
-  } else if (state.statusFilter === "automation") {
-    params.set("route_status", "automated");
-  } else if (state.statusFilter === "not_automated") {
-    params.set("route_status", "not_automated");
   } else if (state.statusFilter === "route_errors") {
     params.set("route_errors", "true");
-  } else if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
-    params.set("route_label", state.statusFilter);
+  } else {
+    const { group, leaf } = selectedFilterParts();
+    if (group !== "all") {
+      params.set("route_group", group);
+      if (leaf) params.set("route_subcategory", leaf);
+    }
   }
   return `/api/account/cases?${params.toString()}`;
 }
 
-function applyTicketPage(data) {
+function applyTicketPage(data, countsVersion = 0) {
   state.history = data.cases || data.tickets || data.billing_tickets || [];
   state.pagination = {
     page: Number(data.page || state.currentPage || 1),
@@ -375,6 +419,13 @@ function applyTicketPage(data) {
     hasMore: Boolean(data.has_more),
   };
   state.currentPage = state.pagination.page;
+  if (data.filter_counts && countsVersion >= (state.filterCountsVersion || 0)) {
+    state.filterCounts = { ...data.filter_counts };
+    state.filterCountsVersion = countsVersion;
+  }
+  if (Array.isArray(data.filter_definitions) && data.filter_definitions.length) {
+    state.filterDefinitions = data.filter_definitions;
+  }
 }
 
 function invalidateSummaryCache() {
@@ -486,7 +537,7 @@ async function fetchTickets({ force = false, renderOnUpdate = false } = {}) {
 
   if (!force && cached && age < CACHE_HARD_EXPIRY_MS) {
     touchCacheEntry(summaryCache, cacheKey, cached, SUMMARY_CACHE_LIMIT);
-    applyTicketPage(cached.data);
+    applyTicketPage(cached.data, cached.countsVersion || 0);
     state.isLoadingHistory = false;
     prefetchTicketDetails(state.history);
     if (renderOnUpdate) render();
@@ -511,8 +562,9 @@ async function fetchTickets({ force = false, renderOnUpdate = false } = {}) {
     if (!response.ok) throw new Error("Could not load Account Cases.");
     const data = await response.json();
     if (generation !== summaryRequestGeneration || cacheKey !== currentSummaryKey()) return;
-    touchCacheEntry(summaryCache, cacheKey, { data, cachedAt: Date.now() }, SUMMARY_CACHE_LIMIT);
-    applyTicketPage(data);
+    const countsVersion = Date.now();
+    touchCacheEntry(summaryCache, cacheKey, { data, cachedAt: countsVersion, countsVersion }, SUMMARY_CACHE_LIMIT);
+    applyTicketPage(data, countsVersion);
     state.isLoadingHistory = false;
     prefetchTicketDetails(state.history);
     if (renderOnUpdate) render();
@@ -797,51 +849,64 @@ function displayRouteStatus(item) {
   return isAutomatedRoute(item) ? "automation" : "not_automated";
 }
 
-function matchesFilter(item) {
-  const itemStatus = item.status || item.automation_status || "not_automated";
-  const reviewStatus = item.route_review_status || "pending";
-  const { secondary } = classificationLabels(item);
-  if (state.statusFilter === "all") return true;
-  if (state.statusFilter === "unreviewed") return reviewStatus !== "reviewed";
-  if (state.statusFilter === "reviewed") return reviewStatus === "reviewed";
-  if (state.statusFilter === "automation") return isAutomatedRoute(item);
-  if (state.statusFilter === "not_automated") return !isAutomatedRoute(item);
-  if (state.statusFilter === "route_errors") return Boolean(item.route_error);
-  if (ROUTE_LABEL_FILTERS.has(state.statusFilter)) {
-    const { primary } = classificationLabels(item);
-    const expected = ROUTE_LABEL_FILTER_MATCHES[state.statusFilter];
-    if (expected instanceof Set) return expected.has(secondary) || expected.has(primary);
-    return state.statusFilter === "account_billing"
-      ? secondary.startsWith(expected)
-      : secondary === expected || primary === expected;
-  }
-  return true;
+function renderFilterCount(key) {
+  const count = filterCount(key);
+  return count === null ? "" : `<span class="filter-count" aria-label="${count} cases">${count}</span>`;
 }
 
 function renderFilterControls() {
-  const filters = [
-    { value: "agora_technical", label: "Agora Technical" },
-    { value: "account_billing", label: "Account & Billing" },
-    { value: "human_review", label: "Human Review" },
-    { value: "automation", label: "Automation" },
-    { value: "conversation", label: "Conversation" },
-  ];
+  const definitions = Array.isArray(state.filterDefinitions) && state.filterDefinitions.length
+    ? state.filterDefinitions
+    : DEFAULT_FILTER_DEFINITIONS;
   return `
-    <div class="filter-chips">
-      ${filters
-        .map(
-          (f) => `
-        <button
-          class="filter-chip ${state.statusFilter === f.value ? "filter-chip--active" : ""}"
-          type="button"
-          data-action="set-filter"
-          data-value="${escapeHtml(f.value)}"
-        >${escapeHtml(f.label)}</button>
-      `
-        )
+    <div class="filter-groups" aria-label="Account case route filters">
+      ${definitions
+        .map((group) => {
+          const groupKey = group.id;
+          const children = Array.isArray(group.children) ? group.children : [];
+          return `
+            <div class="filter-group">
+              <button
+                class="filter-chip filter-chip--group ${state.statusFilter === groupKey ? "filter-chip--active" : ""}"
+                type="button"
+                data-action="set-filter"
+                data-value="${escapeHtml(groupKey)}"
+                aria-pressed="${state.statusFilter === groupKey}"
+              >${escapeHtml(group.label)}${renderFilterCount(groupKey)}</button>
+              ${children.length ? `
+                <div class="filter-child-list" aria-label="${escapeHtml(group.label)} filters">
+                  ${children
+                    .map((child) => {
+                      const key = `${groupKey}:${child.id}`;
+                      return `
+                        <button
+                          class="filter-chip filter-chip--child ${state.statusFilter === key ? "filter-chip--active" : ""}"
+                          type="button"
+                          data-action="set-filter"
+                          data-value="${escapeHtml(key)}"
+                          aria-pressed="${state.statusFilter === key}"
+                        >${escapeHtml(child.label)}${renderFilterCount(key)}</button>
+                      `;
+                    })
+                    .join("")}
+                </div>
+              ` : ""}
+            </div>
+          `;
+        })
         .join("")}
     </div>
   `;
+}
+
+function selectedFilterLabel() {
+  const key = String(state.statusFilter || "all");
+  for (const group of state.filterDefinitions || DEFAULT_FILTER_DEFINITIONS) {
+    if (group.id === key) return group.label;
+    const child = (group.children || []).find((item) => `${group.id}:${item.id}` === key);
+    if (child) return `${group.label} / ${child.label}`;
+  }
+  return "All";
 }
 
 function paginationPages(currentPage, totalPages) {
@@ -923,34 +988,19 @@ function renderHistorySidebar() {
       </div>
     `;
   }
-  const visibleItems = state.history.filter(matchesFilter);
   if (!state.history.length) {
     return `
+      ${renderFilterControls()}
       <div class="history-empty">
         <span class="material-symbols-outlined">receipt_long</span>
         <p>No Account Cases yet</p>
       </div>
     `;
   }
-  if (!visibleItems.length) {
-    return `
-      ${renderFilterControls()}
-      <div class="history-empty">
-        <span class="material-symbols-outlined">filter_alt_off</span>
-        <p>No Account Cases match this filter</p>
-      </div>
-    `;
-  }
   return `
     ${renderFilterControls()}
-    <div class="history-section-title">${
-      state.statusFilter === "reviewed"
-        ? "Reviewed Account Cases"
-        : state.statusFilter === "unreviewed"
-          ? "Unreviewed Account Cases"
-          : "Recent Account Cases"
-    }</div>
-    ${visibleItems
+    <div class="history-section-title">${escapeHtml(selectedFilterLabel())} Account Cases (${escapeHtml(state.pagination.total)})</div>
+    ${state.history
       .map(
         (item) => {
           const itemId = item.account_case_id || item.ticket_id || item.billing_ticket_id || "";
@@ -1635,7 +1685,7 @@ function bind() {
       }
       const filterBtn = event.target.closest("[data-action='set-filter']");
       if (filterBtn) {
-        state.statusFilter = filterBtn.dataset.value || "agora_technical";
+        state.statusFilter = filterBtn.dataset.value || "all";
         state.currentPage = 1;
         if (state.statusFilter === "route_errors") {
           state.routeErrorSummary = null;

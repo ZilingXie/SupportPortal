@@ -377,6 +377,8 @@
 6. Zendesk 来源的 Account case 必须在列表和详情中优先展示来源 ticket number（例如 `#11830`）；若历史记录的内部 Ticket ID 与 Zendesk number 不一致，详情需同时保留 Internal Ticket ID 供追踪。
 7. `manual_attention / failed` 必须作为文字状态显示并使用 `aria-live="polite"`，不能只靠颜色。客户在等待期间追加消息时，旧 scheduled reply 必须取消并由最新上下文替代。
 8. Automation Behavior 只保存结构化字段、路由状态、内部动作和发送时机；客户可见文案必须在最终发送入口由统一 Automation Persona 生成。Persona 失败、缺少人设或事实抽取失败时显示 Human Review，不发送 Behavior 兜底文案。
+9. `/account` 列表使用两级 route filter：默认 `All`，一级展示 Automation、Account & Billing、Agora Technical、Agora Non-technical、Conversation、Human Review，存在子路由时在同组展示二级 filter。每个一级和二级 filter 都显示服务端 facet count，列表分页只渲染服务端返回的当前页，不再在浏览器重复筛选。
+10. Filter count、当前页和 total 必须来自同一数据库快照；内存缓存仅保存当前页摘要与受限详情，缓存响应不得覆盖更新版本的 counts。Filter 控件保持键盘可操作、`aria-pressed` 状态明确，窄屏允许子 filter 换行但不得横向溢出。
 
 ### 6.9 Internal Automation Email Handoff
 1. Fraud Account、Account Verification、Detailed Invoice、Enablement、Quota 的内部 handoff 邮件必须复用统一的 `Internal Automation Email` 模板；Workspace Invitation 属于用户外发邮件，不使用该模板。
