@@ -147,6 +147,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_PUBLISHING,
     ACCOUNT_REPLY_PERSONA_QUEUED,
     ACCOUNT_REPLY_PERSONA_SCHEDULED,
+    create_account_reply_job,
 )
 from backend.services.automation_persona import (
     AutomationPersonaError,
@@ -705,56 +706,19 @@ def _create_account_reply_job(
     rerun_job_id: str | None = None,
 ) -> dict[str, Any]:
     created_at = now_iso()
-    trigger_at = datetime.fromisoformat(trigger_message_created_at).astimezone(timezone.utc)
-    created_at_value = datetime.fromisoformat(created_at).astimezone(timezone.utc)
-    delay_base = max(trigger_at, created_at_value)
-    scheduled_for = (delay_base + timedelta(seconds=_account_reply_delay_seconds())).isoformat()
-    ticket_repository.cancel_pending_account_reply_jobs(
-        ticket_id,
-        updated_at=created_at,
+    return create_account_reply_job(
+        ticket_repository,
+        ticket_id=ticket_id,
+        trigger_message_created_at=trigger_message_created_at,
+        created_at=created_at,
+        delay_seconds=_account_reply_delay_seconds(),
+        draft_content=draft_content,
+        reply_facts=reply_facts,
+        asked_field_keys=asked_field_keys,
+        persona_assignment=persona_assignment,
+        automation_delivery_key=automation_delivery_key,
         rerun_job_id=rerun_job_id,
     )
-    payload: dict[str, Any] = {
-        "draft_content": str(draft_content or "").strip(),
-        "asked_field_keys": sorted({str(item).strip().lower() for item in (asked_field_keys or []) if str(item).strip()}),
-        "visibility": "account_only",
-    }
-    if isinstance(reply_facts, dict) and reply_facts:
-        payload["reply_facts"] = copy.deepcopy(reply_facts)
-        payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
-    if persona_assignment:
-        payload.update(
-            {
-                "persona_key": persona_assignment.get("persona_key"),
-                "persona_version": persona_assignment.get("version"),
-                "effective_prompt": copy.deepcopy(persona_assignment.get("content") or {}),
-            }
-        )
-    if str(automation_delivery_key or "").strip():
-        payload["automation_delivery_key"] = str(automation_delivery_key).strip()
-    if str(rerun_job_id or "").strip():
-        payload["rerun_job_id"] = str(rerun_job_id).strip()
-        payload["replace_existing_reply"] = True
-    job = {
-        "job_id": f"account-reply-{uuid4().hex}",
-        "ticket_id": ticket_id,
-        "trigger_message_created_at": trigger_message_created_at,
-        # Persona-backed replies use a private status namespace so older workers cannot
-        # claim them through the legacy queued/scheduled poller.
-        "status": (
-            ACCOUNT_REPLY_PERSONA_QUEUED
-            if payload.get("reply_pipeline") == ACCOUNT_REPLY_PERSONA_PIPELINE
-            else ("scheduled" if payload["draft_content"] else "queued")
-        ),
-        "scheduled_for": scheduled_for,
-        "payload": payload,
-        "attempt_count": 0,
-        "claimed_at": None,
-        "published_at": None,
-        "created_at": created_at,
-        "updated_at": created_at,
-    }
-    return ticket_repository.save_account_reply_job(job)
 
 
 async def _send_billing_internal_email_attempt(attempt: dict[str, Any]) -> tuple[str, str]:

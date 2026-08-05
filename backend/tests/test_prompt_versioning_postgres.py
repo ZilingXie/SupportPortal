@@ -10,6 +10,7 @@ import psycopg
 from psycopg import sql
 
 from backend.repositories.ticket_repository import PostgresTicketRepository
+from backend.services.agent_config import build_managed_prompt_catalog
 from backend.services.prompt_versioning import PromptVersionService
 
 
@@ -130,6 +131,79 @@ class PromptVersioningPostgresTests(unittest.TestCase):
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(self.service.active_release()["release_id"], active["release_id"])
         self.assertEqual(self.service.get_prompt("route-system")["active_version"]["version"], selected_version)
+
+    def test_catalog_retirement_and_reintroduction_preserve_release_history(self) -> None:
+        catalog = build_managed_prompt_catalog()
+        retired = catalog[-1]
+        current_catalog = catalog[:-1]
+        previous = self.service.active_release()
+        stale_draft = self.repository.create_prompt_draft(
+            retired["prompt_key"],
+            content="stale scheduled content",
+            change_note="must not survive retirement as scheduled",
+            based_on_version=1,
+            actor_id="test",
+            created_at="2026-07-23T03:58:00+00:00",
+        )
+        self.repository.schedule_prompt_version(
+            retired["prompt_key"],
+            stale_draft["version"],
+            actor_id="test",
+            scheduled_at="2026-07-23T03:59:00+00:00",
+        )
+
+        sync_result = self.repository.sync_prompt_catalog(
+            current_catalog,
+            actor_id="test",
+            created_at="2026-07-23T04:00:00+00:00",
+        )
+        candidate = self.repository.prepare_prompt_release(
+            build_ref="retirement-build",
+            created_at="2026-07-23T04:01:00+00:00",
+        )
+
+        self.assertEqual(sync_result["retired_prompt_keys"], [retired["prompt_key"]])
+        self.assertIsNone(self.repository.get_managed_prompt(retired["prompt_key"]))
+        self.assertEqual(set(candidate["items"]), {item["prompt_key"] for item in current_catalog})
+        self.assertNotIn(retired["prompt_key"], candidate["items"])
+        self.assertIn(retired["prompt_key"], previous["items"])
+
+        failed = self.repository.fail_prompt_release(
+            candidate["release_id"],
+            failure_reason="integration failure",
+        )
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(self.service.active_release()["release_id"], previous["release_id"])
+
+        replacement = self.repository.prepare_prompt_release(
+            build_ref="retirement-build-2",
+            created_at="2026-07-23T04:02:00+00:00",
+        )
+        active = self.repository.activate_prompt_release(
+            replacement["release_id"],
+            activated_at="2026-07-23T04:03:00+00:00",
+        )
+        self.assertEqual(active["status"], "active")
+        self.assertNotIn(retired["prompt_key"], active["items"])
+
+        reintroduced = self.repository.sync_prompt_catalog(
+            catalog,
+            actor_id="test",
+            created_at="2026-07-23T04:04:00+00:00",
+        )
+        restored = self.repository.get_managed_prompt(retired["prompt_key"])
+        next_candidate = self.repository.prepare_prompt_release(
+            build_ref="reintroduction-build",
+            created_at="2026-07-23T04:05:00+00:00",
+        )
+        self.assertEqual(reintroduced["reactivated_prompt_keys"], [retired["prompt_key"]])
+        self.assertIsNotNone(restored["scheduled_version"])
+        self.assertEqual(restored["scheduled_version"]["content"], retired["content"])
+        stale = next(
+            item for item in restored["versions"] if item["version"] == stale_draft["version"]
+        )
+        self.assertEqual(stale["status"], "draft")
+        self.assertIn(retired["prompt_key"], next_candidate["items"])
 
 
 if __name__ == "__main__":

@@ -2024,12 +2024,22 @@ class InMemoryTicketRepository:
     def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]:
         with self._assignment_lock:
             has_active_release = self.get_active_prompt_release() is not None
-            created_keys: list[str] = []
+            active_release = self.get_active_prompt_release() or {}
+            active_release_keys = set((active_release.get("items") or {}).keys())
+            normalized_definitions: dict[str, dict[str, Any]] = {}
             for definition in definitions:
                 key = str(definition.get("prompt_key") or "").strip()
                 content = str(definition.get("content") or "").strip()
                 if not key or not content:
                     raise ValueError("prompt catalog entries require prompt_key and content")
+                if key in normalized_definitions:
+                    raise ValueError(f"duplicate prompt catalog key: {key}")
+                normalized_definitions[key] = {**definition, "prompt_key": key, "content": content}
+
+            created_keys: list[str] = []
+            reactivated_keys: list[str] = []
+            for key, definition in normalized_definitions.items():
+                content = str(definition["content"])
                 existing = self._prompt_definitions.get(key)
                 if existing is None:
                     self._prompt_definitions[key] = {
@@ -2040,6 +2050,7 @@ class InMemoryTicketRepository:
                         "editable": bool(definition.get("editable", True)),
                         "created_at": created_at,
                         "updated_at": created_at,
+                        "retired_at": None,
                     }
                     self._prompt_versions[key] = [{
                         "prompt_key": key,
@@ -2057,14 +2068,61 @@ class InMemoryTicketRepository:
                     }]
                     created_keys.append(key)
                 else:
+                    was_retired = bool(existing.get("retired_at"))
                     existing.update({
                         "name": str(definition.get("name") or key).strip(),
                         "agent_key": str(definition.get("agent_key") or "").strip(),
                         "component_key": str(definition.get("component_key") or "").strip(),
                         "editable": bool(definition.get("editable", True)),
                         "updated_at": created_at,
+                        "retired_at": None,
                     })
-            if not has_active_release and self._prompt_definitions:
+                    if was_retired:
+                        reactivated_keys.append(key)
+                        versions = self._prompt_versions[key]
+                        scheduled = next((item for item in versions if item["status"] == "scheduled"), None)
+                        if key not in active_release_keys and scheduled is None:
+                            source = max(
+                                (item for item in versions if item.get("activated_at")),
+                                key=lambda item: (str(item.get("activated_at") or ""), int(item["version"])),
+                                default=None,
+                            )
+                            source_content = str((source or {}).get("content") or content)
+                            version = max(int(item["version"]) for item in versions) + 1
+                            versions.append({
+                                "prompt_key": key,
+                                "version": version,
+                                "content": source_content,
+                                "content_sha256": hashlib.sha256(source_content.encode("utf-8")).hexdigest(),
+                                "status": "scheduled",
+                                "based_on_version": int(source["version"]) if source else None,
+                                "change_note": "Restored after code catalog reintroduction",
+                                "created_by": actor_id,
+                                "created_at": created_at,
+                                "scheduled_by": actor_id,
+                                "scheduled_at": created_at,
+                                "activated_at": None,
+                            })
+
+            current_keys = set(normalized_definitions)
+            retired_keys = sorted(
+                key
+                for key, definition in self._prompt_definitions.items()
+                if key not in current_keys and not definition.get("retired_at")
+            )
+            for key in retired_keys:
+                self._prompt_definitions[key].update({"retired_at": created_at, "updated_at": created_at})
+                for version in self._prompt_versions.get(key, []):
+                    if version.get("status") == "scheduled":
+                        version.update(
+                            {
+                                "status": "draft",
+                                "scheduled_by": None,
+                                "scheduled_at": None,
+                            }
+                        )
+
+            if not has_active_release and current_keys:
                 release_id = f"pr-{uuid4().hex[:12]}"
                 self._prompt_releases[release_id] = {
                     "release_id": release_id,
@@ -2075,10 +2133,15 @@ class InMemoryTicketRepository:
                     "activated_at": created_at,
                     "failure_reason": None,
                     "items": {
-                        key: 1 for key in sorted(self._prompt_definitions)
+                        key: 1 for key in sorted(current_keys)
                     },
                 }
-            return {"created_prompt_keys": created_keys, "prompt_count": len(self._prompt_definitions)}
+            return {
+                "created_prompt_keys": created_keys,
+                "retired_prompt_keys": retired_keys,
+                "reactivated_prompt_keys": sorted(reactivated_keys),
+                "prompt_count": len(current_keys),
+            }
 
     def _managed_prompt_payload(self, prompt_key: str) -> dict[str, Any]:
         definition = copy.deepcopy(self._prompt_definitions[prompt_key])
@@ -2091,16 +2154,22 @@ class InMemoryTicketRepository:
         return definition
 
     def list_managed_prompts(self) -> list[dict[str, Any]]:
-        return [self._managed_prompt_payload(key) for key in sorted(self._prompt_definitions)]
+        return [
+            self._managed_prompt_payload(key)
+            for key in sorted(self._prompt_definitions)
+            if not self._prompt_definitions[key].get("retired_at")
+        ]
 
     def get_managed_prompt(self, prompt_key: str) -> dict[str, Any] | None:
         key = str(prompt_key or "").strip()
-        return self._managed_prompt_payload(key) if key in self._prompt_definitions else None
+        definition = self._prompt_definitions.get(key)
+        return self._managed_prompt_payload(key) if definition and not definition.get("retired_at") else None
 
     def create_prompt_draft(self, prompt_key: str, *, content: str, change_note: str, based_on_version: int, actor_id: str, created_at: str) -> dict[str, Any]:
         key = str(prompt_key or "").strip()
         normalized_content = str(content or "").strip()
-        if key not in self._prompt_definitions:
+        definition = self._prompt_definitions.get(key)
+        if definition is None or definition.get("retired_at"):
             raise ValueError("prompt not found")
         versions = self._prompt_versions[key]
         active = next((item for item in versions if item["status"] == "active"), None)
@@ -2121,6 +2190,9 @@ class InMemoryTicketRepository:
     def schedule_prompt_version(self, prompt_key: str, version: int, *, actor_id: str, scheduled_at: str) -> dict[str, Any]:
         key = str(prompt_key or "").strip()
         with self._assignment_lock:
+            definition = self._prompt_definitions.get(key)
+            if definition is None or definition.get("retired_at"):
+                raise ValueError("prompt not found")
             versions = self._prompt_versions.get(key, [])
             target = next((item for item in versions if int(item["version"]) == int(version)), None)
             if target is None or target["status"] != "draft":
@@ -2150,20 +2222,33 @@ class InMemoryTicketRepository:
     def prepare_prompt_release(self, *, build_ref: str, created_at: str) -> dict[str, Any]:
         with self._assignment_lock:
             active = self.get_active_prompt_release()
+            current_keys = {
+                key for key, definition in self._prompt_definitions.items()
+                if not definition.get("retired_at")
+            }
             scheduled = {
                 key: next((item for item in versions if item["status"] == "scheduled"), None)
                 for key, versions in self._prompt_versions.items()
+                if key in current_keys
             }
             scheduled = {key: item for key, item in scheduled.items() if item is not None}
-            if not scheduled:
+            active_items = dict((active or {}).get("items") or {})
+            if not scheduled and set(active_items) == current_keys:
                 if active is None:
                     raise ValueError("active prompt release not found")
                 return {**copy.deepcopy(active), "created": False}
+            items: dict[str, int] = {}
+            for key in sorted(current_keys):
+                selected = scheduled.get(key)
+                if selected is not None:
+                    items[key] = int(selected["version"])
+                elif key in active_items:
+                    items[key] = int(active_items[key])
+                else:
+                    raise ValueError(f"current prompt catalog key has no deployable version: {key}")
             for release in self._prompt_releases.values():
                 if release["status"] == "candidate":
                     release.update({"status": "failed", "failure_reason": "Superseded by a newer deployment candidate"})
-            items = dict((active or {}).get("items") or {})
-            items.update({key: int(item["version"]) for key, item in scheduled.items()})
             release_id = f"pr-{uuid4().hex[:12]}"
             release = {
                 "release_id": release_id, "build_ref": str(build_ref or "unknown"),
@@ -2185,10 +2270,12 @@ class InMemoryTicketRepository:
         for current in self._prompt_releases.values():
             if current["status"] == "active":
                 current["status"] = "superseded"
-        for key, selected_version in release["items"].items():
-            for item in self._prompt_versions[key]:
+        for versions in self._prompt_versions.values():
+            for item in versions:
                 if item["status"] == "active":
                     item["status"] = "superseded"
+        for key, selected_version in release["items"].items():
+            for item in self._prompt_versions[key]:
                 if int(item["version"]) == int(selected_version):
                     item.update({"status": "active", "activated_at": activated_at})
         release.update({"status": "active", "activated_at": activated_at})
@@ -4767,7 +4854,8 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, published_version INTEGER, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)").format(self._table("support_account_personas")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT NOT NULL REFERENCES {}(persona_key) ON DELETE CASCADE, version INTEGER NOT NULL, status TEXT NOT NULL CHECK (status IN ('draft','published','superseded')), content JSONB NOT NULL, change_note TEXT NOT NULL, based_on_version INTEGER, created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, published_by TEXT, published_at TIMESTAMPTZ, PRIMARY KEY (persona_key, version))").format(self._table("support_account_prompt_versions"), self._table("support_account_personas")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (ticket_id TEXT PRIMARY KEY REFERENCES {}(ticket_id) ON DELETE CASCADE, persona_key TEXT NOT NULL, version INTEGER NOT NULL, assigned_at TIMESTAMPTZ NOT NULL, FOREIGN KEY (persona_key, version) REFERENCES {}(persona_key, version))").format(self._table("support_account_persona_assignments"), self._table("support_tickets"), self._table("support_account_prompt_versions")))
-                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (prompt_key TEXT PRIMARY KEY, name TEXT NOT NULL, agent_key TEXT NOT NULL, component_key TEXT NOT NULL, editable BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)").format(self._table("support_prompt_definitions")))
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (prompt_key TEXT PRIMARY KEY, name TEXT NOT NULL, agent_key TEXT NOT NULL, component_key TEXT NOT NULL, editable BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, retired_at TIMESTAMPTZ)").format(self._table("support_prompt_definitions")))
+                cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ").format(self._table("support_prompt_definitions")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (prompt_key TEXT NOT NULL REFERENCES {}(prompt_key) ON DELETE CASCADE, version INTEGER NOT NULL, content TEXT NOT NULL, content_sha256 TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('draft','scheduled','active','superseded')), based_on_version INTEGER, change_note TEXT NOT NULL, created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, scheduled_by TEXT, scheduled_at TIMESTAMPTZ, activated_at TIMESTAMPTZ, PRIMARY KEY (prompt_key, version))").format(self._table("support_prompt_versions"), self._table("support_prompt_definitions")))
                 cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (prompt_key) WHERE status='scheduled'").format(sql.Identifier("idx_support_prompt_versions_one_scheduled"), self._table("support_prompt_versions")))
                 cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (prompt_key) WHERE status='active'").format(sql.Identifier("idx_support_prompt_versions_one_active"), self._table("support_prompt_versions")))
@@ -9873,50 +9961,156 @@ class PostgresTicketRepository:
         }
 
     def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]:
+        normalized_definitions: dict[str, dict[str, Any]] = {}
+        for definition in definitions:
+            key = str(definition.get("prompt_key") or "").strip()
+            content = str(definition.get("content") or "").strip()
+            if not key or not content:
+                raise ValueError("prompt catalog entries require prompt_key and content")
+            if key in normalized_definitions:
+                raise ValueError(f"duplicate prompt catalog key: {key}")
+            normalized_definitions[key] = {**definition, "prompt_key": key, "content": content}
+
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(sql.SQL("SELECT release_id FROM {} WHERE status='active' LIMIT 1").format(self._table("support_prompt_releases")))
-                has_active_release = cur.fetchone() is not None
+                active_row = cur.fetchone()
+                active_release_id = str(active_row[0]) if active_row else None
+                active_release_keys: set[str] = set()
+                if active_release_id:
+                    cur.execute(
+                        sql.SQL("SELECT prompt_key FROM {} WHERE release_id=%s").format(
+                            self._table("support_prompt_release_items")
+                        ),
+                        (active_release_id,),
+                    )
+                    active_release_keys = {str(row[0]) for row in cur.fetchall()}
                 created_keys: list[str] = []
-                for definition in definitions:
-                    key = str(definition.get("prompt_key") or "").strip()
-                    content = str(definition.get("content") or "").strip()
-                    if not key or not content:
-                        raise ValueError("prompt catalog entries require prompt_key and content")
-                    cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s").format(self._table("support_prompt_definitions")), (key,))
-                    exists = cur.fetchone() is not None
+                reactivated_keys: list[str] = []
+                for key, definition in normalized_definitions.items():
+                    content = str(definition["content"])
+                    cur.execute(
+                        sql.SQL("SELECT retired_at FROM {} WHERE prompt_key=%s FOR UPDATE").format(
+                            self._table("support_prompt_definitions")
+                        ),
+                        (key,),
+                    )
+                    existing = cur.fetchone()
+                    exists = existing is not None
+                    was_retired = bool(existing and existing[0] is not None)
                     cur.execute(
                         sql.SQL(
-                            "INSERT INTO {} (prompt_key,name,agent_key,component_key,editable,created_at,updated_at) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (prompt_key) DO UPDATE SET "
+                            "INSERT INTO {} (prompt_key,name,agent_key,component_key,editable,created_at,updated_at,retired_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,NULL) ON CONFLICT (prompt_key) DO UPDATE SET "
                             "name=EXCLUDED.name,agent_key=EXCLUDED.agent_key,component_key=EXCLUDED.component_key,"
-                            "editable=EXCLUDED.editable,updated_at=EXCLUDED.updated_at"
+                            "editable=EXCLUDED.editable,updated_at=EXCLUDED.updated_at,retired_at=NULL"
                         ).format(self._table("support_prompt_definitions")),
                         (key, str(definition.get("name") or key).strip(), str(definition.get("agent_key") or "").strip(), str(definition.get("component_key") or "").strip(), bool(definition.get("editable", True)), created_at, created_at),
                     )
                     if not exists:
-                        status = "scheduled" if has_active_release else "active"
+                        status = "scheduled" if active_release_id else "active"
                         cur.execute(
                             sql.SQL(
                                 "INSERT INTO {} (prompt_key,version,content,content_sha256,status,based_on_version,change_note,created_by,created_at,scheduled_by,scheduled_at,activated_at) "
                                 "VALUES (%s,1,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s)"
                             ).format(self._table("support_prompt_versions")),
-                            (key, content, hashlib.sha256(content.encode("utf-8")).hexdigest(), status, "Seeded from code prompt catalog", actor_id, created_at, actor_id if has_active_release else None, created_at if has_active_release else None, None if has_active_release else created_at),
+                            (key, content, hashlib.sha256(content.encode("utf-8")).hexdigest(), status, "Seeded from code prompt catalog", actor_id, created_at, actor_id if active_release_id else None, created_at if active_release_id else None, None if active_release_id else created_at),
                         )
                         created_keys.append(key)
-                if not has_active_release and definitions:
+                    elif was_retired:
+                        reactivated_keys.append(key)
+                        if key not in active_release_keys:
+                            cur.execute(
+                                sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s AND status='scheduled'").format(
+                                    self._table("support_prompt_versions")
+                                ),
+                                (key,),
+                            )
+                            if cur.fetchone() is None:
+                                cur.execute(
+                                    sql.SQL(
+                                        "SELECT version,content FROM {} WHERE prompt_key=%s AND activated_at IS NOT NULL "
+                                        "ORDER BY activated_at DESC,version DESC LIMIT 1"
+                                    ).format(self._table("support_prompt_versions")),
+                                    (key,),
+                                )
+                                source = cur.fetchone()
+                                source_version = int(source[0]) if source else None
+                                source_content = str(source[1]) if source else content
+                                cur.execute(
+                                    sql.SQL("SELECT COALESCE(MAX(version),0)+1 FROM {} WHERE prompt_key=%s").format(
+                                        self._table("support_prompt_versions")
+                                    ),
+                                    (key,),
+                                )
+                                next_version = int(cur.fetchone()[0])
+                                cur.execute(
+                                    sql.SQL(
+                                        "INSERT INTO {} (prompt_key,version,content,content_sha256,status,based_on_version,change_note,created_by,created_at,scheduled_by,scheduled_at,activated_at) "
+                                        "VALUES (%s,%s,%s,%s,'scheduled',%s,%s,%s,%s,%s,%s,NULL)"
+                                    ).format(self._table("support_prompt_versions")),
+                                    (
+                                        key,
+                                        next_version,
+                                        source_content,
+                                        hashlib.sha256(source_content.encode("utf-8")).hexdigest(),
+                                        source_version,
+                                        "Restored after code catalog reintroduction",
+                                        actor_id,
+                                        created_at,
+                                        actor_id,
+                                        created_at,
+                                    ),
+                                )
+
+                current_keys = sorted(normalized_definitions)
+                cur.execute(
+                    sql.SQL(
+                        "SELECT prompt_key FROM {} WHERE retired_at IS NULL "
+                        "AND NOT (prompt_key = ANY(%s::text[])) ORDER BY prompt_key"
+                    ).format(self._table("support_prompt_definitions")),
+                    (current_keys,),
+                )
+                retired_keys = [str(row[0]) for row in cur.fetchall()]
+                if retired_keys:
+                    cur.execute(
+                        sql.SQL("UPDATE {} SET retired_at=%s,updated_at=%s WHERE prompt_key = ANY(%s::text[])").format(
+                            self._table("support_prompt_definitions")
+                        ),
+                        (created_at, created_at, retired_keys),
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='draft',scheduled_by=NULL,scheduled_at=NULL "
+                            "WHERE prompt_key = ANY(%s::text[]) AND status='scheduled'"
+                        ).format(self._table("support_prompt_versions")),
+                        (retired_keys,),
+                    )
+
+                if not active_release_id and current_keys:
                     release_id = f"pr-{uuid4().hex[:12]}"
                     cur.execute(
                         sql.SQL("INSERT INTO {} (release_id,build_ref,status,previous_release_id,created_at,activated_at) VALUES (%s,'initial','active',NULL,%s,%s)").format(self._table("support_prompt_releases")),
                         (release_id, created_at, created_at),
                     )
                     cur.execute(
-                        sql.SQL("INSERT INTO {} (release_id,prompt_key,prompt_version) SELECT %s,prompt_key,version FROM {} WHERE status='active'").format(
-                            self._table("support_prompt_release_items"), self._table("support_prompt_versions")
+                        sql.SQL(
+                            "INSERT INTO {} (release_id,prompt_key,prompt_version) "
+                            "SELECT %s,v.prompt_key,v.version FROM {} v JOIN {} d ON d.prompt_key=v.prompt_key "
+                            "WHERE v.status='active' AND d.retired_at IS NULL"
+                        ).format(
+                            self._table("support_prompt_release_items"),
+                            self._table("support_prompt_versions"),
+                            self._table("support_prompt_definitions"),
                         ),
                         (release_id,),
                     )
-                return {"created_prompt_keys": created_keys, "prompt_count": len(definitions)}
+                return {
+                    "created_prompt_keys": created_keys,
+                    "retired_prompt_keys": retired_keys,
+                    "reactivated_prompt_keys": sorted(reactivated_keys),
+                    "prompt_count": len(current_keys),
+                }
         return self._run_with_connection_retry("sync_prompt_catalog", _operation)
 
     def list_managed_prompts(self) -> list[dict[str, Any]]:
@@ -9925,7 +10119,7 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("SELECT release_id FROM {} WHERE status='active' LIMIT 1").format(self._table("support_prompt_releases")))
                 active_row = cur.fetchone()
                 active_release_id = str(active_row[0]) if active_row else None
-                cur.execute(sql.SQL("SELECT prompt_key,name,agent_key,component_key,editable,created_at,updated_at FROM {} ORDER BY agent_key,component_key,prompt_key").format(self._table("support_prompt_definitions")))
+                cur.execute(sql.SQL("SELECT prompt_key,name,agent_key,component_key,editable,created_at,updated_at FROM {} WHERE retired_at IS NULL ORDER BY agent_key,component_key,prompt_key").format(self._table("support_prompt_definitions")))
                 definitions = cur.fetchall()
                 result: list[dict[str, Any]] = []
                 for row in definitions:
@@ -9956,7 +10150,7 @@ class PostgresTicketRepository:
         normalized_content = str(content or "").strip()
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
-                cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s FOR UPDATE").format(self._table("support_prompt_definitions")), (key,))
+                cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s AND retired_at IS NULL FOR UPDATE").format(self._table("support_prompt_definitions")), (key,))
                 if cur.fetchone() is None:
                     raise ValueError("prompt not found")
                 cur.execute(sql.SQL("SELECT version FROM {} WHERE prompt_key=%s AND status='active'").format(self._table("support_prompt_versions")), (key,))
@@ -9977,7 +10171,7 @@ class PostgresTicketRepository:
         key = str(prompt_key or "").strip()
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
-                cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s FOR UPDATE").format(self._table("support_prompt_definitions")), (key,))
+                cur.execute(sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s AND retired_at IS NULL FOR UPDATE").format(self._table("support_prompt_definitions")), (key,))
                 if cur.fetchone() is None:
                     raise ValueError("prompt not found")
                 cur.execute(sql.SQL("SELECT status FROM {} WHERE prompt_key=%s AND version=%s FOR UPDATE").format(self._table("support_prompt_versions")), (key, version))
@@ -10023,17 +10217,31 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("SELECT release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason FROM {} WHERE status='active' FOR UPDATE").format(self._table("support_prompt_releases")))
                 active_row = cur.fetchone()
                 active = self._prompt_release_from_row(cur, active_row) if active_row else None
-                cur.execute(sql.SQL("SELECT prompt_key,version FROM {} WHERE status='scheduled' ORDER BY prompt_key").format(self._table("support_prompt_versions")))
+                cur.execute(sql.SQL("SELECT prompt_key FROM {} WHERE retired_at IS NULL ORDER BY prompt_key").format(self._table("support_prompt_definitions")))
+                current_keys = [str(row[0]) for row in cur.fetchall()]
+                cur.execute(
+                    sql.SQL(
+                        "SELECT v.prompt_key,v.version FROM {} v JOIN {} d ON d.prompt_key=v.prompt_key "
+                        "WHERE v.status='scheduled' AND d.retired_at IS NULL ORDER BY v.prompt_key"
+                    ).format(self._table("support_prompt_versions"), self._table("support_prompt_definitions"))
+                )
                 scheduled = {str(row[0]): int(row[1]) for row in cur.fetchall()}
-                if not scheduled:
+                active_items = dict((active or {}).get("items") or {})
+                if not scheduled and set(active_items) == set(current_keys):
                     if active is None:
                         raise ValueError("active prompt release not found")
                     return {**active, "created": False}
+                items: dict[str, int] = {}
+                for key in current_keys:
+                    if key in scheduled:
+                        items[key] = scheduled[key]
+                    elif key in active_items:
+                        items[key] = int(active_items[key])
+                    else:
+                        raise ValueError(f"current prompt catalog key has no deployable version: {key}")
                 cur.execute(sql.SQL("UPDATE {} SET status='failed',failure_reason='Superseded by a newer deployment candidate' WHERE status='candidate'").format(self._table("support_prompt_releases")))
                 release_id = f"pr-{uuid4().hex[:12]}"
                 cur.execute(sql.SQL("INSERT INTO {} (release_id,build_ref,status,previous_release_id,created_at) VALUES (%s,%s,'candidate',%s,%s)").format(self._table("support_prompt_releases")), (release_id, str(build_ref or "unknown"), (active or {}).get("release_id"), created_at))
-                items = dict((active or {}).get("items") or {})
-                items.update(scheduled)
                 for key, selected_version in items.items():
                     cur.execute(sql.SQL("INSERT INTO {} (release_id,prompt_key,prompt_version) VALUES (%s,%s,%s)").format(self._table("support_prompt_release_items")), (release_id, key, selected_version))
                 return {"release_id": release_id, "build_ref": str(build_ref or "unknown"), "status": "candidate", "previous_release_id": (active or {}).get("release_id"), "created_at": created_at, "activated_at": None, "failure_reason": None, "items": items, "created": True}
@@ -10053,8 +10261,8 @@ class PostgresTicketRepository:
                     raise ValueError("candidate prompt release not found")
                 release = self._prompt_release_from_row(cur, row)
                 cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE status='active'").format(self._table("support_prompt_releases")))
+                cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE status='active'").format(self._table("support_prompt_versions")))
                 for key, selected_version in release["items"].items():
-                    cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE prompt_key=%s AND status='active'").format(self._table("support_prompt_versions")), (key,))
                     cur.execute(sql.SQL("UPDATE {} SET status='active',activated_at=%s WHERE prompt_key=%s AND version=%s").format(self._table("support_prompt_versions")), (activated_at, key, selected_version))
                 cur.execute(sql.SQL("UPDATE {} SET status='active',activated_at=%s WHERE release_id=%s").format(self._table("support_prompt_releases")), (activated_at, normalized))
                 release.update({"status": "active", "activated_at": activated_at})

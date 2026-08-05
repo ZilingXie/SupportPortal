@@ -49,6 +49,46 @@ def _code_snapshot() -> PromptRuntimeSnapshot:
     return PromptRuntimeSnapshot(release_id=f"code-{digest}", prompts=prompts, source="code")
 
 
+def load_prompt_release_snapshot(repository: Any, release_id: str) -> PromptRuntimeSnapshot:
+    normalized_release_id = str(release_id or "").strip()
+    if not normalized_release_id:
+        raise RuntimeError("Prompt Release ID is required")
+    release = repository.get_prompt_release(normalized_release_id)
+    if release is None:
+        raise RuntimeError(f"Prompt Release {normalized_release_id} was not found")
+    if release.get("status") not in {"candidate", "active"}:
+        raise RuntimeError(f"Prompt Release {normalized_release_id} is not deployable")
+    managed = {item["prompt_key"]: item for item in repository.list_managed_prompts()}
+    prompts: dict[str, str] = {}
+    for prompt_key, version in dict(release.get("items") or {}).items():
+        prompt = managed.get(prompt_key)
+        selected = next(
+            (
+                item
+                for item in list((prompt or {}).get("versions") or [])
+                if int(item.get("version") or 0) == int(version)
+            ),
+            None,
+        )
+        if selected is None:
+            raise RuntimeError(f"Prompt Release {normalized_release_id} is missing {prompt_key} v{version}")
+        content = str(selected.get("content") or "")
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if content_hash != str(selected.get("content_sha256") or ""):
+            raise RuntimeError(f"Prompt Release {normalized_release_id} hash mismatch for {prompt_key}")
+        prompts[prompt_key] = content
+    from backend.services.agent_config import build_managed_prompt_catalog
+
+    expected_keys = {item["prompt_key"] for item in build_managed_prompt_catalog()}
+    if set(prompts) != expected_keys:
+        missing = sorted(expected_keys - set(prompts))
+        extra = sorted(set(prompts) - expected_keys)
+        raise RuntimeError(
+            f"Prompt Release {normalized_release_id} catalog mismatch missing={missing} extra={extra}"
+        )
+    return PromptRuntimeSnapshot(release_id=normalized_release_id, prompts=prompts, source="release")
+
+
 def initialize_prompt_runtime(repository: Any | None = None, *, service_name: str | None = None) -> PromptRuntimeSnapshot:
     global _SNAPSHOT
     with _SNAPSHOT_LOCK:
@@ -69,43 +109,12 @@ def initialize_prompt_runtime(repository: Any | None = None, *, service_name: st
             return _SNAPSHOT
         if repository is None:
             raise RuntimeError("prompt repository is required for a managed Prompt Release")
-        release = repository.get_prompt_release(release_id)
-        if release is None:
-            raise RuntimeError(f"Prompt Release {release_id} was not found")
-        if release.get("status") not in {"candidate", "active"}:
-            raise RuntimeError(f"Prompt Release {release_id} is not deployable")
-        managed = {item["prompt_key"]: item for item in repository.list_managed_prompts()}
-        prompts: dict[str, str] = {}
-        for prompt_key, version in dict(release.get("items") or {}).items():
-            prompt = managed.get(prompt_key)
-            selected = next(
-                (
-                    item
-                    for item in list((prompt or {}).get("versions") or [])
-                    if int(item.get("version") or 0) == int(version)
-                ),
-                None,
-            )
-            if selected is None:
-                raise RuntimeError(f"Prompt Release {release_id} is missing {prompt_key} v{version}")
-            content = str(selected.get("content") or "")
-            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            if content_hash != str(selected.get("content_sha256") or ""):
-                raise RuntimeError(f"Prompt Release {release_id} hash mismatch for {prompt_key}")
-            prompts[prompt_key] = content
-        from backend.services.agent_config import build_managed_prompt_catalog
-
-        expected_keys = {item["prompt_key"] for item in build_managed_prompt_catalog()}
-        if set(prompts) != expected_keys:
-            missing = sorted(expected_keys - set(prompts))
-            extra = sorted(set(prompts) - expected_keys)
-            raise RuntimeError(f"Prompt Release {release_id} catalog mismatch missing={missing} extra={extra}")
-        _SNAPSHOT = PromptRuntimeSnapshot(release_id=release_id, prompts=prompts, source="release")
+        _SNAPSHOT = load_prompt_release_snapshot(repository, release_id)
         LOGGER.warning(
             "prompt_runtime_loaded service=%s release_id=%s prompts=%s source=release",
             str(service_name or "unknown"),
             release_id,
-            len(prompts),
+            len(_SNAPSHOT.prompts),
         )
         return _SNAPSHOT
 
