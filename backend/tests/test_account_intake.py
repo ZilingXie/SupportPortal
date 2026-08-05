@@ -2289,7 +2289,12 @@ class AccountIntakeApiTests(unittest.TestCase):
             payload = response.json()
             self.assertEqual(payload["total"], 1)
             self.assertEqual(payload["count"], 1)
-            self.assertEqual(payload["cases"][0]["secondary_label"], secondary_label)
+            expected_secondary_label = (
+                "Account & Billing / Other"
+                if route_filter == "account_billing"
+                else secondary_label
+            )
+            self.assertEqual(payload["cases"][0]["secondary_label"], expected_secondary_label)
 
         human_review = self.client.get(
             "/api/account/cases?page=1&page_size=10&route_label=human_review"
@@ -2313,6 +2318,77 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         invalid = self.client.get("/api/account/cases?route_label=unsupported")
         self.assertEqual(invalid.status_code, 422, invalid.text)
+
+    def test_account_cases_route_filter_counts_cover_groups_and_leaves(self) -> None:
+        fixtures = [
+            ("fraud", "automated", "automation", "fraud_account", "fraud_account"),
+            ("invoice", "automated", "automation", "detailed_invoice", "detailed_invoice"),
+            ("enablement", "automated", "automation", "enablement", "enablement"),
+            ("suspension", "not_automated", "account_billing", "account_suspension", "account_suspension"),
+            ("billing-other", "not_automated", "account_billing", "other", "other"),
+            ("technical", "not_automated", "agora_technical", None, None),
+            ("follow-up", "not_automated", "conversation", "follow_up", "follow_up"),
+            ("uncertain", "not_automated", "human_review", "uncertain", "uncertain"),
+        ]
+        for ticket_id, status, group, leaf, action in fixtures:
+            classification = {
+                "intent_class": "conversation" if group == "conversation" else "uncertain" if group == "human_review" else "agora",
+                "agora_route": "technical" if group == "agora_technical" else group if group == "account_billing" else "automation" if group == "automation" else None,
+                "conversation_action": leaf if group == "conversation" else None,
+                "automation_subcategory": leaf if group == "automation" else None,
+                "account_billing_subcategory": leaf if group == "account_billing" else None,
+            }
+            self.repository.save_billing_ticket(
+                {
+                    "billing_ticket_id": f"BT-{ticket_id}",
+                    "client_ticket_id": f"TK-{ticket_id}",
+                    "title": ticket_id,
+                    "question": "q",
+                    "automation_status": status,
+                    "route_status": "automated" if status == "automated" else "not_automated",
+                    "route_family": "automated" if status == "automated" else "human_review",
+                    "route": action or "human_review_required",
+                    "execution_action": action or "human_review_required",
+                    "scope_label": group,
+                    "route_classification": classification,
+                }
+            )
+
+        response = self.client.get("/api/account/cases?page=2&page_size=3")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        counts = payload["filter_counts"]
+        self.assertEqual(payload["total"], len(fixtures))
+        self.assertEqual(payload["page"], 2)
+        self.assertEqual(payload["count"], 3)
+        self.assertEqual(counts["all"], len(fixtures))
+        self.assertEqual(counts["automation"], 3)
+        self.assertEqual(counts["automation:fraud_account"], 1)
+        self.assertEqual(counts["automation:detailed_invoice"], 1)
+        self.assertEqual(counts["automation:enablement"], 1)
+        self.assertEqual(counts["account_billing"], 2)
+        self.assertEqual(counts["conversation"], 1)
+        self.assertEqual(counts["human_review"], 1)
+
+        filtered = self.client.get(
+            "/api/account/cases?page_size=10&route_group=automation&route_subcategory=enablement"
+        )
+        self.assertEqual(filtered.status_code, 200, filtered.text)
+        self.assertEqual(filtered.json()["total"], 1)
+        self.assertEqual(filtered.json()["filter_counts"], counts)
+
+        self.assertEqual(
+            self.client.get(
+                "/api/account/cases?route_group=agora_technical&route_subcategory=enablement"
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.get(
+                "/api/account/cases?route_group=all&route_subcategory=enablement"
+            ).status_code,
+            422,
+        )
 
     def test_account_cases_list_fetches_latest_reply_jobs_in_one_batch(self) -> None:
         for index in range(2):

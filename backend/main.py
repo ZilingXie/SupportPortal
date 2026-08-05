@@ -161,6 +161,10 @@ from backend.services.account_route_pipeline import (
     classification_for_corrected_route,
     decide_account_route,
 )
+from backend.services.account_case_filters import (
+    account_case_filter_definitions,
+    normalize_account_case_filter,
+)
 from backend.services.agent_config import build_agent_config_payload
 from backend.services.prompt_runtime import initialize_prompt_runtime, prompt_runtime_info, resolve_system_prompt
 from backend.services.prompt_versioning import PromptVersionService
@@ -4781,7 +4785,15 @@ def list_billing_tickets(
     route_errors: bool = False,
     route_label: str | None = Query(
         default=None,
-        pattern="^(human_review|conversation|agora_technical|agora_non_technical|account_billing|uncertain)$",
+        pattern="^(human_review|conversation|agora_technical|agora_non_technical|account_billing|uncertain|automation|all)$",
+    ),
+    route_group: str | None = Query(
+        default=None,
+        pattern="^(all|automation|account_billing|agora_technical|agora_non_technical|conversation|human_review)$",
+    ),
+    route_subcategory: str | None = Query(
+        default=None,
+        pattern="^(fraud_account|detailed_invoice|enablement|quota|unregistered|account_suspension|other|resolve|follow_up|human_review|uncategorized|uncertain|non_agora)$",
     ),
 ) -> dict[str, Any]:
     requested_page_size = page_size if page_size is not None else limit
@@ -4789,15 +4801,23 @@ def list_billing_tickets(
     normalized_review_status = str(review_status).strip() if review_status else None
     selected_route_status = route_status or automation_status
     normalized_automation_status = str(selected_route_status).strip() if selected_route_status else None
+    try:
+        normalized_route_filter = normalize_account_case_filter(
+            group=route_group,
+            subcategory=route_subcategory,
+            legacy_label=route_label,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     requested_page = max(1, page)
     requested_offset = (requested_page - 1) * safe_page_size
-    tickets, total = ticket_repository.list_account_case_page(
+    tickets, total, filter_counts = ticket_repository.list_account_case_page_with_filter_counts(
         limit=safe_page_size,
         review_status=normalized_review_status,
         offset=requested_offset,
         route_status=normalized_automation_status,
         route_errors_only=route_errors,
-        route_filter=route_label,
+        route_filter=normalized_route_filter,
     )
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
     safe_page = min(requested_page, total_pages)
@@ -4812,6 +4832,8 @@ def list_billing_tickets(
         "total": total,
         "total_pages": total_pages,
         "has_more": safe_page < total_pages,
+        "filter_counts": filter_counts,
+        "filter_definitions": account_case_filter_definitions(),
     }
 
 

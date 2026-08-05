@@ -15,6 +15,12 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
+from backend.services.account_case_filters import (
+    account_case_filter_key,
+    account_case_filter_keys,
+    account_case_filter_matches,
+    normalize_account_case_filter,
+)
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -67,112 +73,108 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
-_ACCOUNT_CASE_ROUTE_FILTER_LABELS = {
-    "agora_technical": "Agora Technical",
-    "agora_non_technical": "Agora Non-technical",
-    "account_billing": "Account & Billing",
-    "uncertain": "Uncertain",
-}
-_ACCOUNT_CASE_ROUTE_FILTER_GROUPS = {
-    "human_review": "human_review",
-    "conversation": "conversation",
-}
 
 
 def _account_case_route_label(item: dict[str, Any]) -> str:
-    classification = item.get("route_classification")
-    if isinstance(classification, dict) and classification:
-        intent = str(classification.get("intent_class") or "unclear")
-        if intent == "conversation":
-            action = str(classification.get("conversation_action") or "human_review")
-            return {"resolve": "Resolve", "follow_up": "Follow-up"}.get(action, "Human Review")
-        if intent == "agora":
-            agora_route = str(classification.get("agora_route") or "uncategorized")
-            if agora_route == "technical":
-                return "Agora Technical"
-            if agora_route == "non_technical":
-                return "Agora Non-technical"
-            if agora_route == "account_billing":
-                return "Account & Billing"
-            if agora_route == "automation" and str(
-                classification.get("automation_subcategory") or ""
-            ).strip():
-                return "Automation"
-            return "Human Review"
-        if intent == "support_request":
-            if str(classification.get("support_scope") or "unclear") == "non_agora":
-                return "Non-Agora"
-            agora_route = str(classification.get("agora_route") or "unclear")
-            if agora_route == "technical":
-                return "Agora Technical"
-            if agora_route == "non_technical":
-                return "Agora Non-technical"
-            if agora_route == "automation" and str(
-                classification.get("automation_subcategory") or ""
-            ).strip():
-                return "Automation"
-            return "Human Review"
-        return "Uncertain" if intent in {"uncertain", "unclear"} else "Human Review"
-
-    scope = str(item.get("scope_label") or "").strip().lower()
-    metadata = automation_metadata(
-        route_family=item.get("route_family"),
-        execution_action=item.get("execution_action") or item.get("route"),
-    )
-    if metadata["route_status"] == "automated":
-        return "Automation"
-    return {
-        "ticket_resolution": "Resolve",
-        "small_talk": "Follow-up",
-        "non_agora": "Non-Agora",
-        "agora_technical": "Agora Technical",
-        "agora_non_technical": "Agora Non-technical",
-        "account_billing": "Account & Billing",
-        "uncertain": "Uncertain",
-    }.get(scope, "Human Review")
+    return account_case_filter_key(item)
 
 
 def _account_case_matches_route_filter(item: dict[str, Any], route_filter: str | None) -> bool:
-    normalized_filter = str(route_filter or "").strip()
-    expected_group = _ACCOUNT_CASE_ROUTE_FILTER_GROUPS.get(normalized_filter)
-    if expected_group:
-        classification = item.get("route_classification")
-        if isinstance(classification, dict) and classification:
-            intent = str(classification.get("intent_class") or "unclear").strip().lower()
-            if intent == "conversation":
-                actual_group = "conversation"
-            elif intent in {"uncertain", "unclear"}:
-                actual_group = "human_review"
-            elif intent == "agora":
-                actual_group = (
-                    "human_review"
-                    if str(classification.get("agora_route") or "uncategorized").strip().lower()
-                    == "uncategorized"
-                    else "other"
-                )
-            elif intent == "support_request":
-                support_scope = str(classification.get("support_scope") or "unclear").strip().lower()
-                agora_route = str(classification.get("agora_route") or "unclear").strip().lower()
-                actual_group = (
-                    "human_review"
-                    if support_scope in {"non_agora", "unclear", "mixed"}
-                    or agora_route in {"unclear", "mixed"}
-                    else "other"
-                )
-            else:
-                actual_group = "human_review"
-        else:
-            scope = str(item.get("scope_label") or "").strip().lower()
-            actual_group = (
-                "conversation"
-                if scope in {"ticket_resolution", "small_talk", "conversation"}
-                else "human_review"
-                if scope in {"uncertain", "unclear", "non_agora", "human_review", "uncategorized"}
-                else "other"
-            )
-        return actual_group == expected_group
-    expected_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(normalized_filter)
-    return expected_label is None or _account_case_route_label(item) == expected_label
+    try:
+        normalized_filter = normalize_account_case_filter(legacy_label=route_filter)
+    except ValueError:
+        return False
+    return account_case_filter_matches(item, normalized_filter)
+
+
+def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
+    """Return the SQL equivalent of account_case_filter_key()."""
+    # The default rendered expression intentionally contains bt.route_classification ->> 'intent_class',
+    # bt.route_classification ->> 'agora_route' and bt.scope_label = 'agora_technical'.
+    return sql.SQL(
+        """
+        CASE
+            WHEN COALESCE({alias}.route_classification, '{{}}'::jsonb) <> '{{}}'::jsonb THEN
+                CASE COALESCE({alias}.route_classification ->> 'intent_class', 'unclear')
+                    WHEN 'conversation' THEN
+                        'conversation:' || CASE COALESCE({alias}.route_classification ->> 'conversation_action', 'human_review')
+                            WHEN 'resolve' THEN 'resolve'
+                            WHEN 'follow_up' THEN 'follow_up'
+                            ELSE 'human_review'
+                        END
+                    WHEN 'uncertain' THEN 'human_review:uncertain'
+                    WHEN 'agora' THEN
+                        CASE COALESCE({alias}.route_classification ->> 'agora_route', 'uncategorized')
+                            WHEN 'technical' THEN 'agora_technical'
+                            WHEN 'non_technical' THEN 'agora_non_technical'
+                            WHEN 'account_billing' THEN
+                                'account_billing:' || CASE
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_suspension'
+                                        THEN 'account_suspension'
+                                    ELSE 'other'
+                                END
+                            WHEN 'automation' THEN
+                                'automation:' || CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                    WHEN 'account_verification' THEN 'fraud_account'
+                                    WHEN 'fraud_account' THEN 'fraud_account'
+                                    WHEN 'detailed_invoice' THEN 'detailed_invoice'
+                                    WHEN 'enablement' THEN 'enablement'
+                                    WHEN 'quota' THEN 'quota'
+                                    ELSE 'unregistered'
+                                END
+                            ELSE 'human_review:uncategorized'
+                        END
+                    WHEN 'support_request' THEN
+                        CASE
+                            WHEN COALESCE({alias}.route_classification ->> 'support_scope', 'unclear') = 'non_agora'
+                                THEN 'human_review:non_agora'
+                            WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'technical'
+                                THEN 'agora_technical'
+                            WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'non_technical'
+                                THEN 'agora_non_technical'
+                            WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'account_billing'
+                                THEN 'account_billing:' || CASE
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_suspension'
+                                        THEN 'account_suspension'
+                                    ELSE 'other'
+                                END
+                            WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'automation'
+                                THEN 'automation:' || CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                    WHEN 'account_verification' THEN 'fraud_account'
+                                    WHEN 'fraud_account' THEN 'fraud_account'
+                                    WHEN 'detailed_invoice' THEN 'detailed_invoice'
+                                    WHEN 'enablement' THEN 'enablement'
+                                    WHEN 'quota' THEN 'quota'
+                                    ELSE 'unregistered'
+                                END
+                            ELSE 'human_review:other'
+                        END
+                    ELSE 'human_review:uncertain'
+                END
+            WHEN COALESCE({alias}.execution_action, {alias}.route) = 'account_suspension'
+                THEN 'account_billing:account_suspension'
+            WHEN LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation') THEN
+                'automation:' || CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                    WHEN 'account_verification' THEN 'fraud_account'
+                    WHEN 'fraud_account' THEN 'fraud_account'
+                    WHEN 'detailed_invoice' THEN 'detailed_invoice'
+                    WHEN 'enablement' THEN 'enablement'
+                    WHEN 'quota' THEN 'quota'
+                    ELSE 'unregistered'
+                END
+            WHEN {alias}.scope_label = 'ticket_resolution' THEN 'conversation:resolve'
+            WHEN {alias}.scope_label IN ('small_talk', 'conversation') THEN 'conversation:follow_up'
+            WHEN {alias}.scope_label = 'agora_technical' THEN 'agora_technical'
+            WHEN {alias}.scope_label = 'agora_non_technical' THEN 'agora_non_technical'
+            WHEN {alias}.scope_label IN ('account_billing', 'billing') THEN
+                'account_billing:' || CASE WHEN {alias}.subcategory = 'account_suspension' THEN 'account_suspension' ELSE 'other' END
+            WHEN {alias}.scope_label IN ('uncertain', 'unclear') THEN 'human_review:uncertain'
+            WHEN {alias}.scope_label = 'non_agora' THEN 'human_review:non_agora'
+            WHEN {alias}.scope_label IN ('human_review', 'uncategorized') THEN 'human_review:uncategorized'
+            ELSE 'human_review:other'
+        END
+        """.format(alias=alias)
+    )
 
 
 _ACCOUNT_CASE_LIST_FIELDS = (
@@ -1384,6 +1386,17 @@ class TicketRepository(Protocol):
     ) -> tuple[list[dict[str, Any]], int]:
         ...
 
+    def list_account_case_page_with_filter_counts(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+        route_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+        ...
+
     def count_account_cases(
         self,
         review_status: str | None = None,
@@ -1497,9 +1510,28 @@ class InMemoryTicketRepository:
         route_errors_only: bool = False,
         route_filter: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
+        items, total, _filter_counts = self._list_account_case_page_impl(
+            limit=limit,
+            review_status=review_status,
+            offset=offset,
+            route_status=route_status,
+            route_errors_only=route_errors_only,
+            route_filter=route_filter,
+        )
+        return items, total
+
+    def _list_account_case_page_impl(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+        route_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
         safe_limit = _safe_positive_int(limit, 30)
         requested_offset = _safe_non_negative_int(offset, 0)
-        all_items = self.list_billing_tickets(
+        filtered_items = self.list_billing_tickets(
             limit=max(1, len(self._billing_tickets)),
             review_status=review_status,
             offset=0,
@@ -1507,12 +1539,28 @@ class InMemoryTicketRepository:
             route_errors_only=route_errors_only,
             route_filter=route_filter,
         )
-        total = len(all_items)
+        all_items = self.list_billing_tickets(
+            limit=max(1, len(self._billing_tickets)),
+            review_status=review_status,
+            offset=0,
+            automation_filter=route_status,
+            route_errors_only=route_errors_only,
+            route_filter=None,
+        )
+        total = len(filtered_items)
+        filter_counts = {key: 0 for key in account_case_filter_keys()}
+        filter_counts["all"] = len(all_items)
+        for item in all_items:
+            key = account_case_filter_key(item)
+            filter_counts[key] = filter_counts.get(key, 0) + 1
+            group = key.split(":", 1)[0]
+            if group != key:
+                filter_counts[group] = filter_counts.get(group, 0) + 1
         if total == 0:
-            return [], 0
+            return [], 0, filter_counts
         last_page_offset = ((total - 1) // safe_limit) * safe_limit
         safe_offset = min(requested_offset, last_page_offset)
-        items = all_items[safe_offset : safe_offset + safe_limit]
+        items = filtered_items[safe_offset : safe_offset + safe_limit]
         client_ticket_ids = [
             str(item.get("client_ticket_id") or "").strip()
             for item in items
@@ -1542,7 +1590,26 @@ class InMemoryTicketRepository:
                 correction,
             )
             enriched_items.append(record)
-        return enriched_items, total
+        return enriched_items, total, filter_counts
+
+    def list_account_case_page_with_filter_counts(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+        route_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+        items, total, filter_counts = self._list_account_case_page_impl(
+            limit=limit,
+            review_status=review_status,
+            offset=offset,
+            route_status=route_status,
+            route_errors_only=route_errors_only,
+            route_filter=route_filter,
+        )
+        return items, total, filter_counts
 
     def get_account_case_details(
         self, identifiers: list[str]
@@ -4018,6 +4085,148 @@ class PostgresTicketRepository:
                 return items, total
 
         return self._run_with_connection_retry("list_account_case_page", _operation)
+
+    def list_account_case_page_with_filter_counts(
+        self,
+        limit: int = 30,
+        review_status: str | None = None,
+        offset: int = 0,
+        route_status: str | None = None,
+        route_errors_only: bool = False,
+        route_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+        safe_limit = _safe_positive_int(limit, 30)
+        requested_offset = _safe_non_negative_int(offset, 0)
+        normalized_review_status = str(review_status).strip() if review_status else None
+        normalized_route_status = str(route_status or "").strip()
+        normalized_route_filter = str(route_filter or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    where_sql, params = self._billing_ticket_filter_sql(
+                        review_status=normalized_review_status,
+                        automation_filter=normalized_route_status,
+                        route_errors_only=route_errors_only,
+                        route_filter=normalized_route_filter,
+                    )
+                    facet_where_sql, facet_params = self._billing_ticket_filter_sql(
+                        review_status=normalized_review_status,
+                        automation_filter=normalized_route_status,
+                        route_errors_only=route_errors_only,
+                        route_filter="",
+                    )
+                    selected_columns = sql.SQL(", ").join(
+                        sql.SQL("bt.{}").format(sql.Identifier(field))
+                        for field in _ACCOUNT_CASE_LIST_FIELDS
+                    )
+                    filter_expression = _account_case_filter_sql_expression("facet_source")
+                    query = sql.SQL(
+                        """
+                        WITH filtered AS MATERIALIZED (
+                            SELECT {selected_columns} FROM {cases} bt
+                            {where_sql}
+                        ), facet_source AS MATERIALIZED (
+                            SELECT {selected_columns} FROM {cases} bt
+                            {facet_where_sql}
+                        ), classified AS MATERIALIZED (
+                            SELECT facet_source.*, {filter_expression} AS _filter_key
+                            FROM facet_source
+                        ), page_meta AS (
+                            SELECT COUNT(*)::BIGINT AS total FROM filtered
+                        ), facet_rows AS (
+                            SELECT 'all'::TEXT AS filter_key, COUNT(*)::BIGINT AS item_count FROM classified
+                            UNION ALL
+                            SELECT _filter_key, COUNT(*)::BIGINT FROM classified GROUP BY _filter_key
+                            UNION ALL
+                            SELECT split_part(_filter_key, ':', 1), COUNT(*)::BIGINT
+                            FROM classified GROUP BY split_part(_filter_key, ':', 1)
+                        ), facet_counts AS (
+                            SELECT COALESCE(jsonb_object_agg(filter_key, item_count), '{{}}'::jsonb) AS counts
+                            FROM facet_rows
+                        )
+                        SELECT
+                            page.*,
+                            page_meta.total AS _total,
+                            facet_counts.counts AS _filter_counts,
+                            TO_JSONB(correction_row) AS _route_correction,
+                            latest_reply.reply_job AS _latest_reply_job,
+                            ticket_row.updated_at AS _ticket_updated_at,
+                            message_meta.message_count AS _message_count,
+                            message_meta.latest_message_at AS _latest_message_at
+                        FROM page_meta
+                        CROSS JOIN facet_counts
+                        LEFT JOIN LATERAL (
+                            SELECT * FROM filtered
+                            ORDER BY created_at DESC
+                            LIMIT %s
+                            OFFSET LEAST(
+                                %s,
+                                CASE
+                                    WHEN page_meta.total = 0 THEN 0
+                                    ELSE ((page_meta.total - 1) / %s) * %s
+                                END
+                            )
+                        ) page ON TRUE
+                        LEFT JOIN {tickets} ticket_row
+                          ON ticket_row.ticket_id = page.client_ticket_id
+                        LEFT JOIN LATERAL (
+                            SELECT COUNT(*)::INTEGER AS message_count, MAX(created_at) AS latest_message_at
+                            FROM {messages} message_row
+                            WHERE message_row.ticket_id = page.client_ticket_id
+                        ) message_meta ON TRUE
+                        LEFT JOIN LATERAL (
+                            SELECT TO_JSONB(reply_row) AS reply_job
+                            FROM {reply_jobs} reply_row
+                            WHERE reply_row.ticket_id = page.client_ticket_id
+                            ORDER BY reply_row.created_at DESC
+                            LIMIT 1
+                        ) latest_reply ON TRUE
+                        LEFT JOIN {corrections} correction_row
+                          ON correction_row.billing_ticket_id = page.billing_ticket_id
+                        """
+                    ).format(
+                        selected_columns=selected_columns,
+                        cases=self._table("support_account_cases"),
+                        where_sql=where_sql,
+                        facet_where_sql=facet_where_sql,
+                        filter_expression=filter_expression,
+                        tickets=self._table("support_tickets"),
+                        messages=self._table("support_ticket_messages"),
+                        reply_jobs=self._table("support_account_reply_jobs"),
+                        corrections=self._table("support_billing_route_corrections"),
+                    )
+                    cur.execute(
+                        query,
+                        (*params, *facet_params, safe_limit, requested_offset, safe_limit, safe_limit),
+                    )
+                    rows = cur.fetchall()
+                    if not rows:
+                        return [], 0, {key: 0 for key in account_case_filter_keys()}
+                    col_names = [desc[0] for desc in cur.description]
+                    total_index = col_names.index("_total")
+                    counts_index = col_names.index("_filter_counts")
+                    total = int(rows[0][total_index] or 0)
+                    raw_counts = rows[0][counts_index] or {}
+                    filter_counts = {key: int(raw_counts.get(key) or 0) for key in account_case_filter_keys()}
+                    items: list[dict[str, Any]] = []
+                    for row in rows:
+                        record = dict(zip(col_names, row))
+                        record.pop("_total", None)
+                        record.pop("_filter_counts", None)
+                        if record.get("client_ticket_id") is not None:
+                            record["_detail_revision"] = _account_case_detail_revision(
+                                record,
+                                {"updated_at": record.pop("_ticket_updated_at", None)},
+                                record.get("_latest_reply_job"),
+                                record.get("_route_correction"),
+                                message_count=int(record.pop("_message_count", 0) or 0),
+                                latest_message_at=record.pop("_latest_message_at", None),
+                            )
+                            items.append(record)
+                    return items, total, filter_counts
+
+        return self._run_with_connection_retry("list_account_case_page_with_filter_counts", _operation)
 
     def count_account_cases(
         self,
@@ -9150,109 +9359,17 @@ class PostgresTicketRepository:
             clauses.append(sql.SQL("bt.route_status = 'automated'"))
         elif automation_filter == "not_automated":
             clauses.append(sql.SQL("bt.route_status <> 'automated'"))
-        route_group = _ACCOUNT_CASE_ROUTE_FILTER_GROUPS.get(route_filter)
-        route_label = _ACCOUNT_CASE_ROUTE_FILTER_LABELS.get(route_filter)
-        if route_group:
-            clauses.append(
-                sql.SQL(
-                    """
-                    CASE
-                        WHEN bt.route_classification <> '{}'::jsonb THEN
-                            CASE COALESCE(bt.route_classification ->> 'intent_class', 'unclear')
-                                WHEN 'conversation' THEN 'conversation'
-                                WHEN 'uncertain' THEN 'human_review'
-                                WHEN 'unclear' THEN 'human_review'
-                                WHEN 'agora' THEN
-                                    CASE
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'uncategorized'
-                                            THEN 'human_review'
-                                        ELSE 'other'
-                                    END
-                                WHEN 'support_request' THEN
-                                    CASE
-                                        WHEN COALESCE(bt.route_classification ->> 'support_scope', 'unclear') IN ('non_agora', 'unclear', 'mixed')
-                                             OR COALESCE(bt.route_classification ->> 'agora_route', 'unclear') IN ('unclear', 'mixed')
-                                            THEN 'human_review'
-                                        ELSE 'other'
-                                    END
-                                ELSE 'human_review'
-                            END
-                        ELSE
-                            CASE
-                                WHEN bt.scope_label IN ('ticket_resolution', 'small_talk', 'conversation')
-                                    THEN 'conversation'
-                                WHEN bt.scope_label IN ('uncertain', 'unclear', 'non_agora', 'human_review', 'uncategorized')
-                                    THEN 'human_review'
-                                ELSE 'other'
-                            END
-                    END = %s
-                    """
-                )
-            )
-            params.append(route_group)
-        elif route_label:
-            clauses.append(
-                sql.SQL(
-                    """
-                    CASE
-                        WHEN bt.route_classification <> '{}'::jsonb THEN
-                            CASE COALESCE(bt.route_classification ->> 'intent_class', 'unclear')
-                                WHEN 'conversation' THEN
-                                    CASE COALESCE(bt.route_classification ->> 'conversation_action', 'human_review')
-                                        WHEN 'resolve' THEN 'Resolve'
-                                        WHEN 'follow_up' THEN 'Follow-up'
-                                        ELSE 'Human Review'
-                                    END
-                                WHEN 'agora' THEN
-                                    CASE
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'technical'
-                                            THEN 'Agora Technical'
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'non_technical'
-                                            THEN 'Agora Non-technical'
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'account_billing'
-                                            THEN 'Account & Billing'
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'uncategorized') = 'automation'
-                                             AND COALESCE(bt.route_classification ->> 'automation_subcategory', '') <> ''
-                                            THEN 'Automation'
-                                        ELSE 'Human Review'
-                                    END
-                                WHEN 'support_request' THEN
-                                    CASE
-                                        WHEN COALESCE(bt.route_classification ->> 'support_scope', 'unclear') = 'non_agora'
-                                            THEN 'Non-Agora'
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'unclear') = 'technical'
-                                            THEN 'Agora Technical'
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'unclear') = 'non_technical'
-                                            THEN 'Agora Non-technical'
-                                        WHEN COALESCE(bt.route_classification ->> 'agora_route', 'unclear') = 'automation'
-                                             AND COALESCE(bt.route_classification ->> 'automation_subcategory', '') <> ''
-                                            THEN 'Automation'
-                                        ELSE 'Human Review'
-                                    END
-                                WHEN 'uncertain' THEN 'Uncertain'
-                                ELSE 'Human Review'
-                            END
-                        ELSE
-                            CASE
-                                WHEN bt.route_family IN ('automated', 'billing_automation')
-                                     AND COALESCE(bt.execution_action, bt.route) IN (
-                                         'account_verification', 'account_suspension', 'detailed_invoice', 'enablement', 'quota'
-                                     )
-                                    THEN 'Automation'
-                                WHEN bt.scope_label = 'ticket_resolution' THEN 'Resolve'
-                                WHEN bt.scope_label = 'small_talk' THEN 'Follow-up'
-                                WHEN bt.scope_label = 'non_agora' THEN 'Non-Agora'
-                                WHEN bt.scope_label = 'agora_technical' THEN 'Agora Technical'
-                                WHEN bt.scope_label = 'agora_non_technical' THEN 'Agora Non-technical'
-                                WHEN bt.scope_label = 'account_billing' THEN 'Account & Billing'
-                                WHEN bt.scope_label = 'uncertain' THEN 'Uncertain'
-                                ELSE 'Human Review'
-                            END
-                    END = %s
-                    """
-                )
-            )
-            params.append(route_label)
+        if route_filter:
+            normalized_filter = normalize_account_case_filter(legacy_label=route_filter)
+            if normalized_filter:
+                filter_expression = _account_case_filter_sql_expression("bt")
+                if ":" in normalized_filter:
+                    clauses.append(sql.SQL("{} = %s").format(filter_expression))
+                else:
+                    clauses.append(
+                        sql.SQL("split_part({}, ':', 1) = %s").format(filter_expression)
+                    )
+                params.append(normalized_filter)
         if route_errors_only:
             clauses.append(
                 sql.SQL(
