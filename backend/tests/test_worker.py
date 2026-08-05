@@ -2035,6 +2035,39 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_billing_ticket.assert_not_called()
         repository.record_event.assert_not_called()
 
+    def test_enablement_resolution_reply_uses_canonical_feature_key(self) -> None:
+        repository = Mock()
+        repository.list_ticket_events.return_value = []
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-ACC-2",
+            "billing_ticket_id": "AC-TK-ACC-2",
+            "client_ticket_id": "TK-ACC-2",
+            "automation_handler": "enablement",
+            "collected_fields": {
+                "app_id": "7da36383d624411698e5c0bc1fda6324",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "channel media rele",
+            },
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ACC-2",
+            "messages": [{"role": "customer", "content": "Please enable Media Relay."}],
+        }
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-canonical",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ACC-2",
+            body_text="The request is complete.",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_render_case_persona_reply",
+            return_value="Hi Customer,\n\nThe request is complete.\n\nBest,\nSid",
+        ) as render:
+            self.assertTrue(worker.handle_enablement_request_reply(reply))
+
+        self.assertEqual(render.call_args.kwargs["known_information"], {"requested_feature": "media_relay"})
+
     def test_handle_enablement_request_reply_notifies_customer_without_assuming_success(self) -> None:
         repository = Mock()
         repository.list_ticket_events.return_value = []
