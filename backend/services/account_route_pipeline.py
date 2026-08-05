@@ -55,7 +55,7 @@ from backend.services.support_router_prompt import build_route_prompt_hints
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v4"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v5"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_BILLING_PROMPT_KEY = "account-account-billing-router-system"
@@ -89,6 +89,7 @@ _AGORA_REASON_CODES = {
     "insufficient_route_information",
     "insufficient_backend_operation_evidence",
     "multiple_equal_intents",
+    "legal_compliance_request",
 }
 _AUTOMATION_REASON_CODES = {
     "registered_fraud_account",

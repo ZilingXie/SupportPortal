@@ -303,6 +303,118 @@ class AccountIntakeApiTests(unittest.TestCase):
             duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
 
+    def test_account_single_case_rerun_targets_only_requested_case(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12562",
+                "customer_id": "customer@example.com",
+                "subject": "Third-party compliance complaint",
+                "status": "open",
+                "messages": [{
+                    "role": "customer",
+                    "content": "A third-party fraud complaint asks Agora to extract server logs as evidence.",
+                    "created_at": "2026-08-04T00:00:00+00:00",
+                }],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12562",
+                "client_ticket_id": "12562",
+                "route_status": "not_automated",
+                "route_family": "human_review",
+            }
+        )
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            response = self.client.post("/api/account/cases/12562/rerun")
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertEqual(payload["scope"], "single_case")
+        self.assertEqual(payload["target_case_ids"], ["AC-12562"])
+        runner.assert_awaited_once_with(payload["job_id"])
+
+        duplicate = self.client.post("/api/account/cases/AC-12562/rerun")
+        self.assertEqual(duplicate.status_code, 409, duplicate.text)
+
+    def test_single_case_rerun_worker_does_not_process_other_cases(self) -> None:
+        for ticket_id, case_id in (("12562", "AC-12562"), ("12563", "AC-12563")):
+            self.repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": "customer@example.com",
+                    "subject": "Account Case",
+                    "status": "open",
+                    "messages": [{
+                        "role": "customer",
+                        "content": "A third-party compliance complaint asks Agora to extract logs.",
+                        "created_at": "2026-08-04T00:00:00+00:00",
+                    }],
+                }
+            )
+            self.repository.save_account_case(
+                {
+                    "account_case_id": case_id,
+                    "client_ticket_id": ticket_id,
+                    "route_status": "not_automated",
+                    "route_family": "human_review",
+                    "secondary_label": "Agora / Uncategorized",
+                }
+            )
+
+        result = SimpleNamespace(
+            account_case={
+                "account_case_id": "AC-12562",
+                "client_ticket_id": "12562",
+                "route": "human_review_required",
+                "scope_label": "uncategorized",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "route_status": "not_automated",
+                "category": "human_review",
+                "subcategory": "human_review_required",
+                "automation_handler": None,
+                "route_classification": {
+                    "intent_class": "agora",
+                    "agora_route": "uncategorized",
+                    "primary_label": "Agora",
+                    "secondary_label": "Agora / Uncategorized",
+                },
+            },
+            route_execution={"ticket_id": "12562", "classification": {}},
+            changed=True,
+            handler_status="not_automated",
+            internal_email_to_send=None,
+            email_handler=None,
+            customer_reply="",
+            reply_kind=None,
+            asked_field_keys=(),
+        )
+        job = asyncio.run(
+            main._enqueue_account_rerun_job(
+                SimpleNamespace(add_task=lambda *args: None),
+                target_case_ids=["AC-12562"],
+            )
+        )
+        with patch.object(main, "reprocess_account_case", return_value=result) as reprocess:
+            asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
+
+        reprocess.assert_called_once()
+        self.assertEqual(reprocess.call_args.args[0]["account_case_id"], "AC-12562")
+        latest = main._account_full_reroute_job(job["job_id"])
+        assert latest is not None
+        self.assertEqual(latest["scope"], "single_case")
+        self.assertEqual(latest["total"], 1)
+        self.assertEqual(latest["processed"], 1)
+        self.assertEqual(latest["route_counts"], {"Agora / Uncategorized": 1})
+        self.assertEqual(
+            self.repository.get_account_case("AC-12563")["secondary_label"],
+            "Agora / Uncategorized",
+        )
+        execution = self.repository.list_account_route_executions("12562")[-1]
+        self.assertEqual(execution["trigger"], "single_case_rerun")
+
     def test_account_full_reroute_returns_retryable_503_when_storage_is_unavailable(self) -> None:
         with patch.object(
             main,
@@ -729,7 +841,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v3")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v5")
         self.assertEqual(executions[0]["classification"]["intent_class"], "agora")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn(

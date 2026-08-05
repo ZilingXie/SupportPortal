@@ -17,7 +17,7 @@ from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-layered-router-v4"
+ROUTER_PROMPT_VERSION = "account-layered-router-v5"
 ROUTING_STAGE_DESCRIPTIONS = {
     "intent_classifier": "Classifies Account messages as Conversation, Agora, or Uncertain.",
     "agora_router": "Classifies Agora cases as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
@@ -344,7 +344,7 @@ def route_execution_from_decision(
             "classification": dict(classification),
             "confidence": decision.confidence,
             "confidence_threshold": decision.intent_router_confidence_threshold,
-            "router_prompt_version": str(classification.get("pipeline_version") or "account-layered-router-v3"),
+            "router_prompt_version": str(classification.get("pipeline_version") or ROUTER_PROMPT_VERSION),
             "prompt_snapshots": snapshots,
             "prompt_snapshot_available": bool(snapshots),
             "stages": stages,

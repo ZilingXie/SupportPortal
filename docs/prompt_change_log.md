@@ -3262,3 +3262,23 @@ For each new entry, record:
   - `/client` and the shared legacy Automation registry remain unchanged.
 - Verification:
   - Targeted Account route, intake, reroute, correction, UI, Admin, prompt, and feature-list checks.
+
+## 2026-08-05 - Legal and regulatory complaints remain Uncategorized
+
+- Area or subsystem: `/account` Agora Router and single-case rerun validation
+- Prompt or model version: `account-layered-router-v5`, `account-agora-v6` / existing `intent_router` profile
+- Summary: Added a high-priority legal/compliance primary-intent rule so long third-party fraud, regulatory, or enforcement complaints remain `Agora / Uncategorized` even when they contain evidence-extraction or server-log commands. Automation `Unregistered` remains available as the registered Automation Router diagnostic fallback.
+- Reason: Case 12562 was incorrectly sent to the Automation Router because a late request to extract server logs outweighed the message's primary legal and regulatory complaint intent.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/account_admin.py`
+  - `backend/main.py`
+- Expected behavior change:
+  - Legal, regulatory, compliance, enforcement, and third-party fraud complaints use `legal_compliance_request`, stop before Automation Router, and route to Human Review.
+  - Definite but unregistered backend operations continue to produce `Automation / Unregistered` for taxonomy-gap discovery.
+  - `/account/cases/{account_case_id}/rerun` can run one fresh Account Case through routing, extractors, and handlers without touching other cases.
+- Verification:
+  - Unit route contract confirms the legal/compliance path invokes only Intent Classifier and Agora Router.
+  - Single-case rerun contract confirms only the requested Case is selected.
+  - Post-deploy live rerun of Case 12562 will verify `Agora / Uncategorized + Human Review`.
