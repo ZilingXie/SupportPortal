@@ -44,7 +44,9 @@ class EnablementAutomationTests(unittest.TestCase):
         self.assertEqual(result.internal_email["to"], "")
         self.assertIn("Account Case ID: AC-TK-12302", result.internal_email["body"])
         self.assertIn("App ID: 7da36383d624411698e5c0bc1fda6324", result.internal_email["body"])
-        self.assertIn("Requested feature: medial relay", result.internal_email["body"])
+        self.assertIn("Feature: Media Relay", result.internal_email["body"])
+        self.assertIn("body_html", result.internal_email)
+        self.assertIn("Media Relay enablement request", result.internal_email["body_html"])
 
     def test_customer_visible_information_uses_canonical_name_and_hides_raw_fields(self) -> None:
         visible = customer_visible_enablement_information(
@@ -138,6 +140,19 @@ class EnablementAutomationTests(unittest.TestCase):
         self.assertEqual(result["status"], "sent")
         self.assertEqual(result["resolved_to"], "current@example.com")
         self.assertEqual(send_mail.call_args.kwargs["to_address"], "current@example.com")
+
+    def test_internal_email_prefers_html_body(self) -> None:
+        payload = {"subject": "Request", "body": "Plain fallback", "body_html": "<p>Pretty</p>"}
+        with patch.dict(
+            "os.environ",
+            {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "current@example.com"},
+            clear=False,
+        ), patch("backend.services.enablement_automation.send_graph_mail") as send_mail:
+            result = send_enablement_internal_email(payload)
+
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(send_mail.call_args.kwargs["body"], "<p>Pretty</p>")
+        self.assertEqual(send_mail.call_args.kwargs["content_type"], "HTML")
 
     def test_internal_reply_thread_is_rewritten_for_the_customer(self) -> None:
         profile = Mock()

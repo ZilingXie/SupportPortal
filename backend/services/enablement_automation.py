@@ -8,6 +8,7 @@ from typing import Any
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import DEFAULT_USERNAME, send_graph_mail
+from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
     ENABLEMENT_REPLY_SCENARIO,
@@ -266,11 +267,18 @@ def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict
     to_address = _clean_text(os.getenv(ENABLEMENT_INTERNAL_EMAIL_ENV))
     subject = _clean_text(payload.get("subject"))
     body = str(payload.get("body") or "").strip()
-    missing = [name for name, value in (("to", to_address), ("subject", subject), ("body", body)) if not value]
+    body_html = str(payload.get("body_html") or "").strip()
+    send_body = body_html or body
+    missing = [name for name, value in (("to", to_address), ("subject", subject), ("body", send_body)) if not value]
     if missing:
         return {"status": ENABLEMENT_INTERNAL_EMAIL_RETRY, "reason": f"missing {', '.join(missing)}"}
     try:
-        send_graph_mail(to_address=to_address, subject=subject, body=body)
+        send_graph_mail(
+            to_address=to_address,
+            subject=subject,
+            body=send_body,
+            content_type="HTML" if body_html else "Text",
+        )
     except (FileNotFoundError, ValueError) as exc:
         return {"status": ENABLEMENT_INTERNAL_EMAIL_RETRY, "reason": str(exc)}
     except Exception as exc:
@@ -394,25 +402,32 @@ def _build_internal_email(
     customer_message: str,
     collected_fields: dict[str, str],
 ) -> dict[str, str]:
-    feature_label = collected_fields["requested_feature_label"]
+    raw_feature_label = collected_fields["requested_feature_label"]
+    feature_key = _clean_text(collected_fields.get("requested_feature")).lower()
+    feature_label = _ENABLEMENT_FEATURE_DISPLAY_NAMES.get(feature_key) or raw_feature_label
     app_id = collected_fields["app_id"]
+    rendered = render_internal_handoff_email(
+        request_type="Enablement",
+        title=f"{feature_label} enablement request",
+        ticket_id=ticket_id,
+        intro="A customer has requested backend feature enablement.",
+        summary_fields=(
+            ("Account Case ID", account_case_id),
+            ("Ticket ID", ticket_id),
+            ("App ID", app_id),
+            ("Customer email", customer_email or "{{customer_email}}"),
+        ),
+        sections=(InternalEmailSection(title="Requested feature", fields=(("Feature", feature_label),)),),
+        original_message=customer_message,
+        action_text="Please reply directly to this email with a customer-shareable handling update.",
+    )
     return {
         "to": "",
         "recipient_config_key": ENABLEMENT_INTERNAL_EMAIL_ENV,
         "delivery_key": f"enablement:{_clean_text(account_case_id)}:v1",
         "from": _clean_text(os.getenv("MSGRAPH_USERNAME")) or DEFAULT_USERNAME,
         "subject": f"{ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX} {feature_label} - Ticket {_clean_text(ticket_id)}",
-        "body": (
-            "Hi team,\n\n"
-            "A customer has requested backend feature enablement.\n\n"
-            f"Account Case ID: {_clean_text(account_case_id)}\n"
-            f"Ticket ID: {_clean_text(ticket_id)}\n"
-            f"App ID: {app_id}\n"
-            f"Requested feature: {feature_label}\n"
-            f"Customer email: {_clean_text(customer_email) or '{{customer_email}}'}\n\n"
-            f"Original customer message:\n{_clean_multiline(customer_message)}\n\n"
-            "Please reply directly to this email with a customer-shareable handling update."
-        ),
+        **rendered,
     }
 
 

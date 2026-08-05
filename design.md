@@ -378,6 +378,14 @@
 7. `manual_attention / failed` 必须作为文字状态显示并使用 `aria-live="polite"`，不能只靠颜色。客户在等待期间追加消息时，旧 scheduled reply 必须取消并由最新上下文替代。
 8. Automation Behavior 只保存结构化字段、路由状态、内部动作和发送时机；客户可见文案必须在最终发送入口由统一 Automation Persona 生成。Persona 失败、缺少人设或事实抽取失败时显示 Human Review，不发送 Behavior 兜底文案。
 
+### 6.9 Internal Automation Email Handoff
+1. Fraud Account、Account Verification、Detailed Invoice、Enablement、Quota 的内部 handoff 邮件必须复用统一的 `Internal Automation Email` 模板；Workspace Invitation 属于用户外发邮件，不使用该模板。
+2. 邮件使用 640–680px 的单栏、table-based layout，依次表达请求类型、Ticket ID、请求摘要、业务字段、缺失字段、客户原文和处理动作；不使用远程图片、外部字体、脚本或追踪资源。
+3. 邮件视觉以中性色为基础，用 `primary` 表示业务动作，用 `warning` 表示缺失信息，用 `success` 表示已确认信息；颜色必须同时配合文字，不得只靠颜色表达状态。
+4. 所有动态客户数据必须作为转义后的文本节点展示；App ID、邮箱、URL 和客户长句必须支持换行，不得撑破 Outlook 桌面端或窄屏布局。
+5. 需要 Response Link 时使用明确的主操作和可复制的纯文本 URL；链接只允许 `http` 或 `https` 协议。没有安全链接时，统一提示内部人员直接回复原邮件。
+6. HTML 正文必须同时保留等价的纯文本正文，用于旧 payload、管理端状态判断、邮件客户端兼容和后续回复解析。模板升级不得改变现有 delivery key 或触发已发送 Case 重发。
+
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：
    - `loading`

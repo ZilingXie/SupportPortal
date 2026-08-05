@@ -64,7 +64,13 @@ def acquire_graph_access_token(config: dict[str, str]) -> str:
     return access_token
 
 
-def send_graph_mail(*, to_address: str, subject: str, body: str) -> None:
+def send_graph_mail(
+    *,
+    to_address: str,
+    subject: str,
+    body: str,
+    content_type: str = "Text",
+) -> None:
     config = load_graph_mail_config()
     missing = [name for name, value in config.items() if not value]
     if missing:
@@ -75,17 +81,29 @@ def send_graph_mail(*, to_address: str, subject: str, body: str) -> None:
         to_address=to_address,
         subject=subject,
         body=body,
+        content_type=content_type,
     )
 
 
-def send_graph_mail_with_token(*, access_token: str, to_address: str, subject: str, body: str) -> None:
+def send_graph_mail_with_token(
+    *,
+    access_token: str,
+    to_address: str,
+    subject: str,
+    body: str,
+    content_type: str = "Text",
+) -> None:
+    normalized_content_type = str(content_type or "Text").strip().lower()
+    if normalized_content_type not in {"text", "html"}:
+        raise ValueError("Graph mail content_type must be Text or HTML")
+    graph_content_type = "HTML" if normalized_content_type == "html" else "Text"
     request = urllib.request.Request(
         GRAPH_SENDMAIL_URL,
         data=json.dumps(
             {
                 "message": {
                     "subject": subject,
-                    "body": {"contentType": "Text", "content": body},
+                    "body": {"contentType": graph_content_type, "content": body},
                     "toRecipients": [{"emailAddress": {"address": to_address}}],
                 },
                 "saveToSentItems": True,

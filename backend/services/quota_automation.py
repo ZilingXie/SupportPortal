@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 from collections.abc import Iterable
@@ -9,6 +8,7 @@ from typing import Any
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import DEFAULT_USERNAME, send_graph_mail
+from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import ENABLEMENT_REPLY_SCENARIO, resolve_model_profile
 from backend.services.quota_field_extractor import QuotaFieldExtraction
@@ -90,11 +90,18 @@ def send_quota_internal_email(email_payload: dict[str, Any] | None) -> dict[str,
     to_address = _clean_text(os.getenv(QUOTA_INTERNAL_EMAIL_ENV))
     subject = _clean_text(payload.get("subject"))
     body = str(payload.get("body") or "").strip()
-    missing = [name for name, value in (("to", to_address), ("subject", subject), ("body", body)) if not value]
+    body_html = str(payload.get("body_html") or "").strip()
+    send_body = body_html or body
+    missing = [name for name, value in (("to", to_address), ("subject", subject), ("body", send_body)) if not value]
     if missing:
         return {"status": "skipped_config_missing", "reason": f"missing {', '.join(missing)}"}
     try:
-        send_graph_mail(to_address=to_address, subject=subject, body=body)
+        send_graph_mail(
+            to_address=to_address,
+            subject=subject,
+            body=send_body,
+            content_type="HTML" if body_html else "Text",
+        )
     except (FileNotFoundError, ValueError) as exc:
         return {"status": "retry", "reason": str(exc)}
     except Exception as exc:
@@ -166,23 +173,33 @@ def _build_internal_email(
 ) -> dict[str, Any]:
     products = collected_fields.get("products") or ["account quota"]
     product_label = ", ".join(str(item) for item in products) if isinstance(products, list) else str(products)
+    detail_fields = tuple(
+        (str(key).replace("_", " ").title(), value)
+        for key, value in sorted(collected_fields.items())
+        if value not in (None, "", [], {})
+    )
+    rendered = render_internal_handoff_email(
+        request_type="Quota",
+        title=f"{product_label} capacity request",
+        ticket_id=ticket_id,
+        intro="A customer has requested a quota or capacity review.",
+        summary_fields=(
+            ("Account Case ID", account_case_id),
+            ("Ticket ID", ticket_id),
+            ("Customer email", customer_email or "{{customer_email}}"),
+        ),
+        sections=(InternalEmailSection(title="Collected request details", fields=detail_fields),),
+        missing_fields=tuple(missing_fields),
+        original_message=customer_message,
+        action_text="Please reply directly to this email with a customer-shareable handling update.",
+    )
     return {
         "to": "",
         "recipient_config_key": QUOTA_INTERNAL_EMAIL_ENV,
         "delivery_key": f"quota:{_clean_text(account_case_id)}:v1",
         "from": _clean_text(os.getenv("MSGRAPH_USERNAME")) or DEFAULT_USERNAME,
         "subject": f"{QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX} {product_label} - Ticket {_clean_text(ticket_id)}",
-        "body": (
-            "Hi team,\n\n"
-            "A customer has requested a quota or capacity review.\n\n"
-            f"Account Case ID: {_clean_text(account_case_id)}\n"
-            f"Ticket ID: {_clean_text(ticket_id)}\n"
-            f"Customer email: {_clean_text(customer_email) or '{{customer_email}}'}\n"
-            f"Collected request details:\n{json.dumps(collected_fields, ensure_ascii=False, indent=2, sort_keys=True)}\n"
-            f"Missing details after one follow-up: {', '.join(missing_fields) if missing_fields else 'None'}\n\n"
-            f"Original customer message:\n{str(customer_message or '').strip()}\n\n"
-            "Please reply directly to this email with a customer-shareable handling update."
-        ),
+        **rendered,
     }
 
 
