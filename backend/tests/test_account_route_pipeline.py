@@ -13,7 +13,10 @@ from backend.services.account_route_pipeline import (
     classification_for_corrected_route,
     decide_account_route,
 )
-from backend.services.prompts.account_routing import build_account_automation_system_prompt
+from backend.services.prompts.account_routing import (
+    build_account_agora_system_prompt,
+    build_account_automation_system_prompt,
+)
 from backend.services.support_router import SupportRouteDecision
 
 
@@ -22,6 +25,42 @@ def _attempt(payload: dict[str, object]) -> AccountRouteStageAttempt:
 
 
 class AccountRoutePipelineTests(unittest.TestCase):
+    def test_agora_prompt_prioritizes_legal_compliance_complaints_over_evidence_commands(self) -> None:
+        prompt = build_account_agora_system_prompt()
+
+        self.assertIn("legal_compliance_request", prompt)
+        self.assertIn("third-party fraud complaint", prompt)
+        self.assertIn("extract logs, preserve evidence", prompt)
+
+    def test_legal_compliance_agora_route_stops_before_automation_router(self) -> None:
+        attempts = [
+            _attempt({
+                "intent_class": "agora",
+                "intent_confidence": 0.99,
+                "reason_code": "agora_case",
+            }),
+            _attempt({
+                "agora_route": "uncategorized",
+                "confidence": 0.98,
+                "reason_code": "legal_compliance_request",
+                "backend_operation": None,
+                "evidence_spans": ["third-party fraud complaint", "extract server logs"],
+            }),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ) as invoke_stage:
+            result = decide_account_route(
+                "A third-party fraud complaint asks Agora and regulators to extract server logs as evidence."
+            )
+
+        self.assertEqual(result.secondary_label, "Agora / Uncategorized")
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.classification["route_reason_code"], "legal_compliance_request")
+        self.assertEqual(invoke_stage.call_count, 2)
+
     def test_automation_prompt_treats_complete_suspension_review_template_as_fraud_evidence(self) -> None:
         prompt = build_account_automation_system_prompt()
 

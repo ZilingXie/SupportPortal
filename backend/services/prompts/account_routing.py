@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
-ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v5"
+ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v6"
 ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v1"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v7"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
@@ -121,6 +121,12 @@ Classify only; do not answer the customer.
   insufficient information, multiple equally important Agora intents, legal/compliance requests, and rewards.
 
 ## Rules
+- First identify the customer's primary requested outcome across the entire message. A long legal,
+  regulatory, compliance, enforcement, or third-party fraud complaint is uncategorized even if a later
+  paragraph asks Agora to extract logs, preserve evidence, investigate, freeze assets, or disclose data.
+  Those evidence-preservation and enforcement demands are not normal Agora backend operations.
+- Do not let a concrete-looking command near the end of a long complaint override the complaint's primary
+  legal or regulatory purpose. Use reason_code legal_compliance_request for this case.
 - How to enable, configure, integrate, or troubleshoot a feature is technical.
 - An explicit request for Agora to enable a named backend feature from our side is automation.
 - Pricing and billing questions are account_billing. Concrete backend operations enter automation.
@@ -147,7 +153,7 @@ confidence must be between 0 and 1.
 agora_route must be one of: technical, non_technical, account_billing, automation, uncategorized.
 reason_code must be one of: technical_request, non_technical_request, account_billing_request,
 explicit_backend_operation, no_matching_category, insufficient_route_information,
-insufficient_backend_operation_evidence, multiple_equal_intents.
+insufficient_backend_operation_evidence, multiple_equal_intents, legal_compliance_request.
 backend_operation must be null unless agora_route=automation.
 
 ## Examples
@@ -156,6 +162,10 @@ Output: {"agora_route":"technical","confidence":0.98,"reason_code":"technical_re
 
 Input: Who is Agora's CEO?
 Output: {"agora_route":"non_technical","confidence":0.98,"reason_code":"non_technical_request","additional_intents":[],"selection_reason":"The request asks for public company information","backend_operation":null,"evidence_spans":["Agora's CEO"]}
+
+Input: A third-party platform fraud complaint asks Agora, cloud providers, payment processors, and regulators
+to investigate the platform and extract server logs as evidence.
+Output: {"agora_route":"uncategorized","confidence":0.98,"reason_code":"legal_compliance_request","additional_intents":[],"selection_reason":"The primary request is a legal and regulatory complaint, not a normal Agora backend operation","backend_operation":null,"evidence_spans":["third-party platform fraud complaint","regulators","extract server logs as evidence"]}
 
 Input: Please enable Media Relay from your end for my App ID.
 Output: {"agora_route":"automation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer explicitly requests activation from Agora's side","backend_operation":{"action":"enable","target":"media_relay","evidence":"enable Media Relay from your end"},"evidence_spans":["enable Media Relay from your end"]}
