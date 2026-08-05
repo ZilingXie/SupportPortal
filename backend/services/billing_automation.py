@@ -29,6 +29,7 @@ from backend.services.detailed_invoice_field_extractor import (
     DetailedInvoiceFieldExtraction,
     extract_detailed_invoice_fields,
 )
+from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
 
 LOGGER = logging.getLogger(__name__)
 
@@ -286,6 +287,9 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
     from_address = _clean_text(payload.get("from")) or DEFAULT_BILLING_EMAIL_FROM
     subject = _clean_text(payload.get("subject"))
     body = str(payload.get("body") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    body_html = str(payload.get("body_html") or "").strip()
+    content_type = "HTML" if body_html else "Text"
+    send_body = body_html or body
     mail_transport = (_clean_text(os.getenv(BILLING_MAIL_TRANSPORT_ENV)) or DEFAULT_BILLING_MAIL_TRANSPORT).lower()
 
     missing = [
@@ -294,7 +298,7 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
             ("to", to_address),
             ("from", from_address),
             ("subject", subject),
-            ("body", body),
+            ("body", send_body),
         )
         if not value
     ]
@@ -323,7 +327,8 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
             access_token=access_token,
             to_address=to_address,
             subject=subject,
-            body=body,
+            body=send_body,
+            content_type=content_type,
         )
     except FileNotFoundError as exc:
         return {
@@ -541,12 +546,20 @@ def _post_form_json(url: str, form: dict[str, str]) -> dict[str, Any]:
         return _decode_json_response(response)
 
 
-def _send_graph_mail(*, access_token: str, to_address: str, subject: str, body: str) -> None:
+def _send_graph_mail(
+    *,
+    access_token: str,
+    to_address: str,
+    subject: str,
+    body: str,
+    content_type: str = "Text",
+) -> None:
     send_graph_mail_with_token(
         access_token=access_token,
         to_address=to_address,
         subject=subject,
         body=body,
+        content_type=content_type,
     )
 
 
@@ -1047,6 +1060,7 @@ def _build_internal_email(
             "use_case",
         )
         lead = "A customer has provided the required information for an account suspension review request."
+        request_title = "Account suspension review"
     elif action == BILLING_ACTION_ACCOUNT_VERIFICATION:
         subject = f"Account verification request - Ticket {normalized_ticket_id}"
         field_order = (
@@ -1058,34 +1072,46 @@ def _build_internal_email(
             "use_case",
         )
         lead = "A customer has provided the required information for an account verification request."
+        request_title = "Account verification review"
     else:
         subject = f"Detailed invoice request - Ticket {normalized_ticket_id}"
         field_order = ("issue_date", "transaction_id", "amount")
         lead = "A customer has provided the required information for a detailed invoice request."
+        request_title = "Detailed invoice request"
 
-    fields = "\n".join(f"{_FIELD_LABELS[field_name]}: {collected_fields[field_name]}" for field_name in field_order)
-    app_id_line = f"\nApp ID: {collected_fields['app_id']}" if collected_fields.get("app_id") else ""
-    body = "\n\n".join(
-        [
-            "Hi team,",
-            lead,
-            f"Billing Ticket ID: {normalized_billing_ticket_id}\nCustomer email: {normalized_customer_email}{app_id_line}",
-            fields,
-            f"Original customer message:\n{_clean_text(customer_message)}",
-            (
-                "Please review and submit the handling result here:\n"
-                f"{normalized_response_link}"
-                if normalized_response_link
-                else (
-                    "Please review this request and reply directly to this email in Outlook. "
-                    "Your reply will be attached to the ticket for customer follow-up."
-                )
-            ),
-        ]
+    detail_fields = tuple(
+        (_FIELD_LABELS[field_name], collected_fields[field_name])
+        for field_name in field_order
+        if collected_fields.get(field_name)
+    )
+    summary_fields: list[tuple[str, Any]] = [
+        ("Billing Ticket ID", normalized_billing_ticket_id),
+        ("Ticket ID", normalized_ticket_id),
+        ("Customer email", normalized_customer_email),
+    ]
+    if collected_fields.get("app_id"):
+        summary_fields.append(("App ID", collected_fields["app_id"]))
+    if normalized_response_link:
+        action_text = "Please review and submit the handling result using the secure SupportPortal form."
+    else:
+        action_text = (
+            "Please review this request and reply directly to this email in Outlook. "
+            "Your reply will be attached to the ticket for customer follow-up."
+        )
+    rendered = render_internal_handoff_email(
+        request_type="Billing",
+        title=request_title,
+        ticket_id=normalized_ticket_id,
+        intro=lead,
+        summary_fields=tuple(summary_fields),
+        sections=(InternalEmailSection(title="Request details", fields=detail_fields),),
+        original_message=customer_message,
+        action_text=action_text,
+        action_url=normalized_response_link,
     )
     return {
         "to": to_address,
         "from": from_address,
         "subject": f"{BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX} {subject}",
-        "body": body,
+        **rendered,
     }

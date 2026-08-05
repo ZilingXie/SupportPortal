@@ -184,6 +184,8 @@ class AccountVerificationAutomationTests(unittest.TestCase):
         assert second.internal_email is not None
         self.assertIn("Missing after one follow-up", second.internal_email["body"])
         self.assertNotIn("Website", second.internal_email["body"])
+        self.assertEqual(second.internal_email["body_content_type"], "HTML")
+        self.assertIn("Missing after one follow-up", second.internal_email["body_html"])
 
     def test_all_account_automation_subcategories_are_explicitly_registered(self) -> None:
         self.assertEqual(

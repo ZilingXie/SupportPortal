@@ -50,6 +50,8 @@ class QuotaAutomationTests(unittest.TestCase):
         assert second.internal_email is not None
         self.assertEqual(second.internal_email["delivery_key"], "quota:AC-12512:v1")
         self.assertIn("Missing details after one follow-up", second.internal_email["body"])
+        self.assertEqual(second.internal_email["body_content_type"], "HTML")
+        self.assertIn("Collected request details", second.internal_email["body_html"])
 
     def test_missing_destination_preserves_explicit_status(self) -> None:
         with patch.dict(os.environ, {"QUOTA_AUTOMATION_INTERNAL_EMAIL": ""}, clear=False):
@@ -57,6 +59,17 @@ class QuotaAutomationTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "skipped_config_missing")
         self.assertIn("to", result["reason"])
+
+    def test_internal_email_prefers_html_body(self) -> None:
+        payload = {"subject": "Quota", "body": "Plain fallback", "body_html": "<p>Pretty</p>"}
+        with patch.dict(os.environ, {"QUOTA_AUTOMATION_INTERNAL_EMAIL": "quota@example.com"}, clear=False), patch(
+            "backend.services.quota_automation.send_graph_mail"
+        ) as send_mail:
+            result = send_quota_internal_email(payload)
+
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(send_mail.call_args.kwargs["body"], "<p>Pretty</p>")
+        self.assertEqual(send_mail.call_args.kwargs["content_type"], "HTML")
 
     def test_internal_resolution_is_rewritten_for_the_customer(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True)

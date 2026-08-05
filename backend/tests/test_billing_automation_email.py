@@ -103,6 +103,8 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertIsNotNone(result.internal_email)
         assert result.internal_email is not None
         self.assertEqual(result.internal_email["from"], "ai-support-agent@agora.io")
+        self.assertEqual(result.internal_email["body_content_type"], "HTML")
+        self.assertIn("Request details", result.internal_email["body_html"])
 
     def test_send_billing_internal_email_uses_graph_sendmail(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -152,6 +154,33 @@ class BillingAutomationEmailTests(unittest.TestCase):
             [{"emailAddress": {"address": "billing@example.com"}}],
         )
         self.assertNotIn("xieziling97@163.com", requests[1].data.decode("utf-8"))
+
+    def test_send_billing_internal_email_prefers_html_body(self) -> None:
+        with patch.dict(os.environ, dict(GRAPH_ENV), clear=False), patch(
+            "backend.services.billing_automation._load_graph_mail_config",
+            return_value={"tenant_id": "tenant", "client_id": "client", "client_secret": "secret", "username": "agent@example.com", "token_cache": "cache"},
+        ), patch(
+            "backend.services.billing_automation._acquire_graph_access_token",
+            return_value="access-token",
+        ), patch("backend.services.billing_automation._send_graph_mail") as send_mail:
+            result = send_billing_internal_email(
+                {
+                    "to": "billing@example.com",
+                    "from": "agent@example.com",
+                    "subject": "Invoice",
+                    "body": "Plain fallback",
+                    "body_html": "<p>Pretty</p>",
+                }
+            )
+
+        self.assertEqual(result, {"status": "sent", "reason": ""})
+        send_mail.assert_called_once_with(
+            access_token="access-token",
+            to_address="billing@example.com",
+            subject="Invoice",
+            body="<p>Pretty</p>",
+            content_type="HTML",
+        )
 
     def test_send_billing_internal_email_never_uses_legacy_smtp(self) -> None:
         with patch.dict(

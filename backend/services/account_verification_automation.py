@@ -11,6 +11,7 @@ from backend.services.account_verification_field_extractor import (
     extract_account_verification_fields,
 )
 from backend.services.customer_reply_composer import compose_customer_reply_email
+from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
 from backend.services.llm_factory import LlmInvocationError
 
 ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL"
@@ -44,28 +45,39 @@ def _internal_email(
     collected_fields: dict[str, str],
     missing_fields: list[str],
 ) -> dict[str, str]:
-    provided_lines = [
-        f"{_GROUP_LABELS[group]}: {collected_fields[group]}"
+    provided_fields = [
+        (_GROUP_LABELS[group], collected_fields[group])
         for group in _GROUP_LABELS
         if collected_fields.get(group)
     ]
-    missing_lines = [f"- {_GROUP_LABELS[group]}" for group in missing_fields]
-    body_parts = [
-        "Hi team,",
-        "A customer has requested a fraud/risk account review.",
-        f"Account Case ID: {account_case_id}\nTicket ID: {ticket_id}\nCustomer email: {customer_email or '(not provided)'}",
-        "Provided information:\n" + ("\n".join(provided_lines) or "(none safely collected)"),
-    ]
-    if missing_lines:
-        body_parts.append("Missing after one follow-up:\n" + "\n".join(missing_lines))
-    body_parts.append("Please reply directly to this email with a customer-shareable handling update.")
     delivery_key = hashlib.sha256(f"fraud-account:{account_case_id}".encode("utf-8")).hexdigest()
+    rendered = render_internal_handoff_email(
+        request_type="Fraud Account",
+        title="Fraud account review",
+        ticket_id=ticket_id,
+        intro="A customer has requested a fraud/risk account review.",
+        summary_fields=(
+            ("Account Case ID", account_case_id),
+            ("Ticket ID", ticket_id),
+            ("Customer email", customer_email or "(not provided)"),
+        ),
+        sections=(
+            InternalEmailSection(
+                title="Provided information",
+                fields=tuple(provided_fields),
+                body="(none safely collected)" if not provided_fields else "",
+            ),
+        ),
+        missing_fields=tuple(_GROUP_LABELS.get(group, group) for group in missing_fields),
+        missing_title="Missing after one follow-up",
+        action_text="Please reply directly to this email with a customer-shareable handling update.",
+    )
     return {
         "to": os.getenv(ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV, "").strip()
         or DEFAULT_ACCOUNT_VERIFICATION_INTERNAL_EMAIL,
         "subject": f"[Billing Request] Fraud account review - Ticket {ticket_id}",
-        "body": "\n\n".join(body_parts),
         "delivery_key": delivery_key,
+        **rendered,
     }
 
 
