@@ -12,6 +12,34 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-05 - Managed Prompt retirement and pre-stop Release validation
+
+- Area or subsystem: managed Prompt Catalog, Prompt Release runtime, EC2 deployment, and targeted Account reply recovery
+- Prompt or model version: `prompt-release-v2` lifecycle; prompt text and model configuration unchanged
+- Summary: Added explicit managed-prompt retirement/reactivation state, projected deployment candidates onto the current code catalog, and validated candidate snapshots before stopping the healthy stack. Added a PII-redacted, single-ticket customer-name repair command that reuses existing reply facts and queues a delayed Persona replacement without resending internal email.
+- Reason: Removing a managed prompt from code left its database key in every later release, so strict startup validation rejected the new image and automatic deployment rolled back. Completed Account intake idempotency also made N8n replay unsuitable for repairing one already-created case.
+- Affected files or config:
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/services/prompt_runtime.py`
+  - `backend/services/prompt_versioning.py`
+  - `backend/scripts/prompt_release.py`
+  - `deployment/deploy_ec2.sh`
+  - `backend/services/account_reply_jobs.py`
+  - `backend/scripts/repair_account_customer_name.py`
+- Expected behavior change:
+  - Removed code-catalog keys remain available in historical Prompt Releases but are hidden from current managed-prompt APIs and excluded from new candidates.
+  - A catalog key-set change creates a candidate even without scheduled prompt edits; reintroduced keys reuse their last activated content through a scheduled version.
+  - Candidate hash/catalog failures abort deployment before `docker compose down`, leaving the current stack running; activation retains strict exact-catalog validation.
+  - The targeted Account repair preserves the current published reply until its replacement publishes, keeps prior reply facts/asked fields/delivery identity, recalculates the 6-10 minute delay, and records no customer name or email value in output or audit events.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_repair_account_customer_name -v` (21 tests)
+  - `RUN_PROMPT_POSTGRES_TEST=true` PostgreSQL integration suite against an isolated temporary schema (2 tests)
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_deploy_ec2 -v`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m compileall -q backend`
+  - `rtk bash -n deployment/deploy_ec2.sh`
+  - `rtk git diff --check`
+
 ## 2026-08-03 - Customer-aware, natural Automation greetings
 
 - Area or subsystem: `/account` intake, Automation reply facts, and Automation Persona

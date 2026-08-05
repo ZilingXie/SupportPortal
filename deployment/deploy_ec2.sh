@@ -232,6 +232,11 @@ prepare_candidate_prompt_release() {
   log "Prompt Release candidate: ${CANDIDATE_PROMPT_RELEASE_ID} created=${CANDIDATE_PROMPT_RELEASE_CREATED}"
 }
 
+validate_candidate_prompt_release() {
+  run_prompt_release_command validate --release-id "${CANDIDATE_PROMPT_RELEASE_ID}" >/dev/null || return 1
+  log "Validated Prompt Release candidate ${CANDIDATE_PROMPT_RELEASE_ID}."
+}
+
 mark_candidate_prompt_release_failed() {
   local reason="$1"
   if [[ "${CANDIDATE_PROMPT_RELEASE_CREATED}" != "true" || -z "${CANDIDATE_PROMPT_RELEASE_ID}" ]]; then
@@ -577,6 +582,12 @@ main() {
     cleanup_rollback_image
     ROLLBACK_IMAGE=""
     fail "Prompt Release preparation failed; the running stack was not stopped"
+  fi
+  if ! validate_candidate_prompt_release; then
+    mark_candidate_prompt_release_failed "Prompt Release validation failed" || true
+    cleanup_rollback_image
+    ROLLBACK_IMAGE=""
+    fail "Prompt Release validation failed; the running stack was not stopped"
   fi
 
   log "Stopping services..."

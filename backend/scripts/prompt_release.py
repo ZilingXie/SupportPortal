@@ -18,6 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
     prepare = subparsers.add_parser("prepare", help="Freeze scheduled Prompt versions into a candidate Release.")
     prepare.add_argument("--build-ref", required=True)
     prepare.add_argument("--output", choices=("json", "shell"), default="json")
+    validate = subparsers.add_parser("validate", help="Validate a deployable Prompt Release against the code catalog.")
+    validate.add_argument("--release-id", required=True)
     activate = subparsers.add_parser("activate", help="Activate a healthy candidate Release.")
     activate.add_argument("--release-id", required=True)
     fail = subparsers.add_parser("fail", help="Mark a candidate Release as failed.")
@@ -49,6 +51,8 @@ def _execute(args: argparse.Namespace, *, repository: Any | None = None) -> dict
             }
         if args.command == "prepare":
             return {"release": service.prepare_release(build_ref=args.build_ref)}
+        if args.command == "validate":
+            return {"validation": service.validate_release(args.release_id)}
         if args.command == "activate":
             return {"release": service.activate_release(args.release_id)}
         if args.command == "fail":

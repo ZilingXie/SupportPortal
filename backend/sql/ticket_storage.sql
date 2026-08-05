@@ -208,8 +208,12 @@ CREATE TABLE IF NOT EXISTS support_prompt_definitions (
     component_key TEXT NOT NULL,
     editable BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL,
+    retired_at TIMESTAMPTZ
 );
+
+ALTER TABLE support_prompt_definitions
+    ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS support_prompt_versions (
     prompt_key TEXT NOT NULL REFERENCES support_prompt_definitions(prompt_key) ON DELETE CASCADE,

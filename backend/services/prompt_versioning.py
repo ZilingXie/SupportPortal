@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.services.agent_config import build_managed_prompt_catalog
+from backend.services.prompt_runtime import load_prompt_release_snapshot
 
 
 MAX_PROMPT_CONTENT_CHARS = 100_000
@@ -93,6 +94,7 @@ class PromptVersionService:
         )
 
     def activate_release(self, release_id: str, *, activated_at: str | None = None) -> dict[str, Any]:
+        self.validate_release(release_id)
         return self.repository.activate_prompt_release(
             release_id,
             activated_at=activated_at or _now_iso(),
@@ -106,6 +108,10 @@ class PromptVersionService:
 
     def active_release(self) -> dict[str, Any] | None:
         return self.repository.get_active_prompt_release()
+
+    def validate_release(self, release_id: str) -> dict[str, Any]:
+        snapshot = load_prompt_release_snapshot(self.repository, release_id)
+        return snapshot.info()
 
     def release(self, release_id: str) -> dict[str, Any]:
         release = self.repository.get_prompt_release(release_id)

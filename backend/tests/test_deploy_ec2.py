@@ -180,6 +180,11 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 if "run" in args:
                     if "prepare" in args:
                         print("release-candidate\\ttrue")
+                    elif "validate" in args:
+                        if os.environ.get("FAKE_PROMPT_VALIDATE_EXIT_CODE") == "1":
+                            print("validate failed", file=sys.stderr)
+                            sys.exit(1)
+                        print('{"ok":true}')
                     elif "activate" in args:
                         if os.environ.get("FAKE_PROMPT_ACTIVATE_EXIT_CODE") == "1":
                             print("activate failed", file=sys.stderr)
@@ -405,10 +410,13 @@ class DeployEc2ScriptTests(unittest.TestCase):
         )
         build_index = next(index for index, call in enumerate(docker_calls) if "build" in call["argv"])
         prepare_index = next(index for index, call in enumerate(docker_calls) if "prepare" in call["argv"])
+        validate_index = next(index for index, call in enumerate(docker_calls) if "validate" in call["argv"])
         down_index = next(index for index, call in enumerate(docker_calls) if "down" in call["argv"])
         activate_index = next(index for index, call in enumerate(docker_calls) if "activate" in call["argv"])
         self.assertLess(tag_index, build_index)
         self.assertLess(prepare_index, down_index)
+        self.assertLess(prepare_index, validate_index)
+        self.assertLess(validate_index, down_index)
         self.assertGreater(activate_index, down_index)
         up_call = next(call for call in docker_calls if "up" in call["argv"])
         self.assertNotIn("--build", up_call["argv"])
@@ -618,6 +626,21 @@ class DeployEc2ScriptTests(unittest.TestCase):
         )
         self.assertEqual(rollback_up["prompt_release_id"], "release-previous")
         self.assertEqual(rollback_up["prompt_release_required"], "true")
+
+    def test_prompt_validation_failure_keeps_running_stack_up(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={"FAKE_PROMPT_VALIDATE_EXIT_CODE": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Prompt Release validation failed; the running stack was not stopped", result.stdout + result.stderr)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertTrue(any("fail" in call["argv"] for call in docker_calls))
+        self.assertFalse(any("down" in call["argv"] for call in docker_calls))
+        self.assertFalse(any("up" in call["argv"] for call in docker_calls))
 
     def test_activation_transport_failure_keeps_new_stack_when_candidate_is_already_active(self) -> None:
         result = self._run_script(
