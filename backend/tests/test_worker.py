@@ -1949,7 +1949,8 @@ class WorkerResilienceTests(unittest.TestCase):
 
     def test_handle_billing_request_reply_generates_customer_followup(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "billing_ticket_id": "BT-TK-ACC-1",
             "client_ticket_id": "TK-ACC-1",
@@ -1984,34 +1985,25 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
             "record_billing_request_reply",
-        ) as record_mock:
+        ) as record_mock, patch.object(
+            worker, "_render_case_persona_reply", return_value="Hi Customer,\n\nThe detailed invoice is ready.\n\nBest,\nSid"
+        ):
             handled = worker.handle_billing_request_reply(reply)
 
         self.assertTrue(handled)
         record_mock.assert_called_once_with(reply)
         repository.get_billing_ticket_by_client_ticket_id.assert_called_once_with("TK-ACC-1")
         repository.get_ticket.assert_called_once_with("TK-ACC-1")
-        saved_ticket = repository.save_ticket.call_args.args[0]
-        new_messages = repository.save_ticket.call_args.kwargs["new_messages"]
-        self.assertEqual(saved_ticket["messages"][-1]["role"], "assistant")
-        self.assertEqual(saved_ticket["messages"][-1]["source"], "billing_reply_email")
-        self.assertIn("detailed invoice", saved_ticket["messages"][-1]["content"].lower())
-        self.assertEqual(new_messages, [saved_ticket["messages"][-1]])
-        saved_billing_ticket = repository.save_billing_ticket.call_args.args[0]
-        self.assertEqual(saved_billing_ticket["automation_status"], "customer_notified")
-        self.assertIn("detailed invoice", saved_billing_ticket["customer_reply"].lower())
-        self.assertEqual(repository.record_event.call_count, 2)
-        self.assertEqual(repository.record_event.call_args_list[0].args[1], "billing_internal_resolution_submitted")
-        self.assertEqual(repository.record_event.call_args_list[1].args[1], "billing_customer_followup_generated")
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertEqual(commit["assistant_message"]["source"], "billing_reply_email")
+        self.assertIn("detailed invoice", commit["assistant_message"]["content"].lower())
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
+        self.assertEqual([event["event_type"] for event in commit["events"]],
+                         ["billing_internal_resolution_submitted", "billing_customer_followup_generated"])
 
     def test_handle_billing_request_reply_skips_duplicate_graph_message(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = [
-            {
-                "event_type": "billing_customer_followup_generated",
-                "payload": {"billing_reply_message_id": "msg-1"},
-            }
-        ]
+        repository.claim_automation_reply.return_value = {"status": "already_completed"}
         reply = types.SimpleNamespace(
             message_id="msg-1",
             subject="Re: [Billing Request] Detailed invoice request - Ticket TK-ACC-1",
@@ -2026,9 +2018,9 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as record_mock:
             handled = worker.handle_billing_request_reply(reply)
 
-        self.assertFalse(handled)
+        self.assertEqual(handled, "already_completed")
         record_mock.assert_not_called()
-        repository.list_ticket_events.assert_called_once_with("TK-ACC-1", limit=200)
+        repository.claim_automation_reply.assert_called_once()
         repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
         repository.get_ticket.assert_not_called()
         repository.save_ticket.assert_not_called()
@@ -2037,7 +2029,8 @@ class WorkerResilienceTests(unittest.TestCase):
 
     def test_enablement_resolution_reply_uses_canonical_feature_key(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ACC-2",
             "billing_ticket_id": "AC-TK-ACC-2",
@@ -2066,11 +2059,13 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             self.assertTrue(worker.handle_enablement_request_reply(reply))
 
-        self.assertEqual(render.call_args.kwargs["known_information"], {"requested_feature": "media_relay"})
+        self.assertEqual(render.call_args.kwargs["known_information"]["requested_feature"], "media_relay")
+        self.assertEqual(render.call_args.kwargs["known_information"]["requested_feature_label"], "channel media rele")
 
     def test_handle_enablement_request_reply_notifies_customer_without_assuming_success(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ACC-2",
             "billing_ticket_id": "AC-TK-ACC-2",
@@ -2098,27 +2093,19 @@ class WorkerResilienceTests(unittest.TestCase):
 
         generated_reply = "Hi there,\n\nPlease add a payment method before activation.\n\nBest Regards,\nSid"
         with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker,
-            "build_enablement_customer_followup",
-            return_value=generated_reply,
-        ) as composer_mock:
+            worker, "_render_case_persona_reply", return_value=generated_reply,
+        ):
             handled = worker.handle_automation_request_reply(reply)
 
         self.assertTrue(handled)
-        saved_ticket = repository.save_ticket.call_args.args[0]
-        assistant_message = saved_ticket["messages"][-1]
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        assistant_message = commit["assistant_message"]
         self.assertEqual(assistant_message["source"], "enablement_reply_email")
         self.assertEqual(assistant_message["content"], generated_reply)
         self.assertNotIn("has been enabled", assistant_message["content"])
-        self.assertEqual(
-            composer_mock.call_args.kwargs["sensitive_values"],
-            ("7da36383d624411698e5c0bc1fda6324", "", ""),
-        )
-        saved_case = repository.save_account_case.call_args.args[0]
-        self.assertEqual(saved_case["automation_status"], "customer_notified")
-        self.assertEqual(saved_case["route_status"], "automated")
-        self.assertEqual(repository.record_event.call_count, 2)
-        event_payload = repository.record_event.call_args_list[0].args[2]
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
+        self.assertEqual(len(commit["events"]), 2)
+        event_payload = commit["events"][0]["payload"]
         self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
 
     def test_enablement_reply_subject_accepts_numeric_zendesk_ticket_id(self) -> None:
@@ -2131,7 +2118,8 @@ class WorkerResilienceTests(unittest.TestCase):
 
     def test_handle_quota_request_reply_notifies_customer_and_keeps_automated_route(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-12512",
             "billing_ticket_id": "AC-12512",
@@ -2154,25 +2142,19 @@ class WorkerResilienceTests(unittest.TestCase):
         generated_reply = "Hi there,\n\nThe requested limits are approved for the event window.\n\nBest Regards,\nSid"
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker,
-            "build_quota_customer_followup",
-            return_value=generated_reply,
+            worker, "_render_case_persona_reply", return_value=generated_reply,
         ):
             handled = worker.handle_automation_request_reply(reply)
 
         self.assertTrue(handled)
-        saved_case = repository.save_account_case.call_args.args[0]
-        self.assertEqual(saved_case["automation_status"], "customer_notified")
-        self.assertEqual(saved_case["route_status"], "automated")
-        saved_ticket = repository.save_ticket.call_args.args[0]
-        self.assertEqual(saved_ticket["messages"][-1]["source"], "quota_reply_email")
-        self.assertEqual(repository.record_event.call_count, 2)
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
+        self.assertEqual(commit["assistant_message"]["source"], "quota_reply_email")
+        self.assertEqual(len(commit["events"]), 2)
 
     def test_handle_enablement_request_reply_is_idempotent(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = [
-            {"payload": {"automation_reply_message_id": "enablement-msg-1"}}
-        ]
+        repository.claim_automation_reply.return_value = {"status": "already_completed"}
         reply = types.SimpleNamespace(
             message_id="enablement-msg-1",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ACC-2",
@@ -2182,7 +2164,7 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository):
             handled = worker.handle_enablement_request_reply(reply)
 
-        self.assertFalse(handled)
+        self.assertEqual(handled, "already_completed")
         repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
         repository.save_ticket.assert_not_called()
         repository.save_account_case.assert_not_called()
@@ -2394,7 +2376,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
     def test_handle_billing_request_reply_rejects_empty_body_before_marking_read(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "billing_ticket_id": "BT-TK-ACC-1",
             "client_ticket_id": "TK-ACC-1",
@@ -2419,10 +2401,12 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_ticket.assert_not_called()
         repository.save_billing_ticket.assert_not_called()
         repository.record_event.assert_not_called()
+        repository.fail_automation_reply_claim.assert_called_once()
 
     def test_handle_billing_request_reply_uses_pdf_ocr_text_when_body_is_empty(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "billing_ticket_id": "BT-TK-ACC-1",
             "client_ticket_id": "TK-ACC-1",
@@ -2454,20 +2438,23 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
             "record_billing_request_reply",
-        ) as record_mock:
+        ) as record_mock, patch.object(
+            worker, "_render_case_persona_reply", return_value="Hi Customer,\n\nThe detailed invoice is ready.\n\nBest,\nSid"
+        ):
             worker.handle_billing_request_reply(reply)
 
         record_mock.assert_called_once_with(reply)
-        saved_ticket = repository.save_ticket.call_args.args[0]
-        self.assertEqual(saved_ticket["messages"][-1]["source"], "billing_reply_email")
-        self.assertIn("detailed invoice", saved_ticket["messages"][-1]["content"].lower())
-        resolution_payload = repository.record_event.call_args_list[0].args[2]
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertEqual(commit["assistant_message"]["source"], "billing_reply_email")
+        self.assertIn("detailed invoice", commit["assistant_message"]["content"].lower())
+        resolution_payload = commit["events"][0]["payload"]
         self.assertIn("[PDF attachment: invoice-approval.pdf]", resolution_payload["note"])
         self.assertIn("Invoice total: USD 705.97", resolution_payload["note"])
 
     def test_handle_billing_request_reply_attaches_pdf_to_customer_message_without_ocr(self) -> None:
         repository = Mock()
-        repository.list_ticket_events.return_value = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "billing_ticket_id": "BT-TK-ACC-1",
             "client_ticket_id": "TK-ACC-1",
@@ -2488,6 +2475,7 @@ class WorkerResilienceTests(unittest.TestCase):
             ],
         }
         asset_repository = Mock()
+        asset_repository.get_asset.return_value = None
         asset_repository.create_asset.side_effect = lambda asset: {
             **asset,
             "status": "uploaded",
@@ -2520,6 +2508,9 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "record_billing_request_reply",
         ) as record_mock, patch.object(
+            worker, "_render_case_persona_reply",
+            return_value="Hi Customer,\n\nThe attached invoice is ready.\n\nBest,\nSid",
+        ), patch.object(
             worker,
             "asset_repository",
             asset_repository,
@@ -2529,29 +2520,24 @@ class WorkerResilienceTests(unittest.TestCase):
             "asset_storage",
             asset_storage,
             create=True,
-        ), patch.object(
-            worker,
-            "create_asset_id",
-            return_value="ASSET-BILLINGPDF1",
-            create=True,
-        ):
+        ), patch.object(worker.hashlib, "sha256") as digest:
+            digest.return_value.hexdigest.return_value = "abcdef1234560000000000000000000000000000000000000000000000000000"
             worker.handle_billing_request_reply(reply)
 
         record_mock.assert_called_once_with(reply)
         asset_storage.store_bytes.assert_called_once()
         stored_asset = asset_repository.create_asset.call_args.args[0]
-        self.assertEqual(stored_asset["asset_id"], "ASSET-BILLINGPDF1")
+        self.assertEqual(stored_asset["asset_id"], "ASSET-ABCDEF123456000000000000")
         self.assertEqual(stored_asset["ticket_id"], "TK-ACC-1")
         self.assertEqual(stored_asset["customer_id"], "C-001")
         self.assertEqual(stored_asset["original_filename"], "invoice-approval.pdf")
         self.assertEqual(stored_asset["content_type"], "application/pdf")
         self.assertEqual(stored_asset["extension"], ".pdf")
         self.assertEqual(stored_asset["status"], "uploaded")
-        asset_repository.mark_attached.assert_called_once_with(["ASSET-BILLINGPDF1"])
-        saved_ticket = repository.save_ticket.call_args.args[0]
-        assistant_message = saved_ticket["messages"][-1]
+        asset_repository.mark_attached.assert_called_once_with(["ASSET-ABCDEF123456000000000000"])
+        assistant_message = repository.commit_automation_reply_result.call_args.kwargs["assistant_message"]
         self.assertEqual(assistant_message["source"], "billing_reply_email")
-        self.assertEqual(assistant_message["attachments"][0]["asset_id"], "ASSET-BILLINGPDF1")
+        self.assertEqual(assistant_message["attachments"][0]["asset_id"], "ASSET-ABCDEF123456000000000000")
         self.assertEqual(assistant_message["attachments"][0]["original_filename"], "invoice-approval.pdf")
         self.assertIn("attached", assistant_message["content"].lower())
         self.assertNotIn("sent to your email", assistant_message["content"].lower())

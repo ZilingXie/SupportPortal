@@ -44,7 +44,6 @@ class AutomationPersonaTests(unittest.TestCase):
                 "customer_action": "Try the feature again.",
             },
         )
-
         self.assertEqual(
             facts["known_information"],
             {
@@ -53,6 +52,76 @@ class AutomationPersonaTests(unittest.TestCase):
                 "customer_action": "Try the feature again.",
             },
         )
+
+    def test_cross_channel_media_relay_uses_canonical_display_name(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="enablement", reply_intent="resolution_update",
+            known_information={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "cross_channel_media_relay",
+                "requested_feature_label": "channel media rele",
+            },
+        )
+        self.assertEqual(facts["known_information"], {"requested_feature_name": "Media Relay"})
+
+    def test_extractor_redacts_identifiers_email_and_raw_feature_label(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=json.dumps({"status": "completed", "customer_shareable_facts": ["Enabled."],
+                             "customer_action": None, "next_step": None}),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            extract_automation_resolution_facts(
+                behavior="enablement",
+                source_text=("Ticket 12555 Account Case ID: AC-12555 App ID abcdefabcdefabcdefabcdefabcdefab "
+                             "for customer@example.com channel media rele is enabled."),
+                known_information={
+                    "app_id": "abcdefabcdefabcdefabcdefabcdefab", "ticket_id": "12555",
+                    "account_case_id": "AC-12555", "customer_email": "customer@example.com",
+                    "requested_feature_label": "channel media rele",
+                },
+            )
+        user_prompt = invoke.call_args.kwargs["user_prompt"]
+        for forbidden in ("12555", "AC-12555", "abcdefabcdefabcdefabcdefabcdefab",
+                          "customer@example.com", "channel media rele"):
+            self.assertNotIn(forbidden, user_prompt)
+
+    def test_final_reply_rejects_forbidden_app_id(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="enablement", reply_intent="resolution_update",
+            known_information={"app_id": "abcdefabcdefabcdefabcdefabcdefab", "requested_feature": "media_relay"},
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Media Relay is enabled for abcdefabcdefabcdefabcdefabcdefab.", model_name="persona-model"
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            with self.assertRaisesRegex(AutomationPersonaError, "automation_persona_forbidden_value"):
+                render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                )
+
+    def test_final_reply_allows_canonical_feature_label(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="enablement", reply_intent="resolution_update",
+            known_information={"requested_feature": "media_relay", "requested_feature_label": "Media Relay"},
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(text="Media Relay is now enabled.", model_name="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+            )
+        self.assertIn("Media Relay", result.content)
 
     def test_enablement_submission_prompt_uses_canonical_name(self) -> None:
         facts = build_automation_reply_facts(

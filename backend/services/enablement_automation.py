@@ -28,6 +28,7 @@ ENABLEMENT_INTERNAL_EMAIL_SENT = "sent"
 
 _ENABLEMENT_FEATURE_DISPLAY_NAMES = {
     "media_relay": "Media Relay",
+    "cross_channel_media_relay": "Media Relay",
 }
 
 _APP_ID_RE = re.compile(

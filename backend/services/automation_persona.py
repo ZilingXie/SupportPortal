@@ -10,9 +10,56 @@ from backend.services.llm_factory import LlmInvocationError, invoke_responses_te
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v5"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v6"
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
+_APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
+_EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
+_SUPPORT_ID_RE = re.compile(
+    r"(?i)\b(?:ticket\s*(?:id\s*)?[:#-]?\s*(?:TK-[A-Z0-9-]+|\d{3,})|"
+    r"account case\s*(?:id\s*)?[:#-]?\s*AC-[A-Z0-9-]+)\b"
+)
+
+
+def _forbidden_values(known_information: dict[str, Any] | None) -> list[str]:
+    known = dict(known_information or {})
+    values: list[str] = []
+    for key in ("app_id", "ticket_id", "account_case_id", "customer_email"):
+        value = str(known.get(key) or "").strip()
+        if value:
+            values.append(value)
+    raw_feature_label = str(known.get("requested_feature_label") or "").strip()
+    display_name = str(
+        customer_visible_enablement_information(known, reply_intent="resolution_update").get(
+            "requested_feature_name"
+        )
+        or ""
+    ).strip()
+    if raw_feature_label and raw_feature_label.casefold() != display_name.casefold():
+        values.append(raw_feature_label)
+    app_ids = known.get("app_ids")
+    if isinstance(app_ids, list):
+        values.extend(str(value).strip() for value in app_ids if str(value).strip())
+    return list(dict.fromkeys(values))
+
+
+def _sanitize_internal_resolution(source_text: str, forbidden_values: list[str]) -> str:
+    sanitized = str(source_text or "")
+    for value in sorted(forbidden_values, key=len, reverse=True):
+        sanitized = re.sub(re.escape(value), "[redacted]", sanitized, flags=re.IGNORECASE)
+    sanitized = _APP_ID_RE.sub("[redacted]", sanitized)
+    sanitized = _EMAIL_RE.sub("[redacted]", sanitized)
+    sanitized = _SUPPORT_ID_RE.sub("[redacted]", sanitized)
+    return sanitized
+
+
+def _assert_no_forbidden_values(value: Any, forbidden_values: list[str], *, error_code: str) -> None:
+    serialized = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    lowered = serialized.casefold()
+    if any(item.casefold() in lowered for item in forbidden_values if item):
+        raise AutomationPersonaError(error_code)
+    if _APP_ID_RE.search(serialized) or _EMAIL_RE.search(serialized) or _SUPPORT_ID_RE.search(serialized):
+        raise AutomationPersonaError(error_code)
 
 
 def customer_first_name(customer_name: Any) -> str:
@@ -52,6 +99,13 @@ def extract_automation_resolution_facts(
     profile = resolve_model_profile(AUTOMATION_PERSONA_SCENARIO)
     if not profile.has_invocation_credentials():
         raise AutomationPersonaError("automation_resolution_extractor_missing_credentials")
+    forbidden_values = _forbidden_values(known_information)
+    sanitized_source = _sanitize_internal_resolution(source_text, forbidden_values)
+    safe_known_information = {
+        key: value
+        for key, value in dict(known_information or {}).items()
+        if key not in {"app_id", "app_ids", "ticket_id", "account_case_id", "customer_email", "requested_feature_label"}
+    }
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -65,8 +119,8 @@ def extract_automation_resolution_facts(
             ),
             user_prompt=(
                 f"Behavior: {behavior}\n"
-                f"Known information: {json.dumps(dict(known_information or {}), ensure_ascii=False, sort_keys=True)}\n"
-                f"Internal resolution note:\n<internal_resolution>\n{str(source_text or '').strip()}\n</internal_resolution>"
+                f"Known information: {json.dumps(safe_known_information, ensure_ascii=False, sort_keys=True)}\n"
+                f"Internal resolution note:\n<internal_resolution>\n{sanitized_source.strip()}\n</internal_resolution>"
             ),
         )
     except (LlmInvocationError, ValueError, TypeError) as exc:
@@ -77,6 +131,9 @@ def extract_automation_resolution_facts(
         raise AutomationPersonaError("automation_resolution_extraction_invalid_json") from exc
     if not isinstance(payload, dict) or not str(payload.get("status") or "").strip():
         raise AutomationPersonaError("automation_resolution_extraction_invalid_payload")
+    _assert_no_forbidden_values(
+        payload, forbidden_values, error_code="automation_resolution_extraction_forbidden_value"
+    )
     return payload
 
 
@@ -96,12 +153,17 @@ def build_automation_reply_facts(
     """Build the small, customer-facing fact packet consumed by the Persona."""
     behavior_value = str(behavior or "").strip()
     reply_intent_value = str(reply_intent or "").strip()
-    known_fields = dict(known_information or {})
+    raw_known_fields = dict(known_information or {})
+    forbidden_values = _forbidden_values(raw_known_fields)
+    known_fields = dict(raw_known_fields)
     if behavior_value.lower() == "enablement":
         known_fields = customer_visible_enablement_information(
             known_fields,
             reply_intent=reply_intent_value,
         )
+    else:
+        for key in ("app_id", "app_ids", "ticket_id", "account_case_id", "customer_email", "requested_feature_label"):
+            known_fields.pop(key, None)
     visible_source_facts = [str(item).strip() for item in (source_facts or []) if str(item).strip()]
     if behavior_value.lower() == "enablement" and reply_intent_value == "submission_confirmation":
         visible_source_facts = []
@@ -116,6 +178,7 @@ def build_automation_reply_facts(
         "customer_language": str(customer_language or "").strip() or "en",
         "source_facts": visible_source_facts,
         "customer_first_name": customer_first_name(customer_name),
+        "_forbidden_values": forbidden_values,
     }
 
 
@@ -138,6 +201,7 @@ def render_automation_reply(
         signoff_name = str(content.get("signoff_name") or "Sid").strip() or "Sid"
         signature = f"Best Regards,\n{signoff_name}"
     facts = dict(reply_facts or {})
+    forbidden_values = [str(value) for value in facts.pop("_forbidden_values", []) if str(value)]
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
 
@@ -182,7 +246,9 @@ def render_automation_reply(
         reply = reply[: -len(signature)].rstrip()
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
+    content = f"{greeting}\n\n{reply}\n\n{signature}"
+    _assert_no_forbidden_values(content, forbidden_values, error_code="automation_persona_forbidden_value")
     return AutomationPersonaResult(
-        content=f"{greeting}\n\n{reply}\n\n{signature}",
+        content=content,
         model=str(response.model_name or profile.model).strip() or profile.model,
     )

@@ -405,12 +405,14 @@ def poll_automation_request_replies(
                     attachment_names=tuple(item.name for item in attachments),
                     attachments=attachments,
                 )
-        handled = True
+        outcome: Any = "completed"
         if handler is not None:
-            handled = handler(reply) is not False
+            outcome = handler(reply)
+        if outcome in {"in_progress", "failed"}:
+            continue
         if summary.get("isRead") is not True:
             _mark_graph_message_read(access_token=access_token, message_id=reply.message_id)
-        if handled:
+        if outcome not in {False, "already_completed"}:
             replies.append(reply)
     return replies
 

@@ -1219,6 +1219,22 @@ class TicketRepository(Protocol):
     ) -> None:
         ...
 
+    def claim_automation_reply(
+        self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
+        owner_token: str, claimed_at: str, lease_expires_at: str,
+    ) -> dict[str, Any]: ...
+
+    def fail_automation_reply_claim(
+        self, automation_reply_key: str, *, owner_token: str, error_code: str,
+        failed_at: str,
+    ) -> bool: ...
+
+    def commit_automation_reply_result(
+        self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
+        assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
+        events: list[dict[str, Any]], completed_at: str,
+    ) -> bool: ...
+
     def record_rollout_event(
         self,
         counter_key: str,
@@ -1593,6 +1609,7 @@ class InMemoryTicketRepository:
         self._engineer_schedules: dict[tuple[str, int], dict[str, Any]] = {}
         self._workspace_audit_events: list[dict[str, Any]] = []
         self._idempotency_records: dict[tuple[str, str], dict[str, Any]] = {}
+        self._automation_reply_claims: dict[str, dict[str, Any]] = {}
         self._rollout_counters: dict[str, int] = {}
         self._rollout_events: dict[tuple[str, str], int] = {}
         self._account_route_executions: dict[str, list[dict[str, Any]]] = {}
@@ -3055,6 +3072,79 @@ class InMemoryTicketRepository:
                     "updated_at": updated_at,
                 }
             )
+
+    def claim_automation_reply(
+        self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
+        owner_token: str, claimed_at: str, lease_expires_at: str,
+    ) -> dict[str, Any]:
+        key = str(automation_reply_key or "").strip()
+        now_value = datetime.fromisoformat(str(claimed_at).replace("Z", "+00:00"))
+        with self._assignment_lock:
+            existing = self._automation_reply_claims.get(key)
+            if existing and existing["state"] == "completed":
+                return {"status": "already_completed", **copy.deepcopy(existing)}
+            if existing and existing["state"] == "processing":
+                lease_value = existing.get("lease_expires_at")
+                lease = (
+                    datetime.fromisoformat(str(lease_value).replace("Z", "+00:00"))
+                    if lease_value else None
+                )
+                if lease is not None and lease > now_value:
+                    return {"status": "in_progress", **copy.deepcopy(existing)}
+            attempts = int((existing or {}).get("attempt_count") or 0) + 1
+            record = {
+                "automation_reply_key": key, "client_ticket_id": client_ticket_id,
+                "handler": handler, "state": "processing", "owner_token": owner_token,
+                "lease_expires_at": lease_expires_at, "attempt_count": attempts,
+                "error_code": None, "created_at": (existing or {}).get("created_at") or claimed_at,
+                "updated_at": claimed_at, "completed_at": None,
+            }
+            self._automation_reply_claims[key] = record
+            return {"status": "acquired", **copy.deepcopy(record)}
+
+    def fail_automation_reply_claim(
+        self, automation_reply_key: str, *, owner_token: str, error_code: str,
+        failed_at: str,
+    ) -> bool:
+        with self._assignment_lock:
+            claim = self._automation_reply_claims.get(str(automation_reply_key))
+            if not claim or claim.get("state") != "processing" or claim.get("owner_token") != owner_token:
+                return False
+            claim.update({"state": "failed", "owner_token": None, "lease_expires_at": None,
+                          "error_code": str(error_code or "automation_reply_failed")[:120], "updated_at": failed_at})
+            return True
+
+    def commit_automation_reply_result(
+        self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
+        assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
+        events: list[dict[str, Any]], completed_at: str,
+    ) -> bool:
+        with self._assignment_lock:
+            claim = self._automation_reply_claims.get(str(automation_reply_key))
+            if not claim or claim.get("state") != "processing" or claim.get("owner_token") != owner_token:
+                return False
+            ticket = self._tickets.get(str(ticket_id))
+            if ticket is None:
+                raise ValueError(f"linked support ticket not found for {ticket_id}")
+            if assistant_message:
+                message = copy.deepcopy(assistant_message)
+                message.setdefault("meta", {})["automation_reply_key"] = automation_reply_key
+                if not any((item.get("meta") or {}).get("automation_reply_key") == automation_reply_key for item in ticket.get("messages", [])):
+                    ticket.setdefault("messages", []).append(message)
+            ticket["updated_at"] = completed_at
+            account_case = next((item for item in self._billing_tickets.values() if item.get("client_ticket_id") == ticket_id), None)
+            if account_case is None:
+                raise ValueError(f"account case not found for {ticket_id}")
+            account_case.update(copy.deepcopy(account_case_updates))
+            for event in events:
+                payload = copy.deepcopy(event.get("payload") or {})
+                payload["automation_reply_key"] = automation_reply_key
+                event_type = str(event.get("event_type") or "").strip()
+                if not any(item.get("event_type") == event_type and (item.get("payload") or {}).get("automation_reply_key") == automation_reply_key for item in self._events):
+                    self.record_event(ticket_id, event_type, payload)
+            claim.update({"state": "completed", "owner_token": None, "lease_expires_at": None,
+                          "error_code": None, "updated_at": completed_at, "completed_at": completed_at})
+            return True
 
     def record_rollout_event(
         self,
@@ -4950,6 +5040,69 @@ class PostgresTicketRepository:
                         )
                         """
                     ).format(self._table("support_idempotency_records"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            automation_reply_key TEXT PRIMARY KEY,
+                            client_ticket_id TEXT NOT NULL,
+                            handler TEXT NOT NULL,
+                            state TEXT NOT NULL CHECK (state IN ('processing', 'completed', 'failed')),
+                            owner_token TEXT,
+                            lease_expires_at TIMESTAMPTZ,
+                            attempt_count INTEGER NOT NULL DEFAULT 1,
+                            error_code TEXT,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            completed_at TIMESTAMPTZ
+                        )
+                        """
+                    ).format(self._table("support_automation_reply_claims"))
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (state, lease_expires_at)").format(
+                        sql.Identifier("idx_support_automation_reply_claims_state_lease"),
+                        self._table("support_automation_reply_claims"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((meta->>'automation_reply_key')) "
+                        "WHERE COALESCE(meta->>'automation_reply_key', '') <> ''"
+                    ).format(
+                        sql.Identifier("idx_support_ticket_messages_automation_reply_key"),
+                        self._table("support_ticket_messages"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((payload->>'automation_reply_key'), event_type) "
+                        "WHERE COALESCE(payload->>'automation_reply_key', '') <> ''"
+                    ).format(
+                        sql.Identifier("idx_support_ticket_events_automation_reply_key_event"),
+                        self._table("support_ticket_events"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (automation_reply_key, client_ticket_id, handler, state,
+                            owner_token, lease_expires_at, attempt_count, created_at, updated_at, completed_at)
+                        SELECT DISTINCT ON (COALESCE(payload->>'automation_reply_message_id', payload->>'billing_reply_message_id'))
+                            'graph:' || COALESCE(payload->>'automation_reply_message_id', payload->>'billing_reply_message_id'),
+                            ticket_id,
+                            CASE WHEN event_type LIKE 'enablement_%' THEN 'enablement'
+                                 WHEN event_type LIKE 'quota_%' THEN 'quota' ELSE 'billing' END,
+                            'completed', NULL, NULL, 1, created_at, created_at, created_at
+                        FROM {}
+                        WHERE COALESCE(payload->>'automation_reply_message_id', payload->>'billing_reply_message_id', '') <> ''
+                        ON CONFLICT (automation_reply_key) DO NOTHING
+                        """
+                    ).format(
+                        self._table("support_automation_reply_claims"),
+                        self._table("support_ticket_events"),
+                    )
                 )
                 cur.execute(
                     sql.SQL(
@@ -7669,6 +7822,130 @@ class PostgresTicketRepository:
                         raise ValueError("idempotency request was not started")
 
         self._run_with_connection_retry("complete_idempotent_request", _operation)
+
+    def claim_automation_reply(
+        self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
+        owner_token: str, claimed_at: str, lease_expires_at: str,
+    ) -> dict[str, Any]:
+        key = str(automation_reply_key or "").strip()
+        if not key or not owner_token:
+            raise ValueError("automation_reply_key and owner_token are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (automation_reply_key, client_ticket_id, handler, state,
+                                owner_token, lease_expires_at, attempt_count, error_code,
+                                created_at, updated_at, completed_at)
+                            VALUES (%s, %s, %s, 'processing', %s, %s, 1, NULL, %s, %s, NULL)
+                            ON CONFLICT (automation_reply_key) DO UPDATE SET
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                handler = EXCLUDED.handler,
+                                state = 'processing', owner_token = EXCLUDED.owner_token,
+                                lease_expires_at = EXCLUDED.lease_expires_at,
+                                attempt_count = {}.attempt_count + 1,
+                                error_code = NULL, updated_at = EXCLUDED.updated_at, completed_at = NULL
+                            WHERE {}.state = 'failed'
+                               OR ({}.state = 'processing' AND ({}.lease_expires_at IS NULL OR {}.lease_expires_at <= EXCLUDED.updated_at))
+                            RETURNING state, owner_token, lease_expires_at, attempt_count, created_at, updated_at
+                            """
+                        ).format(*([self._table("support_automation_reply_claims")] * 6)),
+                        (key, client_ticket_id, handler, owner_token, lease_expires_at, claimed_at, claimed_at),
+                    )
+                    row = cur.fetchone()
+                    if row is not None:
+                        return {"status": "acquired", "automation_reply_key": key,
+                                "state": str(row[0]), "owner_token": str(row[1]),
+                                "lease_expires_at": _to_iso(row[2]), "attempt_count": int(row[3]),
+                                "created_at": _to_iso(row[4]), "updated_at": _to_iso(row[5])}
+                    cur.execute(
+                        sql.SQL("SELECT state, owner_token, lease_expires_at, attempt_count FROM {} WHERE automation_reply_key = %s").format(
+                            self._table("support_automation_reply_claims")
+                        ), (key,),
+                    )
+                    existing = cur.fetchone()
+                    assert existing is not None
+                    return {"status": "already_completed" if str(existing[0]) == "completed" else "in_progress",
+                            "automation_reply_key": key, "state": str(existing[0]),
+                            "owner_token": str(existing[1] or "") or None,
+                            "lease_expires_at": _to_iso(existing[2]) if existing[2] else None,
+                            "attempt_count": int(existing[3])}
+        return self._run_with_connection_retry("claim_automation_reply", _operation)
+
+    def fail_automation_reply_claim(
+        self, automation_reply_key: str, *, owner_token: str, error_code: str,
+        failed_at: str,
+    ) -> bool:
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL("UPDATE {} SET state='failed', owner_token=NULL, lease_expires_at=NULL, error_code=%s, updated_at=%s WHERE automation_reply_key=%s AND state='processing' AND owner_token=%s").format(
+                            self._table("support_automation_reply_claims")
+                        ), (str(error_code or "automation_reply_failed")[:120], failed_at, automation_reply_key, owner_token),
+                    )
+                    return cur.rowcount == 1
+        return self._run_with_connection_retry("fail_automation_reply_claim", _operation)
+
+    def commit_automation_reply_result(
+        self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
+        assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
+        events: list[dict[str, Any]], completed_at: str,
+    ) -> bool:
+        allowed_case_fields = {
+            "route", "scope_label", "route_family", "execution_action", "automation_status",
+            "customer_reply", "not_automated_reason", "internal_email_send_reason", "updated_at",
+        }
+        updates = {key: value for key, value in account_case_updates.items() if key in allowed_case_fields}
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL("SELECT state, owner_token FROM {} WHERE automation_reply_key=%s FOR UPDATE").format(
+                            self._table("support_automation_reply_claims")
+                        ), (automation_reply_key,),
+                    )
+                    claim = cur.fetchone()
+                    if claim is None or str(claim[0]) != "processing" or str(claim[1] or "") != owner_token:
+                        return False
+                    cur.execute(sql.SQL("UPDATE {} SET updated_at=%s WHERE ticket_id=%s").format(self._table("support_tickets")), (completed_at, ticket_id))
+                    if cur.rowcount != 1:
+                        raise ValueError(f"linked support ticket not found for {ticket_id}")
+                    if assistant_message:
+                        meta = _ticket_message_meta(assistant_message)
+                        meta["automation_reply_key"] = automation_reply_key
+                        cur.execute(
+                            sql.SQL("INSERT INTO {} (ticket_id, role, content, created_at, sentiment_label, sources, citations, meta) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING").format(
+                                self._table("support_ticket_messages")
+                            ), (ticket_id, _normalize_role(assistant_message.get("role")), str(assistant_message.get("content") or "").strip(),
+                                assistant_message.get("created_at") or completed_at, _normalize_message_sentiment_label(assistant_message.get("sentiment_label")),
+                                Json(assistant_message.get("sources")) if assistant_message.get("sources") else None,
+                                Json(assistant_message.get("citations")) if assistant_message.get("citations") else None, Json(meta)),
+                        )
+                    if updates:
+                        assignments = sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(key)) for key in updates)
+                        cur.execute(sql.SQL("UPDATE {} SET {} WHERE client_ticket_id=%s").format(self._table("support_account_cases"), assignments), (*updates.values(), ticket_id))
+                        if cur.rowcount != 1:
+                            raise ValueError(f"account case not found for {ticket_id}")
+                    for event in events:
+                        payload = dict(event.get("payload") or {})
+                        payload["automation_reply_key"] = automation_reply_key
+                        cur.execute(
+                            sql.SQL("INSERT INTO {} (ticket_id, event_type, payload, created_at) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING").format(
+                                self._table("support_ticket_events")
+                            ), (ticket_id, str(event.get("event_type") or "").strip(), Json(payload), payload.get("created_at") or completed_at),
+                        )
+                    cur.execute(
+                        sql.SQL("UPDATE {} SET state='completed', owner_token=NULL, lease_expires_at=NULL, error_code=NULL, updated_at=%s, completed_at=%s WHERE automation_reply_key=%s AND owner_token=%s").format(
+                            self._table("support_automation_reply_claims")
+                        ), (completed_at, completed_at, automation_reply_key, owner_token),
+                    )
+                    return cur.rowcount == 1
+        return self._run_with_connection_retry("commit_automation_reply_result", _operation)
 
     def record_rollout_event(
         self,
