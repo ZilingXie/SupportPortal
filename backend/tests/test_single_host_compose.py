@@ -57,6 +57,8 @@ class SingleHostComposeTests(unittest.TestCase):
         )
         self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "false"', worker_block)
         self.assertIn('ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "false"', worker_block)
+        self.assertIn('AUTOMATION_REPLY_POLL_ENABLED: "false"', worker_block)
+        self.assertIn('BILLING_AUTOMATION_REPLY_POLL_ENABLED: "false"', worker_block)
         self.assertIn(
             "WORKER_CONCURRENCY: ${WORKER_QUERY_CONCURRENCY:-2}",
             worker_block,

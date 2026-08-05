@@ -12,6 +12,32 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-05 - Atomic Outlook automation replies and Persona v6 safety gate
+
+- Area or subsystem: `/account` Automation Outlook reply processing and Automation Persona
+- Prompt or model version: `automation-persona-v6`; model configuration unchanged
+- Summary: Added lease-based, owner-checked Outlook reply claims and a single-transaction completion path for the customer message, Account case, resolution/follow-up events, and completed claim. Added deterministic pre-extractor redaction and post-extractor/final-reply forbidden-value checks. Added `cross_channel_media_relay -> Media Relay` canonical display mapping.
+- Reason: Case `#12555` was processed twice for the same Microsoft Graph message because the prior history scan and separate persistence transactions were not atomic. Internal resolution notes could also expose identifiers or the customer's misspelled raw feature label to the Persona pipeline.
+- Affected files or config:
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/sql/migrations/2026_08_05_automation_reply_claims.sql`
+  - `backend/worker.py`
+  - `backend/services/billing_automation.py`
+  - `backend/services/automation_persona.py`
+  - `backend/services/enablement_automation.py`
+  - `deployment/docker-compose.single-host.yml`
+- Expected behavior change:
+  - Only one worker can process a Graph reply while its lease is active; stale or failed claims can be reclaimed, but an old owner cannot commit.
+  - A completed duplicate is marked read without generating another customer reply. An in-progress or failed attempt remains unread for retry.
+  - Customer message, Account case state, reply events, and completed claim commit atomically with partial unique indexes as a second guard.
+  - Billing PDF retries reuse a deterministic attachment ID instead of creating another asset.
+  - App IDs, ticket IDs, Account case IDs, emails, and raw feature labels are removed before extraction and rejected if they appear in extracted facts or the final reply; unsafe output moves to manual attention.
+  - `worker_query` explicitly disables both Automation Outlook poller flags so `.env` cannot create a second poller owner.
+- Verification:
+  - `rtk uv run --with 'psycopg[binary]' --with psycopg-pool --with fastapi --with 'pydantic==2.11.7' --with python-dotenv --with httpx python -m unittest backend.tests.test_automation_reply_claims backend.tests.test_automation_persona backend.tests.test_billing_automation_email backend.tests.test_single_host_compose backend.tests.test_repository_configuration <nine targeted worker reply tests> -v` (162 passed)
+  - `RUN_POSTGRES_INTEGRATION=1 uv run --with 'psycopg[binary]' --with psycopg-pool python -m unittest backend.tests.test_automation_reply_claims_postgres -v` against an isolated temporary schema (1 passed; schema removed in `finally`)
+
 ## 2026-08-05 - Customer-safe Enablement confirmation facts
 
 - Area or subsystem: `/account` Enablement reply facts and Automation Persona

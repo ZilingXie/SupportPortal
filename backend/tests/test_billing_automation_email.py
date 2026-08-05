@@ -394,6 +394,42 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertEqual(replies, [])
         mark_read_mock.assert_not_called()
 
+    def test_poll_automation_request_replies_keeps_in_progress_message_unread(self) -> None:
+        summary = {"id": "msg-active", "subject": "[Enablement Request] Media Relay - Ticket 12555"}
+        message = {**summary, "body": {"contentType": "text", "content": "Done."}}
+        with patch.dict(os.environ, GRAPH_ENV), patch(
+            "backend.services.billing_automation._acquire_graph_access_token", return_value="access-token"
+        ), patch(
+            "backend.services.billing_automation._list_recent_inbox_messages", return_value=[summary]
+        ), patch(
+            "backend.services.billing_automation._get_graph_message", return_value=message
+        ), patch(
+            "backend.services.billing_automation._mark_graph_message_read"
+        ) as mark_read_mock:
+            replies = poll_automation_request_replies(
+                handler=lambda _reply: "in_progress", subject_prefixes=("[Enablement Request]",)
+            )
+        self.assertEqual(replies, [])
+        mark_read_mock.assert_not_called()
+
+    def test_poll_automation_request_replies_marks_completed_duplicate_read(self) -> None:
+        summary = {"id": "msg-done", "subject": "[Enablement Request] Media Relay - Ticket 12555"}
+        message = {**summary, "body": {"contentType": "text", "content": "Done."}}
+        with patch.dict(os.environ, GRAPH_ENV), patch(
+            "backend.services.billing_automation._acquire_graph_access_token", return_value="access-token"
+        ), patch(
+            "backend.services.billing_automation._list_recent_inbox_messages", return_value=[summary]
+        ), patch(
+            "backend.services.billing_automation._get_graph_message", return_value=message
+        ), patch(
+            "backend.services.billing_automation._mark_graph_message_read"
+        ) as mark_read_mock:
+            replies = poll_automation_request_replies(
+                handler=lambda _reply: "already_completed", subject_prefixes=("[Enablement Request]",)
+            )
+        self.assertEqual(replies, [])
+        mark_read_mock.assert_called_once_with(access_token="access-token", message_id="msg-done")
+
     def test_poll_billing_request_replies_leaves_message_unread_when_handler_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"

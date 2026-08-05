@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import hashlib
 import logging
 import os
 import re
@@ -41,7 +41,7 @@ from backend.services.automation_persona import (
     render_automation_reply,
 )
 from backend.services.app_build import get_app_build_info
-from backend.services.asset_storage import build_asset_s3_key, create_asset_id, sanitize_asset_filename
+from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
     build_new_engineer_case,
     apply_case_context_to_engineer_case,
@@ -52,7 +52,6 @@ from backend.services.engineer_cases import (
 from backend.services.engineer_assignment import EngineerAssignmentService
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.investigation_flow import (
-    COMMUNICATING_STATUS,
     INVESTIGATING_STATUS,
     RESOLVED_STATUS,
     build_investigation_opening_context,
@@ -63,19 +62,15 @@ from backend.services.investigation_flow import (
 from backend.services.billing_automation import poll_automation_request_replies, record_billing_request_reply
 from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
-    build_enablement_customer_followup,
-    build_enablement_submission_confirmation,
     send_enablement_internal_email,
 )
 from backend.services.quota_automation import (
     QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX,
-    build_quota_customer_followup,
 )
 from backend.services.billing_response_flow import (
     BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
     BILLING_RESPONSE_EVENT,
     BILLING_RESPONSE_RESULT_COMPLETED,
-    build_customer_followup_from_resolution,
     build_billing_internal_resolution_event,
 )
 from backend.services.client_ticket_agent_runtime import (
@@ -93,7 +88,7 @@ from backend.services.rag_service_client import (
     RagTicketAnswerDetail,
 )
 from backend.services.sentiment_classifier import classify_sentiment
-from backend.services.support_router import SupportResolution, SupportRouteDecision, decide_support_route
+from backend.services.support_router import decide_support_route
 from backend.services.task_queue import SyncRedisTaskQueue
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
@@ -112,6 +107,7 @@ BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGE
 AUTOMATION_REPLY_POLL_ENABLED_ENV = "AUTOMATION_REPLY_POLL_ENABLED"
 AUTOMATION_REPLY_POLL_INTERVAL_ENV = "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_MESSAGES"
+AUTOMATION_REPLY_CLAIM_LEASE_SECONDS = 15 * 60
 ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV = "ENGINEER_ASSIGNMENT_POLLER_ENABLED"
 ENGINEER_ASSIGNMENT_POLL_INTERVAL_ENV = "ENGINEER_ASSIGNMENT_POLL_INTERVAL_SECONDS"
 ACCOUNT_REPLY_POLL_INTERVAL_ENV = "ACCOUNT_REPLY_POLL_INTERVAL_SECONDS"
@@ -661,8 +657,15 @@ def _render_case_persona_reply(
     next_step: str | None = None,
     resolution_status: str | None = None,
     save_case: Any,
+    persist_failure: bool = True,
 ) -> str:
     persona = ticket_repository.resolve_account_persona(ticket_id)
+    known_information = {
+        **dict(known_information or {}),
+        "ticket_id": ticket_id,
+        "account_case_id": str(case.get("account_case_id") or case.get("billing_ticket_id") or "").strip(),
+        "customer_email": str(case.get("customer_email") or "").strip(),
+    }
     extracted_resolution: dict[str, Any] | None = None
     if source_facts:
         try:
@@ -686,7 +689,8 @@ def _render_case_persona_reply(
                     "updated_at": timestamp,
                 }
             )
-            save_case(case)
+            if persist_failure:
+                save_case(case)
             return ""
         resolution_facts = extracted_resolution.get("customer_shareable_facts")
         resolution_facts = resolution_facts if isinstance(resolution_facts, list) else []
@@ -728,7 +732,8 @@ def _render_case_persona_reply(
                 "updated_at": timestamp,
             }
         )
-        save_case(case)
+        if persist_failure:
+            save_case(case)
         return ""
 
 
@@ -1020,18 +1025,33 @@ def _billing_resolution_automation_status(result: str, notify_customer: bool) ->
     return "customer_notified" if notify_customer else "resolved_without_customer_notification"
 
 
-def _automation_reply_already_processed(client_ticket_id: str, message_id: str) -> bool:
-    normalized_message_id = str(message_id or "").strip()
-    if not normalized_message_id:
-        return False
-    for event in ticket_repository.list_ticket_events(client_ticket_id, limit=200):
-        payload = event.get("payload") if isinstance(event, dict) else {}
-        if not isinstance(payload, dict):
-            continue
-        recorded_message_id = payload.get("automation_reply_message_id") or payload.get("billing_reply_message_id")
-        if str(recorded_message_id or "").strip() == normalized_message_id:
-            return True
-    return False
+def _automation_reply_key(message_id: str) -> str:
+    normalized = str(message_id or "").strip()
+    if not normalized:
+        raise ValueError("automation reply message id is required")
+    return f"graph:{normalized}"
+
+
+def _claim_automation_reply(*, client_ticket_id: str, message_id: str, handler: str) -> tuple[str, str, str]:
+    claimed_at = datetime.now(timezone.utc)
+    owner_token = uuid4().hex
+    key = _automation_reply_key(message_id)
+    claim = ticket_repository.claim_automation_reply(
+        key,
+        client_ticket_id=client_ticket_id,
+        handler=handler,
+        owner_token=owner_token,
+        claimed_at=claimed_at.isoformat(),
+        lease_expires_at=(claimed_at + timedelta(seconds=AUTOMATION_REPLY_CLAIM_LEASE_SECONDS)).isoformat(),
+    )
+    return str(claim.get("status") or "in_progress"), key, owner_token
+
+
+def _fail_automation_reply(key: str, owner_token: str, exc: Exception) -> None:
+    error_code = str(exc) if isinstance(exc, AutomationPersonaError) else type(exc).__name__
+    ticket_repository.fail_automation_reply_claim(
+        key, owner_token=owner_token, error_code=error_code, failed_at=now_iso()
+    )
 
 
 def _billing_reply_attachment_note(reply: Any) -> str:
@@ -1099,7 +1119,8 @@ def _store_billing_reply_pdf_attachments(
 
     message_attachments: list[dict[str, Any]] = []
     asset_ids: list[str] = []
-    for item in attachments:
+    message_id = str(getattr(reply, "message_id", "") or "").strip()
+    for attachment_index, item in enumerate(attachments):
         raw_name = getattr(item, "name", "") if not isinstance(item, dict) else item.get("name")
         safe_name = sanitize_asset_filename(str(raw_name or "billing-attachment.pdf"))
         content = getattr(item, "content", b"") if not isinstance(item, dict) else item.get("content") or b""
@@ -1107,7 +1128,15 @@ def _store_billing_reply_pdf_attachments(
         content_type = str(
             getattr(item, "content_type", "") if not isinstance(item, dict) else item.get("content_type") or ""
         ).strip() or "application/pdf"
-        asset_id = create_asset_id()
+        stable_material = b"\0".join(
+            (message_id.encode("utf-8"), str(attachment_index).encode("ascii"), safe_name.encode("utf-8"), content_bytes)
+        )
+        asset_id = f"ASSET-{hashlib.sha256(stable_material).hexdigest()[:24].upper()}"
+        existing_asset = asset_repository.get_asset(asset_id)
+        if existing_asset is not None:
+            message_attachments.append(_public_billing_attachment_summary(existing_asset))
+            asset_ids.append(asset_id)
+            continue
         bucket = str(getattr(asset_storage, "bucket", "") or os.getenv("ASSET_S3_BUCKET") or "").strip()
         asset = {
             "asset_id": asset_id,
@@ -1124,7 +1153,7 @@ def _store_billing_reply_pdf_attachments(
             "meta": {
                 "agent_read_enabled": False,
                 "source": "billing_reply_email",
-                "billing_reply_message_id": str(getattr(reply, "message_id", "") or "").strip(),
+                "billing_reply_message_id": message_id,
             },
         }
         upload_info = asset_storage.store_bytes(asset, content_bytes)
@@ -1136,318 +1165,174 @@ def _store_billing_reply_pdf_attachments(
     return message_attachments, asset_ids
 
 
-def handle_billing_request_reply(reply: Any) -> bool:
+def handle_billing_request_reply(reply: Any) -> str:
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
     if not client_ticket_id:
         raise ValueError("billing reply subject does not include client ticket id")
     message_id = str(getattr(reply, "message_id", "") or "").strip()
-    if _automation_reply_already_processed(client_ticket_id, message_id):
-        LOGGER.info(
-            "Billing reply message %s for ticket %s was already processed.",
-            message_id,
-            client_ticket_id,
-        )
-        return False
-    record_billing_request_reply(reply)
-
-    billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
-    if billing_ticket is None:
-        raise ValueError(f"billing ticket not found for {client_ticket_id}")
-    canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
-    if canonical_ticket is None:
-        raise ValueError(f"linked support ticket not found for {client_ticket_id}")
-
-    body_note = str(getattr(reply, "body_text", "") or "").strip()
-    attachment_note = _billing_reply_attachment_note(reply)
-    note = "\n\n".join(part for part in (body_note, attachment_note) if part)
-    if not note:
-        raise ValueError("billing reply body is empty")
-
-    timestamp = now_iso()
-    billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
-    title = str(billing_ticket.get("title") or canonical_ticket.get("subject") or "").strip()
-    original_question = str(billing_ticket.get("question") or "").strip()
-    customer_reply = _render_case_persona_reply(
-        ticket_id=client_ticket_id,
-        case=billing_ticket,
-        behavior="billing",
-        reply_intent="resolution_update",
-        known_information={"title": title},
-        source_facts=[note],
-        resolution_status="completed",
-        save_case=ticket_repository.save_billing_ticket,
+    status, reply_key, owner_token = _claim_automation_reply(
+        client_ticket_id=client_ticket_id, message_id=message_id, handler="billing"
     )
-    if not customer_reply:
-        ticket_repository.record_event(
-            client_ticket_id,
-            "automation_persona_human_review",
-            {
-                "event": "automation_persona_human_review",
-                "ticket_id": client_ticket_id,
+    if status != "acquired":
+        return status
+    attached_asset_ids: list[str] = []
+    try:
+        record_billing_request_reply(reply)
+        billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
+        if billing_ticket is None:
+            raise ValueError(f"billing ticket not found for {client_ticket_id}")
+        canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
+        if canonical_ticket is None:
+            raise ValueError(f"linked support ticket not found for {client_ticket_id}")
+        body_note = str(getattr(reply, "body_text", "") or "").strip()
+        attachment_note = _billing_reply_attachment_note(reply)
+        note = "\n\n".join(part for part in (body_note, attachment_note) if part)
+        if not note:
+            raise ValueError("billing reply body is empty")
+        timestamp = now_iso()
+        billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
+        customer_reply = _render_case_persona_reply(
+            ticket_id=client_ticket_id, case=billing_ticket, behavior="billing",
+            reply_intent="resolution_update",
+            known_information={"title": str(billing_ticket.get("title") or canonical_ticket.get("subject") or "").strip()},
+            source_facts=[note], resolution_status="completed",
+            save_case=ticket_repository.save_billing_ticket, persist_failure=False,
+        )
+        if not customer_reply:
+            event_payload = {
+                "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
                 "account_case_id": billing_ticket.get("account_case_id") or billing_ticket_id,
                 "billing_reply_message_id": message_id,
                 "reason": str(billing_ticket.get("not_automated_reason") or "automation_persona_human_review"),
-                "created_at": now_iso(),
-                "source": "billing_reply_email",
-            },
-        )
-        return True
-    message_attachments, attached_asset_ids = _store_billing_reply_pdf_attachments(
-        reply=reply,
-        ticket_id=client_ticket_id,
-        customer_id=str(canonical_ticket.get("customer_id") or "").strip(),
-    )
-
-    assistant_message = {
-        "role": "assistant",
-        "content": customer_reply,
-        "created_at": timestamp,
-        "content_format": "plaintext",
-        "source": "billing_reply_email",
-        **({"attachments": message_attachments} if message_attachments else {}),
-    }
-    initial_message_count = (
-        len(canonical_ticket.get("messages", []))
-        if isinstance(canonical_ticket.get("messages"), list)
-        else 0
-    )
-    canonical_ticket.setdefault("messages", []).append(assistant_message)
-    canonical_ticket["updated_at"] = timestamp
-
-    automation_status = _billing_resolution_automation_status(
-        BILLING_RESPONSE_RESULT_COMPLETED,
-        True,
-    )
-    billing_ticket["automation_status"] = automation_status
-    billing_ticket["customer_reply"] = customer_reply
-    billing_ticket["updated_at"] = timestamp
-
-    new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
-    ticket_repository.save_ticket(canonical_ticket, new_messages=new_messages)
-    ticket_repository.save_billing_ticket(billing_ticket)
-    if attached_asset_ids:
-        asset_repository.mark_attached(attached_asset_ids)
-
-    resolution_event = build_billing_internal_resolution_event(
-        billing_ticket_id=billing_ticket_id,
-        client_ticket_id=client_ticket_id,
-        result=BILLING_RESPONSE_RESULT_COMPLETED,
-        notify_customer=True,
-        note=note,
-        created_at=timestamp,
-    )
-    resolution_event["source"] = "billing_reply_email"
-    resolution_event["billing_reply_message_id"] = message_id
-    ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_EVENT, resolution_event)
-
-    followup_event = {
-        "event": BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
-        "billing_ticket_id": billing_ticket_id,
-        "ticket_id": client_ticket_id,
-        "resolution_result": BILLING_RESPONSE_RESULT_COMPLETED,
-        "notify_customer": True,
-        "customer_reply": customer_reply,
-        "created_at": timestamp,
-        "source": "billing_reply_email",
-        "billing_reply_message_id": message_id,
-    }
-    ticket_repository.record_event(client_ticket_id, BILLING_RESPONSE_AI_FOLLOWUP_EVENT, followup_event)
-    return True
-
-
-def handle_enablement_request_reply(reply: Any) -> bool:
-    client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
-    if not client_ticket_id:
-        raise ValueError("enablement reply subject does not include client ticket id")
-    message_id = str(getattr(reply, "message_id", "") or "").strip()
-    if _automation_reply_already_processed(client_ticket_id, message_id):
-        LOGGER.info(
-            "Enablement reply message %s for ticket %s was already processed.",
-            message_id,
-            client_ticket_id,
-        )
-        return False
-
-    account_case = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
-    if account_case is None:
-        raise ValueError(f"account case not found for {client_ticket_id}")
-    if str(account_case.get("automation_handler") or "").strip() != "enablement":
-        raise ValueError(f"account case {client_ticket_id} is not handled by enablement automation")
-    canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
-    if canonical_ticket is None:
-        raise ValueError(f"linked support ticket not found for {client_ticket_id}")
-
-    note = str(getattr(reply, "body_text", "") or "").strip()
-    if not note:
-        raise ValueError("enablement reply body is empty")
-    collected_fields = account_case.get("collected_fields")
-    collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
-    customer_reply = _render_case_persona_reply(
-        ticket_id=client_ticket_id,
-        case=account_case,
-        behavior="enablement",
-        reply_intent="resolution_update",
-        known_information={
-            "requested_feature": str(
-                collected_fields.get("requested_feature")
-                or collected_fields.get("requested_feature_label")
-                or "feature"
+                "created_at": timestamp, "source": "billing_reply_email",
+            }
+            committed = ticket_repository.commit_automation_reply_result(
+                reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+                assistant_message=None, account_case_updates=billing_ticket,
+                events=[{"event_type": "automation_persona_human_review", "payload": event_payload}],
+                completed_at=timestamp,
             )
-        },
-        source_facts=[note],
-        resolution_status="completed",
-        save_case=ticket_repository.save_account_case,
-    )
-    if not customer_reply:
-        ticket_repository.record_event(
-            client_ticket_id,
-            "automation_persona_human_review",
-            {
-                "event": "automation_persona_human_review",
-                "ticket_id": client_ticket_id,
-                "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
-                "automation_reply_message_id": message_id,
-                "reason": str(account_case.get("not_automated_reason") or "automation_persona_human_review"),
-                "created_at": now_iso(),
-                "source": "enablement_reply_email",
-            },
+            return "completed" if committed else "in_progress"
+        message_attachments, attached_asset_ids = _store_billing_reply_pdf_attachments(
+            reply=reply, ticket_id=client_ticket_id,
+            customer_id=str(canonical_ticket.get("customer_id") or "").strip(),
         )
-        return True
-
-    timestamp = now_iso()
-    assistant_message = {
-        "role": "assistant",
-        "content": customer_reply,
-        "created_at": timestamp,
-        "content_format": "plaintext",
-        "source": "enablement_reply_email",
-    }
-    initial_message_count = len(canonical_ticket.get("messages", []))
-    canonical_ticket.setdefault("messages", []).append(assistant_message)
-    canonical_ticket["updated_at"] = timestamp
-    account_case["automation_status"] = "customer_notified"
-    account_case["customer_reply"] = customer_reply
-    account_case["updated_at"] = timestamp
-
-    ticket_repository.save_ticket(
-        canonical_ticket,
-        new_messages=canonical_ticket.get("messages", [])[initial_message_count:],
-    )
-    ticket_repository.save_account_case(account_case)
-    resolution_event = {
-        "event": "enablement_internal_resolution_received",
-        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
-        "ticket_id": client_ticket_id,
-        "note": note,
-        "created_at": timestamp,
-        "source": "enablement_reply_email",
-        "automation_reply_message_id": message_id,
-    }
-    ticket_repository.record_event(client_ticket_id, resolution_event["event"], resolution_event)
-    followup_event = {
-        "event": "enablement_customer_followup_generated",
-        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
-        "ticket_id": client_ticket_id,
-        "customer_reply": customer_reply,
-        "created_at": timestamp,
-        "source": "enablement_reply_email",
-        "automation_reply_message_id": message_id,
-    }
-    ticket_repository.record_event(client_ticket_id, followup_event["event"], followup_event)
-    return True
+        assistant_message = {
+            "role": "assistant", "content": customer_reply, "created_at": timestamp,
+            "content_format": "plaintext", "source": "billing_reply_email",
+            **({"attachments": message_attachments} if message_attachments else {}),
+        }
+        resolution_event = build_billing_internal_resolution_event(
+            billing_ticket_id=billing_ticket_id, client_ticket_id=client_ticket_id,
+            result=BILLING_RESPONSE_RESULT_COMPLETED, notify_customer=True, note=note, created_at=timestamp,
+        )
+        resolution_event.update({"source": "billing_reply_email", "billing_reply_message_id": message_id})
+        followup_event = {
+            "event": BILLING_RESPONSE_AI_FOLLOWUP_EVENT, "billing_ticket_id": billing_ticket_id,
+            "ticket_id": client_ticket_id, "resolution_result": BILLING_RESPONSE_RESULT_COMPLETED,
+            "notify_customer": True, "customer_reply": customer_reply, "created_at": timestamp,
+            "source": "billing_reply_email", "billing_reply_message_id": message_id,
+        }
+        if attached_asset_ids:
+            asset_repository.mark_attached(attached_asset_ids)
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=assistant_message,
+            account_case_updates={"automation_status": _billing_resolution_automation_status(BILLING_RESPONSE_RESULT_COMPLETED, True),
+                                  "customer_reply": customer_reply, "updated_at": timestamp},
+            events=[{"event_type": BILLING_RESPONSE_EVENT, "payload": resolution_event},
+                    {"event_type": BILLING_RESPONSE_AI_FOLLOWUP_EVENT, "payload": followup_event}],
+            completed_at=timestamp,
+        )
+        return "completed" if committed else "in_progress"
+    except Exception as exc:
+        _fail_automation_reply(reply_key, owner_token, exc)
+        raise
 
 
-def handle_quota_request_reply(reply: Any) -> bool:
+def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
     if not client_ticket_id:
-        raise ValueError("quota reply subject does not include client ticket id")
+        raise ValueError(f"{handler} reply subject does not include client ticket id")
     message_id = str(getattr(reply, "message_id", "") or "").strip()
-    if _automation_reply_already_processed(client_ticket_id, message_id):
-        LOGGER.info("Quota reply message %s for ticket %s was already processed.", message_id, client_ticket_id)
-        return False
-    account_case = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
-    if account_case is None:
-        raise ValueError(f"account case not found for {client_ticket_id}")
-    if str(account_case.get("automation_handler") or "").strip() != "quota":
-        raise ValueError(f"account case {client_ticket_id} is not handled by quota automation")
-    canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
-    if canonical_ticket is None:
-        raise ValueError(f"linked support ticket not found for {client_ticket_id}")
-    note = str(getattr(reply, "body_text", "") or "").strip()
-    if not note:
-        raise ValueError("quota reply body is empty")
-    collected_fields = account_case.get("collected_fields")
-    collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
-    app_ids = collected_fields.get("app_ids")
-    app_ids = app_ids if isinstance(app_ids, list) else [app_ids] if app_ids else []
-    customer_reply = _render_case_persona_reply(
-        ticket_id=client_ticket_id,
-        case=account_case,
-        behavior="quota",
-        reply_intent="resolution_update",
-        known_information={"products": collected_fields.get("products") or []},
-        source_facts=[note],
-        resolution_status="completed",
-        save_case=ticket_repository.save_account_case,
+    status, reply_key, owner_token = _claim_automation_reply(
+        client_ticket_id=client_ticket_id, message_id=message_id, handler=handler
     )
-    if not customer_reply:
-        ticket_repository.record_event(
-            client_ticket_id,
-            "automation_persona_human_review",
-            {
-                "event": "automation_persona_human_review",
-                "ticket_id": client_ticket_id,
-                "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
-                "automation_reply_message_id": message_id,
-                "reason": str(account_case.get("not_automated_reason") or "automation_persona_human_review"),
-                "created_at": now_iso(),
-                "source": "quota_reply_email",
-            },
+    if status != "acquired":
+        return status
+    try:
+        account_case = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
+        if account_case is None:
+            raise ValueError(f"account case not found for {client_ticket_id}")
+        if str(account_case.get("automation_handler") or "").strip() != handler:
+            raise ValueError(f"account case {client_ticket_id} is not handled by {handler} automation")
+        if ticket_repository.get_ticket(client_ticket_id) is None:
+            raise ValueError(f"linked support ticket not found for {client_ticket_id}")
+        note = str(getattr(reply, "body_text", "") or "").strip()
+        if not note:
+            raise ValueError(f"{handler} reply body is empty")
+        collected_fields = account_case.get("collected_fields")
+        collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
+        known_information = (
+            dict(collected_fields)
+            if handler == "enablement" else {"products": collected_fields.get("products") or []}
         )
-        return True
-    timestamp = now_iso()
-    assistant_message = {
-        "role": "assistant",
-        "content": customer_reply,
-        "created_at": timestamp,
-        "content_format": "plaintext",
-        "source": "quota_reply_email",
-    }
-    initial_message_count = len(canonical_ticket.get("messages", []))
-    canonical_ticket.setdefault("messages", []).append(assistant_message)
-    canonical_ticket["updated_at"] = timestamp
-    account_case["automation_status"] = "customer_notified"
-    account_case["customer_reply"] = customer_reply
-    account_case["updated_at"] = timestamp
-    ticket_repository.save_ticket(
-        canonical_ticket,
-        new_messages=canonical_ticket.get("messages", [])[initial_message_count:],
-    )
-    ticket_repository.save_account_case(account_case)
-    resolution_event = {
-        "event": "quota_internal_resolution_received",
-        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
-        "ticket_id": client_ticket_id,
-        "note": note,
-        "created_at": timestamp,
-        "source": "quota_reply_email",
-        "automation_reply_message_id": message_id,
-    }
-    ticket_repository.record_event(client_ticket_id, resolution_event["event"], resolution_event)
-    followup_event = {
-        "event": "quota_customer_followup_generated",
-        "account_case_id": account_case.get("account_case_id") or account_case.get("billing_ticket_id"),
-        "ticket_id": client_ticket_id,
-        "customer_reply": customer_reply,
-        "created_at": timestamp,
-        "source": "quota_reply_email",
-        "automation_reply_message_id": message_id,
-    }
-    ticket_repository.record_event(client_ticket_id, followup_event["event"], followup_event)
-    return True
+        customer_reply = _render_case_persona_reply(
+            ticket_id=client_ticket_id, case=account_case, behavior=handler,
+            reply_intent="resolution_update", known_information=known_information,
+            source_facts=[note], resolution_status="completed",
+            save_case=ticket_repository.save_account_case, persist_failure=False,
+        )
+        timestamp = now_iso()
+        source = f"{handler}_reply_email"
+        case_id = account_case.get("account_case_id") or account_case.get("billing_ticket_id")
+        if not customer_reply:
+            manual_event = {
+                "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
+                "account_case_id": case_id, "automation_reply_message_id": message_id,
+                "reason": str(account_case.get("not_automated_reason") or "automation_persona_human_review"),
+                "created_at": timestamp, "source": source,
+            }
+            committed = ticket_repository.commit_automation_reply_result(
+                reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+                assistant_message=None, account_case_updates=account_case,
+                events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
+                completed_at=timestamp,
+            )
+            return "completed" if committed else "in_progress"
+        assistant_message = {"role": "assistant", "content": customer_reply, "created_at": timestamp,
+                             "content_format": "plaintext", "source": source}
+        resolution_name = f"{handler}_internal_resolution_received"
+        followup_name = f"{handler}_customer_followup_generated"
+        resolution_event = {"event": resolution_name, "account_case_id": case_id, "ticket_id": client_ticket_id,
+                            "note": note, "created_at": timestamp, "source": source,
+                            "automation_reply_message_id": message_id}
+        followup_event = {"event": followup_name, "account_case_id": case_id, "ticket_id": client_ticket_id,
+                          "customer_reply": customer_reply, "created_at": timestamp, "source": source,
+                          "automation_reply_message_id": message_id}
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=assistant_message,
+            account_case_updates={"automation_status": "customer_notified", "customer_reply": customer_reply,
+                                  "updated_at": timestamp},
+            events=[{"event_type": resolution_name, "payload": resolution_event},
+                    {"event_type": followup_name, "payload": followup_event}], completed_at=timestamp,
+        )
+        return "completed" if committed else "in_progress"
+    except Exception as exc:
+        _fail_automation_reply(reply_key, owner_token, exc)
+        raise
 
 
-def handle_automation_request_reply(reply: Any) -> bool:
+def handle_enablement_request_reply(reply: Any) -> str:
+    return _handle_non_billing_automation_reply(reply, handler="enablement")
+
+
+def handle_quota_request_reply(reply: Any) -> str:
+    return _handle_non_billing_automation_reply(reply, handler="quota")
+
+
+def handle_automation_request_reply(reply: Any) -> str:
     subject = str(getattr(reply, "subject", "") or "")
     if ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX.lower() in subject.lower():
         return handle_enablement_request_reply(reply)
