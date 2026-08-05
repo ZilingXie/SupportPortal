@@ -12,6 +12,28 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-05 - Customer-safe Enablement confirmation facts
+
+- Area or subsystem: `/account` Enablement reply facts and Automation Persona
+- Prompt or model version: `automation-persona-v5`
+- Summary: Added a deterministic customer-visible projection for Enablement facts. Canonical `media_relay` is rendered as `Media Relay`; customer-provided App IDs and raw feature labels are excluded from submission confirmations while remaining available to internal handoff and audit paths.
+- Reason: Case `#12596` repeated an App ID the customer had already supplied and copied the misspelled label `channel media rele` into the confirmation reply.
+- Affected files or config:
+  - `backend/services/enablement_automation.py`
+  - `backend/services/automation_persona.py`
+  - `backend/worker.py`
+  - `backend/tests/test_enablement_automation.py`
+  - `backend/tests/test_automation_persona.py`
+- Expected behavior change:
+  - Enablement submission confirmations use `Media Relay` when the canonical feature key is `media_relay`, without repeating the App ID or the customer's raw/misspelled feature label.
+  - Unknown feature keys are not silently corrected; the customer reply can refer to the request generically.
+  - Resolution updates retain safe status facts but still exclude App IDs and raw feature labels.
+  - Internal Outlook handoff and persisted `collected_fields` continue to contain the original App ID and raw label.
+- Verification:
+  - `rtk uv run --with pytest --with 'psycopg[binary]' python -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_automation.py -q` (26 passed, 9 subtests)
+  - `rtk uv run --with pytest --with 'psycopg[binary]' python -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_repair.py backend/tests/test_account_intake.py -k 'enablement or automation_persona' -q` (47 passed, 11 subtests)
+  - `rtk uv run --with pytest --with 'psycopg[binary]' python -m pytest backend/tests/test_worker.py -k 'enablement_delivery or persona_reply_facts_are_rendered_before_scheduling or deleted_account_reply_job or enablement_resolution_reply_uses_canonical_feature_key' -q` (8 passed)
+
 ## 2026-08-05 - Managed Prompt retirement and pre-stop Release validation
 
 - Area or subsystem: managed Prompt Catalog, Prompt Release runtime, EC2 deployment, and targeted Account reply recovery

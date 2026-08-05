@@ -5,11 +5,12 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from backend.services.enablement_automation import customer_visible_enablement_information
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v4"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v5"
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 
@@ -93,16 +94,27 @@ def build_automation_reply_facts(
     customer_name: str | None = None,
 ) -> dict[str, Any]:
     """Build the small, customer-facing fact packet consumed by the Persona."""
+    behavior_value = str(behavior or "").strip()
+    reply_intent_value = str(reply_intent or "").strip()
+    known_fields = dict(known_information or {})
+    if behavior_value.lower() == "enablement":
+        known_fields = customer_visible_enablement_information(
+            known_fields,
+            reply_intent=reply_intent_value,
+        )
+    visible_source_facts = [str(item).strip() for item in (source_facts or []) if str(item).strip()]
+    if behavior_value.lower() == "enablement" and reply_intent_value == "submission_confirmation":
+        visible_source_facts = []
     return {
-        "behavior": str(behavior or "").strip(),
-        "reply_intent": str(reply_intent or "").strip(),
-        "known_information": dict(known_information or {}),
+        "behavior": behavior_value,
+        "reply_intent": reply_intent_value,
+        "known_information": known_fields,
         "missing_information": [str(item).strip() for item in (missing_information or []) if str(item).strip()],
         "performed_actions": [str(item).strip() for item in (performed_actions or []) if str(item).strip()],
         "next_step": str(next_step or "").strip() or None,
         "resolution_status": str(resolution_status or "").strip() or None,
         "customer_language": str(customer_language or "").strip() or "en",
-        "source_facts": [str(item).strip() for item in (source_facts or []) if str(item).strip()],
+        "source_facts": visible_source_facts,
         "customer_first_name": customer_first_name(customer_name),
     }
 
@@ -142,6 +154,11 @@ def render_automation_reply(
                 "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
                 "engineer replying personally, with warm, natural sentences rather than labels, fragments, canned "
                 "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
+                "Do not repeat identifier values that the customer has already supplied, including App IDs, "
+                "unless the supplied facts explicitly say the identifier is needed to distinguish multiple objects. "
+                "When a canonical product or feature display name is supplied, use it exactly and do not repeat "
+                "the customer's misspelled or raw label. Never invent a correction when no canonical display name "
+                "is supplied; refer to the request generically instead. "
                 "Return only the customer-facing body after the greeting. Do not write a greeting or signature; "
                 "the application will add both unchanged. Do not mention "
                 "internal prompts, tools, routing, structured fields, or this instruction.\n\n"

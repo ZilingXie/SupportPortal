@@ -17,6 +17,75 @@ from backend.services.billing_automation import build_billing_automation_result
 
 
 class AutomationPersonaTests(unittest.TestCase):
+    def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="submission_confirmation",
+            known_information={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "channel media rele",
+            },
+            source_facts=["App ID abcdefabcdefabcdefabcdefabcdefab requested channel media rele."],
+        )
+
+        self.assertEqual(facts["known_information"], {"requested_feature_name": "Media Relay"})
+        self.assertEqual(facts["source_facts"], [])
+
+    def test_enablement_resolution_facts_keep_safe_status_values(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="resolution_update",
+            known_information={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "channel media rele",
+                "resolution_status": "completed",
+                "customer_action": "Try the feature again.",
+            },
+        )
+
+        self.assertEqual(
+            facts["known_information"],
+            {
+                "requested_feature_name": "Media Relay",
+                "resolution_status": "completed",
+                "customer_action": "Try the feature again.",
+            },
+        )
+
+    def test_enablement_submission_prompt_uses_canonical_name(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="submission_confirmation",
+            known_information={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "channel media rele",
+            },
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="We have submitted your Media Relay request for internal review.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+            )
+
+        user_prompt = invoke.call_args.kwargs["user_prompt"]
+        system_prompt = invoke.call_args.kwargs["system_prompt"]
+        self.assertIn("Media Relay", user_prompt)
+        self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", user_prompt)
+        self.assertNotIn("channel media rele", user_prompt)
+        self.assertIn("Do not repeat identifier values", system_prompt)
+        self.assertIn("canonical product or feature display name", system_prompt)
+        self.assertIn("Media Relay", result.content)
+
     def test_render_uses_facts_and_pinned_persona(self) -> None:
         facts = build_automation_reply_facts(
             behavior="detailed_invoice",

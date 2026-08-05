@@ -26,6 +26,10 @@ ENABLEMENT_INTERNAL_EMAIL_PENDING = "pending"
 ENABLEMENT_INTERNAL_EMAIL_RETRY = "retry"
 ENABLEMENT_INTERNAL_EMAIL_SENT = "sent"
 
+_ENABLEMENT_FEATURE_DISPLAY_NAMES = {
+    "media_relay": "Media Relay",
+}
+
 _APP_ID_RE = re.compile(
     r"\b(?:app\s*id|appid)\s*(?::|=|#|-)?\s*([0-9a-f]{32})\b",
     re.IGNORECASE,
@@ -97,6 +101,30 @@ class EnablementAutomationResult:
     missing_fields: list[str]
     collected_fields: dict[str, str]
     internal_email: dict[str, str] | None
+
+
+def customer_visible_enablement_information(
+    collected_fields: dict[str, Any] | None,
+    *,
+    reply_intent: str,
+) -> dict[str, Any]:
+    """Project Enablement fields into the facts safe for a customer reply."""
+    fields = dict(collected_fields or {})
+    fields.pop("app_id", None)
+    fields.pop("requested_feature_label", None)
+
+    feature_key = _clean_text(fields.pop("requested_feature", "")).lower()
+    display_name = _ENABLEMENT_FEATURE_DISPLAY_NAMES.get(feature_key)
+    if display_name:
+        fields["requested_feature_name"] = display_name
+
+    if str(reply_intent or "").strip() == "submission_confirmation":
+        return (
+            {"requested_feature_name": display_name}
+            if display_name
+            else {}
+        )
+    return fields
 
 
 def detect_enablement_route(message: str) -> EnablementRouteMatch | None:

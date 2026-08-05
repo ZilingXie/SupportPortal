@@ -1289,8 +1289,8 @@ def handle_enablement_request_reply(reply: Any) -> bool:
         reply_intent="resolution_update",
         known_information={
             "requested_feature": str(
-                collected_fields.get("requested_feature_label")
-                or collected_fields.get("requested_feature")
+                collected_fields.get("requested_feature")
+                or collected_fields.get("requested_feature_label")
                 or "feature"
             )
         },

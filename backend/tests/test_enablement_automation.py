@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from backend.services.enablement_automation import (
     build_enablement_automation_result,
     build_enablement_customer_followup,
+    customer_visible_enablement_information,
     detect_enablement_route,
     send_enablement_internal_email,
 )
@@ -42,6 +43,32 @@ class EnablementAutomationTests(unittest.TestCase):
         self.assertEqual(result.collected_fields["requested_feature"], "media_relay")
         self.assertEqual(result.internal_email["to"], "")
         self.assertIn("Account Case ID: AC-TK-12302", result.internal_email["body"])
+        self.assertIn("App ID: 7da36383d624411698e5c0bc1fda6324", result.internal_email["body"])
+        self.assertIn("Requested feature: medial relay", result.internal_email["body"])
+
+    def test_customer_visible_information_uses_canonical_name_and_hides_raw_fields(self) -> None:
+        visible = customer_visible_enablement_information(
+            {
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "channel media rele",
+            },
+            reply_intent="submission_confirmation",
+        )
+
+        self.assertEqual(visible, {"requested_feature_name": "Media Relay"})
+
+    def test_unknown_feature_does_not_get_silently_corrected_for_customer(self) -> None:
+        visible = customer_visible_enablement_information(
+            {
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "new_backend_switch",
+                "requested_feature_label": "new backand swtich",
+            },
+            reply_intent="submission_confirmation",
+        )
+
+        self.assertEqual(visible, {})
 
     def test_media_relay_title_variants_are_normalized(self) -> None:
         for message in (
