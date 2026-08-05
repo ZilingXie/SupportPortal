@@ -217,10 +217,15 @@ def _html_section(section: InternalEmailSection) -> str:
     title = _html_text(section.title)
     body = _html_paragraph(section.body) if section.body else ""
     fields = _html_field_rows(_normalize_fields(section.fields)) if section.fields else ""
+    fields_table = (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">{fields}</table>'
+        if fields
+        else ""
+    )
     items = "".join(f"<li style=\"margin:0 0 5px;\">{_html_text(item)}</li>" for item in section.items)
     list_html = f"<ul style=\"margin:0;padding-left:18px;\">{items}</ul>" if items else ""
     tone = _section_tone(section.tone)
-    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"email-surface\" style=\"padding:16px 18px;background:{tone['background']};border-left:4px solid {tone['border']};border-radius:4px;\"><div style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{tone['label']};font-weight:bold;margin-bottom:8px;\">{title}</div>{body}{('<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\">' + fields + '</table>') if fields else ''}{list_html}</td></tr></table>"""
+    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"email-surface\" style=\"padding:16px 18px;background:{tone['background']};border-left:4px solid {tone['border']};border-radius:4px;\"><div style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{tone['label']};font-weight:bold;margin-bottom:8px;\">{title}</div>{body}{fields_table}{list_html}</td></tr></table>"""
 
 
 def _html_missing_fields(fields: Sequence[str], title: str) -> str:
