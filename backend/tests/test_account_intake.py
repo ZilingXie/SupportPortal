@@ -2469,6 +2469,18 @@ class AccountIntakeApiTests(unittest.TestCase):
         response = self.client.get("/api/account/cases?page=2&page_size=3")
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
+        self.assertEqual(
+            [item["label"] for item in payload["filter_definitions"]],
+            [
+                "All",
+                "Automation",
+                "Account & Billing",
+                "Tech",
+                "Non-tech",
+                "Conversation",
+                "Human Review",
+            ],
+        )
         counts = payload["filter_counts"]
         self.assertEqual(payload["total"], len(fixtures))
         self.assertEqual(payload["page"], 2)

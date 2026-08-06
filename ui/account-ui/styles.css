@@ -289,73 +289,136 @@ button:disabled {
 
 /* --- Route filters --- */
 
-.filter-groups {
+.route-filter {
   display: grid;
-  gap: 8px;
-  padding: 0 0 8px;
+  gap: 12px;
+  padding: 0 0 10px;
 }
 
-.filter-group {
+.route-filter__groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.route-filter__group-button {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 7px 9px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
-  flex-wrap: wrap;
-}
-
-.filter-child-list {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.filter-chip {
-  border: 0;
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 600;
   color: var(--ink-muted);
   background: var(--surface-container);
-  transition: background 0.15s, color 0.15s;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
 }
 
-.filter-chip:hover {
-  background: var(--surface-container-high);
+.route-filter__group-button--all {
+  grid-column: 1 / -1;
+}
+
+.route-filter__group-button:hover {
   color: var(--ink-soft);
+  background: var(--surface-container-high);
+  transform: translateY(-1px);
 }
 
-.filter-chip--active {
-  background: var(--primary);
+.route-filter__group-button--active,
+.route-filter__group-button--active:hover {
+  border-color: var(--primary);
   color: white;
-}
-
-.filter-chip--active:hover {
   background: var(--primary);
-  color: white;
+  box-shadow: 0 6px 16px rgba(0, 100, 147, 0.18);
+  transform: none;
 }
 
-.filter-chip--group {
-  font-weight: 700;
+.route-filter__group-button:focus-visible,
+.route-filter__subcategory:focus-visible {
+  outline: 3px solid rgba(0, 176, 255, 0.34);
+  outline-offset: 2px;
 }
 
-.filter-chip--child {
-  background: var(--surface-container-low);
+.route-filter__subcategory-field {
+  display: grid;
+  gap: 6px;
+}
+
+.route-filter__label {
+  color: var(--ink-muted);
   font-size: 11px;
-  padding-inline: 9px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.route-filter__subcategory {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--ghost-border);
+  border-radius: 12px;
+  padding: 0 34px 0 12px;
+  color: var(--ink-muted);
+  background: var(--surface-container);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.route-filter__subcategory:not(:disabled):hover {
+  border-color: rgba(0, 100, 147, 0.35);
+  background: var(--surface-container-high);
+}
+
+.route-filter__subcategory:disabled {
+  color: var(--ink-muted);
+  background: var(--surface-container-low);
+  opacity: 0.72;
 }
 
 .filter-count {
   display: inline-flex;
+  flex: 0 0 auto;
   min-width: 1.35em;
   justify-content: center;
-  margin-left: 5px;
+  margin-left: auto;
   padding: 1px 4px;
   border-radius: 999px;
   background: color-mix(in srgb, currentColor 14%, transparent);
   font-size: 10px;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
+}
+
+.route-filter__group-button--active .filter-count {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Shared chips used by route-correction controls and detail metadata. */
+.filter-chip {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 12px;
+  color: var(--ink-muted);
+  background: var(--surface-container);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+
+.filter-chip:hover {
+  color: var(--ink-soft);
+  background: var(--surface-container-high);
+}
+
+.filter-chip--active,
+.filter-chip--active:hover {
+  color: white;
+  background: var(--primary);
 }
 
 /* --- Sidebar history list --- */
@@ -1341,5 +1404,15 @@ select.input,
 
   .msg-bubble {
     max-width: 95%;
+  }
+}
+
+@media (max-width: 360px) {
+  .route-filter__groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-filter__group-button--all {
+    grid-column: auto;
   }
 }

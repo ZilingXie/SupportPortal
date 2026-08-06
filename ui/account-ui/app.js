@@ -53,8 +53,8 @@ const DEFAULT_FILTER_DEFINITIONS = [
       { id: "other", label: "Other" },
     ],
   },
-  { id: "agora_technical", label: "Agora Technical", children: [] },
-  { id: "agora_non_technical", label: "Agora Non-technical", children: [] },
+  { id: "agora_technical", label: "Tech", children: [] },
+  { id: "agora_non_technical", label: "Non-tech", children: [] },
   {
     id: "conversation",
     label: "Conversation",
@@ -378,14 +378,49 @@ function currentSummaryKey() {
   return `${state.statusFilter}:${state.currentPage}`;
 }
 
-function selectedFilterParts() {
-  const [group, leaf] = String(state.statusFilter || "all").split(":", 2);
+function selectedFilterParts(filterValue = state.statusFilter) {
+  const [group, leaf] = String(filterValue || "all").split(":", 2);
   return { group: group || "all", leaf: leaf || "" };
 }
 
-function filterCount(key) {
-  const value = state.filterCounts?.[key];
-  return Number.isFinite(Number(value)) ? Number(value) : null;
+function readFilterCount(counts, key) {
+  const value = counts?.[key];
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildRouteFilterViewModel(definitions, counts, filterValue) {
+  const safeDefinitions = Array.isArray(definitions) && definitions.length
+    ? definitions
+    : DEFAULT_FILTER_DEFINITIONS;
+  const parsed = selectedFilterParts(filterValue);
+  const fallbackGroup = safeDefinitions.find((group) => group.id === "all") || safeDefinitions[0];
+  const group = safeDefinitions.find((item) => item.id === parsed.group) || fallbackGroup;
+  const children = Array.isArray(group?.children) ? group.children : [];
+  const leafKey = children.some((child) => child.id === parsed.leaf) ? parsed.leaf : "";
+  const groupKey = group?.id || "all";
+  const groupCount = readFilterCount(counts, groupKey);
+  const options = [
+    { value: "", label: `All ${group?.label || "Cases"}`, count: groupCount },
+    ...children.map((child) => ({
+      value: child.id,
+      label: child.label,
+      count: readFilterCount(counts, `${groupKey}:${child.id}`),
+    })),
+  ];
+  return {
+    groupKey,
+    leafKey,
+    group,
+    groups: safeDefinitions.map((item) => ({
+      ...item,
+      count: readFilterCount(counts, item.id),
+      active: item.id === groupKey,
+    })),
+    options,
+    selectDisabled: children.length === 0,
+  };
 }
 
 function buildTicketListUrl() {
@@ -849,8 +884,7 @@ function displayRouteStatus(item) {
   return isAutomatedRoute(item) ? "automation" : "not_automated";
 }
 
-function renderFilterCount(key) {
-  const count = filterCount(key);
+function renderFilterCount(count) {
   return count === null ? "" : `<span class="filter-count" aria-label="${count} cases">${count}</span>`;
 }
 
@@ -858,43 +892,42 @@ function renderFilterControls() {
   const definitions = Array.isArray(state.filterDefinitions) && state.filterDefinitions.length
     ? state.filterDefinitions
     : DEFAULT_FILTER_DEFINITIONS;
+  const viewModel = buildRouteFilterViewModel(definitions, state.filterCounts, state.statusFilter);
   return `
-    <div class="filter-groups" aria-label="Account case route filters">
-      ${definitions
-        .map((group) => {
-          const groupKey = group.id;
-          const children = Array.isArray(group.children) ? group.children : [];
-          return `
-            <div class="filter-group">
-              <button
-                class="filter-chip filter-chip--group ${state.statusFilter === groupKey ? "filter-chip--active" : ""}"
-                type="button"
-                data-action="set-filter"
-                data-value="${escapeHtml(groupKey)}"
-                aria-pressed="${state.statusFilter === groupKey}"
-              >${escapeHtml(group.label)}${renderFilterCount(groupKey)}</button>
-              ${children.length ? `
-                <div class="filter-child-list" aria-label="${escapeHtml(group.label)} filters">
-                  ${children
-                    .map((child) => {
-                      const key = `${groupKey}:${child.id}`;
-                      return `
-                        <button
-                          class="filter-chip filter-chip--child ${state.statusFilter === key ? "filter-chip--active" : ""}"
-                          type="button"
-                          data-action="set-filter"
-                          data-value="${escapeHtml(key)}"
-                          aria-pressed="${state.statusFilter === key}"
-                        >${escapeHtml(child.label)}${renderFilterCount(key)}</button>
-                      `;
-                    })
-                    .join("")}
-                </div>
-              ` : ""}
-            </div>
-          `;
-        })
-        .join("")}
+    <div class="route-filter" aria-label="Account case route filters">
+      <div class="route-filter__groups" role="group" aria-label="Primary route categories">
+        ${viewModel.groups
+          .map((group) => `
+            <button
+              class="route-filter__group-button ${group.active ? "route-filter__group-button--active" : ""} ${group.id === "all" ? "route-filter__group-button--all" : ""}"
+              type="button"
+              data-action="set-route-group"
+              data-value="${escapeHtml(group.id)}"
+              aria-pressed="${group.active}"
+            >${escapeHtml(group.label)}${renderFilterCount(group.count)}</button>
+          `)
+          .join("")}
+      </div>
+      <div class="route-filter__subcategory-field">
+        <label class="route-filter__label" for="account-route-subcategory">Subcategory</label>
+        <select
+          class="route-filter__subcategory"
+          id="account-route-subcategory"
+          data-action="set-route-subcategory"
+          data-group="${escapeHtml(viewModel.groupKey)}"
+          ${viewModel.selectDisabled ? "disabled" : ""}
+        >
+          ${viewModel.selectDisabled
+            ? '<option value="">No subcategories</option>'
+            : viewModel.options
+              .map((option) => `
+                <option value="${escapeHtml(option.value)}" ${option.value === viewModel.leafKey ? "selected" : ""}>
+                  ${escapeHtml(option.label)}${option.count === null ? "" : ` (${option.count})`}
+                </option>
+              `)
+              .join("")}
+        </select>
+      </div>
     </div>
   `;
 }
@@ -1683,9 +1716,9 @@ function bind() {
         if (id) openTicket(id);
         return;
       }
-      const filterBtn = event.target.closest("[data-action='set-filter']");
-      if (filterBtn) {
-        state.statusFilter = filterBtn.dataset.value || "all";
+      const groupButton = event.target.closest("[data-action='set-route-group']");
+      if (groupButton) {
+        state.statusFilter = groupButton.dataset.value || "all";
         state.currentPage = 1;
         if (state.statusFilter === "route_errors") {
           state.routeErrorSummary = null;
@@ -1702,6 +1735,15 @@ function bind() {
         void fetchTickets({ renderOnUpdate: true });
         return;
       }
+    });
+    historyList.addEventListener("change", (event) => {
+      const subcategorySelect = event.target.closest("[data-action='set-route-subcategory']");
+      if (!subcategorySelect || subcategorySelect.disabled) return;
+      const group = subcategorySelect.dataset.group || "all";
+      const subcategory = subcategorySelect.value || "";
+      state.statusFilter = subcategory ? `${group}:${subcategory}` : group;
+      state.currentPage = 1;
+      void fetchTickets({ renderOnUpdate: true });
     });
   }
   document.querySelectorAll("[data-action='new-ticket']").forEach((el) => {

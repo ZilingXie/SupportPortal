@@ -28,8 +28,8 @@ ACCOUNT_CASE_FILTER_GROUPS: tuple[dict[str, Any], ...] = (
             {"id": "other", "label": "Other"},
         ),
     },
-    {"id": "agora_technical", "label": "Agora Technical", "children": ()},
-    {"id": "agora_non_technical", "label": "Agora Non-technical", "children": ()},
+    {"id": "agora_technical", "label": "Tech", "children": ()},
+    {"id": "agora_non_technical", "label": "Non-tech", "children": ()},
     {
         "id": "conversation",
         "label": "Conversation",
