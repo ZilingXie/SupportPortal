@@ -8,7 +8,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Protocol, TypeVar
+from typing import Any, Callable, Literal, Protocol, TypeVar
 from uuid import uuid4
 
 import psycopg
@@ -28,6 +28,118 @@ except ImportError:  # pragma: no cover - exercised in environments without pool
     PoolTimeout = None
 
 LOGGER = logging.getLogger(__name__)
+
+ACCOUNT_RERUN_RESET_AI_ONLY = "account_ai_only"
+ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY = "customer_messages_only"
+AccountRerunResetMode = Literal["account_ai_only", "customer_messages_only"]
+
+
+def _normalize_account_rerun_reset_mode(value: str) -> AccountRerunResetMode:
+    normalized = str(value or ACCOUNT_RERUN_RESET_AI_ONLY).strip().lower()
+    if normalized not in {
+        ACCOUNT_RERUN_RESET_AI_ONLY,
+        ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    }:
+        raise ValueError(f"unsupported Account rerun reset mode: {value}")
+    return normalized  # type: ignore[return-value]
+
+
+def _account_rerun_deleted_role(value: Any) -> str:
+    role = str(value or "").strip().lower()
+    if role in {"assistant", "engineer", "manual", "internal", "system"}:
+        return role
+    return "unknown"
+
+
+def _account_rerun_correction_audit_summary(
+    correction: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(correction, dict):
+        return None
+    allowed_fields = (
+        "original_scope_label",
+        "original_route_family",
+        "original_execution_action",
+        "original_tooling_profile",
+        "corrected_scope_label",
+        "corrected_route_family",
+        "corrected_execution_action",
+        "corrected_tooling_profile",
+        "first_corrected_scope_label",
+        "first_corrected_route_family",
+        "first_corrected_execution_action",
+        "first_corrected_tooling_profile",
+        "correction_count",
+    )
+    return {
+        key: copy.deepcopy(correction.get(key))
+        for key in allowed_fields
+        if correction.get(key) is not None
+    }
+
+
+def _account_rerun_reset_audit_payload(
+    *,
+    ticket_id: str,
+    account_case_id: str,
+    rerun_job_id: str,
+    reset_at: str,
+    audit_context: dict[str, Any] | None,
+    counts: dict[str, Any],
+    correction: dict[str, Any] | None,
+) -> dict[str, Any]:
+    context = audit_context if isinstance(audit_context, dict) else {}
+    return {
+        "job_id": str(rerun_job_id or "").strip(),
+        "account_case_id": str(account_case_id or "").strip(),
+        "ticket_number": str(context.get("ticket_number") or ticket_id).strip(),
+        "reset_mode": ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+        "requested_at": str(context.get("requested_at") or reset_at).strip(),
+        "reset_at": str(reset_at).strip(),
+        "build_ref": str(context.get("build_ref") or "unknown").strip() or "unknown",
+        "customer_messages_retained": int(counts.get("customer_messages_retained") or 0),
+        "messages_deleted": int(counts.get("messages_deleted") or 0),
+        "deleted_messages_by_role": dict(counts.get("deleted_messages_by_role") or {}),
+        "reply_jobs_deleted": int(counts.get("reply_jobs_deleted") or 0),
+        "reply_executions_deleted": int(counts.get("reply_executions_deleted") or 0),
+        "customer_replies_cleared": int(counts.get("customer_replies_cleared") or 0),
+        "route_review_reset": bool(counts.get("route_review_reset")),
+        "route_correction_cleared": correction is not None,
+        "route_correction_summary": _account_rerun_correction_audit_summary(correction),
+    }
+
+
+def _clear_account_case_routing_state(account_case: dict[str, Any]) -> None:
+    for field in (
+        "route",
+        "scope_label",
+        "route_family",
+        "execution_action",
+        "tooling_profile",
+        "route_reason",
+        "route_confidence",
+        "semantic_intent",
+        "automation_eligibility",
+        "policy_decision",
+        "not_automated_reason",
+        "router_source",
+        "category",
+        "subcategory",
+        "automation_handler",
+    ):
+        account_case[field] = None
+    account_case.update(
+        matched_signals=[],
+        automation_status="not_automated",
+        missing_fields=[],
+        collected_fields={},
+        risk_flags=[],
+        evidence_spans=[],
+        route_status="not_automated",
+        route_classification={},
+        automation_context={},
+        route_review_status="pending",
+    )
 
 
 class _TicketPoolAcquireError(psycopg.OperationalError):
@@ -1152,8 +1264,14 @@ class TicketRepository(Protocol):
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
     def reset_account_rerun_state(
-        self, ticket_id: str, *, reset_at: str, rerun_job_id: str | None = None
-    ) -> dict[str, int]: ...
+        self,
+        ticket_id: str,
+        *,
+        reset_at: str,
+        rerun_job_id: str | None = None,
+        reset_mode: AccountRerunResetMode = ACCOUNT_RERUN_RESET_AI_ONLY,
+        audit_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
     def publish_account_reply(
         self,
@@ -1857,9 +1975,16 @@ class InMemoryTicketRepository:
         )
 
     def reset_account_rerun_state(
-        self, ticket_id: str, *, reset_at: str, rerun_job_id: str | None = None
-    ) -> dict[str, int]:
+        self,
+        ticket_id: str,
+        *,
+        reset_at: str,
+        rerun_job_id: str | None = None,
+        reset_mode: AccountRerunResetMode = ACCOUNT_RERUN_RESET_AI_ONLY,
+        audit_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_reset_mode = _normalize_account_rerun_reset_mode(reset_mode)
         ticket = self._tickets.get(normalized_ticket_id)
         empty_result = {
             "ai_messages_deleted": 0,
@@ -1870,55 +1995,137 @@ class InMemoryTicketRepository:
         if ticket is None:
             return empty_result
 
-        ai_messages_deleted = 0
-        retained_messages: list[dict[str, Any]] = []
-        for message in ticket.get("messages", []):
-            if not isinstance(message, dict):
-                retained_messages.append(message)
-                continue
-            role = str(message.get("role") or "").strip().lower()
-            meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
-            is_account_ai = role == "assistant" and (
-                str(meta.get("source") or message.get("source") or "").strip() == "account_ai"
-                or bool(meta.get("account_reply_job_id") or message.get("account_reply_job_id"))
-                or str(meta.get("visibility") or "").strip() == "account_only"
-            )
-            if is_account_ai:
-                ai_messages_deleted += 1
-            else:
-                retained_messages.append(message)
-        ticket["messages"] = retained_messages
-        ticket["updated_at"] = reset_at
-
         with self._assignment_lock:
-            old_job_ids = {
-                str(job_id)
-                for job_id, job in self._account_reply_jobs.items()
-                if str(job.get("ticket_id") or "").strip() == normalized_ticket_id
-            }
-            for job_id in old_job_ids:
-                self._account_reply_jobs.pop(job_id, None)
+            ticket_snapshot = copy.deepcopy(ticket)
+            reply_jobs_snapshot = copy.deepcopy(self._account_reply_jobs)
+            reply_executions_snapshot = copy.deepcopy(self._account_reply_executions)
+            billing_tickets_snapshot = copy.deepcopy(self._billing_tickets)
+            corrections_snapshot = copy.deepcopy(self._billing_route_corrections)
+            audit_snapshot = copy.deepcopy(self._workspace_audit_events)
+            try:
+                ai_messages_deleted = 0
+                messages_deleted = 0
+                customer_messages_retained = 0
+                deleted_messages_by_role: dict[str, int] = {}
+                retained_messages: list[dict[str, Any]] = []
+                for message in ticket.get("messages", []):
+                    role = (
+                        str(message.get("role") or "").strip().lower()
+                        if isinstance(message, dict)
+                        else ""
+                    )
+                    if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                        if isinstance(message, dict) and role in {"customer", "user"}:
+                            retained_messages.append(message)
+                            customer_messages_retained += 1
+                            continue
+                        deleted_role = _account_rerun_deleted_role(role)
+                        deleted_messages_by_role[deleted_role] = (
+                            int(deleted_messages_by_role.get(deleted_role) or 0) + 1
+                        )
+                        messages_deleted += 1
+                        if role == "assistant":
+                            ai_messages_deleted += 1
+                        continue
+                    if not isinstance(message, dict):
+                        retained_messages.append(message)
+                        continue
+                    meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+                    is_account_ai = role == "assistant" and (
+                        str(meta.get("source") or message.get("source") or "").strip()
+                        == "account_ai"
+                        or bool(meta.get("account_reply_job_id") or message.get("account_reply_job_id"))
+                        or str(meta.get("visibility") or "").strip() == "account_only"
+                    )
+                    if is_account_ai:
+                        ai_messages_deleted += 1
+                        messages_deleted += 1
+                    else:
+                        retained_messages.append(message)
+                ticket["messages"] = retained_messages
+                ticket["updated_at"] = reset_at
 
-        reply_executions = self._account_reply_executions.pop(normalized_ticket_id, [])
-        account_case = self.get_billing_ticket_by_client_ticket_id(normalized_ticket_id)
-        customer_replies_cleared = 0
-        if account_case is not None:
-            if str(account_case.get("customer_reply") or "").strip():
-                customer_replies_cleared = 1
-            account_case.update(
-                customer_reply=None,
-                internal_email_payload=None,
-                internal_email_send_status=None,
-                internal_email_send_reason=None,
-                updated_at=reset_at,
-            )
-            self.save_billing_ticket(account_case)
-        return {
-            "ai_messages_deleted": ai_messages_deleted,
-            "reply_jobs_deleted": len(old_job_ids),
-            "reply_executions_deleted": len(reply_executions),
-            "customer_replies_cleared": customer_replies_cleared,
-        }
+                account_case = self.get_billing_ticket_by_client_ticket_id(normalized_ticket_id)
+                account_case_id = str(
+                    (account_case or {}).get("account_case_id")
+                    or (account_case or {}).get("billing_ticket_id")
+                    or ""
+                ).strip()
+                correction = copy.deepcopy(self._billing_route_corrections.get(account_case_id))
+
+                old_job_ids = {
+                    str(job_id)
+                    for job_id, job in self._account_reply_jobs.items()
+                    if str(job.get("ticket_id") or "").strip() == normalized_ticket_id
+                }
+                for job_id in old_job_ids:
+                    self._account_reply_jobs.pop(job_id, None)
+
+                reply_executions = self._account_reply_executions.pop(normalized_ticket_id, [])
+                customer_replies_cleared = 0
+                route_review_reset = False
+                if account_case is not None:
+                    if str(account_case.get("customer_reply") or "").strip():
+                        customer_replies_cleared = 1
+                    account_case.update(
+                        customer_reply=None,
+                        internal_email_payload=None,
+                        internal_email_send_status=None,
+                        internal_email_send_reason=None,
+                        updated_at=reset_at,
+                    )
+                    if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                        route_review_reset = (
+                            str(account_case.get("route_review_status") or "pending") != "pending"
+                        )
+                        _clear_account_case_routing_state(account_case)
+                        if account_case_id:
+                            self._billing_route_corrections.pop(account_case_id, None)
+                    billing_ticket_id = str(account_case.get("billing_ticket_id") or "").strip()
+                    if billing_ticket_id:
+                        self._billing_tickets[billing_ticket_id] = copy.deepcopy(account_case)
+
+                result: dict[str, Any] = {
+                    "ai_messages_deleted": ai_messages_deleted,
+                    "reply_jobs_deleted": len(old_job_ids),
+                    "reply_executions_deleted": len(reply_executions),
+                    "customer_replies_cleared": customer_replies_cleared,
+                }
+                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                    result.update(
+                        messages_deleted=messages_deleted,
+                        customer_messages_retained=customer_messages_retained,
+                        deleted_messages_by_role=deleted_messages_by_role,
+                        route_review_reset=route_review_reset,
+                        route_correction_cleared=correction is not None,
+                    )
+                    if not account_case_id:
+                        raise ValueError("Account Case is required for customer-messages-only reset")
+                    audit_payload = _account_rerun_reset_audit_payload(
+                        ticket_id=normalized_ticket_id,
+                        account_case_id=account_case_id,
+                        rerun_job_id=str(rerun_job_id or ""),
+                        reset_at=reset_at,
+                        audit_context=audit_context,
+                        counts=result,
+                        correction=correction,
+                    )
+                    self.record_workspace_audit_event(
+                        "account_case_full_rerun_reset",
+                        actor_id="account_ui",
+                        target_id=account_case_id,
+                        payload=audit_payload,
+                        created_at=reset_at,
+                    )
+                return result
+            except Exception:
+                self._tickets[normalized_ticket_id] = ticket_snapshot
+                self._account_reply_jobs = reply_jobs_snapshot
+                self._account_reply_executions = reply_executions_snapshot
+                self._billing_tickets = billing_tickets_snapshot
+                self._billing_route_corrections = corrections_snapshot
+                self._workspace_audit_events = audit_snapshot
+                raise
 
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]:
         saved = copy.deepcopy(job)
@@ -10046,9 +10253,16 @@ class PostgresTicketRepository:
         return self._run_with_connection_retry("list_account_reply_executions", _operation)
 
     def reset_account_rerun_state(
-        self, ticket_id: str, *, reset_at: str, rerun_job_id: str | None = None
-    ) -> dict[str, int]:
+        self,
+        ticket_id: str,
+        *,
+        reset_at: str,
+        rerun_job_id: str | None = None,
+        reset_mode: AccountRerunResetMode = ACCOUNT_RERUN_RESET_AI_ONLY,
+        audit_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_reset_mode = _normalize_account_rerun_reset_mode(reset_mode)
         empty_result = {
             "ai_messages_deleted": 0,
             "reply_jobs_deleted": 0,
@@ -10058,7 +10272,7 @@ class PostgresTicketRepository:
         if not normalized_ticket_id:
             return empty_result
 
-        def _operation(conn: psycopg.Connection[Any]) -> dict[str, int]:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL("SELECT ticket_id FROM {} WHERE ticket_id=%s FOR UPDATE").format(
@@ -10070,15 +10284,96 @@ class PostgresTicketRepository:
                     return empty_result
                 cur.execute(
                     sql.SQL(
-                        "DELETE FROM {} WHERE ticket_id=%s AND role='assistant' AND ("
-                        "COALESCE(meta->>'source','')='account_ai' OR "
-                        "meta ? 'account_reply_job_id' OR "
-                        "meta->>'visibility'='account_only'"
-                        ") RETURNING id"
-                    ).format(self._table("support_ticket_messages")),
+                        "SELECT account_case_id, billing_ticket_id, customer_reply, route_review_status "
+                        "FROM {} WHERE client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
                     (normalized_ticket_id,),
                 )
-                ai_messages_deleted = len(cur.fetchall())
+                case_row = cur.fetchone()
+                account_case_id = str(case_row[0] or "").strip() if case_row else ""
+                billing_ticket_id = str(case_row[1] or "").strip() if case_row else ""
+                customer_replies_cleared = int(
+                    case_row is not None and bool(str(case_row[2] or "").strip())
+                )
+                prior_review_status = str(case_row[3] or "pending").strip() if case_row else "pending"
+
+                correction_fields = (
+                    "original_scope_label",
+                    "original_route_family",
+                    "original_execution_action",
+                    "original_tooling_profile",
+                    "corrected_scope_label",
+                    "corrected_route_family",
+                    "corrected_execution_action",
+                    "corrected_tooling_profile",
+                    "first_corrected_scope_label",
+                    "first_corrected_route_family",
+                    "first_corrected_execution_action",
+                    "first_corrected_tooling_profile",
+                    "correction_count",
+                )
+                correction: dict[str, Any] | None = None
+                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                    if not account_case_id or not billing_ticket_id:
+                        raise ValueError("Account Case is required for customer-messages-only reset")
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT original_scope_label, original_route_family, "
+                            "original_execution_action, original_tooling_profile, "
+                            "corrected_scope_label, corrected_route_family, "
+                            "corrected_execution_action, corrected_tooling_profile, "
+                            "first_corrected_scope_label, first_corrected_route_family, "
+                            "first_corrected_execution_action, first_corrected_tooling_profile, "
+                            "correction_count FROM {} WHERE billing_ticket_id=%s FOR UPDATE"
+                        ).format(self._table("support_billing_route_corrections")),
+                        (billing_ticket_id,),
+                    )
+                    correction_row = cur.fetchone()
+                    if correction_row is not None:
+                        correction = dict(zip(correction_fields, correction_row))
+
+                messages_deleted = 0
+                customer_messages_retained = 0
+                deleted_messages_by_role: dict[str, int] = {}
+                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT COUNT(*) FROM {} WHERE ticket_id=%s "
+                            "AND COALESCE(LOWER(TRIM(role)), '') IN ('customer','user')"
+                        ).format(self._table("support_ticket_messages")),
+                        (normalized_ticket_id,),
+                    )
+                    retained_row = cur.fetchone()
+                    customer_messages_retained = int(retained_row[0] or 0) if retained_row else 0
+                    cur.execute(
+                        sql.SQL(
+                            "DELETE FROM {} WHERE ticket_id=%s "
+                            "AND COALESCE(LOWER(TRIM(role)), '') NOT IN ('customer','user') "
+                            "RETURNING role"
+                        ).format(self._table("support_ticket_messages")),
+                        (normalized_ticket_id,),
+                    )
+                    deleted_rows = cur.fetchall()
+                    messages_deleted = len(deleted_rows)
+                    for row in deleted_rows:
+                        role = _account_rerun_deleted_role(row[0] if row else None)
+                        deleted_messages_by_role[role] = (
+                            int(deleted_messages_by_role.get(role) or 0) + 1
+                        )
+                    ai_messages_deleted = int(deleted_messages_by_role.get("assistant") or 0)
+                else:
+                    cur.execute(
+                        sql.SQL(
+                            "DELETE FROM {} WHERE ticket_id=%s AND role='assistant' AND ("
+                            "COALESCE(meta->>'source','')='account_ai' OR "
+                            "meta ? 'account_reply_job_id' OR "
+                            "meta->>'visibility'='account_only'"
+                            ") RETURNING id"
+                        ).format(self._table("support_ticket_messages")),
+                        (normalized_ticket_id,),
+                    )
+                    ai_messages_deleted = len(cur.fetchall())
+                    messages_deleted = ai_messages_deleted
                 cur.execute(
                     sql.SQL("DELETE FROM {} WHERE ticket_id=%s RETURNING execution_id").format(
                         self._table("support_account_reply_executions")
@@ -10093,36 +10388,80 @@ class PostgresTicketRepository:
                     (normalized_ticket_id,),
                 )
                 reply_jobs_deleted = len(cur.fetchall())
-                cur.execute(
+                routing_reset_sql = (
                     sql.SQL(
-                        "SELECT customer_reply FROM {} WHERE client_ticket_id=%s FOR UPDATE"
-                    ).format(self._table("support_account_cases")),
-                    (normalized_ticket_id,),
-                )
-                case_row = cur.fetchone()
-                customer_replies_cleared = int(
-                    case_row is not None and bool(str(case_row[0] or "").strip())
+                        ", route_review_status='pending', route=NULL, scope_label=NULL, "
+                        "route_family=NULL, execution_action=NULL, tooling_profile=NULL, "
+                        "route_reason=NULL, route_confidence=NULL, matched_signals='[]'::jsonb, "
+                        "automation_status='not_automated', missing_fields='[]'::jsonb, "
+                        "collected_fields='{}'::jsonb, semantic_intent=NULL, "
+                        "automation_eligibility=NULL, policy_decision=NULL, "
+                        "not_automated_reason=NULL, risk_flags='[]'::jsonb, "
+                        "evidence_spans='[]'::jsonb, router_source=NULL, category=NULL, "
+                        "subcategory=NULL, route_status='not_automated', automation_handler=NULL, "
+                        "route_classification='{}'::jsonb, automation_context='{}'::jsonb"
+                    )
+                    if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY
+                    else sql.SQL("")
                 )
                 cur.execute(
                     sql.SQL(
                         "UPDATE {} SET customer_reply=NULL, internal_email_payload=NULL, "
                         "internal_email_send_status=NULL, internal_email_send_reason=NULL, "
-                        "updated_at=%s WHERE client_ticket_id=%s"
-                    ).format(self._table("support_account_cases")),
+                        "updated_at=%s{} WHERE client_ticket_id=%s"
+                    ).format(self._table("support_account_cases"), routing_reset_sql),
                     (reset_at, normalized_ticket_id),
                 )
+                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                    cur.execute(
+                        sql.SQL("DELETE FROM {} WHERE billing_ticket_id=%s").format(
+                            self._table("support_billing_route_corrections")
+                        ),
+                        (billing_ticket_id,),
+                    )
                 cur.execute(
                     sql.SQL("UPDATE {} SET updated_at=%s WHERE ticket_id=%s").format(
                         self._table("support_tickets")
                     ),
                     (reset_at, normalized_ticket_id),
                 )
-                return {
+                result: dict[str, Any] = {
                     "ai_messages_deleted": ai_messages_deleted,
                     "reply_jobs_deleted": reply_jobs_deleted,
                     "reply_executions_deleted": reply_executions_deleted,
                     "customer_replies_cleared": customer_replies_cleared,
                 }
+                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                    result.update(
+                        messages_deleted=messages_deleted,
+                        customer_messages_retained=customer_messages_retained,
+                        deleted_messages_by_role=deleted_messages_by_role,
+                        route_review_reset=prior_review_status != "pending",
+                        route_correction_cleared=correction is not None,
+                    )
+                    audit_payload = _account_rerun_reset_audit_payload(
+                        ticket_id=normalized_ticket_id,
+                        account_case_id=account_case_id,
+                        rerun_job_id=str(rerun_job_id or ""),
+                        reset_at=reset_at,
+                        audit_context=audit_context,
+                        counts=result,
+                        correction=correction,
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (event_type, actor_id, target_id, payload, created_at) "
+                            "VALUES (%s,%s,%s,%s,%s)"
+                        ).format(self._table("support_workspace_audit_events")),
+                        (
+                            "account_case_full_rerun_reset",
+                            "account_ui",
+                            account_case_id,
+                            Json(audit_payload),
+                            reset_at,
+                        ),
+                    )
+                return result
 
         return self._run_with_connection_retry("reset_account_rerun_state", _operation)
 

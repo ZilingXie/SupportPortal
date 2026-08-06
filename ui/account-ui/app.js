@@ -101,6 +101,9 @@ const state = {
   filterDefinitions: DEFAULT_FILTER_DEFINITIONS,
   filterCounts: {},
   filterCountsVersion: 0,
+  caseSearchQuery: "",
+  caseSearchError: "",
+  isSearchingCase: false,
   replyMessage: "",
   isSubmittingReply: false,
   replyError: "",
@@ -114,6 +117,8 @@ const state = {
   reviewError: "",
   rerouteJob: null,
   rerouteConfirmationOpen: false,
+  rerouteTargetSnapshot: null,
+  rerouteActiveTargetCaseId: "",
   isStartingReroute: false,
   rerouteError: "",
 };
@@ -123,6 +128,8 @@ let isFetchingRouteErrorSummary = false;
 let replyPollTimer = null;
 let reroutePollTimer = null;
 let summaryRequestController = null;
+let caseSearchRequestController = null;
+let caseSearchGeneration = 0;
 let summaryRequestGeneration = 0;
 let detailOpenGeneration = 0;
 const summaryCache = new Map();
@@ -281,6 +288,11 @@ function zendeskTicketLabel(link) {
 function accountTicketNumber(item) {
   return zendeskTicketId(safeSourceLink(item?.source))
     || String(item?.ticket_id || item?.client_ticket_id || "").trim();
+}
+
+function normalizeCaseNumberQuery(value) {
+  const normalized = String(value || "").trim().replace(/^#/, "");
+  return /^\d+$/.test(normalized) ? normalized : "";
 }
 
 function renderSourceValue(source) {
@@ -646,13 +658,49 @@ function responseErrorMessage(payload, fallback) {
   return fallback;
 }
 
-async function refreshAfterReroute() {
+async function refreshAfterReroute(targetCaseId = "") {
   invalidateSummaryCache();
-  invalidateDetailCache();
+  if (targetCaseId) invalidateDetailCache(targetCaseId);
+  else invalidateDetailCache();
   await fetchTickets({ force: true });
   if (state.view === "detail" && state.activeItem) {
-    const ticketId = state.activeItem.ticket_id || state.activeItem.client_ticket_id || "";
-    if (ticketId) state.activeItem = (await fetchTicketDetail(ticketId)) || state.activeItem;
+    const activeCaseId = accountCaseIdentifier(state.activeItem);
+    const lookupId = targetCaseId && accountCaseAliases(state.activeItem).has(targetCaseId)
+      ? targetCaseId
+      : activeCaseId;
+    if (lookupId) {
+      state.activeItem = (await fetchTicketDetail(lookupId, { force: true })) || state.activeItem;
+    }
+  }
+}
+
+async function fetchRerouteJob(jobId, { refreshCasesOnCompletion = false } = {}) {
+  const normalizedJobId = String(jobId || "").trim();
+  if (!normalizedJobId) return fetchLatestRerouteJob({ refreshCasesOnCompletion });
+  const wasActive = isActiveRerouteJob();
+  try {
+    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`, {
+      cache: "no-store",
+    });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Could not load rerun status."));
+    }
+    if (String(payload.job_id || "") !== normalizedJobId) return;
+    state.rerouteJob = payload;
+    state.rerouteError = "";
+    if (refreshCasesOnCompletion && wasActive && !isActiveRerouteJob(payload)) {
+      const targetCaseId = state.rerouteActiveTargetCaseId;
+      await refreshAfterReroute(targetCaseId);
+      showToast(
+        payload.status === "completed"
+          ? targetCaseId ? "Account Case rerun complete" : "All Account Cases were reprocessed"
+          : "Account Case reprocessing finished with issues"
+      );
+      state.rerouteActiveTargetCaseId = "";
+    }
+  } catch (err) {
+    state.rerouteError = err instanceof Error ? err.message : "Could not load rerun status.";
   }
 }
 
@@ -667,12 +715,13 @@ async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) 
     state.rerouteJob = payload;
     state.rerouteError = "";
     if (refreshCasesOnCompletion && wasActive && !isActiveRerouteJob()) {
-      await refreshAfterReroute();
+      await refreshAfterReroute(state.rerouteActiveTargetCaseId);
       showToast(
         state.rerouteJob.status === "completed"
           ? "All Account Cases were reprocessed"
           : "Account Case reprocessing finished with issues"
       );
+      state.rerouteActiveTargetCaseId = "";
     }
   } catch (err) {
     state.rerouteError = err instanceof Error ? err.message : "Could not load rerun status.";
@@ -686,7 +735,9 @@ function updateReroutePolling() {
   }
   if (!isActiveRerouteJob()) return;
   reroutePollTimer = window.setTimeout(async () => {
-    await fetchLatestRerouteJob({ refreshCasesOnCompletion: true });
+    const jobId = String(state.rerouteJob?.job_id || "").trim();
+    if (jobId) await fetchRerouteJob(jobId, { refreshCasesOnCompletion: true });
+    else await fetchLatestRerouteJob({ refreshCasesOnCompletion: true });
     render();
   }, 3000);
 }
@@ -710,9 +761,43 @@ async function startFullReroute() {
       );
     }
     state.rerouteJob = payload;
+    state.rerouteActiveTargetCaseId = "";
     showToast("Account Case reprocessing started");
   } catch (err) {
     state.rerouteError = err instanceof Error ? err.message : "Could not start Account Case rerun.";
+  } finally {
+    state.isStartingReroute = false;
+    render();
+  }
+}
+
+async function startSingleCaseRerun() {
+  const snapshot = state.rerouteTargetSnapshot;
+  const caseId = String(snapshot?.caseId || "").trim();
+  if (!caseId || state.isStartingReroute || isActiveRerouteJob()) return;
+  state.isStartingReroute = true;
+  state.rerouteConfirmationOpen = false;
+  state.rerouteError = "";
+  render();
+  try {
+    const response = await fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      if (response.status === 409) {
+        await fetchLatestRerouteJob();
+        return;
+      }
+      throw new Error(responseErrorMessage(payload, "Could not rerun this Account Case."));
+    }
+    state.rerouteJob = payload;
+    state.rerouteActiveTargetCaseId = caseId;
+    state.rerouteTargetSnapshot = null;
+    showToast(`Rerun started for Case #${snapshot.ticketNumber}`);
+  } catch (err) {
+    state.rerouteError = err instanceof Error ? err.message : "Could not rerun this Account Case.";
   } finally {
     state.isStartingReroute = false;
     render();
@@ -748,6 +833,55 @@ async function fetchTicketDetail(ticketId, { force = false } = {}) {
   })();
   detailInflight.set(ticketId, request);
   return request;
+}
+
+async function searchCaseByNumber(event) {
+  event?.preventDefault();
+  const ticketNumber = normalizeCaseNumberQuery(state.caseSearchQuery);
+  if (!ticketNumber) {
+    state.caseSearchError = "Enter an exact numeric Case #.";
+    render();
+    return;
+  }
+
+  caseSearchRequestController?.abort();
+  const controller = new AbortController();
+  caseSearchRequestController = controller;
+  const generation = ++caseSearchGeneration;
+  state.isSearchingCase = true;
+  state.caseSearchError = "";
+  render();
+  try {
+    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketNumber)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const payload = await readResponsePayload(response);
+    if (generation !== caseSearchGeneration) return;
+    if (response.status === 404) {
+      state.caseSearchError = `Case #${ticketNumber} not found`;
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Could not search Account Cases."));
+    }
+    cacheDetail(payload);
+    state.activeItem = payload;
+    state.view = "detail";
+    state.detailLoading = false;
+    state.caseSearchQuery = ticketNumber;
+    resetCorrectionState(payload);
+  } catch (error) {
+    if (error?.name === "AbortError" || generation !== caseSearchGeneration) return;
+    state.caseSearchError = error instanceof Error
+      ? error.message
+      : "Could not search Account Cases.";
+  } finally {
+    if (generation === caseSearchGeneration) {
+      state.isSearchingCase = false;
+      render();
+    }
+  }
 }
 
 async function fetchRouteErrorSummary() {
@@ -888,6 +1022,32 @@ function renderFilterCount(count) {
   return count === null ? "" : `<span class="filter-count" aria-label="${count} cases">${count}</span>`;
 }
 
+function renderCaseSearch() {
+  return `
+    <form class="account-case-search" data-case-search-form role="search" aria-label="Find an exact Account Case number">
+      <div class="account-case-search__control">
+        <span class="material-symbols-outlined" aria-hidden="true">search</span>
+        <input
+          type="search"
+          inputmode="numeric"
+          pattern="#?[0-9]+"
+          placeholder="Case #"
+          aria-label="Case number"
+          value="${escapeHtml(state.caseSearchQuery)}"
+          data-case-search-input
+          ${state.isSearchingCase ? "disabled" : ""}
+        />
+        <button type="submit" aria-label="Search case" ${state.isSearchingCase ? "disabled" : ""}>
+          <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+        </button>
+      </div>
+      <div class="account-case-search__status ${state.caseSearchError ? "account-case-search__status--error" : ""}" aria-live="polite">
+        ${state.isSearchingCase ? "Searching..." : escapeHtml(state.caseSearchError)}
+      </div>
+    </form>
+  `;
+}
+
 function renderFilterControls() {
   const definitions = Array.isArray(state.filterDefinitions) && state.filterDefinitions.length
     ? state.filterDefinitions
@@ -1015,6 +1175,7 @@ function renderPaginationControls() {
 function renderHistorySidebar() {
   if (state.isLoadingHistory && !state.history.length) {
     return `
+      ${renderCaseSearch()}
       ${renderFilterControls()}
       <div class="history-loading" role="status" aria-label="Loading Account Cases">
         ${Array.from({ length: 5 }, () => '<span class="loading-line"></span>').join("")}
@@ -1023,6 +1184,7 @@ function renderHistorySidebar() {
   }
   if (!state.history.length) {
     return `
+      ${renderCaseSearch()}
       ${renderFilterControls()}
       <div class="history-empty">
         <span class="material-symbols-outlined">receipt_long</span>
@@ -1031,6 +1193,7 @@ function renderHistorySidebar() {
     `;
   }
   return `
+    ${renderCaseSearch()}
     ${renderFilterControls()}
     <div class="history-section-title">${escapeHtml(selectedFilterLabel())} Account Cases (${escapeHtml(state.pagination.total)})</div>
     ${state.history
@@ -1320,7 +1483,18 @@ function renderDetailView() {
           <span class="detail-ticket-number">Ticket #${escapeHtml(ticketNumber)}</span>
           <h3>${escapeHtml(item.title || "")}</h3>
         </div>
-        ${renderClassificationBadges(item)}
+        <div class="detail-header__actions">
+          ${renderClassificationBadges(item)}
+          <button
+            class="danger-button detail-rerun-button"
+            type="button"
+            data-action="open-single-rerun-confirmation"
+            ${state.isStartingReroute || isActiveRerouteJob() ? "disabled" : ""}
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">restart_alt</span>
+            Rerun this case
+          </button>
+        </div>
       </div>
       <div class="meta-grid">
         <div class="meta-row">
@@ -1585,24 +1759,39 @@ function renderRerouteStatus() {
 
 function renderRerouteConfirmation() {
   if (!state.rerouteConfirmationOpen) return "";
+  const snapshot = state.rerouteTargetSnapshot;
+  const singleCase = Boolean(snapshot?.caseId);
   return `
     <div class="reroute-modal-backdrop" data-action="close-reroute-confirmation">
       <section class="reroute-modal" role="dialog" aria-modal="true" aria-labelledby="reroute-dialog-title" data-reroute-dialog>
         <div class="reroute-modal__heading">
-          <span class="material-symbols-outlined" aria-hidden="true">sync</span>
+          <span class="material-symbols-outlined" aria-hidden="true">${singleCase ? "warning" : "sync"}</span>
           <div>
-            <h2 id="reroute-dialog-title">Rerun all Account Cases?</h2>
-            <p>This starts each case again with the latest Router, Field Extractors, Automation handlers, and Persona.</p>
+            <h2 id="reroute-dialog-title">${singleCase ? `Rerun Case #${escapeHtml(snapshot.ticketNumber)}?` : "Rerun all Account Cases?"}</h2>
+            <p>${singleCase
+              ? "This completely resets the active case conversation before running the latest routing workflow."
+              : "This starts each case again with the latest Router, Field Extractors, Automation handlers, and Persona."}</p>
           </div>
         </div>
-        <ul>
-          <li>Previously sent internal emails will be sent again as a new rerun execution.</li>
-          <li>Existing Account-only AI replies and reply jobs will be deleted before each case starts again.</li>
-          <li>Account & Billing classification extractors also run again; they never send email or customer replies.</li>
-        </ul>
+        ${singleCase
+          ? `<ul>
+              <li>All non-customer messages will be permanently deleted.</li>
+              <li>Engineer, manual, and internal messages are included and cannot be recovered.</li>
+              <li>The current route review and correction will be reset.</li>
+              <li>Automation may send a new internal email.</li>
+              <li>A new Account-only reply will be scheduled with the standard 6-10 minute delay.</li>
+              <li>Independent audit records will be retained.</li>
+            </ul>`
+          : `<ul>
+              <li>Previously sent internal emails will be sent again as a new rerun execution.</li>
+              <li>Existing Account-only AI replies and reply jobs will be deleted before each case starts again.</li>
+              <li>Account & Billing classification extractors also run again; they never send email or customer replies.</li>
+            </ul>`}
         <div class="reroute-modal__actions">
           <button class="ghost-button" type="button" data-action="close-reroute-confirmation">Cancel</button>
-          <button class="primary-button" type="button" data-action="confirm-reroute">Rerun all cases</button>
+          <button class="${singleCase ? "danger-button" : "primary-button"}" type="button" data-action="${singleCase ? "confirm-single-rerun" : "confirm-reroute"}" ${state.isStartingReroute ? "disabled" : ""}>
+            ${singleCase ? "Rerun this case" : "Rerun all cases"}
+          </button>
         </div>
       </section>
     </div>
@@ -1683,12 +1872,19 @@ document.addEventListener("visibilitychange", () => {
         });
       }
     }
-    if (isActiveRerouteJob()) void fetchLatestRerouteJob({ refreshCasesOnCompletion: true }).then(render);
+    if (isActiveRerouteJob()) {
+      const jobId = String(state.rerouteJob?.job_id || "").trim();
+      const refresh = jobId
+        ? fetchRerouteJob(jobId, { refreshCasesOnCompletion: true })
+        : fetchLatestRerouteJob({ refreshCasesOnCompletion: true });
+      void refresh.then(render);
+    }
   }
 });
 
 window.addEventListener("pagehide", () => {
   summaryRequestController?.abort();
+  caseSearchRequestController?.abort();
   detailRequestControllers.forEach((controller) => controller.abort());
   summaryCache.clear();
   detailCache.clear();
@@ -1698,11 +1894,21 @@ window.addEventListener("pagehide", () => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.rerouteConfirmationOpen) {
     state.rerouteConfirmationOpen = false;
+    state.rerouteTargetSnapshot = null;
     render();
   }
 });
 
 function bind() {
+  const caseSearchForm = document.querySelector("[data-case-search-form]");
+  if (caseSearchForm) caseSearchForm.addEventListener("submit", searchCaseByNumber);
+  const caseSearchInput = document.querySelector("[data-case-search-input]");
+  if (caseSearchInput) {
+    caseSearchInput.addEventListener("input", (event) => {
+      state.caseSearchQuery = event.target.value;
+      state.caseSearchError = "";
+    });
+  }
   const form = document.querySelector("[data-account-form]");
   if (form) {
     form.addEventListener("submit", submitAccountIntake);
@@ -1754,9 +1960,22 @@ function bind() {
   });
   document.querySelectorAll("[data-action='open-reroute-confirmation']").forEach((el) => {
     el.addEventListener("click", () => {
+      state.rerouteTargetSnapshot = null;
       state.rerouteConfirmationOpen = true;
       render();
       document.querySelector("[data-reroute-dialog] [data-action='confirm-reroute']")?.focus();
+    });
+  });
+  document.querySelectorAll("[data-action='open-single-rerun-confirmation']").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (!state.activeItem || state.isStartingReroute || isActiveRerouteJob()) return;
+      state.rerouteTargetSnapshot = {
+        caseId: accountCaseIdentifier(state.activeItem),
+        ticketNumber: accountTicketNumber(state.activeItem),
+      };
+      state.rerouteConfirmationOpen = true;
+      render();
+      document.querySelector("[data-reroute-dialog] [data-action='confirm-single-rerun']")?.focus();
     });
   });
   document.querySelectorAll("[data-action='close-reroute-confirmation']").forEach((el) => {
@@ -1766,11 +1985,15 @@ function bind() {
         && event.target.closest("[data-reroute-dialog]")
       ) return;
       state.rerouteConfirmationOpen = false;
+      state.rerouteTargetSnapshot = null;
       render();
     });
   });
   document.querySelectorAll("[data-action='confirm-reroute']").forEach((el) => {
     el.addEventListener("click", () => void startFullReroute());
+  });
+  document.querySelectorAll("[data-action='confirm-single-rerun']").forEach((el) => {
+    el.addEventListener("click", () => void startSingleCaseRerun());
   });
   document.querySelectorAll("[data-action='submit-reply']").forEach((el) => {
     el.addEventListener("click", submitReply);

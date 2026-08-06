@@ -39,6 +39,8 @@ from pydantic import AliasChoices, BaseModel, Field
 import psycopg
 
 from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_AI_ONLY,
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
     InMemoryTicketRepository,
     TicketRepository,
     create_ticket_repository,
@@ -5006,11 +5008,20 @@ async def _enqueue_account_rerun_job(
         str(item or "").strip() for item in (target_case_ids or []) if str(item or "").strip()
     ))
     created_at = now_iso()
+    single_case = bool(normalized_targets)
     job = {
         "job_id": f"account-rerun-{uuid4().hex}",
         "mode": "fresh_case_rerun",
-        "scope": "single_case" if normalized_targets else "all_cases",
+        "scope": "single_case" if single_case else "all_cases",
         "target_case_ids": normalized_targets,
+        "reset_mode": (
+            ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY
+            if single_case
+            else ACCOUNT_RERUN_RESET_AI_ONLY
+        ),
+        "audit_actor_id": "account_ui" if single_case else "system",
+        "requested_at": created_at,
+        "build_ref": str(get_app_build_info().get("ref") or "unknown").strip() or "unknown",
         "status": "queued",
         "total": 0,
         "processed": 0,
@@ -5025,9 +5036,13 @@ async def _enqueue_account_rerun_job(
         "emails_failed": 0,
         "replies_scheduled": 0,
         "replies_deleted": 0,
+        "messages_deleted": 0,
+        "customer_messages_retained": 0,
         "reply_jobs_deleted": 0,
         "reply_executions_deleted": 0,
         "customer_replies_cleared": 0,
+        "route_reviews_reset": 0,
+        "route_corrections_cleared": 0,
         "new_replies_published": 0,
         "reply_job_ids": [],
         "reply_jobs_pending": 0,
@@ -5046,6 +5061,59 @@ async def _enqueue_account_rerun_job(
     _save_account_full_reroute_job(job)
     background_tasks.add_task(_run_account_full_reroute_job, job["job_id"])
     return job
+
+
+async def _record_account_rerun_terminal_audit(
+    job: dict[str, Any],
+    *,
+    event_type: str,
+    terminal_status: str,
+    completed_at: str,
+) -> None:
+    if str(job.get("scope") or "") != "single_case":
+        return
+    target_case_id = next(
+        (str(item or "").strip() for item in job.get("target_case_ids") or [] if str(item or "").strip()),
+        "",
+    )
+    account_case = await _account_rerun_storage_call(
+        _account_case_for_identifier,
+        target_case_id,
+    )
+    ticket_number = str((account_case or {}).get("client_ticket_id") or "").strip()
+    payload = {
+        "audit_event_id": f"{event_type}:{job.get('job_id')}",
+        "job_id": str(job.get("job_id") or "").strip(),
+        "account_case_id": target_case_id,
+        "ticket_number": ticket_number,
+        "reset_mode": str(job.get("reset_mode") or "").strip(),
+        "requested_at": str(job.get("requested_at") or job.get("created_at") or "").strip(),
+        "completed_at": completed_at,
+        "terminal_status": terminal_status,
+        "build_ref": str(job.get("build_ref") or "unknown").strip() or "unknown",
+        "processed": int(job.get("processed") or 0),
+        "succeeded": int(job.get("succeeded") or 0),
+        "failed": int(job.get("failed") or 0),
+        "messages_deleted": int(job.get("messages_deleted") or 0),
+        "customer_messages_retained": int(job.get("customer_messages_retained") or 0),
+        "reply_jobs_deleted": int(job.get("reply_jobs_deleted") or 0),
+        "reply_executions_deleted": int(job.get("reply_executions_deleted") or 0),
+        "customer_replies_cleared": int(job.get("customer_replies_cleared") or 0),
+        "route_reviews_reset": int(job.get("route_reviews_reset") or 0),
+        "route_corrections_cleared": int(job.get("route_corrections_cleared") or 0),
+        "emails_sent": int(job.get("emails_sent") or 0),
+        "replies_scheduled": int(job.get("replies_scheduled") or 0),
+        "route_counts": dict(job.get("route_counts") or {}),
+        "handler_counts": dict(job.get("handler_counts") or {}),
+    }
+    await _account_rerun_storage_call(
+        ticket_repository.record_workspace_audit_event,
+        event_type,
+        actor_id="account_ui",
+        target_id=target_case_id or None,
+        payload=payload,
+        created_at=completed_at,
+    )
 
 
 def _account_rerun_reply_wait_timeout_seconds() -> float:
@@ -5232,16 +5300,30 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     client_ticket_id,
                     reset_at=now_iso(),
                     rerun_job_id=job_id,
+                    reset_mode=str(job.get("reset_mode") or ACCOUNT_RERUN_RESET_AI_ONLY),
+                    audit_context={
+                        "account_case_id": case_id,
+                        "ticket_number": client_ticket_id,
+                        "requested_at": job.get("requested_at") or job.get("created_at"),
+                        "build_ref": job.get("build_ref"),
+                    },
                 )
                 for stat_name, count_key in (
-                    ("replies_deleted", "ai_messages_deleted"),
+                    ("replies_deleted", "messages_deleted"),
+                    ("messages_deleted", "messages_deleted"),
+                    ("customer_messages_retained", "customer_messages_retained"),
                     ("reply_jobs_deleted", "reply_jobs_deleted"),
                     ("reply_executions_deleted", "reply_executions_deleted"),
                     ("customer_replies_cleared", "customer_replies_cleared"),
+                    ("route_reviews_reset", "route_review_reset"),
+                    ("route_corrections_cleared", "route_correction_cleared"),
                 ):
+                    count_value = reset_counts.get(count_key)
+                    if count_key == "messages_deleted" and count_value is None:
+                        count_value = reset_counts.get("ai_messages_deleted")
                     job[stat_name] = int(job.get(stat_name) or 0) + int(
-                        reset_counts.get(count_key) or 0
-                )
+                        count_value or 0
+                    )
                 # Reset removes Account AI messages before routing so the latest
                 # assistant context cannot influence the fresh classification.
                 canonical_ticket = await _account_rerun_storage_call(
@@ -5250,6 +5332,13 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 )
                 if canonical_ticket is None:
                     raise ValueError("canonical support ticket disappeared during rerun reset")
+                reset_account_case = await _account_rerun_storage_call(
+                    ticket_repository.get_account_case,
+                    case_id,
+                )
+                if not isinstance(reset_account_case, dict):
+                    raise ValueError("Account Case disappeared during rerun reset")
+                account_case = reset_account_case
                 case_stage = "routed"
                 result = await async_to_thread(
                     reprocess_account_case,
@@ -5428,17 +5517,28 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
         await _wait_for_account_rerun_replies(job)
         await _reconcile_account_rerun_failures(job)
         completed_at = now_iso()
-        job.update(
-            status=(
-                "completed_with_errors"
-                if (
-                    job["failed"]
-                    or job.get("reply_wait_timed_out")
-                    or job.get("reply_jobs_manual_attention")
-                    or job.get("reply_jobs_failed")
-                )
-                else "completed"
+        terminal_status = (
+            "completed_with_errors"
+            if (
+                job["failed"]
+                or job.get("reply_wait_timed_out")
+                or job.get("reply_jobs_manual_attention")
+                or job.get("reply_jobs_failed")
+            )
+            else "completed"
+        )
+        await _record_account_rerun_terminal_audit(
+            job,
+            event_type=(
+                "account_case_full_rerun_completed"
+                if terminal_status == "completed"
+                else "account_case_full_rerun_failed"
             ),
+            terminal_status=terminal_status,
+            completed_at=completed_at,
+        )
+        job.update(
+            status=terminal_status,
             completed_at=completed_at,
             updated_at=completed_at,
         )
@@ -5446,9 +5546,22 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
     except Exception as exc:
         LOGGER.exception("Account full reroute job failed")
         failed_at = now_iso()
+        audit_persistence_failed = False
+        if str(job.get("scope") or "") == "single_case":
+            try:
+                await _record_account_rerun_terminal_audit(
+                    job,
+                    event_type="account_case_full_rerun_failed",
+                    terminal_status="failed",
+                    completed_at=failed_at,
+                )
+            except Exception:
+                audit_persistence_failed = True
+                LOGGER.exception("Could not persist Account single-case rerun failure audit")
         job.update(
             status="failed",
             error=str(exc)[:1000],
+            audit_persistence_failed=audit_persistence_failed,
             completed_at=failed_at,
             updated_at=failed_at,
         )

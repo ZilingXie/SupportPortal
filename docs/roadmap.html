@@ -1472,6 +1472,7 @@
             <li><strong>Scope：</strong>自动化覆盖 account verification、account suspension、detailed invoice 与 enablement。</li>
             <li><strong>Metrics：</strong>以全部 /account ticket 为分母展示 routed-to-Automated 占比，并据此决定是否扩充 category。</li>
             <li><strong>Account filters：</strong>/account 默认使用 All，并按 Automation、Account &amp; Billing、Conversation、Human Review 等 route group/leaf 提供分页和同一快照的 case counts。</li>
+            <li><strong>Single Case operations：</strong>/account 可按 ticket # 精准打开 Case，并对单 Case 执行仅保留客户消息、保留独立 workspace audit 的完整 Rerun。</li>
             <li><strong>Admin：</strong>新增 Automated Cases 与 Environment Config 控制面；Route Strategy 已合并到 Agent Config 的 Agent-only 层级导航，route outcome 仅在 Overview 解释，Automation Router 统一管理 Persona 并原位展开具体行为的 Prompt 或 deterministic capability。Agent Config 继续支持 Prompt Draft、Scheduled、Active、Diff、Restore 与历史版本，并绑定每日成功部署统一生效。</li>
           </ul>
           <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-&gt;</span></a>
@@ -2080,6 +2081,7 @@ flowchart TD
         thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router 和 Automation Router，并同时记录大标签、小标签与稳定 reason code。Account & Billing 以 account_suspension、other 为子类；Automation 以 fraud_account、detailed_invoice、enablement、quota 作为规范 subcategory。`/client` 继续使用原共享 Router。",
         done: [
           { summary: "`/account` 已强制采用当前三层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行三层路由、Field Extractor 与 Automation handler reconciliation。每个 Case 保留客户消息和路由审计，旧 Account AI 回复、reply job 与 reply execution 会先物理删除，再按 delivery binding 重建内部邮件与 Persona 回复。", prs: [] },
+          { summary: "`/account` 已支持按 ticket # 精准搜索，并可对单 Case 执行完整 Rerun：客户消息原样保留，所有 AI、Engineer、Manual 与 Internal 消息以及当前 route correction 被清除，独立 workspace audit 持久保留。", prs: [] },
           { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；非风控 Account Suspension 已迁移到 `category=account_billing`，由 Account & Billing Router 分类并仅提取上下文，不触发追问、邮件或客户回复。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Quota handler 已支持配额审核、并发提升和 Big Event 容量报备；系统以 LLM 收集产品、App ID、目标容量与活动信息，最多追问一次后发送内部邮件并处理 Outlook 回复。", prs: [] },

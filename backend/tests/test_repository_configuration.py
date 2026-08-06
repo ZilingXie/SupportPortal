@@ -20,8 +20,13 @@ from backend.repositories.knowledge_repository import (
     _vector_type_dimension,
     create_knowledge_repository,
 )
-from backend.repositories.ticket_repository import PoolTimeout, PostgresTicketRepository, create_ticket_repository
-from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    InMemoryTicketRepository,
+    PoolTimeout,
+    PostgresTicketRepository,
+    create_ticket_repository,
+)
 
 
 class _BenchmarkPrepCursor:
@@ -93,6 +98,57 @@ class _RowcountCursor(_ReusableCursor):
     def __init__(self, *, rowcount: int) -> None:
         super().__init__()
         self.rowcount = rowcount
+
+
+class _AccountRerunResetCursor(_ReusableCursor):
+    def __init__(self, *, fail_audit_insert: bool = False) -> None:
+        super().__init__()
+        self._last_sql = ""
+        self._fail_audit_insert = fail_audit_insert
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+        if self._fail_audit_insert and "support_workspace_audit_events" in self._last_sql:
+            raise RuntimeError("audit insert failed")
+
+    def fetchone(self):
+        if "SELECT ticket_id" in self._last_sql:
+            return ("12572",)
+        if "SELECT account_case_id" in self._last_sql:
+            return ("AC-12572", "AC-12572", "Existing reply", "reviewed")
+        if "SELECT original_scope_label" in self._last_sql:
+            return (
+                "uncertain",
+                "human_review",
+                "human_review_required",
+                "manual",
+                "billing",
+                "automated",
+                "detailed_invoice",
+                "deterministic_billing_intake",
+                "billing",
+                "automated",
+                "detailed_invoice",
+                "deterministic_billing_intake",
+                1,
+            )
+        if "SELECT COUNT(*)" in self._last_sql:
+            return (2,)
+        return None
+
+    def fetchall(self):
+        if "DELETE FROM" in self._last_sql and "support_ticket_messages" in self._last_sql:
+            return [("assistant",), ("engineer",), ("internal",), ("mystery",)]
+        if "support_account_reply_executions" in self._last_sql:
+            return [("reply-execution-1",)]
+        if "support_account_reply_jobs" in self._last_sql:
+            return [("reply-job-1",)]
+        return []
 
 
 class _ExecuteFailsOnceCursor(_ReusableCursor):
@@ -206,6 +262,64 @@ class _BorrowingPool(_FakePool):
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_postgres_single_case_reset_writes_audit_in_the_reset_transaction(self) -> None:
+        cursor = _AccountRerunResetCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            counts = repository.reset_account_rerun_state(
+                "12572",
+                reset_at="2026-08-04T00:00:00+00:00",
+                rerun_job_id="account-rerun-test",
+                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                audit_context={
+                    "account_case_id": "AC-12572",
+                    "ticket_number": "12572",
+                    "requested_at": "2026-08-04T00:00:00+00:00",
+                    "build_ref": "test-build",
+                },
+            )
+
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+        self.assertEqual(counts["customer_messages_retained"], 2)
+        self.assertEqual(counts["messages_deleted"], 4)
+        self.assertEqual(
+            counts["deleted_messages_by_role"],
+            {"assistant": 1, "engineer": 1, "internal": 1, "unknown": 1},
+        )
+        executed_sql = "\n".join(cursor._sql_text(args[0]) for args, _kwargs in cursor.executed)
+        self.assertIn("support_workspace_audit_events", executed_sql)
+        self.assertIn("support_billing_route_corrections", executed_sql)
+        self.assertIn("route_review_status='pending'", executed_sql.replace(" ", ""))
+
+    def test_postgres_single_case_reset_rolls_back_when_audit_insert_fails(self) -> None:
+        cursor = _AccountRerunResetCursor(fail_audit_insert=True)
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "audit insert failed"):
+                repository.reset_account_rerun_state(
+                    "12572",
+                    reset_at="2026-08-04T00:00:00+00:00",
+                    rerun_job_id="account-rerun-test",
+                    reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                    audit_context={"account_case_id": "AC-12572"},
+                )
+
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
     def test_supersede_account_ai_messages_formats_jsonb_default_literal(self) -> None:
         cursor = _RowcountCursor(rowcount=2)
         connection = _ReusableConnection(cursor)

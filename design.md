@@ -378,7 +378,9 @@
 7. `manual_attention / failed` 必须作为文字状态显示并使用 `aria-live="polite"`，不能只靠颜色。客户在等待期间追加消息时，旧 scheduled reply 必须取消并由最新上下文替代。
 8. Automation Behavior 只保存结构化字段、路由状态、内部动作和发送时机；客户可见文案必须在最终发送入口由统一 Automation Persona 生成。Persona 失败、缺少人设或事实抽取失败时显示 Human Review，不发送 Behavior 兜底文案。
 9. `/account` 列表使用两级 route filter：默认 `All`，一级使用紧凑按钮展示 All、Automation、Account & Billing、Tech、Non-tech、Conversation、Human Review，并在每个按钮后显示服务端 facet count。页面只保留一个二级下拉菜单，且只在当前一级存在真实子路由时启用；下拉第一项为当前一级的全部结果。列表分页只渲染服务端返回的当前页，不再在浏览器重复筛选。
-10. Filter count、当前页和 total 必须来自同一数据库快照；内存缓存仅保存当前页摘要与受限详情，缓存响应不得覆盖更新版本的 counts。Filter 按钮保持键盘可操作、`aria-pressed` 状态明确，二级菜单使用原生 select 并具备清晰 label；All、Tech、Non-tech 没有子路由时显示禁用状态，窄屏按钮矩阵和下拉菜单不得造成横向溢出。
+10. `/account` 的 Case # 搜索位于 route filter 之前，使用单行紧凑输入与图标按钮，只接受精确数字编号（允许输入一个前导 `#`）。命中后直接打开详情，但不得改变当前 filter、页码或列表内容；not found 与服务异常必须显示不同反馈。
+11. 单 Case 的 `Rerun this case` 属于不可逆危险操作，固定放在 detail header 的独立 action 区，不与 route 标签混成一个 badge。确认弹窗必须冻结目标 Case ID，并明确说明非客户消息、人工消息与当前 route correction 会被删除，内部邮件可能重发，独立审计会保留；运行期间所有 rerun 入口必须禁用。
+12. Filter count、当前页和 total 必须来自同一数据库快照；内存缓存仅保存当前页摘要与受限详情，缓存响应不得覆盖更新版本的 counts。Filter 按钮保持键盘可操作、`aria-pressed` 状态明确，二级菜单使用原生 select 并具备清晰 label；All、Tech、Non-tech 没有子路由时显示禁用状态，窄屏按钮矩阵和下拉菜单不得造成横向溢出。
 
 ### 6.9 Internal Automation Email Handoff
 1. Fraud Account、Account Verification、Detailed Invoice、Enablement、Quota 的内部 handoff 邮件必须复用统一的 `Internal Automation Email` 模板；Workspace Invitation 属于用户外发邮件，不使用该模板。
