@@ -3282,3 +3282,24 @@ For each new entry, record:
   - Unit route contract confirms the legal/compliance path invokes only Intent Classifier and Agora Router.
   - Single-case rerun contract confirms only the requested Case is selected.
   - Post-deploy live rerun of Case 12562 will verify `Agora / Uncategorized + Human Review`.
+
+## 2026-08-06 - Cross-deployment internal email payload compatibility
+
+- Area or subsystem: `/account` Automation internal handoff delivery
+- Prompt or model version: `internal-handoff-v1` / deterministic domain renderers
+- Summary: Added a version-aware payload upgrader so unsent Fraud, Invoice, Enablement, and Quota handoffs are rebuilt with the current HTML template before retry; added an atomic delivery claim and completion guard.
+- Reason: Cases created before a deployment retained the old plain-text payload, and the retry worker sent that persisted payload without re-rendering it. Concurrent workers could also send before one worker's state update was saved.
+- Affected files or config:
+  - `backend/services/internal_email_payload.py`
+  - `backend/services/account_verification_automation.py`
+  - `backend/services/billing_automation.py`
+  - `backend/services/enablement_automation.py`
+  - `backend/services/quota_automation.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/worker.py`
+- Expected behavior change:
+  - Only unsent retryable payloads are upgraded; sent payloads are never rewritten or resent.
+  - Delivery metadata and customer-confirmation idempotency keys are preserved.
+  - A single Case/delivery key can be claimed by one worker; unreconstructable payloads enter manual attention without sending legacy content.
+- Verification:
+  - Legacy payload upgrade, sent-case preservation, four handler renderers, claim-token ownership, and Enablement retry tests pass.

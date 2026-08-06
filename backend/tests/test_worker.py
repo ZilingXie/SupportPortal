@@ -2219,6 +2219,10 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(first["confirmations"], 1)
         self.assertEqual(second["sent"], 0)
         send_mail.assert_called_once()
+        sent_payload = send_mail.call_args.args[0]
+        self.assertEqual(sent_payload["body_content_type"], "HTML")
+        self.assertIn("body_html", sent_payload)
+        self.assertNotEqual(sent_payload["body"], "Internal request")
         repository.save_account_reply_job.assert_called_once()
         reply_job = repository.save_account_reply_job.call_args.args[0]
         self.assertEqual(
@@ -2373,6 +2377,37 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(result["confirmations"], 0)
         send_mail.assert_not_called()
         repository.save_account_reply_job.assert_not_called()
+
+    def test_enablement_delivery_retry_marks_unreconstructable_payload_for_manual_attention(self) -> None:
+        account_case = {
+            "account_case_id": "AC-unrecoverable",
+            "client_ticket_id": "unrecoverable",
+            "automation_handler": "enablement",
+            "missing_fields": [],
+            "collected_fields": {},
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-unrecoverable:v1",
+                "body": "legacy body",
+            },
+            "internal_email_send_status": "retry",
+            "updated_at": "2026-07-24T00:00:00+00:00",
+        }
+        repository = Mock()
+        repository.list_billing_tickets.return_value = [account_case]
+        repository.get_ticket.return_value = {"ticket_id": "unrecoverable", "messages": []}
+        repository.claim_account_internal_email_delivery.return_value = True
+        repository.complete_account_internal_email_delivery.return_value = True
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "send_enablement_internal_email",
+        ) as send_mail:
+            result = worker.retry_enablement_internal_deliveries_once()
+
+        self.assertEqual(result["sent"], 0)
+        self.assertEqual(account_case["internal_email_send_status"], "manual_attention")
+        send_mail.assert_not_called()
+        repository.complete_account_internal_email_delivery.assert_called_once()
 
     def test_handle_billing_request_reply_rejects_empty_body_before_marking_read(self) -> None:
         repository = Mock()

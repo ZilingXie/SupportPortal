@@ -64,6 +64,10 @@ from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
     send_enablement_internal_email,
 )
+from backend.services.internal_email_payload import (
+    InternalEmailPayloadUpgradeError,
+    upgrade_internal_email_payload,
+)
 from backend.services.quota_automation import (
     QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX,
 )
@@ -927,6 +931,102 @@ def _queue_enablement_submission_confirmation(
     return True
 
 
+def _send_claimed_enablement_delivery(account_case: dict[str, Any]) -> dict[str, Any]:
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    if not account_case_id or not ticket_id:
+        return {"status": "skipped", "reason": "missing_case_or_ticket_id", "claimed": False}
+    canonical_ticket = ticket_repository.get_ticket(ticket_id)
+    if not isinstance(canonical_ticket, dict):
+        return {"status": "skipped", "reason": "linked_ticket_not_found", "claimed": False}
+    try:
+        payload, upgraded = upgrade_internal_email_payload(account_case, canonical_ticket)
+    except InternalEmailPayloadUpgradeError:
+        payload = (
+            dict(account_case.get("internal_email_payload"))
+            if isinstance(account_case.get("internal_email_payload"), dict)
+            else {}
+        )
+        delivery_key = str(payload.get("delivery_key") or "").strip()
+        claim_token = uuid4().hex
+        marked_manual = bool(
+            delivery_key
+            and ticket_repository.claim_account_internal_email_delivery(
+                account_case_id,
+                delivery_key=delivery_key,
+                claim_token=claim_token,
+                claimed_at=now_iso(),
+                payload=payload,
+            )
+            and ticket_repository.complete_account_internal_email_delivery(
+                account_case_id,
+                delivery_key=delivery_key,
+                claim_token=claim_token,
+                payload=payload,
+                send_status="manual_attention",
+                send_reason="template_upgrade_failed",
+                completed_at=now_iso(),
+            )
+        )
+        if marked_manual:
+            account_case["internal_email_send_status"] = "manual_attention"
+            account_case["internal_email_send_reason"] = "template_upgrade_failed"
+        return {
+            "status": "manual_attention" if marked_manual else "failed",
+            "reason": "template_upgrade_failed",
+            "claimed": marked_manual,
+        }
+    delivery_key = str(payload.get("delivery_key") or "").strip()
+    if not delivery_key:
+        return {"status": "failed", "reason": "missing_delivery_key", "claimed": False}
+    claim_token = uuid4().hex
+    attempt_payload = dict(payload)
+    attempt_payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
+    attempt_payload["last_attempt_at"] = now_iso()
+    claimed = ticket_repository.claim_account_internal_email_delivery(
+        account_case_id,
+        delivery_key=delivery_key,
+        claim_token=claim_token,
+        claimed_at=now_iso(),
+        payload=attempt_payload,
+    )
+    if not claimed:
+        return {"status": "claimed_elsewhere", "reason": "", "claimed": False}
+
+    result = send_enablement_internal_email(attempt_payload)
+    send_status = str(result.get("status") or "failed").strip() or "failed"
+    send_reason = str(result.get("reason") or "").strip()
+    resolved_to = str(result.get("resolved_to") or "").strip()
+    if resolved_to:
+        attempt_payload["resolved_to"] = resolved_to
+    attempt_payload.pop("delivery_claim_token", None)
+    completed = ticket_repository.complete_account_internal_email_delivery(
+        account_case_id,
+        delivery_key=delivery_key,
+        claim_token=claim_token,
+        payload=attempt_payload,
+        send_status=send_status,
+        send_reason=send_reason,
+        completed_at=now_iso(),
+    )
+    if not completed:
+        return {"status": "delivery_unknown", "reason": "delivery_state_not_committed", "claimed": True}
+
+    account_case["internal_email_payload"] = attempt_payload
+    account_case["internal_email_send_status"] = send_status
+    account_case["internal_email_send_reason"] = send_reason
+    account_case["updated_at"] = now_iso()
+    return {
+        "status": send_status,
+        "reason": send_reason,
+        "claimed": True,
+        "upgraded": upgraded,
+        "payload": attempt_payload,
+    }
+
+
 def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, int]:
     counts = {"examined": 0, "sent": 0, "retried": 0, "confirmations": 0}
     cases = ticket_repository.list_billing_tickets(limit=max(1, limit))
@@ -947,33 +1047,13 @@ def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, 
             continue
         if status not in {"pending", "retry", "failed", "skipped_config_missing"} or not payload:
             continue
-        account_case_id = str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip()
-        latest_case = ticket_repository.get_account_case(account_case_id) if account_case_id else None
-        if isinstance(latest_case, dict) and str(latest_case.get("updated_at") or "") != str(
-            account_case.get("updated_at") or ""
-        ):
-            # A fresh rerun may have reset this delivery while this poller was reading it.
-            continue
         updated_at = _parse_iso_datetime(str(account_case.get("updated_at") or ""))
         if updated_at is not None and (datetime.now(timezone.utc) - updated_at).total_seconds() < 30:
             continue
         counts["examined"] += 1
-        result = send_enablement_internal_email(payload)
-        payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
-        payload["last_attempt_at"] = now_iso()
-        resolved_to = str(result.get("resolved_to") or "").strip()
-        if resolved_to:
-            payload["resolved_to"] = resolved_to
-        latest_case = ticket_repository.get_account_case(account_case_id) if account_case_id else None
-        if isinstance(latest_case, dict) and str(latest_case.get("updated_at") or "") != str(
-            account_case.get("updated_at") or ""
-        ):
+        result = _send_claimed_enablement_delivery(account_case)
+        if not result.get("claimed"):
             continue
-        account_case["internal_email_payload"] = payload
-        account_case["internal_email_send_status"] = str(result.get("status") or "failed")
-        account_case["internal_email_send_reason"] = str(result.get("reason") or "")
-        account_case["updated_at"] = now_iso()
-        ticket_repository.save_account_case(account_case)
         if account_case["internal_email_send_status"] == "sent":
             counts["sent"] += 1
             counts["confirmations"] += int(_queue_enablement_submission_confirmation(account_case))

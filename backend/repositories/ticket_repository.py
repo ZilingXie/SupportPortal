@@ -1353,6 +1353,36 @@ class TicketRepository(Protocol):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         ...
 
+    def claim_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        claim_token: str,
+        claimed_at: str,
+        payload: dict[str, Any],
+        allowed_statuses: tuple[str, ...] = (
+            "pending",
+            "retry",
+            "failed",
+            "skipped_config_missing",
+        ),
+    ) -> bool:
+        ...
+
+    def complete_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        claim_token: str,
+        payload: dict[str, Any],
+        send_status: str,
+        send_reason: str,
+        completed_at: str,
+    ) -> bool:
+        ...
+
     def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
         ...
 
@@ -1476,6 +1506,87 @@ class TicketRepository(Protocol):
 class InMemoryTicketRepository:
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
+
+    def claim_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        claim_token: str,
+        claimed_at: str,
+        payload: dict[str, Any],
+        allowed_statuses: tuple[str, ...] = (
+            "pending",
+            "retry",
+            "failed",
+            "skipped_config_missing",
+        ),
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        normalized_key = str(delivery_key or "").strip()
+        for billing_ticket_id, current in self._billing_tickets.items():
+            current_id = str(
+                current.get("account_case_id") or current.get("billing_ticket_id") or ""
+            ).strip()
+            current_payload = current.get("internal_email_payload")
+            current_key = (
+                str(current_payload.get("delivery_key") or "").strip()
+                if isinstance(current_payload, dict)
+                else ""
+            )
+            if current_id != normalized_id or current_key != normalized_key:
+                continue
+            if str(current.get("internal_email_send_status") or "").strip() not in set(allowed_statuses):
+                return False
+            claimed_payload = copy.deepcopy(payload)
+            claimed_payload["delivery_claim_token"] = str(claim_token or "").strip()
+            updated = copy.deepcopy(current)
+            updated["internal_email_payload"] = claimed_payload
+            updated["internal_email_send_status"] = "sending"
+            updated["internal_email_send_reason"] = "delivery_claimed"
+            updated["updated_at"] = claimed_at
+            self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
+            return True
+        return False
+
+    def complete_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        claim_token: str,
+        payload: dict[str, Any],
+        send_status: str,
+        send_reason: str,
+        completed_at: str,
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        normalized_key = str(delivery_key or "").strip()
+        normalized_claim = str(claim_token or "").strip()
+        for billing_ticket_id, current in self._billing_tickets.items():
+            current_id = str(
+                current.get("account_case_id") or current.get("billing_ticket_id") or ""
+            ).strip()
+            current_payload = current.get("internal_email_payload")
+            if not isinstance(current_payload, dict):
+                continue
+            if (
+                current_id != normalized_id
+                or str(current_payload.get("delivery_key") or "").strip() != normalized_key
+                or str(current_payload.get("delivery_claim_token") or "").strip() != normalized_claim
+                or str(current.get("internal_email_send_status") or "").strip() != "sending"
+            ):
+                continue
+            completed_payload = copy.deepcopy(payload)
+            completed_payload.pop("delivery_claim_token", None)
+            updated = copy.deepcopy(current)
+            updated["internal_email_payload"] = completed_payload
+            updated["internal_email_send_status"] = str(send_status or "failed").strip() or "failed"
+            updated["internal_email_send_reason"] = str(send_reason or "").strip()
+            updated["updated_at"] = completed_at
+            self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
+            return True
+        return False
 
     def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
         return self.get_billing_ticket(account_case_id)
@@ -3828,6 +3939,112 @@ def _build_trace_ticket_snapshot_payload(
 class PostgresTicketRepository:
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
+
+    def claim_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        claim_token: str,
+        claimed_at: str,
+        payload: dict[str, Any],
+        allowed_statuses: tuple[str, ...] = (
+            "pending",
+            "retry",
+            "failed",
+            "skipped_config_missing",
+        ),
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        normalized_key = str(delivery_key or "").strip()
+        if not normalized_id or not normalized_key or not str(claim_token or "").strip():
+            return False
+        claimed_payload = copy.deepcopy(payload)
+        claimed_payload["delivery_claim_token"] = str(claim_token).strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET internal_email_payload = %s,
+                            internal_email_send_status = 'sending',
+                            internal_email_send_reason = 'delivery_claimed',
+                            updated_at = %s
+                        WHERE (billing_ticket_id = %s OR account_case_id = %s)
+                          AND internal_email_send_status = ANY(%s)
+                          AND COALESCE(internal_email_payload->>'delivery_key', '') = %s
+                        """
+                    ).format(self._table("support_account_cases")),
+                    (
+                        Json(claimed_payload),
+                        claimed_at,
+                        normalized_id,
+                        normalized_id,
+                        list(allowed_statuses),
+                        normalized_key,
+                    ),
+                )
+                return cur.rowcount == 1
+
+        return self._run_with_connection_retry(
+            "claim_account_internal_email_delivery",
+            _operation,
+        )
+
+    def complete_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        claim_token: str,
+        payload: dict[str, Any],
+        send_status: str,
+        send_reason: str,
+        completed_at: str,
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        normalized_key = str(delivery_key or "").strip()
+        normalized_claim = str(claim_token or "").strip()
+        if not normalized_id or not normalized_key or not normalized_claim:
+            return False
+        completed_payload = copy.deepcopy(payload)
+        completed_payload.pop("delivery_claim_token", None)
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET internal_email_payload = %s,
+                            internal_email_send_status = %s,
+                            internal_email_send_reason = %s,
+                            updated_at = %s
+                        WHERE (billing_ticket_id = %s OR account_case_id = %s)
+                          AND internal_email_send_status = 'sending'
+                          AND COALESCE(internal_email_payload->>'delivery_key', '') = %s
+                          AND COALESCE(internal_email_payload->>'delivery_claim_token', '') = %s
+                        """
+                    ).format(self._table("support_account_cases")),
+                    (
+                        Json(completed_payload),
+                        str(send_status or "failed").strip() or "failed",
+                        str(send_reason or "").strip(),
+                        completed_at,
+                        normalized_id,
+                        normalized_id,
+                        normalized_key,
+                        normalized_claim,
+                    ),
+                )
+                return cur.rowcount == 1
+
+        return self._run_with_connection_retry(
+            "complete_account_internal_email_delivery",
+            _operation,
+        )
 
     def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
         return self.get_billing_ticket(account_case_id)
