@@ -1115,3 +1115,25 @@ def _build_internal_email(
         "subject": f"{BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX} {subject}",
         **rendered,
     }
+
+
+def build_billing_internal_email_payload(
+    *,
+    action: str,
+    collected_fields: dict[str, str],
+    ticket_id: str | None,
+    customer_email: str | None,
+    customer_message: str,
+    billing_ticket_id: str | None,
+    response_link: str | None = None,
+) -> dict[str, str]:
+    """Render a persisted Billing-family handoff without re-running extraction."""
+    return _build_internal_email(
+        action=action,
+        collected_fields=collected_fields,
+        ticket_id=ticket_id,
+        customer_email=customer_email,
+        customer_message=customer_message,
+        billing_ticket_id=billing_ticket_id,
+        response_link=response_link,
+    )

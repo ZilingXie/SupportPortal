@@ -81,6 +81,24 @@ def _internal_email(
     }
 
 
+def build_account_verification_internal_email_payload(
+    *,
+    ticket_id: str,
+    account_case_id: str,
+    customer_email: str | None,
+    collected_fields: dict[str, str],
+    missing_fields: list[str],
+) -> dict[str, str]:
+    """Render the persisted Fraud/Account Verification handoff payload."""
+    return _internal_email(
+        ticket_id=ticket_id,
+        account_case_id=account_case_id,
+        customer_email=customer_email,
+        collected_fields=collected_fields,
+        missing_fields=missing_fields,
+    )
+
+
 def build_account_verification_automation_result(
     *,
     ticket_subject: str,

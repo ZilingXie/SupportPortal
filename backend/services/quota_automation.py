@@ -203,5 +203,25 @@ def _build_internal_email(
     }
 
 
+def build_quota_internal_email_payload(
+    *,
+    ticket_id: str,
+    account_case_id: str,
+    customer_email: str | None,
+    customer_message: str,
+    collected_fields: dict[str, Any],
+    missing_fields: list[str],
+) -> dict[str, Any]:
+    """Render a persisted Quota handoff without re-running extraction."""
+    return _build_internal_email(
+        ticket_id=ticket_id,
+        account_case_id=account_case_id,
+        customer_email=customer_email,
+        customer_message=customer_message,
+        collected_fields=collected_fields,
+        missing_fields=missing_fields,
+    )
+
+
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
