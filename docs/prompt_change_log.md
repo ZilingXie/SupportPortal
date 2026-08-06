@@ -3303,3 +3303,21 @@ For each new entry, record:
   - A single Case/delivery key can be claimed by one worker; unreconstructable payloads enter manual attention without sending legacy content.
 - Verification:
   - Legacy payload upgrade, sent-case preservation, four handler renderers, claim-token ownership, and Enablement retry tests pass.
+
+## 2026-08-06 - Internal automation email dual-theme contrast
+
+- Area or subsystem: `/account` Automation internal handoff HTML template
+- Prompt or model version: `internal-handoff-v2` / deterministic domain renderers
+- Summary: Replaced the low-contrast gray dark palette with explicit Light/Dark theme tokens, Outlook `data-ogsc` overrides, and inline light fallbacks for shared Fraud, Invoice, Enablement, and Quota handoff emails.
+- Reason: Outlook dark mode flattened the previous slate-gray card, summary, and quote surfaces into a hazy medium-gray appearance. The email must remain legible in both dark and light themes without relying on client auto-inversion.
+- Affected files or config:
+  - `backend/services/internal_email_template.py`
+  - `backend/services/internal_email_payload.py` (version compatibility through the shared template version)
+  - `backend/tests/test_internal_email_template.py`
+  - `backend/tests/test_internal_email_payload.py`
+  - `design.md`
+- Expected behavior change:
+  - New emails use `internal-handoff-v2`, deep blue-black dark surfaces, crisp light defaults, explicit text/link/border colors, and Outlook-specific dark selectors.
+  - Unsent v1 HTML payloads are rebuilt as v2 while delivery keys and attempt metadata remain unchanged; sent payloads are never rewritten or resent.
+- Verification:
+  - Theme contract, HTML escaping, Graph content type, four-family payload upgrade, and sent-payload preservation tests pass.

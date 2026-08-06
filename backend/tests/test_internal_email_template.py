@@ -23,6 +23,24 @@ class _FakeResponse:
 
 
 class InternalEmailTemplateTests(unittest.TestCase):
+    def test_theme_contract_has_crisp_light_defaults_and_outlook_dark_overrides(self) -> None:
+        rendered = render_internal_handoff_email(
+            request_type="Enablement",
+            title="Media Relay enablement request",
+            ticket_id="12555",
+            intro="A customer has requested feature enablement.",
+            summary_fields=(("Customer email", "customer@example.com"),),
+            action_text="Please reply directly to this email.",
+        )
+
+        html = rendered["body_html"]
+        self.assertIn('bgcolor="#FFFFFF"', html)
+        self.assertIn("[data-ogsc] .email-shell", html)
+        self.assertIn("[data-ogsc].email-body", html)
+        self.assertIn("[data-ogsc] .email-panel", html)
+        self.assertIn("#0C1C26", html)
+        self.assertNotIn("#303941", html)
+
     def test_rendering_escapes_customer_values_and_preserves_plain_text(self) -> None:
         rendered = render_internal_handoff_email(
             request_type="Enablement",

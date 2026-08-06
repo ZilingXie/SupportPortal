@@ -11,6 +11,9 @@ from backend.services.internal_email_template import INTERNAL_EMAIL_TEMPLATE_VER
 
 
 class InternalEmailPayloadUpgradeTests(unittest.TestCase):
+    def test_template_version_is_v2(self) -> None:
+        self.assertEqual(INTERNAL_EMAIL_TEMPLATE_VERSION, "internal-handoff-v2")
+
     @staticmethod
     def _ticket(ticket_id: str = "12636") -> dict[str, object]:
         return {
@@ -97,6 +100,29 @@ class InternalEmailPayloadUpgradeTests(unittest.TestCase):
         self.assertFalse(upgraded)
         self.assertEqual(payload["body"], "legacy plain text body")
         self.assertNotIn("body_html", payload)
+
+    def test_unsent_v1_html_payload_is_rebuilt_for_v2(self) -> None:
+        account_case = self._case(
+            "enablement",
+            {
+                "app_id": "app-1",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+        )
+        account_case["internal_email_payload"].update(
+            {
+                "template_version": "internal-handoff-v1",
+                "body_html": "<p>Legacy theme</p>",
+                "body_content_type": "HTML",
+            }
+        )
+
+        payload, upgraded = upgrade_internal_email_payload(account_case, self._ticket())
+
+        self.assertTrue(upgraded)
+        self.assertEqual(payload["template_version"], "internal-handoff-v2")
+        self.assertNotEqual(payload["body_html"], "<p>Legacy theme</p>")
 
     def test_unknown_handler_fails_closed(self) -> None:
         account_case = self._case("unknown", {})
