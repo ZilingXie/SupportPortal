@@ -15,5 +15,6 @@
   {"case_id":"12476","message":"I won an Agora hackathon reward and need help redeeming it.","primary_label":"Agora","secondary_label":"Agora / Uncategorized","reason_code":"no_matching_category"},
   {"case_id":"12460","message":"Please help transfer ownership of our Agora account.","primary_label":"Agora","secondary_label":"Account & Billing","reason_code":"account_billing_request"},
   {"case_id":"12458","message":"Please need help we get errors and a black screen. We find that we may need active channel media relle. Can you please help with this?","primary_label":"Agora","secondary_label":"Agora Technical","reason_code":"technical_request"},
-  {"case_id":"12456","message":"Channel Media Relay fails with server no response. Is it enabled, why does it fail, and is server configuration required?","primary_label":"Agora","secondary_label":"Agora Technical","reason_code":"technical_request"}
+  {"case_id":"12456","message":"Channel Media Relay fails with server no response. Is it enabled, why does it fail, and is server configuration required?","primary_label":"Agora","secondary_label":"Agora Technical","reason_code":"technical_request"},
+  {"case_id":"12572","message":"My Agora wallet has a balance, but Bank Transfer billing shows a payment and the invoice and payment records do not match. Please clarify the charge.","primary_label":"Agora","secondary_label":"Account & Billing / Other","reason_code":"account_billing_other"}
 ]

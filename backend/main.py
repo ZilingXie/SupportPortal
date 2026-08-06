@@ -3811,6 +3811,16 @@ def _route_error_fields(
     }
 
 
+def _route_diagnostic_fields(classification: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "route_failure_family": classification.get("route_failure_family"),
+        "stage_failure_types": dict(classification.get("stage_failure_types") or {}),
+        "stage_failure_sources": dict(classification.get("stage_failure_sources") or {}),
+        "stage_attempt_counts": dict(classification.get("stage_attempt_counts") or {}),
+        "stage_recovered": dict(classification.get("stage_recovered") or {}),
+    }
+
+
 def _build_account_ticket_view_model(
     ticket: dict[str, Any],
     correction: dict[str, Any] | None | object = _MISSING,
@@ -3902,6 +3912,7 @@ def _build_account_ticket_view_model(
         "secondary_label": secondary_label,
         "route_reason_code": route_reason_code,
         "stage_reason_codes": stage_reason_codes,
+        **_route_diagnostic_fields(route_classification),
         "source": source_display,
         "status": status,
         "automation_status": status,
@@ -3930,6 +3941,12 @@ _ACCOUNT_CASE_SUMMARY_FIELDS = (
     "automation_mode",
     "primary_label",
     "secondary_label",
+    "route_reason_code",
+    "route_failure_family",
+    "stage_failure_types",
+    "stage_failure_sources",
+    "stage_attempt_counts",
+    "stage_recovered",
     "route_review_status",
     "route_corrected",
     "route_low_confidence",
@@ -4290,6 +4307,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
             created_at=timestamp,
             classification=route_classification,
             prompt_snapshots=route_prompt_snapshots,
+            stage_attempts=getattr(account_route_result, "stage_attempts", None),
         ),
     )
     asked_field_keys = list(missing_fields) if missing_fields and not internal_email_payload else []
@@ -4445,6 +4463,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         "secondary_label": secondary_label,
         "route_reason_code": route_reason_code,
         "stage_reason_codes": stage_reason_codes,
+        **_route_diagnostic_fields(route_classification),
         # Router audit fields
         "intent_router_attempted": decision.intent_router_attempted,
         "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
@@ -4489,6 +4508,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         "secondary_label": secondary_label,
         "route_reason_code": route_reason_code,
         "stage_reason_codes": stage_reason_codes,
+        **_route_diagnostic_fields(route_classification),
         "intent_router_attempted": decision.intent_router_attempted,
         "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
         "intent_router_model_confidence": decision.intent_router_model_confidence,
@@ -6250,6 +6270,7 @@ async def reply_to_billing_ticket(
                 created_at=timestamp,
                 classification=route_classification,
                 prompt_snapshots=route_prompt_snapshots,
+                stage_attempts=getattr(route_result, "stage_attempts", None) if route_result is not None else None,
             ),
         )
 

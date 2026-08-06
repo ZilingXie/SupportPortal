@@ -9,10 +9,12 @@ from unittest.mock import patch
 from backend.services.account_route_pipeline import (
     AccountRouteStageAttempt,
     ACCOUNT_ROUTE_PIPELINE_VERSION,
+    _invoke_stage,
     account_case_labels,
     classification_for_corrected_route,
     decide_account_route,
 )
+from backend.services.llm_factory import LlmTextResult
 from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
     build_account_automation_system_prompt,
@@ -25,6 +27,102 @@ def _attempt(payload: dict[str, object]) -> AccountRouteStageAttempt:
 
 
 class AccountRoutePipelineTests(unittest.TestCase):
+    def test_stage_repairs_invalid_json_once_with_structured_output(self) -> None:
+        responses = [
+            LlmTextResult(
+                text="not json",
+                model_name="test-model",
+                provider_name="openai",
+            ),
+            LlmTextResult(
+                text='{"intent_class":"agora","intent_confidence":0.99}',
+                model_name="test-model",
+                provider_name="openai",
+            ),
+        ]
+
+        with patch(
+            "backend.services.account_route_pipeline.resolve_model_profile",
+            return_value=unittest.mock.Mock(provider="openai"),
+        ), patch(
+            "backend.services.account_route_pipeline.profile_has_invocation_credentials",
+            return_value=True,
+        ), patch(
+            "backend.services.account_route_pipeline.invoke_responses_text",
+            side_effect=responses,
+        ) as invoke:
+            result = _invoke_stage(
+                stage_name="intent_classifier",
+                prompt_key="account-intent-classifier-system",
+                fallback_system_prompt="Return JSON.",
+                payload={"message": "How do I generate an RTC token?"},
+                validate_payload=lambda payload: None
+                if payload.get("intent_class") == "agora"
+                else "missing_required_field",
+            )
+
+        self.assertEqual(result.payload["intent_class"], "agora")
+        self.assertEqual(result.attempt_count, 2)
+        self.assertTrue(result.recovered)
+        self.assertEqual(result.attempt_failures[0]["failure_type"], "invalid_json")
+        self.assertEqual(invoke.call_count, 2)
+        for call in invoke.call_args_list:
+            self.assertEqual(
+                call.kwargs["extra_payload"],
+                {"text": {"format": {"type": "json_object"}}},
+            )
+        self.assertIn("violated the output contract", invoke.call_args_list[1].kwargs["user_prompt"])
+
+    def test_stage_does_not_retry_valid_low_confidence_payload(self) -> None:
+        response = LlmTextResult(
+            text='{"intent_class":"agora","intent_confidence":0.4}',
+            model_name="test-model",
+            provider_name="openai",
+        )
+        with patch(
+            "backend.services.account_route_pipeline.resolve_model_profile",
+            return_value=unittest.mock.Mock(provider="openai"),
+        ), patch(
+            "backend.services.account_route_pipeline.profile_has_invocation_credentials",
+            return_value=True,
+        ), patch(
+            "backend.services.account_route_pipeline.invoke_responses_text",
+            return_value=response,
+        ) as invoke:
+            result = _invoke_stage(
+                stage_name="intent_classifier",
+                prompt_key="account-intent-classifier-system",
+                fallback_system_prompt="Return JSON.",
+                payload={"message": "Maybe something is wrong."},
+                validate_payload=lambda payload: None,
+            )
+
+        self.assertEqual(result.attempt_count, 1)
+        self.assertFalse(result.recovered)
+        self.assertIsNone(result.failure_type)
+        invoke.assert_called_once()
+
+    def test_route_execution_exposes_terminal_stage_failure_metadata(self) -> None:
+        attempts = [
+            AccountRouteStageAttempt(
+                payload=None,
+                attempted=True,
+                failure_type="invalid_json",
+                failure_source="intent_classifier",
+                attempt_count=2,
+                attempt_failures=({"attempt": 1, "failure_type": "invalid_json"},),
+            ),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ):
+            result = decide_account_route("Please review my Agora account.")
+
+        self.assertEqual(result.classification["route_reason_code"], "intent_classifier_invalid_json")
+        self.assertEqual(result.classification["stage_failure_types"]["intent_classifier"], "invalid_json")
+        self.assertEqual(result.classification["stage_attempt_counts"]["intent_classifier"], 2)
+
     def test_agora_prompt_prioritizes_legal_compliance_complaints_over_evidence_commands(self) -> None:
         prompt = build_account_agora_system_prompt()
 
@@ -74,11 +172,11 @@ class AccountRoutePipelineTests(unittest.TestCase):
         fixture_path = Path(__file__).parent / "fixtures" / "account_route_golden_cases.json"
         cases = json.loads(fixture_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(len(cases), 17)
+        self.assertEqual(len(cases), 18)
         self.assertEqual({item["case_id"] for item in cases}, {
             "12515", "12512", "12511", "12506", "12505", "12502", "12500",
             "12497", "12496", "12486", "12484", "12480", "12479", "12476",
-            "12460", "12458", "12456",
+            "12460", "12458", "12456", "12572",
         })
         self.assertTrue(all(item["primary_label"] == "Agora" for item in cases))
         self.assertNotIn("Support Request", {item["primary_label"] for item in cases})
@@ -86,6 +184,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
         by_case_id = {item["case_id"]: item for item in cases}
         self.assertEqual(by_case_id["12458"]["secondary_label"], "Agora Technical")
         self.assertEqual(by_case_id["12458"]["reason_code"], "technical_request")
+        self.assertEqual(by_case_id["12572"]["secondary_label"], "Account & Billing / Other")
+        self.assertEqual(by_case_id["12572"]["reason_code"], "account_billing_other")
 
     def test_route_correction_uses_layered_labels_without_activating_handler(self) -> None:
         conversation = classification_for_corrected_route(

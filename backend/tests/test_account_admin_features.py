@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.repositories.ticket_repository import (
@@ -461,6 +462,51 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(execution["user_prompt"], "user snapshot")
         self.assertTrue(execution["prompt_snapshot_available"])
         self.assertGreaterEqual(len(execution["stages"]), 3)
+
+    def test_route_execution_records_stage_failure_attempt_metadata(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="uncertain",
+            route="human_review_required",
+            confidence=0.0,
+            reason="intent_classifier_invalid_json",
+            route_family="human_review",
+            execution_action="human_review_required",
+            router_source="account_layered_llm",
+        )
+        execution = route_execution_from_decision(
+            ticket_id="TK-12572",
+            decision=decision,
+            system_prompt=None,
+            user_prompt=None,
+            classification={
+                "pipeline_version": ROUTER_PROMPT_VERSION,
+                "route_target": "human_review",
+                "route_reason_code": "intent_classifier_invalid_json",
+                "stage_confidences": {"intent_classifier": 0.0},
+                "stage_reason_codes": {"intent_classifier": "intent_classifier_invalid_json"},
+            },
+            stage_attempts={
+                "intent_classifier": SimpleNamespace(
+                    failure_type="invalid_json",
+                    failure_source="intent_classifier",
+                    attempt_count=2,
+                    recovered=False,
+                    model_name="gpt-test",
+                    provider_name="openai",
+                    raw_output_length=8,
+                    raw_output_sha256="a" * 64,
+                    sanitized_output_excerpt="not json",
+                    attempt_failures=({"attempt": 1, "failure_type": "invalid_json"},),
+                )
+            },
+        )
+
+        stage = execution["stages"][0]
+        self.assertEqual(stage["status"], "failed")
+        self.assertEqual(stage["failure_type"], "invalid_json")
+        self.assertEqual(stage["attempt_count"], 2)
+        self.assertEqual(stage["output_sha256"], "a" * 64)
+        self.assertEqual(stage["output_excerpt"], "not json")
 
     def test_routing_config_describes_stages_and_lists_supported_categories(self) -> None:
         payload = routing_config_payload()

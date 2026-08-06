@@ -54,7 +54,73 @@ def _route_result(*, action: str = "account_suspension") -> AccountRouteResult:
     )
 
 
+def _failed_route_result() -> AccountRouteResult:
+    classification = {
+        "pipeline_version": ACCOUNT_ROUTE_PIPELINE_VERSION,
+        "intent_class": "uncertain",
+        "agora_route": None,
+        "route_target": "human_review",
+        "route_reason_code": "intent_classifier_invalid_json",
+        "stage_confidences": {"intent_classifier": 0.0},
+        "stage_reason_codes": {"intent_classifier": "intent_classifier_invalid_json"},
+        "stage_failure_types": {"intent_classifier": "invalid_json"},
+        "stage_attempt_counts": {"intent_classifier": 2},
+        "primary_label": "Uncertain",
+        "secondary_label": "Human Review",
+    }
+    decision = SupportRouteDecision(
+        scope_label="uncertain",
+        route="human_review_required",
+        route_family="human_review",
+        execution_action="human_review_required",
+        confidence=0.0,
+        reason="intent_classifier_invalid_json",
+        router_source="account_layered_llm",
+    )
+    return AccountRouteResult(
+        decision=decision,
+        classification=classification,
+        primary_label="Uncertain",
+        secondary_label="Human Review",
+    )
+
+
 class AccountCaseRerouteTests(unittest.TestCase):
+    def test_failed_reroute_is_human_review_and_preserves_previous_route_only_in_audit(self) -> None:
+        original = {
+            "account_case_id": "AC-12572",
+            "billing_ticket_id": "AC-12572",
+            "client_ticket_id": "12572",
+            "title": "Wallet balance and invoice discrepancy",
+            "question": "Why does the invoice show a payment when my Agora balance is available?",
+            "category": "account_billing",
+            "subcategory": "other",
+            "route": "human_review_required",
+            "execution_action": "human_review_required",
+            "route_family": "human_review",
+            "route_status": "not_automated",
+            "route_classification": {
+                "pipeline_version": "account-layered-router-v4",
+                "primary_label": "Agora",
+                "secondary_label": "Account & Billing / Other",
+                "route_reason_code": "account_billing_other",
+            },
+        }
+
+        result = reroute_account_case(original, route_agent=Mock(return_value=_failed_route_result()))
+
+        self.assertEqual(result.account_case["route_classification"]["secondary_label"], "Human Review")
+        self.assertEqual(result.account_case["route_family"], "human_review")
+        self.assertTrue(result.route_execution["reroute_failed_closed"])
+        self.assertEqual(
+            result.route_execution["previous_valid_route"]["secondary_label"],
+            "Account & Billing / Other",
+        )
+        self.assertEqual(
+            result.route_execution["classification"]["route_reason_code"],
+            "intent_classifier_invalid_json",
+        )
+
     def test_reroute_replaces_legacy_labels_without_replaying_automation(self) -> None:
         route_agent = Mock(return_value=_route_result())
         original = {

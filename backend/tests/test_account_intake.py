@@ -227,6 +227,31 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._account_verification_extractor_patcher.start()
         self._account_verification_follow_up_patcher.start()
 
+    def test_account_case_view_exposes_route_failure_diagnostics(self) -> None:
+        view = main._build_account_ticket_view_model(
+            {
+                "account_case_id": "AC-12572",
+                "billing_ticket_id": "AC-12572",
+                "client_ticket_id": "12572",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "route_classification": {
+                    "route_reason_code": "intent_classifier_invalid_json",
+                    "stage_failure_types": {"intent_classifier": "invalid_json"},
+                    "stage_failure_sources": {"intent_classifier": "intent_classifier"},
+                    "stage_attempt_counts": {"intent_classifier": 2},
+                    "stage_recovered": {"intent_classifier": False},
+                    "route_failure_family": "invalid_intent_output",
+                },
+            },
+            correction=None,
+        )
+
+        self.assertEqual(view["route_failure_family"], "invalid_intent_output")
+        self.assertEqual(view["stage_failure_types"], {"intent_classifier": "invalid_json"})
+        self.assertEqual(view["stage_attempt_counts"], {"intent_classifier": 2})
+        self.assertEqual(view["stage_recovered"], {"intent_classifier": False})
+
     def tearDown(self) -> None:
         self._account_verification_follow_up_patcher.stop()
         self._account_verification_extractor_patcher.stop()
@@ -1020,7 +1045,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v5")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v6")
         self.assertEqual(executions[0]["classification"]["intent_class"], "agora")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn(
