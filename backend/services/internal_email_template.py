@@ -6,9 +6,52 @@ from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
-
-INTERNAL_EMAIL_TEMPLATE_VERSION = "internal-handoff-v1"
+INTERNAL_EMAIL_TEMPLATE_VERSION = "internal-handoff-v2"
 INTERNAL_EMAIL_HTML_CONTENT_TYPE = "HTML"
+
+_LIGHT_THEME = {
+    "shell": "#F3F8FA",
+    "panel": "#FFFFFF",
+    "surface": "#F5FAFC",
+    "quote": "#FAFCFD",
+    "action": "#EDF8FB",
+    "warning": "#FFF8ED",
+    "success": "#EEF9F4",
+    "text": "#142832",
+    "muted": "#536873",
+    "label": "#006C9B",
+    "link": "#006EA6",
+    "border": "#D7E3E9",
+    "quote_border": "#D7E3E9",
+    "action_border": "#B9DCE6",
+    "action_text": "#174E61",
+    "warning_border": "#C77C1A",
+    "warning_text": "#8A5510",
+    "success_border": "#25845D",
+    "success_text": "#176340",
+}
+
+_DARK_THEME = {
+    "shell": "#07131B",
+    "panel": "#0C1C26",
+    "surface": "#102B39",
+    "quote": "#0A202C",
+    "action": "#0B3443",
+    "warning": "#3A2A16",
+    "success": "#12352A",
+    "text": "#F4FAFC",
+    "muted": "#B4C7D0",
+    "label": "#63C7F2",
+    "link": "#73CFFF",
+    "border": "#2A5061",
+    "quote_border": "#2B566B",
+    "action_border": "#3A839C",
+    "action_text": "#C5EFFB",
+    "warning_border": "#E2A04A",
+    "warning_text": "#FFD39B",
+    "success_border": "#63C99A",
+    "success_text": "#B8F0D2",
+}
 
 
 @dataclass(frozen=True)
@@ -119,6 +162,55 @@ def _render_text(
     return "\n\n".join(block for block in blocks if block).strip()
 
 
+def _render_dark_theme_rules(prefix: str = "") -> str:
+    dark = _DARK_THEME
+    return f"""      {prefix}.email-body {{ background-color: {dark['shell']} !important; color: {dark['text']} !important; }}
+      {prefix}.email-shell {{ background-color: {dark['shell']} !important; color: {dark['text']} !important; }}
+      {prefix}.email-panel {{ background-color: {dark['panel']} !important; color: {dark['text']} !important; }}
+      {prefix}.email-surface {{ background-color: {dark['surface']} !important; color: {dark['text']} !important; }}
+      {prefix}.email-quote {{ background-color: {dark['quote']} !important; border-color: {dark['quote_border']} !important; color: {dark['text']} !important; }}
+      {prefix}.email-action {{ background-color: {dark['action']} !important; border-color: {dark['action_border']} !important; color: {dark['action_text']} !important; }}
+      {prefix}.email-warning {{ background-color: {dark['warning']} !important; border-color: {dark['warning_border']} !important; color: {dark['warning_text']} !important; }}
+      {prefix}.email-success {{ background-color: {dark['success']} !important; border-color: {dark['success_border']} !important; color: {dark['success_text']} !important; }}
+      {prefix}.email-text, {prefix}.email-field-value {{ color: {dark['text']} !important; }}
+      {prefix}.email-muted, {prefix}.email-field-label {{ color: {dark['muted']} !important; }}
+      {prefix}.email-label, {prefix}.email-tone-label {{ color: {dark['label']} !important; }}
+      {prefix}.email-link {{ color: {dark['link']} !important; }}
+      {prefix}.email-button {{ background-color: {dark['label']} !important; color: {dark['panel']} !important; }}
+      {prefix}.email-divider {{ border-color: {dark['border']} !important; }}
+      {prefix}.email-action-text {{ color: {dark['action_text']} !important; }}
+      {prefix}.email-warning-text {{ color: {dark['warning_text']} !important; }}
+      {prefix}.email-success-text {{ color: {dark['success_text']} !important; }}"""
+
+
+def _render_theme_css() -> str:
+    return f"""    :root {{ color-scheme: light dark; }}
+    @media (prefers-color-scheme: dark) {{
+{_render_dark_theme_rules()}
+    }}
+    [data-ogsc] {{ color-scheme: dark; }}
+    [data-ogsc].email-body {{ background-color: {_DARK_THEME['shell']} !important; color: {_DARK_THEME['text']} !important; }}
+    [data-ogsc] .email-body,
+    [data-ogsc] .email-shell,
+    [data-ogsc] .email-panel,
+    [data-ogsc] .email-surface,
+    [data-ogsc] .email-quote,
+    [data-ogsc] .email-action,
+    [data-ogsc] .email-warning,
+    [data-ogsc] .email-success,
+    [data-ogsc] .email-text,
+    [data-ogsc] .email-muted,
+    [data-ogsc] .email-label,
+    [data-ogsc] .email-link,
+    [data-ogsc] .email-divider {{ color-scheme: dark; }}
+{_render_dark_theme_rules("[data-ogsc] ")}
+    @media only screen and (max-width: 620px) {{
+      .email-panel {{ width: 100% !important; }}
+      .email-pad {{ padding: 22px 18px !important; }}
+      .summary-cell {{ display: block !important; width: 100% !important; padding-right: 0 !important; }}
+    }}"""
+
+
 def _render_html(
     *,
     request_type: str,
@@ -152,48 +244,35 @@ def _render_html(
   <meta name=\"supported-color-schemes\" content=\"light dark\">
   <title>{title_html}</title>
   <style>
-    :root {{ color-scheme: light dark; }}
-    @media (prefers-color-scheme: dark) {{
-      .email-shell {{ background: #171c21 !important; }}
-      .email-panel {{ background: #242b32 !important; color: #f5f7f9 !important; }}
-      .email-muted {{ color: #c2cbd3 !important; }}
-      .email-surface {{ background: #303941 !important; color: #f5f7f9 !important; }}
-      .email-quote {{ background: #20262c !important; border-color: #59656f !important; }}
-      .email-action {{ background: #173b4a !important; border-color: #4e9fc0 !important; }}
-    }}
-    @media only screen and (max-width: 620px) {{
-      .email-panel {{ width: 100% !important; }}
-      .email-pad {{ padding: 22px 18px !important; }}
-      .summary-cell {{ display: block !important; width: 100% !important; padding-right: 0 !important; }}
-    }}
+{_render_theme_css()}
   </style>
 </head>
-<body style=\"margin:0;padding:0;background:#eef2f5;font-family:Arial,Helvetica,sans-serif;color:#17212b;\">
+<body class=\"email-body\" style=\"margin:0;padding:0;background:{_LIGHT_THEME['shell']};font-family:Arial,Helvetica,sans-serif;color:{_LIGHT_THEME['text']};\">
   <div style=\"display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;\">{preheader}</div>
-  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-shell\" style=\"width:100%;background:#eef2f5;\">
+  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-shell\" bgcolor=\"{_LIGHT_THEME['shell']}\" style=\"width:100%;background-color:{_LIGHT_THEME['shell']};color:{_LIGHT_THEME['text']};\">
     <tr>
       <td align=\"center\" style=\"padding:28px 12px;\">
-        <table role=\"presentation\" width=\"680\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-panel\" style=\"width:100%;max-width:680px;background:#ffffff;border-radius:8px;overflow:hidden;\">
+        <table role=\"presentation\" width=\"680\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-panel\" bgcolor=\"{_LIGHT_THEME['panel']}\" style=\"width:100%;max-width:680px;background-color:{_LIGHT_THEME['panel']};color:{_LIGHT_THEME['text']};border-radius:8px;overflow:hidden;\">
           <tr>
-            <td style=\"height:6px;background:#006493;font-size:0;line-height:0;\">&nbsp;</td>
+            <td class=\"email-label\" style=\"height:6px;background-color:{_LIGHT_THEME['label']};font-size:0;line-height:0;\">&nbsp;</td>
           </tr>
           <tr>
             <td class=\"email-pad\" style=\"padding:28px 34px 24px;\">
               <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\">
                 <tr>
-                  <td style=\"font-size:12px;line-height:18px;letter-spacing:.08em;text-transform:uppercase;color:#006493;font-weight:bold;\">Agora Support Operations</td>
-                  <td align=\"right\" class=\"email-muted\" style=\"font-size:12px;line-height:18px;color:#6b7782;\">{request_type_html}</td>
+                  <td class=\"email-label\" style=\"font-size:12px;line-height:18px;letter-spacing:.08em;text-transform:uppercase;color:{_LIGHT_THEME['label']};font-weight:bold;\">Agora Support Operations</td>
+                  <td align=\"right\" class=\"email-muted\" style=\"font-size:12px;line-height:18px;color:{_LIGHT_THEME['muted']};\">{request_type_html}</td>
                 </tr>
               </table>
-              <h1 style=\"margin:14px 0 6px;font-size:25px;line-height:32px;color:inherit;font-weight:700;\">{title_html}</h1>
-              <p class=\"email-muted\" style=\"margin:0;font-size:14px;line-height:22px;color:#5c6873;\">Ticket {ticket_html}</p>
+              <h1 class=\"email-text\" style=\"margin:14px 0 6px;font-size:25px;line-height:32px;color:{_LIGHT_THEME['text']};font-weight:700;\">{title_html}</h1>
+              <p class=\"email-muted\" style=\"margin:0;font-size:14px;line-height:22px;color:{_LIGHT_THEME['muted']};\">Ticket {ticket_html}</p>
             </td>
           </tr>
           <tr>
             <td class=\"email-pad\" style=\"padding:0 34px 8px;\">
-              <p style=\"margin:0 0 18px;font-size:16px;line-height:25px;color:inherit;\">{_html_paragraph(intro)}</p>
-              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-surface\" style=\"background:#f5f8fb;border-radius:6px;\">
-                <tr><td style=\"padding:16px 18px 8px;font-size:12px;line-height:18px;letter-spacing:.06em;text-transform:uppercase;color:#006493;font-weight:bold;\">Request summary</td></tr>
+              <p class=\"email-text\" style=\"margin:0 0 18px;font-size:16px;line-height:25px;color:{_LIGHT_THEME['text']};\">{_html_paragraph(intro)}</p>
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-surface\" bgcolor=\"{_LIGHT_THEME['surface']}\" style=\"background-color:{_LIGHT_THEME['surface']};color:{_LIGHT_THEME['text']};border-radius:6px;\">
+                <tr><td class=\"email-label\" style=\"padding:16px 18px 8px;font-size:12px;line-height:18px;letter-spacing:.06em;text-transform:uppercase;color:{_LIGHT_THEME['label']};font-weight:bold;\">Request summary</td></tr>
                 <tr><td style=\"padding:0 18px 14px;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\">{summary_html}</table></td></tr>
               </table>
               {sections_html}
@@ -203,7 +282,7 @@ def _render_html(
             </td>
           </tr>
           <tr>
-            <td class=\"email-pad email-muted\" style=\"padding:20px 34px 28px;color:#6b7782;font-size:12px;line-height:18px;border-top:1px solid #e5eaee;\">Internal handoff. Customer data is included for case handling only.</td>
+            <td class=\"email-pad email-muted email-divider\" style=\"padding:20px 34px 28px;color:{_LIGHT_THEME['muted']};font-size:12px;line-height:18px;border-top:1px solid {_LIGHT_THEME['border']};\">Internal handoff. Customer data is included for case handling only.</td>
           </tr>
         </table>
       </td>
@@ -215,7 +294,11 @@ def _render_html(
 
 def _html_section(section: InternalEmailSection) -> str:
     title = _html_text(section.title)
-    body = _html_paragraph(section.body) if section.body else ""
+    body = (
+        f'<div class="email-text" style="font-size:14px;line-height:22px;color:{_LIGHT_THEME["text"]};">{_html_paragraph(section.body)}</div>'
+        if section.body
+        else ""
+    )
     fields = _html_field_rows(_normalize_fields(section.fields)) if section.fields else ""
     fields_table = (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">{fields}</table>'
@@ -225,36 +308,40 @@ def _html_section(section: InternalEmailSection) -> str:
     items = "".join(f"<li style=\"margin:0 0 5px;\">{_html_text(item)}</li>" for item in section.items)
     list_html = f"<ul style=\"margin:0;padding-left:18px;\">{items}</ul>" if items else ""
     tone = _section_tone(section.tone)
-    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"email-surface\" style=\"padding:16px 18px;background:{tone['background']};border-left:4px solid {tone['border']};border-radius:4px;\"><div style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{tone['label']};font-weight:bold;margin-bottom:8px;\">{title}</div>{body}{fields_table}{list_html}</td></tr></table>"""
+    tone_class = {
+        "#fff8ed": "email-warning",
+        "#eef9f4": "email-success",
+    }.get(tone["background"], "email-surface")
+    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"{tone_class}\" bgcolor=\"{tone['background']}\" style=\"padding:16px 18px;background-color:{tone['background']};color:{_LIGHT_THEME['text']};border-left:4px solid {tone['border']};border-radius:4px;\"><div class=\"email-tone-label\" style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{tone['label']};font-weight:bold;margin-bottom:8px;\">{title}</div>{body}{fields_table}{list_html}</td></tr></table>"""
 
 
 def _html_missing_fields(fields: Sequence[str], title: str) -> str:
     if not fields:
         return ""
     items = "".join(f"<li style=\"margin:0 0 5px;\">{_html_text(item)}</li>" for item in fields)
-    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"email-action\" style=\"padding:16px 18px;background:#fff8ed;border-left:4px solid #c77c1a;border-radius:4px;\"><div style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:#8a5510;font-weight:bold;margin-bottom:8px;\">{_html_text(title)}</div><ul style=\"margin:0;padding-left:18px;\">{items}</ul></td></tr></table>"""
+    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"email-warning\" bgcolor=\"{_LIGHT_THEME['warning']}\" style=\"padding:16px 18px;background-color:{_LIGHT_THEME['warning']};color:{_LIGHT_THEME['warning_text']};border-left:4px solid {_LIGHT_THEME['warning_border']};border-radius:4px;\"><div class=\"email-warning-text\" style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{_LIGHT_THEME['warning_text']};font-weight:bold;margin-bottom:8px;\">{_html_text(title)}</div><ul style=\"margin:0;padding-left:18px;\">{items}</ul></td></tr></table>"""
 
 
 def _html_original_message(message: str) -> str:
     if not message:
         return ""
-    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"email-quote\" style=\"padding:16px 18px;background:#f8fafb;border:1px solid #dfe6eb;border-radius:4px;\"><div style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:#6b7782;font-weight:bold;margin-bottom:8px;\">Original customer message</div><div style=\"font-size:14px;line-height:22px;color:inherit;overflow-wrap:anywhere;word-break:break-word;\">{_html_multiline(message)}</div></td></tr></table>"""
+    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"email-quote\" bgcolor=\"{_LIGHT_THEME['quote']}\" style=\"padding:16px 18px;background-color:{_LIGHT_THEME['quote']};color:{_LIGHT_THEME['text']};border:1px solid {_LIGHT_THEME['quote_border']};border-radius:4px;\"><div class=\"email-muted\" style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{_LIGHT_THEME['muted']};font-weight:bold;margin-bottom:8px;\">Original customer message</div><div class=\"email-text\" style=\"font-size:14px;line-height:22px;color:{_LIGHT_THEME['text']};overflow-wrap:anywhere;word-break:break-word;\">{_html_multiline(message)}</div></td></tr></table>"""
 
 
 def _html_action(text: str, url: str | None) -> str:
     if not text:
         return ""
     if url:
-        return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:20px;\"><tr><td class=\"email-action\" style=\"padding:17px 18px;background:#edf8fb;border:1px solid #b9dce6;border-radius:4px;\"><div style=\"font-size:15px;line-height:23px;font-weight:bold;color:#174e61;margin-bottom:11px;\">{_html_paragraph(text)}</div><a href=\"{escape(url, quote=True)}\" style=\"display:inline-block;background:#006493;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:4px;font-size:14px;line-height:18px;font-weight:bold;\">Open handling form</a><div style=\"margin-top:10px;font-size:12px;line-height:18px;color:#5c6873;overflow-wrap:anywhere;\">{_html_text(url)}</div></td></tr></table>"""
-    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:20px;\"><tr><td class=\"email-action\" style=\"padding:17px 18px;background:#edf8fb;border:1px solid #b9dce6;border-radius:4px;\"><div style=\"font-size:15px;line-height:23px;font-weight:bold;color:#174e61;\">{_html_paragraph(text)}</div></td></tr></table>"""
+        return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:20px;\"><tr><td class=\"email-action\" bgcolor=\"{_LIGHT_THEME['action']}\" style=\"padding:17px 18px;background-color:{_LIGHT_THEME['action']};color:{_LIGHT_THEME['action_text']};border:1px solid {_LIGHT_THEME['action_border']};border-radius:4px;\"><div class=\"email-action-text\" style=\"font-size:15px;line-height:23px;font-weight:bold;color:{_LIGHT_THEME['action_text']};margin-bottom:11px;\">{_html_paragraph(text)}</div><a class=\"email-button\" href=\"{escape(url, quote=True)}\" style=\"display:inline-block;background-color:{_LIGHT_THEME['label']};color:#FFFFFF;text-decoration:none;padding:10px 16px;border-radius:4px;font-size:14px;line-height:18px;font-weight:bold;\">Open handling form</a><div class=\"email-muted\" style=\"margin-top:10px;font-size:12px;line-height:18px;color:{_LIGHT_THEME['muted']};overflow-wrap:anywhere;\">{_html_text(url)}</div></td></tr></table>"""
+    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:20px;\"><tr><td class=\"email-action\" bgcolor=\"{_LIGHT_THEME['action']}\" style=\"padding:17px 18px;background-color:{_LIGHT_THEME['action']};color:{_LIGHT_THEME['action_text']};border:1px solid {_LIGHT_THEME['action_border']};border-radius:4px;\"><div class=\"email-action-text\" style=\"font-size:15px;line-height:23px;font-weight:bold;color:{_LIGHT_THEME['action_text']};\">{_html_paragraph(text)}</div></td></tr></table>"""
 
 
 def _html_field_rows(fields: Sequence[tuple[str, str]]) -> str:
     rows: list[str] = []
     for index, (label, value) in enumerate(fields):
-        border = "border-top:1px solid #e5eaee;" if index else ""
+        border = f"border-top:1px solid {_LIGHT_THEME['border']};" if index else ""
         rows.append(
-            f"<tr><td class=\"summary-cell\" style=\"width:35%;padding:8px 14px 8px 0;{border}font-size:12px;line-height:18px;color:#6b7782;vertical-align:top;\">{_html_text(label)}</td><td class=\"summary-cell\" style=\"padding:8px 0;{border}font-size:14px;line-height:20px;color:inherit;vertical-align:top;overflow-wrap:anywhere;word-break:break-word;\">{_html_text(value)}</td></tr>"
+            f"<tr><td class=\"summary-cell email-field-label email-divider\" style=\"width:35%;padding:8px 14px 8px 0;{border}font-size:12px;line-height:18px;color:{_LIGHT_THEME['muted']};vertical-align:top;\">{_html_text(label)}</td><td class=\"summary-cell email-field-value email-text\" style=\"padding:8px 0;{border}font-size:14px;line-height:20px;color:{_LIGHT_THEME['text']};vertical-align:top;overflow-wrap:anywhere;word-break:break-word;\">{_html_text(value)}</td></tr>"
         )
     return "".join(rows)
 

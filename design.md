@@ -387,6 +387,9 @@
 4. 所有动态客户数据必须作为转义后的文本节点展示；App ID、邮箱、URL 和客户长句必须支持换行，不得撑破 Outlook 桌面端或窄屏布局。
 5. 需要 Response Link 时使用明确的主操作和可复制的纯文本 URL；链接只允许 `http` 或 `https` 协议。没有安全链接时，统一提示内部人员直接回复原邮件。
 6. HTML 正文必须同时保留等价的纯文本正文，用于旧 payload、管理端状态判断、邮件客户端兼容和后续回复解析。模板升级不得改变现有 delivery key 或触发已发送 Case 重发。
+7. Internal Automation Email 必须提供受控的 Light/Dark 双主题：Light 主题以内联白色 fallback 为默认，Dark 主题使用深蓝黑层级，不得使用大面积低对比中灰作为主卡片或信息区背景。
+   - 暗色覆盖同时支持 `prefers-color-scheme: dark` 和 Outlook 的 `[data-ogsc]` selector；关键容器、正文、muted text、链接、边框和状态区必须有明确颜色，不能依赖 `color: inherit` 或客户端自动反色。
+   - 颜色 token 必须集中在共享模板中，并满足正文 WCAG AA 对比度；不得添加远程字体、图片、脚本或追踪资源。
 
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：
