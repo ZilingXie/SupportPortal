@@ -161,7 +161,7 @@ class AutomationPersonaTests(unittest.TestCase):
             reply_intent="request_missing_information",
             missing_information=["Transaction ID"],
             resolution_status="awaiting_customer",
-            customer_name="Jack Gold",
+            customer_name="jack Gold",
         )
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(text="Could you share the Transaction ID?", model_name="persona-model")
@@ -190,6 +190,8 @@ class AutomationPersonaTests(unittest.TestCase):
 
     def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
         self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")
+        self.assertEqual(customer_first_name("md anisur rahman"), "Md")
+        self.assertEqual(customer_first_name("mD anisur rahman"), "MD")
         self.assertEqual(customer_first_name("陈小明"), "陈小明")
         self.assertEqual(customer_first_name("Mary-Jane Watson"), "Mary-Jane")
         self.assertEqual(customer_first_name("customer@example.com"), "Customer")

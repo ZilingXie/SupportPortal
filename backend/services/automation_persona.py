@@ -75,7 +75,7 @@ def customer_first_name(customer_name: Any) -> str:
         or not all(character.isalpha() or character in {"-", "'"} for character in first_name)
     ):
         return "Customer"
-    return first_name
+    return first_name[:1].upper() + first_name[1:]
 
 
 class AutomationPersonaError(RuntimeError):
