@@ -160,10 +160,82 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.account-case-search {
+  display: grid;
+  gap: 5px;
+}
+
+.account-case-search__control {
+  min-height: 42px;
+  border: 1px solid var(--ghost-border);
+  border-radius: 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px 3px 11px;
+  color: var(--ink-muted);
+  background: var(--surface-lowest);
+}
+
+.account-case-search__control:focus-within {
+  border-color: rgba(0, 100, 147, 0.42);
+  box-shadow: 0 0 0 3px rgba(0, 176, 255, 0.14);
+}
+
+.account-case-search__control input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  background: transparent;
+}
+
+.account-case-search__control button {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: var(--primary);
+}
+
+.account-case-search__status {
+  min-height: 15px;
+  padding: 0 4px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.account-case-search__status--error {
+  color: var(--danger);
+}
+
 .primary-button--small {
   min-height: 38px;
   padding: 0 14px;
   font-size: 13px;
+}
+
+.danger-button {
+  min-height: 40px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+  border-radius: 999px;
+  padding: 0 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-lowest));
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface-lowest));
 }
 
 .reroute-button {
@@ -954,6 +1026,19 @@ select.input,
   min-width: 0;
 }
 
+.detail-header__actions {
+  display: flex;
+  flex: 0 1 360px;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.detail-rerun-button {
+  flex: 0 0 auto;
+}
+
 .detail-title {
   display: grid;
   flex: 1 1 auto;
@@ -1400,6 +1485,17 @@ select.input,
   .reroute-modal__actions button {
     width: 100%;
     min-height: 44px;
+  }
+
+  .detail-header {
+    flex-direction: column;
+  }
+
+  .detail-header__actions {
+    width: 100%;
+    flex-basis: auto;
+    align-items: flex-start;
+    justify-content: flex-start;
   }
 
   .msg-bubble {

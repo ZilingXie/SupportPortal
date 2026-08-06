@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260806-account-filter-redesign-1", html)
+        self.assertIn("20260806-account-case-rerun-search-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -51,6 +51,56 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('role="progressbar"', app_source)
         self.assertIn("reroute-modal", styles)
         self.assertIn("reroute-progress", styles)
+
+    def test_account_app_contains_exact_case_search_and_single_case_rerun(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+
+        for marker in (
+            "caseSearchQuery",
+            "caseSearchError",
+            "isSearchingCase",
+            "normalizeCaseNumberQuery",
+            "searchCaseByNumber",
+            'data-case-search-form',
+            'placeholder="Case #"',
+            'aria-live="polite"',
+            "Rerun this case",
+            "startSingleCaseRerun",
+            "rerouteTargetSnapshot",
+            'fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`',
+            'fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`',
+            "All non-customer messages will be permanently deleted",
+            "Engineer, manual, and internal messages are included",
+            "The current route review and correction will be reset",
+            "Independent audit records will be retained",
+            "invalidateDetailCache(targetCaseId)",
+        ):
+            self.assertIn(marker, app_source)
+        self.assertIn("account-case-search", styles)
+        self.assertIn("detail-rerun-button", styles)
+        self.assertIn("danger-button", styles)
+
+        helper_start = app_source.index("function normalizeCaseNumberQuery")
+        helper_end = app_source.index("\nfunction", helper_start + 1)
+        helper = app_source[helper_start:helper_end]
+        script = (
+            f"{helper}\n"
+            "console.log(JSON.stringify(["
+            "normalizeCaseNumberQuery('12572'),"
+            "normalizeCaseNumberQuery('#12572'),"
+            "normalizeCaseNumberQuery('1257x'),"
+            "normalizeCaseNumberQuery('')"
+            "]));"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["12572", "12572", "", ""])
 
     def test_account_app_posts_title_and_question_to_account_endpoint(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")

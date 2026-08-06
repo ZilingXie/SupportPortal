@@ -19,7 +19,11 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 import backend.worker as worker
-from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_AI_ONLY,
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    InMemoryTicketRepository,
+)
 from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
@@ -289,6 +293,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             created = response.json()
             self.assertEqual(created["status"], "queued")
             self.assertEqual(created["mode"], "fresh_case_rerun")
+            self.assertEqual(created["reset_mode"], ACCOUNT_RERUN_RESET_AI_ONLY)
             self.assertTrue(created["job_id"].startswith("account-rerun-"))
             runner.assert_awaited_once_with(created["job_id"])
 
@@ -333,6 +338,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["scope"], "single_case")
         self.assertEqual(payload["target_case_ids"], ["AC-12562"])
+        self.assertEqual(
+            payload["reset_mode"],
+            ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+        )
+        self.assertEqual(payload["audit_actor_id"], "account_ui")
         runner.assert_awaited_once_with(payload["job_id"])
 
         duplicate = self.client.post("/api/account/cases/AC-12562/rerun")
@@ -346,17 +356,27 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "customer_id": "customer@example.com",
                     "subject": "Account Case",
                     "status": "open",
-                    "messages": [{
-                        "role": "customer",
-                        "content": "A third-party compliance complaint asks Agora to extract logs.",
-                        "created_at": "2026-08-04T00:00:00+00:00",
-                    }],
+                    "messages": [
+                        {
+                            "role": "customer",
+                            "content": "A third-party compliance complaint asks Agora to extract logs.",
+                            "created_at": "2026-08-04T00:00:00+00:00",
+                        },
+                        {
+                            "role": "engineer",
+                            "content": f"Private manual note for {ticket_id}",
+                            "created_at": "2026-08-04T00:01:00+00:00",
+                        },
+                    ],
                 }
             )
             self.repository.save_account_case(
                 {
                     "account_case_id": case_id,
                     "client_ticket_id": ticket_id,
+                    "route": "detailed_invoice",
+                    "scope_label": "billing",
+                    "execution_action": "detailed_invoice",
                     "route_status": "not_automated",
                     "route_family": "human_review",
                     "secondary_label": "Agora / Uncategorized",
@@ -402,6 +422,9 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         reprocess.assert_called_once()
         self.assertEqual(reprocess.call_args.args[0]["account_case_id"], "AC-12562")
+        self.assertIsNone(reprocess.call_args.args[0]["route"])
+        self.assertIsNone(reprocess.call_args.args[0]["scope_label"])
+        self.assertIsNone(reprocess.call_args.args[0]["execution_action"])
         latest = main._account_full_reroute_job(job["job_id"])
         assert latest is not None
         self.assertEqual(latest["scope"], "single_case")
@@ -414,6 +437,162 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         execution = self.repository.list_account_route_executions("12562")[-1]
         self.assertEqual(execution["trigger"], "single_case_rerun")
+        self.assertEqual(
+            [message["role"] for message in self.repository.get_ticket("12562")["messages"]],
+            ["customer"],
+        )
+        self.assertEqual(
+            [message["role"] for message in self.repository.get_ticket("12563")["messages"]],
+            ["customer", "engineer"],
+        )
+        audit_events = self.repository.list_workspace_audit_events()
+        self.assertEqual(
+            [event["event_type"] for event in audit_events],
+            ["account_case_full_rerun_completed", "account_case_full_rerun_reset"],
+        )
+        self.assertNotIn("Private manual note", json.dumps(audit_events))
+
+    def test_account_case_lookup_uses_exact_ticket_number(self) -> None:
+        for ticket_id in ("12572", "125720"):
+            self.repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "messages": [{"role": "customer", "content": f"Request {ticket_id}"}],
+                }
+            )
+            self.repository.save_account_case(
+                {
+                    "account_case_id": f"AC-{ticket_id}",
+                    "client_ticket_id": ticket_id,
+                    "route_status": "not_automated",
+                    "route_family": "human_review",
+                }
+            )
+
+        exact = self.client.get("/api/account/cases/12572")
+        prefix = self.client.get("/api/account/cases/1257")
+        longer = self.client.get("/api/account/cases/1257200")
+
+        self.assertEqual(exact.status_code, 200, exact.text)
+        self.assertEqual(exact.json()["client_ticket_id"], "12572")
+        self.assertEqual(prefix.status_code, 404, prefix.text)
+        self.assertEqual(longer.status_code, 404, longer.text)
+
+    def test_single_case_rerun_records_sanitized_failed_audit(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12574",
+                "customer_id": "private-customer@example.com",
+                "messages": [
+                    {"role": "customer", "content": "Private customer message"},
+                    {"role": "manual", "content": "Private manual message"},
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12574",
+                "client_ticket_id": "12574",
+                "route_status": "not_automated",
+                "route_family": "human_review",
+            }
+        )
+        job = asyncio.run(
+            main._enqueue_account_rerun_job(
+                SimpleNamespace(add_task=lambda *args: None),
+                target_case_ids=["AC-12574"],
+            )
+        )
+
+        with patch.object(
+            main,
+            "reprocess_account_case",
+            side_effect=RuntimeError("private-customer@example.com could not route"),
+        ):
+            asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
+
+        latest = main._account_full_reroute_job(job["job_id"])
+        assert latest is not None
+        self.assertEqual(latest["status"], "completed_with_errors")
+        audit_events = self.repository.list_workspace_audit_events()
+        self.assertEqual(audit_events[0]["event_type"], "account_case_full_rerun_failed")
+        audit_text = json.dumps(audit_events).lower()
+        self.assertNotIn("private customer message", audit_text)
+        self.assertNotIn("private manual message", audit_text)
+        self.assertNotIn("private-customer@example.com", audit_text)
+
+    def test_single_case_rerun_does_not_report_success_without_completion_audit(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12575",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Route this request",
+                        "created_at": "2026-08-04T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12575",
+                "client_ticket_id": "12575",
+                "route_status": "not_automated",
+                "route_family": "human_review",
+            }
+        )
+        job = asyncio.run(
+            main._enqueue_account_rerun_job(
+                SimpleNamespace(add_task=lambda *args: None),
+                target_case_ids=["AC-12575"],
+            )
+        )
+        result = SimpleNamespace(
+            account_case={
+                "account_case_id": "AC-12575",
+                "client_ticket_id": "12575",
+                "route": "human_review_required",
+                "scope_label": "human_review",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "route_status": "not_automated",
+                "route_classification": {
+                    "primary_label": "Agora",
+                    "secondary_label": "Agora / Uncategorized",
+                },
+            },
+            route_execution={"ticket_id": "12575", "classification": {}},
+            changed=True,
+            handler_status="not_automated",
+            internal_email_to_send=None,
+            email_handler=None,
+            customer_reply="",
+            reply_kind=None,
+            asked_field_keys=(),
+        )
+        original_record = self.repository.record_workspace_audit_event
+
+        def record_with_completion_failure(event_type, **kwargs):
+            if event_type == "account_case_full_rerun_completed":
+                raise RuntimeError("completion audit unavailable")
+            return original_record(event_type, **kwargs)
+
+        with patch.object(main, "reprocess_account_case", return_value=result), patch.object(
+            self.repository,
+            "record_workspace_audit_event",
+            side_effect=record_with_completion_failure,
+        ), patch.object(main, "_ACCOUNT_RERUN_STORAGE_RETRY_DELAYS", (0.0,)):
+            asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
+
+        latest = main._account_full_reroute_job(job["job_id"])
+        assert latest is not None
+        self.assertEqual(latest["status"], "failed")
+        self.assertNotEqual(latest["status"], "completed")
+        self.assertEqual(
+            self.repository.list_workspace_audit_events()[0]["event_type"],
+            "account_case_full_rerun_failed",
+        )
 
     def test_account_full_reroute_returns_retryable_503_when_storage_is_unavailable(self) -> None:
         with patch.object(

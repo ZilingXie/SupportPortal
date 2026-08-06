@@ -3,8 +3,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_AI_ONLY,
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    InMemoryTicketRepository,
+)
 from backend.services.account_admin import (
     DEFAULT_PERSONA_CONTENT,
     DEFAULT_PERSONA_KEY,
@@ -156,6 +161,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             "TK-RESET",
             reset_at="2026-08-04T00:00:00+00:00",
             rerun_job_id="rerun-1",
+            reset_mode=ACCOUNT_RERUN_RESET_AI_ONLY,
         )
 
         self.assertEqual(
@@ -181,6 +187,204 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertIsNone(case["customer_reply"])
         self.assertIsNone(case["internal_email_payload"])
         self.assertIsNone(case["internal_email_send_status"])
+
+    def test_single_case_reset_keeps_only_customer_messages_and_records_sanitized_audit(self) -> None:
+        customer_messages = [
+            {
+                "message_id": "customer-1",
+                "role": "customer",
+                "content": "Private request from customer@example.com",
+                "created_at": "2026-08-03T00:00:00+00:00",
+                "meta": {"source": "zendesk", "sequence": 1},
+            },
+            {
+                "message_id": "customer-2",
+                "role": "user",
+                "content": "Additional private details",
+                "created_at": "2026-08-03T00:03:00+00:00",
+                "meta": {"source": "zendesk", "sequence": 2},
+            },
+        ]
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12572",
+                "subject": "Private subject",
+                "updated_at": "2026-08-03T00:00:00+00:00",
+                "messages": [
+                    customer_messages[0],
+                    {"role": "assistant", "content": "AI reply", "source": "account_ai"},
+                    {"role": "engineer", "content": "Manual engineer reply"},
+                    {"role": "internal", "content": "Internal note"},
+                    {"role": "mystery", "content": "Unknown role"},
+                    customer_messages[1],
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12572",
+                "billing_ticket_id": "AC-12572",
+                "client_ticket_id": "12572",
+                "title": "Private subject",
+                "route_review_status": "reviewed",
+                "route": "detailed_invoice",
+                "scope_label": "billing",
+                "route_family": "automated",
+                "execution_action": "detailed_invoice",
+                "tooling_profile": "deterministic_billing_intake",
+                "category": "automation",
+                "subcategory": "detailed_invoice",
+                "route_status": "automated",
+                "automation_status": "automation",
+                "automation_handler": "billing",
+                "route_classification": {"route_target": "automation"},
+                "automation_context": {"follow_up_count": 1},
+                "missing_fields": ["amount"],
+                "collected_fields": {"transaction_id": "private-value"},
+                "customer_reply": "Old reply",
+                "internal_email_payload": {"delivery_key": "old-delivery"},
+                "internal_email_send_status": "sent",
+                "internal_email_send_reason": "sent",
+            }
+        )
+        self.repository.apply_billing_route_correction(
+            billing_ticket_id="AC-12572",
+            active_route={
+                "route": "detailed_invoice",
+                "scope_label": "billing",
+                "route_family": "automated",
+                "execution_action": "detailed_invoice",
+                "tooling_profile": "deterministic_billing_intake",
+                "category": "automation",
+                "subcategory": "detailed_invoice",
+                "route_status": "automated",
+                "automation_handler": "billing",
+                "route_classification": {},
+            },
+            correction={
+                "client_ticket_id": "12572",
+                "original_scope_label": "uncertain",
+                "original_route_family": "human_review",
+                "original_execution_action": "human_review_required",
+                "original_tooling_profile": "manual",
+                "corrected_scope_label": "billing",
+                "corrected_route_family": "automated",
+                "corrected_execution_action": "detailed_invoice",
+                "corrected_tooling_profile": "deterministic_billing_intake",
+                "first_corrected_scope_label": "billing",
+                "first_corrected_route_family": "automated",
+                "first_corrected_execution_action": "detailed_invoice",
+                "first_corrected_tooling_profile": "deterministic_billing_intake",
+                "corrector": "private-operator@example.com",
+                "created_at": "2026-08-03T00:02:00+00:00",
+                "updated_at": "2026-08-03T00:02:00+00:00",
+            },
+        )
+
+        counts = self.repository.reset_account_rerun_state(
+            "12572",
+            reset_at="2026-08-04T00:00:00+00:00",
+            rerun_job_id="account-rerun-test",
+            reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+            audit_context={
+                "actor_id": "account_ui",
+                "account_case_id": "AC-12572",
+                "ticket_number": "12572",
+                "requested_at": "2026-08-04T00:00:00+00:00",
+                "build_ref": "test-build",
+            },
+        )
+
+        self.assertEqual(self.repository.get_ticket("12572")["messages"], customer_messages)
+        self.assertEqual(counts["customer_messages_retained"], 2)
+        self.assertEqual(counts["messages_deleted"], 4)
+        self.assertEqual(
+            counts["deleted_messages_by_role"],
+            {"assistant": 1, "engineer": 1, "internal": 1, "unknown": 1},
+        )
+        account_case = self.repository.get_account_case("AC-12572")
+        assert account_case is not None
+        self.assertEqual(account_case["route_review_status"], "pending")
+        for cleared_field in (
+            "route",
+            "scope_label",
+            "route_family",
+            "execution_action",
+            "tooling_profile",
+            "category",
+            "subcategory",
+            "automation_handler",
+        ):
+            self.assertIsNone(account_case[cleared_field])
+        self.assertEqual(account_case["route_status"], "not_automated")
+        self.assertEqual(account_case["automation_status"], "not_automated")
+        self.assertEqual(account_case["route_classification"], {})
+        self.assertEqual(account_case["automation_context"], {})
+        self.assertEqual(account_case["missing_fields"], [])
+        self.assertEqual(account_case["collected_fields"], {})
+        self.assertIsNone(self.repository.get_billing_route_correction("AC-12572"))
+        audit = self.repository.list_workspace_audit_events()[0]
+        self.assertEqual(audit["event_type"], "account_case_full_rerun_reset")
+        self.assertEqual(audit["actor_id"], "account_ui")
+        self.assertEqual(audit["target_id"], "AC-12572")
+        self.assertEqual(audit["payload"]["messages_deleted"], 4)
+        self.assertTrue(audit["payload"]["route_correction_cleared"])
+        audit_text = str(audit).lower()
+        for private_value in (
+            "private request",
+            "additional private details",
+            "private subject",
+            "customer@example.com",
+            "private-operator@example.com",
+        ):
+            self.assertNotIn(private_value, audit_text)
+
+    def test_single_case_reset_rolls_back_when_audit_write_fails(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12573",
+                "messages": [
+                    {"role": "customer", "content": "Keep"},
+                    {"role": "engineer", "content": "Do not delete without audit"},
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12573",
+                "billing_ticket_id": "AC-12573",
+                "client_ticket_id": "12573",
+                "route_review_status": "reviewed",
+                "customer_reply": "Existing reply",
+            }
+        )
+
+        with patch.object(
+            self.repository,
+            "record_workspace_audit_event",
+            side_effect=RuntimeError("audit unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "audit unavailable"):
+                self.repository.reset_account_rerun_state(
+                    "12573",
+                    reset_at="2026-08-04T00:00:00+00:00",
+                    rerun_job_id="account-rerun-test",
+                    reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                    audit_context={
+                        "actor_id": "account_ui",
+                        "account_case_id": "AC-12573",
+                        "ticket_number": "12573",
+                    },
+                )
+
+        self.assertEqual(
+            [message["role"] for message in self.repository.get_ticket("12573")["messages"]],
+            ["customer", "engineer"],
+        )
+        account_case = self.repository.get_account_case("AC-12573")
+        assert account_case is not None
+        self.assertEqual(account_case["route_review_status"], "reviewed")
+        self.assertEqual(account_case["customer_reply"], "Existing reply")
 
     def test_environment_config_returns_names_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
