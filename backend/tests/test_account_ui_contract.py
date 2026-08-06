@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260805-route-filters-1", html)
+        self.assertIn("20260806-account-filter-redesign-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -119,8 +119,8 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('label: "Conversation"', app_source)
         self.assertIn('label: "Non-Agora"', app_source)
         self.assertIn('{ id: "all", label: "All", children: [] }', app_source)
-        self.assertIn('{ id: "agora_technical", label: "Agora Technical", children: [] }', app_source)
-        self.assertIn('{ id: "agora_non_technical", label: "Agora Non-technical", children: [] }', app_source)
+        self.assertIn('{ id: "agora_technical", label: "Tech", children: [] }', app_source)
+        self.assertIn('{ id: "agora_non_technical", label: "Non-tech", children: [] }', app_source)
         self.assertIn('id: "conversation"', app_source)
         self.assertIn('id: "human_review"', app_source)
         self.assertIn("PAGE_SIZE", app_source)
@@ -144,6 +144,58 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("formatMessageTimestamp", app_source)
         self.assertIn("AI reply scheduled", app_source)
         self.assertNotIn("Customer reply", app_source)
+
+    def test_account_filter_uses_primary_buttons_and_one_conditional_select(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+
+        for marker in (
+            "buildRouteFilterViewModel",
+            'data-action="set-route-group"',
+            'data-action="set-route-subcategory"',
+            "No subcategories",
+            "route-filter__group-button",
+            "route-filter__subcategory",
+        ):
+            self.assertIn(marker, app_source)
+        self.assertNotIn("filter-child-list", app_source)
+        self.assertIn("route-filter", styles)
+        self.assertIn("route-filter__group-button", styles)
+        self.assertIn("route-filter__subcategory", styles)
+
+        helper_start = app_source.index("function selectedFilterParts")
+        helper_end = app_source.index("\nfunction renderFilterCount", helper_start)
+        helpers = app_source[helper_start:helper_end]
+        script = (
+            f"{helpers}\n"
+            "const definitions = ["
+            "{id:'all',label:'All',children:[]},"
+            "{id:'automation',label:'Automation',children:["
+            "{id:'enablement',label:'Enablement'}]},"
+            "{id:'agora_technical',label:'Tech',children:[]}];"
+            "const counts = {'all': 7, 'automation': 2, 'automation:enablement': 2, 'agora_technical': 3};"
+            "console.log(JSON.stringify(["
+            "buildRouteFilterViewModel(definitions, counts, 'all'),"
+            "buildRouteFilterViewModel(definitions, counts, 'automation:enablement'),"
+            "buildRouteFilterViewModel(definitions, counts, 'agora_technical')"
+            "]));"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        view_models = json.loads(result.stdout)
+        self.assertEqual(view_models[0]["groupKey"], "all")
+        self.assertTrue(view_models[0]["selectDisabled"])
+        self.assertEqual(view_models[1]["groupKey"], "automation")
+        self.assertEqual(view_models[1]["leafKey"], "enablement")
+        self.assertFalse(view_models[1]["selectDisabled"])
+        self.assertEqual(view_models[1]["options"][0]["count"], 2)
+        self.assertEqual(view_models[2]["groupKey"], "agora_technical")
+        self.assertTrue(view_models[2]["selectDisabled"])
 
     def test_account_app_uses_memory_only_two_level_cache_and_batch_prefetch(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -283,8 +335,12 @@ class AccountUiContractTests(unittest.TestCase):
 
         self.assertIn(".status-badge--automation", styles)
         self.assertIn(".source-link", styles)
-        # Filter chips.
-        self.assertIn(".filter-groups", styles)
+        # Route filter controls.
+        self.assertIn(".route-filter", styles)
+        self.assertIn(".route-filter__group-button", styles)
+        self.assertIn(".route-filter__group-button--active", styles)
+        self.assertIn(".route-filter__subcategory", styles)
+        # Route correction controls still use the shared generic chip styles.
         self.assertIn(".filter-chip", styles)
         self.assertIn(".filter-chip--active", styles)
         # Pagination.
