@@ -12,6 +12,32 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-06 - Account Router structured-output retry and failure audit
+
+- Area or subsystem: `/account` layered Intent Classifier, Agora Router, Account & Billing Router, and Automation Router
+- Prompt or model version: `account-layered-router-v6`; model configuration unchanged
+- Summary: Enabled JSON object output for every Account routing stage, added application-level stage schema validation, and added one local repair retry for malformed JSON or invalid output contracts. Added stage attempt counts, stable failure types, recovery status, model/provider metadata, and redacted output fingerprints to route execution audit.
+- Reason: Case `#12572` was correctly classified as Account & Billing in earlier executions, but one malformed Intent Classifier response during `bulk_latest_reroute` was collapsed to `invalid_intent_output` and overwrote the valid route.
+- Affected files or config:
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/account_admin.py`
+  - `backend/services/account_case_reroute.py`
+  - `backend/main.py`
+  - `backend/tests/test_account_route_pipeline.py`
+  - `backend/tests/test_account_admin_features.py`
+  - `backend/tests/test_account_case_reroute.py`
+  - `backend/tests/test_account_intake.py`
+  - `backend/tests/fixtures/account_route_golden_cases.json`
+- Expected behavior change:
+  - A contract failure is retried once for the current stage only; successful upstream stages are not repeated and valid low-confidence output is not retried.
+  - Two failed contract attempts fail closed to Human Review while retaining the parent-layer label (`Uncertain`, `Agora / Uncategorized`, `Account & Billing / Other`, or `Automation / Unregistered`). The previous route is audit-only and never restored as the current label.
+  - Account APIs expose stable stage failure types, attempt counts, recovery flags, and failure family; raw model output is not returned and audit excerpts are redacted and bounded.
+  - `/client` and the legacy shared router remain unchanged.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_account_admin_features.py backend/tests/test_account_case_reroute.py backend/tests/test_account_full_reroute.py`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_intake.py::AccountIntakeApiTests::test_account_case_view_exposes_route_failure_diagnostics`
+  - Case `#12572` single-case rerun and live Account/Admin API verification after merge.
+
 ## 2026-08-05 - Atomic Outlook automation replies and Persona v6 safety gate
 
 - Area or subsystem: `/account` Automation Outlook reply processing and Automation Persona
