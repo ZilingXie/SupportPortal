@@ -17,7 +17,7 @@ from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-layered-router-v5"
+ROUTER_PROMPT_VERSION = "account-layered-router-v6"
 ROUTING_STAGE_DESCRIPTIONS = {
     "intent_classifier": "Classifies Account messages as Conversation, Agora, or Uncertain.",
     "agora_router": "Classifies Agora cases as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
@@ -312,6 +312,7 @@ def route_execution_from_decision(
     created_at: str | None = None,
     classification: dict[str, Any] | None = None,
     prompt_snapshots: dict[str, dict[str, str]] | None = None,
+    stage_attempts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if isinstance(classification, dict) and classification:
         stage_confidences = dict(classification.get("stage_confidences") or {})
@@ -320,15 +321,48 @@ def route_execution_from_decision(
             or classification.get("stage_reasons")
             or {}
         )
-        stages = [
-            {
+        attempt_records = dict(stage_attempts or {})
+        stages = []
+        for name, confidence in stage_confidences.items():
+            attempt = attempt_records.get(name)
+            failure_type = str(getattr(attempt, "failure_type", "") or "").strip() or None
+            recovered = bool(getattr(attempt, "recovered", False))
+            stage = {
                 "name": name,
-                "status": "completed",
+                "status": "failed" if failure_type else "completed_after_retry" if recovered else "completed",
                 "confidence": confidence,
                 "reason": stage_reasons.get(name),
+                "failure_type": failure_type,
+                "failure_source": str(getattr(attempt, "failure_source", "") or "").strip() or None,
+                "attempt_count": max(1, int(getattr(attempt, "attempt_count", 1) or 1)),
+                "recovered": recovered,
+                "model": str(getattr(attempt, "model_name", "") or "").strip() or None,
+                "provider": str(getattr(attempt, "provider_name", "") or "").strip() or None,
+                "output_length": int(getattr(attempt, "raw_output_length", 0) or 0),
+                "output_sha256": getattr(attempt, "raw_output_sha256", None),
+                "output_excerpt": getattr(attempt, "sanitized_output_excerpt", None),
+                "attempt_failures": [dict(item) for item in getattr(attempt, "attempt_failures", ())],
             }
-            for name, confidence in stage_confidences.items()
-        ]
+            stages.append(stage)
+        known_stage_names = {str(stage.get("name") or "") for stage in stages}
+        for name, failure_type in dict(classification.get("stage_failure_types") or {}).items():
+            if name in known_stage_names:
+                continue
+            stages.append(
+                {
+                    "name": name,
+                    "status": "failed",
+                    "confidence": 0.0,
+                    "reason": stage_reasons.get(name),
+                    "failure_type": str(failure_type),
+                    "failure_source": (classification.get("stage_failure_sources") or {}).get(name),
+                    "attempt_count": max(
+                        1,
+                        int((classification.get("stage_attempt_counts") or {}).get(name) or 1),
+                    ),
+                    "recovered": bool((classification.get("stage_recovered") or {}).get(name)),
+                }
+            )
         stages.append(
             {
                 "name": "final_route",

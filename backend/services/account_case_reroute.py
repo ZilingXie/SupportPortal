@@ -151,10 +151,26 @@ def reroute_account_case(
         created_at=timestamp,
         classification=classification,
         prompt_snapshots=result.prompt_snapshots,
+        stage_attempts=result.stage_attempts,
     )
     execution["trigger"] = "bulk_latest_reroute"
     execution["previous_pipeline_version"] = previous_pipeline_version
     execution["target_pipeline_version"] = ACCOUNT_ROUTE_PIPELINE_VERSION
+    failed_stage = any(
+        bool(attempt.failure_type)
+        for attempt in result.stage_attempts.values()
+    ) or bool(classification.get("stage_failure_types"))
+    if failed_stage:
+        execution["reroute_failed_closed"] = True
+        execution["previous_valid_route"] = {
+            "pipeline_version": previous_classification.get("pipeline_version"),
+            "primary_label": previous_classification.get("primary_label"),
+            "secondary_label": previous_classification.get("secondary_label"),
+            "route_reason_code": previous_classification.get("route_reason_code"),
+            "category": current.get("category"),
+            "subcategory": current.get("subcategory"),
+            "route_family": current.get("route_family"),
+        }
     return AccountCaseReroute(
         account_case=updated,
         route_execution=execution,

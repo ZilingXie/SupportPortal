@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -55,7 +57,7 @@ from backend.services.support_router_prompt import build_route_prompt_hints
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v5"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v6"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_BILLING_PROMPT_KEY = "account-account-billing-router-system"
@@ -114,6 +116,14 @@ class AccountRouteStageAttempt:
     failure_source: str | None = None
     system_prompt: str | None = None
     user_prompt: str | None = None
+    attempt_count: int = 1
+    attempt_failures: tuple[dict[str, Any], ...] = ()
+    model_name: str | None = None
+    provider_name: str | None = None
+    raw_output_length: int = 0
+    raw_output_sha256: str | None = None
+    sanitized_output_excerpt: str | None = None
+    recovered: bool = False
 
 
 @dataclass(frozen=True)
@@ -123,6 +133,7 @@ class AccountRouteResult:
     primary_label: str
     secondary_label: str
     prompt_snapshots: dict[str, dict[str, str]] = field(default_factory=dict)
+    stage_attempts: dict[str, AccountRouteStageAttempt] = field(default_factory=dict)
 
 
 def account_router_prompt_catalog() -> list[dict[str, str]]:
@@ -270,11 +281,123 @@ def _resolve_account_prompt(prompt_key: str, fallback: str) -> str:
         return fallback
 
 
+def _sanitize_output_excerpt(value: Any) -> str | None:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return None
+    if not re.fullmatch(r"(?:not json|[{}\[\],:\"'\s0-9._-]{1,200})", text, re.IGNORECASE):
+        return "<redacted>"
+    text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[redacted_email]", text)
+    text = re.sub(
+        r"(?i)\b(app[_ -]?id|token|secret|password|authorization)\s*[:=]\s*[^,;}\s]+",
+        r"\1=[redacted]",
+        text,
+    )
+    text = _SENSITIVE_IDENTIFIER_RE.sub("[redacted_identifier]", text)
+    return text[:200]
+
+
+def _attempt_failure(
+    *,
+    attempt: int,
+    failure_type: str,
+    source: str,
+    raw_text: str = "",
+) -> dict[str, Any]:
+    return {
+        "attempt": attempt,
+        "failure_type": failure_type,
+        "failure_source": source,
+        "raw_output_length": len(raw_text),
+        "raw_output_sha256": hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+        if raw_text
+        else None,
+        "sanitized_output_excerpt": _sanitize_output_excerpt(raw_text),
+    }
+
+
+def _valid_confidence(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number) and 0.0 <= number <= 1.0
+
+
+def _require_fields(payload: dict[str, Any], fields: tuple[str, ...]) -> str | None:
+    if any(field not in payload for field in fields):
+        return "missing_required_field"
+    return None
+
+
+def _validate_intent_payload(payload: dict[str, Any]) -> str | None:
+    required = _require_fields(payload, ("intent_class", "intent_confidence"))
+    if required:
+        return required
+    intent_class = str(payload.get("intent_class") or "").strip().lower()
+    if intent_class not in _INTENT_CLASSES:
+        return "invalid_enum"
+    if not _valid_confidence(payload.get("intent_confidence")):
+        return "invalid_confidence"
+    if intent_class == "conversation":
+        required = _require_fields(payload, ("conversation_action", "action_confidence"))
+        if required:
+            return required
+        if str(payload.get("conversation_action") or "").strip().lower() not in _CONVERSATION_ACTIONS:
+            return "invalid_enum"
+        if not _valid_confidence(payload.get("action_confidence")):
+            return "invalid_confidence"
+    return None
+
+
+def _validate_agora_payload(payload: dict[str, Any]) -> str | None:
+    required = _require_fields(payload, ("agora_route", "confidence"))
+    if required:
+        return required
+    if str(payload.get("agora_route") or "").strip().lower() not in _AGORA_ROUTES:
+        return "invalid_enum"
+    if not _valid_confidence(payload.get("confidence")):
+        return "invalid_confidence"
+    return None
+
+
+def _validate_account_billing_payload(payload: dict[str, Any]) -> str | None:
+    required = _require_fields(payload, ("account_billing_subcategory", "confidence"))
+    if required:
+        return required
+    if str(payload.get("account_billing_subcategory") or "").strip().lower() not in ACCOUNT_BILLING_SUBCATEGORIES:
+        return "invalid_enum"
+    if not _valid_confidence(payload.get("confidence")):
+        return "invalid_confidence"
+    return None
+
+
+def _validate_automation_payload(payload: dict[str, Any]) -> str | None:
+    required = _require_fields(payload, ("automation_subcategory", "confidence"))
+    if required:
+        return required
+    raw_subcategory = canonical_automation_subcategory(payload.get("automation_subcategory"))
+    if raw_subcategory not in _AUTOMATION_SUBCATEGORIES:
+        return "invalid_enum"
+    if not _valid_confidence(payload.get("confidence")):
+        return "invalid_confidence"
+    return None
+
+
+def _stage_failure_reason(stage_name: str, attempt: AccountRouteStageAttempt) -> str:
+    failure_type = str(attempt.failure_type or "invalid_payload").strip().lower()
+    return f"{stage_name}_{failure_type}"
+
+
 def _invoke_stage(
     *,
+    stage_name: str,
     prompt_key: str,
     fallback_system_prompt: str,
     payload: dict[str, Any],
+    validate_payload: Callable[[dict[str, Any]], str | None] | None = None,
 ) -> AccountRouteStageAttempt:
     system_prompt = _resolve_account_prompt(prompt_key, fallback_system_prompt)
     user_prompt = build_account_stage_user_prompt(payload)
@@ -288,43 +411,86 @@ def _invoke_stage(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
-    try:
-        response = invoke_responses_text(
-            profile=profile,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+    failures: list[dict[str, Any]] = []
+    for attempt_number in (1, 2):
+        current_user_prompt = user_prompt
+        if attempt_number == 2:
+            current_user_prompt = (
+                f"{user_prompt}\n\n"
+                "Your previous response violated the output contract. "
+                "Return exactly one valid JSON object matching the required schema. "
+                "Do not add Markdown or explanatory text."
+            )
+        try:
+            response = invoke_responses_text(
+                profile=profile,
+                system_prompt=system_prompt,
+                user_prompt=current_user_prompt,
+                extra_payload={"text": {"format": {"type": "json_object"}}},
+            )
+        except LlmInvocationError:
+            LOGGER.warning("Account route stage %s failed", prompt_key, exc_info=True)
+            return AccountRouteStageAttempt(
+                payload=None,
+                attempted=True,
+                failure_type="llm_invocation_failed",
+                failure_source=stage_name,
+                system_prompt=system_prompt,
+                user_prompt=current_user_prompt,
+                attempt_count=attempt_number,
+                attempt_failures=tuple(failures),
+            )
+        raw_text = str(getattr(response, "text", "") or "")
+        try:
+            parsed = json.loads(raw_text)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+            failure_type = "invalid_json"
+        else:
+            failure_type = "invalid_payload" if not isinstance(parsed, dict) else None
+            if failure_type is None and validate_payload is not None:
+                failure_type = validate_payload(parsed)
+        model_name = str(getattr(response, "model_name", "") or "") or None
+        provider_name = str(getattr(response, "provider_name", "") or "") or None
+        if failure_type is None:
+            return AccountRouteStageAttempt(
+                payload=parsed,
+                attempted=True,
+                system_prompt=system_prompt,
+                user_prompt=current_user_prompt,
+                attempt_count=attempt_number,
+                attempt_failures=tuple(failures),
+                model_name=model_name,
+                provider_name=provider_name,
+                recovered=bool(failures),
+            )
+        failures.append(
+            _attempt_failure(
+                attempt=attempt_number,
+                failure_type=failure_type,
+                source=stage_name,
+                raw_text=raw_text,
+            )
         )
-    except LlmInvocationError:
-        LOGGER.warning("Account route stage %s failed", prompt_key, exc_info=True)
+        if attempt_number == 1:
+            continue
+        digest = hashlib.sha256(raw_text.encode("utf-8")).hexdigest() if raw_text else None
         return AccountRouteStageAttempt(
             payload=None,
             attempted=True,
-            failure_type="llm_invocation_failed",
-            failure_source=prompt_key,
+            failure_type=failure_type,
+            failure_source=stage_name,
             system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            user_prompt=current_user_prompt,
+            attempt_count=attempt_number,
+            attempt_failures=tuple(failures),
+            model_name=model_name,
+            provider_name=provider_name,
+            raw_output_length=len(raw_text),
+            raw_output_sha256=digest,
+            sanitized_output_excerpt=_sanitize_output_excerpt(raw_text),
         )
-    try:
-        parsed = json.loads(response.text)
-    except (json.JSONDecodeError, TypeError):
-        return AccountRouteStageAttempt(
-            payload=None,
-            attempted=True,
-            failure_type="invalid_json",
-            failure_source=prompt_key,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
-    if not isinstance(parsed, dict):
-        parsed = None
-    return AccountRouteStageAttempt(
-        payload=parsed,
-        attempted=True,
-        failure_type=None if parsed is not None else "invalid_payload",
-        failure_source=None if parsed is not None else prompt_key,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-    )
+    raise AssertionError("unreachable account route stage attempt")
 
 
 def _decision(
@@ -572,6 +738,46 @@ def _result(
     )
     classification["stage_reason_codes"] = stage_reason_codes
     classification["stage_reasons"] = dict(stage_reason_codes)
+    classification["stage_attempt_counts"] = {
+        name: max(1, int(attempt.attempt_count or 1))
+        for name, attempt in attempts.items()
+    }
+    classification["stage_recovered"] = {
+        name: bool(attempt.recovered)
+        for name, attempt in attempts.items()
+    }
+    classification["stage_failure_types"] = {
+        name: str(attempt.failure_type)
+        for name, attempt in attempts.items()
+        if attempt.failure_type
+    }
+    classification["stage_failure_sources"] = {
+        name: str(attempt.failure_source)
+        for name, attempt in attempts.items()
+        if attempt.failure_source
+    }
+    failure_families = {
+        "intent_classifier": "invalid_intent_output",
+        "agora_router": "invalid_agora_output",
+        "account_billing_router": "invalid_account_billing_output",
+        "automation_router": "invalid_automation_output",
+    }
+    for stage_name, attempt in attempts.items():
+        if attempt.failure_type:
+            if attempt.failure_type in {
+                "invalid_json",
+                "invalid_payload",
+                "missing_required_field",
+                "invalid_enum",
+                "invalid_confidence",
+            }:
+                classification.setdefault("route_failure_family", failure_families.get(stage_name))
+            else:
+                classification.setdefault(
+                    "route_failure_family",
+                    f"{stage_name}_{attempt.failure_type}",
+                )
+            break
     classification.setdefault(
         "route_reason_code",
         next(reversed(stage_reason_codes.values()), "legacy_reason_unavailable"),
@@ -583,6 +789,7 @@ def _result(
         primary_label=primary_label,
         secondary_label=secondary_label,
         prompt_snapshots=snapshots,
+        stage_attempts=dict(attempts),
     )
 
 
@@ -848,9 +1055,11 @@ def decide_account_route(
     }
     attempts: dict[str, AccountRouteStageAttempt] = {}
     intent_attempt = _invoke_stage(
+        stage_name="intent_classifier",
         prompt_key=ACCOUNT_INTENT_PROMPT_KEY,
         fallback_system_prompt=build_account_intent_system_prompt(),
         payload=base_payload,
+        validate_payload=_validate_intent_payload,
     )
     attempts["intent_classifier"] = intent_attempt
     if intent_attempt.payload is None:
@@ -868,7 +1077,7 @@ def decide_account_route(
             )
         return finish(_human_review_result(
             intent_class="uncertain",
-            reason="invalid_intent_output",
+            reason=_stage_failure_reason("intent_classifier", intent_attempt),
             response_language=response_language,
             confidence=0.0,
             attempts=attempts,
@@ -982,9 +1191,11 @@ def decide_account_route(
         ))
 
     agora_attempt = _invoke_stage(
+        stage_name="agora_router",
         prompt_key=ACCOUNT_AGORA_PROMPT_KEY,
         fallback_system_prompt=build_account_agora_system_prompt(),
         payload={**base_payload, "parent_classification": classification},
+        validate_payload=_validate_agora_payload,
     )
     attempts["agora_router"] = agora_attempt
     agora_payload = agora_attempt.payload or {}
@@ -1002,9 +1213,12 @@ def decide_account_route(
         _AGORA_REASON_CODES,
         agora_reason_defaults.get(agora_route, "invalid_agora_output"),
     )
+    if agora_attempt.payload is None and agora_attempt.failure_type:
+        agora_reason = _stage_failure_reason("agora_router", agora_attempt)
     if agora_route not in _AGORA_ROUTES:
         agora_route = "uncategorized"
-        agora_reason = "invalid_agora_output"
+        if not (agora_attempt.payload is None and agora_attempt.failure_type):
+            agora_reason = "invalid_agora_output"
     elif agora_confidence < threshold:
         agora_route = "uncategorized"
         agora_reason = "low_agora_route_confidence"
@@ -1070,9 +1284,11 @@ def decide_account_route(
 
     if agora_route == "account_billing":
         account_billing_attempt = _invoke_stage(
+            stage_name="account_billing_router",
             prompt_key=ACCOUNT_BILLING_PROMPT_KEY,
             fallback_system_prompt=build_account_billing_system_prompt(),
             payload={**base_payload, "parent_classification": classification},
+            validate_payload=_validate_account_billing_payload,
         )
         attempts["account_billing_router"] = account_billing_attempt
         account_billing_payload = account_billing_attempt.payload or {}
@@ -1082,7 +1298,11 @@ def decide_account_route(
         account_billing_confidence = _safe_confidence(account_billing_payload.get("confidence"))
         if account_billing_attempt.payload is None:
             subcategory = "other"
-            account_billing_reason = "invalid_account_billing_output"
+            account_billing_reason = (
+                _stage_failure_reason("account_billing_router", account_billing_attempt)
+                if account_billing_attempt.failure_type
+                else "invalid_account_billing_output"
+            )
         elif account_billing_confidence < threshold:
             subcategory = "other"
             account_billing_reason = "low_account_billing_subcategory_confidence"
@@ -1146,9 +1366,11 @@ def decide_account_route(
         ))
 
     automation_attempt = _invoke_stage(
+        stage_name="automation_router",
         prompt_key=ACCOUNT_AUTOMATION_PROMPT_KEY,
         fallback_system_prompt=build_account_automation_system_prompt(),
         payload={**base_payload, "parent_classification": classification},
+        validate_payload=_validate_automation_payload,
     )
     attempts["automation_router"] = automation_attempt
     automation_payload = automation_attempt.payload or {}
@@ -1172,7 +1394,11 @@ def decide_account_route(
     )
     if automation_attempt.payload is None:
         subcategory = "unregistered"
-        automation_reason = "invalid_automation_output"
+        automation_reason = (
+            _stage_failure_reason("automation_router", automation_attempt)
+            if automation_attempt.failure_type
+            else "invalid_automation_output"
+        )
     elif automation_confidence < threshold:
         subcategory = "unregistered"
         automation_reason = "low_subcategory_confidence"
