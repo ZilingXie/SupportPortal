@@ -186,7 +186,8 @@ _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
 _SCHEMA_BOOTSTRAP_ADVISORY_LOCK = (842918, 1)
-_ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK = (842918, 2)
+# Namespace 842918 key 4 is reserved for Persona registry writes.
+_ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK = (842918, 4)
 
 
 def _account_case_route_label(item: dict[str, Any]) -> str:

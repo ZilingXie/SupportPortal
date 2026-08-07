@@ -25,6 +25,7 @@ from backend.repositories.ticket_repository import (
     InMemoryTicketRepository,
     PoolTimeout,
     PostgresTicketRepository,
+    _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
     create_ticket_repository,
 )
 
@@ -748,6 +749,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertFalse(connection.autocommit)
         first_sql = str(cursor.executed[0][0][0])
         self.assertIn("pg_advisory_xact_lock", first_sql)
+
+    def test_persona_registry_advisory_lock_reserves_key_four(self) -> None:
+        # Namespace ownership: 1 schema bootstrap, 2 asset bootstrap, 3 archive, 4 Persona registry.
+        self.assertEqual(_ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK, (842918, 4))
 
     def test_ticket_repository_initialize_grants_separate_runtime_role_access(self) -> None:
         cursor = _ReusableCursor()

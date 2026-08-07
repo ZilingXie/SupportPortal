@@ -15,7 +15,10 @@ from dotenv import load_dotenv
 from psycopg import sql
 from psycopg.types.json import Json
 
-from backend.repositories.ticket_repository import PostgresTicketRepository
+from backend.repositories.ticket_repository import (
+    PostgresTicketRepository,
+    _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
+)
 from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_KEY
 
 
@@ -25,10 +28,6 @@ _TEST_PGOPTIONS = "-c lock_timeout=15000 -c statement_timeout=60000"
 _TEST_CONNECT_TIMEOUT_SECONDS = 15
 _TEST_THREAD_TIMEOUT_SECONDS = 50
 _TEST_FUTURE_TIMEOUT_SECONDS = 65
-_PERSONA_REGISTRY_ADVISORY_LOCK_NAMESPACE = 842918
-_PERSONA_REGISTRY_ADVISORY_LOCK_KEY = 2
-
-
 @unittest.skipUnless(
     RUN_POSTGRES_TESTS,
     "set RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true to run PostgreSQL integration tests",
@@ -137,7 +136,7 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                 cursor.execute("SET LOCAL statement_timeout = '60s'")
                 target._ensure_account_persona_presets(cursor)
 
-    def _wait_for_backend_lock(self, backend_pid: int, *, timeout: float) -> None:
+    def _wait_for_persona_coordination_lock(self, backend_pid: int, *, timeout: float) -> None:
         deadline = time.monotonic() + timeout
         last_state: tuple[object, ...] | None = None
         with psycopg.connect(
@@ -156,7 +155,7 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                         return
                     time.sleep(0.05)
         self.fail(
-            f"backend {backend_pid} did not wait on the Persona table lock within {timeout}s; "
+            f"backend {backend_pid} did not wait for the Persona coordination transaction within {timeout}s; "
             f"last state: {last_state!r}"
         )
 
@@ -182,8 +181,8 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                     """,
                     (
                         backend_pid,
-                        _PERSONA_REGISTRY_ADVISORY_LOCK_NAMESPACE,
-                        _PERSONA_REGISTRY_ADVISORY_LOCK_KEY,
+                        _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK[0],
+                        _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK[1],
                     ),
                 )
                 return bool(cursor.fetchone()[0])
@@ -220,8 +219,8 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                         WHERE application_name = %s
                         """,
                         (
-                            _PERSONA_REGISTRY_ADVISORY_LOCK_NAMESPACE,
-                            _PERSONA_REGISTRY_ADVISORY_LOCK_KEY,
+                            _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK[0],
+                            _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK[1],
                             application_name,
                         ),
                     )
@@ -496,11 +495,11 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                     self.repository._ensure_account_persona_presets(cursor)
                     first_seeded.set()
                     if not release_first.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
-                        raise TimeoutError("timed out while holding the Persona table lock")
+                        raise TimeoutError("timed out while holding the Persona coordination lock")
 
         def seed_while_first_transaction_holds_lock() -> None:
             if not first_seeded.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
-                raise TimeoutError("first transaction did not acquire the Persona table lock")
+                raise TimeoutError("first transaction did not acquire the Persona coordination lock")
             with psycopg.connect(
                 self.migration_dsn,
                 connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
@@ -526,7 +525,7 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                     "second seed transaction did not start",
                 )
                 second_backend_pid = second_backend_pids.get(timeout=5)
-                self._wait_for_backend_lock(second_backend_pid, timeout=5)
+                self._wait_for_persona_coordination_lock(second_backend_pid, timeout=5)
             finally:
                 release_first.set()
             first.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
