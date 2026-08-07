@@ -722,7 +722,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
@@ -736,7 +739,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection.autocommit = True
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         self.assertFalse(connection.autocommit)
@@ -755,6 +761,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         with (
             patch.object(repository, "_connect_for_initialize", return_value=connection),
             patch.object(repository, "_runtime_database_role", return_value="runtime-role"),
+            patch.object(repository, "_ensure_account_persona_presets"),
         ):
             repository.initialize()
 
@@ -785,7 +792,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://shared", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
@@ -796,7 +806,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)

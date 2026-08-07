@@ -25,6 +25,8 @@ _TEST_PGOPTIONS = "-c lock_timeout=15000 -c statement_timeout=60000"
 _TEST_CONNECT_TIMEOUT_SECONDS = 15
 _TEST_THREAD_TIMEOUT_SECONDS = 50
 _TEST_FUTURE_TIMEOUT_SECONDS = 65
+_PERSONA_REGISTRY_ADVISORY_LOCK_NAMESPACE = 842918
+_PERSONA_REGISTRY_ADVISORY_LOCK_KEY = 2
 
 
 @unittest.skipUnless(
@@ -37,15 +39,34 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self.migration_dsn = os.getenv("TICKET_DB_MIGRATION_DSN", "").strip()
         if not self.dsn or not self.migration_dsn:
             self.fail("TICKET_DB_DSN and TICKET_DB_MIGRATION_DSN are required")
+        self.runtime_role = self._runtime_database_role()
         self.schema = f"supportportal_account_persona_{uuid4().hex}"
         self.repository = self._repository()
         self.addCleanup(self._cleanup_schema)
 
-    def _repository(self) -> PostgresTicketRepository:
+    def _runtime_database_role(self) -> str:
+        with psycopg.connect(
+            self.dsn,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT current_user")
+                row = cursor.fetchone()
+        role = str(row[0] if row else "").strip()
+        if not role:
+            self.fail("TICKET_DB_DSN did not report a runtime database role")
+        return role
+
+    def _repository(
+        self,
+        *,
+        application_name: str | None = None,
+    ) -> PostgresTicketRepository:
         return PostgresTicketRepository(
             dsn=self.dsn,
             migration_dsn=self.migration_dsn,
             schema=self.schema,
+            application_name=application_name,
         )
 
     def _cleanup_schema(self) -> None:
@@ -90,12 +111,19 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                     ).format(versions, personas)
                 )
                 cursor.execute(
-                    sql.SQL("GRANT USAGE ON SCHEMA {} TO PUBLIC").format(sql.Identifier(self.schema))
+                    sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                        sql.Identifier(self.schema),
+                        sql.Identifier(self.runtime_role),
+                    )
                 )
                 cursor.execute(
                     sql.SQL(
-                        "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO PUBLIC"
-                    ).format(sql.Identifier(self.schema))
+                        "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {}, {} TO {}"
+                    ).format(
+                        personas,
+                        versions,
+                        sql.Identifier(self.runtime_role),
+                    )
                 )
 
     def _ensure_presets(self, repository: PostgresTicketRepository | None = None) -> None:
@@ -131,6 +159,77 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             f"backend {backend_pid} did not wait on the Persona table lock within {timeout}s; "
             f"last state: {last_state!r}"
         )
+
+    def _holds_persona_registry_advisory_lock(self, backend_pid: int) -> bool:
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM pg_locks
+                        WHERE pid = %s
+                          AND locktype = 'advisory'
+                          AND classid = %s
+                          AND objid = %s
+                          AND objsubid = 2
+                          AND granted
+                    )
+                    """,
+                    (
+                        backend_pid,
+                        _PERSONA_REGISTRY_ADVISORY_LOCK_NAMESPACE,
+                        _PERSONA_REGISTRY_ADVISORY_LOCK_KEY,
+                    ),
+                )
+                return bool(cursor.fetchone()[0])
+
+    def _wait_for_persona_registry_advisory_lock(
+        self,
+        application_name: str,
+        *,
+        timeout: float,
+    ) -> tuple[bool, tuple[object, ...] | None]:
+        deadline = time.monotonic() + timeout
+        last_state: tuple[object, ...] | None = None
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                while time.monotonic() < deadline:
+                    cursor.execute(
+                        """
+                        SELECT state, wait_event_type, wait_event,
+                               EXISTS(
+                                   SELECT 1
+                                   FROM pg_locks
+                                   WHERE pid = activity.pid
+                                     AND locktype = 'advisory'
+                                     AND classid = %s
+                                     AND objid = %s
+                                     AND objsubid = 2
+                                     AND NOT granted
+                               )
+                        FROM pg_stat_activity AS activity
+                        WHERE application_name = %s
+                        """,
+                        (
+                            _PERSONA_REGISTRY_ADVISORY_LOCK_NAMESPACE,
+                            _PERSONA_REGISTRY_ADVISORY_LOCK_KEY,
+                            application_name,
+                        ),
+                    )
+                    last_state = cursor.fetchone()
+                    if last_state is not None and bool(last_state[3]):
+                        return True, last_state
+                    time.sleep(0.05)
+        return False, last_state
 
     def _insert_legacy_persona(
         self,
@@ -266,6 +365,116 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             [item["status"] for item in personas[DEFAULT_PERSONA_KEY]["versions"]],
             ["superseded", "published"],
         )
+
+    def test_publish_waits_for_seed_coordination_lock_and_preserves_history(self) -> None:
+        self._create_persona_tables()
+        self._ensure_presets()
+        draft_content = {
+            "instruction": "Admin voice",
+            "opener": "",
+            "signature": "Best,\nSid\nSupport Engineer 2",
+        }
+        draft = self.repository.create_account_persona_draft(
+            DEFAULT_PERSONA_KEY,
+            content=draft_content,
+            change_note="Admin publication while seed rechecks",
+            based_on_version=1,
+            actor_id="admin-1",
+            created_at="2026-08-07T00:00:00+00:00",
+        )
+        seed_repository = self._repository()
+        publish_application_name = f"account-persona-publish-{uuid4().hex}"
+        publish_repository = self._repository(application_name=publish_application_name)
+        self.addCleanup(seed_repository.close)
+        self.addCleanup(publish_repository.close)
+        seed_ready = threading.Event()
+        release_seed = threading.Event()
+        publish_started = threading.Event()
+        seed_backend_pids: Queue[int] = Queue()
+
+        def seed_and_hold_coordination_lock() -> None:
+            with psycopg.connect(
+                self.migration_dsn,
+                connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+            ) as connection:
+                with connection.transaction(), connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL lock_timeout = '15s'")
+                    cursor.execute("SET LOCAL statement_timeout = '30s'")
+                    cursor.execute("SELECT pg_backend_pid()")
+                    seed_backend_pids.put(int(cursor.fetchone()[0]))
+                    seed_repository._ensure_account_persona_presets(cursor)
+                    seed_ready.set()
+                    if not release_seed.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
+                        raise TimeoutError("timed out while holding the Persona coordination lock")
+
+        def publish_draft() -> dict[str, object]:
+            if not seed_ready.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
+                raise TimeoutError("seed transaction did not acquire the Persona coordination lock")
+            publish_started.set()
+            return publish_repository.publish_account_persona_version(
+                DEFAULT_PERSONA_KEY,
+                draft["version"],
+                actor_id="admin-1",
+                published_at="2026-08-07T00:01:00+00:00",
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            seed = executor.submit(seed_and_hold_coordination_lock)
+            try:
+                self.assertTrue(
+                    seed_ready.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS),
+                    "seed transaction did not acquire its coordination lock",
+                )
+                seed_backend_pid = seed_backend_pids.get(timeout=5)
+                seed_holds_coordination_lock = self._holds_persona_registry_advisory_lock(
+                    seed_backend_pid
+                )
+                publisher = executor.submit(publish_draft)
+                self.assertTrue(
+                    publish_started.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS),
+                    "publish transaction did not start",
+                )
+                publisher_waited, last_publisher_state = (
+                    self._wait_for_persona_registry_advisory_lock(
+                        publish_application_name,
+                        timeout=5,
+                    )
+                )
+            finally:
+                release_seed.set()
+            seed.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
+            published = publisher.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
+
+        self.assertTrue(
+            publisher_waited,
+            "real publish backend did not wait on the shared Persona advisory lock; "
+            f"seed held lock={seed_holds_coordination_lock}, "
+            f"last publish state={last_publisher_state!r}",
+        )
+        self.assertTrue(
+            seed_holds_coordination_lock,
+            "seed helper transaction did not hold the dedicated Persona advisory lock",
+        )
+        self.assertEqual(published["version"], draft["version"])
+        self.assertEqual(published["status"], "published")
+        self.assertEqual(published["published_by"], "admin-1")
+
+        personas = self._personas()
+        self.assertEqual(set(personas), {preset.persona_key for preset in ACCOUNT_PERSONA_PRESETS})
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            self.assertEqual(personas[preset.persona_key]["versions"][0]["created_by"], "system")
+            self.assertEqual(
+                personas[preset.persona_key]["versions"][0]["change_note"],
+                preset.seed_marker,
+            )
+        default_versions = personas[DEFAULT_PERSONA_KEY]["versions"]
+        self.assertEqual(personas[DEFAULT_PERSONA_KEY]["published_version"], draft["version"])
+        self.assertEqual([item["version"] for item in default_versions], [1, draft["version"]])
+        self.assertEqual([item["status"] for item in default_versions], ["superseded", "published"])
+        self.assertEqual(default_versions[1]["content"], draft_content)
+        self.assertEqual(default_versions[1]["change_note"], "Admin publication while seed rechecks")
+        self.assertEqual(default_versions[1]["created_by"], "admin-1")
+        self.assertEqual(default_versions[1]["published_by"], "admin-1")
 
     def test_concurrent_seed_helpers_converge_without_duplicate_versions(self) -> None:
         self._create_persona_tables()

@@ -185,6 +185,8 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
+_SCHEMA_BOOTSTRAP_ADVISORY_LOCK = (842918, 1)
+_ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK = (842918, 2)
 
 
 def _account_case_route_label(item: dict[str, Any]) -> str:
@@ -5070,6 +5072,7 @@ class PostgresTicketRepository:
 
         personas_table = self._table("support_account_personas")
         versions_table = self._table("support_account_prompt_versions")
+        self._lock_account_persona_registry(cur)
         # This migration changes version history, so serialize it against both Persona writes.
         cur.execute(
             sql.SQL("LOCK TABLE {}, {} IN SHARE ROW EXCLUSIVE MODE").format(
@@ -5156,6 +5159,13 @@ class PostgresTicketRepository:
                 (display_name, next_version, persona_key),
             )
 
+    def _lock_account_persona_registry(self, cur: psycopg.Cursor[Any]) -> None:
+        # Keep every Persona registry writer ahead of the seed helper's table lock.
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(%s, %s)",
+            _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
+        )
+
     def initialize(self) -> None:
         runtime_role = self._runtime_database_role()
         with self._connect_for_initialize() as conn:
@@ -5163,7 +5173,10 @@ class PostgresTicketRepository:
             conn.autocommit = False
             with conn.cursor() as cur:
                 # Serialize bootstrap across services/workers sharing the same AWS database.
-                cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842918, 1))
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(%s, %s)",
+                    _SCHEMA_BOOTSTRAP_ADVISORY_LOCK,
+                )
                 cur.execute(
                     sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
                         sql.Identifier(self._schema)
@@ -5678,7 +5691,6 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT PRIMARY KEY, build_ref TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('candidate','active','superseded','failed')), previous_release_id TEXT REFERENCES {}(release_id), created_at TIMESTAMPTZ NOT NULL, activated_at TIMESTAMPTZ, failure_reason TEXT)").format(self._table("support_prompt_releases"), self._table("support_prompt_releases")))
                 cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((status)) WHERE status='active'").format(sql.Identifier("idx_support_prompt_releases_one_active"), self._table("support_prompt_releases")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT NOT NULL REFERENCES {}(release_id) ON DELETE CASCADE, prompt_key TEXT NOT NULL, prompt_version INTEGER NOT NULL, PRIMARY KEY (release_id, prompt_key), FOREIGN KEY (prompt_key, prompt_version) REFERENCES {}(prompt_key, version))").format(self._table("support_prompt_release_items"), self._table("support_prompt_releases"), self._table("support_prompt_versions")))
-                self._ensure_account_persona_presets(cur)
                 cur.execute(
                     sql.SQL(
                         """
@@ -6390,6 +6402,7 @@ class PostgresTicketRepository:
                     )
                 )
                 self._backfill_engineer_cases_from_legacy_storage(cur)
+                self._ensure_account_persona_presets(cur)
                 if runtime_role:
                     self._grant_runtime_privileges(cur, runtime_role)
             conn.commit()
@@ -10799,6 +10812,7 @@ class PostgresTicketRepository:
         key = str(persona_key).strip().lower()
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
+                self._lock_account_persona_registry(cur)
                 try:
                     cur.execute(sql.SQL("INSERT INTO {} (persona_key,display_name,enabled,published_version,created_at,updated_at) VALUES (%s,%s,TRUE,NULL,%s,%s)").format(self._table("support_account_personas")), (key, str(display_name).strip(), created_at, created_at))
                 except psycopg.errors.UniqueViolation as exc: raise ValueError("persona_key must be unique") from exc
@@ -10810,6 +10824,7 @@ class PostgresTicketRepository:
         key = str(persona_key).strip().lower()
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
+                self._lock_account_persona_registry(cur)
                 cur.execute(sql.SQL("SELECT COALESCE(MAX(version),0)+1 FROM {} WHERE persona_key=%s").format(self._table("support_account_prompt_versions")), (key,)); version=int(cur.fetchone()[0])
                 if based_on_version is not None:
                     cur.execute(sql.SQL("SELECT 1 FROM {} WHERE persona_key=%s AND version=%s").format(self._table("support_account_prompt_versions")), (key,based_on_version))
@@ -10822,6 +10837,7 @@ class PostgresTicketRepository:
         key=str(persona_key).strip().lower()
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
+                self._lock_account_persona_registry(cur)
                 cur.execute(sql.SQL("SELECT content,change_note,based_on_version,created_by,created_at,status FROM {} WHERE persona_key=%s AND version=%s FOR UPDATE").format(self._table("support_account_prompt_versions")),(key,version)); row=cur.fetchone()
                 if row is None or row[5] != "draft": raise ValueError("draft version not found")
                 cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE persona_key=%s AND status='published'").format(self._table("support_account_prompt_versions")),(key,))
@@ -10840,6 +10856,7 @@ class PostgresTicketRepository:
         key=str(persona_key).strip().lower()
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
+                self._lock_account_persona_registry(cur)
                 if not enabled:
                     cur.execute(sql.SQL("SELECT COUNT(*) FROM {} WHERE enabled=TRUE AND published_version IS NOT NULL").format(self._table("support_account_personas")))
                     if int(cur.fetchone()[0]) <= 1: raise ValueError("last enabled persona cannot be disabled")
