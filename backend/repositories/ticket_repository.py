@@ -1917,32 +1917,34 @@ class InMemoryTicketRepository:
         self._prompt_definitions: dict[str, dict[str, Any]] = {}
         self._prompt_versions: dict[str, list[dict[str, Any]]] = {}
         self._prompt_releases: dict[str, dict[str, Any]] = {}
-        self._seed_default_account_persona()
+        self._seed_account_persona_presets()
 
-    def _seed_default_account_persona(self) -> None:
-        from backend.services.account_admin import DEFAULT_PERSONA_CONTENT, DEFAULT_PERSONA_KEY
+    def _seed_account_persona_presets(self) -> None:
+        from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 
         created_at = _utc_now()
-        self._account_personas[DEFAULT_PERSONA_KEY] = {
-            "persona_key": DEFAULT_PERSONA_KEY,
-            "display_name": "Default Support",
-            "enabled": True,
-            "published_version": 1,
-            "created_at": created_at,
-            "updated_at": created_at,
-        }
-        self._account_persona_versions[DEFAULT_PERSONA_KEY] = [{
-            "persona_key": DEFAULT_PERSONA_KEY,
-            "version": 1,
-            "status": "published",
-            "content": copy.deepcopy(DEFAULT_PERSONA_CONTENT),
-            "change_note": "Seeded from the pre-registry customer reply behavior",
-            "based_on_version": None,
-            "created_by": "system",
-            "created_at": created_at,
-            "published_by": "system",
-            "published_at": created_at,
-        }]
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            persona_key = str(preset["persona_key"])
+            self._account_personas[persona_key] = {
+                "persona_key": persona_key,
+                "display_name": str(preset["display_name"]),
+                "enabled": True,
+                "published_version": 1,
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+            self._account_persona_versions[persona_key] = [{
+                "persona_key": persona_key,
+                "version": 1,
+                "status": "published",
+                "content": copy.deepcopy(preset["content"]),
+                "change_note": str(preset["seed_marker"]),
+                "based_on_version": None,
+                "created_by": "system",
+                "created_at": created_at,
+                "published_by": "system",
+                "published_at": created_at,
+            }]
 
     def save_account_route_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
         saved = copy.deepcopy(execution)
@@ -5063,6 +5065,95 @@ class PostgresTicketRepository:
                 )
                 self._invalidate_pool_if_current(getattr(exc, "pool", None))
 
+    def _ensure_account_persona_presets(self, cur: psycopg.Cursor[Any]) -> None:
+        from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_KEY
+
+        personas_table = self._table("support_account_personas")
+        versions_table = self._table("support_account_prompt_versions")
+        # This migration changes version history, so serialize it against both Persona writes.
+        cur.execute(
+            sql.SQL("LOCK TABLE {}, {} IN SHARE ROW EXCLUSIVE MODE").format(
+                personas_table,
+                versions_table,
+            )
+        )
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            persona_key = str(preset["persona_key"])
+            display_name = str(preset["display_name"])
+            seed_marker = str(preset["seed_marker"])
+            content = copy.deepcopy(preset["content"])
+            cur.execute(
+                sql.SQL(
+                    "SELECT display_name, enabled, published_version FROM {} "
+                    "WHERE persona_key=%s FOR UPDATE"
+                ).format(personas_table),
+                (persona_key,),
+            )
+            persona = cur.fetchone()
+            if persona is not None:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT 1 FROM {} WHERE persona_key=%s AND created_by='system' "
+                        "AND change_note=%s LIMIT 1"
+                    ).format(versions_table),
+                    (persona_key, seed_marker),
+                )
+                if cur.fetchone() is not None:
+                    continue
+                if persona_key != DEFAULT_PERSONA_KEY:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT EXISTS(SELECT 1 FROM {} WHERE persona_key=%s "
+                            "AND created_by <> 'system')"
+                        ).format(versions_table),
+                        (persona_key,),
+                    )
+                    if bool(cur.fetchone()[0]):
+                        LOGGER.warning(
+                            "Account Persona preset %s was not seeded because non-system content already exists; "
+                            "review and migrate it manually.",
+                            persona_key,
+                        )
+                        continue
+            else:
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (persona_key,display_name,enabled,published_version,created_at,updated_at) "
+                        "VALUES (%s,%s,TRUE,NULL,NOW(),NOW())"
+                    ).format(personas_table),
+                    (persona_key, display_name),
+                )
+
+            cur.execute(
+                sql.SQL("SELECT COALESCE(MAX(version),0) FROM {} WHERE persona_key=%s").format(
+                    versions_table
+                ),
+                (persona_key,),
+            )
+            next_version = int(cur.fetchone()[0]) + 1
+            based_on_version = int(persona[2]) if persona is not None and persona[2] is not None else None
+            cur.execute(
+                sql.SQL(
+                    "UPDATE {} SET status='superseded' WHERE persona_key=%s AND status='published'"
+                ).format(versions_table),
+                (persona_key,),
+            )
+            cur.execute(
+                sql.SQL(
+                    "INSERT INTO {} (persona_key,version,status,content,change_note,based_on_version,"
+                    "created_by,created_at,published_by,published_at) "
+                    "VALUES (%s,%s,'published',%s,%s,%s,'system',NOW(),'system',NOW())"
+                ).format(versions_table),
+                (persona_key, next_version, Json(content), seed_marker, based_on_version),
+            )
+            cur.execute(
+                sql.SQL(
+                    "UPDATE {} SET display_name=%s,enabled=TRUE,published_version=%s,updated_at=NOW() "
+                    "WHERE persona_key=%s"
+                ).format(personas_table),
+                (display_name, next_version, persona_key),
+            )
+
     def initialize(self) -> None:
         runtime_role = self._runtime_database_role()
         with self._connect_for_initialize() as conn:
@@ -5585,80 +5676,7 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT PRIMARY KEY, build_ref TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('candidate','active','superseded','failed')), previous_release_id TEXT REFERENCES {}(release_id), created_at TIMESTAMPTZ NOT NULL, activated_at TIMESTAMPTZ, failure_reason TEXT)").format(self._table("support_prompt_releases"), self._table("support_prompt_releases")))
                 cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((status)) WHERE status='active'").format(sql.Identifier("idx_support_prompt_releases_one_active"), self._table("support_prompt_releases")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT NOT NULL REFERENCES {}(release_id) ON DELETE CASCADE, prompt_key TEXT NOT NULL, prompt_version INTEGER NOT NULL, PRIMARY KEY (release_id, prompt_key), FOREIGN KEY (prompt_key, prompt_version) REFERENCES {}(prompt_key, version))").format(self._table("support_prompt_release_items"), self._table("support_prompt_releases"), self._table("support_prompt_versions")))
-                cur.execute(sql.SQL("INSERT INTO {} (persona_key, display_name, enabled, published_version, created_at, updated_at) VALUES ('default-support','Default Support',TRUE,1,NOW(),NOW()) ON CONFLICT (persona_key) DO NOTHING").format(self._table("support_account_personas")))
-                default_persona_content = {
-                    "instruction": (
-                        "You are Sid, a friendly and helpful support agent. "
-                        "Match the customer's language."
-                    ),
-                    "opener": "",
-                    "signature": "Best,\nSid\nSupport Engineer 2",
-                }
-                cur.execute(sql.SQL("INSERT INTO {} (persona_key, version, status, content, change_note, created_by, created_at, published_by, published_at) VALUES ('default-support',1,'published',%s,'Seeded from the pre-registry customer reply behavior','system',NOW(),'system',NOW()) ON CONFLICT (persona_key, version) DO NOTHING").format(self._table("support_account_prompt_versions")), (Json(default_persona_content),))
-                cur.execute(
-                    sql.SQL(
-                        """
-                        WITH candidate AS (
-                            SELECT persona.persona_key, persona.published_version
-                            FROM {} persona
-                            JOIN {} version
-                              ON version.persona_key = persona.persona_key
-                             AND version.version = persona.published_version
-                            WHERE persona.persona_key = 'default-support'
-                              AND version.status = 'published'
-                              AND version.created_by = 'system'
-                              AND version.content ->> 'instruction' IN (%s, %s)
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM {} later
-                                  WHERE later.persona_key = persona.persona_key
-                                    AND later.version > persona.published_version
-                              )
-                        ),
-                        inserted AS (
-                            INSERT INTO {} (
-                                persona_key, version, status, content, change_note, based_on_version,
-                                created_by, created_at, published_by, published_at
-                            )
-                            SELECT persona_key, published_version + 1, 'published', %s,
-                                   'Added separately managed multiline Signature', published_version,
-                                   'system', NOW(), 'system', NOW()
-                            FROM candidate
-                            ON CONFLICT (persona_key, version) DO NOTHING
-                            RETURNING persona_key, version
-                        ),
-                        superseded AS (
-                            UPDATE {} old_version
-                            SET status = 'superseded'
-                            FROM candidate, inserted
-                            WHERE old_version.persona_key = candidate.persona_key
-                              AND old_version.version = candidate.published_version
-                              AND inserted.persona_key = candidate.persona_key
-                            RETURNING old_version.persona_key
-                        )
-                        UPDATE {} persona
-                        SET published_version = inserted.version, updated_at = NOW()
-                        FROM inserted, superseded
-                        WHERE persona.persona_key = inserted.persona_key
-                          AND superseded.persona_key = persona.persona_key
-                        """
-                    ).format(
-                        self._table("support_account_personas"),
-                        self._table("support_account_prompt_versions"),
-                        self._table("support_account_prompt_versions"),
-                        self._table("support_account_prompt_versions"),
-                        self._table("support_account_prompt_versions"),
-                        self._table("support_account_personas"),
-                    ),
-                    (
-                        "Use a calm, warm, polished concierge-style support voice. Match the customer's language.",
-                        (
-                            "You are Sid, a friendly and helpful support agent. "
-                            "Match the customer's language. "
-                            "Always end every customer-facing reply with a signature using the name Sid."
-                        ),
-                        Json(default_persona_content),
-                    ),
-                )
+                self._ensure_account_persona_presets(cur)
                 cur.execute(
                     sql.SQL(
                         """

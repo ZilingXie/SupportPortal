@@ -12,6 +12,8 @@ from backend.repositories.ticket_repository import (
     InMemoryTicketRepository,
 )
 from backend.services.account_admin import (
+    ACCOUNT_PERSONA_PRESETS,
+    ACCOUNT_PERSONA_PRESET_VERSION,
     DEFAULT_PERSONA_CONTENT,
     DEFAULT_PERSONA_KEY,
     ROUTER_PROMPT_VERSION,
@@ -533,17 +535,71 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertIn("Account & Billing Router", payload["system_prompt"])
         self.assertIn("Automation Router", payload["system_prompt"])
 
+    def test_persona_seed_catalog_contains_the_three_published_presets(self) -> None:
+        expected = {
+            "sid-precise": {
+                "display_name": "Sid Precise",
+                "instruction": (
+                    "Use a precise, composed, and professional support voice. State the current "
+                    "status clearly, then explain any information the customer needs to provide "
+                    "or the next step. Prefer concise, complete sentences and unambiguous wording. "
+                    "Avoid casual chatter, decorative language, vague reassurance, and promises "
+                    "not supported by the provided facts. Remain courteous and human; do not sound "
+                    "legalistic, cold, or robotic."
+                ),
+            },
+            "sid-bright": {
+                "display_name": "Sid Bright",
+                "instruction": (
+                    "Use a professional, upbeat, and energetic support voice. Keep the writing "
+                    "natural and concise, with positive momentum and varied sentence rhythm. "
+                    "Friendly contractions are acceptable when they sound natural, but do not use "
+                    "emoji, slang, exaggerated enthusiasm, excessive exclamation marks, or overly "
+                    "casual language. For sensitive or serious matters, reduce the energy and use "
+                    "a calm, respectful tone."
+                ),
+            },
+            "default-support": {
+                "display_name": "Sid Warm",
+                "instruction": (
+                    "Use a warm, considerate, and reassuring support voice. Acknowledge the "
+                    "customer's request or patience naturally when supported by the provided "
+                    "facts, and explain the current status and next step in a personal, caring way. "
+                    "Avoid canned pleasantries, repetitive thanks or apologies, false empathy, and "
+                    "promises beyond the provided facts. Remain concise and professional, "
+                    "especially for sensitive matters."
+                ),
+            },
+        }
+
+        catalog = {preset["persona_key"]: preset for preset in ACCOUNT_PERSONA_PRESETS}
+        personas = {persona["persona_key"]: persona for persona in self.repository.list_account_personas()}
+
+        self.assertEqual(ACCOUNT_PERSONA_PRESET_VERSION, "automation-persona-presets-v1")
+        self.assertEqual(set(catalog), set(expected))
+        self.assertEqual(set(personas), set(expected))
+        for key, expected_preset in expected.items():
+            self.assertEqual(catalog[key]["display_name"], expected_preset["display_name"])
+            self.assertEqual(catalog[key]["content"]["instruction"], expected_preset["instruction"])
+            self.assertEqual(catalog[key]["content"]["opener"], "")
+            self.assertEqual(catalog[key]["content"]["signature"], "Best,\nSid\nSupport Engineer 2")
+            self.assertEqual(catalog[key]["seed_marker"], f"Seeded {expected_preset['display_name']} preset v1")
+            self.assertTrue(personas[key]["enabled"])
+            self.assertEqual(personas[key]["published_version"], 1)
+            self.assertEqual(len(personas[key]["versions"]), 1)
+            self.assertEqual(personas[key]["versions"][0]["status"], "published")
+            self.assertEqual(personas[key]["versions"][0]["created_by"], "system")
+            self.assertEqual(personas[key]["versions"][0]["change_note"], catalog[key]["seed_marker"])
+            self.assertEqual(personas[key]["versions"][0]["content"], catalog[key]["content"])
+
     def test_persona_draft_publish_assignment_and_rollback_are_versioned(self) -> None:
-        personas = self.repository.list_account_personas()
-        self.assertEqual(personas[0]["persona_key"], DEFAULT_PERSONA_KEY)
-        self.assertEqual(personas[0]["published_version"], 1)
-        default_instruction = personas[0]["versions"][0]["content"]["instruction"]
-        self.assertEqual(personas[0]["versions"][0]["content"], DEFAULT_PERSONA_CONTENT)
-        self.assertIn("friendly and helpful support agent", default_instruction)
-        self.assertIn("Match the customer's language", default_instruction)
-        self.assertIn("You are Sid", default_instruction)
+        personas = {item["persona_key"]: item for item in self.repository.list_account_personas()}
+        default_persona = personas[DEFAULT_PERSONA_KEY]
+        self.assertEqual(default_persona["display_name"], "Sid Warm")
+        self.assertEqual(default_persona["published_version"], 1)
+        self.assertEqual(default_persona["versions"][0]["content"], DEFAULT_PERSONA_CONTENT)
         self.assertEqual(
-            personas[0]["versions"][0]["content"]["signature"],
+            default_persona["versions"][0]["content"]["signature"],
             "Best,\nSid\nSupport Engineer 2",
         )
 
@@ -556,23 +612,47 @@ class AccountAdminFeatureTests(unittest.TestCase):
             created_at="2026-07-21T01:00:00+00:00",
         )
         self.assertEqual(draft["status"], "draft")
-        self.assertEqual(self.repository.resolve_account_persona("TK-1")["version"], 1)
+        assigned_before_publish = self.repository.resolve_account_persona("TK-1")
 
         published = self.repository.publish_account_persona_version(
             DEFAULT_PERSONA_KEY, draft["version"], actor_id="admin-1", published_at="2026-07-21T02:00:00+00:00"
         )
         self.assertEqual(published["status"], "published")
-        first = self.repository.resolve_account_persona("TK-STABLE")
-        self.assertEqual(first["version"], 2)
+        personas_after_publish = {
+            item["persona_key"]: item for item in self.repository.list_account_personas()
+        }
+        self.assertEqual(personas_after_publish[DEFAULT_PERSONA_KEY]["published_version"], 2)
+        self.assertEqual(
+            [item["status"] for item in personas_after_publish[DEFAULT_PERSONA_KEY]["versions"]],
+            ["superseded", "published"],
+        )
+        self.assertEqual(self.repository.resolve_account_persona("TK-1"), assigned_before_publish)
+        self.assertEqual(
+            {
+                key: item["published_version"]
+                for key, item in personas_after_publish.items()
+                if key != DEFAULT_PERSONA_KEY
+            },
+            {"sid-bright": 1, "sid-precise": 1},
+        )
 
         rollback = self.repository.rollback_account_persona_version(
             DEFAULT_PERSONA_KEY, 1, actor_id="admin-1", published_at="2026-07-21T03:00:00+00:00"
         )
         self.assertEqual(rollback["version"], 3)
         self.assertEqual(rollback["status"], "published")
-        self.assertEqual(self.repository.resolve_account_persona("TK-STABLE")["version"], 2)
+        personas_after_rollback = {
+            item["persona_key"]: item for item in self.repository.list_account_personas()
+        }
+        self.assertEqual(
+            [item["version"] for item in personas_after_rollback[DEFAULT_PERSONA_KEY]["versions"]],
+            [1, 2, 3],
+        )
+        self.assertEqual(self.repository.resolve_account_persona("TK-1"), assigned_before_publish)
 
     def test_last_enabled_persona_cannot_be_disabled(self) -> None:
+        self.repository.set_account_persona_enabled("sid-bright", False)
+        self.repository.set_account_persona_enabled("sid-precise", False)
         with self.assertRaisesRegex(ValueError, "last enabled persona"):
             self.repository.set_account_persona_enabled(DEFAULT_PERSONA_KEY, False)
 
