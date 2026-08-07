@@ -28,6 +28,8 @@ _TEST_PGOPTIONS = "-c lock_timeout=15000 -c statement_timeout=60000"
 _TEST_CONNECT_TIMEOUT_SECONDS = 15
 _TEST_THREAD_TIMEOUT_SECONDS = 50
 _TEST_FUTURE_TIMEOUT_SECONDS = 65
+
+
 @unittest.skipUnless(
     RUN_POSTGRES_TESTS,
     "set RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true to run PostgreSQL integration tests",
@@ -517,7 +519,7 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             if not first_seeded.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
                 release_first.set()
                 first.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
-                self.fail("first seed transaction did not acquire its table lock")
+                self.fail("first seed transaction did not acquire its coordination lock")
             second = executor.submit(seed_while_first_transaction_holds_lock)
             try:
                 self.assertTrue(
