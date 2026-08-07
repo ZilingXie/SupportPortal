@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -572,25 +573,49 @@ class AccountAdminFeatureTests(unittest.TestCase):
             },
         }
 
-        catalog = {preset["persona_key"]: preset for preset in ACCOUNT_PERSONA_PRESETS}
+        catalog = {preset.persona_key: preset for preset in ACCOUNT_PERSONA_PRESETS}
         personas = {persona["persona_key"]: persona for persona in self.repository.list_account_personas()}
 
         self.assertEqual(ACCOUNT_PERSONA_PRESET_VERSION, "automation-persona-presets-v1")
         self.assertEqual(set(catalog), set(expected))
         self.assertEqual(set(personas), set(expected))
         for key, expected_preset in expected.items():
-            self.assertEqual(catalog[key]["display_name"], expected_preset["display_name"])
-            self.assertEqual(catalog[key]["content"]["instruction"], expected_preset["instruction"])
-            self.assertEqual(catalog[key]["content"]["opener"], "")
-            self.assertEqual(catalog[key]["content"]["signature"], "Best,\nSid\nSupport Engineer 2")
-            self.assertEqual(catalog[key]["seed_marker"], f"Seeded {expected_preset['display_name']} preset v1")
+            self.assertEqual(catalog[key].display_name, expected_preset["display_name"])
+            self.assertEqual(catalog[key].content["instruction"], expected_preset["instruction"])
+            self.assertEqual(catalog[key].content["opener"], "")
+            self.assertEqual(catalog[key].content["signature"], "Best,\nSid\nSupport Engineer 2")
+            self.assertEqual(catalog[key].seed_marker, f"Seeded {expected_preset['display_name']} preset v1")
             self.assertTrue(personas[key]["enabled"])
             self.assertEqual(personas[key]["published_version"], 1)
             self.assertEqual(len(personas[key]["versions"]), 1)
             self.assertEqual(personas[key]["versions"][0]["status"], "published")
             self.assertEqual(personas[key]["versions"][0]["created_by"], "system")
-            self.assertEqual(personas[key]["versions"][0]["change_note"], catalog[key]["seed_marker"])
-            self.assertEqual(personas[key]["versions"][0]["content"], catalog[key]["content"])
+            self.assertEqual(personas[key]["versions"][0]["change_note"], catalog[key].seed_marker)
+            self.assertEqual(personas[key]["versions"][0]["content"], catalog[key].content)
+
+    def test_persona_preset_catalog_is_immutable_and_content_isolated(self) -> None:
+        preset = ACCOUNT_PERSONA_PRESETS[0]
+        original_content = preset.content
+
+        for attribute, replacement in (
+            ("persona_key", "changed-key"),
+            ("display_name", "Changed name"),
+            ("seed_marker", "Changed marker"),
+            ("instruction", "Changed instruction"),
+        ):
+            with self.subTest(attribute=attribute):
+                with self.assertRaises(FrozenInstanceError):
+                    setattr(preset, attribute, replacement)
+
+        self.assertEqual(set(original_content), {"instruction", "opener", "signature"})
+        original_content["instruction"] = "Mutated instruction"
+        self.assertNotEqual(preset.content["instruction"], "Mutated instruction")
+
+        reseeded = {item["persona_key"]: item for item in InMemoryTicketRepository().list_account_personas()}
+        self.assertEqual(
+            reseeded[preset.persona_key]["versions"][0]["content"],
+            preset.content,
+        )
 
     def test_persona_draft_publish_assignment_and_rollback_are_versioned(self) -> None:
         personas = {item["persona_key"]: item for item in self.repository.list_account_personas()}

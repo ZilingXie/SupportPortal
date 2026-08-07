@@ -22,16 +22,16 @@ class AgentConfigTests(unittest.TestCase):
     def test_catalog_groups_real_agents_and_places_personas_on_automation_router(self) -> None:
         seeded_personas = [
             {
-                "persona_key": preset["persona_key"],
-                "display_name": preset["display_name"],
+                "persona_key": preset.persona_key,
+                "display_name": preset.display_name,
                 "enabled": True,
                 "published_version": 1,
                 "versions": [
                     {
                         "version": 1,
                         "status": "published",
-                        "content": dict(preset["content"]),
-                        "change_note": preset["seed_marker"],
+                        "content": preset.content,
+                        "change_note": preset.seed_marker,
                         "created_at": "2026-07-20T00:00:00+00:00",
                         "published_at": "2026-07-20T00:00:00+00:00",
                     }
@@ -52,11 +52,11 @@ class AgentConfigTests(unittest.TestCase):
         personas = {item["persona_key"]: item for item in payload["automation_personas"]}
         self.assertEqual(set(personas), {"default-support", "sid-bright", "sid-precise"})
         for preset in ACCOUNT_PERSONA_PRESETS:
-            persona = personas[preset["persona_key"]]
-            self.assertEqual(persona["display_name"], preset["display_name"])
+            persona = personas[preset.persona_key]
+            self.assertEqual(persona["display_name"], preset.display_name)
             self.assertTrue(persona["enabled"])
             self.assertEqual(persona["published_version"], 1)
-            self.assertEqual(persona["versions"][0]["content"]["instruction"], preset["content"]["instruction"])
+            self.assertEqual(persona["versions"][0]["content"]["instruction"], preset.content["instruction"])
             self.assertEqual(persona["versions"][0]["content"]["opener"], "")
             self.assertEqual(persona["versions"][0]["content"]["signature"], DEFAULT_PERSONA_SIGNATURE)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -29,60 +30,66 @@ ROUTING_STAGE_DESCRIPTIONS = {
 DEFAULT_PERSONA_KEY = "default-support"
 DEFAULT_PERSONA_SIGNATURE = "Best,\nSid\nSupport Engineer 2"
 ACCOUNT_PERSONA_PRESET_VERSION = "automation-persona-presets-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class AccountPersonaPreset:
+    persona_key: str
+    display_name: str
+    instruction: str
+    seed_marker: str
+
+    @property
+    def content(self) -> dict[str, str]:
+        return {
+            "instruction": self.instruction,
+            "opener": "",
+            "signature": DEFAULT_PERSONA_SIGNATURE,
+        }
+
+
 ACCOUNT_PERSONA_PRESETS = (
-    {
-        "persona_key": "sid-precise",
-        "display_name": "Sid Precise",
-        "content": {
-            "instruction": (
-                "Use a precise, composed, and professional support voice. State the current "
-                "status clearly, then explain any information the customer needs to provide "
-                "or the next step. Prefer concise, complete sentences and unambiguous wording. "
-                "Avoid casual chatter, decorative language, vague reassurance, and promises "
-                "not supported by the provided facts. Remain courteous and human; do not sound "
-                "legalistic, cold, or robotic."
-            ),
-            "opener": "",
-            "signature": DEFAULT_PERSONA_SIGNATURE,
-        },
-        "seed_marker": "Seeded Sid Precise preset v1",
-    },
-    {
-        "persona_key": "sid-bright",
-        "display_name": "Sid Bright",
-        "content": {
-            "instruction": (
-                "Use a professional, upbeat, and energetic support voice. Keep the writing "
-                "natural and concise, with positive momentum and varied sentence rhythm. "
-                "Friendly contractions are acceptable when they sound natural, but do not use "
-                "emoji, slang, exaggerated enthusiasm, excessive exclamation marks, or overly "
-                "casual language. For sensitive or serious matters, reduce the energy and use "
-                "a calm, respectful tone."
-            ),
-            "opener": "",
-            "signature": DEFAULT_PERSONA_SIGNATURE,
-        },
-        "seed_marker": "Seeded Sid Bright preset v1",
-    },
-    {
-        "persona_key": DEFAULT_PERSONA_KEY,
-        "display_name": "Sid Warm",
-        "content": {
-            "instruction": (
-                "Use a warm, considerate, and reassuring support voice. Acknowledge the "
-                "customer's request or patience naturally when supported by the provided "
-                "facts, and explain the current status and next step in a personal, caring way. "
-                "Avoid canned pleasantries, repetitive thanks or apologies, false empathy, and "
-                "promises beyond the provided facts. Remain concise and professional, "
-                "especially for sensitive matters."
-            ),
-            "opener": "",
-            "signature": DEFAULT_PERSONA_SIGNATURE,
-        },
-        "seed_marker": "Seeded Sid Warm preset v1",
-    },
+    AccountPersonaPreset(
+        persona_key="sid-precise",
+        display_name="Sid Precise",
+        instruction=(
+            "Use a precise, composed, and professional support voice. State the current "
+            "status clearly, then explain any information the customer needs to provide "
+            "or the next step. Prefer concise, complete sentences and unambiguous wording. "
+            "Avoid casual chatter, decorative language, vague reassurance, and promises "
+            "not supported by the provided facts. Remain courteous and human; do not sound "
+            "legalistic, cold, or robotic."
+        ),
+        seed_marker="Seeded Sid Precise preset v1",
+    ),
+    AccountPersonaPreset(
+        persona_key="sid-bright",
+        display_name="Sid Bright",
+        instruction=(
+            "Use a professional, upbeat, and energetic support voice. Keep the writing "
+            "natural and concise, with positive momentum and varied sentence rhythm. "
+            "Friendly contractions are acceptable when they sound natural, but do not use "
+            "emoji, slang, exaggerated enthusiasm, excessive exclamation marks, or overly "
+            "casual language. For sensitive or serious matters, reduce the energy and use "
+            "a calm, respectful tone."
+        ),
+        seed_marker="Seeded Sid Bright preset v1",
+    ),
+    AccountPersonaPreset(
+        persona_key=DEFAULT_PERSONA_KEY,
+        display_name="Sid Warm",
+        instruction=(
+            "Use a warm, considerate, and reassuring support voice. Acknowledge the "
+            "customer's request or patience naturally when supported by the provided "
+            "facts, and explain the current status and next step in a personal, caring way. "
+            "Avoid canned pleasantries, repetitive thanks or apologies, false empathy, and "
+            "promises beyond the provided facts. Remain concise and professional, "
+            "especially for sensitive matters."
+        ),
+        seed_marker="Seeded Sid Warm preset v1",
+    ),
 )
-DEFAULT_PERSONA_CONTENT = copy.deepcopy(ACCOUNT_PERSONA_PRESETS[2]["content"])
+DEFAULT_PERSONA_CONTENT = ACCOUNT_PERSONA_PRESETS[2].content
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _ENV_EXACT_DESCRIPTIONS = {

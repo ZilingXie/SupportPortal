@@ -348,12 +348,12 @@ class WorkspaceApiTests(unittest.TestCase):
         persona_map = {item["persona_key"]: item for item in personas.json()["personas"]}
         self.assertEqual(set(persona_map), {"default-support", "sid-bright", "sid-precise"})
         for preset in ACCOUNT_PERSONA_PRESETS:
-            persona = persona_map[preset["persona_key"]]
-            self.assertEqual(persona["display_name"], preset["display_name"])
+            persona = persona_map[preset.persona_key]
+            self.assertEqual(persona["display_name"], preset.display_name)
             self.assertTrue(persona["enabled"])
             self.assertEqual(persona["published_version"], 1)
             self.assertEqual(persona["versions"][0]["content"]["signature"], DEFAULT_PERSONA_SIGNATURE)
-            self.assertEqual(persona["versions"][0]["change_note"], preset["seed_marker"])
+            self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
 
     def test_agent_config_is_admin_only_and_places_personas_on_automation_router(self) -> None:
         self.assertEqual(self.client.get("/api/workspace/admin/agent-config").status_code, 401)

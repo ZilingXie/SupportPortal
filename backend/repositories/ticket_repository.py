@@ -1924,10 +1924,10 @@ class InMemoryTicketRepository:
 
         created_at = _utc_now()
         for preset in ACCOUNT_PERSONA_PRESETS:
-            persona_key = str(preset["persona_key"])
+            persona_key = preset.persona_key
             self._account_personas[persona_key] = {
                 "persona_key": persona_key,
-                "display_name": str(preset["display_name"]),
+                "display_name": preset.display_name,
                 "enabled": True,
                 "published_version": 1,
                 "created_at": created_at,
@@ -1937,8 +1937,8 @@ class InMemoryTicketRepository:
                 "persona_key": persona_key,
                 "version": 1,
                 "status": "published",
-                "content": copy.deepcopy(preset["content"]),
-                "change_note": str(preset["seed_marker"]),
+                "content": preset.content,
+                "change_note": preset.seed_marker,
                 "based_on_version": None,
                 "created_by": "system",
                 "created_at": created_at,
@@ -5078,10 +5078,10 @@ class PostgresTicketRepository:
             )
         )
         for preset in ACCOUNT_PERSONA_PRESETS:
-            persona_key = str(preset["persona_key"])
-            display_name = str(preset["display_name"])
-            seed_marker = str(preset["seed_marker"])
-            content = copy.deepcopy(preset["content"])
+            persona_key = preset.persona_key
+            display_name = preset.display_name
+            seed_marker = preset.seed_marker
+            content = preset.content
             cur.execute(
                 sql.SQL(
                     "SELECT display_name, enabled, published_version FROM {} "
@@ -5132,12 +5132,14 @@ class PostgresTicketRepository:
             )
             next_version = int(cur.fetchone()[0]) + 1
             based_on_version = int(persona[2]) if persona is not None and persona[2] is not None else None
-            cur.execute(
-                sql.SQL(
-                    "UPDATE {} SET status='superseded' WHERE persona_key=%s AND status='published'"
-                ).format(versions_table),
-                (persona_key,),
-            )
+            if based_on_version is not None:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='superseded' "
+                        "WHERE persona_key=%s AND version=%s AND status='published'"
+                    ).format(versions_table),
+                    (persona_key, based_on_version),
+                )
             cur.execute(
                 sql.SQL(
                     "INSERT INTO {} (persona_key,version,status,content,change_note,based_on_version,"

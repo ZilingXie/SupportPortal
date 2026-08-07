@@ -132,7 +132,14 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             f"last state: {last_state!r}"
         )
 
-    def _insert_legacy_persona(self, persona_key: str, *, enabled: bool = False) -> None:
+    def _insert_legacy_persona(
+        self,
+        persona_key: str,
+        *,
+        enabled: bool = False,
+        published_version: int | None = 1,
+        version_numbers: tuple[int, ...] = (1,),
+    ) -> None:
         personas = sql.Identifier(self.schema, "support_account_personas")
         versions = sql.Identifier(self.schema, "support_account_prompt_versions")
         with psycopg.connect(
@@ -144,35 +151,40 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                 cursor.execute(
                     sql.SQL(
                         "INSERT INTO {} (persona_key,display_name,enabled,published_version,created_at,updated_at) "
-                        "VALUES (%s,%s,%s,1,NOW(),NOW())"
+                        "VALUES (%s,%s,%s,%s,NOW(),NOW())"
                     ).format(personas),
-                    (persona_key, "Legacy Persona", enabled),
+                    (persona_key, "Legacy Persona", enabled, published_version),
                 )
-                cursor.execute(
-                    sql.SQL(
-                        "INSERT INTO {} (persona_key,version,status,content,change_note,created_by,created_at,published_by,published_at) "
-                        "VALUES (%s,1,'published',%s,'Legacy content','admin-1',NOW(),'admin-1',NOW())"
-                    ).format(versions),
-                    (persona_key, Json({"instruction": "Legacy voice", "opener": "", "signature": "Legacy"})),
-                )
+                for version in version_numbers:
+                    cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (persona_key,version,status,content,change_note,created_by,created_at,published_by,published_at) "
+                            "VALUES (%s,%s,'published',%s,'Legacy content','admin-1',NOW(),'admin-1',NOW())"
+                        ).format(versions),
+                        (
+                            persona_key,
+                            version,
+                            Json({"instruction": "Legacy voice", "opener": "", "signature": "Legacy"}),
+                        ),
+                    )
 
     def test_fresh_initialize_seeds_exact_presets(self) -> None:
         with patch.dict(os.environ, {"PGOPTIONS": _TEST_PGOPTIONS}):
             self.repository.initialize()
 
         personas = self._personas()
-        expected = {preset["persona_key"]: preset for preset in ACCOUNT_PERSONA_PRESETS}
+        expected = {preset.persona_key: preset for preset in ACCOUNT_PERSONA_PRESETS}
         self.assertEqual(set(personas), set(expected))
         for key, preset in expected.items():
             persona = personas[key]
-            self.assertEqual(persona["display_name"], preset["display_name"])
+            self.assertEqual(persona["display_name"], preset.display_name)
             self.assertTrue(persona["enabled"])
             self.assertEqual(persona["published_version"], 1)
             self.assertEqual(len(persona["versions"]), 1)
             self.assertEqual(persona["versions"][0]["status"], "published")
             self.assertEqual(persona["versions"][0]["created_by"], "system")
-            self.assertEqual(persona["versions"][0]["change_note"], preset["seed_marker"])
-            self.assertEqual(persona["versions"][0]["content"], preset["content"])
+            self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
+            self.assertEqual(persona["versions"][0]["content"], preset.content)
 
     def test_legacy_default_history_receives_one_marked_warm_version(self) -> None:
         self._create_persona_tables()
@@ -180,7 +192,7 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self._ensure_presets()
         self._ensure_presets()
 
-        warm = next(preset for preset in ACCOUNT_PERSONA_PRESETS if preset["persona_key"] == DEFAULT_PERSONA_KEY)
+        warm = next(preset for preset in ACCOUNT_PERSONA_PRESETS if preset.persona_key == DEFAULT_PERSONA_KEY)
         persona = self._personas()[DEFAULT_PERSONA_KEY]
         self.assertEqual(persona["display_name"], "Sid Warm")
         self.assertTrue(persona["enabled"])
@@ -188,8 +200,44 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self.assertEqual([item["version"] for item in persona["versions"]], [1, 2])
         self.assertEqual([item["status"] for item in persona["versions"]], ["superseded", "published"])
         self.assertEqual(persona["versions"][1]["created_by"], "system")
-        self.assertEqual(persona["versions"][1]["change_note"], warm["seed_marker"])
-        self.assertEqual(persona["versions"][1]["content"], warm["content"])
+        self.assertEqual(persona["versions"][1]["change_note"], warm.seed_marker)
+        self.assertEqual(persona["versions"][1]["content"], warm.content)
+
+    def test_legacy_default_supersedes_only_registry_published_version(self) -> None:
+        self._create_persona_tables()
+        self._insert_legacy_persona(
+            DEFAULT_PERSONA_KEY,
+            published_version=2,
+            version_numbers=(1, 2),
+        )
+
+        self._ensure_presets()
+
+        persona = self._personas()[DEFAULT_PERSONA_KEY]
+        self.assertEqual(persona["published_version"], 3)
+        self.assertEqual([item["version"] for item in persona["versions"]], [1, 2, 3])
+        self.assertEqual(
+            [item["status"] for item in persona["versions"]],
+            ["published", "superseded", "published"],
+        )
+
+    def test_legacy_default_without_registry_pointer_preserves_published_history(self) -> None:
+        self._create_persona_tables()
+        self._insert_legacy_persona(
+            DEFAULT_PERSONA_KEY,
+            published_version=None,
+            version_numbers=(1, 2),
+        )
+
+        self._ensure_presets()
+
+        persona = self._personas()[DEFAULT_PERSONA_KEY]
+        self.assertEqual(persona["published_version"], 3)
+        self.assertEqual([item["version"] for item in persona["versions"]], [1, 2, 3])
+        self.assertEqual(
+            [item["status"] for item in persona["versions"]],
+            ["published", "published", "published"],
+        )
 
     def test_later_admin_publication_and_disable_survive_seed_recheck(self) -> None:
         self._create_persona_tables()
@@ -276,13 +324,13 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             second.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
 
         personas = self._personas()
-        self.assertEqual(set(personas), {preset["persona_key"] for preset in ACCOUNT_PERSONA_PRESETS})
+        self.assertEqual(set(personas), {preset.persona_key for preset in ACCOUNT_PERSONA_PRESETS})
         for preset in ACCOUNT_PERSONA_PRESETS:
-            persona = personas[preset["persona_key"]]
+            persona = personas[preset.persona_key]
             self.assertEqual(persona["published_version"], 1)
             self.assertEqual(len(persona["versions"]), 1)
             self.assertEqual(persona["versions"][0]["created_by"], "system")
-            self.assertEqual(persona["versions"][0]["change_note"], preset["seed_marker"])
+            self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
 
     def test_non_system_preset_conflicts_are_unchanged_and_warned(self) -> None:
         self._create_persona_tables()
