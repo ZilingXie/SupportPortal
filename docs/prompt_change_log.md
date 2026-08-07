@@ -12,6 +12,28 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-07 - Internal automation email light-only Outlook compatibility
+
+- Area or subsystem: `/account` Automation internal handoff HTML template
+- Prompt or model version: `internal-handoff-v3` / deterministic domain renderers; model configuration unchanged
+- Summary: Removed the explicit dark palette and dark-mode negotiation from the shared internal handoff template. New HTML uses a stable Light-only content canvas with inline and `bgcolor` fallbacks, while preserving the existing plain-text body and Microsoft Graph Outlook handoff.
+- Reason: Outlook for Mac applied a second dark-mode transformation to the v2 deep blue-black palette, rendering the email as a hazy medium-gray surface in dark theme.
+- Affected files or config:
+  - `backend/services/internal_email_template.py`
+  - `backend/tests/test_internal_email_template.py`
+  - `backend/services/internal_email_payload.py` (shared version gate; no algorithm change)
+  - `backend/tests/test_internal_email_payload.py`
+  - `design.md`
+- Expected behavior change:
+  - New internal Fraud, Invoice, Enablement, Account Verification, and Quota handoffs use `internal-handoff-v3`, declare Light-only support, and no longer emit `prefers-color-scheme: dark` or dark `[data-ogsc]` rules.
+  - Unsent v1/v2 HTML payloads rebuild to v3 while preserving delivery keys and attempt metadata; sent payloads are never rewritten or resent.
+  - Existing Outlook handoff transport, subject, recipient routing, customer data escaping, and plain-text fallback remain unchanged.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_internal_email_template.py backend/tests/test_internal_email_payload.py backend/tests/test_billing_automation_email.py backend/tests/test_enablement_automation.py backend/tests/test_quota_automation.py backend/tests/test_account_verification_automation.py -k 'not all_account_automation_subcategories_are_explicitly_registered'` (54 passed, 1 deselected, 16 subtests passed)
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/internal_email_template.py backend/services/internal_email_payload.py`
+  - Full related test selection also reproduces the pre-existing `account_suspension` registration failure on unchanged `main`; it is unrelated to email rendering.
+  - A synthetic `.eml` was generated without customer data, but automated Outlook for Mac dark/light screenshot verification was blocked because Computer Use permissions were not granted in this environment.
+
 ## 2026-08-06 - Account Router structured-output retry and failure audit
 
 - Area or subsystem: `/account` layered Intent Classifier, Agora Router, Account & Billing Router, and Automation Router
