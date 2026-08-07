@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+from queue import Queue
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import psycopg
@@ -18,9 +21,16 @@ from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERS
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 RUN_POSTGRES_TESTS = os.getenv("RUN_ACCOUNT_PERSONA_POSTGRES_TEST", "").strip().lower() == "true"
+_TEST_PGOPTIONS = "-c lock_timeout=15000 -c statement_timeout=60000"
+_TEST_CONNECT_TIMEOUT_SECONDS = 15
+_TEST_THREAD_TIMEOUT_SECONDS = 50
+_TEST_FUTURE_TIMEOUT_SECONDS = 65
 
 
-@unittest.skipUnless(RUN_POSTGRES_TESTS, "set RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true to run PostgreSQL integration tests")
+@unittest.skipUnless(
+    RUN_POSTGRES_TESTS,
+    "set RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true to run PostgreSQL integration tests",
+)
 class AccountPersonaPostgresTests(unittest.TestCase):
     def setUp(self) -> None:
         self.dsn = os.getenv("TICKET_DB_DSN", "").strip()
@@ -40,7 +50,11 @@ class AccountPersonaPostgresTests(unittest.TestCase):
 
     def _cleanup_schema(self) -> None:
         self.repository.close()
-        with psycopg.connect(self.migration_dsn, autocommit=True) as connection:
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(self.schema))
@@ -49,10 +63,14 @@ class AccountPersonaPostgresTests(unittest.TestCase):
     def _personas(self) -> dict[str, dict[str, object]]:
         return {item["persona_key"]: item for item in self.repository.list_account_personas()}
 
-    def _create_legacy_persona_tables(self) -> None:
-        with psycopg.connect(self.migration_dsn, autocommit=True) as connection:
+    def _create_persona_tables(self) -> None:
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql.SQL("CREATE SCHEMA {} ").format(sql.Identifier(self.schema)))
+                cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(self.schema)))
                 personas = sql.Identifier(self.schema, "support_account_personas")
                 versions = sql.Identifier(self.schema, "support_account_prompt_versions")
                 cursor.execute(
@@ -71,11 +89,57 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                         "published_at TIMESTAMPTZ, PRIMARY KEY (persona_key, version))"
                     ).format(versions, personas)
                 )
+                cursor.execute(
+                    sql.SQL("GRANT USAGE ON SCHEMA {} TO PUBLIC").format(sql.Identifier(self.schema))
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO PUBLIC"
+                    ).format(sql.Identifier(self.schema))
+                )
+
+    def _ensure_presets(self, repository: PostgresTicketRepository | None = None) -> None:
+        target = repository or self.repository
+        with psycopg.connect(
+            self.migration_dsn,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '15s'")
+                cursor.execute("SET LOCAL statement_timeout = '60s'")
+                target._ensure_account_persona_presets(cursor)
+
+    def _wait_for_backend_lock(self, backend_pid: int, *, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        last_state: tuple[object, ...] | None = None
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                while time.monotonic() < deadline:
+                    cursor.execute(
+                        "SELECT wait_event_type, wait_event, state FROM pg_stat_activity WHERE pid = %s",
+                        (backend_pid,),
+                    )
+                    last_state = cursor.fetchone()
+                    if last_state is not None and last_state[0] == "Lock":
+                        return
+                    time.sleep(0.05)
+        self.fail(
+            f"backend {backend_pid} did not wait on the Persona table lock within {timeout}s; "
+            f"last state: {last_state!r}"
+        )
 
     def _insert_legacy_persona(self, persona_key: str, *, enabled: bool = False) -> None:
         personas = sql.Identifier(self.schema, "support_account_personas")
         versions = sql.Identifier(self.schema, "support_account_prompt_versions")
-        with psycopg.connect(self.migration_dsn, autocommit=True) as connection:
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -92,9 +156,9 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                     (persona_key, Json({"instruction": "Legacy voice", "opener": "", "signature": "Legacy"})),
                 )
 
-    def test_fresh_seed_is_exact_and_idempotent(self) -> None:
-        self.repository.initialize()
-        self.repository.initialize()
+    def test_fresh_initialize_seeds_exact_presets(self) -> None:
+        with patch.dict(os.environ, {"PGOPTIONS": _TEST_PGOPTIONS}):
+            self.repository.initialize()
 
         personas = self._personas()
         expected = {preset["persona_key"]: preset for preset in ACCOUNT_PERSONA_PRESETS}
@@ -104,19 +168,17 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             self.assertEqual(persona["display_name"], preset["display_name"])
             self.assertTrue(persona["enabled"])
             self.assertEqual(persona["published_version"], 1)
-            versions = persona["versions"]
-            self.assertEqual(len(versions), 1)
-            self.assertEqual(versions[0]["status"], "published")
-            self.assertEqual(versions[0]["created_by"], "system")
-            self.assertEqual(versions[0]["change_note"], preset["seed_marker"])
-            self.assertEqual(versions[0]["content"], preset["content"])
+            self.assertEqual(len(persona["versions"]), 1)
+            self.assertEqual(persona["versions"][0]["status"], "published")
+            self.assertEqual(persona["versions"][0]["created_by"], "system")
+            self.assertEqual(persona["versions"][0]["change_note"], preset["seed_marker"])
+            self.assertEqual(persona["versions"][0]["content"], preset["content"])
 
     def test_legacy_default_history_receives_one_marked_warm_version(self) -> None:
-        self._create_legacy_persona_tables()
+        self._create_persona_tables()
         self._insert_legacy_persona(DEFAULT_PERSONA_KEY)
-
-        self.repository.initialize()
-        self.repository.initialize()
+        self._ensure_presets()
+        self._ensure_presets()
 
         warm = next(preset for preset in ACCOUNT_PERSONA_PRESETS if preset["persona_key"] == DEFAULT_PERSONA_KEY)
         persona = self._personas()[DEFAULT_PERSONA_KEY]
@@ -129,8 +191,9 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self.assertEqual(persona["versions"][1]["change_note"], warm["seed_marker"])
         self.assertEqual(persona["versions"][1]["content"], warm["content"])
 
-    def test_later_admin_publication_and_disable_survive_initialize(self) -> None:
-        self.repository.initialize()
+    def test_later_admin_publication_and_disable_survive_seed_recheck(self) -> None:
+        self._create_persona_tables()
+        self._ensure_presets()
         draft = self.repository.create_account_persona_draft(
             DEFAULT_PERSONA_KEY,
             content={"instruction": "Admin voice", "opener": "", "signature": "Best,\nSid\nSupport Engineer 2"},
@@ -146,8 +209,7 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             published_at="2026-08-07T00:01:00+00:00",
         )
         self.repository.set_account_persona_enabled("sid-bright", False)
-
-        self.repository.initialize()
+        self._ensure_presets()
 
         personas = self._personas()
         self.assertEqual(personas[DEFAULT_PERSONA_KEY]["published_version"], 2)
@@ -157,35 +219,78 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             ["superseded", "published"],
         )
 
-    def test_concurrent_initialize_seeds_each_preset_once(self) -> None:
+    def test_concurrent_seed_helpers_converge_without_duplicate_versions(self) -> None:
+        self._create_persona_tables()
         second_repository = self._repository()
         self.addCleanup(second_repository.close)
-        barrier = threading.Barrier(2)
+        first_seeded = threading.Event()
+        release_first = threading.Event()
+        second_started = threading.Event()
+        second_backend_pids: Queue[int] = Queue()
 
-        def initialize(repository: PostgresTicketRepository) -> None:
-            barrier.wait(timeout=5)
-            repository.initialize()
+        def seed_and_hold_lock() -> None:
+            with psycopg.connect(
+                self.migration_dsn,
+                connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+            ) as connection:
+                with connection.transaction(), connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL lock_timeout = '15s'")
+                    cursor.execute("SET LOCAL statement_timeout = '30s'")
+                    self.repository._ensure_account_persona_presets(cursor)
+                    first_seeded.set()
+                    if not release_first.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
+                        raise TimeoutError("timed out while holding the Persona table lock")
+
+        def seed_while_first_transaction_holds_lock() -> None:
+            if not first_seeded.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
+                raise TimeoutError("first transaction did not acquire the Persona table lock")
+            with psycopg.connect(
+                self.migration_dsn,
+                connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+            ) as connection:
+                with connection.transaction(), connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL lock_timeout = '15s'")
+                    cursor.execute("SET LOCAL statement_timeout = '30s'")
+                    cursor.execute("SELECT pg_backend_pid()")
+                    second_backend_pids.put(int(cursor.fetchone()[0]))
+                    second_started.set()
+                    second_repository._ensure_account_persona_presets(cursor)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [
-                executor.submit(initialize, self.repository),
-                executor.submit(initialize, second_repository),
-            ]
-            for future in futures:
-                future.result(timeout=180)
+            first = executor.submit(seed_and_hold_lock)
+            if not first_seeded.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS):
+                release_first.set()
+                first.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
+                self.fail("first seed transaction did not acquire its table lock")
+            second = executor.submit(seed_while_first_transaction_holds_lock)
+            try:
+                self.assertTrue(
+                    second_started.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS),
+                    "second seed transaction did not start",
+                )
+                second_backend_pid = second_backend_pids.get(timeout=5)
+                self._wait_for_backend_lock(second_backend_pid, timeout=5)
+            finally:
+                release_first.set()
+            first.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
+            second.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
 
         personas = self._personas()
         self.assertEqual(set(personas), {preset["persona_key"] for preset in ACCOUNT_PERSONA_PRESETS})
-        self.assertTrue(all(len(persona["versions"]) == 1 for persona in personas.values()))
-        self.assertTrue(all(persona["published_version"] == 1 for persona in personas.values()))
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            persona = personas[preset["persona_key"]]
+            self.assertEqual(persona["published_version"], 1)
+            self.assertEqual(len(persona["versions"]), 1)
+            self.assertEqual(persona["versions"][0]["created_by"], "system")
+            self.assertEqual(persona["versions"][0]["change_note"], preset["seed_marker"])
 
     def test_non_system_preset_conflicts_are_unchanged_and_warned(self) -> None:
-        self._create_legacy_persona_tables()
+        self._create_persona_tables()
         self._insert_legacy_persona("sid-bright")
         self._insert_legacy_persona("sid-precise")
 
         with self.assertLogs("backend.repositories.ticket_repository", level="WARNING") as logs:
-            self.repository.initialize()
+            self._ensure_presets()
 
         personas = self._personas()
         for key in ("sid-bright", "sid-precise"):
@@ -194,6 +299,8 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             self.assertEqual(personas[key]["published_version"], 1)
             self.assertEqual(len(personas[key]["versions"]), 1)
             self.assertEqual(personas[key]["versions"][0]["created_by"], "admin-1")
+        self.assertEqual(personas[DEFAULT_PERSONA_KEY]["published_version"], 1)
+        self.assertEqual(personas[DEFAULT_PERSONA_KEY]["versions"][0]["created_by"], "system")
         warnings = "\n".join(logs.output)
         self.assertIn("sid-bright", warnings)
         self.assertIn("sid-precise", warnings)
