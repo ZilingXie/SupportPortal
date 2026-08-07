@@ -23,7 +23,7 @@ class _FakeResponse:
 
 
 class InternalEmailTemplateTests(unittest.TestCase):
-    def test_theme_contract_has_crisp_light_defaults_and_outlook_dark_overrides(self) -> None:
+    def test_theme_contract_uses_a_light_only_canvas_for_outlook_compatibility(self) -> None:
         rendered = render_internal_handoff_email(
             request_type="Enablement",
             title="Media Relay enablement request",
@@ -34,11 +34,13 @@ class InternalEmailTemplateTests(unittest.TestCase):
         )
 
         html = rendered["body_html"]
+        self.assertIn('<meta name="color-scheme" content="light">', html)
+        self.assertIn('<meta name="supported-color-schemes" content="light">', html)
+        self.assertIn("color-scheme: only light;", html)
         self.assertIn('bgcolor="#FFFFFF"', html)
-        self.assertIn("[data-ogsc] .email-shell", html)
-        self.assertIn("[data-ogsc].email-body", html)
-        self.assertIn("[data-ogsc] .email-panel", html)
-        self.assertIn("#0C1C26", html)
+        self.assertNotIn("prefers-color-scheme: dark", html)
+        self.assertNotIn("[data-ogsc]", html)
+        self.assertNotIn("#0C1C26", html)
         self.assertNotIn("#303941", html)
 
     def test_rendering_escapes_customer_values_and_preserves_plain_text(self) -> None:

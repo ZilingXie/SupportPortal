@@ -6,7 +6,7 @@ from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
-INTERNAL_EMAIL_TEMPLATE_VERSION = "internal-handoff-v2"
+INTERNAL_EMAIL_TEMPLATE_VERSION = "internal-handoff-v3"
 INTERNAL_EMAIL_HTML_CONTENT_TYPE = "HTML"
 
 _LIGHT_THEME = {
@@ -30,29 +30,6 @@ _LIGHT_THEME = {
     "success_border": "#25845D",
     "success_text": "#176340",
 }
-
-_DARK_THEME = {
-    "shell": "#07131B",
-    "panel": "#0C1C26",
-    "surface": "#102B39",
-    "quote": "#0A202C",
-    "action": "#0B3443",
-    "warning": "#3A2A16",
-    "success": "#12352A",
-    "text": "#F4FAFC",
-    "muted": "#B4C7D0",
-    "label": "#63C7F2",
-    "link": "#73CFFF",
-    "border": "#2A5061",
-    "quote_border": "#2B566B",
-    "action_border": "#3A839C",
-    "action_text": "#C5EFFB",
-    "warning_border": "#E2A04A",
-    "warning_text": "#FFD39B",
-    "success_border": "#63C99A",
-    "success_text": "#B8F0D2",
-}
-
 
 @dataclass(frozen=True)
 class InternalEmailSection:
@@ -162,53 +139,13 @@ def _render_text(
     return "\n\n".join(block for block in blocks if block).strip()
 
 
-def _render_dark_theme_rules(prefix: str = "") -> str:
-    dark = _DARK_THEME
-    return f"""      {prefix}.email-body {{ background-color: {dark['shell']} !important; color: {dark['text']} !important; }}
-      {prefix}.email-shell {{ background-color: {dark['shell']} !important; color: {dark['text']} !important; }}
-      {prefix}.email-panel {{ background-color: {dark['panel']} !important; color: {dark['text']} !important; }}
-      {prefix}.email-surface {{ background-color: {dark['surface']} !important; color: {dark['text']} !important; }}
-      {prefix}.email-quote {{ background-color: {dark['quote']} !important; border-color: {dark['quote_border']} !important; color: {dark['text']} !important; }}
-      {prefix}.email-action {{ background-color: {dark['action']} !important; border-color: {dark['action_border']} !important; color: {dark['action_text']} !important; }}
-      {prefix}.email-warning {{ background-color: {dark['warning']} !important; border-color: {dark['warning_border']} !important; color: {dark['warning_text']} !important; }}
-      {prefix}.email-success {{ background-color: {dark['success']} !important; border-color: {dark['success_border']} !important; color: {dark['success_text']} !important; }}
-      {prefix}.email-text, {prefix}.email-field-value {{ color: {dark['text']} !important; }}
-      {prefix}.email-muted, {prefix}.email-field-label {{ color: {dark['muted']} !important; }}
-      {prefix}.email-label, {prefix}.email-tone-label {{ color: {dark['label']} !important; }}
-      {prefix}.email-link {{ color: {dark['link']} !important; }}
-      {prefix}.email-button {{ background-color: {dark['label']} !important; color: {dark['panel']} !important; }}
-      {prefix}.email-divider {{ border-color: {dark['border']} !important; }}
-      {prefix}.email-action-text {{ color: {dark['action_text']} !important; }}
-      {prefix}.email-warning-text {{ color: {dark['warning_text']} !important; }}
-      {prefix}.email-success-text {{ color: {dark['success_text']} !important; }}"""
-
-
 def _render_theme_css() -> str:
-    return f"""    :root {{ color-scheme: light dark; }}
-    @media (prefers-color-scheme: dark) {{
-{_render_dark_theme_rules()}
-    }}
-    [data-ogsc] {{ color-scheme: dark; }}
-    [data-ogsc].email-body {{ background-color: {_DARK_THEME['shell']} !important; color: {_DARK_THEME['text']} !important; }}
-    [data-ogsc] .email-body,
-    [data-ogsc] .email-shell,
-    [data-ogsc] .email-panel,
-    [data-ogsc] .email-surface,
-    [data-ogsc] .email-quote,
-    [data-ogsc] .email-action,
-    [data-ogsc] .email-warning,
-    [data-ogsc] .email-success,
-    [data-ogsc] .email-text,
-    [data-ogsc] .email-muted,
-    [data-ogsc] .email-label,
-    [data-ogsc] .email-link,
-    [data-ogsc] .email-divider {{ color-scheme: dark; }}
-{_render_dark_theme_rules("[data-ogsc] ")}
-    @media only screen and (max-width: 620px) {{
-      .email-panel {{ width: 100% !important; }}
-      .email-pad {{ padding: 22px 18px !important; }}
-      .summary-cell {{ display: block !important; width: 100% !important; padding-right: 0 !important; }}
-    }}"""
+    return """    :root { color-scheme: only light; }
+    @media only screen and (max-width: 620px) {
+      .email-panel { width: 100% !important; }
+      .email-pad { padding: 22px 18px !important; }
+      .summary-cell { display: block !important; width: 100% !important; padding-right: 0 !important; }
+    }"""
 
 
 def _render_html(
@@ -240,8 +177,8 @@ def _render_html(
 <head>
   <meta charset=\"utf-8\">
   <meta name=\"x-apple-disable-message-reformatting\">
-  <meta name=\"color-scheme\" content=\"light dark\">
-  <meta name=\"supported-color-schemes\" content=\"light dark\">
+  <meta name=\"color-scheme\" content=\"light\">
+  <meta name=\"supported-color-schemes\" content=\"light\">
   <title>{title_html}</title>
   <style>
 {_render_theme_css()}
