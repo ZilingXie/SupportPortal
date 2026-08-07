@@ -31,6 +31,10 @@ DEFAULT_PERSONA_SIGNATURE = "Best,\nSid\nSupport Engineer 2"
 ACCOUNT_PERSONA_PRESET_VERSION = "automation-persona-presets-v1"
 
 
+class AccountPersonaUnavailableError(RuntimeError):
+    """Raised when no enabled, genuinely published Account Persona is available."""
+
+
 @dataclass(frozen=True, slots=True)
 class AccountPersonaPreset:
     persona_key: str

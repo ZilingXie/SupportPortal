@@ -26,7 +26,10 @@ from backend.main import (
     asset_storage,
     ticket_repository,
 )
-from backend.services.account_admin import apply_persona_to_customer_reply
+from backend.services.account_admin import (
+    AccountPersonaUnavailableError,
+    apply_persona_to_customer_reply,
+)
 from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PREPARING,
@@ -40,6 +43,8 @@ from backend.services.automation_persona import (
     extract_automation_resolution_facts,
     render_automation_reply,
 )
+from backend.services.automation_routing import automation_metadata
+from backend.services.account_route_pipeline import classification_labels
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -363,7 +368,16 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
             raise RuntimeError("unsupported Account reply pipeline")
         payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
         if not payload.get("persona_key") or not payload.get("effective_prompt"):
-            persona = ticket_repository.resolve_account_persona(ticket_id)
+            try:
+                persona = ticket_repository.resolve_account_persona(ticket_id)
+            except AccountPersonaUnavailableError as exc:
+                _move_automation_reply_to_human_review(
+                    job,
+                    ticket,
+                    str(exc),
+                    policy_decision="account_persona_unavailable_human_review",
+                )
+                return
             if not isinstance(persona, dict):
                 _move_automation_reply_to_human_review(
                     job,
@@ -456,16 +470,35 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     draft = str(resolution.answer or "").strip()
     if not draft:
         if str(resolution.route_family or "").strip() == "human_review":
+            evidence = (
+                resolution.evidence_summary
+                if isinstance(resolution.evidence_summary, dict)
+                else {}
+            )
             _move_automation_reply_to_human_review(
                 job,
                 ticket,
                 str(resolution.route_reason or "automation_persona_human_review").strip(),
+                policy_decision=(
+                    "account_persona_unavailable_human_review"
+                    if evidence.get("account_persona_unavailable") is True
+                    else "automation_persona_human_review"
+                ),
             )
             return
         payload["error"] = "AI could not prepare a reliable account-only reply."
         job["status"] = "manual_attention"
     else:
-        persona = ticket_repository.resolve_account_persona(ticket_id)
+        try:
+            persona = ticket_repository.resolve_account_persona(ticket_id)
+        except AccountPersonaUnavailableError as exc:
+            _move_automation_reply_to_human_review(
+                job,
+                ticket,
+                str(exc),
+                policy_decision="account_persona_unavailable_human_review",
+            )
+            return
         rendered_by_automation_persona = bool(
             isinstance(resolution.evidence_summary, dict)
             and resolution.evidence_summary.get("automation_persona_render_status") == "generated"
@@ -594,6 +627,8 @@ def _move_automation_reply_to_human_review(
     job: dict[str, Any],
     ticket: dict[str, Any],
     reason: str,
+    *,
+    policy_decision: str = "automation_persona_human_review",
 ) -> None:
     """Stop an Automation send when Persona generation is unavailable."""
     if not _account_reply_job_still_exists(job):
@@ -610,30 +645,14 @@ def _move_automation_reply_to_human_review(
         str(ticket.get("ticket_id") or job.get("ticket_id") or "")
     )
     if billing_ticket is not None:
-        classification = dict(billing_ticket.get("route_classification") or {})
-        classification.update(
-            {
-                "route_target": "human_review",
-                "human_review_reason": reason,
-                "route_reason_code": reason,
-                "handler_binding_status": "human_review",
-            }
+        _mark_account_case_for_human_review(
+            billing_ticket,
+            reason=reason,
+            timestamp=timestamp,
+            policy_decision=policy_decision,
         )
-        billing_ticket.update(
-            {
-                "route": "human_review_required",
-                "scope_label": "human_review",
-                "route_family": "human_review",
-                "execution_action": "human_review_required",
-                "automation_status": "not_automated",
-                "not_automated_reason": reason,
-                "route_classification": classification,
-                "internal_email_send_status": str(
-                    billing_ticket.get("internal_email_send_status") or "not_applicable"
-                ),
-                "internal_email_send_reason": reason,
-                "updated_at": timestamp,
-            }
+        billing_ticket["internal_email_send_status"] = str(
+            billing_ticket.get("internal_email_send_status") or "not_applicable"
         )
         ticket_repository.save_billing_ticket(billing_ticket)
         ticket_repository.record_event(
@@ -647,6 +666,53 @@ def _move_automation_reply_to_human_review(
                 "created_at": timestamp,
             },
         )
+
+
+def _mark_account_case_for_human_review(
+    account_case: dict[str, Any],
+    *,
+    reason: str,
+    timestamp: str,
+    policy_decision: str,
+) -> None:
+    predicted_action = str(
+        account_case.get("execution_action") or account_case.get("route") or ""
+    ).strip() or None
+    classification = dict(account_case.get("route_classification") or {})
+    classification.update(
+        {
+            "predicted_automation_subcategory": predicted_action,
+            "agora_route": "uncategorized",
+            "automation_subcategory": None,
+            "route_target": "human_review",
+            "human_review_reason": reason,
+            "route_reason_code": reason,
+            "handler_binding_status": "human_review",
+        }
+    )
+    primary_label, secondary_label = classification_labels(classification)
+    classification["primary_label"] = primary_label
+    classification["secondary_label"] = secondary_label
+    account_case.update(
+        {
+            "route": "human_review_required",
+            "scope_label": "human_review",
+            "route_family": "human_review",
+            "execution_action": "human_review_required",
+            "tooling_profile": None,
+            "route_reason": reason,
+            "policy_decision": policy_decision,
+            "automation_status": "not_automated",
+            "not_automated_reason": reason,
+            "route_classification": classification,
+            "internal_email_send_reason": reason,
+            "updated_at": timestamp,
+            **automation_metadata(
+                route_family="human_review",
+                execution_action="human_review_required",
+            ),
+        }
+    )
 
 
 def _render_case_persona_reply(
@@ -663,7 +729,20 @@ def _render_case_persona_reply(
     save_case: Any,
     persist_failure: bool = True,
 ) -> str:
-    persona = ticket_repository.resolve_account_persona(ticket_id)
+    try:
+        persona = ticket_repository.resolve_account_persona(ticket_id)
+    except AccountPersonaUnavailableError as exc:
+        timestamp = now_iso()
+        reason = str(exc)
+        _mark_account_case_for_human_review(
+            case,
+            reason=reason,
+            timestamp=timestamp,
+            policy_decision="account_persona_unavailable_human_review",
+        )
+        if persist_failure:
+            save_case(case)
+        return ""
     known_information = {
         **dict(known_information or {}),
         "ticket_id": ticket_id,
@@ -681,17 +760,11 @@ def _render_case_persona_reply(
         except AutomationPersonaError as exc:
             timestamp = now_iso()
             reason = str(exc)
-            case.update(
-                {
-                    "route": "human_review_required",
-                    "scope_label": "human_review",
-                    "route_family": "human_review",
-                    "execution_action": "human_review_required",
-                    "automation_status": "not_automated",
-                    "not_automated_reason": reason,
-                    "internal_email_send_reason": reason,
-                    "updated_at": timestamp,
-                }
+            _mark_account_case_for_human_review(
+                case,
+                reason=reason,
+                timestamp=timestamp,
+                policy_decision="automation_persona_human_review",
             )
             if persist_failure:
                 save_case(case)
@@ -724,17 +797,11 @@ def _render_case_persona_reply(
     except AutomationPersonaError as exc:
         timestamp = now_iso()
         reason = str(exc)
-        case.update(
-            {
-                "route": "human_review_required",
-                "scope_label": "human_review",
-                "route_family": "human_review",
-                "execution_action": "human_review_required",
-                "automation_status": "not_automated",
-                "not_automated_reason": reason,
-                "internal_email_send_reason": reason,
-                "updated_at": timestamp,
-            }
+        _mark_account_case_for_human_review(
+            case,
+            reason=reason,
+            timestamp=timestamp,
+            policy_decision="automation_persona_human_review",
         )
         if persist_failure:
             save_case(case)
@@ -888,7 +955,19 @@ def _queue_enablement_submission_confirmation(
         resolution_status="submitted_for_review",
         customer_name=str(account_case.get("customer_name") or ""),
     )
-    persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
+    try:
+        persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
+    except AccountPersonaUnavailableError as exc:
+        timestamp = now_iso()
+        reason = str(exc)
+        _mark_account_case_for_human_review(
+            account_case,
+            reason=reason,
+            timestamp=timestamp,
+            policy_decision="account_persona_unavailable_human_review",
+        )
+        ticket_repository.save_account_case(account_case)
+        return False
     created_at = now_iso()
     ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
     reply_payload: dict[str, Any] = {

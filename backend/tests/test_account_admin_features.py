@@ -15,6 +15,7 @@ from backend.repositories.ticket_repository import (
 from backend.services.account_admin import (
     ACCOUNT_PERSONA_PRESETS,
     ACCOUNT_PERSONA_PRESET_VERSION,
+    AccountPersonaUnavailableError,
     DEFAULT_PERSONA_CONTENT,
     DEFAULT_PERSONA_KEY,
     ROUTER_PROMPT_VERSION,
@@ -616,6 +617,141 @@ class AccountAdminFeatureTests(unittest.TestCase):
             reseeded[preset.persona_key]["versions"][0]["content"],
             preset.content,
         )
+
+    def test_persona_assignment_draws_once_and_reuses_the_persisted_choice(self) -> None:
+        def choose_bright(candidates: list[dict[str, object]]) -> dict[str, object]:
+            return next(candidate for candidate in candidates if candidate["persona_key"] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ) as chooser:
+            first = self.repository.resolve_account_persona("TK-RANDOM-1")
+            chooser.side_effect = lambda candidates: next(
+                candidate for candidate in candidates if candidate["persona_key"] == "sid-precise"
+            )
+            second = self.repository.resolve_account_persona("TK-RANDOM-1")
+
+        self.assertEqual(first["persona_key"], "sid-bright")
+        self.assertEqual(second, first)
+        self.assertEqual(chooser.call_count, 1)
+
+    def test_persisted_persona_assignment_survives_disable_and_supersede(self) -> None:
+        def choose_bright(candidates: list[dict[str, object]]) -> dict[str, object]:
+            return next(candidate for candidate in candidates if candidate["persona_key"] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ) as chooser:
+            first = self.repository.resolve_account_persona("TK-RANDOM-PERSISTED")
+            self.repository._account_personas["sid-bright"]["enabled"] = False
+            self.repository._account_persona_versions["sid-bright"][0]["status"] = "superseded"
+            second = self.repository.resolve_account_persona("TK-RANDOM-PERSISTED")
+            compatibility_assignment = self.repository.resolve_published_account_persona(
+                "TK-RANDOM-PERSISTED"
+            )
+
+        self.assertEqual(first["persona_key"], "sid-bright")
+        self.assertEqual(second, first)
+        self.assertEqual(compatibility_assignment, first)
+        self.assertEqual(chooser.call_count, 1)
+
+    def test_persona_assignment_excludes_disabled_and_stale_candidates(self) -> None:
+        self.repository._account_personas["sid-bright"]["enabled"] = False
+        self.repository._account_personas["sid-precise"]["published_version"] = 99
+
+        def choose_warm(candidates: list[dict[str, object]]) -> dict[str, object]:
+            self.assertEqual([candidate["persona_key"] for candidate in candidates], [DEFAULT_PERSONA_KEY])
+            return candidates[0]
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_warm,
+        ) as chooser:
+            assignment = self.repository.resolve_account_persona("TK-ELIGIBLE-1")
+
+        self.assertEqual(assignment["persona_key"], DEFAULT_PERSONA_KEY)
+        self.assertEqual(chooser.call_count, 1)
+
+    def test_persona_assignment_rejects_draft_and_superseded_registry_versions(self) -> None:
+        self.repository._account_personas["sid-bright"]["enabled"] = False
+        self.repository._account_personas["sid-precise"]["enabled"] = False
+        default_version = self.repository._account_persona_versions[DEFAULT_PERSONA_KEY][0]
+
+        for status in ("draft", "superseded"):
+            with self.subTest(status=status):
+                default_version["status"] = status
+                with patch("backend.repositories.ticket_repository.random.choice") as chooser:
+                    with self.assertRaisesRegex(
+                        AccountPersonaUnavailableError,
+                        "no enabled published persona",
+                    ):
+                        self.repository.resolve_account_persona(f"TK-NO-{status}")
+                chooser.assert_not_called()
+
+        default_version["status"] = "published"
+
+    def test_each_eligible_persona_can_be_selected(self) -> None:
+        for persona_key in ("sid-bright", "sid-precise", DEFAULT_PERSONA_KEY):
+            with self.subTest(persona_key=persona_key):
+                def choose_requested(candidates: list[dict[str, object]]) -> dict[str, object]:
+                    return next(candidate for candidate in candidates if candidate["persona_key"] == persona_key)
+
+                with patch(
+                    "backend.repositories.ticket_repository.random.choice",
+                    side_effect=choose_requested,
+                ) as chooser:
+                    assignment = self.repository.resolve_account_persona(f"TK-CHOICE-{persona_key}")
+
+                self.assertEqual(assignment["persona_key"], persona_key)
+                self.assertEqual(chooser.call_count, 1)
+
+    def test_compatibility_resolver_reuses_persisted_assignment(self) -> None:
+        def choose_bright(candidates: list[dict[str, object]]) -> dict[str, object]:
+            return next(candidate for candidate in candidates if candidate["persona_key"] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ) as chooser:
+            compatibility_assignment = self.repository.resolve_published_account_persona("TK-COMPAT-1")
+            persisted_assignment = self.repository.resolve_account_persona("TK-COMPAT-1")
+
+        self.assertEqual(compatibility_assignment, persisted_assignment)
+        self.assertEqual(chooser.call_count, 1)
+
+    def test_account_persona_assignment_getter_is_read_only_and_returns_metadata(self) -> None:
+        def choose_bright(candidates: list[dict[str, object]]) -> dict[str, object]:
+            return next(candidate for candidate in candidates if candidate["persona_key"] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ) as chooser:
+            self.assertIsNone(self.repository.get_account_persona_assignment("TK-GETTER-1"))
+            chooser.assert_not_called()
+            assignment = self.repository.resolve_account_persona("TK-GETTER-1")
+            metadata = self.repository.get_account_persona_assignment("TK-GETTER-1")
+
+        self.assertEqual(
+            metadata,
+            {
+                "ticket_id": "TK-GETTER-1",
+                "persona_key": assignment["persona_key"],
+                "version": assignment["version"],
+                "assigned_at": assignment["assigned_at"],
+            },
+        )
+        self.assertNotIn("content", metadata)
+        self.assertEqual(chooser.call_count, 1)
+
+    def test_last_enabled_guard_uses_only_genuinely_published_personas(self) -> None:
+        self.repository._account_personas["sid-precise"]["published_version"] = 99
+        self.repository._account_persona_versions[DEFAULT_PERSONA_KEY][0]["status"] = "draft"
+
+        with self.assertRaisesRegex(ValueError, "last enabled persona"):
+            self.repository.set_account_persona_enabled("sid-bright", False)
 
     def test_persona_draft_publish_assignment_and_rollback_are_versioned(self) -> None:
         personas = {item["persona_key"]: item for item in self.repository.list_account_personas()}

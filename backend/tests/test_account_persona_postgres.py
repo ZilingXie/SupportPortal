@@ -19,7 +19,11 @@ from backend.repositories.ticket_repository import (
     PostgresTicketRepository,
     _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
 )
-from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_KEY
+from backend.services.account_admin import (
+    ACCOUNT_PERSONA_PRESETS,
+    AccountPersonaUnavailableError,
+    DEFAULT_PERSONA_KEY,
+)
 
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
@@ -84,6 +88,62 @@ class AccountPersonaPostgresTests(unittest.TestCase):
 
     def _personas(self) -> dict[str, dict[str, object]]:
         return {item["persona_key"]: item for item in self.repository.list_account_personas()}
+
+    def _initialize_persona_assignment_ticket(self, ticket_id: str) -> None:
+        self.repository.initialize()
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "C-persona",
+                "requester": "persona@example.com",
+                "subject": "Persona assignment test",
+                "status": "open",
+                "created_at": "2026-08-07T00:00:00+00:00",
+                "updated_at": "2026-08-07T00:00:00+00:00",
+            }
+        )
+
+    def _assignment_count(self, ticket_id: str) -> int:
+        with psycopg.connect(
+            self.migration_dsn,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT COUNT(*) FROM {} WHERE ticket_id=%s").format(
+                        sql.Identifier(self.schema, "support_account_persona_assignments")
+                    ),
+                    (ticket_id,),
+                )
+                return int(cursor.fetchone()[0])
+
+    def _set_persona_registry_pointer(self, persona_key: str, version: int) -> None:
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("UPDATE {} SET published_version=%s WHERE persona_key=%s").format(
+                        sql.Identifier(self.schema, "support_account_personas")
+                    ),
+                    (version, persona_key),
+                )
+
+    def _set_persona_version_status(self, persona_key: str, version: int, status: str) -> None:
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("UPDATE {} SET status=%s WHERE persona_key=%s AND version=%s").format(
+                        sql.Identifier(self.schema, "support_account_prompt_versions")
+                    ),
+                    (status, persona_key, version),
+                )
 
     def _create_persona_tables(self) -> None:
         with psycopg.connect(
@@ -366,6 +426,242 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             [item["status"] for item in personas[DEFAULT_PERSONA_KEY]["versions"]],
             ["superseded", "published"],
         )
+
+    def test_resolver_rejects_stale_pointer_and_nonpublished_version(self) -> None:
+        ticket_id = "TK-PERSONA-STATUS"
+        self._initialize_persona_assignment_ticket(ticket_id)
+        self.repository.set_account_persona_enabled("sid-bright", False)
+        self._set_persona_registry_pointer(DEFAULT_PERSONA_KEY, 99)
+        self._set_persona_version_status("sid-precise", 1, "draft")
+
+        with self.assertRaisesRegex(
+            AccountPersonaUnavailableError,
+            "no enabled published persona",
+        ):
+            self.repository.resolve_account_persona(ticket_id)
+
+        self.assertEqual(self._assignment_count(ticket_id), 0)
+
+    def test_persisted_assignment_survives_disable_and_supersede(self) -> None:
+        ticket_id = "TK-PERSONA-PERSISTED"
+        self._initialize_persona_assignment_ticket(ticket_id)
+
+        def choose_bright(candidates: list[tuple[object, ...]]) -> tuple[object, ...]:
+            return next(candidate for candidate in candidates if candidate[0] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ) as chooser:
+            first = self.repository.resolve_account_persona(ticket_id)
+            self.repository.set_account_persona_enabled("sid-bright", False)
+            self._set_persona_version_status("sid-bright", 1, "superseded")
+            second = self.repository.resolve_account_persona(ticket_id)
+            compatibility_assignment = self.repository.resolve_published_account_persona(ticket_id)
+
+        self.assertEqual(first["persona_key"], "sid-bright")
+        self.assertEqual(first["version"], 1)
+        self.assertEqual(second["persona_key"], first["persona_key"])
+        self.assertEqual(second["version"], first["version"])
+        self.assertEqual(second["content"], first["content"])
+        self.assertEqual(compatibility_assignment, second)
+        self.assertEqual(chooser.call_count, 1)
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+
+    def test_concurrent_same_ticket_resolution_returns_persisted_winner(self) -> None:
+        ticket_id = "TK-PERSONA-CONCURRENT"
+        self._initialize_persona_assignment_ticket(ticket_id)
+        second_repository = self._repository()
+        self.addCleanup(second_repository.close)
+        chooser_barrier = threading.Barrier(2)
+        chooser_lock = threading.Lock()
+        chooser_count = 0
+
+        def choose_different(candidates: list[tuple[object, ...]]) -> tuple[object, ...]:
+            nonlocal chooser_count
+            with chooser_lock:
+                chosen_key = ("sid-bright", "sid-precise")[chooser_count]
+                chooser_count += 1
+            chooser_barrier.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS)
+            return next(candidate for candidate in candidates if candidate[0] == chosen_key)
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_different,
+        ) as chooser:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(repository.resolve_account_persona, ticket_id)
+                    for repository in (self.repository, second_repository)
+                ]
+                assignments = [future.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS) for future in futures]
+
+        self.assertEqual(chooser.call_count, 2)
+        self.assertEqual(assignments[0]["persona_key"], assignments[1]["persona_key"])
+        self.assertEqual(assignments[0]["version"], assignments[1]["version"])
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+
+    def test_concurrent_disable_rejects_one_when_only_two_eligible_personas_remain(self) -> None:
+        self._initialize_persona_assignment_ticket("TK-PERSONA-DISABLE")
+        self._set_persona_registry_pointer(DEFAULT_PERSONA_KEY, 99)
+        barrier = threading.Barrier(2)
+
+        def disable(persona_key: str) -> str | None:
+            barrier.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS)
+            try:
+                self.repository.set_account_persona_enabled(persona_key, False)
+            except ValueError as exc:
+                return str(exc)
+            return None
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = [
+                future.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
+                for future in (
+                    executor.submit(disable, "sid-bright"),
+                    executor.submit(disable, "sid-precise"),
+                )
+            ]
+
+        rejected = [result for result in results if result is not None]
+        self.assertEqual(rejected, ["last enabled persona cannot be disabled"])
+        personas = self._personas()
+        self.assertEqual(
+            sum(bool(personas[key]["enabled"]) for key in ("sid-bright", "sid-precise")),
+            1,
+        )
+
+    def test_assignment_getter_is_read_only(self) -> None:
+        ticket_id = "TK-PERSONA-GETTER"
+        self._initialize_persona_assignment_ticket(ticket_id)
+
+        def choose_bright(candidates: list[tuple[object, ...]]) -> tuple[object, ...]:
+            return next(candidate for candidate in candidates if candidate[0] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ) as chooser:
+            self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
+            chooser.assert_not_called()
+            assignment = self.repository.resolve_published_account_persona(ticket_id)
+            metadata = self.repository.get_account_persona_assignment(ticket_id)
+
+        self.assertEqual(chooser.call_count, 1)
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+        self.assertEqual(
+            metadata,
+            {
+                "ticket_id": ticket_id,
+                "persona_key": assignment["persona_key"],
+                "version": assignment["version"],
+                "assigned_at": assignment["assigned_at"],
+            },
+        )
+        self.assertNotIn("content", metadata)
+
+    def test_automation_reply_commit_persists_human_review_metadata(self) -> None:
+        ticket_id = "TK-PERSONA-HUMAN-REVIEW"
+        claimed_at = "2026-08-07T00:00:00+00:00"
+        completed_at = "2026-08-07T00:01:00+00:00"
+        self._initialize_persona_assignment_ticket(ticket_id)
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-PERSONA-HUMAN-REVIEW",
+                "billing_ticket_id": "AC-PERSONA-HUMAN-REVIEW",
+                "client_ticket_id": ticket_id,
+                "source": "zendesk",
+                "title": "Enable feature",
+                "question": "Please enable the feature.",
+                "route": "enablement",
+                "scope_label": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "category": "automation",
+                "subcategory": "enablement",
+                "route_status": "automated",
+                "automation_handler": "enablement",
+                "tooling_profile": "deterministic_enablement_intake",
+                "automation_status": "automation",
+                "route_classification": {
+                    "intent_class": "agora",
+                    "agora_route": "automation",
+                    "route_target": "automation",
+                    "automation_subcategory": "enablement",
+                    "handler_binding_status": "active",
+                    "primary_label": "Agora",
+                    "secondary_label": "Automation / Enablement",
+                },
+            }
+        )
+        claim = self.repository.claim_automation_reply(
+            "persona-human-review",
+            client_ticket_id=ticket_id,
+            handler="enablement",
+            owner_token="persona-owner",
+            claimed_at=claimed_at,
+            lease_expires_at="2026-08-07T00:16:00+00:00",
+        )
+        self.assertEqual(claim["status"], "acquired")
+
+        self.assertTrue(
+            self.repository.commit_automation_reply_result(
+                "persona-human-review",
+                owner_token="persona-owner",
+                ticket_id=ticket_id,
+                assistant_message=None,
+                account_case_updates={
+                    "route": "human_review_required",
+                    "scope_label": "human_review",
+                    "route_family": "human_review",
+                    "execution_action": "human_review_required",
+                    "category": "human_review",
+                    "subcategory": "human_review_required",
+                    "route_status": "not_automated",
+                    "automation_handler": None,
+                    "tooling_profile": None,
+                    "automation_status": "not_automated",
+                    "policy_decision": "automation_persona_human_review",
+                    "not_automated_reason": "no enabled published persona",
+                    "internal_email_send_reason": "no enabled published persona",
+                    "route_classification": {
+                        "intent_class": "agora",
+                        "agora_route": "uncategorized",
+                        "route_target": "human_review",
+                        "automation_subcategory": None,
+                        "handler_binding_status": "human_review",
+                        "primary_label": "Agora",
+                        "secondary_label": "Agora / Uncategorized",
+                    },
+                    "updated_at": completed_at,
+                },
+                events=[],
+                completed_at=completed_at,
+            )
+        )
+
+        account_case = self.repository.get_billing_ticket_by_client_ticket_id(ticket_id)
+        assert account_case is not None
+        self.assertEqual(
+            {key: account_case[key] for key in ("route", "scope_label", "route_family", "execution_action")},
+            {
+                "route": "human_review_required",
+                "scope_label": "human_review",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+            },
+        )
+        self.assertEqual(account_case["category"], "human_review")
+        self.assertEqual(account_case["subcategory"], "human_review_required")
+        self.assertEqual(account_case["route_status"], "not_automated")
+        self.assertIsNone(account_case["automation_handler"])
+        self.assertIsNone(account_case["tooling_profile"])
+        self.assertEqual(account_case["automation_status"], "not_automated")
+        self.assertEqual(account_case["policy_decision"], "automation_persona_human_review")
+        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        self.assertEqual(account_case["route_classification"]["primary_label"], "Agora")
+        self.assertEqual(account_case["route_classification"]["secondary_label"], "Agora / Uncategorized")
 
     def test_publish_waits_for_seed_coordination_lock_and_preserves_history(self) -> None:
         self._create_persona_tables()

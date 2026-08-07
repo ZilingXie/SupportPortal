@@ -4,6 +4,7 @@ import copy
 import hashlib
 import logging
 import os
+import random
 import threading
 import time
 from contextlib import contextmanager
@@ -15,6 +16,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
+from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_case_filters import (
     account_case_filter_key,
     account_case_filter_keys,
@@ -188,6 +190,12 @@ _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
 _SCHEMA_BOOTSTRAP_ADVISORY_LOCK = (842918, 1)
 # Namespace 842918 key 4 is reserved for Persona registry writes.
 _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK = (842918, 4)
+
+
+def _choose_account_persona(candidates: list[Any]) -> Any:
+    if not candidates:
+        raise AccountPersonaUnavailableError("no enabled published persona")
+    return random.choice(candidates)
 
 
 def _account_case_route_label(item: dict[str, Any]) -> str:
@@ -1309,6 +1317,7 @@ class TicketRepository(Protocol):
     def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]: ...
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
     def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
+    def get_account_persona_assignment(self, ticket_id: str) -> dict[str, Any] | None: ...
     def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]: ...
     def list_managed_prompts(self) -> list[dict[str, Any]]: ...
     def get_managed_prompt(self, prompt_key: str) -> dict[str, Any] | None: ...
@@ -2379,54 +2388,80 @@ class InMemoryTicketRepository:
         draft = self.create_account_persona_draft(key, content=source["content"], change_note=f"Rollback to version {version}", based_on_version=version, actor_id=actor_id, created_at=published_at)
         return self.publish_account_persona_version(key, draft["version"], actor_id=actor_id, published_at=published_at)
 
+    def _eligible_account_persona_candidates(self) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for persona_key, persona in sorted(self._account_personas.items()):
+            if not persona.get("enabled"):
+                continue
+            published_version = persona.get("published_version")
+            if published_version is None:
+                continue
+            version = next(
+                (
+                    item
+                    for item in self._account_persona_versions.get(persona_key, [])
+                    if int(item["version"]) == int(published_version)
+                    and item.get("status") == "published"
+                ),
+                None,
+            )
+            if version is None:
+                continue
+            candidates.append(
+                {
+                    "persona_key": str(persona["persona_key"]),
+                    "version": int(version["version"]),
+                    "content": copy.deepcopy(version["content"]),
+                }
+            )
+        return candidates
+
     def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
-        persona = self._account_personas.get(key)
-        if persona is None: raise ValueError("persona not found")
-        if not enabled and persona.get("enabled") and sum(1 for item in self._account_personas.values() if item.get("enabled") and item.get("published_version")) <= 1:
-            raise ValueError("last enabled persona cannot be disabled")
-        persona["enabled"] = bool(enabled)
-        return copy.deepcopy(persona)
+        with self._assignment_lock:
+            persona = self._account_personas.get(key)
+            if persona is None:
+                raise ValueError("persona not found")
+            if (
+                not enabled
+                and persona.get("enabled")
+                and len(self._eligible_account_persona_candidates()) <= 1
+            ):
+                raise ValueError("last enabled persona cannot be disabled")
+            persona["enabled"] = bool(enabled)
+            return copy.deepcopy(persona)
 
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id).strip()
-        assigned = self._account_persona_assignments.get(normalized_ticket_id)
-        if assigned: return copy.deepcopy(assigned)
-        choices = sorted(
-            (item for item in self._account_personas.values() if item.get("enabled") and item.get("published_version")),
-            key=lambda item: str(item.get("persona_key") or ""),
-        )
-        if not choices: raise ValueError("no enabled published persona")
-        import hashlib
-        persona = choices[int(hashlib.sha256(normalized_ticket_id.encode()).hexdigest(), 16) % len(choices)]
-        version = next(item for item in self._account_persona_versions[persona["persona_key"]] if int(item["version"]) == int(persona["published_version"]))
-        assigned = {"ticket_id": normalized_ticket_id, "persona_key": persona["persona_key"], "version": version["version"], "content": copy.deepcopy(version["content"]), "assigned_at": _utc_now()}
-        self._account_persona_assignments[normalized_ticket_id] = assigned
-        return copy.deepcopy(assigned)
+        with self._assignment_lock:
+            assigned = self._account_persona_assignments.get(normalized_ticket_id)
+            if assigned:
+                return copy.deepcopy(assigned)
+            candidate = _choose_account_persona(self._eligible_account_persona_candidates())
+            assigned = {
+                "ticket_id": normalized_ticket_id,
+                "persona_key": candidate["persona_key"],
+                "version": candidate["version"],
+                "content": copy.deepcopy(candidate["content"]),
+                "assigned_at": _utc_now(),
+            }
+            self._account_persona_assignments[normalized_ticket_id] = assigned
+            return copy.deepcopy(assigned)
 
     def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]:
-        normalized_ticket_id = str(ticket_id).strip()
-        choices = sorted(
-            (item for item in self._account_personas.values() if item.get("enabled") and item.get("published_version")),
-            key=lambda item: str(item.get("persona_key") or ""),
-        )
-        if not choices:
-            raise ValueError("no enabled published persona")
-        import hashlib
+        return self.resolve_account_persona(ticket_id)
 
-        persona = choices[int(hashlib.sha256(normalized_ticket_id.encode()).hexdigest(), 16) % len(choices)]
-        version = next(
-            item
-            for item in self._account_persona_versions[persona["persona_key"]]
-            if int(item["version"]) == int(persona["published_version"])
-        )
-        return {
-            "ticket_id": normalized_ticket_id,
-            "persona_key": persona["persona_key"],
-            "version": version["version"],
-            "content": copy.deepcopy(version["content"]),
-            "assigned_at": _utc_now(),
-        }
+    def get_account_persona_assignment(self, ticket_id: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            assignment = self._account_persona_assignments.get(str(ticket_id).strip())
+            if assignment is None:
+                return None
+            return {
+                "ticket_id": assignment["ticket_id"],
+                "persona_key": assignment["persona_key"],
+                "version": assignment["version"],
+                "assigned_at": assignment["assigned_at"],
+            }
 
     def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]:
         with self._assignment_lock:
@@ -8563,10 +8598,18 @@ class PostgresTicketRepository:
         events: list[dict[str, Any]], completed_at: str,
     ) -> bool:
         allowed_case_fields = {
-            "route", "scope_label", "route_family", "execution_action", "automation_status",
-            "customer_reply", "not_automated_reason", "internal_email_send_reason", "updated_at",
+            "route", "scope_label", "route_family", "execution_action", "tooling_profile",
+            "category", "subcategory", "route_status", "automation_handler", "automation_status",
+            "customer_reply", "not_automated_reason", "internal_email_send_reason",
+            "route_reason", "policy_decision", "route_classification", "updated_at",
         }
         updates = {key: value for key, value in account_case_updates.items() if key in allowed_case_fields}
+        if "route_classification" in updates:
+            updates["route_classification"] = Json(
+                updates["route_classification"]
+                if isinstance(updates["route_classification"], dict)
+                else {}
+            )
 
         def _operation(conn: psycopg.Connection[Any]) -> bool:
             with conn.transaction():
@@ -10854,63 +10897,133 @@ class PostgresTicketRepository:
         return self.publish_account_persona_version(persona_key,draft["version"],actor_id=actor_id,published_at=published_at)
 
     def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]:
-        key=str(persona_key).strip().lower()
+        key = str(persona_key).strip().lower()
+
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 self._lock_account_persona_registry(cur)
-                if not enabled:
-                    cur.execute(sql.SQL("SELECT COUNT(*) FROM {} WHERE enabled=TRUE AND published_version IS NOT NULL").format(self._table("support_account_personas")))
-                    if int(cur.fetchone()[0]) <= 1: raise ValueError("last enabled persona cannot be disabled")
-                cur.execute(sql.SQL("UPDATE {} SET enabled=%s,updated_at=NOW() WHERE persona_key=%s RETURNING display_name,published_version,created_at,updated_at").format(self._table("support_account_personas")),(bool(enabled),key)); row=cur.fetchone()
-                if row is None: raise ValueError("persona not found")
-                return {"persona_key":key,"display_name":str(row[0]),"enabled":bool(enabled),"published_version":row[1],"created_at":_to_iso(row[2]),"updated_at":_to_iso(row[3])}
+                personas_table = self._table("support_account_personas")
+                versions_table = self._table("support_account_prompt_versions")
+                cur.execute(
+                    sql.SQL("LOCK TABLE {}, {} IN SHARE ROW EXCLUSIVE MODE").format(
+                        personas_table,
+                        versions_table,
+                    )
+                )
+                cur.execute(
+                    sql.SQL("SELECT enabled FROM {} WHERE persona_key=%s FOR UPDATE").format(
+                        personas_table
+                    ),
+                    (key,),
+                )
+                current = cur.fetchone()
+                if current is None:
+                    raise ValueError("persona not found")
+                if not enabled and bool(current[0]):
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT COUNT(*) FROM {} p "
+                            "JOIN {} v ON v.persona_key=p.persona_key "
+                            "AND v.version=p.published_version "
+                            "WHERE p.enabled=TRUE AND p.published_version IS NOT NULL "
+                            "AND v.status='published'"
+                        ).format(personas_table, versions_table)
+                    )
+                    if int(cur.fetchone()[0]) <= 1:
+                        raise ValueError("last enabled persona cannot be disabled")
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET enabled=%s,updated_at=NOW() WHERE persona_key=%s "
+                        "RETURNING display_name,published_version,created_at,updated_at"
+                    ).format(personas_table),
+                    (bool(enabled), key),
+                )
+                row = cur.fetchone()
+                assert row is not None
+                return {
+                    "persona_key": key,
+                    "display_name": str(row[0]),
+                    "enabled": bool(enabled),
+                    "published_version": row[1],
+                    "created_at": _to_iso(row[2]),
+                    "updated_at": _to_iso(row[3]),
+                }
+
         return self._run_with_connection_retry("set_account_persona_enabled", _operation)
 
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]:
-        normalized=str(ticket_id).strip()
-        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
-            with conn.transaction(), conn.cursor() as cur:
-                cur.execute(sql.SQL("SELECT a.persona_key,a.version,v.content,a.assigned_at FROM {} a JOIN {} v ON v.persona_key=a.persona_key AND v.version=a.version WHERE a.ticket_id=%s").format(self._table("support_account_persona_assignments"),self._table("support_account_prompt_versions")),(normalized,)); row=cur.fetchone()
-                if row: return {"ticket_id":normalized,"persona_key":str(row[0]),"version":int(row[1]),"content":dict(row[2]),"assigned_at":_to_iso(row[3])}
-                cur.execute(sql.SQL("SELECT p.persona_key,p.published_version,v.content FROM {} p JOIN {} v ON v.persona_key=p.persona_key AND v.version=p.published_version WHERE p.enabled=TRUE ORDER BY p.persona_key").format(self._table("support_account_personas"),self._table("support_account_prompt_versions"))); choices=cur.fetchall()
-                if not choices: raise ValueError("no enabled published persona")
-                import hashlib
-                choice=choices[int(hashlib.sha256(normalized.encode()).hexdigest(),16)%len(choices)]; assigned_at=_utc_now()
-                cur.execute(sql.SQL("INSERT INTO {} (ticket_id,persona_key,version,assigned_at) VALUES (%s,%s,%s,%s)").format(self._table("support_account_persona_assignments")),(normalized,choice[0],choice[1],assigned_at))
-                return {"ticket_id":normalized,"persona_key":str(choice[0]),"version":int(choice[1]),"content":dict(choice[2]),"assigned_at":assigned_at}
-        return self._run_with_connection_retry("resolve_account_persona", _operation)
-
-    def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]:
         normalized = str(ticket_id).strip()
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                assignments_table = self._table("support_account_persona_assignments")
+                personas_table = self._table("support_account_personas")
+                versions_table = self._table("support_account_prompt_versions")
+                assignment_query = sql.SQL(
+                    "SELECT a.persona_key,a.version,v.content,a.assigned_at "
+                    "FROM {} a JOIN {} v ON v.persona_key=a.persona_key "
+                    "AND v.version=a.version WHERE a.ticket_id=%s"
+                ).format(assignments_table, versions_table)
+                cur.execute(assignment_query, (normalized,))
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT p.persona_key,p.published_version,v.content "
+                            "FROM {} p JOIN {} v ON v.persona_key=p.persona_key "
+                            "AND v.version=p.published_version "
+                            "WHERE p.enabled=TRUE AND p.published_version IS NOT NULL "
+                            "AND v.status='published' ORDER BY p.persona_key"
+                        ).format(personas_table, versions_table)
+                    )
+                    choice = _choose_account_persona(cur.fetchall())
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (ticket_id,persona_key,version,assigned_at) "
+                            "VALUES (%s,%s,%s,%s) ON CONFLICT (ticket_id) DO NOTHING"
+                        ).format(assignments_table),
+                        (normalized, choice[0], choice[1], _utc_now()),
+                    )
+                    # A concurrent resolver may have won the unique insert; its persisted row is canonical.
+                    cur.execute(assignment_query, (normalized,))
+                    row = cur.fetchone()
+                if row is None:
+                    raise RuntimeError("Account Persona assignment was not persisted")
+                return {
+                    "ticket_id": normalized,
+                    "persona_key": str(row[0]),
+                    "version": int(row[1]),
+                    "content": dict(row[2]),
+                    "assigned_at": _to_iso(row[3]),
+                }
+
+        return self._run_with_connection_retry("resolve_account_persona", _operation)
+
+    def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]:
+        return self.resolve_account_persona(ticket_id)
+
+    def get_account_persona_assignment(self, ticket_id: str) -> dict[str, Any] | None:
+        normalized = str(ticket_id).strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
-                        "SELECT p.persona_key,p.published_version,v.content "
-                        "FROM {} p JOIN {} v ON v.persona_key=p.persona_key "
-                        "AND v.version=p.published_version WHERE p.enabled=TRUE "
-                        "AND p.published_version IS NOT NULL ORDER BY p.persona_key"
-                    ).format(
-                        self._table("support_account_personas"),
-                        self._table("support_account_prompt_versions"),
-                    )
+                        "SELECT ticket_id,persona_key,version,assigned_at FROM {} WHERE ticket_id=%s"
+                    ).format(self._table("support_account_persona_assignments")),
+                    (normalized,),
                 )
-                choices = cur.fetchall()
-            if not choices:
-                raise ValueError("no enabled published persona")
-            import hashlib
-
-            choice = choices[int(hashlib.sha256(normalized.encode()).hexdigest(), 16) % len(choices)]
+                row = cur.fetchone()
+            if row is None:
+                return None
             return {
-                "ticket_id": normalized,
-                "persona_key": str(choice[0]),
-                "version": int(choice[1]),
-                "content": dict(choice[2]),
-                "assigned_at": _utc_now(),
+                "ticket_id": str(row[0]),
+                "persona_key": str(row[1]),
+                "version": int(row[2]),
+                "assigned_at": _to_iso(row[3]),
             }
 
-        return self._run_with_connection_retry("resolve_published_account_persona", _operation)
+        return self._run_with_connection_retry("get_account_persona_assignment", _operation)
 
     @staticmethod
     def _prompt_version_from_row(prompt_key: str, row: tuple[Any, ...]) -> dict[str, Any]:

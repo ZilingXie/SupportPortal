@@ -16,6 +16,7 @@ if importlib.util.find_spec("psycopg") is None:
 import psycopg
 
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
+from backend.services.account_admin import AccountPersonaUnavailableError
 
 if importlib.util.find_spec("redis") is None:
     redis_module = types.ModuleType("redis")
@@ -2658,6 +2659,774 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(started_threads[0].kwargs["args"], (3.0,))
         self.assertEqual(started_threads[0].kwargs["name"], "account-reply-poller")
 
+    def test_reply_facts_persona_unavailable_moves_delayed_reply_to_human_review(self) -> None:
+        job = {
+            "job_id": "account-reply-persona-unavailable",
+            "ticket_id": "TK-PERSONA-UNAVAILABLE",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "request_missing_information",
+                }
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-PERSONA-UNAVAILABLE",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        account_case = {
+            "account_case_id": "AC-TK-PERSONA-UNAVAILABLE",
+            "route": "enablement",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "category": "automation",
+            "subcategory": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "tooling_profile": "deterministic_enablement_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "route_target": "automation",
+                "automation_subcategory": "enablement",
+                "handler_binding_status": "active",
+            },
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+        repository.resolve_account_persona.side_effect = AccountPersonaUnavailableError(
+            "no enabled published persona"
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply"
+        ) as render:
+            worker._prepare_account_reply_job(job)
+
+        self.assertEqual(job["status"], "manual_attention")
+        self.assertEqual(job["payload"]["persona_render_status"], "human_review")
+        self.assertEqual(job["payload"]["error"], "no enabled published persona")
+        self.assertEqual(account_case["route"], "human_review_required")
+        self.assertEqual(account_case["not_automated_reason"], "no enabled published persona")
+        self.assertEqual(account_case["category"], "human_review")
+        self.assertEqual(account_case["subcategory"], "human_review_required")
+        self.assertEqual(account_case["route_status"], "not_automated")
+        self.assertIsNone(account_case["automation_handler"])
+        self.assertIsNone(account_case["tooling_profile"])
+        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        render.assert_not_called()
+        repository.publish_account_reply.assert_not_called()
+
+    def test_legacy_delayed_reply_persona_unavailable_moves_to_human_review(self) -> None:
+        job = {
+            "job_id": "account-reply-legacy-persona-unavailable",
+            "ticket_id": "TK-LEGACY-PERSONA-UNAVAILABLE",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "payload": {},
+        }
+        ticket = {
+            "ticket_id": "TK-LEGACY-PERSONA-UNAVAILABLE",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        account_case = {
+            "account_case_id": "AC-TK-LEGACY-PERSONA-UNAVAILABLE",
+            "route": "enablement",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "category": "automation",
+            "subcategory": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "tooling_profile": "deterministic_enablement_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "route_target": "automation",
+                "automation_subcategory": "enablement",
+                "handler_binding_status": "active",
+            },
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+        repository.resolve_account_persona.side_effect = AccountPersonaUnavailableError(
+            "no enabled published persona"
+        )
+        resolution = types.SimpleNamespace(
+            answer="Please share the App ID.",
+            evidence_summary=None,
+            answer_route="enablement",
+            route_reason="registered_enablement",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "resolve_support_message", return_value=resolution
+        ), patch.object(worker, "apply_persona_to_customer_reply") as apply_persona:
+            worker._prepare_account_reply_job(job)
+
+        self.assertEqual(job["status"], "manual_attention")
+        self.assertEqual(job["payload"]["persona_render_status"], "human_review")
+        self.assertEqual(account_case["route"], "human_review_required")
+        self.assertEqual(account_case["category"], "human_review")
+        self.assertEqual(account_case["subcategory"], "human_review_required")
+        self.assertEqual(account_case["route_status"], "not_automated")
+        self.assertIsNone(account_case["automation_handler"])
+        self.assertIsNone(account_case["tooling_profile"])
+        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        apply_persona.assert_not_called()
+        repository.publish_account_reply.assert_not_called()
+
+    def test_legacy_human_review_from_unavailable_persona_uses_unavailable_policy(self) -> None:
+        job = {
+            "job_id": "account-reply-legacy-indirect-persona-unavailable",
+            "ticket_id": "TK-LEGACY-INDIRECT-PERSONA-UNAVAILABLE",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "payload": {},
+        }
+        ticket = {
+            "ticket_id": "TK-LEGACY-INDIRECT-PERSONA-UNAVAILABLE",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        account_case = {
+            "account_case_id": "AC-TK-LEGACY-INDIRECT-PERSONA-UNAVAILABLE",
+            "route": "enablement",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "category": "automation",
+            "subcategory": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "tooling_profile": "deterministic_enablement_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "route_target": "automation",
+                "automation_subcategory": "enablement",
+                "handler_binding_status": "active",
+            },
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+        resolution = types.SimpleNamespace(
+            answer="",
+            route_family="human_review",
+            route_reason="no enabled published persona",
+            evidence_summary={"account_persona_unavailable": True},
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "resolve_support_message", return_value=resolution
+        ):
+            worker._prepare_account_reply_job(job)
+
+        self.assertEqual(job["status"], "manual_attention")
+        self.assertEqual(job["payload"]["persona_render_status"], "human_review")
+        self.assertEqual(account_case["policy_decision"], "account_persona_unavailable_human_review")
+        self.assertEqual(account_case["route"], "human_review_required")
+        self.assertEqual(account_case["category"], "human_review")
+        self.assertEqual(account_case["subcategory"], "human_review_required")
+        self.assertEqual(account_case["route_status"], "not_automated")
+        self.assertIsNone(account_case["automation_handler"])
+        self.assertIsNone(account_case["tooling_profile"])
+        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        repository.resolve_account_persona.assert_not_called()
+        repository.publish_account_reply.assert_not_called()
+
+    def test_legacy_human_review_without_boolean_unavailable_marker_uses_generic_policy(self) -> None:
+        base_job = {
+            "job_id": "account-reply-legacy-marker-negative",
+            "ticket_id": "TK-LEGACY-MARKER-NEGATIVE",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "payload": {},
+        }
+        ticket = {
+            "ticket_id": "TK-LEGACY-MARKER-NEGATIVE",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        base_case = {
+            "account_case_id": "AC-TK-LEGACY-MARKER-NEGATIVE",
+            "route": "enablement",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "category": "automation",
+            "subcategory": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "tooling_profile": "deterministic_enablement_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "route_target": "automation",
+                "automation_subcategory": "enablement",
+                "handler_binding_status": "active",
+            },
+        }
+        for marker in ({}, {"account_persona_unavailable": "true"}, {"account_persona_unavailable": 1}):
+            with self.subTest(marker=marker):
+                job = copy.deepcopy(base_job)
+                account_case = copy.deepcopy(base_case)
+                repository = Mock()
+                repository.get_account_reply_job.return_value = job
+                repository.get_ticket.return_value = ticket
+                repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+                resolution = types.SimpleNamespace(
+                    answer="",
+                    route_family="human_review",
+                    route_reason="no enabled published persona",
+                    evidence_summary=marker,
+                )
+
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker, "resolve_support_message", return_value=resolution
+                ):
+                    worker._prepare_account_reply_job(job)
+
+                self.assertEqual(account_case["policy_decision"], "automation_persona_human_review")
+                self.assertEqual(account_case["route"], "human_review_required")
+                repository.resolve_account_persona.assert_not_called()
+
+    def test_internal_followups_persona_unavailable_do_not_publish_customer_copy(self) -> None:
+        cases = (
+            (
+                "billing",
+                worker.handle_billing_request_reply,
+                "Re: [Billing Request] Detailed invoice - Ticket TK-PERSONA-BILLING",
+                {
+                    "billing_ticket_id": "AC-TK-PERSONA-BILLING",
+                    "account_case_id": "AC-TK-PERSONA-BILLING",
+                    "client_ticket_id": "TK-PERSONA-BILLING",
+                    "route": "detailed_invoice",
+                    "route_family": "automated",
+                    "execution_action": "detailed_invoice",
+                    "automation_status": "automation",
+                },
+            ),
+            (
+                "enablement",
+                worker.handle_enablement_request_reply,
+                "Re: [Enablement Request] Media Relay - Ticket TK-PERSONA-ENABLEMENT",
+                {
+                    "billing_ticket_id": "AC-TK-PERSONA-ENABLEMENT",
+                    "account_case_id": "AC-TK-PERSONA-ENABLEMENT",
+                    "client_ticket_id": "TK-PERSONA-ENABLEMENT",
+                    "automation_handler": "enablement",
+                    "route": "enablement",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                    "automation_status": "automation",
+                    "collected_fields": {"app_id": "alpha"},
+                },
+            ),
+            (
+                "quota",
+                worker.handle_quota_request_reply,
+                "Re: [Quota Request] RTC - Ticket TK-PERSONA-QUOTA",
+                {
+                    "billing_ticket_id": "AC-TK-PERSONA-QUOTA",
+                    "account_case_id": "AC-TK-PERSONA-QUOTA",
+                    "client_ticket_id": "TK-PERSONA-QUOTA",
+                    "automation_handler": "quota",
+                    "route": "quota",
+                    "route_family": "automated",
+                    "execution_action": "quota",
+                    "automation_status": "automation",
+                    "collected_fields": {"products": ["rtc"]},
+                },
+            ),
+        )
+        for handler, handle_reply, subject, account_case in cases:
+            with self.subTest(handler=handler):
+                account_case.update(
+                    {
+                        "category": "automation",
+                        "subcategory": str(account_case["execution_action"]),
+                        "route_status": "automated",
+                        "automation_handler": handler,
+                        "tooling_profile": f"deterministic_{handler}_intake",
+                        "route_classification": {
+                            "route_target": "automation",
+                            "automation_subcategory": str(account_case["execution_action"]),
+                            "handler_binding_status": "active",
+                        },
+                    }
+                )
+                repository = Mock()
+                repository.claim_automation_reply.return_value = {"status": "acquired"}
+                repository.commit_automation_reply_result.return_value = True
+                repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+                repository.get_ticket.return_value = {
+                    "ticket_id": account_case["client_ticket_id"],
+                    "subject": "Automation request",
+                    "messages": [{"role": "customer", "content": "Please help."}],
+                }
+                repository.resolve_account_persona.side_effect = AccountPersonaUnavailableError(
+                    "no enabled published persona"
+                )
+                reply = types.SimpleNamespace(
+                    message_id=f"{handler}-persona-unavailable",
+                    subject=subject,
+                    body_text="The internal team completed the request.",
+                )
+
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker, "record_billing_request_reply"
+                ), patch.object(worker, "render_automation_reply") as render:
+                    handled = handle_reply(reply)
+
+                self.assertEqual(handled, "completed")
+                commit = repository.commit_automation_reply_result.call_args.kwargs
+                self.assertIsNone(commit["assistant_message"])
+                self.assertEqual(
+                    commit["account_case_updates"]["route"],
+                    "human_review_required",
+                )
+                self.assertEqual(
+                    commit["account_case_updates"]["not_automated_reason"],
+                    "no enabled published persona",
+                )
+                self.assertEqual(commit["account_case_updates"]["category"], "human_review")
+                self.assertEqual(
+                    commit["account_case_updates"]["subcategory"],
+                    "human_review_required",
+                )
+                self.assertEqual(commit["account_case_updates"]["route_status"], "not_automated")
+                self.assertIsNone(commit["account_case_updates"]["automation_handler"])
+                self.assertIsNone(commit["account_case_updates"]["tooling_profile"])
+                self.assertEqual(
+                    commit["account_case_updates"]["route_classification"]["route_target"],
+                    "human_review",
+                )
+                self.assertIsNone(
+                    commit["account_case_updates"]["route_classification"]["automation_subcategory"]
+                )
+                render.assert_not_called()
+
+    def test_internal_followups_persona_render_failure_persist_generic_human_review(self) -> None:
+        cases = (
+            (
+                "billing",
+                worker.handle_billing_request_reply,
+                "Re: [Billing Request] Detailed invoice - Ticket TK-PERSONA-RENDER-BILLING",
+                {
+                    "billing_ticket_id": "AC-TK-PERSONA-RENDER-BILLING",
+                    "account_case_id": "AC-TK-PERSONA-RENDER-BILLING",
+                    "client_ticket_id": "TK-PERSONA-RENDER-BILLING",
+                    "route": "detailed_invoice",
+                    "route_family": "automated",
+                    "execution_action": "detailed_invoice",
+                },
+            ),
+            (
+                "enablement",
+                worker.handle_enablement_request_reply,
+                "Re: [Enablement Request] Media Relay - Ticket TK-PERSONA-RENDER-ENABLEMENT",
+                {
+                    "billing_ticket_id": "AC-TK-PERSONA-RENDER-ENABLEMENT",
+                    "account_case_id": "AC-TK-PERSONA-RENDER-ENABLEMENT",
+                    "client_ticket_id": "TK-PERSONA-RENDER-ENABLEMENT",
+                    "route": "enablement",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                    "collected_fields": {"app_id": "alpha"},
+                },
+            ),
+            (
+                "quota",
+                worker.handle_quota_request_reply,
+                "Re: [Quota Request] RTC - Ticket TK-PERSONA-RENDER-QUOTA",
+                {
+                    "billing_ticket_id": "AC-TK-PERSONA-RENDER-QUOTA",
+                    "account_case_id": "AC-TK-PERSONA-RENDER-QUOTA",
+                    "client_ticket_id": "TK-PERSONA-RENDER-QUOTA",
+                    "route": "quota",
+                    "route_family": "automated",
+                    "execution_action": "quota",
+                    "collected_fields": {"products": ["rtc"]},
+                },
+            ),
+        )
+        for handler, handle_reply, subject, account_case in cases:
+            with self.subTest(handler=handler):
+                account_case.update(
+                    {
+                        "category": "automation",
+                        "subcategory": str(account_case["execution_action"]),
+                        "route_status": "automated",
+                        "automation_handler": handler,
+                        "tooling_profile": f"deterministic_{handler}_intake",
+                        "automation_status": "automation",
+                        "route_classification": {
+                            "intent_class": "agora",
+                            "agora_route": "automation",
+                            "route_target": "automation",
+                            "automation_subcategory": str(account_case["execution_action"]),
+                            "handler_binding_status": "active",
+                            "primary_label": "Agora",
+                            "secondary_label": (
+                                f"Automation / {str(account_case['execution_action']).replace('_', ' ').title()}"
+                            ),
+                        },
+                    }
+                )
+                repository = Mock()
+                repository.claim_automation_reply.return_value = {"status": "acquired"}
+                repository.commit_automation_reply_result.return_value = True
+                repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+                repository.get_ticket.return_value = {
+                    "ticket_id": account_case["client_ticket_id"],
+                    "subject": "Automation request",
+                    "messages": [{"role": "customer", "content": "Please help."}],
+                }
+                repository.resolve_account_persona.return_value = {
+                    "persona_key": "sid-warm",
+                    "version": 1,
+                    "content": {},
+                }
+                reply = types.SimpleNamespace(
+                    message_id=f"{handler}-persona-render-failure",
+                    subject=subject,
+                    body_text="The internal team completed the request.",
+                )
+
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker, "record_billing_request_reply"
+                ), patch.object(
+                    worker,
+                    "extract_automation_resolution_facts",
+                    return_value={
+                        "customer_shareable_facts": ["The internal team completed the request."],
+                        "customer_action": None,
+                        "next_step": None,
+                        "status": "completed",
+                    },
+                ), patch.object(
+                    worker,
+                    "render_automation_reply",
+                    side_effect=worker.AutomationPersonaError("persona render failed"),
+                ) as render:
+                    handled = handle_reply(reply)
+
+                self.assertEqual(handled, "completed")
+                commit = repository.commit_automation_reply_result.call_args.kwargs
+                self.assertIsNone(commit["assistant_message"])
+                updates = commit["account_case_updates"]
+                self.assertEqual(updates["policy_decision"], "automation_persona_human_review")
+                self.assertEqual(updates["route"], "human_review_required")
+                self.assertEqual(updates["category"], "human_review")
+                self.assertEqual(updates["subcategory"], "human_review_required")
+                self.assertEqual(updates["route_status"], "not_automated")
+                self.assertIsNone(updates["automation_handler"])
+                self.assertIsNone(updates["tooling_profile"])
+                self.assertEqual(updates["route_classification"]["route_target"], "human_review")
+                self.assertIsNone(updates["route_classification"]["automation_subcategory"])
+                self.assertEqual(updates["route_classification"]["primary_label"], "Agora")
+                self.assertEqual(
+                    updates["route_classification"]["secondary_label"],
+                    "Agora / Uncategorized",
+                )
+                render.assert_called_once()
+
+    def test_case_persona_extraction_failure_persists_generic_human_review(self) -> None:
+        account_case = {
+            "account_case_id": "AC-TK-PERSONA-EXTRACTION-FAILURE",
+            "client_ticket_id": "TK-PERSONA-EXTRACTION-FAILURE",
+            "route": "enablement",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "category": "automation",
+            "subcategory": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "tooling_profile": "deterministic_enablement_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "intent_class": "agora",
+                "agora_route": "automation",
+                "route_target": "automation",
+                "automation_subcategory": "enablement",
+                "handler_binding_status": "active",
+                "primary_label": "Agora",
+                "secondary_label": "Automation / Enablement",
+            },
+        }
+        repository = Mock()
+        repository.resolve_account_persona.return_value = {
+            "persona_key": "sid-warm",
+            "version": 1,
+            "content": {},
+        }
+        save_case = Mock()
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "extract_automation_resolution_facts",
+            side_effect=worker.AutomationPersonaError("persona extraction failed"),
+        ), patch.object(worker, "render_automation_reply") as render:
+            reply = worker._render_case_persona_reply(
+                ticket_id="TK-PERSONA-EXTRACTION-FAILURE",
+                case=account_case,
+                behavior="enablement",
+                reply_intent="resolution_update",
+                source_facts=["The internal team completed the request."],
+                save_case=save_case,
+            )
+
+        self.assertEqual(reply, "")
+        save_case.assert_called_once_with(account_case)
+        self.assertEqual(account_case["policy_decision"], "automation_persona_human_review")
+        self.assertEqual(account_case["route"], "human_review_required")
+        self.assertEqual(account_case["category"], "human_review")
+        self.assertEqual(account_case["subcategory"], "human_review_required")
+        self.assertEqual(account_case["route_status"], "not_automated")
+        self.assertIsNone(account_case["automation_handler"])
+        self.assertIsNone(account_case["tooling_profile"])
+        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        self.assertEqual(account_case["route_classification"]["primary_label"], "Agora")
+        self.assertEqual(account_case["route_classification"]["secondary_label"], "Agora / Uncategorized")
+        render.assert_not_called()
+
+    def test_enablement_confirmation_persona_unavailable_does_not_create_reply_job(self) -> None:
+        account_case = {
+            "account_case_id": "AC-PERSONA-CONFIRMATION",
+            "client_ticket_id": "TK-PERSONA-CONFIRMATION",
+            "route": "enablement",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "category": "automation",
+            "subcategory": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "tooling_profile": "deterministic_enablement_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "route_target": "automation",
+                "automation_subcategory": "enablement",
+                "handler_binding_status": "active",
+            },
+            "internal_email_payload": {"delivery_key": "enablement:AC-PERSONA-CONFIRMATION:v1"},
+            "collected_fields": {"app_id": "alpha", "requested_feature": "media_relay"},
+        }
+        repository = Mock()
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-PERSONA-CONFIRMATION",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable Media Relay.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository.get_latest_account_reply_job.return_value = None
+        repository.resolve_account_persona.side_effect = AccountPersonaUnavailableError(
+            "no enabled published persona"
+        )
+
+        with patch.object(worker, "ticket_repository", repository):
+            created = worker._queue_enablement_submission_confirmation(account_case)
+
+        self.assertFalse(created)
+        self.assertEqual(account_case["route"], "human_review_required")
+        self.assertEqual(account_case["not_automated_reason"], "no enabled published persona")
+        self.assertEqual(account_case["category"], "human_review")
+        self.assertEqual(account_case["subcategory"], "human_review_required")
+        self.assertEqual(account_case["route_status"], "not_automated")
+        self.assertIsNone(account_case["automation_handler"])
+        self.assertIsNone(account_case["tooling_profile"])
+        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        repository.cancel_pending_account_reply_jobs.assert_not_called()
+        repository.save_account_reply_job.assert_not_called()
+        repository.save_account_case.assert_called_once_with(account_case)
+
+    def test_reply_facts_prepare_pins_persisted_persona_assignment(self) -> None:
+        job = {
+            "job_id": "account-reply-persona-pin",
+            "ticket_id": "TK-PERSONA-PIN",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "request_missing_information",
+                }
+            },
+        }
+        assignment = {
+            "persona_key": "sid-bright",
+            "version": 2,
+            "content": {"instruction": "Bright", "signature": "Best,\nSid"},
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-PERSONA-PIN",
+            "messages": [{"role": "customer", "content": "Please enable the feature."}],
+        }
+        repository.resolve_account_persona.return_value = assignment
+        rendered = types.SimpleNamespace(
+            content="Please share the App ID.",
+            model="persona-model",
+            prompt_version="automation-persona-v4",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply", return_value=rendered
+        ) as render:
+            worker._prepare_account_reply_job(job)
+
+        repository.resolve_account_persona.assert_called_once_with("TK-PERSONA-PIN")
+        self.assertEqual(job["payload"]["persona_key"], "sid-bright")
+        self.assertEqual(job["payload"]["persona_version"], 2)
+        self.assertEqual(job["payload"]["effective_prompt"], assignment["content"])
+        self.assertEqual(render.call_args.kwargs["persona_assignment"]["persona_key"], "sid-bright")
+        self.assertEqual(render.call_args.kwargs["persona_assignment"]["version"], 2)
+
+    def test_legacy_delayed_reply_pins_persisted_persona_assignment(self) -> None:
+        job = {
+            "job_id": "account-reply-legacy-pin",
+            "ticket_id": "TK-LEGACY-PIN",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "payload": {},
+        }
+        assignment = {
+            "persona_key": "sid-precise",
+            "version": 4,
+            "content": {"instruction": "Precise"},
+        }
+        repository = Mock()
+        repository.get_account_reply_job.side_effect = [job, copy.deepcopy(job)]
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-LEGACY-PIN",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository.resolve_account_persona.return_value = assignment
+        resolution = types.SimpleNamespace(
+            answer="Please share the App ID.",
+            evidence_summary=None,
+            answer_route="enablement",
+            route_reason="registered_enablement",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "resolve_support_message", return_value=resolution
+        ), patch.object(worker, "apply_persona_to_customer_reply", return_value="Pinned draft") as apply_persona:
+            worker._prepare_account_reply_job(job)
+
+        repository.resolve_account_persona.assert_called_once_with("TK-LEGACY-PIN")
+        apply_persona.assert_called_once_with("Please share the App ID.", assignment)
+        self.assertEqual(job["payload"]["persona_key"], "sid-precise")
+        self.assertEqual(job["payload"]["persona_version"], 4)
+        self.assertEqual(job["payload"]["effective_prompt"], assignment["content"])
+
+    def test_internal_reply_renders_with_persisted_persona_assignment(self) -> None:
+        account_case = {
+            "account_case_id": "AC-PERSONA-INTERNAL",
+            "customer_name": "Alice",
+        }
+        assignment = {
+            "persona_key": "sid-warm",
+            "version": 5,
+            "content": {"instruction": "Warm"},
+        }
+        repository = Mock()
+        repository.resolve_account_persona.return_value = assignment
+        rendered = types.SimpleNamespace(content="The request is complete.")
+        save_case = Mock()
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply", return_value=rendered
+        ) as render:
+            reply = worker._render_case_persona_reply(
+                ticket_id="TK-PERSONA-INTERNAL",
+                case=account_case,
+                behavior="quota",
+                reply_intent="resolution_update",
+                save_case=save_case,
+            )
+
+        self.assertEqual(reply, "The request is complete.")
+        repository.resolve_account_persona.assert_called_once_with("TK-PERSONA-INTERNAL")
+        self.assertEqual(render.call_args.kwargs["persona_assignment"], assignment)
+        save_case.assert_not_called()
+
+    def test_enablement_confirmation_pins_persisted_persona_assignment(self) -> None:
+        account_case = {
+            "account_case_id": "AC-PERSONA-CONFIRMATION-PIN",
+            "client_ticket_id": "TK-PERSONA-CONFIRMATION-PIN",
+            "internal_email_payload": {"delivery_key": "enablement:AC-PERSONA-CONFIRMATION-PIN:v1"},
+            "collected_fields": {"app_id": "alpha", "requested_feature": "media_relay"},
+        }
+        assignment = {
+            "persona_key": "sid-bright",
+            "version": 2,
+            "content": {"instruction": "Bright"},
+        }
+        repository = Mock()
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-PERSONA-CONFIRMATION-PIN",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable Media Relay.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository.get_latest_account_reply_job.return_value = None
+        repository.resolve_account_persona.return_value = assignment
+
+        with patch.object(worker, "ticket_repository", repository):
+            created = worker._queue_enablement_submission_confirmation(account_case)
+
+        self.assertTrue(created)
+        repository.resolve_account_persona.assert_called_once_with("TK-PERSONA-CONFIRMATION-PIN")
+        reply_job = repository.save_account_reply_job.call_args.args[0]
+        self.assertEqual(reply_job["payload"]["persona_key"], "sid-bright")
+        self.assertEqual(reply_job["payload"]["persona_version"], 2)
+        self.assertEqual(reply_job["payload"]["effective_prompt"], assignment["content"])
+
     def test_published_persona_content_is_reused_on_retry(self) -> None:
         job = {
             "job_id": "account-reply-persona-retry",
@@ -2842,6 +3611,10 @@ class WorkerResilienceTests(unittest.TestCase):
 
         self.assertEqual(job["status"], "manual_attention")
         self.assertEqual(billing_ticket["route"], "human_review_required")
+        self.assertEqual(
+            billing_ticket["policy_decision"],
+            "automation_persona_human_review",
+        )
         self.assertEqual(billing_ticket["internal_email_send_status"], "sent")
         self.assertEqual(len(ticket["messages"]), 1)
         repository.record_event.assert_called_once()
