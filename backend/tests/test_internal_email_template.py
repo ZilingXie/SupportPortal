@@ -23,6 +23,37 @@ class _FakeResponse:
 
 
 class InternalEmailTemplateTests(unittest.TestCase):
+    def test_surfaces_use_uniform_canvas_colors_for_outlook_dark_mode(self) -> None:
+        rendered = render_internal_handoff_email(
+            request_type="Enablement",
+            title="Media Relay enablement request",
+            ticket_id="12688",
+            intro="A customer has requested backend feature enablement.",
+            summary_fields=(("Ticket ID", "12688"),),
+            sections=(
+                InternalEmailSection(title="Neutral section", body="Details."),
+                InternalEmailSection(title="Warning section", body="Needs review.", tone="warning"),
+                InternalEmailSection(title="Success section", body="Verified.", tone="success"),
+            ),
+            original_message="Please enable the feature.",
+            action_text="Please reply directly to this email.",
+        )
+
+        html = rendered["body_html"].lower()
+        for color in (
+            "#f3f8fa",
+            "#f5fafc",
+            "#f5f8fb",
+            "#fafcfd",
+            "#edf8fb",
+            "#fff8ed",
+            "#eef9f4",
+        ):
+            self.assertNotIn(f"background-color:{color}", html)
+            self.assertNotIn(f"background:{color}", html)
+        self.assertIn("background-color:#ffffff", html)
+        self.assertIn("border-left", html)
+
     def test_theme_contract_uses_a_light_only_canvas_for_outlook_compatibility(self) -> None:
         rendered = render_internal_handoff_email(
             request_type="Enablement",
