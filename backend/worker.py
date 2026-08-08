@@ -349,15 +349,51 @@ def _account_reply_message_job_id(message: dict[str, Any]) -> str:
     return str(meta.get("account_reply_job_id") or message.get("account_reply_job_id") or "").strip()
 
 
-def _account_reply_job_still_exists(job: dict[str, Any]) -> bool:
-    job_id = str(job.get("job_id") or "").strip()
-    return bool(job_id) and ticket_repository.get_account_reply_job(job_id) is not None
+def _account_reply_claim_is_current(
+    claimed_job: dict[str, Any],
+    current_job: dict[str, Any] | None,
+    *,
+    expected_status: str,
+) -> bool:
+    if not isinstance(current_job, dict):
+        return False
+    return (
+        str(current_job.get("job_id") or "")
+        == str(claimed_job.get("job_id") or "")
+        and str(current_job.get("ticket_id") or "")
+        == str(claimed_job.get("ticket_id") or "")
+        and str(current_job.get("trigger_message_created_at") or "")
+        == str(claimed_job.get("trigger_message_created_at") or "")
+        and str(current_job.get("status") or "") == expected_status
+        and str(current_job.get("claimed_at") or "")
+        == str(claimed_job.get("claimed_at") or "")
+        and int(current_job.get("attempt_count") or 0)
+        == int(claimed_job.get("attempt_count") or 0)
+    )
+
+
+def _update_claimed_account_reply_job(
+    job: dict[str, Any],
+    *,
+    expected_status: str,
+) -> bool:
+    return ticket_repository.update_claimed_account_reply_job(
+        job,
+        expected_status=expected_status,
+        expected_claimed_at=job.get("claimed_at"),
+        expected_attempt_count=int(job.get("attempt_count") or 0),
+    ) is not None
 
 
 def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
-    if not _account_reply_job_still_exists(job):
+    claimed_status = str(job.get("status") or "")
+    if not _account_reply_claim_is_current(
+        job,
+        ticket_repository.get_account_reply_job(job_id),
+        expected_status=claimed_status,
+    ):
         return
     ticket = ticket_repository.get_ticket(ticket_id)
     if not job_id or ticket is None:
@@ -421,14 +457,12 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
             else "scheduled"
         )
         job["updated_at"] = now_iso()
-        if _account_reply_job_still_exists(job):
-            ticket_repository.save_account_reply_job(job)
+        _update_claimed_account_reply_job(job, expected_status=claimed_status)
         return
     if not _account_reply_trigger_is_latest(ticket, str(job.get("trigger_message_created_at") or "")):
         job["status"] = "cancelled"
         job["updated_at"] = now_iso()
-        if _account_reply_job_still_exists(job):
-            ticket_repository.save_account_reply_job(job)
+        _update_claimed_account_reply_job(job, expected_status=claimed_status)
         return
 
     trigger_message = next(
@@ -515,28 +549,33 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         )
         job["status"] = "scheduled"
     current_job = ticket_repository.get_account_reply_job(job_id)
-    if current_job is None or (
-        isinstance(current_job, dict)
-        and str(current_job.get("status") or "")
-        not in {"preparing", ACCOUNT_REPLY_PERSONA_PREPARING}
+    if not _account_reply_claim_is_current(
+        job,
+        current_job,
+        expected_status=claimed_status,
     ):
         return
     job["payload"] = payload
     job["updated_at"] = now_iso()
-    ticket_repository.save_account_reply_job(job)
+    _update_claimed_account_reply_job(job, expected_status=claimed_status)
 
 
 def _publish_account_reply_job(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
+    claimed_status = str(job.get("status") or "")
     current_job = ticket_repository.get_account_reply_job(job_id)
     ticket = ticket_repository.get_ticket(ticket_id)
     if current_job is None or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
-    if str(current_job.get("status") or "") not in {
+    if claimed_status not in {
         "publishing",
         ACCOUNT_REPLY_PERSONA_PUBLISHING,
-    }:
+    } or not _account_reply_claim_is_current(
+        job,
+        current_job,
+        expected_status=claimed_status,
+    ):
         return
     payload = dict(current_job.get("payload") or {})
     existing_message = next(
@@ -553,7 +592,10 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     ):
         current_job["status"] = "cancelled"
         current_job["updated_at"] = now_iso()
-        ticket_repository.save_account_reply_job(current_job)
+        _update_claimed_account_reply_job(
+            current_job,
+            expected_status=claimed_status,
+        )
         return
 
     if (
@@ -584,7 +626,11 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload["persona_model"] = rendered.model
         payload["persona_prompt_version"] = rendered.prompt_version
         current_job["payload"] = payload
-        ticket_repository.save_account_reply_job(current_job)
+        if not _update_claimed_account_reply_job(
+            current_job,
+            expected_status=claimed_status,
+        ):
+            return
 
     content = str(
         (existing_message or {}).get("content")
@@ -597,7 +643,10 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         current_job["status"] = "manual_attention"
         current_job["payload"] = payload
         current_job["updated_at"] = now_iso()
-        ticket_repository.save_account_reply_job(current_job)
+        _update_claimed_account_reply_job(
+            current_job,
+            expected_status=claimed_status,
+        )
         return
 
     published_at = str((existing_message or {}).get("created_at") or now_iso())
@@ -631,7 +680,12 @@ def _move_automation_reply_to_human_review(
     policy_decision: str = "automation_persona_human_review",
 ) -> None:
     """Stop an Automation send when Persona generation is unavailable."""
-    if not _account_reply_job_still_exists(job):
+    expected_status = str(job.get("status") or "")
+    if not _account_reply_claim_is_current(
+        job,
+        ticket_repository.get_account_reply_job(str(job.get("job_id") or "")),
+        expected_status=expected_status,
+    ):
         return
     timestamp = now_iso()
     payload = dict(job.get("payload") or {})
@@ -640,7 +694,8 @@ def _move_automation_reply_to_human_review(
     job["payload"] = payload
     job["status"] = "manual_attention"
     job["updated_at"] = timestamp
-    ticket_repository.save_account_reply_job(job)
+    if not _update_claimed_account_reply_job(job, expected_status=expected_status):
+        return
     billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(
         str(ticket.get("ticket_id") or job.get("ticket_id") or "")
     )
@@ -840,7 +895,11 @@ def _process_claimed_account_reply_jobs(
             operation = "preparation" if to_status in {ACCOUNT_REPLY_PERSONA_PREPARING, "preparing"} else "publication"
             LOGGER.exception("Account reply %s failed for %s", operation, job.get("job_id"))
             current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
-            if current is None or str(current.get("status") or "") == "cancelled":
+            if not _account_reply_claim_is_current(
+                job,
+                current,
+                expected_status=to_status,
+            ):
                 continue
             failed_job = current
             failed_job["status"] = retry_status if int(failed_job.get("attempt_count") or 0) < (3 if operation == "preparation" else 4) else "failed"
@@ -849,7 +908,10 @@ def _process_claimed_account_reply_jobs(
                 "error": str(exc),
             }
             failed_job["updated_at"] = now_iso()
-            ticket_repository.save_account_reply_job(failed_job)
+            _update_claimed_account_reply_job(
+                failed_job,
+                expected_status=to_status,
+            )
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:

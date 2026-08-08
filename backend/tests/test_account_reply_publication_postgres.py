@@ -381,6 +381,62 @@ class PostgresAccountReplyPublicationTests(unittest.TestCase):
                 job_id=job_id,
             )
 
+    def test_reset_delete_prevents_stale_claimed_update_from_reinserting_job(self) -> None:
+        application_name = "supportportal-stale-claimed-update-race-test"
+        with self._isolated_repository(
+            application_name=application_name,
+        ) as (repository, schema, runtime_dsn):
+            ticket_id = "12560"
+            job_id = "account-reply-stale-claimed-update-race"
+            stale_job = _seed_publishable_reply(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+            stale_job["status"] = "persona_scheduled"
+            stale_job["updated_at"] = "2026-08-08T02:04:00+00:00"
+            with (
+                psycopg.connect(runtime_dsn) as reset_transaction,
+                psycopg.connect(runtime_dsn, autocommit=True) as observer,
+                ThreadPoolExecutor(max_workers=1) as executor,
+            ):
+                reset_transaction.execute(
+                    sql.SQL(
+                        "SELECT ticket_id FROM {} WHERE ticket_id=%s FOR UPDATE"
+                    ).format(sql.Identifier(schema, "support_tickets")),
+                    (ticket_id,),
+                ).fetchone()
+                deleted = reset_transaction.execute(
+                    sql.SQL("DELETE FROM {} WHERE job_id=%s").format(
+                        sql.Identifier(schema, "support_account_reply_jobs")
+                    ),
+                    (job_id,),
+                )
+                self.assertEqual(deleted.rowcount, 1)
+                try:
+                    update_future = executor.submit(
+                        repository.update_claimed_account_reply_job,
+                        stale_job,
+                        expected_status="persona_publishing",
+                        expected_claimed_at=stale_job["claimed_at"],
+                        expected_attempt_count=stale_job["attempt_count"],
+                    )
+                    self._wait_for_lock_waiters(
+                        observer,
+                        application_name=application_name,
+                        minimum=1,
+                    )
+                finally:
+                    reset_transaction.commit()
+                update_result = update_future.result(timeout=15)
+
+            self.assertIsNone(update_result)
+            self._assert_no_reply_state(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+
     def test_publish_ticket_fence_does_not_deadlock_existing_case_upsert(self) -> None:
         application_name = "supportportal-publish-upsert-race-test"
         ticket_fence_locked = threading.Event()

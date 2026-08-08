@@ -266,6 +266,212 @@ class AccountAdminFeatureTests(unittest.TestCase):
             assignment_before_reset,
         )
 
+    def test_claimed_job_update_cannot_recreate_job_deleted_by_rerun_reset(self) -> None:
+        ticket_id = "TK-RESET-CLAIMED-UPDATE"
+        job_id = "account-reply-reset-claimed-update"
+        trigger_created_at = "2026-08-08T03:00:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable this feature.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_queued",
+                "scheduled_for": "2026-08-08T03:01:00+00:00",
+                "payload": {"reply_facts": {"behavior": "enablement"}},
+                "created_at": "2026-08-08T03:00:30+00:00",
+            }
+        )
+        claimed = self.repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-08-08T03:01:30+00:00",
+        )[0]
+
+        reset_result = self.repository.reset_account_rerun_state(
+            ticket_id,
+            reset_at="2026-08-08T03:02:00+00:00",
+            rerun_job_id="account-rerun-reset-claimed-update",
+            clear_persona_assignment=True,
+        )
+        claimed["status"] = "persona_scheduled"
+        claimed["updated_at"] = "2026-08-08T03:03:00+00:00"
+        updated = self.repository.update_claimed_account_reply_job(
+            claimed,
+            expected_status="persona_preparing",
+            expected_claimed_at=claimed["claimed_at"],
+            expected_attempt_count=claimed["attempt_count"],
+        )
+
+        self.assertIsNone(updated)
+        self.assertEqual(reset_result["reply_jobs_deleted"], 1)
+        self.assertIsNone(self.repository.get_account_reply_job(job_id))
+        self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertEqual(
+            [message["role"] for message in stored_ticket["messages"]],
+            ["customer"],
+        )
+
+        newly_scheduled = self.repository.save_account_reply_job(
+            {
+                **claimed,
+                "job_id": "account-reply-new-generation",
+                "status": "persona_queued",
+                "claimed_at": None,
+                "attempt_count": 0,
+            }
+        )
+        self.assertEqual(newly_scheduled["job_id"], "account-reply-new-generation")
+        first_claim = self.repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-08-08T03:04:00+00:00",
+        )[0]
+        self.repository.save_account_reply_job(
+            {
+                **first_claim,
+                "status": "persona_queued",
+                "updated_at": "2026-08-08T03:05:00+00:00",
+            }
+        )
+        second_claim = self.repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-08-08T03:06:00+00:00",
+        )[0]
+        first_claim["status"] = "persona_scheduled"
+
+        stale_update = self.repository.update_claimed_account_reply_job(
+            first_claim,
+            expected_status="persona_preparing",
+            expected_claimed_at=first_claim["claimed_at"],
+            expected_attempt_count=first_claim["attempt_count"],
+        )
+
+        self.assertIsNone(stale_update)
+        self.assertEqual(
+            self.repository.get_account_reply_job("account-reply-new-generation"),
+            second_claim,
+        )
+
+    def test_publish_rejects_stale_claim_ownership(self) -> None:
+        ticket_id = "TK-STALE-PUBLISH-CLAIM"
+        job_id = "account-reply-stale-publish-claim"
+        trigger_created_at = "2026-08-08T04:00:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable this feature.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        stale_claim = self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_publishing",
+                "scheduled_for": "2026-08-08T04:01:00+00:00",
+                "payload": {"generated_content": "Stale reply"},
+                "claimed_at": "2026-08-08T04:01:00+00:00",
+                "attempt_count": 1,
+                "created_at": "2026-08-08T04:00:30+00:00",
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                **stale_claim,
+                "claimed_at": "2026-08-08T04:02:00+00:00",
+                "attempt_count": 2,
+                "updated_at": "2026-08-08T04:02:00+00:00",
+            }
+        )
+
+        with self.assertRaises(KeyError):
+            self.repository.publish_account_reply(
+                stale_claim,
+                content="Stale reply",
+                payload=dict(stale_claim["payload"]),
+                published_at="2026-08-08T04:03:00+00:00",
+                reply_execution={
+                    "execution_id": f"reply-{job_id}",
+                    "ticket_id": ticket_id,
+                    "reply_kind": "enablement",
+                },
+            )
+
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertEqual([message["role"] for message in stored_ticket["messages"]], ["customer"])
+        self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
+
+    def test_in_memory_resolver_waits_for_reset_fence_before_redrawing_persona(self) -> None:
+        ticket_id = "TK-IN-MEMORY-RESOLVE-RESET"
+        self.repository.save_ticket({"ticket_id": ticket_id, "messages": []})
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=lambda candidates: next(
+                candidate
+                for candidate in candidates
+                if candidate["persona_key"] == "sid-bright"
+            ),
+        ):
+            old_assignment = self.repository.resolve_account_persona(ticket_id)
+
+        resolver_started = threading.Event()
+
+        def resolve_after_reset() -> dict[str, object]:
+            resolver_started.set()
+            return self.repository.resolve_account_persona(ticket_id)
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = None
+        try:
+            self.repository._assignment_lock.acquire()
+            try:
+                counts = self.repository.reset_account_rerun_state(
+                    ticket_id,
+                    reset_at="2026-08-08T05:00:00+00:00",
+                    clear_persona_assignment=True,
+                )
+                self.repository.set_account_persona_enabled("sid-bright", False)
+                future = executor.submit(resolve_after_reset)
+                self.assertTrue(resolver_started.wait(timeout=5))
+                self.assertFalse(future.done())
+            finally:
+                self.repository._assignment_lock.release()
+            assert future is not None
+            new_assignment = future.result(timeout=5)
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        self.assertEqual(counts["persona_assignments_deleted"], 1)
+        self.assertEqual(old_assignment["persona_key"], "sid-bright")
+        self.assertNotEqual(new_assignment["persona_key"], old_assignment["persona_key"])
+        self.assertEqual(
+            self.repository.get_account_persona_assignment(ticket_id)["persona_key"],
+            new_assignment["persona_key"],
+        )
+
     def test_single_case_reset_keeps_only_customer_messages_and_records_sanitized_audit(self) -> None:
         customer_messages = [
             {

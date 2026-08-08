@@ -293,6 +293,37 @@ class AccountPersonaPostgresTests(unittest.TestCase):
                     time.sleep(0.05)
         return False, last_state
 
+    def _wait_for_application_lock(
+        self,
+        application_name: str,
+        *,
+        timeout: float,
+    ) -> tuple[bool, tuple[object, ...] | None]:
+        deadline = time.monotonic() + timeout
+        last_state: tuple[object, ...] | None = None
+        with psycopg.connect(
+            self.migration_dsn,
+            autocommit=True,
+            connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            with connection.cursor() as cursor:
+                while time.monotonic() < deadline:
+                    cursor.execute(
+                        """
+                        SELECT state, wait_event_type, wait_event, query
+                        FROM pg_stat_activity
+                        WHERE application_name = %s
+                        ORDER BY pid DESC
+                        LIMIT 1
+                        """,
+                        (application_name,),
+                    )
+                    last_state = cursor.fetchone()
+                    if last_state is not None and last_state[1] == "Lock":
+                        return True, last_state
+                    time.sleep(0.05)
+        return False, last_state
+
     def _insert_legacy_persona(
         self,
         persona_key: str,
@@ -685,6 +716,91 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self.assertEqual(assignments[0]["persona_key"], assignments[1]["persona_key"])
         self.assertEqual(assignments[0]["version"], assignments[1]["version"])
         self.assertEqual(self._assignment_count(ticket_id), 1)
+
+    def test_resolver_waits_for_reset_ticket_fence_then_redraws_persona(self) -> None:
+        ticket_id = "TK-PERSONA-RESET-RESOLVE-RACE"
+        self._initialize_persona_assignment_ticket(ticket_id)
+
+        def choose_bright(candidates: list[tuple[object, ...]]) -> tuple[object, ...]:
+            return next(candidate for candidate in candidates if candidate[0] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ):
+            old_assignment = self.repository.resolve_account_persona(ticket_id)
+
+        resolver_application_name = f"account-persona-reset-resolver-{uuid4().hex}"
+        resolver_repository = self._repository(
+            application_name=resolver_application_name,
+        )
+        self.addCleanup(resolver_repository.close)
+        executor = ThreadPoolExecutor(max_workers=1)
+        resolver_future = None
+        try:
+            with psycopg.connect(
+                self.dsn,
+                connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+            ) as reset_connection:
+                with reset_connection.transaction(), reset_connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL lock_timeout = '15s'")
+                    cursor.execute("SET LOCAL statement_timeout = '60s'")
+                    cursor.execute(
+                        sql.SQL(
+                            "SELECT ticket_id FROM {} WHERE ticket_id=%s FOR UPDATE"
+                        ).format(sql.Identifier(self.schema, "support_tickets")),
+                        (ticket_id,),
+                    )
+                    self.assertIsNotNone(cursor.fetchone())
+                    cursor.execute(
+                        sql.SQL("DELETE FROM {} WHERE ticket_id=%s").format(
+                            sql.Identifier(
+                                self.schema,
+                                "support_account_persona_assignments",
+                            )
+                        ),
+                        (ticket_id,),
+                    )
+                    self.assertEqual(cursor.rowcount, 1)
+                    cursor.execute(
+                        sql.SQL(
+                            "UPDATE {} SET enabled=FALSE WHERE persona_key='sid-bright'"
+                        ).format(sql.Identifier(self.schema, "support_account_personas"))
+                    )
+                    cursor.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='superseded' "
+                            "WHERE persona_key='sid-bright' AND version=1"
+                        ).format(
+                            sql.Identifier(self.schema, "support_account_prompt_versions")
+                        )
+                    )
+                    resolver_future = executor.submit(
+                        resolver_repository.resolve_account_persona,
+                        ticket_id,
+                    )
+                    resolver_waited, last_state = self._wait_for_application_lock(
+                        resolver_application_name,
+                        timeout=5,
+                    )
+                    self.assertTrue(
+                        resolver_waited,
+                        "resolver returned a stale assignment instead of waiting for the reset "
+                        f"ticket fence; last state={last_state!r}",
+                    )
+
+            assert resolver_future is not None
+            new_assignment = resolver_future.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        self.assertEqual(old_assignment["persona_key"], "sid-bright")
+        self.assertNotEqual(new_assignment["persona_key"], old_assignment["persona_key"])
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+        self.assertEqual(
+            self.repository.get_account_persona_assignment(ticket_id)["persona_key"],
+            new_assignment["persona_key"],
+        )
 
     def test_concurrent_disable_rejects_one_when_only_two_eligible_personas_remain(self) -> None:
         self._initialize_persona_assignment_ticket("TK-PERSONA-DISABLE")

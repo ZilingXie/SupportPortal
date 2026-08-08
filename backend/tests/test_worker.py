@@ -3512,7 +3512,9 @@ class WorkerResilienceTests(unittest.TestCase):
             ],
         }
         repository = Mock()
+        repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = ticket
+        repository.update_claimed_account_reply_job.return_value = job
         rendered = types.SimpleNamespace(
             content="Hi Customer,\\n\\nPlease share the App ID.\\n\\nBest,\\nSid",
             model="persona-model",
@@ -3529,7 +3531,13 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(job["status"], worker.ACCOUNT_REPLY_PERSONA_SCHEDULED)
         self.assertEqual(job["payload"]["generated_content"], rendered.content)
         self.assertEqual(job["payload"]["persona_render_status"], "generated")
-        repository.save_account_reply_job.assert_called_once_with(job)
+        repository.update_claimed_account_reply_job.assert_called_once_with(
+            job,
+            expected_status="preparing",
+            expected_claimed_at=None,
+            expected_attempt_count=0,
+        )
+        repository.save_account_reply_job.assert_not_called()
 
     def test_deleted_account_reply_job_is_not_recreated_by_stale_worker(self) -> None:
         job = {
@@ -3546,11 +3554,12 @@ class WorkerResilienceTests(unittest.TestCase):
             },
         }
         repository = Mock()
-        repository.get_account_reply_job.side_effect = [job, None]
+        repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = {
             "ticket_id": "TK-DELETED-REPLY",
             "messages": [{"role": "customer", "content": "Please increase quota"}],
         }
+        repository.update_claimed_account_reply_job.return_value = None
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
@@ -3564,6 +3573,13 @@ class WorkerResilienceTests(unittest.TestCase):
             worker._prepare_account_reply_job(job)
 
         repository.save_account_reply_job.assert_not_called()
+        repository.update_claimed_account_reply_job.assert_called_once_with(
+            job,
+            expected_status="preparing",
+            expected_claimed_at=None,
+            expected_attempt_count=0,
+        )
+        repository.publish_account_reply.assert_not_called()
 
     def test_persona_failure_moves_reply_job_to_human_review_without_sending(self) -> None:
         job = {

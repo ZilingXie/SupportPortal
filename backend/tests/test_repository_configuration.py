@@ -115,11 +115,44 @@ class _PublicationLockOrderCursor(_ReusableCursor):
         if "support_account_cases" in self._last_sql and "FOR UPDATE" in self._last_sql:
             return ("enablement", "automated", "enablement", None, None)
         if "support_account_reply_jobs" in self._last_sql and "FOR UPDATE" in self._last_sql:
-            return ("account-reply-lock-order",)
+            return (
+                "account-reply-lock-order",
+                "TK-ACCOUNT-LOCK-ORDER",
+                datetime(2026, 8, 8, tzinfo=timezone.utc),
+                "persona_publishing",
+                datetime(2026, 8, 8, 0, 1, tzinfo=timezone.utc),
+                1,
+            )
         if "support_ticket_messages" in self._last_sql and "SELECT" in self._last_sql:
             return None
         if "support_ticket_messages" in self._last_sql and "INSERT INTO" in self._last_sql:
             return (42, self._published_at)
+        return None
+
+
+class _PersonaResolutionLockOrderCursor(_ReusableCursor):
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_sql = ""
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+
+    def fetchone(self):
+        if "support_tickets" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("TK-PERSONA-LOCK-ORDER",)
+        if "support_account_persona_assignments" in self._last_sql:
+            return (
+                "default-support",
+                1,
+                {"instruction": "Pinned Persona"},
+                datetime(2026, 8, 8, tzinfo=timezone.utc),
+            )
         return None
 
 
@@ -407,7 +440,14 @@ class RepositoryConfigurationTests(unittest.TestCase):
             fetchone_results=[
                 ("TK-ACCOUNT-1",),
                 ("enablement", "automated", "enablement", None, None),
-                ("account-reply-new",),
+                (
+                    "account-reply-new",
+                    "TK-ACCOUNT-1",
+                    datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    "persona_publishing",
+                    datetime(2026, 8, 3, 0, 1, tzinfo=timezone.utc),
+                    1,
+                ),
                 None,
                 (42, published_at),
             ]
@@ -418,7 +458,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "job_id": "account-reply-new",
             "ticket_id": "TK-ACCOUNT-1",
             "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+            "status": "persona_publishing",
             "scheduled_for": "2026-08-03T00:01:00+00:00",
+            "claimed_at": "2026-08-03T00:01:00+00:00",
+            "attempt_count": 1,
         }
         payload = {
             "replace_existing_reply": True,
@@ -464,7 +507,14 @@ class RepositoryConfigurationTests(unittest.TestCase):
             fetchone_results=[
                 ("TK-ACCOUNT-1",),
                 ("enablement", "automated", "enablement", None, None),
-                ("account-reply-existing",),
+                (
+                    "account-reply-existing",
+                    "TK-ACCOUNT-1",
+                    datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    "persona_publishing",
+                    datetime(2026, 8, 3, 0, 1, tzinfo=timezone.utc),
+                    2,
+                ),
                 (42, "Previously generated reply", published_at),
             ]
         )
@@ -474,6 +524,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "job_id": "account-reply-existing",
             "ticket_id": "TK-ACCOUNT-1",
             "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+            "status": "persona_publishing",
+            "claimed_at": "2026-08-03T00:01:00+00:00",
+            "attempt_count": 2,
         }
 
         with patch.object(
@@ -522,7 +575,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
                     "job_id": "account-reply-lock-order",
                     "ticket_id": "TK-ACCOUNT-LOCK-ORDER",
                     "trigger_message_created_at": "2026-08-08T00:00:00+00:00",
+                    "status": "persona_publishing",
                     "scheduled_for": "2026-08-08T00:01:00+00:00",
+                    "claimed_at": "2026-08-08T00:01:00+00:00",
+                    "attempt_count": 1,
                 },
                 content="Lock publication in canonical order.",
                 payload={},
@@ -546,6 +602,39 @@ class RepositoryConfigurationTests(unittest.TestCase):
                 lock_targets.append("reply_job")
 
         self.assertEqual(lock_targets, ["ticket", "account_case", "reply_job"])
+
+    def test_resolve_account_persona_locks_ticket_before_reading_assignment(self) -> None:
+        cursor = _PersonaResolutionLockOrderCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            assignment = repository.resolve_account_persona("TK-PERSONA-LOCK-ORDER")
+
+        rendered_queries = [
+            cursor._sql_text(args[0])
+            for args, _kwargs in cursor.executed
+            if args
+        ]
+        ticket_lock_index = next(
+            index
+            for index, query in enumerate(rendered_queries)
+            if "support_tickets" in query and "FOR UPDATE" in query
+        )
+        assignment_read_index = next(
+            index
+            for index, query in enumerate(rendered_queries)
+            if "support_account_persona_assignments" in query
+        )
+        self.assertLess(ticket_lock_index, assignment_read_index)
+        self.assertEqual(assignment["persona_key"], "default-support")
 
     def test_ticket_storage_contract_removes_priority_column_and_index(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")

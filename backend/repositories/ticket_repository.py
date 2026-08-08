@@ -53,6 +53,27 @@ def _account_rerun_deleted_role(value: Any) -> str:
     return "unknown"
 
 
+def _account_reply_job_matches_claim(
+    current: dict[str, Any],
+    claimed: dict[str, Any],
+    *,
+    expected_status: str,
+    expected_claimed_at: str | None,
+    expected_attempt_count: int,
+) -> bool:
+    return (
+        str(current.get("job_id") or "") == str(claimed.get("job_id") or "")
+        and str(current.get("ticket_id") or "")
+        == str(claimed.get("ticket_id") or "")
+        and str(current.get("trigger_message_created_at") or "")
+        == str(claimed.get("trigger_message_created_at") or "")
+        and str(current.get("status") or "") == str(expected_status or "")
+        and str(current.get("claimed_at") or "")
+        == str(expected_claimed_at or "")
+        and int(current.get("attempt_count") or 0) == int(expected_attempt_count)
+    )
+
+
 def _account_rerun_correction_audit_summary(
     correction: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -1304,6 +1325,14 @@ class TicketRepository(Protocol):
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
+    def update_claimed_account_reply_job(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+    ) -> dict[str, Any] | None: ...
     def publish_account_reply(
         self,
         job: dict[str, Any],
@@ -2187,6 +2216,32 @@ class InMemoryTicketRepository:
             self._account_reply_jobs[str(saved["job_id"])] = saved
         return copy.deepcopy(saved)
 
+    def update_claimed_account_reply_job(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+    ) -> dict[str, Any] | None:
+        job_id = str(job.get("job_id") or "").strip()
+        with self._assignment_lock:
+            current = self._account_reply_jobs.get(job_id)
+            if current is None or not _account_reply_job_matches_claim(
+                current,
+                job,
+                expected_status=expected_status,
+                expected_claimed_at=expected_claimed_at,
+                expected_attempt_count=expected_attempt_count,
+            ):
+                return None
+            saved = copy.deepcopy(job)
+            saved["created_at"] = saved.get("created_at") or current.get("created_at") or _utc_now()
+            saved["updated_at"] = saved.get("updated_at") or saved["created_at"]
+            saved["attempt_count"] = int(saved.get("attempt_count") or 0)
+            self._account_reply_jobs[job_id] = saved
+            return copy.deepcopy(saved)
+
     def publish_account_reply(
         self,
         job: dict[str, Any],
@@ -2199,7 +2254,19 @@ class InMemoryTicketRepository:
         ticket_id = str(job.get("ticket_id") or "").strip()
         job_id = str(job.get("job_id") or "").strip()
         with self._assignment_lock:
-            if job_id not in self._account_reply_jobs:
+            current_job = self._account_reply_jobs.get(job_id)
+            expected_status = str(job.get("status") or "")
+            if (
+                current_job is None
+                or expected_status not in {"publishing", "persona_publishing"}
+                or not _account_reply_job_matches_claim(
+                    current_job,
+                    job,
+                    expected_status=expected_status,
+                    expected_claimed_at=job.get("claimed_at"),
+                    expected_attempt_count=int(job.get("attempt_count") or 0),
+                )
+            ):
                 raise KeyError(job_id)
             ticket = self._tickets.get(ticket_id)
             if ticket is None:
@@ -10688,6 +10755,54 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("save_account_reply_job", _operation)
 
+    def update_claimed_account_reply_job(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+    ) -> dict[str, Any] | None:
+        saved = copy.deepcopy(job)
+        saved["attempt_count"] = int(saved.get("attempt_count") or 0)
+        payload = dict(saved.get("payload") or {})
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s,scheduled_for=%s,payload=%s,"
+                        "attempt_count=%s,claimed_at=%s,published_at=%s,updated_at=%s "
+                        "WHERE job_id=%s AND ticket_id=%s AND trigger_message_created_at=%s "
+                        "AND status=%s AND claimed_at IS NOT DISTINCT FROM %s "
+                        "AND attempt_count=%s "
+                        "RETURNING job_id,ticket_id,trigger_message_created_at,status,scheduled_for,"
+                        "payload,attempt_count,claimed_at,published_at,created_at,updated_at"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (
+                        saved["status"],
+                        saved["scheduled_for"],
+                        Json(payload),
+                        saved["attempt_count"],
+                        saved.get("claimed_at"),
+                        saved.get("published_at"),
+                        saved["updated_at"],
+                        saved["job_id"],
+                        saved["ticket_id"],
+                        saved["trigger_message_created_at"],
+                        expected_status,
+                        expected_claimed_at,
+                        int(expected_attempt_count),
+                    ),
+                )
+                row = cur.fetchone()
+                return self._account_reply_job_from_row(row) if row is not None else None
+
+        return self._run_with_connection_retry(
+            "update_claimed_account_reply_job",
+            _operation,
+        )
+
     def publish_account_reply(
         self,
         job: dict[str, Any],
@@ -10751,11 +10866,36 @@ class PostgresTicketRepository:
                 )
                 cur.execute(
                     sql.SQL(
-                        "SELECT job_id FROM {} WHERE job_id=%s FOR UPDATE"
+                        "SELECT job_id,ticket_id,trigger_message_created_at,status,claimed_at,attempt_count "
+                        "FROM {} WHERE job_id=%s FOR UPDATE"
                     ).format(self._table("support_account_reply_jobs")),
                     (job_id,),
                 )
-                if cur.fetchone() is None:
+                job_row = cur.fetchone()
+                canonical_job = (
+                    {
+                        "job_id": str(job_row[0]),
+                        "ticket_id": str(job_row[1]),
+                        "trigger_message_created_at": _to_iso(job_row[2]),
+                        "status": str(job_row[3]),
+                        "claimed_at": _to_iso(job_row[4]) if job_row[4] is not None else None,
+                        "attempt_count": int(job_row[5] or 0),
+                    }
+                    if job_row is not None
+                    else None
+                )
+                expected_status = str(job.get("status") or "")
+                if (
+                    canonical_job is None
+                    or expected_status not in {"publishing", "persona_publishing"}
+                    or not _account_reply_job_matches_claim(
+                        canonical_job,
+                        job,
+                        expected_status=expected_status,
+                        expected_claimed_at=job.get("claimed_at"),
+                        expected_attempt_count=int(job.get("attempt_count") or 0),
+                    )
+                ):
                     raise KeyError(job_id)
                 if account_case is not None and _account_case_requires_human_review(
                     account_case
@@ -11093,6 +11233,8 @@ class PostgresTicketRepository:
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
+                if not self._lock_account_reply_ticket(cur, normalized):
+                    raise ValueError("ticket not found")
                 assignments_table = self._table("support_account_persona_assignments")
                 personas_table = self._table("support_account_personas")
                 versions_table = self._table("support_account_prompt_versions")
