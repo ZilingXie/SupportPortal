@@ -5206,6 +5206,7 @@ async def _enqueue_account_rerun_job(
         "reply_jobs_deleted": 0,
         "reply_executions_deleted": 0,
         "customer_replies_cleared": 0,
+        "persona_assignments_deleted": 0,
         "route_reviews_reset": 0,
         "route_corrections_cleared": 0,
         "new_replies_published": 0,
@@ -5264,6 +5265,9 @@ async def _record_account_rerun_terminal_audit(
         "reply_jobs_deleted": int(job.get("reply_jobs_deleted") or 0),
         "reply_executions_deleted": int(job.get("reply_executions_deleted") or 0),
         "customer_replies_cleared": int(job.get("customer_replies_cleared") or 0),
+        "persona_assignments_deleted": int(
+            job.get("persona_assignments_deleted") or 0
+        ),
         "route_reviews_reset": int(job.get("route_reviews_reset") or 0),
         "route_corrections_cleared": int(job.get("route_corrections_cleared") or 0),
         "emails_sent": int(job.get("emails_sent") or 0),
@@ -5466,6 +5470,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     reset_at=now_iso(),
                     rerun_job_id=job_id,
                     reset_mode=str(job.get("reset_mode") or ACCOUNT_RERUN_RESET_AI_ONLY),
+                    clear_persona_assignment=True,
                     audit_context={
                         "account_case_id": case_id,
                         "ticket_number": client_ticket_id,
@@ -5480,6 +5485,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     ("reply_jobs_deleted", "reply_jobs_deleted"),
                     ("reply_executions_deleted", "reply_executions_deleted"),
                     ("customer_replies_cleared", "customer_replies_cleared"),
+                    ("persona_assignments_deleted", "persona_assignments_deleted"),
                     ("route_reviews_reset", "route_review_reset"),
                     ("route_corrections_cleared", "route_correction_cleared"),
                 ):
@@ -5531,13 +5537,14 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 case_route_key = _account_rerun_route_key(primary_label, secondary_label)
                 case_handler_status = str(result.handler_status or "")
                 persona: dict[str, Any] | None = None
-                needs_persona = bool(
-                    result.internal_email_to_send and result.email_handler
-                ) or result.reply_kind in {"field_follow_up", "submission_confirmation"}
+                needs_persona = result.reply_kind in {
+                    "field_follow_up",
+                    "submission_confirmation",
+                }
                 if needs_persona:
                     try:
                         persona = await _account_rerun_storage_call(
-                            ticket_repository.resolve_published_account_persona,
+                            ticket_repository.resolve_account_persona,
                             client_ticket_id,
                         )
                     except AccountPersonaUnavailableError as exc:

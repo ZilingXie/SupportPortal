@@ -163,12 +163,25 @@ class AccountAdminFeatureTests(unittest.TestCase):
                 "payload": {"content": "Delete this Account reply"},
             }
         )
+        with patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-08-03T00:03:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=lambda candidates: next(
+                candidate
+                for candidate in candidates
+                if candidate["persona_key"] == DEFAULT_PERSONA_KEY
+            ),
+        ):
+            old_assignment = self.repository.resolve_account_persona("TK-RESET")
 
         counts = self.repository.reset_account_rerun_state(
             "TK-RESET",
             reset_at="2026-08-04T00:00:00+00:00",
             rerun_job_id="rerun-1",
             reset_mode=ACCOUNT_RERUN_RESET_AI_ONLY,
+            clear_persona_assignment=True,
         )
 
         self.assertEqual(
@@ -178,6 +191,34 @@ class AccountAdminFeatureTests(unittest.TestCase):
                 "reply_jobs_deleted": 2,
                 "reply_executions_deleted": 1,
                 "customer_replies_cleared": 1,
+                "persona_assignments_deleted": 1,
+            },
+        )
+        self.assertIsNone(self.repository.get_account_persona_assignment("TK-RESET"))
+        with patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-08-04T00:01:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=lambda candidates: next(
+                candidate
+                for candidate in candidates
+                if candidate["persona_key"] == old_assignment["persona_key"]
+            ),
+        ) as chooser:
+            new_assignment = self.repository.resolve_account_persona("TK-RESET")
+
+        self.assertEqual(new_assignment["persona_key"], old_assignment["persona_key"])
+        self.assertEqual(new_assignment["version"], old_assignment["version"])
+        self.assertNotEqual(new_assignment["assigned_at"], old_assignment["assigned_at"])
+        self.assertEqual(chooser.call_count, 1)
+        self.assertEqual(
+            self.repository.get_account_persona_assignment("TK-RESET"),
+            {
+                "ticket_id": "TK-RESET",
+                "persona_key": new_assignment["persona_key"],
+                "version": new_assignment["version"],
+                "assigned_at": new_assignment["assigned_at"],
             },
         )
         ticket = self.repository.get_ticket("TK-RESET")
@@ -194,6 +235,36 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertIsNone(case["customer_reply"])
         self.assertIsNone(case["internal_email_payload"])
         self.assertIsNone(case["internal_email_send_status"])
+
+    def test_account_rerun_reset_preserves_assignment_without_explicit_clear(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "TK-RESET-COMPAT",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Keep this request",
+                        "created_at": "2026-08-03T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        self.repository.resolve_account_persona("TK-RESET-COMPAT")
+        assignment_before_reset = self.repository.get_account_persona_assignment(
+            "TK-RESET-COMPAT"
+        )
+
+        counts = self.repository.reset_account_rerun_state(
+            "TK-RESET-COMPAT",
+            reset_at="2026-08-04T00:00:00+00:00",
+            rerun_job_id="reply-only-recovery",
+        )
+
+        self.assertEqual(counts["persona_assignments_deleted"], 0)
+        self.assertEqual(
+            self.repository.get_account_persona_assignment("TK-RESET-COMPAT"),
+            assignment_before_reset,
+        )
 
     def test_single_case_reset_keeps_only_customer_messages_and_records_sanitized_audit(self) -> None:
         customer_messages = [
@@ -293,6 +364,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             reset_at="2026-08-04T00:00:00+00:00",
             rerun_job_id="account-rerun-test",
             reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+            clear_persona_assignment=True,
             audit_context={
                 "actor_id": "account_ui",
                 "account_case_id": "AC-12572",
@@ -305,6 +377,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(self.repository.get_ticket("12572")["messages"], customer_messages)
         self.assertEqual(counts["customer_messages_retained"], 2)
         self.assertEqual(counts["messages_deleted"], 4)
+        self.assertEqual(counts["persona_assignments_deleted"], 0)
         self.assertEqual(
             counts["deleted_messages_by_role"],
             {"assistant": 1, "engineer": 1, "internal": 1, "unknown": 1},
@@ -335,6 +408,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(audit["actor_id"], "account_ui")
         self.assertEqual(audit["target_id"], "AC-12572")
         self.assertEqual(audit["payload"]["messages_deleted"], 4)
+        self.assertEqual(audit["payload"]["persona_assignments_deleted"], 0)
         self.assertTrue(audit["payload"]["route_correction_cleared"])
         audit_text = str(audit).lower()
         for private_value in (
@@ -365,6 +439,8 @@ class AccountAdminFeatureTests(unittest.TestCase):
                 "customer_reply": "Existing reply",
             }
         )
+        self.repository.resolve_account_persona("12573")
+        assignment_before_reset = self.repository.get_account_persona_assignment("12573")
 
         with patch.object(
             self.repository,
@@ -377,6 +453,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
                     reset_at="2026-08-04T00:00:00+00:00",
                     rerun_job_id="account-rerun-test",
                     reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                    clear_persona_assignment=True,
                     audit_context={
                         "actor_id": "account_ui",
                         "account_case_id": "AC-12573",
@@ -392,6 +469,10 @@ class AccountAdminFeatureTests(unittest.TestCase):
         assert account_case is not None
         self.assertEqual(account_case["route_review_status"], "reviewed")
         self.assertEqual(account_case["customer_reply"], "Existing reply")
+        self.assertEqual(
+            self.repository.get_account_persona_assignment("12573"),
+            assignment_before_reset,
+        )
 
     def test_environment_config_returns_names_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

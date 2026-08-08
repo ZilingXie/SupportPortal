@@ -16,6 +16,7 @@ from psycopg import sql
 from psycopg.types.json import Json
 
 from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
     PostgresTicketRepository,
     _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
 )
@@ -467,6 +468,190 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self.assertEqual(compatibility_assignment, second)
         self.assertEqual(chooser.call_count, 1)
         self.assertEqual(self._assignment_count(ticket_id), 1)
+
+    def test_complete_rerun_reset_deletes_assignment_and_allows_same_persona_redraw(self) -> None:
+        ticket_id = "TK-PERSONA-RERUN"
+        self._initialize_persona_assignment_ticket(ticket_id)
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "C-persona",
+                "requester": "persona@example.com",
+                "subject": "Persona rerun",
+                "status": "open",
+                "updated_at": "2026-08-07T00:01:00+00:00",
+            },
+            new_messages=[
+                {
+                    "role": "customer",
+                    "content": "Keep this customer request.",
+                    "created_at": "2026-08-07T00:01:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Remove this old Account reply.",
+                    "source": "account_ai",
+                    "created_at": "2026-08-07T00:02:00+00:00",
+                },
+            ],
+        )
+
+        def choose_bright(candidates: list[tuple[object, ...]]) -> tuple[object, ...]:
+            return next(candidate for candidate in candidates if candidate[0] == "sid-bright")
+
+        with patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-08-07T00:03:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ):
+            old_assignment = self.repository.resolve_account_persona(ticket_id)
+
+        counts = self.repository.reset_account_rerun_state(
+            ticket_id,
+            reset_at="2026-08-07T00:04:00+00:00",
+            rerun_job_id="account-rerun-persona-postgres",
+            clear_persona_assignment=True,
+        )
+
+        self.assertEqual(counts["persona_assignments_deleted"], 1)
+        self.assertEqual(counts["ai_messages_deleted"], 1)
+        self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
+        self.assertEqual(self._assignment_count(ticket_id), 0)
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertEqual(
+            [(message["role"], message["content"]) for message in stored_ticket["messages"]],
+            [("customer", "Keep this customer request.")],
+        )
+
+        with patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-08-07T00:05:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=choose_bright,
+        ) as chooser:
+            new_assignment = self.repository.resolve_account_persona(ticket_id)
+
+        self.assertEqual(chooser.call_count, 1)
+        self.assertEqual(new_assignment["persona_key"], old_assignment["persona_key"])
+        self.assertEqual(new_assignment["version"], old_assignment["version"])
+        self.assertNotEqual(new_assignment["assigned_at"], old_assignment["assigned_at"])
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+        self.assertEqual(
+            self.repository.get_account_persona_assignment(ticket_id),
+            {
+                "ticket_id": ticket_id,
+                "persona_key": new_assignment["persona_key"],
+                "version": new_assignment["version"],
+                "assigned_at": new_assignment["assigned_at"],
+            },
+        )
+
+    def test_rerun_reset_default_preserves_assignment_for_reply_only_recovery(self) -> None:
+        ticket_id = "TK-PERSONA-REPLY-RECOVERY"
+        self._initialize_persona_assignment_ticket(ticket_id)
+        self.repository.resolve_account_persona(ticket_id)
+        assignment_before_reset = self.repository.get_account_persona_assignment(ticket_id)
+
+        counts = self.repository.reset_account_rerun_state(
+            ticket_id,
+            reset_at="2026-08-07T00:06:00+00:00",
+            rerun_job_id="account-rerun-reply-recovery",
+        )
+
+        self.assertEqual(counts["persona_assignments_deleted"], 0)
+        self.assertEqual(
+            self.repository.get_account_persona_assignment(ticket_id),
+            assignment_before_reset,
+        )
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+
+    def test_complete_rerun_reset_rolls_back_assignment_when_audit_insert_fails(self) -> None:
+        ticket_id = "TK-PERSONA-RERUN-ROLLBACK"
+        self._initialize_persona_assignment_ticket(ticket_id)
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "C-persona",
+                "requester": "persona@example.com",
+                "subject": "Persona rerun rollback",
+                "status": "open",
+                "updated_at": "2026-08-07T01:00:00+00:00",
+            },
+            new_messages=[
+                {
+                    "role": "customer",
+                    "content": "Keep this customer request.",
+                    "created_at": "2026-08-07T01:00:00+00:00",
+                },
+                {
+                    "role": "engineer",
+                    "content": "Restore this note after rollback.",
+                    "created_at": "2026-08-07T01:01:00+00:00",
+                },
+            ],
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-PERSONA-RERUN-ROLLBACK",
+                "billing_ticket_id": "AC-PERSONA-RERUN-ROLLBACK",
+                "client_ticket_id": ticket_id,
+                "source": "zendesk",
+                "title": "Persona rerun rollback",
+                "question": "Keep this customer request.",
+                "route": "enablement",
+                "scope_label": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "category": "automation",
+                "subcategory": "enablement",
+                "route_status": "automated",
+                "automation_handler": "enablement",
+                "automation_status": "automation",
+                "route_review_status": "reviewed",
+                "customer_reply": "Restore this reply after rollback.",
+            }
+        )
+        self.repository.resolve_account_persona(ticket_id)
+        assignment_before_reset = self.repository.get_account_persona_assignment(ticket_id)
+        case_before_reset = self.repository.get_account_case_by_ticket_id(ticket_id)
+        assert case_before_reset is not None
+        original_table = self.repository._table
+
+        def table_with_missing_audit(name: str) -> sql.Identifier:
+            if name == "support_workspace_audit_events":
+                return sql.Identifier(self.schema, "missing_workspace_audit_events")
+            return original_table(name)
+
+        with patch.object(self.repository, "_table", side_effect=table_with_missing_audit):
+            with self.assertRaises(psycopg.errors.UndefinedTable):
+                self.repository.reset_account_rerun_state(
+                    ticket_id,
+                    reset_at="2026-08-07T01:02:00+00:00",
+                    rerun_job_id="account-rerun-persona-rollback",
+                    reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                    clear_persona_assignment=True,
+                    audit_context={"account_case_id": "AC-PERSONA-RERUN-ROLLBACK"},
+                )
+
+        self.assertEqual(
+            self.repository.get_account_persona_assignment(ticket_id),
+            assignment_before_reset,
+        )
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertEqual(
+            [message["role"] for message in stored_ticket["messages"]],
+            ["customer", "engineer"],
+        )
+        stored_case = self.repository.get_account_case_by_ticket_id(ticket_id)
+        assert stored_case is not None
+        self.assertEqual(stored_case["route_review_status"], case_before_reset["route_review_status"])
+        self.assertEqual(stored_case["customer_reply"], case_before_reset["customer_reply"])
 
     def test_concurrent_same_ticket_resolution_returns_persisted_winner(self) -> None:
         ticket_id = "TK-PERSONA-CONCURRENT"

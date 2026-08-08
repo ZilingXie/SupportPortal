@@ -321,6 +321,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertEqual(created["status"], "queued")
             self.assertEqual(created["mode"], "fresh_case_rerun")
             self.assertEqual(created["reset_mode"], ACCOUNT_RERUN_RESET_AI_ONLY)
+            self.assertEqual(created["persona_assignments_deleted"], 0)
             self.assertTrue(created["job_id"].startswith("account-rerun-"))
             runner.assert_awaited_once_with(created["job_id"])
 
@@ -370,6 +371,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
         )
         self.assertEqual(payload["audit_actor_id"], "account_ui")
+        self.assertEqual(payload["persona_assignments_deleted"], 0)
         runner.assert_awaited_once_with(payload["job_id"])
 
         duplicate = self.client.post("/api/account/cases/AC-12562/rerun")
@@ -409,6 +411,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "secondary_label": "Agora / Uncategorized",
                 }
             )
+        self.repository.resolve_account_persona("12562")
 
         result = SimpleNamespace(
             account_case={
@@ -457,7 +460,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest["scope"], "single_case")
         self.assertEqual(latest["total"], 1)
         self.assertEqual(latest["processed"], 1)
+        self.assertEqual(latest["persona_assignments_deleted"], 1)
         self.assertEqual(latest["route_counts"], {"Agora / Uncategorized": 1})
+        self.assertIsNone(self.repository.get_account_persona_assignment("12562"))
         self.assertEqual(
             self.repository.get_account_case("AC-12563")["secondary_label"],
             "Agora / Uncategorized",
@@ -477,6 +482,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             [event["event_type"] for event in audit_events],
             ["account_case_full_rerun_completed", "account_case_full_rerun_reset"],
         )
+        self.assertEqual(audit_events[0]["payload"]["persona_assignments_deleted"], 1)
+        self.assertEqual(audit_events[1]["payload"]["persona_assignments_deleted"], 1)
         self.assertNotIn("Private manual note", json.dumps(audit_events))
 
     def test_account_case_lookup_uses_exact_ticket_number(self) -> None:
@@ -706,6 +713,16 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "payload": {"content": "Old Account reply"},
             }
         )
+        with patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-07-31T08:32:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=lambda candidates: next(
+                candidate for candidate in candidates if candidate["persona_key"] == "sid-bright"
+            ),
+        ):
+            old_assignment = self.repository.resolve_account_persona("12513")
         created_at = main.now_iso()
         main._save_account_full_reroute_job(
             {
@@ -770,10 +787,21 @@ class AccountIntakeApiTests(unittest.TestCase):
             main,
             "_send_enablement_internal_email_attempt",
             AsyncMock(return_value=("sent", "")),
-        ) as sender:
+        ) as sender, patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-08-01T00:00:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=lambda candidates: next(
+                candidate
+                for candidate in candidates
+                if candidate["persona_key"] == old_assignment["persona_key"]
+            ),
+        ) as chooser:
             asyncio.run(main._run_account_full_reroute_job("account-reroute-test"))
 
         sender.assert_awaited_once()
+        self.assertEqual(chooser.call_count, 1)
         stored = self.repository.get_account_case("AC-12513")
         assert stored is not None
         self.assertEqual(stored["internal_email_send_status"], "sent")
@@ -782,6 +810,13 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert reply_job is not None
         self.assertEqual(reply_job["trigger_message_created_at"], "2026-07-31T08:30:00+00:00")
         self.assertIn(":rerun:account-reroute-test", reply_job["payload"]["automation_delivery_key"])
+        new_assignment = self.repository.get_account_persona_assignment("12513")
+        assert new_assignment is not None
+        self.assertEqual(new_assignment["persona_key"], old_assignment["persona_key"])
+        self.assertEqual(new_assignment["version"], old_assignment["version"])
+        self.assertNotEqual(new_assignment["assigned_at"], old_assignment["assigned_at"])
+        self.assertEqual(reply_job["payload"]["persona_key"], new_assignment["persona_key"])
+        self.assertEqual(reply_job["payload"]["persona_version"], new_assignment["version"])
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None
         self.assertEqual(latest_job["status"], "completed")
@@ -791,6 +826,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest_job["reply_jobs_deleted"], 1)
         self.assertEqual(latest_job["reply_executions_deleted"], 1)
         self.assertEqual(latest_job["customer_replies_cleared"], 1)
+        self.assertEqual(latest_job["persona_assignments_deleted"], 1)
         self.assertIsNone(self.repository.get_account_reply_job("old-account-reply"))
         self.assertEqual(self.repository.list_account_reply_executions("12513"), [])
         stored_ticket = self.repository.get_ticket("12513")
@@ -799,6 +835,92 @@ class AccountIntakeApiTests(unittest.TestCase):
             [message["role"] for message in stored_ticket["messages"]],
             ["customer"],
         )
+
+    def test_full_reroute_automated_internal_email_without_customer_reply_does_not_pin_persona(self) -> None:
+        ticket_id = "12513-NO-REPLY"
+        account_case_id = "AC-12513-NO-REPLY"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "requester": "customer@example.com",
+                "subject": "Enablement without confirmation",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Process this internally without a customer reply.",
+                        "created_at": "2026-07-31T09:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        account_case = {
+            "account_case_id": account_case_id,
+            "billing_ticket_id": account_case_id,
+            "client_ticket_id": ticket_id,
+            "route": "enablement",
+            "scope_label": "automation",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+        }
+        self.repository.save_account_case(account_case)
+        self.repository.resolve_account_persona(ticket_id)
+        job = asyncio.run(
+            main._enqueue_account_rerun_job(SimpleNamespace(add_task=lambda *args: None))
+        )
+        updated_case = {
+            **account_case,
+            "category": "automation",
+            "subcategory": "enablement",
+            "internal_email_send_status": "pending",
+            "internal_email_payload": {"delivery_key": "delivery-no-reply"},
+            "route_classification": {
+                "primary_label": "Agora",
+                "secondary_label": "Automation / Enablement",
+            },
+        }
+        result = SimpleNamespace(
+            account_case=updated_case,
+            route_execution={"ticket_id": ticket_id, "classification": updated_case["route_classification"]},
+            changed=True,
+            handler_status="completed",
+            internal_email_to_send={
+                "to": "internal@example.com",
+                "subject": "Enablement",
+                "body": "Request",
+                "delivery_key": "delivery-no-reply",
+            },
+            email_handler="enablement",
+            customer_reply="",
+            reply_kind=None,
+            asked_field_keys=(),
+        )
+        original_resolve = self.repository.resolve_account_persona
+
+        with patch.object(main, "reprocess_account_case", return_value=result), patch.object(
+            main,
+            "_send_enablement_internal_email_attempt",
+            AsyncMock(return_value=("sent", "")),
+        ) as sender, patch.object(
+            self.repository,
+            "resolve_account_persona",
+            wraps=original_resolve,
+        ) as resolve:
+            asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
+
+        sender.assert_awaited_once()
+        resolve.assert_not_called()
+        self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
+        self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
+        latest_job = main._account_full_reroute_job(job["job_id"])
+        assert latest_job is not None
+        self.assertEqual(latest_job["status"], "completed")
+        self.assertEqual(latest_job["persona_assignments_deleted"], 1)
+        self.assertEqual(latest_job["replies_scheduled"], 0)
 
     def test_full_reroute_persona_unavailable_moves_case_to_human_review_before_email(self) -> None:
         ticket = {
@@ -826,6 +948,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         }
         self.repository.save_ticket(ticket)
         self.repository.save_account_case(account_case)
+        self.repository.resolve_account_persona("12514")
         created_at = main.now_iso()
         main._save_account_full_reroute_job(
             {
@@ -897,7 +1020,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         with patch.object(main, "reprocess_account_case", return_value=result), patch.object(
             self.repository,
-            "resolve_published_account_persona",
+            "resolve_account_persona",
             side_effect=unavailable_persona,
         ), patch.object(
             main,
@@ -928,6 +1051,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(rerun_job["status"], "completed")
         self.assertEqual(rerun_job["succeeded"], 1)
         self.assertEqual(rerun_job["failed"], 0)
+        self.assertEqual(rerun_job["persona_assignments_deleted"], 1)
+        self.assertIsNone(self.repository.get_account_persona_assignment("12514"))
 
     def test_account_rerun_storage_call_retries_transient_pool_failure(self) -> None:
         attempts = 0
@@ -1612,6 +1737,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             ticket_id,
             reset_at="2026-08-08T00:22:00+00:00",
             rerun_job_id="account-rerun-reset-first",
+            clear_persona_assignment=True,
         )
         with self.assertRaises(KeyError):
             self.repository.publish_account_reply(

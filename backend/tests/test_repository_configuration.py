@@ -177,6 +177,8 @@ class _AccountRerunResetCursor(_ReusableCursor):
             return [("reply-execution-1",)]
         if "support_account_reply_jobs" in self._last_sql:
             return [("reply-job-1",)]
+        if "support_account_persona_assignments" in self._last_sql:
+            return [("12572",)]
         return []
 
 
@@ -306,6 +308,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
                 reset_at="2026-08-04T00:00:00+00:00",
                 rerun_job_id="account-rerun-test",
                 reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                clear_persona_assignment=True,
                 audit_context={
                     "account_case_id": "AC-12572",
                     "ticket_number": "12572",
@@ -318,13 +321,26 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(connection.rollback_count, 0)
         self.assertEqual(counts["customer_messages_retained"], 2)
         self.assertEqual(counts["messages_deleted"], 4)
+        self.assertEqual(counts["persona_assignments_deleted"], 1)
         self.assertEqual(
             counts["deleted_messages_by_role"],
             {"assistant": 1, "engineer": 1, "internal": 1, "unknown": 1},
         )
-        executed_sql = "\n".join(cursor._sql_text(args[0]) for args, _kwargs in cursor.executed)
+        executed_queries = [cursor._sql_text(args[0]) for args, _kwargs in cursor.executed]
+        executed_sql = "\n".join(executed_queries)
         self.assertIn("support_workspace_audit_events", executed_sql)
         self.assertIn("support_billing_route_corrections", executed_sql)
+        assignment_delete_index = next(
+            index
+            for index, query in enumerate(executed_queries)
+            if "DELETE FROM" in query and "support_account_persona_assignments" in query
+        )
+        audit_insert_index = next(
+            index
+            for index, query in enumerate(executed_queries)
+            if "INSERT INTO" in query and "support_workspace_audit_events" in query
+        )
+        self.assertLess(assignment_delete_index, audit_insert_index)
         self.assertIn("route_review_status='pending'", executed_sql.replace(" ", ""))
 
     def test_postgres_single_case_reset_rolls_back_when_audit_insert_fails(self) -> None:
@@ -343,11 +359,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
                     reset_at="2026-08-04T00:00:00+00:00",
                     rerun_job_id="account-rerun-test",
                     reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                    clear_persona_assignment=True,
                     audit_context={"account_case_id": "AC-12572"},
                 )
 
         self.assertEqual(connection.commit_count, 0)
         self.assertEqual(connection.rollback_count, 1)
+        executed_sql = "\n".join(
+            cursor._sql_text(args[0]) for args, _kwargs in cursor.executed
+        )
+        self.assertIn("support_account_persona_assignments", executed_sql)
 
     def test_supersede_account_ai_messages_formats_jsonb_default_literal(self) -> None:
         cursor = _RowcountCursor(rowcount=2)

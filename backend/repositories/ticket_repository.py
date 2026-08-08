@@ -105,6 +105,9 @@ def _account_rerun_reset_audit_payload(
         "reply_jobs_deleted": int(counts.get("reply_jobs_deleted") or 0),
         "reply_executions_deleted": int(counts.get("reply_executions_deleted") or 0),
         "customer_replies_cleared": int(counts.get("customer_replies_cleared") or 0),
+        "persona_assignments_deleted": int(
+            counts.get("persona_assignments_deleted") or 0
+        ),
         "route_review_reset": bool(counts.get("route_review_reset")),
         "route_correction_cleared": correction is not None,
         "route_correction_summary": _account_rerun_correction_audit_summary(correction),
@@ -1297,6 +1300,7 @@ class TicketRepository(Protocol):
         reset_at: str,
         rerun_job_id: str | None = None,
         reset_mode: AccountRerunResetMode = ACCOUNT_RERUN_RESET_AI_ONLY,
+        clear_persona_assignment: bool = False,
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
@@ -2012,6 +2016,7 @@ class InMemoryTicketRepository:
         reset_at: str,
         rerun_job_id: str | None = None,
         reset_mode: AccountRerunResetMode = ACCOUNT_RERUN_RESET_AI_ONLY,
+        clear_persona_assignment: bool = False,
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id or "").strip()
@@ -2022,6 +2027,7 @@ class InMemoryTicketRepository:
             "reply_jobs_deleted": 0,
             "reply_executions_deleted": 0,
             "customer_replies_cleared": 0,
+            "persona_assignments_deleted": 0,
         }
         if ticket is None:
             return empty_result
@@ -2033,6 +2039,9 @@ class InMemoryTicketRepository:
             billing_tickets_snapshot = copy.deepcopy(self._billing_tickets)
             corrections_snapshot = copy.deepcopy(self._billing_route_corrections)
             audit_snapshot = copy.deepcopy(self._workspace_audit_events)
+            persona_assignments_snapshot = copy.deepcopy(
+                self._account_persona_assignments
+            )
             try:
                 ai_messages_deleted = 0
                 messages_deleted = 0
@@ -2093,6 +2102,15 @@ class InMemoryTicketRepository:
                     self._account_reply_jobs.pop(job_id, None)
 
                 reply_executions = self._account_reply_executions.pop(normalized_ticket_id, [])
+                persona_assignments_deleted = 0
+                if clear_persona_assignment:
+                    persona_assignments_deleted = int(
+                        self._account_persona_assignments.pop(
+                            normalized_ticket_id,
+                            None,
+                        )
+                        is not None
+                    )
                 customer_replies_cleared = 0
                 route_review_reset = False
                 if account_case is not None:
@@ -2121,6 +2139,7 @@ class InMemoryTicketRepository:
                     "reply_jobs_deleted": len(old_job_ids),
                     "reply_executions_deleted": len(reply_executions),
                     "customer_replies_cleared": customer_replies_cleared,
+                    "persona_assignments_deleted": persona_assignments_deleted,
                 }
                 if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
                     result.update(
@@ -2156,6 +2175,7 @@ class InMemoryTicketRepository:
                 self._billing_tickets = billing_tickets_snapshot
                 self._billing_route_corrections = corrections_snapshot
                 self._workspace_audit_events = audit_snapshot
+                self._account_persona_assignments = persona_assignments_snapshot
                 raise
 
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]:
@@ -10400,6 +10420,7 @@ class PostgresTicketRepository:
         reset_at: str,
         rerun_job_id: str | None = None,
         reset_mode: AccountRerunResetMode = ACCOUNT_RERUN_RESET_AI_ONLY,
+        clear_persona_assignment: bool = False,
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id or "").strip()
@@ -10409,6 +10430,7 @@ class PostgresTicketRepository:
             "reply_jobs_deleted": 0,
             "reply_executions_deleted": 0,
             "customer_replies_cleared": 0,
+            "persona_assignments_deleted": 0,
         }
         if not normalized_ticket_id:
             return empty_result
@@ -10523,6 +10545,17 @@ class PostgresTicketRepository:
                     (normalized_ticket_id,),
                 )
                 reply_jobs_deleted = len(cur.fetchall())
+                persona_assignments_deleted = 0
+                if clear_persona_assignment:
+                    cur.execute(
+                        sql.SQL(
+                            "DELETE FROM {} WHERE ticket_id=%s RETURNING ticket_id"
+                        ).format(
+                            self._table("support_account_persona_assignments")
+                        ),
+                        (normalized_ticket_id,),
+                    )
+                    persona_assignments_deleted = len(cur.fetchall())
                 routing_reset_sql = (
                     sql.SQL(
                         ", route_review_status='pending', route=NULL, scope_label=NULL, "
@@ -10565,6 +10598,7 @@ class PostgresTicketRepository:
                     "reply_jobs_deleted": reply_jobs_deleted,
                     "reply_executions_deleted": reply_executions_deleted,
                     "customer_replies_cleared": customer_replies_cleared,
+                    "persona_assignments_deleted": persona_assignments_deleted,
                 }
                 if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
                     result.update(
