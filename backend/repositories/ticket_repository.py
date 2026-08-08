@@ -10378,6 +10378,19 @@ class PostgresTicketRepository:
                 return [dict(row[0]) for row in cur.fetchall()]
         return self._run_with_connection_retry("list_account_reply_executions", _operation)
 
+    def _lock_account_reply_ticket(
+        self,
+        cur: psycopg.Cursor[Any],
+        ticket_id: str,
+    ) -> bool:
+        cur.execute(
+            sql.SQL("SELECT ticket_id FROM {} WHERE ticket_id=%s FOR UPDATE").format(
+                self._table("support_tickets")
+            ),
+            (ticket_id,),
+        )
+        return cur.fetchone() is not None
+
     def reset_account_rerun_state(
         self,
         ticket_id: str,
@@ -10400,13 +10413,7 @@ class PostgresTicketRepository:
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL("SELECT ticket_id FROM {} WHERE ticket_id=%s FOR UPDATE").format(
-                        self._table("support_tickets")
-                    ),
-                    (normalized_ticket_id,),
-                )
-                if cur.fetchone() is None:
+                if not self._lock_account_reply_ticket(cur, normalized_ticket_id):
                     return empty_result
                 cur.execute(
                     sql.SQL(
@@ -10685,13 +10692,7 @@ class PostgresTicketRepository:
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL(
-                        "SELECT job_id FROM {} WHERE job_id=%s FOR UPDATE"
-                    ).format(self._table("support_account_reply_jobs")),
-                    (job_id,),
-                )
-                if cur.fetchone() is None:
+                if not self._lock_account_reply_ticket(cur, ticket_id):
                     raise KeyError(job_id)
                 cur.execute(
                     sql.SQL(
@@ -10712,6 +10713,14 @@ class PostgresTicketRepository:
                     if account_case_row is not None
                     else None
                 )
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id FROM {} WHERE job_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (job_id,),
+                )
+                if cur.fetchone() is None:
+                    raise KeyError(job_id)
                 if account_case is not None and _account_case_requires_human_review(
                     account_case
                 ):

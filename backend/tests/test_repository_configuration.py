@@ -95,6 +95,34 @@ class _ReusableCursor:
         return False
 
 
+class _PublicationLockOrderCursor(_ReusableCursor):
+    def __init__(self, *, published_at: datetime) -> None:
+        super().__init__()
+        self._last_sql = ""
+        self._published_at = published_at
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+
+    def fetchone(self):
+        if "support_tickets" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("TK-ACCOUNT-LOCK-ORDER",)
+        if "support_account_cases" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("enablement", "automated", "enablement", None, None)
+        if "support_account_reply_jobs" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("account-reply-lock-order",)
+        if "support_ticket_messages" in self._last_sql and "SELECT" in self._last_sql:
+            return None
+        if "support_ticket_messages" in self._last_sql and "INSERT INTO" in self._last_sql:
+            return (42, self._published_at)
+        return None
+
+
 class _RowcountCursor(_ReusableCursor):
     def __init__(self, *, rowcount: int) -> None:
         super().__init__()
@@ -356,8 +384,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
         published_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
         cursor = _ReusableCursor(
             fetchone_results=[
-                ("account-reply-new",),
+                ("TK-ACCOUNT-1",),
                 ("enablement", "automated", "enablement", None, None),
+                ("account-reply-new",),
                 None,
                 (42, published_at),
             ]
@@ -412,8 +441,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
         published_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
         cursor = _ReusableCursor(
             fetchone_results=[
-                ("account-reply-existing",),
+                ("TK-ACCOUNT-1",),
                 ("enablement", "automated", "enablement", None, None),
+                ("account-reply-existing",),
                 (42, "Previously generated reply", published_at),
             ]
         )
@@ -451,6 +481,50 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertNotIn("INSERT INTO supportportal.support_ticket_messages", rendered_queries)
         self.assertIn("id<>%s", rendered_queries)
         self.assertEqual(connection.commit_count, 1)
+
+    def test_publish_account_reply_locks_ticket_case_then_reply_job(self) -> None:
+        published_at = datetime(2026, 8, 8, tzinfo=timezone.utc)
+        cursor = _PublicationLockOrderCursor(published_at=published_at)
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            repository.publish_account_reply(
+                {
+                    "job_id": "account-reply-lock-order",
+                    "ticket_id": "TK-ACCOUNT-LOCK-ORDER",
+                    "trigger_message_created_at": "2026-08-08T00:00:00+00:00",
+                    "scheduled_for": "2026-08-08T00:01:00+00:00",
+                },
+                content="Lock publication in canonical order.",
+                payload={},
+                published_at="2026-08-08T00:02:00+00:00",
+                reply_execution={
+                    "execution_id": "reply-account-reply-lock-order",
+                    "ticket_id": "TK-ACCOUNT-LOCK-ORDER",
+                },
+            )
+
+        lock_targets: list[str] = []
+        for args, _kwargs in cursor.executed:
+            query = cursor._sql_text(args[0])
+            if "FOR UPDATE" not in query:
+                continue
+            if "support_tickets" in query:
+                lock_targets.append("ticket")
+            elif "support_account_cases" in query:
+                lock_targets.append("account_case")
+            elif "support_account_reply_jobs" in query:
+                lock_targets.append("reply_job")
+
+        self.assertEqual(lock_targets, ["ticket", "account_case", "reply_job"])
 
     def test_ticket_storage_contract_removes_priority_column_and_index(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
