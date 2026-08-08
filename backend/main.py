@@ -4778,6 +4778,10 @@ def _render_billing_resolution_customer_reply(
             }
         )
         ticket_repository.save_billing_ticket(billing_ticket)
+        ticket_repository.cancel_pending_account_reply_jobs(
+            ticket_id,
+            updated_at=timestamp,
+        )
         return ""
 
 

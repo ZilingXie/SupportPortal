@@ -1356,6 +1356,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn("account_persona_unavailable", rendered.evidence_summary)
 
     def test_billing_resolution_persona_unavailable_stops_customer_copy(self) -> None:
+        customer_message_created_at = "2026-08-08T00:00:00+00:00"
         billing_ticket = {
             "billing_ticket_id": "AC-12516",
             "account_case_id": "AC-12516",
@@ -1379,6 +1380,39 @@ class AccountIntakeApiTests(unittest.TestCase):
             },
             "customer_name": "Alice",
         }
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12516",
+                "customer_id": "alice@example.com",
+                "requester": "alice@example.com",
+                "subject": "Invoice request",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please send the invoice.",
+                        "created_at": customer_message_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(billing_ticket)
+        self.repository.save_account_reply_job(
+            {
+                "job_id": "account-reply-billing-unavailable",
+                "ticket_id": "12516",
+                "trigger_message_created_at": customer_message_created_at,
+                "status": "persona_scheduled",
+                "scheduled_for": "2026-08-08T00:01:00+00:00",
+                "payload": {
+                    "generated_content": "This delayed reply must not be sent.",
+                    "effective_prompt": {"instruction": "Pinned prompt"},
+                    "persona_key": "default-support",
+                    "persona_version": 1,
+                },
+                "created_at": "2026-08-08T00:00:30+00:00",
+            }
+        )
         with patch.object(
             self.repository,
             "resolve_account_persona",
@@ -1392,10 +1426,41 @@ class AccountIntakeApiTests(unittest.TestCase):
                 ticket_id="12516",
             )
 
+        original_publish = self.repository.publish_account_reply
+        with patch.object(
+            self.repository,
+            "publish_account_reply",
+            wraps=original_publish,
+        ) as publish:
+            claimed = self.repository.claim_account_reply_jobs(
+                from_status="persona_scheduled",
+                to_status="persona_publishing",
+                now_value="2026-08-08T00:02:00+00:00",
+                limit=10,
+                due_only=False,
+            )
+            for claimed_job in claimed:
+                worker._publish_account_reply_job(claimed_job)
+
         self.assertEqual(reply, "")
         render.assert_not_called()
         stored = self.repository.get_billing_ticket("AC-12516")
+        stored_job = self.repository.get_account_reply_job(
+            "account-reply-billing-unavailable"
+        )
         assert stored is not None
+        assert stored_job is not None
+        self.assertEqual(stored_job["status"], "cancelled")
+        self.assertEqual(claimed, [])
+        publish.assert_not_called()
+        messages = self.repository.get_ticket("12516")["messages"]
+        self.assertFalse(
+            any(
+                str(message.get("source") or "") == "account_ai"
+                for message in messages
+                if isinstance(message, dict)
+            )
+        )
         self.assertEqual(stored["route"], "human_review_required")
         self.assertEqual(stored["not_automated_reason"], "no enabled published persona")
         self.assertEqual(stored["category"], "human_review")
@@ -1407,6 +1472,88 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNone(stored["route_classification"]["automation_subcategory"])
         self.assertEqual(stored["route_classification"]["primary_label"], "Agora")
         self.assertEqual(stored["route_classification"]["secondary_label"], "Agora / Uncategorized")
+
+    def test_claimed_delayed_reply_cannot_publish_after_case_moves_to_human_review(self) -> None:
+        ticket_id = "12516-CLAIMED"
+        job_id = "account-reply-billing-claimed"
+        trigger_created_at = "2026-08-08T00:10:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "claimed@example.com",
+                "requester": "claimed@example.com",
+                "subject": "Claimed invoice reply",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please send the invoice.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": f"AC-{ticket_id}",
+                "account_case_id": f"AC-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "route": "human_review_required",
+                "scope_label": "human_review",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "category": "human_review",
+                "subcategory": "human_review_required",
+                "route_status": "not_automated",
+                "automation_handler": None,
+                "automation_status": "not_automated",
+                "policy_decision": "account_persona_unavailable_human_review",
+                "not_automated_reason": "no enabled published persona",
+                "route_reason": "no enabled published persona",
+            }
+        )
+        job = self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_publishing",
+                "scheduled_for": "2026-08-08T00:11:00+00:00",
+                "payload": {
+                    "generated_content": "This claimed reply must not be sent.",
+                    "effective_prompt": {"instruction": "Pinned prompt"},
+                    "persona_key": "default-support",
+                    "persona_version": 1,
+                },
+                "claimed_at": "2026-08-08T00:11:00+00:00",
+                "created_at": "2026-08-08T00:10:30+00:00",
+            }
+        )
+
+        worker._publish_account_reply_job(job)
+
+        stored_job = self.repository.get_account_reply_job(job_id)
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        stored_case = self.repository.get_billing_ticket(f"AC-{ticket_id}")
+        assert stored_job is not None
+        assert stored_ticket is not None
+        assert stored_case is not None
+        self.assertEqual(stored_job["status"], "manual_attention")
+        self.assertEqual(stored_job["payload"]["persona_render_status"], "human_review")
+        self.assertEqual(
+            stored_job["payload"]["error"],
+            "no enabled published persona",
+        )
+        self.assertEqual(
+            [
+                message
+                for message in stored_ticket["messages"]
+                if str(message.get("source") or "") == "account_ai"
+            ],
+            [],
+        )
+        self.assertFalse(stored_case.get("customer_reply"))
+        self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
 
     def test_billing_resolution_persona_render_failure_uses_generic_human_review(self) -> None:
         billing_ticket = {

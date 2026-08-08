@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
+import threading
 import unittest
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -810,6 +812,161 @@ class AccountAdminFeatureTests(unittest.TestCase):
             [1, 2, 3],
         )
         self.assertEqual(self.repository.resolve_account_persona("TK-1"), assigned_before_publish)
+
+    def test_persona_publish_and_resolve_share_one_atomic_registry_snapshot(self) -> None:
+        for persona in self.repository.list_account_personas():
+            if persona["persona_key"] != DEFAULT_PERSONA_KEY:
+                self.repository.set_account_persona_enabled(persona["persona_key"], False)
+        draft = self.repository.create_account_persona_draft(
+            DEFAULT_PERSONA_KEY,
+            content={"instruction": "New atomic voice"},
+            change_note="Atomic publish",
+            based_on_version=1,
+            actor_id="admin-atomic",
+            created_at="2026-08-08T00:00:00+00:00",
+        )
+        reached_intermediate_state = threading.Barrier(2)
+        release_publisher = threading.Event()
+
+        class BlockingPublishedVersion(dict):
+            def __setitem__(self, key: object, value: object) -> None:
+                super().__setitem__(key, value)
+                if key == "status" and value == "superseded":
+                    reached_intermediate_state.wait(timeout=2)
+                    if not release_publisher.wait(timeout=2):
+                        raise TimeoutError("publisher was not released")
+
+        versions = self.repository._account_persona_versions[DEFAULT_PERSONA_KEY]
+        versions[0] = BlockingPublishedVersion(versions[0])
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                publish_future = executor.submit(
+                    self.repository.publish_account_persona_version,
+                    DEFAULT_PERSONA_KEY,
+                    draft["version"],
+                    actor_id="admin-atomic",
+                    published_at="2026-08-08T00:01:00+00:00",
+                )
+                reached_intermediate_state.wait(timeout=2)
+                resolve_future = executor.submit(
+                    self.repository.resolve_account_persona,
+                    "TK-ATOMIC-PUBLISH",
+                )
+                threading.Event().wait(0.05)
+                release_publisher.set()
+                published = publish_future.result(timeout=2)
+                try:
+                    resolved = resolve_future.result(timeout=2)
+                except AccountPersonaUnavailableError as exc:
+                    self.fail(f"resolver observed a partial registry snapshot: {exc}")
+        finally:
+            release_publisher.set()
+
+        self.assertEqual(published["version"], draft["version"])
+        self.assertEqual(resolved["persona_key"], DEFAULT_PERSONA_KEY)
+        self.assertEqual(resolved["version"], draft["version"])
+        self.assertEqual(resolved["content"], draft["content"])
+
+    def test_create_persona_and_list_share_one_complete_registry_snapshot(self) -> None:
+        reached_persona_insert = threading.Barrier(2)
+        release_creator = threading.Event()
+        persona_key = "sid-atomic-new"
+
+        class BlockingPersonaRegistry(dict):
+            def __setitem__(self, key: object, value: object) -> None:
+                super().__setitem__(key, value)
+                if key == persona_key:
+                    reached_persona_insert.wait(timeout=2)
+                    if not release_creator.wait(timeout=2):
+                        raise TimeoutError("persona creator was not released")
+
+        self.repository._account_personas = BlockingPersonaRegistry(
+            self.repository._account_personas
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                create_future = executor.submit(
+                    self.repository.create_account_persona,
+                    persona_key,
+                    "Sid Atomic",
+                    content={"instruction": "Atomic from creation"},
+                    actor_id="admin-atomic",
+                    created_at="2026-08-08T00:02:00+00:00",
+                )
+                reached_persona_insert.wait(timeout=2)
+                list_future = executor.submit(self.repository.list_account_personas)
+                threading.Event().wait(0.05)
+                release_creator.set()
+                created = create_future.result(timeout=2)
+                snapshot = list_future.result(timeout=2)
+        finally:
+            release_creator.set()
+
+        listed = next(item for item in snapshot if item["persona_key"] == persona_key)
+        self.assertEqual(created["version"], 1)
+        self.assertEqual([item["version"] for item in listed["versions"]], [1])
+        self.assertEqual([item["status"] for item in listed["versions"]], ["draft"])
+
+    def test_rollback_and_draft_writer_allocate_distinct_versions(self) -> None:
+        reached_version_scan = threading.Barrier(2)
+        release_rollback = threading.Event()
+
+        class BlockingFirstVersionScan(list):
+            def __init__(self, values: list[dict[str, object]]) -> None:
+                super().__init__(values)
+                self._completed_scans = 0
+                self._scan_lock = threading.Lock()
+
+            def __iter__(self):
+                yield from super().__iter__()
+                with self._scan_lock:
+                    self._completed_scans += 1
+                    block_this_scan = self._completed_scans == 1
+                if block_this_scan:
+                    reached_version_scan.wait(timeout=2)
+                    if not release_rollback.wait(timeout=2):
+                        raise TimeoutError("rollback was not released")
+
+        self.repository._account_persona_versions[DEFAULT_PERSONA_KEY] = (
+            BlockingFirstVersionScan(
+                self.repository._account_persona_versions[DEFAULT_PERSONA_KEY]
+            )
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                rollback_future = executor.submit(
+                    self.repository.rollback_account_persona_version,
+                    DEFAULT_PERSONA_KEY,
+                    1,
+                    actor_id="admin-rollback",
+                    published_at="2026-08-08T00:03:00+00:00",
+                )
+                reached_version_scan.wait(timeout=2)
+                draft_future = executor.submit(
+                    self.repository.create_account_persona_draft,
+                    DEFAULT_PERSONA_KEY,
+                    content={"instruction": "Concurrent draft"},
+                    change_note="Concurrent writer",
+                    based_on_version=None,
+                    actor_id="admin-draft",
+                    created_at="2026-08-08T00:03:00+00:00",
+                )
+                threading.Event().wait(0.05)
+                release_rollback.set()
+                rollback = rollback_future.result(timeout=2)
+                draft = draft_future.result(timeout=2)
+        finally:
+            release_rollback.set()
+
+        self.repository._account_persona_versions[DEFAULT_PERSONA_KEY] = list(
+            self.repository._account_persona_versions[DEFAULT_PERSONA_KEY]
+        )
+        versions = self.repository.list_account_personas()
+        persona = next(item for item in versions if item["persona_key"] == DEFAULT_PERSONA_KEY)
+        allocated_versions = [item["version"] for item in persona["versions"]]
+        self.assertNotEqual(rollback["version"], draft["version"])
+        self.assertEqual(len(allocated_versions), len(set(allocated_versions)))
+        self.assertEqual(sorted(allocated_versions), [1, 2, 3])
 
     def test_last_enabled_persona_cannot_be_disabled(self) -> None:
         self.repository.set_account_persona_enabled("sid-bright", False)

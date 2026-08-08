@@ -210,6 +210,22 @@ def _account_case_matches_route_filter(item: dict[str, Any], route_filter: str |
     return account_case_filter_matches(item, normalized_filter)
 
 
+def _account_case_requires_human_review(item: dict[str, Any]) -> bool:
+    return (
+        str(item.get("route_family") or "").strip() == "human_review"
+        or str(item.get("route") or "").strip() == "human_review_required"
+        or str(item.get("execution_action") or "").strip() == "human_review_required"
+    )
+
+
+def _account_case_human_review_reason(item: dict[str, Any]) -> str:
+    return str(
+        item.get("not_automated_reason")
+        or item.get("route_reason")
+        or "account_case_requires_human_review"
+    ).strip()
+
+
 def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
     """Return the SQL equivalent of account_case_filter_key()."""
     # The default rendered expression intentionally contains bt.route_classification ->> 'intent_class',
@@ -1935,28 +1951,29 @@ class InMemoryTicketRepository:
         from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 
         created_at = _utc_now()
-        for preset in ACCOUNT_PERSONA_PRESETS:
-            persona_key = preset.persona_key
-            self._account_personas[persona_key] = {
-                "persona_key": persona_key,
-                "display_name": preset.display_name,
-                "enabled": True,
-                "published_version": 1,
-                "created_at": created_at,
-                "updated_at": created_at,
-            }
-            self._account_persona_versions[persona_key] = [{
-                "persona_key": persona_key,
-                "version": 1,
-                "status": "published",
-                "content": preset.content,
-                "change_note": preset.seed_marker,
-                "based_on_version": None,
-                "created_by": "system",
-                "created_at": created_at,
-                "published_by": "system",
-                "published_at": created_at,
-            }]
+        with self._assignment_lock:
+            for preset in ACCOUNT_PERSONA_PRESETS:
+                persona_key = preset.persona_key
+                self._account_personas[persona_key] = {
+                    "persona_key": persona_key,
+                    "display_name": preset.display_name,
+                    "enabled": True,
+                    "published_version": 1,
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                }
+                self._account_persona_versions[persona_key] = [{
+                    "persona_key": persona_key,
+                    "version": 1,
+                    "status": "published",
+                    "content": preset.content,
+                    "change_note": preset.seed_marker,
+                    "based_on_version": None,
+                    "created_by": "system",
+                    "created_at": created_at,
+                    "published_by": "system",
+                    "published_at": created_at,
+                }]
 
     def save_account_route_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
         saved = copy.deepcopy(execution)
@@ -2161,71 +2178,95 @@ class InMemoryTicketRepository:
     ) -> dict[str, Any]:
         ticket_id = str(job.get("ticket_id") or "").strip()
         job_id = str(job.get("job_id") or "").strip()
-        ticket = self._tickets.get(ticket_id)
-        if ticket is None:
-            raise ValueError("ticket not found")
-        existing = next(
-            (
-                message
-                for message in ticket.get("messages", [])
-                if isinstance(message, dict)
-                and str(message.get("role") or "").lower() == "assistant"
-                and str(
-                    (message.get("meta") if isinstance(message.get("meta"), dict) else {}).get(
-                        "account_reply_job_id"
-                    )
-                    or message.get("account_reply_job_id")
-                    or ""
+        with self._assignment_lock:
+            ticket = self._tickets.get(ticket_id)
+            if ticket is None:
+                raise ValueError("ticket not found")
+            billing_ticket = self.get_billing_ticket_by_client_ticket_id(ticket_id)
+            if billing_ticket is not None and _account_case_requires_human_review(
+                billing_ticket
+            ):
+                reason = _account_case_human_review_reason(billing_ticket)
+                blocked_payload = copy.deepcopy(payload)
+                blocked_payload.update(
+                    {
+                        "error": reason,
+                        "persona_render_status": "human_review",
+                    }
                 )
-                == job_id
-            ),
-            None,
-        )
-        if existing is None:
-            message = {
-                "role": "assistant",
-                "content": str(content).strip(),
-                "created_at": published_at,
-                "content_format": "plaintext",
-                "source": "account_ai",
-                "meta": {
-                    "account_reply_job_id": job_id,
-                    "visibility": "account_only",
-                    "trigger_message_created_at": job.get("trigger_message_created_at"),
-                    "scheduled_for": job.get("scheduled_for"),
-                    "published_at": published_at,
-                    "asked_field_keys": list(payload.get("asked_field_keys") or []),
-                    "persona_key": payload.get("persona_key"),
-                    "persona_version": payload.get("persona_version"),
-                    "persona_render_status": payload.get("persona_render_status"),
-                    "rerun_job_id": payload.get("rerun_job_id"),
-                    "source": "account_ai",
-                },
-            }
-            ticket.setdefault("messages", []).append(message)
-        else:
-            message = existing
+                saved_job = copy.deepcopy(self._account_reply_jobs.get(job_id) or job)
+                saved_job["payload"] = blocked_payload
+                saved_job["status"] = "manual_attention"
+                saved_job["updated_at"] = published_at
+                self._account_reply_jobs[job_id] = saved_job
+                return {
+                    "content": "",
+                    "published_at": None,
+                    "status": "manual_attention",
+                    "reason": reason,
+                }
 
-        if payload.get("replace_existing_reply"):
-            self.supersede_account_ai_messages(
-                ticket_id,
-                except_job_id=job_id,
-                superseded_at=published_at,
+            existing = next(
+                (
+                    message
+                    for message in ticket.get("messages", [])
+                    if isinstance(message, dict)
+                    and str(message.get("role") or "").lower() == "assistant"
+                    and str(
+                        (message.get("meta") if isinstance(message.get("meta"), dict) else {}).get(
+                            "account_reply_job_id"
+                        )
+                        or message.get("account_reply_job_id")
+                        or ""
+                    )
+                    == job_id
+                ),
+                None,
             )
-        ticket["updated_at"] = published_at
-        billing_ticket = self.get_billing_ticket_by_client_ticket_id(ticket_id)
-        if billing_ticket is not None:
-            billing_ticket["customer_reply"] = str(message.get("content") or content).strip()
-            billing_ticket["updated_at"] = published_at
-            self.save_billing_ticket(billing_ticket)
-        self.save_account_reply_execution(reply_execution)
-        saved_job = copy.deepcopy(job)
-        saved_job["payload"] = copy.deepcopy(payload)
-        saved_job["status"] = "published"
-        saved_job["published_at"] = published_at
-        saved_job["updated_at"] = published_at
-        self.save_account_reply_job(saved_job)
-        return {"content": str(message.get("content") or content).strip(), "published_at": published_at}
+            if existing is None:
+                message = {
+                    "role": "assistant",
+                    "content": str(content).strip(),
+                    "created_at": published_at,
+                    "content_format": "plaintext",
+                    "source": "account_ai",
+                    "meta": {
+                        "account_reply_job_id": job_id,
+                        "visibility": "account_only",
+                        "trigger_message_created_at": job.get("trigger_message_created_at"),
+                        "scheduled_for": job.get("scheduled_for"),
+                        "published_at": published_at,
+                        "asked_field_keys": list(payload.get("asked_field_keys") or []),
+                        "persona_key": payload.get("persona_key"),
+                        "persona_version": payload.get("persona_version"),
+                        "persona_render_status": payload.get("persona_render_status"),
+                        "rerun_job_id": payload.get("rerun_job_id"),
+                        "source": "account_ai",
+                    },
+                }
+                ticket.setdefault("messages", []).append(message)
+            else:
+                message = existing
+
+            if payload.get("replace_existing_reply"):
+                self.supersede_account_ai_messages(
+                    ticket_id,
+                    except_job_id=job_id,
+                    superseded_at=published_at,
+                )
+            ticket["updated_at"] = published_at
+            if billing_ticket is not None:
+                billing_ticket["customer_reply"] = str(message.get("content") or content).strip()
+                billing_ticket["updated_at"] = published_at
+                self.save_billing_ticket(billing_ticket)
+            self.save_account_reply_execution(reply_execution)
+            saved_job = copy.deepcopy(job)
+            saved_job["payload"] = copy.deepcopy(payload)
+            saved_job["status"] = "published"
+            saved_job["published_at"] = published_at
+            saved_job["updated_at"] = published_at
+            self.save_account_reply_job(saved_job)
+            return {"content": str(message.get("content") or content).strip(), "published_at": published_at}
 
     def supersede_account_ai_messages(
         self, ticket_id: str, *, except_job_id: str, superseded_at: str
@@ -2344,49 +2385,56 @@ class InMemoryTicketRepository:
         return claimed
 
     def list_account_personas(self) -> list[dict[str, Any]]:
-        result = []
-        for key, persona in sorted(self._account_personas.items()):
-            item = copy.deepcopy(persona)
-            item["versions"] = copy.deepcopy(self._account_persona_versions.get(key, []))
-            result.append(item)
-        return result
+        with self._assignment_lock:
+            result = []
+            for key, persona in sorted(self._account_personas.items()):
+                item = copy.deepcopy(persona)
+                item["versions"] = copy.deepcopy(
+                    self._account_persona_versions.get(key, [])
+                )
+                result.append(item)
+            return result
 
     def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
-        if not key or key in self._account_personas:
-            raise ValueError("persona_key must be unique")
-        self._account_personas[key] = {"persona_key": key, "display_name": str(display_name).strip(), "enabled": True, "published_version": None, "created_at": created_at, "updated_at": created_at}
-        return self.create_account_persona_draft(key, content=content, change_note="Initial draft", based_on_version=None, actor_id=actor_id, created_at=created_at)
+        with self._assignment_lock:
+            if not key or key in self._account_personas:
+                raise ValueError("persona_key must be unique")
+            self._account_personas[key] = {"persona_key": key, "display_name": str(display_name).strip(), "enabled": True, "published_version": None, "created_at": created_at, "updated_at": created_at}
+            return self.create_account_persona_draft(key, content=content, change_note="Initial draft", based_on_version=None, actor_id=actor_id, created_at=created_at)
 
     def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
-        if key not in self._account_personas:
-            raise ValueError("persona not found")
-        versions = self._account_persona_versions.setdefault(key, [])
-        if based_on_version is not None and not any(int(item["version"]) == int(based_on_version) for item in versions):
-            raise ValueError("based_on_version not found")
-        item = {"persona_key": key, "version": max([int(v["version"]) for v in versions] or [0]) + 1, "status": "draft", "content": copy.deepcopy(content), "change_note": str(change_note).strip(), "based_on_version": based_on_version, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
-        versions.append(item)
-        return copy.deepcopy(item)
+        with self._assignment_lock:
+            if key not in self._account_personas:
+                raise ValueError("persona not found")
+            versions = self._account_persona_versions.setdefault(key, [])
+            if based_on_version is not None and not any(int(item["version"]) == int(based_on_version) for item in versions):
+                raise ValueError("based_on_version not found")
+            item = {"persona_key": key, "version": max([int(v["version"]) for v in versions] or [0]) + 1, "status": "draft", "content": copy.deepcopy(content), "change_note": str(change_note).strip(), "based_on_version": based_on_version, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
+            versions.append(item)
+            return copy.deepcopy(item)
 
     def publish_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
-        versions = self._account_persona_versions.get(key, [])
-        target = next((item for item in versions if int(item["version"]) == int(version)), None)
-        if target is None or target["status"] != "draft":
-            raise ValueError("draft version not found")
-        for item in versions:
-            if item["status"] == "published": item["status"] = "superseded"
-        target.update({"status": "published", "published_by": actor_id, "published_at": published_at})
-        self._account_personas[key].update({"published_version": int(version), "updated_at": published_at})
-        return copy.deepcopy(target)
+        with self._assignment_lock:
+            versions = self._account_persona_versions.get(key, [])
+            target = next((item for item in versions if int(item["version"]) == int(version)), None)
+            if target is None or target["status"] != "draft":
+                raise ValueError("draft version not found")
+            for item in versions:
+                if item["status"] == "published": item["status"] = "superseded"
+            target.update({"status": "published", "published_by": actor_id, "published_at": published_at})
+            self._account_personas[key].update({"published_version": int(version), "updated_at": published_at})
+            return copy.deepcopy(target)
 
     def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
-        source = next((item for item in self._account_persona_versions.get(key, []) if int(item["version"]) == int(version)), None)
-        if source is None: raise ValueError("version not found")
-        draft = self.create_account_persona_draft(key, content=source["content"], change_note=f"Rollback to version {version}", based_on_version=version, actor_id=actor_id, created_at=published_at)
-        return self.publish_account_persona_version(key, draft["version"], actor_id=actor_id, published_at=published_at)
+        with self._assignment_lock:
+            source = next((item for item in self._account_persona_versions.get(key, []) if int(item["version"]) == int(version)), None)
+            if source is None: raise ValueError("version not found")
+            draft = self.create_account_persona_draft(key, content=source["content"], change_note=f"Rollback to version {version}", based_on_version=version, actor_id=actor_id, created_at=published_at)
+            return self.publish_account_persona_version(key, draft["version"], actor_id=actor_id, published_at=published_at)
 
     def _eligible_account_persona_candidates(self) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -3860,7 +3908,8 @@ class InMemoryTicketRepository:
         billing_ticket_id = str(saved["billing_ticket_id"])
         saved.setdefault("created_at", _utc_now())
         saved.setdefault("updated_at", saved["created_at"])
-        self._billing_tickets[billing_ticket_id] = saved
+        with self._assignment_lock:
+            self._billing_tickets[billing_ticket_id] = saved
 
     def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ticket = self._billing_tickets.get(str(billing_ticket_id).strip())
@@ -10644,6 +10693,49 @@ class PostgresTicketRepository:
                 )
                 if cur.fetchone() is None:
                     raise KeyError(job_id)
+                cur.execute(
+                    sql.SQL(
+                        "SELECT route,route_family,execution_action,not_automated_reason,route_reason "
+                        "FROM {} WHERE client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (ticket_id,),
+                )
+                account_case_row = cur.fetchone()
+                account_case = (
+                    {
+                        "route": account_case_row[0],
+                        "route_family": account_case_row[1],
+                        "execution_action": account_case_row[2],
+                        "not_automated_reason": account_case_row[3],
+                        "route_reason": account_case_row[4],
+                    }
+                    if account_case_row is not None
+                    else None
+                )
+                if account_case is not None and _account_case_requires_human_review(
+                    account_case
+                ):
+                    reason = _account_case_human_review_reason(account_case)
+                    blocked_payload = dict(payload)
+                    blocked_payload.update(
+                        {
+                            "error": reason,
+                            "persona_render_status": "human_review",
+                        }
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='manual_attention',payload=%s::jsonb,updated_at=%s "
+                            "WHERE job_id=%s"
+                        ).format(self._table("support_account_reply_jobs")),
+                        (Json(blocked_payload), published_at, job_id),
+                    )
+                    return {
+                        "content": "",
+                        "published_at": None,
+                        "status": "manual_attention",
+                        "reason": reason,
+                    }
                 cur.execute(
                     sql.SQL(
                         "SELECT id,content,created_at FROM {} "

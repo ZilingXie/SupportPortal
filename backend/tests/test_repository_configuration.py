@@ -357,6 +357,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         cursor = _ReusableCursor(
             fetchone_results=[
                 ("account-reply-new",),
+                ("enablement", "automated", "enablement", None, None),
                 None,
                 (42, published_at),
             ]
@@ -412,6 +413,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         cursor = _ReusableCursor(
             fetchone_results=[
                 ("account-reply-existing",),
+                ("enablement", "automated", "enablement", None, None),
                 (42, "Previously generated reply", published_at),
             ]
         )

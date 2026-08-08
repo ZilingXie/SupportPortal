@@ -71,6 +71,111 @@ class PostgresAutomationReplyClaimTests(unittest.TestCase):
             with psycopg.connect(migration_dsn, autocommit=True) as conn:
                 conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
 
+    def test_claimed_reply_does_not_publish_after_case_moves_to_human_review(self) -> None:
+        runtime_dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        migration_dsn = str(os.getenv("TICKET_DB_MIGRATION_DSN") or runtime_dsn).strip()
+        self.assertTrue(runtime_dsn and migration_dsn)
+        schema = f"supportportal_claim_test_{uuid4().hex[:10]}"
+        repository = PostgresTicketRepository(
+            runtime_dsn,
+            schema=schema,
+            migration_dsn=migration_dsn,
+            application_name="supportportal-claim-human-review-test",
+        )
+        ticket_id = "12556"
+        job_id = "account-reply-human-review-race"
+        trigger_created_at = "2026-08-08T00:00:00+00:00"
+        try:
+            repository.initialize()
+            repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": "customer-human-review",
+                    "requester": "human-review@example.com",
+                    "subject": "Invoice",
+                    "status": "open",
+                    "messages": [
+                        {
+                            "role": "customer",
+                            "content": "Please send the invoice.",
+                            "created_at": trigger_created_at,
+                        }
+                    ],
+                    "created_at": trigger_created_at,
+                    "updated_at": trigger_created_at,
+                }
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": "AC-12556",
+                    "billing_ticket_id": "AC-12556",
+                    "client_ticket_id": ticket_id,
+                    "source": "zendesk",
+                    "title": "Invoice",
+                    "question": "Please send the invoice.",
+                    "route": "human_review_required",
+                    "scope_label": "human_review",
+                    "route_family": "human_review",
+                    "execution_action": "human_review_required",
+                    "automation_status": "not_automated",
+                    "not_automated_reason": "no enabled published persona",
+                    "route_reason": "no enabled published persona",
+                }
+            )
+            job = repository.save_account_reply_job(
+                {
+                    "job_id": job_id,
+                    "ticket_id": ticket_id,
+                    "trigger_message_created_at": trigger_created_at,
+                    "status": "persona_publishing",
+                    "scheduled_for": "2026-08-08T00:01:00+00:00",
+                    "payload": {
+                        "generated_content": "This reply must not be sent.",
+                        "effective_prompt": {"instruction": "Pinned prompt"},
+                        "persona_key": "default-support",
+                        "persona_version": 1,
+                    },
+                    "claimed_at": "2026-08-08T00:01:00+00:00",
+                    "created_at": "2026-08-08T00:00:30+00:00",
+                }
+            )
+
+            result = repository.publish_account_reply(
+                job,
+                content="This reply must not be sent.",
+                payload=dict(job["payload"]),
+                published_at="2026-08-08T00:02:00+00:00",
+                reply_execution={
+                    "execution_id": f"reply-{job_id}",
+                    "ticket_id": ticket_id,
+                    "reply_kind": "human_review_required",
+                },
+            )
+
+            stored_ticket = repository.get_ticket(ticket_id)
+            stored_job = repository.get_account_reply_job(job_id)
+            assert stored_ticket is not None
+            assert stored_job is not None
+            self.assertEqual(
+                [
+                    message
+                    for message in stored_ticket["messages"]
+                    if str(message.get("source") or "") == "account_ai"
+                ],
+                [],
+            )
+            self.assertEqual(stored_job["status"], "manual_attention")
+            self.assertEqual(result["status"], "manual_attention")
+            self.assertEqual(repository.list_account_reply_executions(ticket_id), [])
+        finally:
+            repository.close()
+            with psycopg.connect(migration_dsn, autocommit=True) as conn:
+                conn.execute(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                        sql.Identifier(schema)
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
