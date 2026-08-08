@@ -283,14 +283,14 @@ class PostgresAccountReplyPublicationTests(unittest.TestCase):
                     ).format(sql.Identifier(schema, "support_account_cases")),
                     (ticket_id,),
                 ).fetchone()
-                publish_future = executor.submit(self._publish, repository, job)
-                self._wait_for_lock_waiters(
-                    observer,
-                    application_name=application_name,
-                    minimum=1,
-                )
-                reset_future = executor.submit(self._reset, repository, ticket_id)
                 try:
+                    publish_future = executor.submit(self._publish, repository, job)
+                    self._wait_for_lock_waiters(
+                        observer,
+                        application_name=application_name,
+                        minimum=1,
+                    )
+                    reset_future = executor.submit(self._reset, repository, ticket_id)
                     self._wait_for_lock_waiters(
                         observer,
                         application_name=application_name,
@@ -354,14 +354,14 @@ class PostgresAccountReplyPublicationTests(unittest.TestCase):
                     ).format(sql.Identifier(schema, "support_account_cases")),
                     (ticket_id,),
                 ).fetchone()
-                reset_future = executor.submit(self._reset, repository, ticket_id)
-                self._wait_for_lock_waiters(
-                    observer,
-                    application_name=application_name,
-                    minimum=1,
-                )
-                publish_future = executor.submit(self._publish, repository, job)
                 try:
+                    reset_future = executor.submit(self._reset, repository, ticket_id)
+                    self._wait_for_lock_waiters(
+                        observer,
+                        application_name=application_name,
+                        minimum=1,
+                    )
+                    publish_future = executor.submit(self._publish, repository, job)
                     self._wait_for_lock_waiters(
                         observer,
                         application_name=application_name,
