@@ -1555,6 +1555,94 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertFalse(stored_case.get("customer_reply"))
         self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
 
+    def test_reset_deleted_claimed_job_cannot_be_recreated_by_stale_publish(self) -> None:
+        ticket_id = "12516-RESET-FIRST"
+        job_id = "account-reply-reset-first"
+        trigger_created_at = "2026-08-08T00:20:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "reset-first@example.com",
+                "requester": "reset-first@example.com",
+                "subject": "Reset claimed reply",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable this feature.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": f"AC-{ticket_id}",
+                "account_case_id": f"AC-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "route": "enablement",
+                "scope_label": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "category": "automation",
+                "subcategory": "enablement",
+                "route_status": "automated",
+                "automation_handler": "enablement",
+                "automation_status": "internal_processing",
+            }
+        )
+        stale_job = self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_publishing",
+                "scheduled_for": "2026-08-08T00:21:00+00:00",
+                "payload": {
+                    "generated_content": "This stale reply must not be sent.",
+                    "persona_key": "default-support",
+                    "persona_version": 1,
+                },
+                "claimed_at": "2026-08-08T00:21:00+00:00",
+                "created_at": "2026-08-08T00:20:30+00:00",
+            }
+        )
+
+        reset_result = self.repository.reset_account_rerun_state(
+            ticket_id,
+            reset_at="2026-08-08T00:22:00+00:00",
+            rerun_job_id="account-rerun-reset-first",
+        )
+        with self.assertRaises(KeyError):
+            self.repository.publish_account_reply(
+                stale_job,
+                content="This stale reply must not be sent.",
+                payload=dict(stale_job["payload"]),
+                published_at="2026-08-08T00:23:00+00:00",
+                reply_execution={
+                    "execution_id": f"reply-{job_id}",
+                    "ticket_id": ticket_id,
+                    "reply_kind": "enablement",
+                },
+            )
+
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        stored_case = self.repository.get_billing_ticket(f"AC-{ticket_id}")
+        assert stored_ticket is not None
+        assert stored_case is not None
+        self.assertEqual(reset_result["reply_jobs_deleted"], 1)
+        self.assertIsNone(self.repository.get_account_reply_job(job_id))
+        self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
+        self.assertFalse(stored_case.get("customer_reply"))
+        self.assertEqual(
+            [
+                message
+                for message in stored_ticket["messages"]
+                if str(message.get("source") or "") == "account_ai"
+            ],
+            [],
+        )
+
     def test_billing_resolution_persona_render_failure_uses_generic_human_review(self) -> None:
         billing_ticket = {
             "billing_ticket_id": "AC-12517",

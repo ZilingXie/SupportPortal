@@ -2179,6 +2179,8 @@ class InMemoryTicketRepository:
         ticket_id = str(job.get("ticket_id") or "").strip()
         job_id = str(job.get("job_id") or "").strip()
         with self._assignment_lock:
+            if job_id not in self._account_reply_jobs:
+                raise KeyError(job_id)
             ticket = self._tickets.get(ticket_id)
             if ticket is None:
                 raise ValueError("ticket not found")
