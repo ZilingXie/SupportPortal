@@ -215,6 +215,23 @@ _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
 _SCHEMA_BOOTSTRAP_ADVISORY_LOCK = (842918, 1)
 # Namespace 842918 key 4 is reserved for Persona registry writes.
 _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK = (842918, 4)
+# Namespace 842918 key 5 serializes Account rerun admission across API processes.
+_ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK = (842918, 5)
+
+
+def _account_rerun_payload_is_active(payload: dict[str, Any], *, active_after: str) -> bool:
+    if str(payload.get("status") or "") not in {"queued", "running"}:
+        return False
+    try:
+        updated_at = datetime.fromisoformat(str(payload.get("updated_at") or "").replace("Z", "+00:00"))
+        threshold = datetime.fromisoformat(str(active_after).replace("Z", "+00:00"))
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        if threshold.tzinfo is None:
+            threshold = threshold.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return updated_at.astimezone(timezone.utc) >= threshold.astimezone(timezone.utc)
 
 
 def _choose_account_persona(candidates: list[Any]) -> Any:
@@ -1489,6 +1506,18 @@ class TicketRepository(Protocol):
         updated_at: str,
     ) -> None:
         ...
+
+    def claim_account_case_rerun(
+        self,
+        job: dict[str, Any],
+        *,
+        job_ticket_id: str,
+        event_type: str,
+        active_after: str,
+        idempotency_scope: str | None = None,
+        idempotency_key: str | None = None,
+        request_scope: str | None = None,
+    ) -> dict[str, Any]: ...
 
     def claim_automation_reply(
         self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
@@ -3874,6 +3903,95 @@ class InMemoryTicketRepository:
                     "updated_at": updated_at,
                 }
             )
+
+    def claim_account_case_rerun(
+        self,
+        job: dict[str, Any],
+        *,
+        job_ticket_id: str,
+        event_type: str,
+        active_after: str,
+        idempotency_scope: str | None = None,
+        idempotency_key: str | None = None,
+        request_scope: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_scope = str(idempotency_scope or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+        normalized_request_scope = str(request_scope or "").strip()
+        if any((normalized_scope, normalized_key, normalized_request_scope)) and not all(
+            (normalized_scope, normalized_key, normalized_request_scope)
+        ):
+            raise ValueError("idempotency_scope, idempotency_key, and request_scope must be provided together")
+
+        def latest_job(job_id: str) -> dict[str, Any] | None:
+            return next(
+                (
+                    copy.deepcopy(event["payload"])
+                    for event in reversed(self._events)
+                    if str(event.get("ticket_id") or "") == job_ticket_id
+                    and str(event.get("event_type") or "") == event_type
+                    and str((event.get("payload") or {}).get("job_id") or "") == job_id
+                ),
+                None,
+            )
+
+        with self._assignment_lock:
+            if normalized_key:
+                existing = self._idempotency_records.get((normalized_scope, normalized_key))
+                if isinstance(existing, dict):
+                    response = existing.get("response_payload")
+                    if not isinstance(response, dict) or response.get("request_scope") != normalized_request_scope:
+                        return {"status": "scope_conflict", "created": False, "job": None}
+                    stored_job = response.get("job") if isinstance(response.get("job"), dict) else {}
+                    canonical_job = latest_job(str(response.get("job_id") or "")) or copy.deepcopy(stored_job)
+                    return {"status": "replayed", "created": False, "job": canonical_job}
+
+            latest_by_job: dict[str, dict[str, Any]] = {}
+            for event in reversed(self._events):
+                if (
+                    str(event.get("ticket_id") or "") != job_ticket_id
+                    or str(event.get("event_type") or "") != event_type
+                    or not isinstance(event.get("payload"), dict)
+                ):
+                    continue
+                job_id = str(event["payload"].get("job_id") or "").strip()
+                if job_id and job_id not in latest_by_job:
+                    latest_by_job[job_id] = event["payload"]
+            active_job = next(
+                (
+                    copy.deepcopy(candidate)
+                    for candidate in latest_by_job.values()
+                    if _account_rerun_payload_is_active(candidate, active_after=active_after)
+                ),
+                None,
+            )
+            if active_job is not None:
+                return {"status": "active_conflict", "created": False, "job": active_job}
+
+            saved_job = copy.deepcopy(job)
+            self._events.append(
+                {
+                    "ticket_id": job_ticket_id,
+                    "event_type": event_type,
+                    "payload": saved_job,
+                    "created_at": saved_job.get("created_at") or _utc_now(),
+                }
+            )
+            if normalized_key:
+                response_payload = {
+                    "request_scope": normalized_request_scope,
+                    "job_id": str(saved_job.get("job_id") or ""),
+                    "job": copy.deepcopy(saved_job),
+                }
+                self._idempotency_records[(normalized_scope, normalized_key)] = {
+                    "scope": normalized_scope,
+                    "idempotency_key": normalized_key,
+                    "state": "completed",
+                    "response_payload": response_payload,
+                    "created_at": saved_job.get("created_at") or _utc_now(),
+                    "updated_at": saved_job.get("updated_at") or _utc_now(),
+                }
+            return {"status": "created", "created": True, "job": saved_job}
 
     def claim_automation_reply(
         self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
@@ -8963,6 +9081,107 @@ class PostgresTicketRepository:
                         raise ValueError("idempotency request was not started")
 
         self._run_with_connection_retry("complete_idempotent_request", _operation)
+
+    def claim_account_case_rerun(
+        self,
+        job: dict[str, Any],
+        *,
+        job_ticket_id: str,
+        event_type: str,
+        active_after: str,
+        idempotency_scope: str | None = None,
+        idempotency_key: str | None = None,
+        request_scope: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_scope = str(idempotency_scope or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+        normalized_request_scope = str(request_scope or "").strip()
+        if any((normalized_scope, normalized_key, normalized_request_scope)) and not all(
+            (normalized_scope, normalized_key, normalized_request_scope)
+        ):
+            raise ValueError("idempotency_scope, idempotency_key, and request_scope must be provided together")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(%s, %s)",
+                    _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK,
+                )
+                if normalized_key:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT response_payload FROM {} "
+                            "WHERE scope=%s AND idempotency_key=%s FOR UPDATE"
+                        ).format(self._table("support_idempotency_records")),
+                        (normalized_scope, normalized_key),
+                    )
+                    row = cur.fetchone()
+                    if row is not None:
+                        response = row[0] if isinstance(row[0], dict) else None
+                        if not isinstance(response, dict) or response.get("request_scope") != normalized_request_scope:
+                            return {"status": "scope_conflict", "created": False, "job": None}
+                        stored_job = response.get("job") if isinstance(response.get("job"), dict) else {}
+                        canonical_job_id = str(response.get("job_id") or "")
+                        cur.execute(
+                            sql.SQL(
+                                "SELECT payload FROM {} WHERE ticket_id=%s AND event_type=%s "
+                                "AND payload->>'job_id'=%s ORDER BY created_at DESC,id DESC LIMIT 1"
+                            ).format(self._table("support_ticket_events")),
+                            (job_ticket_id, event_type, canonical_job_id),
+                        )
+                        event_row = cur.fetchone()
+                        canonical_job = (
+                            event_row[0]
+                            if event_row is not None and isinstance(event_row[0], dict)
+                            else stored_job
+                        )
+                        return {"status": "replayed", "created": False, "job": canonical_job}
+
+                cur.execute(
+                    sql.SQL(
+                        "SELECT DISTINCT ON ((payload->>'job_id')) payload FROM {} "
+                        "WHERE ticket_id=%s AND event_type=%s AND COALESCE(payload->>'job_id','')<>'' "
+                        "ORDER BY (payload->>'job_id'),created_at DESC,id DESC"
+                    ).format(self._table("support_ticket_events")),
+                    (job_ticket_id, event_type),
+                )
+                active_job = next(
+                    (
+                        row[0]
+                        for row in cur.fetchall()
+                        if isinstance(row[0], dict)
+                        and _account_rerun_payload_is_active(row[0], active_after=active_after)
+                    ),
+                    None,
+                )
+                if active_job is not None:
+                    return {"status": "active_conflict", "created": False, "job": active_job}
+
+                saved_job = copy.deepcopy(job)
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (ticket_id,event_type,payload) VALUES (%s,%s,%s)"
+                    ).format(self._table("support_ticket_events")),
+                    (job_ticket_id, event_type, Json(saved_job)),
+                )
+                if normalized_key:
+                    response_payload = {
+                        "request_scope": normalized_request_scope,
+                        "job_id": str(saved_job.get("job_id") or ""),
+                        "job": copy.deepcopy(saved_job),
+                    }
+                    created_at = saved_job.get("created_at") or _utc_now()
+                    updated_at = saved_job.get("updated_at") or created_at
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (scope,idempotency_key,state,response_payload,created_at,updated_at) "
+                            "VALUES (%s,%s,'completed',%s,%s,%s)"
+                        ).format(self._table("support_idempotency_records")),
+                        (normalized_scope, normalized_key, Json(response_payload), created_at, updated_at),
+                    )
+                return {"status": "created", "created": True, "job": saved_job}
+
+        return self._run_with_connection_retry("claim_account_case_rerun", _operation)
 
     def claim_automation_reply(
         self, automation_reply_key: str, *, client_ticket_id: str, handler: str,

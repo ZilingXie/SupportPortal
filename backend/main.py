@@ -5040,6 +5040,8 @@ def list_billing_tickets(
 ACCOUNT_FULL_REROUTE_JOB_TICKET_ID = "__account-full-reroute__"
 ACCOUNT_FULL_REROUTE_JOB_EVENT = "account_full_reroute_job"
 ACCOUNT_FULL_REROUTE_STALE_AFTER = timedelta(hours=2)
+ACCOUNT_CASE_RERUN_IDEMPOTENCY_SCOPE = "account_case_rerun"
+ACCOUNT_CASE_RERUN_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 ACCOUNT_RERUN_STORAGE_ERROR_CODE = "account_storage_temporarily_unavailable"
 ACCOUNT_RERUN_STORAGE_ERROR_MESSAGE = (
     "Account Case reprocessing is temporarily unavailable because the ticket database "
@@ -5058,6 +5060,19 @@ def _account_rerun_storage_http_exception(exc: Exception) -> HTTPException:
         },
         headers={"Retry-After": "5"},
     )
+
+
+def _validated_account_case_rerun_idempotency_key(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or not ACCOUNT_CASE_RERUN_IDEMPOTENCY_KEY_RE.fullmatch(normalized):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_idempotency_key",
+                "message": "Idempotency-Key must be 8-128 URL-safe ASCII characters.",
+            },
+        )
+    return normalized
 
 
 def _account_full_reroute_jobs(*, limit: int = 500) -> list[dict[str, Any]]:
@@ -5178,10 +5193,9 @@ async def _enqueue_account_rerun_job(
     background_tasks: BackgroundTasks,
     *,
     target_case_ids: list[str] | None = None,
+    idempotency_key: str | None = None,
+    request_scope: str | None = None,
 ) -> dict[str, Any]:
-    latest = next(iter(_account_full_reroute_jobs(limit=1)), None)
-    if _account_full_reroute_job_is_active(latest):
-        raise HTTPException(status_code=409, detail="an Account rerun job is already running")
     normalized_targets = list(dict.fromkeys(
         str(item or "").strip() for item in (target_case_ids or []) if str(item or "").strip()
     ))
@@ -5237,9 +5251,32 @@ async def _enqueue_account_rerun_job(
         "updated_at": created_at,
         "completed_at": None,
     }
-    _save_account_full_reroute_job(job)
-    background_tasks.add_task(_run_account_full_reroute_job, job["job_id"])
-    return job
+    claim = await _account_rerun_storage_call(
+        ticket_repository.claim_account_case_rerun,
+        job,
+        job_ticket_id=ACCOUNT_FULL_REROUTE_JOB_TICKET_ID,
+        event_type=ACCOUNT_FULL_REROUTE_JOB_EVENT,
+        active_after=(datetime.now(timezone.utc) - ACCOUNT_FULL_REROUTE_STALE_AFTER).isoformat(),
+        idempotency_scope=(ACCOUNT_CASE_RERUN_IDEMPOTENCY_SCOPE if idempotency_key else None),
+        idempotency_key=idempotency_key,
+        request_scope=request_scope,
+    )
+    if claim.get("status") == "scope_conflict":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "idempotency_scope_conflict",
+                "message": "Idempotency-Key was already used for a different Account Case rerun.",
+            },
+        )
+    if claim.get("status") == "active_conflict":
+        raise HTTPException(status_code=409, detail="an Account rerun job is already running")
+    canonical_job = claim.get("job")
+    if not isinstance(canonical_job, dict):
+        raise RuntimeError("Account rerun claim did not return a canonical job")
+    if claim.get("created") is True:
+        background_tasks.add_task(_run_account_full_reroute_job, canonical_job["job_id"])
+    return canonical_job
 
 
 async def _record_account_rerun_terminal_audit(
@@ -5806,7 +5843,9 @@ async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> di
 async def create_account_case_rerun_job(
     account_case_id: str,
     background_tasks: BackgroundTasks,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
+    normalized_idempotency_key = _validated_account_case_rerun_idempotency_key(idempotency_key)
     normalized_case_id = str(account_case_id or "").strip()
     try:
         account_case = await _account_rerun_storage_call(
@@ -5823,6 +5862,8 @@ async def create_account_case_rerun_job(
         return await _enqueue_account_rerun_job(
             background_tasks,
             target_case_ids=[canonical_case_id],
+            idempotency_key=normalized_idempotency_key,
+            request_scope=f"POST:/api/account/cases/{canonical_case_id}/rerun",
         )
     except HTTPException:
         raise

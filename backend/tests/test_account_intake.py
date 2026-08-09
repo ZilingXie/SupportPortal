@@ -336,6 +336,50 @@ class AccountIntakeApiTests(unittest.TestCase):
             duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
 
+    def test_account_rerun_admission_gate_blocks_full_and_single_jobs_in_both_directions(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12568",
+                "customer_id": "customer@example.com",
+                "subject": "Shared rerun admission gate",
+                "status": "open",
+                "messages": [],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12568",
+                "client_ticket_id": "12568",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            }
+        )
+        headers = {"Idempotency-Key": "shared-gate-single-12568"}
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            full_job = self.client.post("/api/account/rerun-jobs")
+            blocked_single = self.client.post("/api/account/cases/12568/rerun", headers=headers)
+
+            self.assertEqual(full_job.status_code, 202, full_job.text)
+            self.assertEqual(blocked_single.status_code, 409, blocked_single.text)
+
+            completed_at = main.now_iso()
+            main._save_account_full_reroute_job(
+                {
+                    **full_job.json(),
+                    "status": "completed",
+                    "updated_at": completed_at,
+                    "completed_at": completed_at,
+                }
+            )
+            single_job = self.client.post("/api/account/cases/12568/rerun", headers=headers)
+            blocked_full = self.client.post("/api/account/rerun-jobs")
+
+        self.assertEqual(single_job.status_code, 202, single_job.text)
+        self.assertEqual(blocked_full.status_code, 409, blocked_full.text)
+        self.assertEqual(runner.await_count, 2)
+
     def test_account_single_case_rerun_targets_only_requested_case(self) -> None:
         self.repository.save_ticket(
             {
@@ -360,7 +404,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
 
         with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
-            response = self.client.post("/api/account/cases/12562/rerun")
+            response = self.client.post(
+                "/api/account/cases/12562/rerun",
+                headers={"Idempotency-Key": "single-case-12562-first"},
+            )
 
         self.assertEqual(response.status_code, 202, response.text)
         payload = response.json()
@@ -374,8 +421,108 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["persona_assignments_deleted"], 0)
         runner.assert_awaited_once_with(payload["job_id"])
 
-        duplicate = self.client.post("/api/account/cases/AC-12562/rerun")
+        duplicate = self.client.post(
+            "/api/account/cases/AC-12562/rerun",
+            headers={"Idempotency-Key": "single-case-12562-second"},
+        )
         self.assertEqual(duplicate.status_code, 409, duplicate.text)
+
+    def test_account_single_case_rerun_replays_same_job_and_schedules_worker_once(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12564",
+                "customer_id": "customer@example.com",
+                "subject": "Replay-safe Account Case",
+                "status": "open",
+                "messages": [],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12564",
+                "client_ticket_id": "12564",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            }
+        )
+        headers = {"Idempotency-Key": "single-case-12564-replay"}
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            first = self.client.post("/api/account/cases/12564/rerun", headers=headers)
+            replay = self.client.post("/api/account/cases/AC-12564/rerun", headers=headers)
+
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(replay.status_code, 202, replay.text)
+        self.assertEqual(replay.json(), first.json())
+        runner.assert_awaited_once_with(first.json()["job_id"])
+        events = [
+            event
+            for event in self.repository.list_ticket_events(main.ACCOUNT_FULL_REROUTE_JOB_TICKET_ID)
+            if event["event_type"] == main.ACCOUNT_FULL_REROUTE_JOB_EVENT
+        ]
+        self.assertEqual(len(events), 1)
+
+    def test_account_single_case_rerun_rejects_same_key_for_another_case(self) -> None:
+        for ticket_id in ("12565", "12566"):
+            self.repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": "customer@example.com",
+                    "subject": "Scoped Account Case",
+                    "status": "open",
+                    "messages": [],
+                }
+            )
+            self.repository.save_account_case(
+                {
+                    "account_case_id": f"AC-{ticket_id}",
+                    "client_ticket_id": ticket_id,
+                    "route_status": "automated",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                }
+            )
+        headers = {"Idempotency-Key": "single-case-cross-case-conflict"}
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            first = self.client.post("/api/account/cases/12565/rerun", headers=headers)
+            conflict = self.client.post("/api/account/cases/12566/rerun", headers=headers)
+
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(conflict.json()["detail"]["code"], "idempotency_scope_conflict")
+        runner.assert_awaited_once()
+
+    def test_account_single_case_rerun_requires_a_valid_idempotency_key(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12567",
+                "customer_id": "customer@example.com",
+                "subject": "Validated Account Case",
+                "status": "open",
+                "messages": [],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12567",
+                "client_ticket_id": "12567",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            }
+        )
+
+        missing = self.client.post("/api/account/cases/12567/rerun")
+        malformed = self.client.post(
+            "/api/account/cases/12567/rerun",
+            headers={"Idempotency-Key": "contains spaces"},
+        )
+
+        self.assertEqual(missing.status_code, 422, missing.text)
+        self.assertEqual(malformed.status_code, 422, malformed.text)
+        self.assertEqual(malformed.json()["detail"]["code"], "invalid_idempotency_key")
 
     def test_single_case_rerun_worker_does_not_process_other_cases(self) -> None:
         for ticket_id, case_id in (("12562", "AC-12562"), ("12563", "AC-12563")):
@@ -629,9 +776,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
 
     def test_account_full_reroute_returns_retryable_503_when_storage_is_unavailable(self) -> None:
-        with patch.object(
-            main,
-            "_account_full_reroute_jobs",
+        with patch.object(main, "_ACCOUNT_RERUN_STORAGE_RETRY_DELAYS", (0.0, 0.0, 0.0, 0.0)), patch.object(
+            self.repository,
+            "claim_account_case_rerun",
             side_effect=psycopg.OperationalError("ticket db pool acquire budget exhausted"),
         ), patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
             response = self.client.post("/api/account/rerun-jobs")
@@ -644,9 +791,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         runner.assert_not_awaited()
 
     def test_account_full_reroute_does_not_schedule_when_job_persistence_fails(self) -> None:
-        with patch.object(main, "_account_full_reroute_jobs", return_value=[]), patch.object(
-            main,
-            "_save_account_full_reroute_job",
+        with patch.object(main, "_ACCOUNT_RERUN_STORAGE_RETRY_DELAYS", (0.0, 0.0, 0.0, 0.0)), patch.object(
+            self.repository,
+            "claim_account_case_rerun",
             side_effect=psycopg.OperationalError("ticket db pool acquire budget exhausted"),
         ), patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
             response = self.client.post("/api/account/rerun-jobs")

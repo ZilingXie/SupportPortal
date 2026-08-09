@@ -658,6 +658,19 @@ function responseErrorMessage(payload, fallback) {
   return fallback;
 }
 
+function createSingleCaseRerunIdempotencyKey() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") {
+    return `account-case-rerun:${cryptoApi.randomUUID()}`;
+  }
+  if (typeof cryptoApi?.getRandomValues !== "function") {
+    throw new Error("Secure request identifiers are unavailable in this browser.");
+  }
+  const entropy = new Uint32Array(4);
+  cryptoApi.getRandomValues(entropy);
+  return `account-case-rerun:${Array.from(entropy, (value) => value.toString(16).padStart(8, "0")).join("")}`;
+}
+
 async function refreshAfterReroute(targetCaseId = "") {
   invalidateSummaryCache();
   if (targetCaseId) invalidateDetailCache(targetCaseId);
@@ -783,6 +796,7 @@ async function startSingleCaseRerun() {
     const response = await fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
       method: "POST",
       cache: "no-store",
+      headers: { "Idempotency-Key": snapshot.idempotencyKey },
     });
     const payload = await readResponsePayload(response);
     if (!response.ok) {
@@ -798,6 +812,9 @@ async function startSingleCaseRerun() {
     showToast(`Rerun started for Case #${snapshot.ticketNumber}`);
   } catch (err) {
     state.rerouteError = err instanceof Error ? err.message : "Could not rerun this Account Case.";
+    if (state.rerouteTargetSnapshot === snapshot && !isActiveRerouteJob()) {
+      state.rerouteConfirmationOpen = true;
+    }
   } finally {
     state.isStartingReroute = false;
     render();
@@ -1996,6 +2013,7 @@ function bind() {
       state.rerouteTargetSnapshot = {
         caseId: accountCaseIdentifier(state.activeItem),
         ticketNumber: accountTicketNumber(state.activeItem),
+        idempotencyKey: createSingleCaseRerunIdempotencyKey(),
       };
       state.rerouteConfirmationOpen = true;
       render();

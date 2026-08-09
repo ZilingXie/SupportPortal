@@ -102,6 +102,71 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), ["12572", "12572", "", ""])
 
+    def test_single_case_rerun_reuses_one_idempotency_key_per_confirmation_intent(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        start = app_source.index("async function startSingleCaseRerun")
+        end = app_source.index("\nasync function", start + 1)
+        start_source = app_source[start:end]
+
+        self.assertIn("function createSingleCaseRerunIdempotencyKey", app_source)
+        self.assertIn("idempotencyKey", app_source)
+        self.assertIn('"Idempotency-Key": snapshot.idempotencyKey', start_source)
+        self.assertNotIn("randomUUID", start_source)
+        self.assertIn("state.rerouteTargetSnapshot = null", start_source)
+        self.assertIn("state.rerouteConfirmationOpen = true", start_source)
+
+        open_handler = app_source.index("[data-action='open-single-rerun-confirmation']")
+        close_handler = app_source.index("[data-action='close-reroute-confirmation']", open_handler)
+        open_source = app_source[open_handler:close_handler]
+        self.assertIn("createSingleCaseRerunIdempotencyKey", open_source)
+        self.assertIn("idempotencyKey", open_source)
+
+        script = (
+            "const state = {"
+            "rerouteTargetSnapshot: { caseId: 'AC-12568', ticketNumber: '12568', "
+            "idempotencyKey: 'stable-confirmation-key' }, "
+            "isStartingReroute: false, rerouteConfirmationOpen: true, rerouteError: '', "
+            "rerouteJob: null, rerouteActiveTargetCaseId: '' };\n"
+            "let requestKeys = [];\n"
+            "let shouldSucceed = false;\n"
+            "function isActiveRerouteJob() { return false; }\n"
+            "function render() {}\n"
+            "function showToast() {}\n"
+            "function responseErrorMessage(_payload, fallback) { return fallback; }\n"
+            "async function readResponsePayload(response) { return response.payload; }\n"
+            "async function fetch(_url, options) {\n"
+            "  requestKeys.push(options.headers['Idempotency-Key']);\n"
+            "  if (!shouldSucceed) throw new Error('network unavailable');\n"
+            "  return { ok: true, status: 202, payload: { job_id: 'job-replayed', status: 'queued' } };\n"
+            "}\n"
+            f"{start_source}\n"
+            "(async () => {\n"
+            "  const originalSnapshot = state.rerouteTargetSnapshot;\n"
+            "  await startSingleCaseRerun();\n"
+            "  const reopenedAfterFailure = state.rerouteConfirmationOpen;\n"
+            "  const sameSnapshotAfterFailure = state.rerouteTargetSnapshot === originalSnapshot;\n"
+            "  await startSingleCaseRerun();\n"
+            "  shouldSucceed = true;\n"
+            "  await startSingleCaseRerun();\n"
+            "  console.log(JSON.stringify({ requestKeys, reopenedAfterFailure, "
+            "sameSnapshotAfterFailure, snapshotAfterSuccess: state.rerouteTargetSnapshot, "
+            "jobId: state.rerouteJob?.job_id }));\n"
+            "})().catch((error) => { console.error(error); process.exit(1); });\n"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        retry_result = json.loads(result.stdout)
+        self.assertEqual(retry_result["requestKeys"], ["stable-confirmation-key"] * 3)
+        self.assertTrue(retry_result["reopenedAfterFailure"])
+        self.assertTrue(retry_result["sameSnapshotAfterFailure"])
+        self.assertIsNone(retry_result["snapshotAfterSuccess"])
+        self.assertEqual(retry_result["jobId"], "job-replayed")
+
     def test_account_detail_persona_assignment_is_visible_only_for_automated_cases(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
         self.assertIn("const ACCOUNT_PERSONA_PRESENTATION", app_source)

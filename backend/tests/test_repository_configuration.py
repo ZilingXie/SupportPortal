@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,7 @@ from backend.repositories.ticket_repository import (
     PoolTimeout,
     PostgresTicketRepository,
     _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
+    _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK,
     create_ticket_repository,
 )
 
@@ -326,6 +328,82 @@ class _BorrowingPool(_FakePool):
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_in_memory_account_rerun_claim_converges_concurrent_same_key(self) -> None:
+        repository = InMemoryTicketRepository()
+        barrier = threading.Barrier(2)
+
+        def claim(index: int) -> dict[str, object]:
+            barrier.wait()
+            timestamp = "2026-08-09T00:00:00+00:00"
+            return repository.claim_account_case_rerun(
+                {
+                    "job_id": f"account-rerun-{index}",
+                    "status": "queued",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                job_ticket_id="__account-full-reroute__",
+                event_type="account_full_reroute_job",
+                active_after="2026-08-08T22:00:00+00:00",
+                idempotency_scope="account_case_rerun",
+                idempotency_key="same-concurrent-key",
+                request_scope="POST:/api/account/cases/AC-1/rerun",
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(claim, (1, 2)))
+
+        self.assertEqual(sorted(bool(result["created"]) for result in results), [False, True])
+        self.assertEqual(len({str(result["job"]["job_id"]) for result in results}), 1)
+        self.assertEqual(
+            len(repository.list_ticket_events("__account-full-reroute__")),
+            1,
+        )
+
+    def test_postgres_account_rerun_claim_is_one_locked_transaction(self) -> None:
+        cursor = _ReusableCursor(fetchone_results=[None], fetchall_results=[[]])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+        timestamp = "2026-08-09T00:00:00+00:00"
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.claim_account_case_rerun(
+                {
+                    "job_id": "account-rerun-pg",
+                    "status": "queued",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                job_ticket_id="__account-full-reroute__",
+                event_type="account_full_reroute_job",
+                active_after="2026-08-08T22:00:00+00:00",
+                idempotency_scope="account_case_rerun",
+                idempotency_key="postgres-atomic-key",
+                request_scope="POST:/api/account/cases/AC-1/rerun",
+            )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+        rendered = [
+            args[0].as_string() if hasattr(args[0], "as_string") else str(args[0])
+            for args, _kwargs in cursor.executed
+        ]
+        self.assertIn("pg_advisory_xact_lock", rendered[0])
+        self.assertEqual(cursor.executed[0][0][1], _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK)
+        self.assertIn("support_idempotency_records", rendered[1])
+        self.assertIn("support_ticket_events", rendered[2])
+        self.assertIn("INSERT INTO", rendered[3])
+        self.assertIn("support_ticket_events", rendered[3])
+        self.assertIn("INSERT INTO", rendered[4])
+        self.assertIn("support_idempotency_records", rendered[4])
+        schema = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        self.assertIn("PRIMARY KEY (scope, idempotency_key)", schema)
+
     def test_postgres_account_detail_revision_uses_assignment_in_one_batch_query(self) -> None:
         account_case = {
             "account_case_id": "AC-PERSONA-REVISION",
