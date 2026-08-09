@@ -102,6 +102,85 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), ["12572", "12572", "", ""])
 
+    def test_account_detail_persona_assignment_is_visible_only_for_automated_cases(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        self.assertIn("const ACCOUNT_PERSONA_PRESENTATION", app_source)
+        self.assertIn("function renderPersonaAssignment", app_source)
+        helper_start = app_source.index("const ACCOUNT_PERSONA_PRESENTATION")
+        helper_end = app_source.index("\nfunction renderDetailView", helper_start)
+        helper_source = app_source[helper_start:helper_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }}
+        function isAutomatedRoute(item) {{ return String(item?.route_status || '').trim() === 'automated'; }}
+        {helper_source}
+        console.log(JSON.stringify({{
+          assigned: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: {{ persona_key: 'sid-bright', version: 2, display_name: 'Sid Bright' }} }}),
+          unassigned: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: null }}),
+          humanReview: renderPersonaAssignment({{ route_status: 'not_automated', persona_assignment: {{ persona_key: 'sid-bright', version: 2, display_name: 'Sid Bright' }} }}),
+          custom: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: {{ persona_key: 'custom-calm', version: 4, display_name: 'Custom Calm' }} }}),
+        }}));
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = json.loads(result.stdout)
+        self.assertIn("Sid Bright", rendered["assigned"])
+        self.assertIn("v2", rendered["assigned"])
+        self.assertIn("Bright", rendered["assigned"])
+        self.assertIn("Not assigned yet", rendered["unassigned"])
+        self.assertEqual(rendered["humanReview"], "")
+        self.assertIn("Custom Calm", rendered["custom"])
+        self.assertNotIn("Precise", rendered["custom"])
+        self.assertNotIn("Bright", rendered["custom"])
+        self.assertNotIn("Warm", rendered["custom"])
+
+        detail_start = app_source.index("function renderDetailView")
+        detail_end = app_source.index("\nfunction", detail_start + 1)
+        self.assertIn("renderPersonaAssignment(item)", app_source[detail_start:detail_end])
+
+    def test_account_rerun_summary_always_reports_persona_assignment_resets(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        status_start = app_source.index("function renderRerouteStatus")
+        status_end = app_source.index("\nfunction", status_start + 1)
+        status_source = app_source[status_start:status_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? ''); }}
+        function isActiveRerouteJob() {{ return false; }}
+        const state = {{ rerouteError: '', rerouteJob: null }};
+        {status_source}
+        function renderWithResetCount(count) {{
+          state.rerouteJob = {{ status: 'completed', succeeded: 1, changed: 1, persona_assignments_deleted: count }};
+          return renderRerouteStatus();
+        }}
+        console.log(JSON.stringify([renderWithResetCount(0), renderWithResetCount(3)]));
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        zero, nonzero = json.loads(result.stdout)
+        self.assertIn("0 Persona assignments reset", zero)
+        self.assertIn("3 Persona assignments reset", nonzero)
+
+    def test_account_persona_detail_styles_cover_desktop_tablet_and_mobile_contract(self) -> None:
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+        for marker in (
+            ".persona-assignment",
+            ".persona-style-badge",
+            "overflow-wrap: anywhere",
+            "@media (max-width: 960px)",
+            "@media (max-width: 640px)",
+            "overflow-x: hidden",
+        ):
+            self.assertIn(marker, styles)
+
     def test_account_app_posts_title_and_question_to_account_endpoint(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 

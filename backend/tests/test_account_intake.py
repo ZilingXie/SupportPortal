@@ -3578,6 +3578,91 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(batch.status_code, 200, batch.text)
         self.assertEqual(batch.json()["details"], [single.json()])
 
+    def test_account_case_details_include_persisted_persona_assignment_without_prompt_content(self) -> None:
+        ticket_id = "TK-PERSONA-DETAIL"
+        self._save_billing_ticket(ticket_id=ticket_id, automation_status="automation")
+        draft = self.repository.create_account_persona_draft(
+            "sid-bright",
+            content={
+                "instruction": "SECRET PERSONA PROMPT",
+                "opener": "Hello",
+                "signature": "Best,\nSid",
+            },
+            change_note="Persona detail contract",
+            based_on_version=1,
+            actor_id="admin",
+            created_at="2026-08-09T01:00:00+00:00",
+        )
+        self.repository.publish_account_persona_version(
+            "sid-bright",
+            draft["version"],
+            actor_id="admin",
+            published_at="2026-08-09T01:01:00+00:00",
+        )
+        self.repository.set_account_persona_enabled("sid-precise", False)
+        self.repository.set_account_persona_enabled("default-support", False)
+        assigned = self.repository.resolve_account_persona(ticket_id)
+        self.assertEqual((assigned["persona_key"], assigned["version"]), ("sid-bright", 2))
+        superseding_draft = self.repository.create_account_persona_draft(
+            "sid-bright",
+            content={
+                "instruction": "New published voice",
+                "opener": "Hi",
+                "signature": "Regards,\nSid",
+            },
+            change_note="Supersede assigned version",
+            based_on_version=2,
+            actor_id="admin",
+            created_at="2026-08-09T01:02:00+00:00",
+        )
+        self.repository.publish_account_persona_version(
+            "sid-bright",
+            superseding_draft["version"],
+            actor_id="admin",
+            published_at="2026-08-09T01:03:00+00:00",
+        )
+        self.repository.set_account_persona_enabled("sid-precise", True)
+        self.repository.set_account_persona_enabled("sid-bright", False)
+
+        with patch.object(
+            self.repository,
+            "get_account_persona_assignment",
+            side_effect=AssertionError("detail API must use the batched detail bundle"),
+        ):
+            single = self.client.get("/api/account/cases/BT-TK-PERSONA-DETAIL")
+            batch = self.client.post(
+                "/api/account/cases/batch-details",
+                json={"case_ids": ["BT-TK-PERSONA-DETAIL"]},
+            )
+
+        self.assertEqual(single.status_code, 200, single.text)
+        self.assertEqual(batch.status_code, 200, batch.text)
+        single_assignment = single.json()["persona_assignment"]
+        self.assertEqual(batch.json()["details"][0]["persona_assignment"], single_assignment)
+        self.assertEqual(
+            single_assignment,
+            {
+                "persona_key": "sid-bright",
+                "version": 2,
+                "assigned_at": assigned["assigned_at"],
+                "display_name": "Sid Bright",
+            },
+        )
+        self.assertNotIn("content", single_assignment)
+        self.assertNotIn("enabled", single_assignment)
+        self.assertNotIn("SECRET PERSONA PROMPT", single.text)
+
+    def test_account_case_detail_returns_null_when_persona_is_not_assigned(self) -> None:
+        self._save_billing_ticket(
+            ticket_id="TK-PERSONA-UNASSIGNED",
+            automation_status="automation",
+        )
+
+        response = self.client.get("/api/account/cases/BT-TK-PERSONA-UNASSIGNED")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()["persona_assignment"])
+
     def test_delete_all_billing_tickets_is_not_allowed_and_preserves_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             for i in range(2):

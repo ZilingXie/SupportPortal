@@ -1992,11 +1992,31 @@ class InMemoryTicketRepository:
             ticket = self.get_ticket(ticket_id)
             latest_reply_job = self.get_latest_account_reply_job(ticket_id)
             correction = self.get_billing_route_correction(billing_ticket_id)
+            with self._assignment_lock:
+                assignment = copy.deepcopy(self._account_persona_assignments.get(ticket_id))
+                persona = copy.deepcopy(
+                    self._account_personas.get(str(assignment.get("persona_key") or ""))
+                    if isinstance(assignment, dict)
+                    else None
+                )
+            persona_assignment = (
+                {
+                    "persona_key": str(assignment["persona_key"]),
+                    "version": int(assignment["version"]),
+                    "assigned_at": assignment["assigned_at"],
+                    "display_name": str(
+                        (persona or {}).get("display_name") or assignment["persona_key"]
+                    ),
+                }
+                if isinstance(assignment, dict)
+                else None
+            )
             result[identifier] = {
                 "account_case": account_case,
                 "ticket": ticket,
                 "latest_reply_job": latest_reply_job,
                 "route_correction": correction,
+                "persona_assignment": persona_assignment,
                 "detail_revision": _account_case_detail_revision(
                     account_case,
                     ticket,
@@ -4658,7 +4678,19 @@ class PostgresTicketRepository:
                             message_row.citations,
                             message_row.meta,
                             latest_reply.reply_job,
-                            TO_JSONB(correction_row) AS route_correction
+                            TO_JSONB(correction_row) AS route_correction,
+                            CASE
+                                WHEN persona_assignment_row.ticket_id IS NULL THEN NULL
+                                ELSE JSONB_BUILD_OBJECT(
+                                    'persona_key', persona_assignment_row.persona_key,
+                                    'version', persona_assignment_row.version,
+                                    'assigned_at', persona_assignment_row.assigned_at,
+                                    'display_name', COALESCE(
+                                        persona_row.display_name,
+                                        persona_assignment_row.persona_key
+                                    )
+                                )
+                            END AS persona_assignment
                         FROM requested
                         LEFT JOIN LATERAL (
                             SELECT
@@ -4689,6 +4721,10 @@ class PostgresTicketRepository:
                         ) latest_reply ON TRUE
                         LEFT JOIN {} correction_row
                           ON correction_row.billing_ticket_id = matched.billing_ticket_id
+                        LEFT JOIN {} persona_assignment_row
+                          ON persona_assignment_row.ticket_id = matched.client_ticket_id
+                        LEFT JOIN {} persona_row
+                          ON persona_row.persona_key = persona_assignment_row.persona_key
                         ORDER BY requested.ordinal, message_row.created_at, message_row.id
                         """
                     ).format(
@@ -4697,6 +4733,8 @@ class PostgresTicketRepository:
                         self._table("support_ticket_messages"),
                         self._table("support_account_reply_jobs"),
                         self._table("support_billing_route_corrections"),
+                        self._table("support_account_persona_assignments"),
+                        self._table("support_account_personas"),
                     ),
                     (normalized_ids,),
                 )
@@ -4713,11 +4751,13 @@ class PostgresTicketRepository:
                             ticket["messages"] = []
                         latest_reply_job = dict(row[11]) if isinstance(row[11], dict) else None
                         correction = dict(row[12]) if isinstance(row[12], dict) else None
+                        persona_assignment = dict(row[13]) if isinstance(row[13], dict) else None
                         bundle = {
                             "account_case": account_case,
                             "ticket": ticket,
                             "latest_reply_job": latest_reply_job,
                             "route_correction": correction,
+                            "persona_assignment": persona_assignment,
                         }
                         result[identifier] = bundle
                     ticket = bundle.get("ticket")

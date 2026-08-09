@@ -357,7 +357,7 @@
 ### 6.7 Account Automation Admin Surfaces
 1. `Automated Cases` 使用单行 metric strip 加紧凑 case table；占比文案必须明确表示 routed-to-Automated，不得暗示已解决。
 2. `Route Strategy` 不再作为 Admin 一级页面；route pipeline、分类出口和 Prompt version 统一归入 `Agent Config > Route Agent`。
-3. `Persona Prompt Template` 归入 `Agent Config > Route Agent > Agora Router > Automation Router`，使用左右 workspace：Persona/version 列表作为上下文，编辑器作为主工作区；Draft、Publish、Rollback 必须通过文字状态与确认动作区分。Persona 只管理统一人设，具体 Automation 节点只管理行为 Prompt 或 deterministic capability。
+3. `Persona Prompt Template` 归入 `Agent Config > Route Agent > Agora Router > Automation Router` 的唯一 `Persona` tab，使用左右 workspace：Persona/version 列表作为上下文，编辑器作为主工作区；Draft、Publish、Rollback 必须通过文字状态与确认动作区分。Persona 只管理统一人设，具体 Automation 节点只管理行为 Prompt 或 deterministic capability。
 4. `Environment Config` 只能显示可搜索的配置名 inventory，并为每个配置名显示一条仅由 key 名决定的静态用途说明；说明不得读取或推断 value、set/unset、长度、哈希或来源。每行使用独立的 copy-name icon command，搜索同时匹配 key 和用途说明。
 5. 上述页面沿用 Admin 的低对比 surface 和紧凑信息密度；移动端改为单列，不允许 Prompt、key 或 route label 横向溢出。
 6. `Agent Config` 的 managed Prompt 使用左侧 Prompt 列表与右侧版本工作区；必须同时显示 Active 与 Next deploy 状态，版本历史用选择控件切换，Diff 使用带行号与增删背景的等宽双栏并在移动端降为单列。
@@ -366,7 +366,9 @@
 9. Agent Overview 必须同时表达完整 route outcome 与 Agent 边界：Agent 目标使用明确的 `Agent` 文字标签并允许快捷进入，非 Agent 目标为不可导航的信息行，不显示跳转箭头。Agent 身份不得只依赖颜色或图标表达。
 10. `Automation Router` 是 Persona 的唯一管理入口；Fraud Account、Account Suspension、Detailed Invoice、Enablement、Quota、Unregistered 使用单项展开的紧凑行为列表汇总在 Overview，展开后原位展示行为 Prompt 与 deterministic capability，不创建第五级菜单、独立详情路由或重复 Persona 配置。
 11. Automation Persona 的签名必须作为独立的多行 `Signature` 字段管理，不混入 Persona instruction；编辑器按原始换行展示，最终客户消息逐字使用已发布签名，不翻译或改写签名内容。旧版 `signoff_name` 仅作为读取兼容，不再作为新版本的编辑字段。
-11. `Agent Config` 窄屏使用逐级 Agent 进入模式，保留 Back、面包屑和当前 Agent 的直属子 Agent 入口；流程结果继续留在 Overview，禁止四层缩进压缩正文。树展开、详情切换和 chevron 反馈统一控制在 180ms 内，并在 reduced-motion 下取消；所有折叠与导航控件保持至少 `44x44px` 点击区域。
+12. `Agent Config` 窄屏使用逐级 Agent 进入模式，保留 Back、面包屑和当前 Agent 的直属子 Agent 入口；流程结果继续留在 Overview，禁止四层缩进压缩正文。树展开、详情切换和 chevron 反馈统一控制在 180ms 内，并在 reduced-motion 下取消；所有折叠与导航控件保持至少 `44x44px` 点击区域。
+13. Persona selector 固定优先展示 `Sid Precise / Precise`、`Sid Bright / Bright`、`Sid Warm / Warm`，每项同时显示 Enabled/Disabled 与 Published version；未知 custom Persona 排在三个 seed Persona 之后且不得套用错误 style。当前选择必须使用 `aria-pressed` 或等价文字语义，不得只靠颜色；Persona 不是 Agent，不得进入 Agent tree 或移动端 Agent 导航。
+14. Persona workspace 必须说明运行边界：首次 Account-only 客户可见回复只从 enabled 且已有 published version 的 Persona 中随机选择并 pin 精确版本；full rerun 清除 assignment 后可重新选择，reply-only recovery 保留 pin；Human Review 不分配 Persona。保留现有 Create Persona 与按 Persona key 隔离的 Draft、Publish、Rollback、Enable/Disable 能力。
 
 ### 6.8 Account Ticket Conversation (`/account`)
 1. 所有 account ticket 都必须先展示 route 结果，再由 AI 尝试生成仅在 `/account` 内可见的回复；不得把 AI draft 或 assistant message 回传到来源 Zendesk / 客户邮件渠道。
@@ -381,6 +383,8 @@
 10. `/account` 的 Case # 搜索位于 route filter 之前，使用单行紧凑输入与图标按钮，只接受精确数字编号（允许输入一个前导 `#`）。命中后直接打开详情，但不得改变当前 filter、页码或列表内容；not found 与服务异常必须显示不同反馈。
 11. 单 Case 的 `Rerun this case` 属于不可逆危险操作，固定放在 detail header 的独立 action 区，不与 route 标签混成一个 badge。确认弹窗必须冻结目标 Case ID，并明确说明非客户消息、人工消息与当前 route correction 会被删除，内部邮件可能重发，独立审计会保留；运行期间所有 rerun 入口必须禁用。
 12. Filter count、当前页和 total 必须来自同一数据库快照；内存缓存仅保存当前页摘要与受限详情，缓存响应不得覆盖更新版本的 counts。Filter 按钮保持键盘可操作、`aria-pressed` 状态明确，二级菜单使用原生 select 并具备清晰 label；All、Tech、Non-tech 没有子路由时显示禁用状态，窄屏按钮矩阵和下拉菜单不得造成横向溢出。
+13. Automated Case detail 必须显示服务端持久化的 Persona assignment：display name、精确 `vN` 与已知 seed style；尚未 assignment 时显示 `Not assigned yet`。历史 assignment 即使对应 Persona 后来 Disabled 或版本 Superseded 仍须展示；Human Review 与其他非 Automated Case 完全隐藏 Persona 行，列表不新增 Persona 列。
+14. Full/single rerun 完成摘要必须始终显示本次清除的 Persona assignment 数量，包括 `0`；该计数是 reset 结果，不得被表达成新 Persona 已成功选择。Persona detail 行与 badge 在 1440px、768px、390px 视口均须换行收敛，不得造成页面级横向溢出。
 
 ### 6.9 Internal Automation Email Handoff
 1. Fraud Account、Account Verification、Detailed Invoice、Enablement、Quota 的内部 handoff 邮件必须复用统一的 `Internal Automation Email` 模板；Workspace Invitation 属于用户外发邮件，不使用该模板。

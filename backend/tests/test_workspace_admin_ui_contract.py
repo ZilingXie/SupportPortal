@@ -243,6 +243,52 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             """
         )
 
+    def test_automation_router_persona_selector_uses_seed_order_style_and_accessible_selection(self) -> None:
+        self.run_admin_app_script(
+            """
+            agentConfigData = { automation_personas: [
+              { persona_key: 'custom-calm', display_name: 'Custom Calm', enabled: true, published_version: 4, versions: [{ version: 4, status: 'published', content: { instruction: 'Calm custom voice', signature: 'Best,\\nSid' } }] },
+              { persona_key: 'default-support', display_name: 'Sid Warm', enabled: true, published_version: 3, versions: [{ version: 3, status: 'published', content: { instruction: 'Warm voice', signature: 'Best,\\nSid' } }] },
+              { persona_key: 'sid-bright', display_name: 'Sid Bright', enabled: false, published_version: 2, versions: [{ version: 2, status: 'published', content: { instruction: 'Bright voice', signature: 'Best,\\nSid' } }] },
+              { persona_key: 'sid-precise', display_name: 'Sid Precise', enabled: true, published_version: 5, versions: [{ version: 5, status: 'published', content: { instruction: 'Precise voice', signature: 'Best,\\nSid' } }] },
+            ] };
+            selectedPersonaKey = '';
+            const markup = renderAutomationPersonaPanel();
+            const preciseIndex = markup.indexOf('data-persona-key="sid-precise"');
+            const brightIndex = markup.indexOf('data-persona-key="sid-bright"');
+            const warmIndex = markup.indexOf('data-persona-key="default-support"');
+            const customIndex = markup.indexOf('data-persona-key="custom-calm"');
+            if (!(preciseIndex < brightIndex && brightIndex < warmIndex && warmIndex < customIndex)) throw new Error('seed Persona order is not stable');
+            const preciseButton = markup.slice(preciseIndex, markup.indexOf('</button>', preciseIndex));
+            const brightButton = markup.slice(brightIndex, markup.indexOf('</button>', brightIndex));
+            const warmButton = markup.slice(warmIndex, markup.indexOf('</button>', warmIndex));
+            const customButton = markup.slice(customIndex, markup.indexOf('</button>', customIndex));
+            if (!preciseButton.includes('Precise') || !preciseButton.includes('Enabled') || !preciseButton.includes('Published v5') || !preciseButton.includes('aria-pressed="true"')) throw new Error('Precise selector contract missing');
+            if (!brightButton.includes('Bright') || !brightButton.includes('Disabled') || !brightButton.includes('Published v2') || !brightButton.includes('aria-pressed="false"')) throw new Error('Bright selector contract missing');
+            if (!warmButton.includes('Warm') || !warmButton.includes('Enabled') || !warmButton.includes('Published v3')) throw new Error('Warm selector contract missing');
+            if (customButton.includes('Precise') || customButton.includes('Bright') || customButton.includes('Warm')) throw new Error('custom Persona received a seed style');
+            if (!markup.includes('randomly selects') || !markup.includes('enabled Personas with a published version') || !markup.includes('pins that exact Persona version')) throw new Error('Persona selection and pinning explanation missing');
+            if (!markup.includes('Full reruns clear') || !markup.includes('Reply-only recovery keeps') || !markup.includes('Human Review')) throw new Error('Persona reset and Human Review explanation missing');
+            if (!markup.includes('name="instruction"') || !markup.includes('name="signature"')) throw new Error('Instruction and Signature must remain independent fields');
+            if (!markup.includes('aria-label="Create Persona"')) throw new Error('Create Persona capability was removed');
+
+            personaDraftValues = {
+              'sid-precise': { instruction: 'Precise operator draft', signature: 'Precise signature' },
+              'sid-bright': { instruction: 'Bright operator draft', signature: 'Bright signature' },
+            };
+            selectedPersonaKey = 'sid-precise';
+            const preciseDraft = renderAutomationPersonaPanel();
+            selectedPersonaKey = 'sid-bright';
+            const brightDraft = renderAutomationPersonaPanel();
+            if (!preciseDraft.includes('Precise operator draft') || preciseDraft.includes('Bright operator draft')) throw new Error('Precise draft leaked across Persona keys');
+            if (!brightDraft.includes('Bright operator draft') || brightDraft.includes('Precise operator draft')) throw new Error('Bright draft leaked across Persona keys');
+            """
+        )
+
+        styles = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
+        self.assertIn(".admin-persona-style", styles)
+        self.assertIn(".admin-persona-list button:focus-visible", styles)
+
     def test_automation_router_persona_actions_use_persona_lifecycle_api(self) -> None:
         self.run_admin_app_script(
             """
@@ -266,18 +312,19 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               }
               return { ok: true, status: 200, json: async () => ({ persona: { enabled: false } }) };
             };
-            const form = { dataset: { personaKey: 'default-support' }, values: {
+            const form = { dataset: { personaKey: 'sid-bright' }, values: {
               instruction: 'Warm and direct', opener: 'Hello', signature: 'Best,\\nSid\\nSupport Engineer 2', change_note: 'Refine voice', based_on_version: '1'
             } };
             await createPersonaDraft(form);
             const draftRequest = requests.find(item => item.url.includes('/drafts'));
+            if (!draftRequest.url.endsWith('/account-personas/sid-bright/drafts')) throw new Error('Persona draft used the wrong key');
             const draftBody = JSON.parse(draftRequest.options.body);
             if (draftBody.content.instruction !== 'Warm and direct' || draftBody.content.opener !== 'Hello' || draftBody.content.signature !== 'Best,\\nSid\\nSupport Engineer 2') throw new Error('Persona draft did not preserve unified voice fields');
             if (draftBody.based_on_version !== 1 || draftBody.change_note !== 'Refine voice') throw new Error('Persona draft version contract invalid');
-            await runPersonaVersionAction('publish', 'default-support', 2);
-            if (!requests.some(item => item.url.endsWith('/account-personas/default-support/versions/2/publish'))) throw new Error('Persona publish endpoint missing');
-            await setPersonaEnabled('default-support', false);
-            const toggleRequest = requests.find(item => item.url.endsWith('/account-personas/default-support'));
+            await runPersonaVersionAction('publish', 'sid-precise', 2);
+            if (!requests.some(item => item.url.endsWith('/account-personas/sid-precise/versions/2/publish'))) throw new Error('Persona publish used the wrong key');
+            await setPersonaEnabled('custom-calm', false);
+            const toggleRequest = requests.find(item => item.url.endsWith('/account-personas/custom-calm'));
             if (toggleRequest.options.method !== 'PATCH' || JSON.parse(toggleRequest.options.body).enabled !== false) throw new Error('Persona enabled PATCH invalid');
             if (requests.filter(item => item.url === '/api/workspace/admin/agent-config').length < 3) throw new Error('Persona operations did not refresh Agent Config');
             """

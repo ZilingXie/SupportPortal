@@ -4976,6 +4976,19 @@ p {
   line-height: 1.45;
 }
 
+.admin-persona-runtime-notes {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.admin-persona-runtime-notes p {
+  margin: 0;
+}
+
 .admin-persona-list {
   display: grid;
   gap: 4px;
@@ -4998,6 +5011,52 @@ p {
 .admin-persona-list button.is-active {
   background: var(--primary-fixed);
   color: #00344e;
+}
+
+.admin-persona-list button[aria-pressed="true"] {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.admin-persona-list button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.admin-persona-list-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.admin-persona-list-heading strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-persona-style {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.admin-persona-style--precise {
+  color: #005b66;
+  background: #d7f1f4;
+}
+
+.admin-persona-style--bright {
+  color: #714d00;
+  background: #ffedb5;
+}
+
+.admin-persona-style--warm {
+  color: #7b351d;
+  background: #ffe0d2;
 }
 
 .admin-persona-list small {

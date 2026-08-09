@@ -4124,6 +4124,19 @@ def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
             else None
         )
     )
+    assignment = bundle.get("persona_assignment")
+    view_model["persona_assignment"] = (
+        {
+            "persona_key": str(assignment.get("persona_key") or ""),
+            "version": int(assignment.get("version") or 0),
+            "assigned_at": assignment.get("assigned_at"),
+            "display_name": str(
+                assignment.get("display_name") or assignment.get("persona_key") or ""
+            ),
+        }
+        if isinstance(assignment, dict)
+        else None
+    )
     view_model["detail_revision"] = str(bundle.get("detail_revision") or "")
     return {**account_case, **view_model}
 

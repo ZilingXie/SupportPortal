@@ -1439,6 +1439,26 @@ function renderRouteErrorSummaryPanel() {
   `;
 }
 
+const ACCOUNT_PERSONA_PRESENTATION = Object.freeze({
+  "sid-precise": { style: "Precise", styleKey: "precise" },
+  "sid-bright": { style: "Bright", styleKey: "bright" },
+  "default-support": { style: "Warm", styleKey: "warm" },
+});
+
+function renderPersonaAssignment(item) {
+  if (!isAutomatedRoute(item)) return "";
+  const assignment = item?.persona_assignment;
+  if (!assignment || typeof assignment !== "object") {
+    return `<div class="meta-row persona-assignment"><span class="meta-label">Persona</span><span class="meta-value persona-assignment__value">Not assigned yet</span></div>`;
+  }
+  const personaKey = String(assignment.persona_key || "").trim();
+  const presentation = ACCOUNT_PERSONA_PRESENTATION[personaKey];
+  const displayName = String(assignment.display_name || personaKey || "Unknown Persona").trim();
+  const version = Number(assignment.version);
+  const versionLabel = Number.isInteger(version) && version > 0 ? `v${version}` : "Version unavailable";
+  return `<div class="meta-row persona-assignment"><span class="meta-label">Persona</span><span class="meta-value persona-assignment__value"><strong>${escapeHtml(displayName)}</strong><span class="persona-version-badge">${escapeHtml(versionLabel)}</span>${presentation ? `<span class="persona-style-badge persona-style-badge--${presentation.styleKey}">${presentation.style}</span>` : ""}</span></div>`;
+}
+
 function renderDetailView() {
   const item = state.activeItem;
   if (!item && state.detailLoading) {
@@ -1515,6 +1535,7 @@ function renderDetailView() {
           <span class="meta-label">Status</span>
           <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         </div>
+        ${renderPersonaAssignment(item)}
         ${
           routeClassification.automation_mode
             ? `<div class="meta-row"><span class="meta-label">Automation mode</span><span class="meta-value">${escapeHtml(String(routeClassification.automation_mode).replaceAll("_", " "))}</span></div>`
@@ -1752,7 +1773,7 @@ function renderRerouteStatus() {
   return `
     <div class="reroute-status ${failed || job.status === "failed" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
       <strong>${job.status === "failed" ? "Rerun failed" : "Rerun complete"}</strong>
-      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted</span>
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
     </div>
   `;
 }
