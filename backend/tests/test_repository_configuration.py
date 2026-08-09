@@ -326,6 +326,148 @@ class _BorrowingPool(_FakePool):
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_postgres_account_detail_revision_uses_assignment_in_one_batch_query(self) -> None:
+        account_case = {
+            "account_case_id": "AC-PERSONA-REVISION",
+            "billing_ticket_id": "AC-PERSONA-REVISION",
+            "client_ticket_id": "TK-PERSONA-REVISION",
+            "updated_at": "2026-08-09T00:00:00+00:00",
+        }
+        ticket = {
+            "ticket_id": "TK-PERSONA-REVISION",
+            "updated_at": "2026-08-09T00:00:00+00:00",
+        }
+        assignment = {
+            "persona_key": "sid-precise",
+            "version": 1,
+            "assigned_at": "2026-08-09T01:00:00+00:00",
+            "display_name": "Sid Precise",
+        }
+        empty_message = (None, None, None, None, None, None, None, None)
+        rows = [
+            ("unassigned", account_case, ticket, *empty_message, None, None, None),
+            ("assigned", account_case, ticket, *empty_message, None, None, assignment),
+        ]
+        cursor = _ReusableCursor(fetchall_results=[rows])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            bundles = repository.get_account_case_details(["unassigned", "assigned"])
+
+        self.assertEqual(len(cursor.executed), 1)
+        self.assertNotEqual(
+            bundles["unassigned"]["detail_revision"],
+            bundles["assigned"]["detail_revision"],
+        )
+        self.assertEqual(bundles["assigned"]["persona_assignment"], assignment)
+        query = cursor.executed[0][0][0].as_string()
+        self.assertIn("support_account_persona_assignments", query)
+        self.assertIn("support_account_personas", query)
+        self.assertNotIn("support_account_prompt_versions", query)
+        self.assertNotIn("persona_row.enabled", query)
+
+    def test_postgres_account_list_revisions_use_assignment_in_single_page_queries(self) -> None:
+        assignment = {
+            "persona_key": "sid-precise",
+            "version": 1,
+            "assigned_at": "2026-08-09T01:00:00+00:00",
+            "display_name": "Sid Precise",
+        }
+        columns = (
+            "account_case_id",
+            "billing_ticket_id",
+            "client_ticket_id",
+            "updated_at",
+            "_total",
+            "_filter_counts",
+            "_route_correction",
+            "_latest_reply_job",
+            "_ticket_updated_at",
+            "_message_count",
+            "_latest_message_at",
+            "_persona_assignment",
+        )
+        common = (
+            "2026-08-09T00:00:00+00:00",
+            2,
+            {"all": 2},
+            None,
+            None,
+            "2026-08-09T00:00:00+00:00",
+            0,
+            None,
+        )
+        rows = [
+            ("AC-NULL", "AC-NULL", "TK-NULL", *common, None),
+            ("AC-ASSIGNED", "AC-ASSIGNED", "TK-ASSIGNED", *common, assignment),
+        ]
+        cursor = _ReusableCursor(fetchall_results=[rows])
+        cursor.description = [(name,) for name in columns]
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            items, total, _filter_counts = repository.list_account_case_page_with_filter_counts(
+                limit=10
+            )
+
+        self.assertEqual(len(cursor.executed), 1)
+        self.assertEqual(total, 2)
+        self.assertEqual(len(items), 2)
+        self.assertNotEqual(items[0]["_detail_revision"], items[1]["_detail_revision"])
+        query = cursor.executed[0][0][0].as_string()
+        self.assertIn("support_account_persona_assignments", query)
+        self.assertIn("support_account_personas", query)
+        self.assertNotIn("support_account_prompt_versions", query)
+        self.assertNotIn("persona_row.enabled", query)
+
+        plain_columns = tuple(name for name in columns if name != "_filter_counts")
+        plain_common = (
+            "2026-08-09T00:00:00+00:00",
+            2,
+            None,
+            None,
+            "2026-08-09T00:00:00+00:00",
+            0,
+            None,
+        )
+        plain_rows = [
+            ("AC-NULL", "AC-NULL", "TK-NULL", *plain_common, None),
+            ("AC-ASSIGNED", "AC-ASSIGNED", "TK-ASSIGNED", *plain_common, assignment),
+        ]
+        plain_cursor = _ReusableCursor(fetchall_results=[plain_rows])
+        plain_cursor.description = [(name,) for name in plain_columns]
+        plain_connection = _ReusableConnection(plain_cursor)
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(plain_connection),
+        ):
+            plain_items, plain_total = repository.list_account_case_page(limit=10)
+
+        self.assertEqual(len(plain_cursor.executed), 1)
+        self.assertEqual(plain_total, 2)
+        self.assertEqual(len(plain_items), 2)
+        self.assertNotEqual(
+            plain_items[0]["_detail_revision"],
+            plain_items[1]["_detail_revision"],
+        )
+        plain_query = plain_cursor.executed[0][0][0].as_string()
+        self.assertIn("support_account_persona_assignments", plain_query)
+        self.assertIn("support_account_personas", plain_query)
+        self.assertNotIn("support_account_prompt_versions", plain_query)
+        self.assertNotIn("persona_row.enabled", plain_query)
+
     def test_postgres_single_case_reset_writes_audit_in_the_reset_transaction(self) -> None:
         cursor = _AccountRerunResetCursor()
         connection = _ReusableConnection(cursor)

@@ -1452,7 +1452,9 @@ function renderPersonaAssignment(item) {
     return `<div class="meta-row persona-assignment"><span class="meta-label">Persona</span><span class="meta-value persona-assignment__value">Not assigned yet</span></div>`;
   }
   const personaKey = String(assignment.persona_key || "").trim();
-  const presentation = ACCOUNT_PERSONA_PRESENTATION[personaKey];
+  const presentation = Object.hasOwn(ACCOUNT_PERSONA_PRESENTATION, personaKey)
+    ? ACCOUNT_PERSONA_PRESENTATION[personaKey]
+    : null;
   const displayName = String(assignment.display_name || personaKey || "Unknown Persona").trim();
   const version = Number(assignment.version);
   const versionLabel = Number.isInteger(version) && version > 0 ? `v${version}` : "Version unavailable";

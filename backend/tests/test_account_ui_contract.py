@@ -118,6 +118,7 @@ class AccountUiContractTests(unittest.TestCase):
           unassigned: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: null }}),
           humanReview: renderPersonaAssignment({{ route_status: 'not_automated', persona_assignment: {{ persona_key: 'sid-bright', version: 2, display_name: 'Sid Bright' }} }}),
           custom: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: {{ persona_key: 'custom-calm', version: 4, display_name: 'Custom Calm' }} }}),
+          constructorKey: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: {{ persona_key: 'constructor', version: 5, display_name: 'Constructor Voice' }} }}),
         }}));
         """
         result = subprocess.run(
@@ -137,6 +138,10 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertNotIn("Precise", rendered["custom"])
         self.assertNotIn("Bright", rendered["custom"])
         self.assertNotIn("Warm", rendered["custom"])
+        self.assertIn("Constructor Voice", rendered["constructorKey"])
+        self.assertIn("v5", rendered["constructorKey"])
+        self.assertNotIn("persona-style-badge", rendered["constructorKey"])
+        self.assertNotIn("undefined", rendered["constructorKey"])
 
         detail_start = app_source.index("function renderDetailView")
         detail_end = app_source.index("\nfunction", detail_start + 1)
@@ -376,6 +381,19 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("filterCountsVersion", app_source)
         self.assertIn("countsVersion", app_source)
         self.assertIn("countsVersion >=", app_source)
+        self.assertIn("expectedRevision && entry.revision !== expectedRevision", app_source)
+        self.assertIn(
+            'findDetailCacheEntry(identifier, String(item.detail_revision || ""))',
+            app_source,
+        )
+        self.assertIn(
+            'const expectedRevision = String(summary?.detail_revision || "")',
+            app_source,
+        )
+        self.assertIn(
+            'findDetailCacheEntry(ticketId, String(summary?.detail_revision || ""))',
+            app_source,
+        )
         self.assertIn('window.addEventListener("pagehide"', app_source)
         self.assertIn('document.addEventListener("visibilitychange"', app_source)
         self.assertIn('cache: "no-store"', app_source)

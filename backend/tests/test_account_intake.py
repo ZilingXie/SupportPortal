@@ -3458,12 +3458,13 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "created_at": f"2026-07-28T00:0{index}:00+00:00",
                 }
             )
+            self.repository.resolve_account_persona(ticket_id)
 
-        original_page = self.repository.list_account_case_page
+        original_page = self.repository.list_account_case_page_with_filter_counts
         original_batch = self.repository.get_latest_account_reply_jobs
         with patch.object(
             self.repository,
-            "list_account_case_page",
+            "list_account_case_page_with_filter_counts",
             wraps=original_page,
         ) as page_lookup, patch.object(
             self.repository,
@@ -3481,6 +3482,10 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.repository,
             "get_latest_account_reply_job",
             side_effect=AssertionError("list API must not query reply jobs one ticket at a time"),
+        ), patch.object(
+            self.repository,
+            "get_account_persona_assignment",
+            side_effect=AssertionError("list API must not query Persona assignments one ticket at a time"),
         ):
             response = self.client.get("/api/account/cases?page_size=30&route_status=automation")
 
@@ -3577,6 +3582,77 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(single.status_code, 200, single.text)
         self.assertEqual(batch.status_code, 200, batch.text)
         self.assertEqual(batch.json()["details"], [single.json()])
+
+    def test_account_case_revision_tracks_persona_assignment_identity(self) -> None:
+        ticket_id = "TK-PERSONA-REVISION"
+        case_id = f"BT-{ticket_id}"
+        self._save_billing_ticket(ticket_id=ticket_id, automation_status="automation")
+
+        def revisions() -> tuple[str, str, str]:
+            page = self.client.get("/api/account/cases?page=1&page_size=10")
+            single = self.client.get(f"/api/account/cases/{case_id}")
+            batch = self.client.post(
+                "/api/account/cases/batch-details",
+                json={"case_ids": [case_id]},
+            )
+            self.assertEqual(page.status_code, 200, page.text)
+            self.assertEqual(single.status_code, 200, single.text)
+            self.assertEqual(batch.status_code, 200, batch.text)
+            return (
+                page.json()["cases"][0]["detail_revision"],
+                single.json()["detail_revision"],
+                batch.json()["details"][0]["detail_revision"],
+            )
+
+        unassigned = revisions()
+        self.assertEqual(len(set(unassigned)), 1)
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id] = {
+                "ticket_id": ticket_id,
+                "persona_key": "sid-precise",
+                "version": 1,
+                "assigned_at": "2026-08-09T01:00:00+00:00",
+            }
+        assigned = revisions()
+
+        self.assertEqual(len(set(assigned)), 1)
+        self.assertNotEqual(assigned[0], unassigned[0])
+
+        stable = revisions()
+        self.assertEqual(stable, assigned)
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id]["persona_key"] = "sid-bright"
+        reassigned = revisions()
+        self.assertEqual(len(set(reassigned)), 1)
+        self.assertNotEqual(reassigned[0], assigned[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id]["version"] = 2
+        new_version = revisions()
+        self.assertEqual(len(set(new_version)), 1)
+        self.assertNotEqual(new_version[0], reassigned[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id]["assigned_at"] = (
+                "2026-08-09T01:01:00+00:00"
+            )
+        reassigned_at = revisions()
+        self.assertEqual(len(set(reassigned_at)), 1)
+        self.assertNotEqual(reassigned_at[0], new_version[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_personas["sid-bright"]["display_name"] = "Sid Brighter"
+        renamed = revisions()
+        self.assertEqual(len(set(renamed)), 1)
+        self.assertNotEqual(renamed[0], reassigned_at[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments.pop(ticket_id)
+        cleared = revisions()
+        self.assertEqual(len(set(cleared)), 1)
+        self.assertNotEqual(cleared[0], renamed[0])
+        self.assertEqual(cleared, unassigned)
 
     def test_account_case_details_include_persisted_persona_assignment_without_prompt_content(self) -> None:
         ticket_id = "TK-PERSONA-DETAIL"

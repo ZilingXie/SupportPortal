@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import logging
 import os
 import random
@@ -428,6 +429,7 @@ def _account_case_detail_revision(
     latest_reply_job: dict[str, Any] | None,
     route_correction: dict[str, Any] | None,
     *,
+    persona_assignment: dict[str, Any] | None = None,
     message_count: int | None = None,
     latest_message_at: Any = None,
 ) -> str:
@@ -447,7 +449,22 @@ def _account_case_detail_revision(
         latest_reply_job.get("updated_at") if isinstance(latest_reply_job, dict) else None,
         route_correction.get("updated_at") if isinstance(route_correction, dict) else None,
     )
+    assignment_identity = {
+        field: (
+            _to_iso(persona_assignment.get(field))
+            if isinstance(persona_assignment, dict)
+            and persona_assignment.get(field) is not None
+            else None
+        )
+        for field in ("persona_key", "version", "assigned_at", "display_name")
+    }
     material = "|".join(_to_iso(value) if value is not None else "" for value in parts)
+    material += "|" + json.dumps(
+        assignment_identity,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -1936,6 +1953,21 @@ class InMemoryTicketRepository:
         ]
         latest_reply_jobs = self.get_latest_account_reply_jobs(client_ticket_ids)
         corrections = self.get_billing_route_corrections_for_tickets(billing_ticket_ids)
+        persona_assignments: dict[str, dict[str, Any]] = {}
+        with self._assignment_lock:
+            for ticket_id in client_ticket_ids:
+                assignment = self._account_persona_assignments.get(ticket_id)
+                if not isinstance(assignment, dict):
+                    continue
+                persona = self._account_personas.get(str(assignment.get("persona_key") or ""))
+                persona_assignments[ticket_id] = {
+                    "persona_key": str(assignment["persona_key"]),
+                    "version": int(assignment["version"]),
+                    "assigned_at": assignment["assigned_at"],
+                    "display_name": str(
+                        (persona or {}).get("display_name") or assignment["persona_key"]
+                    ),
+                }
         enriched_items: list[dict[str, Any]] = []
         for item in items:
             record = _account_case_list_record(item)
@@ -1951,6 +1983,7 @@ class InMemoryTicketRepository:
                 ticket,
                 latest_reply_job,
                 correction,
+                persona_assignment=persona_assignments.get(client_ticket_id),
             )
             enriched_items.append(record)
         return enriched_items, total, filter_counts
@@ -2022,6 +2055,7 @@ class InMemoryTicketRepository:
                     ticket,
                     latest_reply_job,
                     correction,
+                    persona_assignment=persona_assignment,
                 ),
             }
         return result
@@ -4782,6 +4816,7 @@ class PostgresTicketRepository:
                         bundle.get("ticket"),
                         bundle.get("latest_reply_job"),
                         bundle.get("route_correction"),
+                        persona_assignment=bundle.get("persona_assignment"),
                     )
                 return result
 
@@ -4847,7 +4882,19 @@ class PostgresTicketRepository:
                         latest_reply.reply_job AS _latest_reply_job,
                         ticket_row.updated_at AS _ticket_updated_at,
                         message_meta.message_count AS _message_count,
-                        message_meta.latest_message_at AS _latest_message_at
+                        message_meta.latest_message_at AS _latest_message_at,
+                        CASE
+                            WHEN persona_assignment_row.ticket_id IS NULL THEN NULL
+                            ELSE JSONB_BUILD_OBJECT(
+                                'persona_key', persona_assignment_row.persona_key,
+                                'version', persona_assignment_row.version,
+                                'assigned_at', persona_assignment_row.assigned_at,
+                                'display_name', COALESCE(
+                                    persona_row.display_name,
+                                    persona_assignment_row.persona_key
+                                )
+                            )
+                        END AS _persona_assignment
                     FROM page_meta
                     LEFT JOIN LATERAL (
                         SELECT * FROM filtered
@@ -4877,6 +4924,10 @@ class PostgresTicketRepository:
                     ) latest_reply ON TRUE
                     LEFT JOIN {} correction_row
                       ON correction_row.billing_ticket_id = page.billing_ticket_id
+                    LEFT JOIN {} persona_assignment_row
+                      ON persona_assignment_row.ticket_id = page.client_ticket_id
+                    LEFT JOIN {} persona_row
+                      ON persona_row.persona_key = persona_assignment_row.persona_key
                     """
                 ).format(
                     selected_columns,
@@ -4886,6 +4937,8 @@ class PostgresTicketRepository:
                     self._table("support_ticket_messages"),
                     self._table("support_account_reply_jobs"),
                     self._table("support_billing_route_corrections"),
+                    self._table("support_account_persona_assignments"),
+                    self._table("support_account_personas"),
                 )
                 cur.execute(
                     query,
@@ -4901,11 +4954,13 @@ class PostgresTicketRepository:
                     record = dict(zip(col_names, row))
                     record.pop("_total", None)
                     if record.get("client_ticket_id") is not None:
+                        persona_assignment = record.pop("_persona_assignment", None)
                         record["_detail_revision"] = _account_case_detail_revision(
                             record,
                             {"updated_at": record.pop("_ticket_updated_at", None)},
                             record.get("_latest_reply_job"),
                             record.get("_route_correction"),
+                            persona_assignment=persona_assignment,
                             message_count=int(record.pop("_message_count", 0) or 0),
                             latest_message_at=record.pop("_latest_message_at", None),
                         )
@@ -4981,7 +5036,19 @@ class PostgresTicketRepository:
                             latest_reply.reply_job AS _latest_reply_job,
                             ticket_row.updated_at AS _ticket_updated_at,
                             message_meta.message_count AS _message_count,
-                            message_meta.latest_message_at AS _latest_message_at
+                            message_meta.latest_message_at AS _latest_message_at,
+                            CASE
+                                WHEN persona_assignment_row.ticket_id IS NULL THEN NULL
+                                ELSE JSONB_BUILD_OBJECT(
+                                    'persona_key', persona_assignment_row.persona_key,
+                                    'version', persona_assignment_row.version,
+                                    'assigned_at', persona_assignment_row.assigned_at,
+                                    'display_name', COALESCE(
+                                        persona_row.display_name,
+                                        persona_assignment_row.persona_key
+                                    )
+                                )
+                            END AS _persona_assignment
                         FROM page_meta
                         CROSS JOIN facet_counts
                         LEFT JOIN LATERAL (
@@ -5012,6 +5079,10 @@ class PostgresTicketRepository:
                         ) latest_reply ON TRUE
                         LEFT JOIN {corrections} correction_row
                           ON correction_row.billing_ticket_id = page.billing_ticket_id
+                        LEFT JOIN {persona_assignments} persona_assignment_row
+                          ON persona_assignment_row.ticket_id = page.client_ticket_id
+                        LEFT JOIN {personas} persona_row
+                          ON persona_row.persona_key = persona_assignment_row.persona_key
                         """
                     ).format(
                         selected_columns=selected_columns,
@@ -5023,6 +5094,8 @@ class PostgresTicketRepository:
                         messages=self._table("support_ticket_messages"),
                         reply_jobs=self._table("support_account_reply_jobs"),
                         corrections=self._table("support_billing_route_corrections"),
+                        persona_assignments=self._table("support_account_persona_assignments"),
+                        personas=self._table("support_account_personas"),
                     )
                     cur.execute(
                         query,
@@ -5043,11 +5116,13 @@ class PostgresTicketRepository:
                         record.pop("_total", None)
                         record.pop("_filter_counts", None)
                         if record.get("client_ticket_id") is not None:
+                            persona_assignment = record.pop("_persona_assignment", None)
                             record["_detail_revision"] = _account_case_detail_revision(
                                 record,
                                 {"updated_at": record.pop("_ticket_updated_at", None)},
                                 record.get("_latest_reply_job"),
                                 record.get("_route_correction"),
+                                persona_assignment=persona_assignment,
                                 message_count=int(record.pop("_message_count", 0) or 0),
                                 latest_message_at=record.pop("_latest_message_at", None),
                             )

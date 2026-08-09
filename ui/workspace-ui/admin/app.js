@@ -1135,10 +1135,16 @@ const AUTOMATION_PERSONA_PRESENTATION = Object.freeze({
   "default-support": { order: 2, style: "Warm", styleKey: "warm" },
 });
 
+function automationPersonaPresentation(personaKey) {
+  return Object.hasOwn(AUTOMATION_PERSONA_PRESENTATION, personaKey)
+    ? AUTOMATION_PERSONA_PRESENTATION[personaKey]
+    : null;
+}
+
 function orderedAutomationPersonas(personas) {
   return [...personas].sort((left, right) => {
-    const leftPresentation = AUTOMATION_PERSONA_PRESENTATION[left.persona_key];
-    const rightPresentation = AUTOMATION_PERSONA_PRESENTATION[right.persona_key];
+    const leftPresentation = automationPersonaPresentation(left.persona_key);
+    const rightPresentation = automationPersonaPresentation(right.persona_key);
     const leftOrder = leftPresentation?.order ?? Number.MAX_SAFE_INTEGER;
     const rightOrder = rightPresentation?.order ?? Number.MAX_SAFE_INTEGER;
     if (leftOrder !== rightOrder) return leftOrder - rightOrder;
@@ -1192,7 +1198,7 @@ function renderAutomationPersonaPanel() {
       </div>
       ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><label><span>Signature</span><textarea name="signature" rows="4" required placeholder="Best,&#10;Sid&#10;Support Engineer 2"></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
       <nav class="admin-persona-list" aria-label="Automation Personas">${personas.map(item => {
-        const presentation = AUTOMATION_PERSONA_PRESENTATION[item.persona_key];
+        const presentation = automationPersonaPresentation(item.persona_key);
         const selected = item.persona_key === persona.persona_key;
         return `<button type="button" data-action="select-persona" data-persona-key="${escapeHtml(item.persona_key)}" class="${selected ? "is-active" : ""}" aria-pressed="${selected ? "true" : "false"}"><span class="admin-persona-list-heading"><strong>${escapeHtml(item.display_name)}</strong>${presentation ? `<span class="admin-persona-style admin-persona-style--${presentation.styleKey}">${presentation.style}</span>` : ""}</span><small>${item.enabled ? "Enabled" : "Disabled"} · Published v${escapeHtml(item.published_version || "-")}</small></button>`;
       }).join("")}</nav>

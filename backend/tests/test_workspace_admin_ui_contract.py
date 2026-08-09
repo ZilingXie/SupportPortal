@@ -248,6 +248,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             """
             agentConfigData = { automation_personas: [
               { persona_key: 'custom-calm', display_name: 'Custom Calm', enabled: true, published_version: 4, versions: [{ version: 4, status: 'published', content: { instruction: 'Calm custom voice', signature: 'Best,\\nSid' } }] },
+              { persona_key: 'constructor', display_name: 'Constructor Voice', enabled: true, published_version: 6, versions: [{ version: 6, status: 'published', content: { instruction: 'Constructor voice', signature: 'Best,\\nSid' } }] },
               { persona_key: 'default-support', display_name: 'Sid Warm', enabled: true, published_version: 3, versions: [{ version: 3, status: 'published', content: { instruction: 'Warm voice', signature: 'Best,\\nSid' } }] },
               { persona_key: 'sid-bright', display_name: 'Sid Bright', enabled: false, published_version: 2, versions: [{ version: 2, status: 'published', content: { instruction: 'Bright voice', signature: 'Best,\\nSid' } }] },
               { persona_key: 'sid-precise', display_name: 'Sid Precise', enabled: true, published_version: 5, versions: [{ version: 5, status: 'published', content: { instruction: 'Precise voice', signature: 'Best,\\nSid' } }] },
@@ -258,15 +259,19 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             const brightIndex = markup.indexOf('data-persona-key="sid-bright"');
             const warmIndex = markup.indexOf('data-persona-key="default-support"');
             const customIndex = markup.indexOf('data-persona-key="custom-calm"');
-            if (!(preciseIndex < brightIndex && brightIndex < warmIndex && warmIndex < customIndex)) throw new Error('seed Persona order is not stable');
+            const constructorIndex = markup.indexOf('data-persona-key="constructor"');
+            if (!(preciseIndex < brightIndex && brightIndex < warmIndex && warmIndex < customIndex && warmIndex < constructorIndex)) throw new Error('seed Persona order is not stable');
             const preciseButton = markup.slice(preciseIndex, markup.indexOf('</button>', preciseIndex));
             const brightButton = markup.slice(brightIndex, markup.indexOf('</button>', brightIndex));
             const warmButton = markup.slice(warmIndex, markup.indexOf('</button>', warmIndex));
             const customButton = markup.slice(customIndex, markup.indexOf('</button>', customIndex));
+            const constructorButton = markup.slice(constructorIndex, markup.indexOf('</button>', constructorIndex));
             if (!preciseButton.includes('Precise') || !preciseButton.includes('Enabled') || !preciseButton.includes('Published v5') || !preciseButton.includes('aria-pressed="true"')) throw new Error('Precise selector contract missing');
             if (!brightButton.includes('Bright') || !brightButton.includes('Disabled') || !brightButton.includes('Published v2') || !brightButton.includes('aria-pressed="false"')) throw new Error('Bright selector contract missing');
             if (!warmButton.includes('Warm') || !warmButton.includes('Enabled') || !warmButton.includes('Published v3')) throw new Error('Warm selector contract missing');
             if (customButton.includes('Precise') || customButton.includes('Bright') || customButton.includes('Warm')) throw new Error('custom Persona received a seed style');
+            if (constructorButton.includes('admin-persona-style') || constructorButton.includes('undefined')) throw new Error('prototype-named custom Persona received a seed style');
+            if (markup.includes('undefined')) throw new Error('Persona selector rendered undefined content');
             if (!markup.includes('randomly selects') || !markup.includes('enabled Personas with a published version') || !markup.includes('pins that exact Persona version')) throw new Error('Persona selection and pinning explanation missing');
             if (!markup.includes('Full reruns clear') || !markup.includes('Reply-only recovery keeps') || !markup.includes('Human Review')) throw new Error('Persona reset and Human Review explanation missing');
             if (!markup.includes('name="instruction"') || !markup.includes('name="signature"')) throw new Error('Instruction and Signature must remain independent fields');
