@@ -169,6 +169,38 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("0 Persona assignments reset", zero)
         self.assertIn("3 Persona assignments reset", nonzero)
 
+    def test_account_rerun_confirmation_explains_persona_reselection_for_single_and_all(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        confirmation_start = app_source.index("function renderRerouteConfirmation")
+        confirmation_end = app_source.index("\nfunction", confirmation_start + 1)
+        confirmation_source = app_source[confirmation_start:confirmation_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? ''); }}
+        const state = {{
+          rerouteConfirmationOpen: true,
+          rerouteTargetSnapshot: null,
+          isStartingReroute: false,
+        }};
+        {confirmation_source}
+        const allCases = renderRerouteConfirmation();
+        state.rerouteTargetSnapshot = {{ caseId: 'AC-12562', ticketNumber: '12562' }};
+        const singleCase = renderRerouteConfirmation();
+        console.log(JSON.stringify([singleCase, allCases]));
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        single_case, all_cases = json.loads(result.stdout)
+        for rendered in (single_case, all_cases):
+            self.assertIn("pinned Persona assignment will be cleared", rendered)
+            self.assertIn("Only if the rerun produces a new Automation customer reply", rendered)
+            self.assertIn("enabled and have a published version", rendered)
+            self.assertIn("same Persona may be selected again", rendered)
+
     def test_account_persona_detail_styles_cover_desktop_tablet_and_mobile_contract(self) -> None:
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
         for marker in (

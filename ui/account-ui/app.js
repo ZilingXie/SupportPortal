@@ -1808,6 +1808,7 @@ function renderRerouteConfirmation() {
               <li>Existing Account-only AI replies and reply jobs will be deleted before each case starts again.</li>
               <li>Account & Billing classification extractors also run again; they never send email or customer replies.</li>
             </ul>`}
+        <p>The pinned Persona assignment will be cleared. Only if the rerun produces a new Automation customer reply will runtime select again from Personas that are enabled and have a published version; the same Persona may be selected again.</p>
         <div class="reroute-modal__actions">
           <button class="ghost-button" type="button" data-action="close-reroute-confirmation">Cancel</button>
           <button class="${singleCase ? "danger-button" : "primary-button"}" type="button" data-action="${singleCase ? "confirm-single-rerun" : "confirm-reroute"}" ${state.isStartingReroute ? "disabled" : ""}>

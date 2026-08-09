@@ -289,6 +289,17 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertIn(".admin-persona-style", styles)
         self.assertIn(".admin-persona-list button:focus-visible", styles)
 
+    def test_automation_router_persona_runtime_explains_unavailable_candidate_handoff(self) -> None:
+        self.run_admin_app_script(
+            """
+            agentConfigData = { automation_personas: [
+              { persona_key: 'sid-precise', display_name: 'Sid Precise', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Precise voice', signature: 'Best,\\nSid' } }] },
+            ] };
+            const markup = renderAutomationPersonaPanel();
+            if (!markup.includes('If no enabled Persona with a published version is available, the reply moves to Human Review and no customer copy is sent.')) throw new Error('Persona unavailable Human Review consequence missing');
+            """
+        )
+
     def test_automation_router_persona_actions_use_persona_lifecycle_api(self) -> None:
         self.run_admin_app_script(
             """

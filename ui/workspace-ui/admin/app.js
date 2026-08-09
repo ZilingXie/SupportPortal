@@ -1188,6 +1188,7 @@ function renderAutomationPersonaPanel() {
       <div class="admin-persona-runtime-notes">
         <p>For the first Account-only customer-facing reply, runtime randomly selects from enabled Personas with a published version and pins that exact Persona version to the case.</p>
         <p>Full reruns clear the assignment so a later reply can select again. Reply-only recovery keeps the pinned assignment. Human Review cases do not receive a Persona.</p>
+        <p>If no enabled Persona with a published version is available, the reply moves to Human Review and no customer copy is sent.</p>
       </div>
       ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><label><span>Signature</span><textarea name="signature" rows="4" required placeholder="Best,&#10;Sid&#10;Support Engineer 2"></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
       <nav class="admin-persona-list" aria-label="Automation Personas">${personas.map(item => {
