@@ -439,6 +439,148 @@ class AccountAdminFeatureTests(unittest.TestCase):
         assert stored_case is not None
         self.assertIsNone(stored_case["customer_reply"])
 
+    def test_claimed_human_review_transition_updates_job_case_and_event_atomically(self) -> None:
+        ticket_id = "TK-CLAIMED-HUMAN-REVIEW"
+        job_id = "account-reply-claimed-human-review"
+        trigger_created_at = "2026-08-08T03:20:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable this feature.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "AC-CLAIMED-HUMAN-REVIEW",
+                "account_case_id": "AC-CLAIMED-HUMAN-REVIEW",
+                "client_ticket_id": ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable this feature.",
+                "route": "enablement",
+                "scope_label": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "tooling_profile": "deterministic_enablement_intake",
+                "automation_status": "automation",
+                "collected_fields": {"app_id": "canonical-app"},
+                "automation_context": {"canonical_marker": "keep"},
+                "route_classification": {
+                    "intent_class": "agora",
+                    "agora_route": "automation",
+                    "automation_subcategory": "enablement",
+                    "canonical_marker": "keep",
+                },
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_queued",
+                "scheduled_for": "2026-08-08T03:21:00+00:00",
+                "payload": {"reply_facts": {"behavior": "enablement"}},
+                "created_at": "2026-08-08T03:20:30+00:00",
+            }
+        )
+        claimed = self.repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-08-08T03:21:30+00:00",
+        )[0]
+
+        transitioned = self.repository.transition_claimed_account_reply_to_human_review(
+            claimed,
+            expected_status="persona_preparing",
+            expected_claimed_at=claimed["claimed_at"],
+            expected_attempt_count=claimed["attempt_count"],
+            reason="no enabled published persona",
+            policy_decision="account_persona_unavailable_human_review",
+            transitioned_at="2026-08-08T03:22:00+00:00",
+        )
+
+        self.assertIsNotNone(transitioned)
+        assert transitioned is not None
+        self.assertEqual(transitioned["status"], "manual_attention")
+        self.assertEqual(transitioned["payload"]["error"], "no enabled published persona")
+        self.assertEqual(transitioned["payload"]["persona_render_status"], "human_review")
+        self.assertEqual(self.repository.get_account_reply_job(job_id), transitioned)
+        stored_case = self.repository.get_billing_ticket("AC-CLAIMED-HUMAN-REVIEW")
+        assert stored_case is not None
+        self.assertEqual(stored_case["route"], "human_review_required")
+        self.assertEqual(stored_case["policy_decision"], "account_persona_unavailable_human_review")
+        self.assertEqual(stored_case["collected_fields"], {"app_id": "canonical-app"})
+        self.assertEqual(stored_case["automation_context"], {"canonical_marker": "keep"})
+        self.assertEqual(stored_case["route_classification"]["canonical_marker"], "keep")
+        self.assertEqual(stored_case["route_classification"]["route_target"], "human_review")
+        events = self.repository.list_ticket_events(ticket_id)
+        self.assertEqual([event["event_type"] for event in events], ["automation_persona_human_review"])
+        self.assertEqual(events[0]["payload"]["job_id"], job_id)
+        self.assertEqual(events[0]["payload"]["reason"], "no enabled published persona")
+
+    def test_claimed_human_review_transition_rolls_back_every_write_on_event_failure(self) -> None:
+        ticket_id = "TK-CLAIMED-HUMAN-REVIEW-ROLLBACK"
+        job_id = "account-reply-claimed-human-review-rollback"
+        trigger_created_at = "2026-08-08T03:30:00+00:00"
+        self.repository.save_ticket({"ticket_id": ticket_id, "messages": []})
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "AC-CLAIMED-HUMAN-REVIEW-ROLLBACK",
+                "account_case_id": "AC-CLAIMED-HUMAN-REVIEW-ROLLBACK",
+                "client_ticket_id": ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable this feature.",
+                "route": "enablement",
+                "scope_label": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "automation_status": "automation",
+                "route_classification": {"intent_class": "agora", "agora_route": "automation"},
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_queued",
+                "scheduled_for": "2026-08-08T03:31:00+00:00",
+                "payload": {},
+                "created_at": "2026-08-08T03:30:30+00:00",
+            }
+        )
+        claimed = self.repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-08-08T03:31:30+00:00",
+        )[0]
+        case_before = self.repository.get_billing_ticket("AC-CLAIMED-HUMAN-REVIEW-ROLLBACK")
+
+        with patch.object(self.repository, "record_event", side_effect=RuntimeError("event write failed")):
+            with self.assertRaisesRegex(RuntimeError, "event write failed"):
+                self.repository.transition_claimed_account_reply_to_human_review(
+                    claimed,
+                    expected_status="persona_preparing",
+                    expected_claimed_at=claimed["claimed_at"],
+                    expected_attempt_count=claimed["attempt_count"],
+                    reason="persona generation failed",
+                    policy_decision="automation_persona_human_review",
+                    transitioned_at="2026-08-08T03:32:00+00:00",
+                )
+
+        self.assertEqual(self.repository.get_account_reply_job(job_id), claimed)
+        self.assertEqual(
+            self.repository.get_billing_ticket("AC-CLAIMED-HUMAN-REVIEW-ROLLBACK"),
+            case_before,
+        )
+        self.assertEqual(self.repository.list_ticket_events(ticket_id), [])
+
     def test_publish_rejects_stale_claim_ownership(self) -> None:
         ticket_id = "TK-STALE-PUBLISH-CLAIM"
         job_id = "account-reply-stale-publish-claim"

@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 import psycopg
@@ -436,6 +437,121 @@ class PostgresAccountReplyPublicationTests(unittest.TestCase):
                 ticket_id=ticket_id,
                 job_id=job_id,
             )
+
+    def test_reset_ticket_fence_prevents_stale_human_review_transition(self) -> None:
+        application_name = "supportportal-human-review-reset-race"
+        transition_application_name = "supportportal-human-review-transition-race"
+        ticket_fence_locked = threading.Event()
+        release_ticket_fence = threading.Event()
+        with self._isolated_repository(
+            application_name=application_name,
+            repository_class=_PausedTicketFenceRepository,
+            ticket_fence_locked=ticket_fence_locked,
+            release_ticket_fence=release_ticket_fence,
+        ) as (repository, schema, runtime_dsn):
+            ticket_id = "TK-HUMAN-REVIEW-RESET-RACE"
+            job_id = "account-reply-human-review-reset-race"
+            job = _seed_publishable_reply(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+            transition_repository = PostgresTicketRepository(
+                runtime_dsn,
+                schema=schema,
+                application_name=transition_application_name,
+            )
+            self.addCleanup(transition_repository.close)
+            with psycopg.connect(runtime_dsn, autocommit=True) as observer:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    reset_future = executor.submit(
+                        repository.reset_account_rerun_state,
+                        ticket_id,
+                        reset_at="2026-08-08T02:03:00+00:00",
+                        rerun_job_id=f"account-rerun-{ticket_id}",
+                        clear_persona_assignment=True,
+                    )
+                    self.assertTrue(ticket_fence_locked.wait(timeout=10))
+                    try:
+                        transition_future = executor.submit(
+                            transition_repository.transition_claimed_account_reply_to_human_review,
+                            job,
+                            expected_status="persona_publishing",
+                            expected_claimed_at=job["claimed_at"],
+                            expected_attempt_count=job["attempt_count"],
+                            reason="persona generation failed",
+                            policy_decision="automation_persona_human_review",
+                            transitioned_at="2026-08-08T02:02:30+00:00",
+                        )
+                        self._wait_for_lock_waiters(
+                            observer,
+                            application_name=transition_application_name,
+                            minimum=1,
+                        )
+                    finally:
+                        release_ticket_fence.set()
+                    reset_result = reset_future.result(timeout=20)
+                    transitioned = transition_future.result(timeout=20)
+
+            self.assertEqual(reset_result["reply_jobs_deleted"], 1)
+            self.assertIsNone(transitioned)
+            self._assert_no_reply_state(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+            stored_case = repository.get_account_case_by_ticket_id(ticket_id)
+            assert stored_case is not None
+            self.assertEqual(stored_case["route"], "enablement")
+            self.assertNotEqual(stored_case.get("policy_decision"), "automation_persona_human_review")
+            self.assertEqual(
+                [
+                    event
+                    for event in repository.list_ticket_events(ticket_id)
+                    if event["event_type"] == "automation_persona_human_review"
+                ],
+                [],
+            )
+
+    def test_human_review_transition_rolls_back_when_event_insert_fails(self) -> None:
+        with self._isolated_repository(
+            application_name="supportportal-human-review-rollback",
+        ) as (repository, _schema, _runtime_dsn):
+            ticket_id = "TK-HUMAN-REVIEW-ROLLBACK"
+            job_id = "account-reply-human-review-rollback"
+            job = _seed_publishable_reply(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+            case_before = repository.get_account_case_by_ticket_id(ticket_id)
+            original_table = repository._table
+
+            def table_with_missing_events(name: str):
+                if name == "support_ticket_events":
+                    return sql.Identifier(repository._schema, "missing_support_ticket_events")
+                return original_table(name)
+
+            with patch.object(repository, "_table", side_effect=table_with_missing_events):
+                with self.assertRaises(psycopg.errors.UndefinedTable):
+                    repository.transition_claimed_account_reply_to_human_review(
+                        job,
+                        expected_status="persona_publishing",
+                        expected_claimed_at=job["claimed_at"],
+                        expected_attempt_count=job["attempt_count"],
+                        reason="persona generation failed",
+                        policy_decision="automation_persona_human_review",
+                        transitioned_at="2026-08-08T02:02:30+00:00",
+                    )
+
+            stored_job = repository.get_account_reply_job(job_id)
+            assert stored_job is not None
+            self.assertEqual(stored_job["status"], job["status"])
+            self.assertEqual(stored_job["payload"], job["payload"])
+            self.assertEqual(stored_job["claimed_at"], job["claimed_at"])
+            self.assertEqual(stored_job["attempt_count"], job["attempt_count"])
+            self.assertEqual(repository.get_account_case_by_ticket_id(ticket_id), case_before)
+            self.assertEqual(repository.list_ticket_events(ticket_id), [])
 
     def test_publish_ticket_fence_does_not_deadlock_existing_case_upsert(self) -> None:
         application_name = "supportportal-publish-upsert-race-test"

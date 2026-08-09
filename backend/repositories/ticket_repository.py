@@ -250,6 +250,60 @@ def _account_case_human_review_reason(item: dict[str, Any]) -> str:
     ).strip()
 
 
+def _account_case_with_human_review_transition(
+    account_case: dict[str, Any],
+    *,
+    reason: str,
+    policy_decision: str,
+    transitioned_at: str,
+) -> dict[str, Any]:
+    from backend.services.account_route_pipeline import classification_labels
+
+    updated = copy.deepcopy(account_case)
+    predicted_action = str(
+        updated.get("execution_action") or updated.get("route") or ""
+    ).strip() or None
+    classification = dict(updated.get("route_classification") or {})
+    classification.update(
+        {
+            "predicted_automation_subcategory": predicted_action,
+            "agora_route": "uncategorized",
+            "automation_subcategory": None,
+            "route_target": "human_review",
+            "human_review_reason": reason,
+            "route_reason_code": reason,
+            "handler_binding_status": "human_review",
+        }
+    )
+    primary_label, secondary_label = classification_labels(classification)
+    classification["primary_label"] = primary_label
+    classification["secondary_label"] = secondary_label
+    updated.update(
+        {
+            "route": "human_review_required",
+            "scope_label": "human_review",
+            "route_family": "human_review",
+            "execution_action": "human_review_required",
+            "tooling_profile": None,
+            "route_reason": reason,
+            "policy_decision": policy_decision,
+            "automation_status": "not_automated",
+            "not_automated_reason": reason,
+            "route_classification": classification,
+            "internal_email_send_status": str(
+                updated.get("internal_email_send_status") or "not_applicable"
+            ),
+            "internal_email_send_reason": reason,
+            "updated_at": transitioned_at,
+            **automation_metadata(
+                route_family="human_review",
+                execution_action="human_review_required",
+            ),
+        }
+    )
+    return updated
+
+
 def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
     """Return the SQL equivalent of account_case_filter_key()."""
     # The default rendered expression intentionally contains bt.route_classification ->> 'intent_class',
@@ -1333,6 +1387,17 @@ class TicketRepository(Protocol):
         expected_claimed_at: str | None,
         expected_attempt_count: int,
     ) -> dict[str, Any] | None: ...
+    def transition_claimed_account_reply_to_human_review(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+        reason: str,
+        policy_decision: str,
+        transitioned_at: str,
+    ) -> dict[str, Any] | None: ...
     def publish_account_reply(
         self,
         job: dict[str, Any],
@@ -2249,6 +2314,88 @@ class InMemoryTicketRepository:
             saved["attempt_count"] = int(saved.get("attempt_count") or 0)
             self._account_reply_jobs[job_id] = saved
             return copy.deepcopy(saved)
+
+    def transition_claimed_account_reply_to_human_review(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+        reason: str,
+        policy_decision: str,
+        transitioned_at: str,
+    ) -> dict[str, Any] | None:
+        job_id = str(job.get("job_id") or "").strip()
+        ticket_id = str(job.get("ticket_id") or "").strip()
+        if not job_id or not ticket_id:
+            return None
+        with self._assignment_lock:
+            current = self._account_reply_jobs.get(job_id)
+            if (
+                current is None
+                or ticket_id not in self._tickets
+                or not _account_reply_job_matches_claim(
+                    current,
+                    job,
+                    expected_status=expected_status,
+                    expected_claimed_at=expected_claimed_at,
+                    expected_attempt_count=expected_attempt_count,
+                )
+            ):
+                return None
+
+            case_key = next(
+                (
+                    billing_ticket_id
+                    for billing_ticket_id, account_case in self._billing_tickets.items()
+                    if str(account_case.get("client_ticket_id") or "").strip() == ticket_id
+                ),
+                None,
+            )
+            job_snapshot = copy.deepcopy(current)
+            case_snapshot = (
+                copy.deepcopy(self._billing_tickets[case_key])
+                if case_key is not None
+                else None
+            )
+            events_snapshot = copy.deepcopy(self._events)
+            try:
+                saved = copy.deepcopy(job)
+                payload = dict(saved.get("payload") or {})
+                payload["error"] = reason
+                payload["persona_render_status"] = "human_review"
+                saved["payload"] = payload
+                saved["status"] = "manual_attention"
+                saved["updated_at"] = transitioned_at
+                self._account_reply_jobs[job_id] = saved
+
+                if case_key is not None and case_snapshot is not None:
+                    transitioned_case = _account_case_with_human_review_transition(
+                        case_snapshot,
+                        reason=reason,
+                        policy_decision=policy_decision,
+                        transitioned_at=transitioned_at,
+                    )
+                    self._billing_tickets[case_key] = transitioned_case
+                    self.record_event(
+                        ticket_id,
+                        "automation_persona_human_review",
+                        {
+                            "event": "automation_persona_human_review",
+                            "ticket_id": ticket_id,
+                            "job_id": job_id,
+                            "reason": reason,
+                            "created_at": transitioned_at,
+                        },
+                    )
+                return copy.deepcopy(saved)
+            except Exception:
+                self._account_reply_jobs[job_id] = job_snapshot
+                if case_key is not None and case_snapshot is not None:
+                    self._billing_tickets[case_key] = case_snapshot
+                self._events = events_snapshot
+                raise
 
     def publish_account_reply(
         self,
@@ -10839,6 +10986,152 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry(
             "update_claimed_account_reply_job",
+            _operation,
+        )
+
+    def transition_claimed_account_reply_to_human_review(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+        reason: str,
+        policy_decision: str,
+        transitioned_at: str,
+    ) -> dict[str, Any] | None:
+        job_id = str(job.get("job_id") or "").strip()
+        ticket_id = str(job.get("ticket_id") or "").strip()
+        if not job_id or not ticket_id:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                if not self._lock_account_reply_ticket(cur, ticket_id):
+                    return None
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,ticket_id,trigger_message_created_at,status,claimed_at,attempt_count "
+                        "FROM {} WHERE job_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (job_id,),
+                )
+                job_row = cur.fetchone()
+                current = (
+                    {
+                        "job_id": str(job_row[0]),
+                        "ticket_id": str(job_row[1]),
+                        "trigger_message_created_at": _to_iso(job_row[2]),
+                        "status": str(job_row[3]),
+                        "claimed_at": (
+                            _to_iso(job_row[4]) if job_row[4] is not None else None
+                        ),
+                        "attempt_count": int(job_row[5] or 0),
+                    }
+                    if job_row is not None
+                    else None
+                )
+                if current is None or not _account_reply_job_matches_claim(
+                    current,
+                    job,
+                    expected_status=expected_status,
+                    expected_claimed_at=expected_claimed_at,
+                    expected_attempt_count=expected_attempt_count,
+                ):
+                    return None
+
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (ticket_id,),
+                )
+                case_row = cur.fetchone()
+                case_columns = (
+                    [description[0] for description in cur.description]
+                    if case_row is not None
+                    else []
+                )
+                canonical_case = (
+                    dict(zip(case_columns, case_row)) if case_row is not None else None
+                )
+
+                saved = copy.deepcopy(job)
+                payload = dict(saved.get("payload") or {})
+                payload["error"] = reason
+                payload["persona_render_status"] = "human_review"
+                saved["payload"] = payload
+                saved["status"] = "manual_attention"
+                saved["updated_at"] = transitioned_at
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='manual_attention',payload=%s,updated_at=%s "
+                        "WHERE job_id=%s"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (Json(payload), transitioned_at, job_id),
+                )
+
+                if canonical_case is not None:
+                    transitioned_case = _account_case_with_human_review_transition(
+                        canonical_case,
+                        reason=reason,
+                        policy_decision=policy_decision,
+                        transitioned_at=transitioned_at,
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET route=%s,scope_label=%s,route_family=%s,"
+                            "execution_action=%s,tooling_profile=%s,route_reason=%s,"
+                            "policy_decision=%s,automation_status=%s,not_automated_reason=%s,"
+                            "route_classification=%s,internal_email_send_status=%s,"
+                            "internal_email_send_reason=%s,category=%s,subcategory=%s,"
+                            "route_status=%s,automation_handler=%s,updated_at=%s "
+                            "WHERE billing_ticket_id=%s"
+                        ).format(self._table("support_account_cases")),
+                        (
+                            transitioned_case.get("route"),
+                            transitioned_case.get("scope_label"),
+                            transitioned_case.get("route_family"),
+                            transitioned_case.get("execution_action"),
+                            transitioned_case.get("tooling_profile"),
+                            transitioned_case.get("route_reason"),
+                            transitioned_case.get("policy_decision"),
+                            transitioned_case.get("automation_status"),
+                            transitioned_case.get("not_automated_reason"),
+                            Json(transitioned_case.get("route_classification") or {}),
+                            transitioned_case.get("internal_email_send_status"),
+                            transitioned_case.get("internal_email_send_reason"),
+                            transitioned_case.get("category"),
+                            transitioned_case.get("subcategory"),
+                            transitioned_case.get("route_status"),
+                            transitioned_case.get("automation_handler"),
+                            transitioned_at,
+                            str(canonical_case.get("billing_ticket_id") or ""),
+                        ),
+                    )
+                    event_payload = {
+                        "event": "automation_persona_human_review",
+                        "ticket_id": ticket_id,
+                        "job_id": job_id,
+                        "reason": reason,
+                        "created_at": transitioned_at,
+                    }
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (ticket_id,event_type,payload,created_at) "
+                            "VALUES (%s,%s,%s,%s)"
+                        ).format(self._table("support_ticket_events")),
+                        (
+                            ticket_id,
+                            "automation_persona_human_review",
+                            Json(event_payload),
+                            transitioned_at,
+                        ),
+                    )
+                return saved
+
+        return self._run_with_connection_retry(
+            "transition_claimed_account_reply_to_human_review",
             _operation,
         )
 

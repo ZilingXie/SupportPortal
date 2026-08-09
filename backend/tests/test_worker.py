@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 import types
 import unittest
@@ -15,6 +17,7 @@ if importlib.util.find_spec("psycopg") is None:
 
 import psycopg
 
+from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.account_admin import AccountPersonaUnavailableError
 
@@ -2706,6 +2709,17 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.resolve_account_persona_for_claimed_reply.side_effect = AccountPersonaUnavailableError(
             "no enabled published persona"
         )
+        transitioned_job = copy.deepcopy(job)
+        transitioned_job.update(
+            status="manual_attention",
+            payload={
+                **copy.deepcopy(job["payload"]),
+                "error": "no enabled published persona",
+                "persona_render_status": "human_review",
+            },
+            updated_at="2026-03-22T00:01:00+00:00",
+        )
+        repository.transition_claimed_account_reply_to_human_review.return_value = transitioned_job
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "render_automation_reply"
@@ -2715,15 +2729,21 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(job["status"], "manual_attention")
         self.assertEqual(job["payload"]["persona_render_status"], "human_review")
         self.assertEqual(job["payload"]["error"], "no enabled published persona")
-        self.assertEqual(account_case["route"], "human_review_required")
-        self.assertEqual(account_case["not_automated_reason"], "no enabled published persona")
-        self.assertEqual(account_case["category"], "human_review")
-        self.assertEqual(account_case["subcategory"], "human_review_required")
-        self.assertEqual(account_case["route_status"], "not_automated")
-        self.assertIsNone(account_case["automation_handler"])
-        self.assertIsNone(account_case["tooling_profile"])
-        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
-        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+        transition_call = repository.transition_claimed_account_reply_to_human_review.call_args
+        self.assertIs(transition_call.args[0], job)
+        self.assertEqual(transition_call.kwargs["expected_status"], "preparing")
+        self.assertIsNone(transition_call.kwargs["expected_claimed_at"])
+        self.assertEqual(transition_call.kwargs["expected_attempt_count"], 0)
+        self.assertEqual(transition_call.kwargs["reason"], "no enabled published persona")
+        self.assertEqual(
+            transition_call.kwargs["policy_decision"],
+            "account_persona_unavailable_human_review",
+        )
+        self.assertTrue(transition_call.kwargs["transitioned_at"])
+        repository.save_account_reply_job.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
         render.assert_not_called()
         repository.publish_account_reply.assert_not_called()
 
@@ -2769,6 +2789,17 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.resolve_account_persona_for_claimed_reply.side_effect = AccountPersonaUnavailableError(
             "no enabled published persona"
         )
+        transitioned_job = copy.deepcopy(job)
+        transitioned_job.update(
+            status="manual_attention",
+            payload={
+                **copy.deepcopy(job["payload"]),
+                "error": "no enabled published persona",
+                "persona_render_status": "human_review",
+            },
+            updated_at="2026-03-22T00:01:00+00:00",
+        )
+        repository.transition_claimed_account_reply_to_human_review.return_value = transitioned_job
         resolution = types.SimpleNamespace(
             answer="Please share the App ID.",
             evidence_summary=None,
@@ -2783,14 +2814,20 @@ class WorkerResilienceTests(unittest.TestCase):
 
         self.assertEqual(job["status"], "manual_attention")
         self.assertEqual(job["payload"]["persona_render_status"], "human_review")
-        self.assertEqual(account_case["route"], "human_review_required")
-        self.assertEqual(account_case["category"], "human_review")
-        self.assertEqual(account_case["subcategory"], "human_review_required")
-        self.assertEqual(account_case["route_status"], "not_automated")
-        self.assertIsNone(account_case["automation_handler"])
-        self.assertIsNone(account_case["tooling_profile"])
-        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
-        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+        transition_call = repository.transition_claimed_account_reply_to_human_review.call_args
+        self.assertIs(transition_call.args[0], job)
+        self.assertEqual(transition_call.kwargs["expected_status"], "preparing")
+        self.assertIsNone(transition_call.kwargs["expected_claimed_at"])
+        self.assertEqual(transition_call.kwargs["expected_attempt_count"], 0)
+        self.assertEqual(transition_call.kwargs["reason"], "no enabled published persona")
+        self.assertEqual(
+            transition_call.kwargs["policy_decision"],
+            "account_persona_unavailable_human_review",
+        )
+        repository.save_account_reply_job.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
         apply_persona.assert_not_called()
         repository.publish_account_reply.assert_not_called()
 
@@ -2833,6 +2870,17 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = ticket
         repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+        transitioned_job = copy.deepcopy(job)
+        transitioned_job.update(
+            status="manual_attention",
+            payload={
+                **copy.deepcopy(job["payload"]),
+                "error": "no enabled published persona",
+                "persona_render_status": "human_review",
+            },
+            updated_at="2026-03-22T00:01:00+00:00",
+        )
+        repository.transition_claimed_account_reply_to_human_review.return_value = transitioned_job
         resolution = types.SimpleNamespace(
             answer="",
             route_family="human_review",
@@ -2847,15 +2895,18 @@ class WorkerResilienceTests(unittest.TestCase):
 
         self.assertEqual(job["status"], "manual_attention")
         self.assertEqual(job["payload"]["persona_render_status"], "human_review")
-        self.assertEqual(account_case["policy_decision"], "account_persona_unavailable_human_review")
-        self.assertEqual(account_case["route"], "human_review_required")
-        self.assertEqual(account_case["category"], "human_review")
-        self.assertEqual(account_case["subcategory"], "human_review_required")
-        self.assertEqual(account_case["route_status"], "not_automated")
-        self.assertIsNone(account_case["automation_handler"])
-        self.assertIsNone(account_case["tooling_profile"])
-        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
-        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+        transition_call = repository.transition_claimed_account_reply_to_human_review.call_args
+        self.assertIs(transition_call.args[0], job)
+        self.assertEqual(transition_call.kwargs["expected_status"], "preparing")
+        self.assertEqual(transition_call.kwargs["reason"], "no enabled published persona")
+        self.assertEqual(
+            transition_call.kwargs["policy_decision"],
+            "account_persona_unavailable_human_review",
+        )
+        repository.save_account_reply_job.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
         repository.resolve_account_persona.assert_not_called()
         repository.publish_account_reply.assert_not_called()
 
@@ -2902,6 +2953,19 @@ class WorkerResilienceTests(unittest.TestCase):
                 repository.get_account_reply_job.return_value = job
                 repository.get_ticket.return_value = ticket
                 repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
+                transitioned_job = copy.deepcopy(job)
+                transitioned_job.update(
+                    status="manual_attention",
+                    payload={
+                        **copy.deepcopy(job["payload"]),
+                        "error": "no enabled published persona",
+                        "persona_render_status": "human_review",
+                    },
+                    updated_at="2026-03-22T00:01:00+00:00",
+                )
+                repository.transition_claimed_account_reply_to_human_review.return_value = (
+                    transitioned_job
+                )
                 resolution = types.SimpleNamespace(
                     answer="",
                     route_family="human_review",
@@ -2914,8 +2978,20 @@ class WorkerResilienceTests(unittest.TestCase):
                 ):
                     worker._prepare_account_reply_job(job)
 
-                self.assertEqual(account_case["policy_decision"], "automation_persona_human_review")
-                self.assertEqual(account_case["route"], "human_review_required")
+                self.assertEqual(job["status"], "manual_attention")
+                repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+                transition_call = (
+                    repository.transition_claimed_account_reply_to_human_review.call_args
+                )
+                self.assertIs(transition_call.args[0], job)
+                self.assertEqual(transition_call.kwargs["expected_status"], "preparing")
+                self.assertEqual(
+                    transition_call.kwargs["policy_decision"],
+                    "automation_persona_human_review",
+                )
+                repository.save_account_reply_job.assert_not_called()
+                repository.save_billing_ticket.assert_not_called()
+                repository.record_event.assert_not_called()
                 repository.resolve_account_persona.assert_not_called()
 
     def test_internal_followups_persona_unavailable_do_not_publish_customer_copy(self) -> None:
@@ -3489,6 +3565,131 @@ class WorkerResilienceTests(unittest.TestCase):
         move_to_human_review.assert_not_called()
         apply_persona.assert_not_called()
 
+    def test_human_review_transition_stops_after_reset_wins_in_memory_fence(self) -> None:
+        ticket_id = "TK-HUMAN-REVIEW-RESET-FENCE"
+        job_id = "account-reply-human-review-reset-fence"
+        trigger_created_at = "2026-03-22T00:00:00+00:00"
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable the feature.",
+                        "created_at": trigger_created_at,
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Old Account reply",
+                        "source": "account_ai",
+                        "meta": {"account_reply_job_id": job_id},
+                        "created_at": "2026-03-22T00:00:30+00:00",
+                    },
+                ],
+            }
+        )
+        repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "AC-HUMAN-REVIEW-RESET-FENCE",
+                "account_case_id": "AC-HUMAN-REVIEW-RESET-FENCE",
+                "client_ticket_id": ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable this feature.",
+                "route": "enablement",
+                "scope_label": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "automation_status": "automation",
+                "customer_reply": "Old Account reply",
+                "route_classification": {
+                    "intent_class": "agora",
+                    "agora_route": "automation",
+                    "automation_subcategory": "enablement",
+                },
+            }
+        )
+        repository.resolve_account_persona(ticket_id)
+        repository.save_account_reply_execution(
+            {"execution_id": f"reply-{job_id}", "ticket_id": ticket_id}
+        )
+        repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_queued",
+                "scheduled_for": "2026-03-22T00:01:00+00:00",
+                "payload": {"reply_facts": {"behavior": "enablement"}},
+                "created_at": "2026-03-22T00:00:45+00:00",
+            }
+        )
+        claimed = repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-03-22T00:01:30+00:00",
+        )[0]
+        ticket = repository.get_ticket(ticket_id)
+        assert ticket is not None
+        original_transition = repository.transition_claimed_account_reply_to_human_review
+        transition_started = threading.Event()
+        release_transition = threading.Event()
+
+        def delayed_transition(*args, **kwargs):
+            transition_started.set()
+            if not release_transition.wait(timeout=5):
+                raise TimeoutError("test did not release claimed human-review transition")
+            return original_transition(*args, **kwargs)
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        transition_future = None
+        try:
+            with patch.object(
+                repository,
+                "transition_claimed_account_reply_to_human_review",
+                side_effect=delayed_transition,
+            ), patch.object(worker, "ticket_repository", repository):
+                transition_future = executor.submit(
+                    worker._move_automation_reply_to_human_review,
+                    claimed,
+                    ticket,
+                    "no enabled published persona",
+                    policy_decision="account_persona_unavailable_human_review",
+                )
+                self.assertTrue(transition_started.wait(timeout=5))
+                reset_result = repository.reset_account_rerun_state(
+                    ticket_id,
+                    reset_at="2026-03-22T00:02:00+00:00",
+                    rerun_job_id="account-rerun-human-review-reset-fence",
+                    clear_persona_assignment=True,
+                )
+                release_transition.set()
+                transition_future.result(timeout=5)
+        finally:
+            release_transition.set()
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        self.assertEqual(reset_result["reply_jobs_deleted"], 1)
+        self.assertEqual(reset_result["reply_executions_deleted"], 1)
+        self.assertEqual(reset_result["persona_assignments_deleted"], 1)
+        self.assertEqual(reset_result["ai_messages_deleted"], 1)
+        self.assertEqual(reset_result["customer_replies_cleared"], 1)
+        self.assertIsNone(repository.get_account_reply_job(job_id))
+        self.assertIsNone(repository.get_account_persona_assignment(ticket_id))
+        self.assertEqual(repository.list_account_reply_executions(ticket_id), [])
+        stored_ticket = repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertEqual([message["role"] for message in stored_ticket["messages"]], ["customer"])
+        stored_case = repository.get_billing_ticket("AC-HUMAN-REVIEW-RESET-FENCE")
+        assert stored_case is not None
+        self.assertEqual(stored_case["route"], "enablement")
+        self.assertIsNone(stored_case["customer_reply"])
+        self.assertNotEqual(stored_case.get("policy_decision"), "account_persona_unavailable_human_review")
+        self.assertNotIn(
+            "automation_persona_human_review",
+            [event["event_type"] for event in repository.list_ticket_events(ticket_id)],
+        )
+
     def test_internal_reply_renders_with_persisted_persona_assignment(self) -> None:
         account_case = {
             "account_case_id": "AC-PERSONA-INTERNAL",
@@ -3746,6 +3947,17 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = ticket
         repository.get_billing_ticket_by_client_ticket_id.return_value = billing_ticket
+        transitioned_job = copy.deepcopy(job)
+        transitioned_job.update(
+            status="manual_attention",
+            payload={
+                **copy.deepcopy(job["payload"]),
+                "error": "automation_persona_missing_credentials",
+                "persona_render_status": "human_review",
+            },
+            updated_at="2026-03-22T00:02:00+00:00",
+        )
+        repository.transition_claimed_account_reply_to_human_review.return_value = transitioned_job
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
@@ -3755,14 +3967,27 @@ class WorkerResilienceTests(unittest.TestCase):
             worker._publish_account_reply_job(job)
 
         self.assertEqual(job["status"], "manual_attention")
-        self.assertEqual(billing_ticket["route"], "human_review_required")
+        self.assertEqual(job["payload"]["persona_render_status"], "human_review")
+        self.assertEqual(job["payload"]["error"], "automation_persona_missing_credentials")
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+        transition_call = repository.transition_claimed_account_reply_to_human_review.call_args
+        self.assertIs(transition_call.args[0], job)
+        self.assertEqual(transition_call.kwargs["expected_status"], "publishing")
+        self.assertIsNone(transition_call.kwargs["expected_claimed_at"])
+        self.assertEqual(transition_call.kwargs["expected_attempt_count"], 0)
         self.assertEqual(
-            billing_ticket["policy_decision"],
+            transition_call.kwargs["policy_decision"],
             "automation_persona_human_review",
         )
-        self.assertEqual(billing_ticket["internal_email_send_status"], "sent")
+        self.assertEqual(
+            transition_call.kwargs["reason"],
+            "automation_persona_missing_credentials",
+        )
         self.assertEqual(len(ticket["messages"]), 1)
-        repository.record_event.assert_called_once()
+        repository.save_account_reply_job.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
+        repository.publish_account_reply.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -704,46 +704,19 @@ def _move_automation_reply_to_human_review(
 ) -> None:
     """Stop an Automation send when Persona generation is unavailable."""
     expected_status = str(job.get("status") or "")
-    if not _account_reply_claim_is_current(
+    transitioned = ticket_repository.transition_claimed_account_reply_to_human_review(
         job,
-        ticket_repository.get_account_reply_job(str(job.get("job_id") or "")),
         expected_status=expected_status,
-    ):
-        return
-    timestamp = now_iso()
-    payload = dict(job.get("payload") or {})
-    payload["error"] = reason
-    payload["persona_render_status"] = "human_review"
-    job["payload"] = payload
-    job["status"] = "manual_attention"
-    job["updated_at"] = timestamp
-    if not _update_claimed_account_reply_job(job, expected_status=expected_status):
-        return
-    billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(
-        str(ticket.get("ticket_id") or job.get("ticket_id") or "")
+        expected_claimed_at=job.get("claimed_at"),
+        expected_attempt_count=int(job.get("attempt_count") or 0),
+        reason=reason,
+        policy_decision=policy_decision,
+        transitioned_at=now_iso(),
     )
-    if billing_ticket is not None:
-        _mark_account_case_for_human_review(
-            billing_ticket,
-            reason=reason,
-            timestamp=timestamp,
-            policy_decision=policy_decision,
-        )
-        billing_ticket["internal_email_send_status"] = str(
-            billing_ticket.get("internal_email_send_status") or "not_applicable"
-        )
-        ticket_repository.save_billing_ticket(billing_ticket)
-        ticket_repository.record_event(
-            str(ticket.get("ticket_id") or job.get("ticket_id") or ""),
-            "automation_persona_human_review",
-            {
-                "event": "automation_persona_human_review",
-                "ticket_id": str(ticket.get("ticket_id") or job.get("ticket_id") or ""),
-                "job_id": str(job.get("job_id") or ""),
-                "reason": reason,
-                "created_at": timestamp,
-            },
-        )
+    if not isinstance(transitioned, dict):
+        return
+    job.clear()
+    job.update(transitioned)
 
 
 def _mark_account_case_for_human_review(
