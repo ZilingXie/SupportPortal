@@ -2703,7 +2703,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = ticket
         repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
-        repository.resolve_account_persona.side_effect = AccountPersonaUnavailableError(
+        repository.resolve_account_persona_for_claimed_reply.side_effect = AccountPersonaUnavailableError(
             "no enabled published persona"
         )
 
@@ -2766,7 +2766,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = ticket
         repository.get_billing_ticket_by_client_ticket_id.return_value = account_case
-        repository.resolve_account_persona.side_effect = AccountPersonaUnavailableError(
+        repository.resolve_account_persona_for_claimed_reply.side_effect = AccountPersonaUnavailableError(
             "no enabled published persona"
         )
         resolution = types.SimpleNamespace(
@@ -3297,7 +3297,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "ticket_id": "TK-PERSONA-PIN",
             "messages": [{"role": "customer", "content": "Please enable the feature."}],
         }
-        repository.resolve_account_persona.return_value = assignment
+        repository.resolve_account_persona_for_claimed_reply.return_value = assignment
         rendered = types.SimpleNamespace(
             content="Please share the App ID.",
             model="persona-model",
@@ -3309,7 +3309,13 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             worker._prepare_account_reply_job(job)
 
-        repository.resolve_account_persona.assert_called_once_with("TK-PERSONA-PIN")
+        repository.resolve_account_persona_for_claimed_reply.assert_called_once_with(
+            job,
+            expected_status="preparing",
+            expected_claimed_at=None,
+            expected_attempt_count=0,
+        )
+        repository.resolve_account_persona.assert_not_called()
         self.assertEqual(job["payload"]["persona_key"], "sid-bright")
         self.assertEqual(job["payload"]["persona_version"], 2)
         self.assertEqual(job["payload"]["effective_prompt"], assignment["content"])
@@ -3341,7 +3347,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 }
             ],
         }
-        repository.resolve_account_persona.return_value = assignment
+        repository.resolve_account_persona_for_claimed_reply.return_value = assignment
         resolution = types.SimpleNamespace(
             answer="Please share the App ID.",
             evidence_summary=None,
@@ -3354,11 +3360,134 @@ class WorkerResilienceTests(unittest.TestCase):
         ), patch.object(worker, "apply_persona_to_customer_reply", return_value="Pinned draft") as apply_persona:
             worker._prepare_account_reply_job(job)
 
-        repository.resolve_account_persona.assert_called_once_with("TK-LEGACY-PIN")
+        repository.resolve_account_persona_for_claimed_reply.assert_called_once_with(
+            job,
+            expected_status="preparing",
+            expected_claimed_at=None,
+            expected_attempt_count=0,
+        )
+        repository.resolve_account_persona.assert_not_called()
         apply_persona.assert_called_once_with("Please share the App ID.", assignment)
         self.assertEqual(job["payload"]["persona_key"], "sid-precise")
         self.assertEqual(job["payload"]["persona_version"], 4)
         self.assertEqual(job["payload"]["effective_prompt"], assignment["content"])
+
+    def test_reply_facts_prepare_stops_silently_when_persona_claim_is_lost(self) -> None:
+        job = {
+            "job_id": "account-reply-persona-lost-claim",
+            "ticket_id": "TK-PERSONA-LOST-CLAIM",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "persona_preparing",
+            "claimed_at": "2026-03-22T00:01:00+00:00",
+            "attempt_count": 2,
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "request_missing_information",
+                }
+            },
+        }
+        original_job = copy.deepcopy(job)
+        repository = Mock()
+        repository.get_account_reply_job.return_value = copy.deepcopy(job)
+        repository.get_ticket.return_value = {
+            "ticket_id": job["ticket_id"],
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": job["trigger_message_created_at"],
+                }
+            ],
+        }
+        repository.resolve_account_persona_for_claimed_reply.return_value = None
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply"
+        ) as render, patch.object(
+            worker, "resolve_support_message"
+        ) as legacy_resolver, patch.object(
+            worker, "_move_automation_reply_to_human_review"
+        ) as move_to_human_review:
+            worker._prepare_account_reply_job(job)
+
+        repository.resolve_account_persona_for_claimed_reply.assert_called_once_with(
+            job,
+            expected_status="persona_preparing",
+            expected_claimed_at="2026-03-22T00:01:00+00:00",
+            expected_attempt_count=2,
+        )
+        self.assertEqual(job, original_job)
+        repository.resolve_account_persona.assert_not_called()
+        repository.update_claimed_account_reply_job.assert_not_called()
+        repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
+        repository.publish_account_reply.assert_not_called()
+        move_to_human_review.assert_not_called()
+        render.assert_not_called()
+        legacy_resolver.assert_not_called()
+
+    def test_legacy_prepare_stops_silently_when_persona_claim_is_lost(self) -> None:
+        job = {
+            "job_id": "account-reply-legacy-lost-claim",
+            "ticket_id": "TK-LEGACY-LOST-CLAIM",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "preparing",
+            "claimed_at": "2026-03-22T00:01:00+00:00",
+            "attempt_count": 1,
+            "payload": {},
+        }
+        original_job = copy.deepcopy(job)
+        repository = Mock()
+        repository.get_account_reply_job.return_value = copy.deepcopy(job)
+        repository.get_ticket.return_value = {
+            "ticket_id": job["ticket_id"],
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": job["trigger_message_created_at"],
+                }
+            ],
+        }
+        repository.resolve_account_persona_for_claimed_reply.return_value = None
+        repository.resolve_account_persona.return_value = {
+            "persona_key": "sid-bright",
+            "version": 1,
+            "content": {"instruction": "Bright"},
+        }
+        resolution = types.SimpleNamespace(
+            answer="Please share the App ID.",
+            evidence_summary=None,
+            answer_route="enablement",
+            route_reason="registered_enablement",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "resolve_support_message", return_value=resolution
+        ), patch.object(
+            worker, "apply_persona_to_customer_reply"
+        ) as apply_persona, patch.object(
+            worker, "_move_automation_reply_to_human_review"
+        ) as move_to_human_review:
+            worker._prepare_account_reply_job(job)
+
+        repository.resolve_account_persona_for_claimed_reply.assert_called_once_with(
+            job,
+            expected_status="preparing",
+            expected_claimed_at="2026-03-22T00:01:00+00:00",
+            expected_attempt_count=1,
+        )
+        self.assertEqual(job, original_job)
+        repository.resolve_account_persona.assert_not_called()
+        repository.update_claimed_account_reply_job.assert_not_called()
+        repository.get_billing_ticket_by_client_ticket_id.assert_not_called()
+        repository.save_billing_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
+        repository.publish_account_reply.assert_not_called()
+        move_to_human_review.assert_not_called()
+        apply_persona.assert_not_called()
 
     def test_internal_reply_renders_with_persisted_persona_assignment(self) -> None:
         account_case = {

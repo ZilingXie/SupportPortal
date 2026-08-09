@@ -1365,6 +1365,14 @@ class TicketRepository(Protocol):
     def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]: ...
     def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]: ...
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
+    def resolve_account_persona_for_claimed_reply(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+    ) -> dict[str, Any] | None: ...
     def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]: ...
     def get_account_persona_assignment(self, ticket_id: str) -> dict[str, Any] | None: ...
     def sync_prompt_catalog(self, definitions: list[dict[str, Any]], *, actor_id: str, created_at: str) -> dict[str, Any]: ...
@@ -2568,22 +2576,53 @@ class InMemoryTicketRepository:
             persona["enabled"] = bool(enabled)
             return copy.deepcopy(persona)
 
+    def _resolve_account_persona_locked(self, ticket_id: str) -> dict[str, Any]:
+        assigned = self._account_persona_assignments.get(ticket_id)
+        if assigned:
+            return copy.deepcopy(assigned)
+        candidate = _choose_account_persona(self._eligible_account_persona_candidates())
+        assigned = {
+            "ticket_id": ticket_id,
+            "persona_key": candidate["persona_key"],
+            "version": candidate["version"],
+            "content": copy.deepcopy(candidate["content"]),
+            "assigned_at": _utc_now(),
+        }
+        self._account_persona_assignments[ticket_id] = assigned
+        return copy.deepcopy(assigned)
+
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id).strip()
         with self._assignment_lock:
-            assigned = self._account_persona_assignments.get(normalized_ticket_id)
-            if assigned:
-                return copy.deepcopy(assigned)
-            candidate = _choose_account_persona(self._eligible_account_persona_candidates())
-            assigned = {
-                "ticket_id": normalized_ticket_id,
-                "persona_key": candidate["persona_key"],
-                "version": candidate["version"],
-                "content": copy.deepcopy(candidate["content"]),
-                "assigned_at": _utc_now(),
-            }
-            self._account_persona_assignments[normalized_ticket_id] = assigned
-            return copy.deepcopy(assigned)
+            return self._resolve_account_persona_locked(normalized_ticket_id)
+
+    def resolve_account_persona_for_claimed_reply(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+    ) -> dict[str, Any] | None:
+        job_id = str(job.get("job_id") or "").strip()
+        ticket_id = str(job.get("ticket_id") or "").strip()
+        if not job_id or not ticket_id:
+            return None
+        with self._assignment_lock:
+            current = self._account_reply_jobs.get(job_id)
+            if (
+                current is None
+                or ticket_id not in self._tickets
+                or not _account_reply_job_matches_claim(
+                    current,
+                    job,
+                    expected_status=expected_status,
+                    expected_claimed_at=expected_claimed_at,
+                    expected_attempt_count=expected_attempt_count,
+                )
+            ):
+                return None
+            return self._resolve_account_persona_locked(ticket_id)
 
     def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]:
         return self.resolve_account_persona(ticket_id)
@@ -11228,6 +11267,52 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("set_account_persona_enabled", _operation)
 
+    def _resolve_account_persona_with_locked_ticket(
+        self,
+        cur: psycopg.Cursor[Any],
+        ticket_id: str,
+    ) -> dict[str, Any]:
+        assignments_table = self._table("support_account_persona_assignments")
+        personas_table = self._table("support_account_personas")
+        versions_table = self._table("support_account_prompt_versions")
+        assignment_query = sql.SQL(
+            "SELECT a.persona_key,a.version,v.content,a.assigned_at "
+            "FROM {} a JOIN {} v ON v.persona_key=a.persona_key "
+            "AND v.version=a.version WHERE a.ticket_id=%s"
+        ).format(assignments_table, versions_table)
+        cur.execute(assignment_query, (ticket_id,))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+                sql.SQL(
+                    "SELECT p.persona_key,p.published_version,v.content "
+                    "FROM {} p JOIN {} v ON v.persona_key=p.persona_key "
+                    "AND v.version=p.published_version "
+                    "WHERE p.enabled=TRUE AND p.published_version IS NOT NULL "
+                    "AND v.status='published' ORDER BY p.persona_key"
+                ).format(personas_table, versions_table)
+            )
+            choice = _choose_account_persona(cur.fetchall())
+            cur.execute(
+                sql.SQL(
+                    "INSERT INTO {} (ticket_id,persona_key,version,assigned_at) "
+                    "VALUES (%s,%s,%s,%s) ON CONFLICT (ticket_id) DO NOTHING"
+                ).format(assignments_table),
+                (ticket_id, choice[0], choice[1], _utc_now()),
+            )
+            # A concurrent resolver may have won the unique insert; its persisted row is canonical.
+            cur.execute(assignment_query, (ticket_id,))
+            row = cur.fetchone()
+        if row is None:
+            raise RuntimeError("Account Persona assignment was not persisted")
+        return {
+            "ticket_id": ticket_id,
+            "persona_key": str(row[0]),
+            "version": int(row[1]),
+            "content": dict(row[2]),
+            "assigned_at": _to_iso(row[3]),
+        }
+
     def resolve_account_persona(self, ticket_id: str) -> dict[str, Any]:
         normalized = str(ticket_id).strip()
 
@@ -11235,48 +11320,63 @@ class PostgresTicketRepository:
             with conn.transaction(), conn.cursor() as cur:
                 if not self._lock_account_reply_ticket(cur, normalized):
                     raise ValueError("ticket not found")
-                assignments_table = self._table("support_account_persona_assignments")
-                personas_table = self._table("support_account_personas")
-                versions_table = self._table("support_account_prompt_versions")
-                assignment_query = sql.SQL(
-                    "SELECT a.persona_key,a.version,v.content,a.assigned_at "
-                    "FROM {} a JOIN {} v ON v.persona_key=a.persona_key "
-                    "AND v.version=a.version WHERE a.ticket_id=%s"
-                ).format(assignments_table, versions_table)
-                cur.execute(assignment_query, (normalized,))
-                row = cur.fetchone()
-                if row is None:
-                    cur.execute(
-                        sql.SQL(
-                            "SELECT p.persona_key,p.published_version,v.content "
-                            "FROM {} p JOIN {} v ON v.persona_key=p.persona_key "
-                            "AND v.version=p.published_version "
-                            "WHERE p.enabled=TRUE AND p.published_version IS NOT NULL "
-                            "AND v.status='published' ORDER BY p.persona_key"
-                        ).format(personas_table, versions_table)
-                    )
-                    choice = _choose_account_persona(cur.fetchall())
-                    cur.execute(
-                        sql.SQL(
-                            "INSERT INTO {} (ticket_id,persona_key,version,assigned_at) "
-                            "VALUES (%s,%s,%s,%s) ON CONFLICT (ticket_id) DO NOTHING"
-                        ).format(assignments_table),
-                        (normalized, choice[0], choice[1], _utc_now()),
-                    )
-                    # A concurrent resolver may have won the unique insert; its persisted row is canonical.
-                    cur.execute(assignment_query, (normalized,))
-                    row = cur.fetchone()
-                if row is None:
-                    raise RuntimeError("Account Persona assignment was not persisted")
-                return {
-                    "ticket_id": normalized,
-                    "persona_key": str(row[0]),
-                    "version": int(row[1]),
-                    "content": dict(row[2]),
-                    "assigned_at": _to_iso(row[3]),
-                }
+                return self._resolve_account_persona_with_locked_ticket(cur, normalized)
 
         return self._run_with_connection_retry("resolve_account_persona", _operation)
+
+    def resolve_account_persona_for_claimed_reply(
+        self,
+        job: dict[str, Any],
+        *,
+        expected_status: str,
+        expected_claimed_at: str | None,
+        expected_attempt_count: int,
+    ) -> dict[str, Any] | None:
+        job_id = str(job.get("job_id") or "").strip()
+        ticket_id = str(job.get("ticket_id") or "").strip()
+        if not job_id or not ticket_id:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                if not self._lock_account_reply_ticket(cur, ticket_id):
+                    return None
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,ticket_id,trigger_message_created_at,status,claimed_at,attempt_count "
+                        "FROM {} WHERE job_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (job_id,),
+                )
+                job_row = cur.fetchone()
+                current = (
+                    {
+                        "job_id": str(job_row[0]),
+                        "ticket_id": str(job_row[1]),
+                        "trigger_message_created_at": _to_iso(job_row[2]),
+                        "status": str(job_row[3]),
+                        "claimed_at": (
+                            _to_iso(job_row[4]) if job_row[4] is not None else None
+                        ),
+                        "attempt_count": int(job_row[5] or 0),
+                    }
+                    if job_row is not None
+                    else None
+                )
+                if current is None or not _account_reply_job_matches_claim(
+                    current,
+                    job,
+                    expected_status=expected_status,
+                    expected_claimed_at=expected_claimed_at,
+                    expected_attempt_count=expected_attempt_count,
+                ):
+                    return None
+                return self._resolve_account_persona_with_locked_ticket(cur, ticket_id)
+
+        return self._run_with_connection_retry(
+            "resolve_account_persona_for_claimed_reply",
+            _operation,
+        )
 
     def resolve_published_account_persona(self, ticket_id: str) -> dict[str, Any]:
         return self.resolve_account_persona(ticket_id)

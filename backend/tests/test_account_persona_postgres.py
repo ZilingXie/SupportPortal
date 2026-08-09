@@ -802,6 +802,98 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             new_assignment["persona_key"],
         )
 
+    def test_claim_scoped_resolver_waits_for_reset_then_leaves_no_assignment(self) -> None:
+        ticket_id = "TK-PERSONA-CLAIM-RESET-RACE"
+        job_id = "account-reply-persona-claim-reset-race"
+        trigger_created_at = "2026-08-08T06:00:00+00:00"
+        self._initialize_persona_assignment_ticket(ticket_id)
+        self.repository.resolve_account_persona(ticket_id)
+        self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_queued",
+                "scheduled_for": "2026-08-08T06:01:00+00:00",
+                "payload": {"reply_facts": {"behavior": "enablement"}},
+                "created_at": "2026-08-08T06:00:30+00:00",
+                "updated_at": "2026-08-08T06:00:30+00:00",
+            }
+        )
+        claimed = self.repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-08-08T06:01:30+00:00",
+        )[0]
+        claimed_assignment = self.repository.resolve_account_persona_for_claimed_reply(
+            claimed,
+            expected_status="persona_preparing",
+            expected_claimed_at=claimed["claimed_at"],
+            expected_attempt_count=claimed["attempt_count"],
+        )
+        self.assertIsNotNone(claimed_assignment)
+        self.assertEqual(self._assignment_count(ticket_id), 1)
+        resolver_application_name = f"account-persona-claim-reset-{uuid4().hex}"
+        resolver_repository = self._repository(application_name=resolver_application_name)
+        self.addCleanup(resolver_repository.close)
+        executor = ThreadPoolExecutor(max_workers=1)
+        resolver_future = None
+        try:
+            with psycopg.connect(
+                self.dsn,
+                connect_timeout=_TEST_CONNECT_TIMEOUT_SECONDS,
+            ) as reset_connection:
+                with reset_connection.transaction(), reset_connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL lock_timeout = '15s'")
+                    cursor.execute("SET LOCAL statement_timeout = '60s'")
+                    cursor.execute(
+                        sql.SQL("SELECT ticket_id FROM {} WHERE ticket_id=%s FOR UPDATE").format(
+                            sql.Identifier(self.schema, "support_tickets")
+                        ),
+                        (ticket_id,),
+                    )
+                    self.assertIsNotNone(cursor.fetchone())
+                    cursor.execute(
+                        sql.SQL("DELETE FROM {} WHERE ticket_id=%s").format(
+                            sql.Identifier(self.schema, "support_account_reply_jobs")
+                        ),
+                        (ticket_id,),
+                    )
+                    self.assertEqual(cursor.rowcount, 1)
+                    cursor.execute(
+                        sql.SQL("DELETE FROM {} WHERE ticket_id=%s").format(
+                            sql.Identifier(self.schema, "support_account_persona_assignments")
+                        ),
+                        (ticket_id,),
+                    )
+                    self.assertEqual(cursor.rowcount, 1)
+                    resolver_future = executor.submit(
+                        resolver_repository.resolve_account_persona_for_claimed_reply,
+                        claimed,
+                        expected_status="persona_preparing",
+                        expected_claimed_at=claimed["claimed_at"],
+                        expected_attempt_count=claimed["attempt_count"],
+                    )
+                    resolver_waited, last_state = self._wait_for_application_lock(
+                        resolver_application_name,
+                        timeout=5,
+                    )
+                    self.assertTrue(
+                        resolver_waited,
+                        "claim-scoped resolver bypassed the reset ticket fence; "
+                        f"last state={last_state!r}",
+                    )
+
+            assert resolver_future is not None
+            resolved = resolver_future.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS)
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        self.assertIsNone(resolved)
+        self.assertIsNone(self.repository.get_account_reply_job(job_id))
+        self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
+        self.assertEqual(self._assignment_count(ticket_id), 0)
+
     def test_concurrent_disable_rejects_one_when_only_two_eligible_personas_remain(self) -> None:
         self._initialize_persona_assignment_ticket("TK-PERSONA-DISABLE")
         self._set_persona_registry_pointer(DEFAULT_PERSONA_KEY, 99)

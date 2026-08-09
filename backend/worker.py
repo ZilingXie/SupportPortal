@@ -385,6 +385,19 @@ def _update_claimed_account_reply_job(
     ) is not None
 
 
+def _resolve_account_persona_for_claimed_reply(
+    job: dict[str, Any],
+    *,
+    expected_status: str,
+) -> dict[str, Any] | None:
+    return ticket_repository.resolve_account_persona_for_claimed_reply(
+        job,
+        expected_status=expected_status,
+        expected_claimed_at=job.get("claimed_at"),
+        expected_attempt_count=int(job.get("attempt_count") or 0),
+    )
+
+
 def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
@@ -405,7 +418,10 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
         if not payload.get("persona_key") or not payload.get("effective_prompt"):
             try:
-                persona = ticket_repository.resolve_account_persona(ticket_id)
+                persona = _resolve_account_persona_for_claimed_reply(
+                    job,
+                    expected_status=claimed_status,
+                )
             except AccountPersonaUnavailableError as exc:
                 _move_automation_reply_to_human_review(
                     job,
@@ -413,6 +429,8 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                     str(exc),
                     policy_decision="account_persona_unavailable_human_review",
                 )
+                return
+            if persona is None:
                 return
             if not isinstance(persona, dict):
                 _move_automation_reply_to_human_review(
@@ -524,7 +542,10 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         job["status"] = "manual_attention"
     else:
         try:
-            persona = ticket_repository.resolve_account_persona(ticket_id)
+            persona = _resolve_account_persona_for_claimed_reply(
+                job,
+                expected_status=claimed_status,
+            )
         except AccountPersonaUnavailableError as exc:
             _move_automation_reply_to_human_review(
                 job,
@@ -532,6 +553,8 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                 str(exc),
                 policy_decision="account_persona_unavailable_human_review",
             )
+            return
+        if persona is None:
             return
         rendered_by_automation_persona = bool(
             isinstance(resolution.evidence_summary, dict)

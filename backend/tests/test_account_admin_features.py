@@ -367,6 +367,78 @@ class AccountAdminFeatureTests(unittest.TestCase):
             second_claim,
         )
 
+    def test_claim_scoped_persona_resolver_cannot_recreate_reset_assignment(self) -> None:
+        ticket_id = "TK-RESET-CLAIMED-PERSONA"
+        job_id = "account-reply-reset-claimed-persona"
+        trigger_created_at = "2026-08-08T03:10:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable this feature.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "AC-RESET-CLAIMED-PERSONA",
+                "account_case_id": "AC-RESET-CLAIMED-PERSONA",
+                "client_ticket_id": ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable this feature.",
+                "automation_status": "automation",
+                "customer_reply": "Old generated reply",
+            }
+        )
+        self.repository.resolve_account_persona(ticket_id)
+        self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_queued",
+                "scheduled_for": "2026-08-08T03:11:00+00:00",
+                "payload": {"reply_facts": {"behavior": "enablement"}},
+                "created_at": "2026-08-08T03:10:30+00:00",
+            }
+        )
+        claimed = self.repository.claim_account_reply_jobs(
+            from_status="persona_queued",
+            to_status="persona_preparing",
+            now_value="2026-08-08T03:11:30+00:00",
+        )[0]
+        self.assertEqual(self.repository.get_account_reply_job(job_id), claimed)
+
+        reset_result = self.repository.reset_account_rerun_state(
+            ticket_id,
+            reset_at="2026-08-08T03:12:00+00:00",
+            rerun_job_id="account-rerun-reset-claimed-persona",
+            clear_persona_assignment=True,
+        )
+        resolved = self.repository.resolve_account_persona_for_claimed_reply(
+            claimed,
+            expected_status="persona_preparing",
+            expected_claimed_at=claimed["claimed_at"],
+            expected_attempt_count=claimed["attempt_count"],
+        )
+
+        self.assertIsNone(resolved)
+        self.assertEqual(reset_result["reply_jobs_deleted"], 1)
+        self.assertEqual(reset_result["persona_assignments_deleted"], 1)
+        self.assertIsNone(self.repository.get_account_reply_job(job_id))
+        self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
+        self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertEqual([message["role"] for message in stored_ticket["messages"]], ["customer"])
+        stored_case = self.repository.get_billing_ticket("AC-RESET-CLAIMED-PERSONA")
+        assert stored_case is not None
+        self.assertIsNone(stored_case["customer_reply"])
+
     def test_publish_rejects_stale_claim_ownership(self) -> None:
         ticket_id = "TK-STALE-PUBLISH-CLAIM"
         job_id = "account-reply-stale-publish-claim"
