@@ -53,7 +53,6 @@ SAFE_CASE_FIELDS = (
     "ai_reply_job_id",
     "ai_reply_scheduled_for",
     "internal_email_send_status",
-    "internal_email_send_reason",
     "detail_revision",
 )
 SAFE_JOB_FIELDS = (

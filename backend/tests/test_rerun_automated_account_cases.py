@@ -159,6 +159,91 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             )
             self.assertEqual(persona_call["headers"]["Authorization"], "Bearer secret-admin-token")
 
+    def test_internal_email_reason_never_enters_dry_run_apply_or_resume_artifacts(self) -> None:
+        sensitive_reason = (
+            "customer=leak-target@example.com "
+            "Authorization: Bearer p1-sensitive-token "
+            "smtp_password=p1-top-secret"
+        )
+        sensitive_case = {
+            **_case("AC-SENSITIVE"),
+            "internal_email_send_reason": sensitive_reason,
+        }
+        forbidden_artifact_text = (
+            "internal_email_send_reason",
+            sensitive_reason,
+            "leak-target@example.com",
+            "Bearer p1-sensitive-token",
+            "smtp_password=p1-top-secret",
+        )
+
+        def assert_artifacts_are_safe(operation_dir: Path) -> None:
+            persisted = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in operation_dir.rglob("*")
+                if path.is_file()
+            )
+            for forbidden in forbidden_artifact_text:
+                self.assertNotIn(forbidden, persisted)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir = runner.create_dry_run(
+                base_url="http://127.0.0.1:8000",
+                operations_root=Path(temporary),
+                request_json=_discovery_request([sensitive_case]),
+                access_token="runner-access-token",
+            )
+            assert_artifacts_are_safe(operation_dir)
+
+            clock = Clock()
+
+            def timeout_handler(call: dict[str, object]) -> dict[str, object]:
+                parsed = urlsplit(str(call["path"]))
+                if parsed.path == "/health":
+                    return {"app_build": {"ref": "build-1"}}
+                if parsed.path == "/api/workspace/admin/account-personas":
+                    return _personas()
+                if parsed.path == "/api/account/cases/AC-SENSITIVE":
+                    return dict(sensitive_case)
+                if call["method"] == "POST":
+                    return {"job_id": "job-sensitive", "status": "queued"}
+                if parsed.path == "/api/account/rerun-jobs/job-sensitive":
+                    return {"job_id": "job-sensitive", "status": "running"}
+                raise AssertionError(call)
+
+            timed_out = runner.apply_operation(
+                operation_dir,
+                request_json=FakeRequest(timeout_handler),
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+                poll_timeout_seconds=2,
+                poll_interval_seconds=1,
+            )
+            self.assertEqual(timed_out["items"]["AC-SENSITIVE"]["status"], "resumable")
+            assert_artifacts_are_safe(operation_dir)
+
+            def resume_handler(call: dict[str, object]) -> dict[str, object]:
+                parsed = urlsplit(str(call["path"]))
+                if parsed.path == "/health":
+                    return {"app_build": {"ref": "build-1"}}
+                if parsed.path == "/api/workspace/admin/account-personas":
+                    return _personas()
+                if parsed.path == "/api/account/rerun-jobs/job-sensitive":
+                    return {"job_id": "job-sensitive", "status": "completed"}
+                if parsed.path == "/api/account/cases/AC-SENSITIVE":
+                    return dict(sensitive_case)
+                raise AssertionError(call)
+
+            resume = FakeRequest(resume_handler)
+            completed = runner.apply_operation(
+                operation_dir,
+                request_json=resume,
+                sleep=lambda _value: None,
+            )
+            self.assertEqual(completed["items"]["AC-SENSITIVE"]["status"], "completed")
+            self.assertFalse(any(call["method"] == "POST" for call in resume.calls))
+            assert_artifacts_are_safe(operation_dir)
+
     def test_apply_requires_an_existing_dry_run_and_loopback_url(self) -> None:
         with self.assertRaises(runner.OperationError):
             runner.validate_base_url("https://support.example.com")
