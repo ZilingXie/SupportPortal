@@ -1467,13 +1467,14 @@
             <li><strong>Fraud fields：</strong>Suhird 明确 required 与 optional fields。</li>
             <li><strong>Clarification：</strong>已落地同一规范化字段最多询问一次；未回答时停止重复追问并保留人工处理状态。</li>
             <li><strong>Reply timing：</strong>已为所有 <code>/account</code> 客户消息落地持久化 6–10 分钟随机延迟，AI 回复只发布在 account thread。</li>
-            <li><strong>Prompt：</strong>维护不同人设的受控回复模板、发布版本、比较与回滚。</li>
-            <li><strong>Automation reply：</strong>Behavior 只提取结构化事实；intake、延迟 job 和 Outlook follow-up 均在最终发送前统一调用 Automation Persona，失败直接进入 Human Review。</li>
+            <li><strong>Persona：</strong>Sid Precise、Sid Bright、Sid Warm 是三套独立版本化的 thin Persona presets，共用 Signature；首次回复从 enabled/published candidates 随机选择并固定精确版本。</li>
+            <li><strong>Automation reply：</strong>Behavior 只提取结构化事实；intake、延迟 job 和 Outlook follow-up 均复用 Case 已固定的 Automation Persona，并由共享 renderer 生成最终客户文案，失败直接进入 Human Review。</li>
             <li><strong>Scope：</strong>自动化覆盖 account verification、account suspension、detailed invoice 与 enablement。</li>
             <li><strong>Metrics：</strong>以全部 /account ticket 为分母展示 routed-to-Automated 占比，并据此决定是否扩充 category。</li>
             <li><strong>Account filters：</strong>/account 默认使用 All，并按 Automation、Account &amp; Billing、Conversation、Human Review 等 route group/leaf 提供分页和同一快照的 case counts。</li>
-            <li><strong>Single Case operations：</strong>/account 可按 ticket # 精准打开 Case，并对单 Case 执行仅保留客户消息、保留独立 workspace audit 的完整 Rerun。</li>
-            <li><strong>Admin：</strong>新增 Automated Cases 与 Environment Config 控制面；Route Strategy 已合并到 Agent Config 的 Agent-only 层级导航，route outcome 仅在 Overview 解释，Automation Router 统一管理 Persona 并原位展开具体行为的 Prompt 或 deterministic capability。Agent Config 继续支持 Prompt Draft、Scheduled、Active、Diff、Restore 与历史版本，并绑定每日成功部署统一生效。</li>
+            <li><strong>Single Case operations：</strong>/account 可按 ticket # 精准打开 Case，并对单 Case 执行仅保留客户消息、保留独立 workspace audit 的完整 Rerun；reset 会清除旧 Persona assignment，仍需 Automation 回复时再独立随机选择并固定版本。</li>
+            <li><strong>Admin：</strong>新增 Automated Cases 与 Environment Config 控制面；Route Strategy 已合并到 Agent Config 的 Agent-only 层级导航，route outcome 仅在 Overview 解释。Automation Router 在唯一 Persona workspace 中独立管理三套 preset 的 Draft、Publish、Rollback 与 Enable/Disable，具体 Behavior 仍只原位管理 Prompt 或 deterministic capability。</li>
+            <li><strong>Rollout：</strong>已提供 dry-run-first、可恢复的 operator-controlled Automated-only rerun 工具；它冻结操作开始时的 Automated Case 集合并逐单调用完整 Rerun，部署不会自动执行这次一次性数据操作。</li>
           </ul>
           <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-&gt;</span></a>
         </article>
@@ -2080,8 +2081,10 @@ flowchart TD
         status: "doing",
         thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router 和 Automation Router，并同时记录大标签、小标签与稳定 reason code。Account & Billing 以 account_suspension、other 为子类；Automation 以 fraud_account、detailed_invoice、enablement、quota 作为规范 subcategory。`/client` 继续使用原共享 Router。",
         done: [
-          { summary: "`/account` 已强制采用当前三层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行三层路由、Field Extractor 与 Automation handler reconciliation。每个 Case 保留客户消息和路由审计，旧 Account AI 回复、reply job 与 reply execution 会先物理删除，再按 delivery binding 重建内部邮件与 Persona 回复。", prs: [] },
-          { summary: "`/account` 已支持按 ticket # 精准搜索，并可对单 Case 执行完整 Rerun：客户消息原样保留，所有 AI、Engineer、Manual 与 Internal 消息以及当前 route correction 被清除，独立 workspace audit 持久保留。", prs: [] },
+          { summary: "`/account` 已强制采用当前三层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行三层路由、Field Extractor 与 Automation handler reconciliation。每个 Case 保留客户消息和路由审计，旧 Account AI 回复、reply job、reply execution 与 Persona assignment 会先清除，再按 delivery binding 重建内部邮件，并在需要回复时重新随机选择并固定 Persona 版本。", prs: [] },
+          { summary: "`/account` 已支持按 ticket # 精准搜索，并可对单 Case 执行完整 Rerun：客户消息原样保留，所有 AI、Engineer、Manual 与 Internal 消息、当前 route correction 及旧 Persona assignment 被清除，独立 workspace audit 持久保留。", prs: [] },
+          { summary: "Automation Persona registry 已交付 Sid Precise、Sid Bright、Sid Warm 三套独立 preset；首次回复从 enabled/published candidates 随机选择并固定精确版本，后续发布或停用不改写现有 assignment。", prs: [] },
+          { summary: "已提供 dry-run-first、可恢复的 Automated-only rollout runner，由操作员审核冻结集合后逐单执行完整 Rerun；一次性 live data operation 不由部署自动触发。", prs: [] },
           { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；非风控 Account Suspension 已迁移到 `category=account_billing`，由 Account & Billing Router 分类并仅提取上下文，不触发追问、邮件或客户回复。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Quota handler 已支持配额审核、并发提升和 Big Event 容量报备；系统以 LLM 收集产品、App ID、目标容量与活动信息，最多追问一次后发送内部邮件并处理 Outlook 回复。", prs: [] },
@@ -2121,9 +2124,11 @@ flowchart TD
         ],
         architecture: {
           title: "Automated Case Flow: Route -> Handler -> Customer Follow-up",
-          summary: "Automation category 通过 subcategory 选择已注册 handler；Behavior 只提取字段和处理事实，intake、延迟 job 与 Outlook reply follow-up 在最终发送前统一由 Automation Persona 生成客户文案。Persona 或事实抽取失败时转 Human Review，不发送兜底文案。",
+          summary: "Automation category 通过 subcategory 选择已注册 handler；Behavior 只提取字段和处理事实。首次客户回复从三套 enabled/published Persona presets 随机选择并固定精确版本，intake、延迟 job 与 Outlook reply follow-up 均复用该 assignment；完整 Rerun 先清除 assignment。Persona 或事实抽取失败时转 Human Review，不发送兜底文案。",
           mermaid: [
             "flowchart TD",
+            "  OP[\"Operator-reviewed Automated-only rollout\"] -->|freeze IDs; sequential complete rerun| RR[\"Complete single-Case Rerun\"]",
+            "  RR -->|clear Persona assignment; route again| R",
             "  Z[\"Zendesk webhook / N8n internal forward\"] --> I[\"Billing intake: content + external_id + comments + metadata\"]",
             "  I --> R[\"Support router\"]",
             "  R -->|route_family=automated| B{\"Automation subcategory registered?\"}",
@@ -2133,6 +2138,7 @@ flowchart TD
             "  B --> BA[\"Billing handler: registered subcategory intake\"]",
             "  BA --> C{\"required info complete?\"}",
             "  C -->|no| Q[\"AI asks customer for missing fields\"]",
+            "  Q --> CR",
             "  C -->|yes| E[\"Internal email to billing owner/team\"]",
             "  E --> O[\"Outlook reply: subject contains [Billing Request]\"]",
             "  O --> P[\"Poll unread Inbox replies\"]",
@@ -2140,11 +2146,12 @@ flowchart TD
             "  D --> SA[\"Store PDF as ticket asset\"]",
             "  SA --> CR",
             "  P --> FX[\"LLM extract resolution facts\"]",
-            "  FX --> CR[\"Automation Persona final customer reply\"]",
+            "  FX --> CR[\"Shared Automation Persona renderer\"]",
+            "  PR[\"3 enabled + published Persona presets\"] -->|random first assignment; pin key + version| CR",
             "  CR -->|completed or refused| CL[\"Customer notified / close or await review\"]",
             "  CR -->|customer action required| WA[\"Ask customer for action / wait for reply\"]"
           ].join("\n"),
-          note: "新 Billing 请求不生成 response token/link；`/response` 只服务历史兼容。Outlook 回复轮询不启用 OCR：PDF 只作为客户工单附件转发，handler 成功后才标记邮件已读。重复 intake 由幂等记录返回原结果或拒绝并发重复处理。"
+          note: "新 Billing 请求不生成 response token/link；`/response` 只服务历史兼容。Outlook 回复轮询不启用 OCR：PDF 只作为客户工单附件转发，handler 成功后才标记邮件已读。重复 intake 由幂等记录返回原结果或拒绝并发重复处理。Automated-only rollout runner 已交付但一次性 live data operation 仍需部署后由操作员明确启动。"
         },
         sources: [
           "docs/prompt_change_log.md",

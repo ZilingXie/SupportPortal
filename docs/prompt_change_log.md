@@ -12,6 +12,38 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-07 - Automation Persona presets and random pinned assignment
+
+- Area or subsystem: `/account` Automation Persona registry and assignment
+- Prompt or model version: `automation-persona-presets-v1`; shared Automation Persona renderer and model configuration unchanged
+- Summary: Added three independently versioned thin Persona presets: `Sid Precise`, `Sid Bright`, and `Sid Warm`. They share the exact multiline Signature `Best,\nSid\nSupport Engineer 2` while keeping their precise, bright, or warm writing-style guidance separate.
+- Reason: Operators need to manage and compare distinct writing styles without duplicating factual or behavioral instructions per Automation Behavior. Random first assignment across eligible Personas avoids a deterministic Ticket-ID allocation while a pinned version keeps each Case voice consistent.
+- Affected files or config:
+  - `backend/services/account_admin.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `ui/workspace-ui/admin/app.js`, `ui/workspace-ui/admin/index.html`, `ui/workspace-ui/admin/styles.css`
+  - `ui/account-ui/app.js`, `ui/account-ui/index.html`, `ui/account-ui/styles.css`
+  - `scripts/ops/rerun_automated_account_cases.py`, `scripts/rerun_automated_account_cases.py`, `scripts/recover_account_rerun.py`
+- Expected behavior change:
+  - The registry initializes the three presets with independent version histories and preserves later operator-managed publish, rollback, enable, and disable decisions.
+  - The first customer-visible Automation reply selects randomly from enabled Personas with a published version and atomically pins the selected Persona key and exact version; later intake, delayed, recovery, and Outlook follow-up paths reuse that assignment.
+  - A complete single-Case or batch Rerun clears the existing assignment before routing again. A Case that remains Automated selects independently when it next needs a reply and may select the same Persona again.
+  - If no enabled and published Persona is available, generation fails closed to Human Review without fallback customer copy.
+  - A dry-run-first, resumable operator tool can freeze and rerun only Cases that are Automated at the start of the one-time rollout; deployment does not execute that data operation automatically.
+- Verification:
+  - `rtk .venv/bin/python -m unittest backend.tests.test_account_reroute_dispatch backend.tests.test_rerun_automated_account_cases backend.tests.test_startup_repository_fallbacks -q` (68 passed)
+  - `rtk .venv/bin/python -m unittest backend.tests.test_repository_configuration -q` (104 passed)
+  - `rtk .venv/bin/python -m unittest backend.tests.test_account_ui_contract -q` (22 passed)
+  - `RUN_ACCOUNT_REROUTE_POSTGRES_TEST=true rtk .venv/bin/python -m unittest backend.tests.test_account_reroute_jobs_postgres -v` (13 passed, 0 skipped)
+  - `rtk python3 scripts/verify_feature_list.py`
+  - `rtk rg -n "automation-persona-presets-v1|Sid Precise|Sid Bright|Sid Warm|random" design.md docs/prompt_change_log.md docs/feature_list.md docs/roadmap.html`
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_roadmap_contract.RoadmapContractTests.test_billing_and_route_plans_reflect_meeting_next_steps backend.tests.test_roadmap_contract.RoadmapContractTests.test_existing_product_lanes_and_architecture_still_render -q` (2 passed)
+  - `rtk git diff --check`
+  - Pending post-merge live verification: `/health.status` is healthy and `app_build.ref` equals merged `main`; the live registry contains exactly enabled/published `default-support`, `sid-bright`, and `sid-precise` with the expected versions and content hashes; Admin serves the random-assignment/pinned-version copy; Account serves the assignment-deletion statistic. The one-time live data operation has not been run.
+
 ## 2026-08-07 - Internal automation email light-only Outlook compatibility
 
 - Area or subsystem: `/account` Automation internal handoff HTML template
