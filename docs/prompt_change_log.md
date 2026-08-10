@@ -34,10 +34,10 @@ For each new entry, record:
   - If no enabled and published Persona is available, generation fails closed to Human Review without fallback customer copy.
   - A dry-run-first, resumable operator tool can freeze and rerun only Cases that are Automated at the start of the one-time rollout; deployment does not execute that data operation automatically.
 - Verification:
-  - `rtk .venv/bin/python -m unittest backend.tests.test_account_reroute_dispatch backend.tests.test_rerun_automated_account_cases backend.tests.test_startup_repository_fallbacks -q` (68 passed)
-  - `rtk .venv/bin/python -m unittest backend.tests.test_repository_configuration -q` (104 passed)
-  - `rtk .venv/bin/python -m unittest backend.tests.test_account_ui_contract -q` (22 passed)
-  - `RUN_ACCOUNT_REROUTE_POSTGRES_TEST=true rtk .venv/bin/python -m unittest backend.tests.test_account_reroute_jobs_postgres -v` (13 passed, 0 skipped)
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_reroute_dispatch backend.tests.test_rerun_automated_account_cases backend.tests.test_startup_repository_fallbacks -q` (68 passed)
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_repository_configuration -q` (104 passed)
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q` (22 passed)
+  - `RUN_ACCOUNT_REROUTE_POSTGRES_TEST=true rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_reroute_jobs_postgres -v` (13 passed, 0 skipped)
   - `rtk python3 scripts/verify_feature_list.py`
   - `rtk rg -n "automation-persona-presets-v1|Sid Precise|Sid Bright|Sid Warm|random" design.md docs/prompt_change_log.md docs/feature_list.md docs/roadmap.html`
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_roadmap_contract.RoadmapContractTests.test_billing_and_route_plans_reflect_meeting_next_steps backend.tests.test_roadmap_contract.RoadmapContractTests.test_existing_product_lanes_and_architecture_still_render -q` (2 passed)
