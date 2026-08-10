@@ -326,6 +326,8 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
         """
         ARRAY_REMOVE(ARRAY[
             {primary},
+            CASE WHEN STRPOS({primary}, ':') > 0
+                THEN split_part({primary}, ':', 1) END,
             CASE WHEN {primary} IN ('account_billing:fraud_account', 'account_billing:detailed_invoice')
                 THEN 'automation' END,
             CASE WHEN {primary} IN ('account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
