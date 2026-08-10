@@ -12,6 +12,33 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-10 - Account route taxonomy v7 and Backend Operations stage
+
+- Area or subsystem: `/account` Intent Classifier, Agora Router, Account & Billing Router, and Backend Operations Router
+- Prompt or model version: `account-layered-router-v7` / `account-backend-operation-v1`; model configuration unchanged
+- Summary: Split explicit backend operations from Account & Billing classification. Account & Billing now owns
+  `account_suspension`, `fraud_account`, `detailed_invoice`, and `other`; Backend Operations owns `enablement`,
+  `quota`, and diagnostic `unregistered`.
+- Reason: Detailed invoice and fraud-review requests have a concrete next action and should enter the existing
+  billing automation contract directly, while feature enablement and quota operations need a separate expandable
+  taxonomy. Unregistered remains visible for discovering future automation candidates.
+- Affected files or config:
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_billing_handlers.py`
+  - `backend/services/support_router.py`
+  - `backend/tests/test_account_route_pipeline.py`
+- Expected behavior change:
+  - New `/account` routes emit `backend_operation` for Enablement/Quota/Unregistered and emit Account & Billing
+    subcategories directly for Detailed Invoice/Fraud Account.
+  - Registered Detailed Invoice, Fraud Account, Enablement, and Quota routes are marked automated; Account
+    Suspension, Account & Billing Other, and Backend Operations Unregistered fail closed to Human Review.
+  - The old `automation` Agora payload remains an input-only compatibility alias; the shared `/client` router is
+    not changed.
+- Verification:
+  - `rtk /tmp/supportportal-account-route-venv/bin/python -m pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_agent_config.py`
+  - `rtk git diff --check`
+
 ## 2026-08-07 - Internal automation email light-only Outlook compatibility
 
 - Area or subsystem: `/account` Automation internal handoff HTML template

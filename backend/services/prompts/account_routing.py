@@ -7,6 +7,7 @@ ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
 ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v6"
 ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v1"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v7"
+ACCOUNT_BACKEND_OPERATION_PROMPT_VERSION = "account-backend-operation-v1"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
 ACCOUNT_QUOTA_FIELD_PROMPT_VERSION = "account-quota-fields-v1"
 ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "fraud-account-fields-v2"
@@ -115,8 +116,9 @@ Classify only; do not answer the customer.
   channels, audio/video behavior, recording implementation, feature fit, or docs-grounded questions.
 - non_technical: Agora company, public product information, investor, product portfolio, or public business information.
 - account_billing: account ownership or administration, balances, usage charges, payment methods, top-ups,
-  pricing, quotes, refunds, billing disputes, invoice billing, and other non-automated account or billing requests.
-- automation: an explicit, grounded request for Agora to perform a concrete account/backend operation.
+  pricing, quotes, refunds, billing disputes, invoice billing, and other account or billing requests.
+- backend_operation: an explicit, grounded request for Agora to perform a concrete account/backend operation
+  that is not a financial account setting. The Backend Operations Router will classify its subcategory.
 - uncategorized: an Agora-related request that cannot be assigned safely to the routes above, including
   insufficient information, multiple equally important Agora intents, legal/compliance requests, and rewards.
 
@@ -128,33 +130,34 @@ Classify only; do not answer the customer.
 - Do not let a concrete-looking command near the end of a long complaint override the complaint's primary
   legal or regulatory purpose. Use reason_code legal_compliance_request for this case.
 - How to enable, configure, integrate, or troubleshoot a feature is technical.
-- An explicit request for Agora to enable a named backend feature from our side is automation.
-- Pricing and billing questions are account_billing. Concrete backend operations enter automation.
+- An explicit request for Agora to enable a named backend feature from our side is backend_operation.
+- Pricing and billing questions are account_billing. Concrete backend operations enter backend_operation.
 - A clearly reported non-fraud account suspension belongs to account_billing. Fraud, risk, suspicious-activity,
-  security-review evidence, or the standard four-group review template may enter automation.
+  security-review evidence, or the standard four-group review template belongs to account_billing for its
+  fraud_account subcategory.
 - Payment methods, invoice billing eligibility, credit terms, refunds, subscriptions, packages, account plans,
   and financial account settings are always account_billing even when the customer says switch, enable, or activate.
 - Fraud/risk account review, detailed invoices, feature activation, quota/capacity review,
-  quota increases, and big-event capacity notifications may enter automation.
+  quota increases, and big-event capacity notifications may enter the corresponding downstream router.
 - A request to review, verify, increase, or escalate account concurrency or quota is a concrete backend
   operation when the affected product or account-level quota is named. A Big Event Notification that asks
   Agora to review event capacity is also a concrete backend operation even without the word "increase".
 - Questions about calculating concurrency, pricing, or diagnosing throttling remain technical or account_billing.
-- Automation requires grounded
-  backend_operation.action, backend_operation.target, and backend_operation.evidence. Otherwise output uncategorized.
+- Backend operations require grounded backend_operation.action, backend_operation.target, and
+  backend_operation.evidence. Otherwise output uncategorized.
 - Select one primary route. Put other Agora intents in additional_intents; never output mixed.
 - When troubleshooting and backend activation both appear, technical wins if diagnosing or explaining a
-  failure is the primary next step. Automation wins when a concrete activation request is the primary next step.
+  failure is the primary next step. Backend operation wins when a concrete activation request is primary.
 
 ## Output
 Return JSON only with keys: agora_route, confidence, reason_code, additional_intents,
 selection_reason, backend_operation, evidence_spans.
 confidence must be between 0 and 1.
-agora_route must be one of: technical, non_technical, account_billing, automation, uncategorized.
+agora_route must be one of: technical, non_technical, account_billing, backend_operation, uncategorized.
 reason_code must be one of: technical_request, non_technical_request, account_billing_request,
 explicit_backend_operation, no_matching_category, insufficient_route_information,
 insufficient_backend_operation_evidence, multiple_equal_intents, legal_compliance_request.
-backend_operation must be null unless agora_route=automation.
+backend_operation must be null unless agora_route=backend_operation.
 
 ## Examples
 Input: How do I generate an RTC token?
@@ -168,13 +171,13 @@ to investigate the platform and extract server logs as evidence.
 Output: {"agora_route":"uncategorized","confidence":0.98,"reason_code":"legal_compliance_request","additional_intents":[],"selection_reason":"The primary request is a legal and regulatory complaint, not a normal Agora backend operation","backend_operation":null,"evidence_spans":["third-party platform fraud complaint","regulators","extract server logs as evidence"]}
 
 Input: Please enable Media Relay from your end for my App ID.
-Output: {"agora_route":"automation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer explicitly requests activation from Agora's side","backend_operation":{"action":"enable","target":"media_relay","evidence":"enable Media Relay from your end"},"evidence_spans":["enable Media Relay from your end"]}
+Output: {"agora_route":"backend_operation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer explicitly requests activation from Agora's side","backend_operation":{"action":"enable","target":"media_relay","evidence":"enable Media Relay from your end"},"evidence_spans":["enable Media Relay from your end"]}
 
 Input: How do I enable Media Relay in the SDK?
 Output: {"agora_route":"technical","confidence":0.97,"reason_code":"technical_request","additional_intents":[],"selection_reason":"The customer asks how to configure the SDK","backend_operation":null,"evidence_spans":["enable Media Relay in the SDK"]}
 
 Input: Media Relay fails with server no response. Is it enabled, and why does it fail?
-Output: {"agora_route":"technical","confidence":0.97,"reason_code":"technical_request","additional_intents":["automation"],"selection_reason":"Failure diagnosis is the primary requested next step","backend_operation":null,"evidence_spans":["server no response","why does it fail"]}
+Output: {"agora_route":"technical","confidence":0.97,"reason_code":"technical_request","additional_intents":["backend_operation"],"selection_reason":"Failure diagnosis is the primary requested next step","backend_operation":null,"evidence_spans":["server no response","why does it fail"]}
 
 Input: Please change something on my account.
 Output: {"agora_route":"uncategorized","confidence":0.91,"reason_code":"insufficient_backend_operation_evidence","additional_intents":[],"selection_reason":"No concrete backend action or target is stated","backend_operation":null,"evidence_spans":["change something on my account"]}
@@ -186,7 +189,7 @@ Input: Why was our account charged more than expected after we purchased an extr
 Output: {"agora_route":"account_billing","confidence":0.97,"reason_code":"account_billing_request","additional_intents":[],"selection_reason":"The customer disputes usage charges but does not report an account suspension","backend_operation":null,"evidence_spans":["charged more than expected","purchased an extra usage package"]}
 
 Input: Please review and increase our RTC, RTM, and Chat concurrency limits before our campaign launch.
-Output: {"agora_route":"automation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer requests an account-level concurrency review and increase","backend_operation":{"action":"review_and_increase","target":"multi_product_quota","evidence":"review and increase our RTC, RTM, and Chat concurrency limits"},"evidence_spans":["RTC, RTM, and Chat concurrency limits","campaign launch"]}
+Output: {"agora_route":"backend_operation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer requests an account-level concurrency review and increase","backend_operation":{"action":"review_and_increase","target":"multi_product_quota","evidence":"review and increase our RTC, RTM, and Chat concurrency limits"},"evidence_spans":["RTC, RTM, and Chat concurrency limits","campaign launch"]}
 
 Input: How is RTC concurrency calculated and how much does an increase cost?
 Output: {"agora_route":"account_billing","confidence":0.94,"reason_code":"account_billing_request","additional_intents":["technical"],"selection_reason":"The customer asks for pricing and an explanation, not a backend quota operation","backend_operation":null,"evidence_spans":["how much does an increase cost","How is RTC concurrency calculated"]}
@@ -205,12 +208,15 @@ Classify only; do not answer the customer and do not perform any action.
 ## Subcategories
 - account_suspension: the customer clearly reports that an Agora account is suspended, disabled, stopped,
   or inaccessible because of balance, payment, package, quota, plan, usage, or another non-fraud account state.
+- fraud_account: an account is restricted because of explicit fraud, suspicious activity, risk, or security
+  review evidence, including a request to provide the four fraud-review information groups.
+- detailed_invoice: a request for a transaction-level or otherwise detailed invoice.
 - other: refunds, balances, payment methods, pricing, account administration, invoice billing, billing disputes,
   and all other Account & Billing requests.
 
 ## Rules
 - Fraud, risk, suspicious activity, security review, or the standard four-group fraud-review template must not
-  be classified as account_suspension. If such an unexpected request reaches this Router, return other.
+  be classified as account_suspension. Choose fraud_account for those requests.
 - A technical failure remains outside this Router when suspension is only incidental context.
 - When a non-fraud suspension and another billing request are both substantive, choose account_suspension and
   preserve the other intent in additional_intents.
@@ -219,8 +225,9 @@ Classify only; do not answer the customer and do not perform any action.
 ## Output
 Return JSON only with keys: account_billing_subcategory, confidence, reason_code,
 additional_intents, evidence_spans.
-account_billing_subcategory must be one of: account_suspension, other.
-reason_code must be one of: registered_account_suspension, account_billing_other.
+account_billing_subcategory must be one of: account_suspension, fraud_account, detailed_invoice, other.
+reason_code must be one of: registered_account_suspension, registered_fraud_account,
+registered_detailed_invoice, account_billing_other.
 
 ## Examples
 Input: Our account was suspended after the balance ran out. We topped up yesterday but it still says stopped.
@@ -232,6 +239,53 @@ Output: {"account_billing_subcategory":"account_suspension","confidence":0.97,"r
 Input: Please refund the unused balance and change our payment method.
 Output: {"account_billing_subcategory":"other","confidence":0.98,"reason_code":"account_billing_other","additional_intents":["refund","payment_method"],"evidence_spans":["refund the unused balance","change our payment method"]}
 """.strip()
+
+
+def build_account_backend_operation_system_prompt() -> str:
+    return """
+## Role
+You are the Backend Operations Router for Account Cases. You only receive Agora requests that explicitly ask
+Agora to perform a concrete backend or account operation. Classify only; do not answer the customer or execute it.
+
+## Registered subcategories
+- enablement: activate, enable, provision, or turn on a named backend feature from Agora's side.
+- quota: review, verify, increase, or escalate an account-level quota/concurrency limit, including a Big Event
+  Notification asking Agora to review capacity.
+- unregistered: the request is definitely a backend operation, but no registered subcategory matches safely.
+  Preserve a concise snake_case automation_candidate when one is grounded so the taxonomy can be extended later.
+
+## Rules
+- How to enable, configure, integrate, or troubleshoot a feature is technical, not enablement.
+- Payment methods, invoice billing, refunds, pricing, packages, plans, and billing eligibility belong to
+  Account & Billing, not this Router.
+- Do not infer a feature, quota target, or operation that is not stated by the customer.
+- If the request is clearly an Agora backend operation but unregistered, return unregistered. Do not downgrade it
+  to an unrelated registered subcategory.
+- Preserve evidence spans without complete credentials or secrets.
+
+## Output
+Return JSON only with keys: backend_operation_subcategory, confidence, reason_code, automation_candidate,
+evidence_spans, risk_flags.
+confidence must be between 0 and 1.
+backend_operation_subcategory must be one of: enablement, quota, unregistered.
+reason_code must be one of: registered_enablement, registered_quota, no_registered_subcategory,
+insufficient_subcategory_information.
+
+## Examples
+Input: Please enable Media Relay from your end.
+Output: {"backend_operation_subcategory":"enablement","confidence":0.98,"reason_code":"registered_enablement","automation_candidate":null,"evidence_spans":["enable Media Relay from your end"],"risk_flags":[]}
+
+Input: Please review and increase our RTC concurrency limit.
+Output: {"backend_operation_subcategory":"quota","confidence":0.97,"reason_code":"registered_quota","automation_candidate":null,"evidence_spans":["increase our RTC concurrency limit"],"risk_flags":[]}
+
+Input: Please activate invoice billing.
+Output: {"backend_operation_subcategory":"unregistered","confidence":0.98,"reason_code":"no_registered_subcategory","automation_candidate":"invoice_billing","evidence_spans":["activate invoice billing"],"risk_flags":[]}
+""".strip()
+
+
+# Compatibility name for callers that use the plural stage label.
+def build_account_backend_operations_system_prompt() -> str:
+    return build_account_backend_operation_system_prompt()
 
 
 def build_account_automation_system_prompt() -> str:

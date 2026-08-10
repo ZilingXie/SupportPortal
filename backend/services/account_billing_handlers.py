@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
-ACCOUNT_BILLING_SUBCATEGORIES = frozenset({"account_suspension", "other"})
+ACCOUNT_BILLING_SUBCATEGORIES = frozenset(
+    {"account_suspension", "fraud_account", "detailed_invoice", "other"}
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,14 @@ _HANDLERS = {
     "account_suspension": AccountBillingHandlerRegistration(
         subcategory="account_suspension",
         implementation="classification_only",
+    ),
+    "fraud_account": AccountBillingHandlerRegistration(
+        subcategory="fraud_account",
+        implementation="billing",
+    ),
+    "detailed_invoice": AccountBillingHandlerRegistration(
+        subcategory="detailed_invoice",
+        implementation="billing",
     ),
     "other": AccountBillingHandlerRegistration(
         subcategory="other",
@@ -33,9 +43,10 @@ def account_billing_metadata(subcategory: Any) -> dict[str, str | None]:
     normalized = str(subcategory or "").strip().lower()
     if normalized not in ACCOUNT_BILLING_SUBCATEGORIES:
         normalized = "other"
+    is_automated = normalized in {"fraud_account", "detailed_invoice"}
     return {
         "category": "account_billing",
         "subcategory": normalized,
-        "route_status": "not_automated",
-        "automation_handler": None,
+        "route_status": "automated" if is_automated else "not_automated",
+        "automation_handler": "billing" if is_automated else None,
     }
