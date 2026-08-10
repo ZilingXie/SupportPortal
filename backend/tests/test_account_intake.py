@@ -520,7 +520,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(conflict.json()["detail"]["code"], "idempotency_scope_conflict")
         runner.assert_awaited_once()
 
-    def test_account_single_case_rerun_requires_a_valid_idempotency_key(self) -> None:
+    def test_account_single_case_rerun_allows_no_key_but_rejects_a_malformed_key(self) -> None:
         self.repository.save_ticket(
             {
                 "ticket_id": "12567",
@@ -540,15 +540,30 @@ class AccountIntakeApiTests(unittest.TestCase):
             }
         )
 
-        missing = self.client.post("/api/account/cases/12567/rerun")
-        malformed = self.client.post(
-            "/api/account/cases/12567/rerun",
-            headers={"Idempotency-Key": "contains spaces"},
-        )
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            missing = self.client.post("/api/account/cases/12567/rerun")
+            malformed = self.client.post(
+                "/api/account/cases/12567/rerun",
+                headers={"Idempotency-Key": "contains spaces"},
+            )
+            empty = self.client.post(
+                "/api/account/cases/12567/rerun",
+                headers={"Idempotency-Key": ""},
+            )
 
-        self.assertEqual(missing.status_code, 422, missing.text)
+        self.assertEqual(missing.status_code, 202, missing.text)
+        payload = missing.json()
+        self.assertEqual(payload["scope"], "single_case")
+        self.assertEqual(payload["target_case_ids"], ["AC-12567"])
         self.assertEqual(malformed.status_code, 422, malformed.text)
         self.assertEqual(malformed.json()["detail"]["code"], "invalid_idempotency_key")
+        self.assertEqual(empty.status_code, 422, empty.text)
+        self.assertEqual(empty.json()["detail"]["code"], "invalid_idempotency_key")
+        runner.assert_awaited_once()
+        stored = self.repository.get_account_reroute_job(payload["job_id"])
+        assert stored is not None
+        self.assertIsNone(stored.get("idempotency_scope"))
+        self.assertIsNone(stored.get("idempotency_key"))
 
     def test_single_case_rerun_worker_does_not_process_other_cases(self) -> None:
         for ticket_id, case_id in (("12562", "AC-12562"), ("12563", "AC-12563")):

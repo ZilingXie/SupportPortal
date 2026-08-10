@@ -1,43 +1,71 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+import hashlib
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 from scripts.ops import rerun_automated_account_cases as runner
 
 
 TEST_ACCESS_TOKEN = "secret-admin-token"
+TEST_SIGNING_SECRET = "stable-automated-rerun-signing-secret"
 
 
 def _personas(content_suffix: str = "baseline") -> dict[str, object]:
     personas = []
-    for key, name in (
-        ("sid-precise", "Sid Precise"),
-        ("sid-bright", "Sid Bright"),
-        ("default-support", "Sid Warm"),
-    ):
+    for preset in ACCOUNT_PERSONA_PRESETS:
+        content = dict(preset.content)
+        if content_suffix != "baseline":
+            content["instruction"] = f"{content['instruction']} [{content_suffix}]"
         personas.append(
             {
-                "persona_key": key,
-                "display_name": name,
+                "persona_key": preset.persona_key,
+                "display_name": preset.display_name,
                 "enabled": True,
                 "published_version": 1,
                 "versions": [
                     {
                         "version": 1,
                         "status": "published",
-                        "content": {"instruction": f"{name} {content_suffix}"},
+                        "content": content,
+                        "created_by": "system",
+                        "change_note": preset.seed_marker,
                     }
                 ],
             }
         )
     return {"personas": personas}
+
+
+def _persona_gate_request(persona_payload: dict[str, object]) -> FakeRequest:
+    def handler(call: dict[str, object]) -> dict[str, object]:
+        parsed = urlsplit(str(call["path"]))
+        if call["method"] == "GET" and parsed.path == "/health":
+            return {"status": "ok", "app_build": {"ref": "build-1"}}
+        if call["method"] == "GET" and parsed.path == "/api/workspace/admin/account-personas":
+            return persona_payload
+        if call["method"] == "GET" and parsed.path == "/api/account/cases":
+            return {
+                "cases": [],
+                "page": 1,
+                "page_size": 100,
+                "total": 0,
+                "total_pages": 1,
+                "has_more": False,
+            }
+        raise AssertionError(f"unexpected request: {call}")
+
+    return FakeRequest(handler)
 
 
 def _case(case_id: str, *, action: str = "enablement", route_status: str = "automated") -> dict[str, object]:
@@ -124,11 +152,15 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
         return runner.apply_operation(
             operation_dir,
             access_token=TEST_ACCESS_TOKEN,
+            signing_secret=TEST_SIGNING_SECRET,
             **kwargs,
         )
 
     def _load(self, operation_dir: Path):
-        return runner._load_operation(operation_dir, access_token=TEST_ACCESS_TOKEN)
+        return runner._load_operation(
+            operation_dir,
+            signing_secret=TEST_SIGNING_SECRET,
+        )
 
     def _persist(
         self,
@@ -140,7 +172,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             operation_dir,
             baseline,
             progress,
-            access_token=TEST_ACCESS_TOKEN,
+            signing_secret=TEST_SIGNING_SECRET,
         )
 
     def _force_resign_operation(
@@ -149,7 +181,10 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
         baseline: dict[str, object],
         progress: dict[str, object],
     ) -> None:
-        key = runner._operation_hmac_key(TEST_ACCESS_TOKEN, str(baseline["operation_id"]))
+        key = runner._operation_hmac_key(
+            TEST_SIGNING_SECRET,
+            str(baseline["operation_id"]),
+        )
         runner._write_json(operation_dir / "baseline.json", baseline)
         runner._write_json(
             operation_dir / "manifest.json",
@@ -164,6 +199,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             operations_root=root,
             request_json=request,
             access_token=TEST_ACCESS_TOKEN,
+            signing_secret=TEST_SIGNING_SECRET,
         )
         return operation_dir, request
 
@@ -182,6 +218,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 operations_root=Path(temporary),
                 request_json=request,
                 access_token=TEST_ACCESS_TOKEN,
+                signing_secret=TEST_SIGNING_SECRET,
             )
 
             baseline = json.loads((operation_dir / "baseline.json").read_text(encoding="utf-8"))
@@ -205,12 +242,165 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             self.assertFalse((operation_dir / "manifest.key").exists())
             persisted = "\n".join(path.read_text(encoding="utf-8") for path in operation_dir.iterdir() if path.is_file())
             self.assertNotIn(TEST_ACCESS_TOKEN, persisted)
+            self.assertNotIn(TEST_SIGNING_SECRET, persisted)
             self.assertNotIn("customer_email", persisted)
             self.assertFalse(any(call["method"] == "POST" for call in request.calls))
             persona_call = next(
                 call for call in request.calls if "/account-personas" in str(call["path"])
             )
             self.assertEqual(persona_call["headers"]["Authorization"], f"Bearer {TEST_ACCESS_TOKEN}")
+
+    def test_dry_run_rejects_an_extra_enabled_published_persona_before_posting(self) -> None:
+        payload = json.loads(json.dumps(_personas()))
+        extra = json.loads(json.dumps(payload["personas"][0]))
+        extra["persona_key"] = "extra-approved-looking"
+        extra["display_name"] = "Extra Approved Looking"
+        payload["personas"].append(extra)
+        request = _persona_gate_request(payload)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(runner.OperationError):
+                runner.create_dry_run(
+                    base_url="http://127.0.0.1:8000",
+                    operations_root=Path(temporary),
+                    request_json=request,
+                    access_token=TEST_ACCESS_TOKEN,
+                    signing_secret=TEST_SIGNING_SECRET,
+                )
+
+        self.assertFalse(any(call["method"] == "POST" for call in request.calls))
+
+    def test_dry_run_rejects_any_non_seeded_persona_metadata_or_content(self) -> None:
+        mutation_names = (
+            "instruction",
+            "opener",
+            "signature",
+            "published_version",
+            "status",
+            "created_by",
+            "change_note",
+            "extra_content_field",
+            "forged_content_hash",
+        )
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            for mutation_name in mutation_names:
+                with self.subTest(persona_key=preset.persona_key, mutation=mutation_name):
+                    payload = json.loads(json.dumps(_personas()))
+                    raw = next(
+                        item
+                        for item in payload["personas"]
+                        if item["persona_key"] == preset.persona_key
+                    )
+                    selected = raw["versions"][0]
+                    content = selected["content"]
+                    if mutation_name == "instruction":
+                        content["instruction"] += " Tampered."
+                    elif mutation_name == "opener":
+                        content["opener"] = "Hello from a custom Persona"
+                    elif mutation_name == "signature":
+                        content["signature"] = "Best,\nA different agent"
+                    elif mutation_name == "published_version":
+                        raw["published_version"] = 2
+                        selected["version"] = 2
+                    elif mutation_name == "status":
+                        selected["status"] = "draft"
+                    elif mutation_name == "created_by":
+                        selected["created_by"] = "admin-user"
+                    elif mutation_name == "change_note":
+                        selected["change_note"] = "Looks close enough"
+                    elif mutation_name == "extra_content_field":
+                        content["custom_style"] = "unapproved"
+                    else:
+                        content["instruction"] += " Tampered despite a claimed hash."
+                        approved_hash = hashlib.sha256(
+                            json.dumps(
+                                preset.content,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ).encode("utf-8")
+                        ).hexdigest()
+                        selected["content_sha256"] = approved_hash
+                        raw["content_sha256"] = approved_hash
+                        payload["persona_fingerprint"] = approved_hash
+
+                    request = _persona_gate_request(payload)
+                    with tempfile.TemporaryDirectory() as temporary:
+                        with self.assertRaises(runner.OperationError):
+                            runner.create_dry_run(
+                                base_url="http://127.0.0.1:8000",
+                                operations_root=Path(temporary),
+                                request_json=request,
+                                access_token=TEST_ACCESS_TOKEN,
+                                signing_secret=TEST_SIGNING_SECRET,
+                            )
+                    self.assertFalse(
+                        any(call["method"] == "POST" for call in request.calls)
+                    )
+
+    def test_dry_run_rejects_builtin_preset_drift_even_when_registry_matches(self) -> None:
+        for mutation_name in ("instruction", "seed_marker"):
+            with self.subTest(mutation=mutation_name):
+                preset = ACCOUNT_PERSONA_PRESETS[0]
+                instruction = preset.instruction
+                seed_marker = preset.seed_marker
+                if mutation_name == "instruction":
+                    instruction += " Drifted."
+                else:
+                    seed_marker = "Drifted Sid Precise preset v1"
+                drifted_preset = replace(
+                    preset,
+                    instruction=instruction,
+                    seed_marker=seed_marker,
+                )
+                drifted_presets = (drifted_preset, *ACCOUNT_PERSONA_PRESETS[1:])
+                payload = json.loads(json.dumps(_personas()))
+                raw = next(
+                    item
+                    for item in payload["personas"]
+                    if item["persona_key"] == preset.persona_key
+                )
+                raw["versions"][0]["content"] = drifted_preset.content
+                raw["versions"][0]["change_note"] = drifted_preset.seed_marker
+                request = _persona_gate_request(payload)
+
+                with tempfile.TemporaryDirectory() as temporary:
+                    with (
+                        patch.object(runner, "ACCOUNT_PERSONA_PRESETS", drifted_presets),
+                        self.assertRaises(runner.OperationError),
+                    ):
+                        runner.create_dry_run(
+                            base_url="http://127.0.0.1:8000",
+                            operations_root=Path(temporary),
+                            request_json=request,
+                            access_token=TEST_ACCESS_TOKEN,
+                            signing_secret=TEST_SIGNING_SECRET,
+                        )
+
+                self.assertFalse(any(call["method"] == "POST" for call in request.calls))
+
+    def test_dry_run_rejects_non_integer_persona_versions(self) -> None:
+        for field, value in (("published_version", "1"), ("version", True)):
+            with self.subTest(field=field):
+                payload = json.loads(json.dumps(_personas()))
+                raw = payload["personas"][0]
+                if field == "published_version":
+                    raw[field] = value
+                else:
+                    raw["versions"][0][field] = value
+                request = _persona_gate_request(payload)
+
+                with tempfile.TemporaryDirectory() as temporary:
+                    with self.assertRaises(runner.OperationError):
+                        runner.create_dry_run(
+                            base_url="http://127.0.0.1:8000",
+                            operations_root=Path(temporary),
+                            request_json=request,
+                            access_token=TEST_ACCESS_TOKEN,
+                            signing_secret=TEST_SIGNING_SECRET,
+                        )
+
+                self.assertFalse(any(call["method"] == "POST" for call in request.calls))
 
     def test_create_and_apply_require_an_external_signing_secret_before_http(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -220,7 +410,8 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     base_url="http://127.0.0.1:8000",
                     operations_root=Path(temporary),
                     request_json=create_request,
-                    access_token="",
+                    access_token=TEST_ACCESS_TOKEN,
+                    signing_secret="",
                 )
             self.assertFalse(create_request.calls)
 
@@ -230,9 +421,68 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 runner.apply_operation(
                     operation_dir,
                     request_json=apply_request,
-                    access_token="",
+                    access_token=TEST_ACCESS_TOKEN,
+                    signing_secret="",
                 )
             self.assertFalse(apply_request.calls)
+
+    def test_resume_accepts_a_rotated_bearer_token_with_the_same_signing_secret(self) -> None:
+        access_token_a = "workspace-token-a"
+        access_token_b = "workspace-token-b"
+        with tempfile.TemporaryDirectory() as temporary:
+            dry_request = _discovery_request([_case("AC-1")])
+            operation_dir = runner.create_dry_run(
+                base_url="http://127.0.0.1:8000",
+                operations_root=Path(temporary),
+                request_json=dry_request,
+                access_token=access_token_a,
+                signing_secret=TEST_SIGNING_SECRET,
+            )
+
+            def apply_handler(call: dict[str, object]) -> dict[str, object]:
+                parsed = urlsplit(str(call["path"]))
+                if parsed.path == "/health":
+                    return {"app_build": {"ref": "build-1"}}
+                if parsed.path == "/api/workspace/admin/account-personas":
+                    return _personas()
+                if parsed.path == "/api/account/cases/AC-1":
+                    return _case("AC-1")
+                if call["method"] == "POST":
+                    return {"job_id": "job-token-rotation", "status": "completed"}
+                raise AssertionError(call)
+
+            apply_request = FakeRequest(apply_handler)
+            result = runner.apply_operation(
+                operation_dir,
+                request_json=apply_request,
+                access_token=access_token_b,
+                signing_secret=TEST_SIGNING_SECRET,
+                sleep=lambda _value: None,
+            )
+
+            self.assertEqual(result["operation_status"], "completed")
+            self.assertTrue(dry_request.calls)
+            self.assertTrue(apply_request.calls)
+            self.assertEqual(
+                {call["headers"].get("Authorization") for call in dry_request.calls},
+                {f"Bearer {access_token_a}"},
+            )
+            self.assertEqual(
+                {call["headers"].get("Authorization") for call in apply_request.calls},
+                {f"Bearer {access_token_b}"},
+            )
+
+            rejected_request = FakeRequest(
+                lambda call: (_ for _ in ()).throw(AssertionError(call))
+            )
+            with self.assertRaises(runner.OperationError):
+                runner.apply_operation(
+                    operation_dir,
+                    request_json=rejected_request,
+                    access_token="workspace-token-c",
+                    signing_secret="wrong-signing-secret",
+                )
+            self.assertFalse(rejected_request.calls)
 
     def test_internal_email_reason_never_enters_dry_run_apply_or_resume_artifacts(self) -> None:
         sensitive_reason = (
@@ -267,6 +517,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 operations_root=Path(temporary),
                 request_json=_discovery_request([sensitive_case]),
                 access_token=TEST_ACCESS_TOKEN,
+                signing_secret=TEST_SIGNING_SECRET,
             )
             assert_artifacts_are_safe(operation_dir)
 
@@ -808,14 +1059,18 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             )
             baseline = json.loads((operation_dir / "baseline.json").read_text(encoding="utf-8"))
             derived_key = runner._operation_hmac_key(
-                TEST_ACCESS_TOKEN,
+                TEST_SIGNING_SECRET,
                 baseline["operation_id"],
             )
             self.assertNotIn(TEST_ACCESS_TOKEN, persisted)
+            self.assertNotIn(TEST_SIGNING_SECRET, persisted)
             self.assertNotIn(derived_key.hex(), persisted)
             self.assertFalse((operation_dir / "manifest.key").exists())
             with self.assertRaises(runner.OperationError):
-                runner._load_operation(operation_dir, access_token="different-external-secret")
+                runner._load_operation(
+                    operation_dir,
+                    signing_secret="different-external-secret",
+                )
 
     def test_commit_failures_before_pointer_publish_keep_the_last_signed_generation(self) -> None:
         failure_phases = (
@@ -1036,12 +1291,60 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             alias = root / "operation-alias"
             alias.symlink_to(operation_dir, target_is_directory=True)
             with (
-                patch.dict(os.environ, {runner.ACCESS_TOKEN_ENV: TEST_ACCESS_TOKEN}),
+                patch.dict(
+                    os.environ,
+                    {
+                        runner.ACCESS_TOKEN_ENV: TEST_ACCESS_TOKEN,
+                        runner.SIGNING_SECRET_ENV: TEST_SIGNING_SECRET,
+                    },
+                ),
                 patch.object(runner, "_http_requester") as requester,
             ):
                 with self.assertRaises(runner.OperationError):
                     runner.main(["--resume", str(alias), "--apply"])
             requester.assert_not_called()
+
+    def test_parser_accepts_approved_names_and_legacy_aliases(self) -> None:
+        approved = runner._build_parser().parse_args(
+            [
+                "--output-root",
+                "/tmp/approved-reruns",
+                "--job-timeout-seconds",
+                "321",
+            ]
+        )
+        legacy = runner._build_parser().parse_args(
+            [
+                "--operations-root",
+                "/tmp/legacy-reruns",
+                "--poll-timeout-seconds",
+                "654",
+            ]
+        )
+
+        self.assertEqual(approved.operations_root, Path("/tmp/approved-reruns"))
+        self.assertEqual(approved.poll_timeout_seconds, 321.0)
+        self.assertEqual(legacy.operations_root, Path("/tmp/legacy-reruns"))
+        self.assertEqual(legacy.poll_timeout_seconds, 654.0)
+
+    def test_approved_cli_path_exists_and_serves_help(self) -> None:
+        entrypoint = runner.REPOSITORY_ROOT / "scripts" / "rerun_automated_account_cases.py"
+        self.assertTrue(entrypoint.is_file())
+        self.assertTrue(os.access(entrypoint, os.X_OK), "approved CLI path is not executable")
+        completed = subprocess.run(
+            [str(entrypoint), "--help"],
+            cwd=runner.REPOSITORY_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--output-root", completed.stdout)
+        self.assertIn("--job-timeout-seconds", completed.stdout)
+        self.assertIn(runner.ACCESS_TOKEN_ENV, completed.stdout)
+        self.assertIn(runner.SIGNING_SECRET_ENV, completed.stdout)
 
     def test_lock_symlink_failure_preserves_target_and_cleans_local_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

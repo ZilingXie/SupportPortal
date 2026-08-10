@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+import subprocess
+import sys
 import threading
+import textwrap
 import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -888,6 +892,186 @@ class AccountRerouteDispatcherLifecycleTests(unittest.TestCase):
             order,
             ["dispatcher", "ticket_repository", "asset_repository"],
         )
+
+
+class AccountRerouteDaemonThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bridge_preserves_context_and_returns_from_a_daemon_thread(self) -> None:
+        request_context = contextvars.ContextVar("reroute_test_context", default="missing")
+        token = request_context.set("dispatcher")
+        try:
+            result = await main._account_reroute_daemon_thread_call(
+                lambda: (request_context.get(), threading.current_thread().daemon)
+            )
+        finally:
+            request_context.reset(token)
+
+        self.assertEqual(result, ("dispatcher", True))
+
+    async def test_bridge_propagates_worker_exception(self) -> None:
+        def fail() -> None:
+            raise RuntimeError("daemon bridge failure")
+
+        with self.assertRaisesRegex(RuntimeError, "daemon bridge failure"):
+            await main._account_reroute_daemon_thread_call(fail)
+
+    async def test_selector_keeps_api_calls_on_the_default_executor(self) -> None:
+        with (
+            patch.object(main, "async_to_thread", AsyncMock(return_value="api")) as default_call,
+            patch.object(
+                main,
+                "_account_reroute_daemon_thread_call",
+                AsyncMock(return_value="dispatcher"),
+            ) as daemon_call,
+        ):
+            self.assertEqual(await main._account_reroute_sync_call(lambda: "value"), "api")
+            default_call.assert_awaited_once()
+            daemon_call.assert_not_awaited()
+
+            token = main._ACCOUNT_REROUTE_DISPATCH_CONTEXT.set(True)
+            try:
+                self.assertEqual(
+                    await main._account_reroute_sync_call(lambda: "value"),
+                    "dispatcher",
+                )
+            finally:
+                main._ACCOUNT_REROUTE_DISPATCH_CONTEXT.reset(token)
+
+            daemon_call.assert_awaited_once()
+
+    async def test_bridge_drops_completion_when_event_loop_rejects_callbacks(self) -> None:
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        callback_attempted = threading.Event()
+        thread_errors: list[threading.ExceptHookArgs] = []
+
+        def blocked_worker() -> str:
+            worker_started.set()
+            release_worker.wait(timeout=2.0)
+            return "finished"
+
+        task = asyncio.create_task(main._account_reroute_daemon_thread_call(blocked_worker))
+        while not worker_started.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        loop = asyncio.get_running_loop()
+        original_call_soon_threadsafe = loop.call_soon_threadsafe
+        original_excepthook = threading.excepthook
+
+        def reject_callback(*_args: object, **_kwargs: object) -> None:
+            callback_attempted.set()
+            raise RuntimeError("Event loop is closed")
+
+        loop.call_soon_threadsafe = reject_callback  # type: ignore[method-assign]
+        threading.excepthook = thread_errors.append
+        try:
+            release_worker.set()
+            self.assertTrue(callback_attempted.wait(timeout=2.0))
+        finally:
+            loop.call_soon_threadsafe = original_call_soon_threadsafe  # type: ignore[method-assign]
+            threading.excepthook = original_excepthook
+
+        self.assertEqual(thread_errors, [])
+
+    def test_lifespan_shutdown_does_not_wait_for_blocked_dispatcher_sync_call(self) -> None:
+        child_script = textwrap.dedent(
+            """
+            import asyncio
+            import os
+            import threading
+            from unittest.mock import patch
+
+            from fastapi import BackgroundTasks
+            from fastapi.testclient import TestClient
+
+            from backend import main
+            from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+            os.environ["ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_SECONDS"] = "0.25"
+            os.environ["ACCOUNT_REROUTE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS"] = "0.25"
+            os.environ.pop("WORKSPACE_BOOTSTRAP_ADMIN_ID", None)
+            os.environ.pop("WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD", None)
+
+            repository = InMemoryTicketRepository()
+            repository.initialize()
+            main.ticket_repository = repository
+            ticket_id = "process-exit-reroute-ticket"
+            case_id = "AC-PROCESS-EXIT"
+            repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": "blocked@example.com",
+                    "subject": "Blocked process exit reroute",
+                    "status": "open",
+                    "messages": [
+                        {
+                            "role": "customer",
+                            "content": "Please check this request.",
+                            "created_at": "2026-08-10T01:00:00+00:00",
+                        }
+                    ],
+                }
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": case_id,
+                    "billing_ticket_id": case_id,
+                    "client_ticket_id": ticket_id,
+                    "route": "enablement",
+                    "scope_label": "automation",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                    "route_status": "automated",
+                    "automation_handler": "enablement",
+                    "route_classification": {
+                        "primary_label": "Agora",
+                        "secondary_label": "Automation / Enablement",
+                    },
+                }
+            )
+            asyncio.run(
+                main._enqueue_account_rerun_job(
+                    BackgroundTasks(),
+                    target_case_ids=[case_id],
+                    idempotency_key="process-exit-blocked-reroute",
+                    request_scope=f"POST:/api/account/cases/{case_id}/rerun",
+                )
+            )
+            reprocess_started = threading.Event()
+
+            def blocked_reprocess(*_args, **_kwargs):
+                reprocess_started.set()
+                threading.Event().wait()
+
+            with patch.object(main, "reprocess_account_case", side_effect=blocked_reprocess):
+                with TestClient(main.app):
+                    if not reprocess_started.wait(timeout=5.0):
+                        raise RuntimeError("dispatcher did not enter blocked reprocess call")
+
+            print("LIFESPAN_RETURNED", flush=True)
+            """
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", child_script],
+            cwd=str(main.BASE_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=8.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate(timeout=2.0)
+            self.fail(
+                "child process remained alive after lifespan shutdown; "
+                f"stdout={stdout!r}, stderr={stderr!r}"
+            )
+
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertIn("LIFESPAN_RETURNED", stdout)
 
 
 if __name__ == "__main__":

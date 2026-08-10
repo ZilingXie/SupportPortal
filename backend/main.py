@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import hashlib
 import importlib.util
@@ -831,7 +832,10 @@ async def _send_billing_internal_email_attempt(attempt: dict[str, Any]) -> tuple
         )
 
     try:
-        email_send_result = await async_to_thread(send_billing_internal_email, internal_email_to_send)
+        email_send_result = await _account_reroute_sync_call(
+            send_billing_internal_email,
+            internal_email_to_send,
+        )
         send_status = str(email_send_result.get("status") or "failed")
         send_reason = str(email_send_result.get("reason") or "")
     except Exception as exc:
@@ -849,7 +853,10 @@ async def _send_enablement_internal_email_attempt(attempt: dict[str, Any]) -> tu
             str(attempt.get("internal_email_send_reason") or "missing_required_fields"),
         )
     try:
-        email_send_result = await async_to_thread(send_enablement_internal_email, internal_email_to_send)
+        email_send_result = await _account_reroute_sync_call(
+            send_enablement_internal_email,
+            internal_email_to_send,
+        )
         resolved_to = str(email_send_result.get("resolved_to") or "").strip()
         if resolved_to:
             internal_email_to_send["resolved_to"] = resolved_to
@@ -869,7 +876,10 @@ async def _send_quota_internal_email_attempt(attempt: dict[str, Any]) -> tuple[s
             str(attempt.get("internal_email_send_reason") or "missing_required_fields"),
         )
     try:
-        email_send_result = await async_to_thread(send_quota_internal_email, internal_email_to_send)
+        email_send_result = await _account_reroute_sync_call(
+            send_quota_internal_email,
+            internal_email_to_send,
+        )
         resolved_to = str(email_send_result.get("resolved_to") or "").strip()
         if resolved_to:
             internal_email_to_send["resolved_to"] = resolved_to
@@ -1355,6 +1365,10 @@ asset_repository: AssetRepository = create_asset_repository()
 _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT = threading.Event()
 _ACCOUNT_REROUTE_DISPATCH_THREAD_LOCK = threading.Lock()
 _ACCOUNT_REROUTE_DISPATCH_THREAD: threading.Thread | None = None
+_ACCOUNT_REROUTE_DISPATCH_CONTEXT = contextvars.ContextVar(
+    "account_reroute_dispatch_context",
+    default=False,
+)
 asset_storage = create_asset_storage()
 hub = ConnectionHub()
 event_bus = AsyncRedisEventBus()
@@ -5081,8 +5095,10 @@ def _account_rerun_storage_http_exception(exc: Exception) -> HTTPException:
     )
 
 
-def _validated_account_case_rerun_idempotency_key(value: str | None) -> str:
-    normalized = str(value or "").strip()
+def _validated_account_case_rerun_idempotency_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
     if not normalized or not ACCOUNT_CASE_RERUN_IDEMPOTENCY_KEY_RE.fullmatch(normalized):
         raise HTTPException(
             status_code=422,
@@ -5226,13 +5242,68 @@ def _is_retryable_account_rerun_storage_error(exc: BaseException) -> bool:
     return any(marker in lowered for marker in _ACCOUNT_RERUN_STORAGE_ERROR_MARKERS)
 
 
+def _complete_account_reroute_daemon_future(
+    future: asyncio.Future[Any],
+    result: Any,
+    error: BaseException | None,
+) -> None:
+    if future.done():
+        return
+    if error is not None:
+        future.set_exception(error)
+        return
+    future.set_result(result)
+
+
+async def _account_reroute_daemon_thread_call(
+    method: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[Any] = loop.create_future()
+    context = contextvars.copy_context()
+
+    def invoke() -> None:
+        result: Any = None
+        error: BaseException | None = None
+        try:
+            result = context.run(method, *args, **kwargs)
+        except BaseException as exc:
+            error = exc
+        try:
+            loop.call_soon_threadsafe(
+                _complete_account_reroute_daemon_future,
+                future,
+                result,
+                error,
+            )
+        except RuntimeError:
+            # The dispatcher event loop may already be gone during process shutdown.
+            return
+
+    thread = threading.Thread(
+        target=invoke,
+        name="account-reroute-sync-call",
+        daemon=True,
+    )
+    thread.start()
+    return await future
+
+
+async def _account_reroute_sync_call(method: Any, *args: Any, **kwargs: Any) -> Any:
+    if _ACCOUNT_REROUTE_DISPATCH_CONTEXT.get():
+        return await _account_reroute_daemon_thread_call(method, *args, **kwargs)
+    return await async_to_thread(method, *args, **kwargs)
+
+
 async def _account_rerun_storage_call(method: Any, *args: Any, **kwargs: Any) -> Any:
     last_error: BaseException | None = None
     for attempt, delay in enumerate(_ACCOUNT_RERUN_STORAGE_RETRY_DELAYS):
         if delay:
             await asyncio.sleep(delay)
         try:
-            return await async_to_thread(method, *args, **kwargs)
+            return await _account_reroute_sync_call(method, *args, **kwargs)
         except Exception as exc:
             last_error = exc
             if (
@@ -5371,7 +5442,11 @@ async def _run_account_reroute_dispatch_loop() -> None:
 
 
 def _run_account_reroute_dispatcher_thread() -> None:
-    asyncio.run(_run_account_reroute_dispatch_loop())
+    token = _ACCOUNT_REROUTE_DISPATCH_CONTEXT.set(True)
+    try:
+        asyncio.run(_run_account_reroute_dispatch_loop())
+    finally:
+        _ACCOUNT_REROUTE_DISPATCH_CONTEXT.reset(token)
 
 
 def _start_account_reroute_dispatcher() -> threading.Thread:
@@ -5618,7 +5693,7 @@ async def _wait_for_account_rerun_replies(
             return True
         if stop_event is None:
             await asyncio.sleep(ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS)
-        elif await async_to_thread(
+        elif await _account_reroute_sync_call(
             stop_event.wait,
             ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS,
         ):
@@ -5867,7 +5942,7 @@ async def _run_account_full_reroute_job(
                     raise ValueError("Account Case disappeared during rerun reset")
                 account_case = reset_account_case
                 case_stage = "routed"
-                result = await async_to_thread(
+                result = await _account_reroute_sync_call(
                     reprocess_account_case,
                     account_case,
                     ticket=canonical_ticket,
