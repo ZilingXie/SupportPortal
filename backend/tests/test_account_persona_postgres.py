@@ -689,30 +689,27 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self._initialize_persona_assignment_ticket(ticket_id)
         second_repository = self._repository()
         self.addCleanup(second_repository.close)
-        chooser_barrier = threading.Barrier(2)
-        chooser_lock = threading.Lock()
-        chooser_count = 0
+        start_barrier = threading.Barrier(2)
 
-        def choose_different(candidates: list[tuple[object, ...]]) -> tuple[object, ...]:
-            nonlocal chooser_count
-            with chooser_lock:
-                chosen_key = ("sid-bright", "sid-precise")[chooser_count]
-                chooser_count += 1
-            chooser_barrier.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS)
-            return next(candidate for candidate in candidates if candidate[0] == chosen_key)
+        def choose_bright(candidates: list[tuple[object, ...]]) -> tuple[object, ...]:
+            return next(candidate for candidate in candidates if candidate[0] == "sid-bright")
+
+        def resolve_after_start(repository: PostgresTicketRepository) -> dict[str, object]:
+            start_barrier.wait(timeout=_TEST_THREAD_TIMEOUT_SECONDS)
+            return repository.resolve_account_persona(ticket_id)
 
         with patch(
             "backend.repositories.ticket_repository.random.choice",
-            side_effect=choose_different,
+            side_effect=choose_bright,
         ) as chooser:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = [
-                    executor.submit(repository.resolve_account_persona, ticket_id)
+                    executor.submit(resolve_after_start, repository)
                     for repository in (self.repository, second_repository)
                 ]
                 assignments = [future.result(timeout=_TEST_FUTURE_TIMEOUT_SECONDS) for future in futures]
 
-        self.assertEqual(chooser.call_count, 2)
+        self.assertEqual(chooser.call_count, 1)
         self.assertEqual(assignments[0]["persona_key"], assignments[1]["persona_key"])
         self.assertEqual(assignments[0]["version"], assignments[1]["version"])
         self.assertEqual(self._assignment_count(ticket_id), 1)
