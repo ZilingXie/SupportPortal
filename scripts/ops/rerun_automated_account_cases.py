@@ -31,7 +31,6 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from backend.services.automation_routing import (  # noqa: E402
     AUTOMATED_ROUTE_STATUS,
-    is_registered_automation,
 )
 from backend.services.account_admin import (  # noqa: E402
     ACCOUNT_PERSONA_PRESETS,
@@ -347,6 +346,10 @@ def _runtime_snapshot(
     build_ref = str(build.get("ref") or "").strip()
     if not build_ref:
         raise OperationError("health response is missing app_build.ref")
+    if health.get("ticket_storage") != "postgres":
+        raise OperationError(
+            "health response must report ticket_storage=postgres for durable Account reruns"
+        )
     persona_payload = _request(
         request_json,
         "GET",
@@ -362,13 +365,7 @@ def _runtime_snapshot(
 
 
 def _is_automated_case(case: dict[str, Any]) -> bool:
-    return (
-        str(case.get("route_status") or "").strip() == AUTOMATED_ROUTE_STATUS
-        and is_registered_automation(
-            route_family=case.get("route_family"),
-            execution_action=case.get("execution_action"),
-        )
-    )
+    return str(case.get("route_status") or "").strip() == AUTOMATED_ROUTE_STATUS
 
 
 def _discover_automated_cases(
@@ -1447,7 +1444,7 @@ def apply_operation(
                 continue
             if not _is_automated_case(current):
                 item["status"] = "skipped"
-                item["skip_reason"] = "no_longer_registered_automation"
+                item["skip_reason"] = "no_longer_automated"
                 item["after"] = _safe_case_snapshot(current)
                 _persist_progress(operation_dir, baseline, progress, signing_secret=signing_secret)
                 continue

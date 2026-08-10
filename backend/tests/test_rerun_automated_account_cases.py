@@ -51,7 +51,7 @@ def _persona_gate_request(persona_payload: dict[str, object]) -> FakeRequest:
     def handler(call: dict[str, object]) -> dict[str, object]:
         parsed = urlsplit(str(call["path"]))
         if call["method"] == "GET" and parsed.path == "/health":
-            return {"status": "ok", "app_build": {"ref": "build-1"}}
+            return {"status": "ok", "app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
         if call["method"] == "GET" and parsed.path == "/api/workspace/admin/account-personas":
             return persona_payload
         if call["method"] == "GET" and parsed.path == "/api/account/cases":
@@ -68,13 +68,21 @@ def _persona_gate_request(persona_payload: dict[str, object]) -> FakeRequest:
     return FakeRequest(handler)
 
 
-def _case(case_id: str, *, action: str = "enablement", route_status: str = "automated") -> dict[str, object]:
+def _case(
+    case_id: str,
+    *,
+    action: str = "enablement",
+    route_status: str = "automated",
+    route_family: str | None = None,
+) -> dict[str, object]:
     ticket_id = case_id.replace("AC-", "TK-")
     return {
         "account_case_id": case_id,
         "client_ticket_id": ticket_id,
         "route_status": route_status,
-        "route_family": "automated" if route_status == "automated" else "human_review",
+        "route_family": route_family or (
+            "automated" if route_status == "automated" else "human_review"
+        ),
         "execution_action": action,
         "route_review_status": "pending",
     }
@@ -110,7 +118,7 @@ def _discovery_request(
         method = str(call["method"])
         parsed = urlsplit(str(call["path"]))
         if method == "GET" and parsed.path == "/health":
-            return {"status": "ok", "app_build": {"ref": build_ref}}
+            return {"status": "ok", "app_build": {"ref": build_ref}, "ticket_storage": "postgres"}
         if method == "GET" and parsed.path == "/api/workspace/admin/account-personas":
             return _personas(persona_suffix)
         if method == "GET" and parsed.path == "/api/account/cases":
@@ -208,7 +216,12 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             _case("AC-1"),
             _case("AC-HUMAN", route_status="not_automated"),
             _case("AC-1"),
-            _case("AC-UNREGISTERED", action="unknown"),
+            _case(
+                "AC-LEGACY",
+                action="legacy-removed-handler",
+                route_family="billing_automation",
+            ),
+            _case("AC-UNKNOWN", action="future-automation-action"),
             _case("AC-2", action="quota"),
         ]
         request = _discovery_request(summaries)
@@ -223,8 +236,14 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
 
             baseline = json.loads((operation_dir / "baseline.json").read_text(encoding="utf-8"))
             progress = json.loads((operation_dir / "progress.json").read_text(encoding="utf-8"))
-            self.assertEqual(baseline["frozen_case_ids"], ["AC-1", "AC-2"])
-            self.assertEqual(list(progress["items"]), ["AC-1", "AC-2"])
+            self.assertEqual(
+                baseline["frozen_case_ids"],
+                ["AC-1", "AC-LEGACY", "AC-UNKNOWN", "AC-2"],
+            )
+            self.assertEqual(
+                list(progress["items"]),
+                ["AC-1", "AC-2", "AC-LEGACY", "AC-UNKNOWN"],
+            )
             self.assertEqual(stat.S_IMODE(operation_dir.stat().st_mode), 0o700)
             state_files = sorted(operation_dir.glob("state-*.json"))
             self.assertEqual(len(state_files), 1)
@@ -442,7 +461,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def apply_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases/AC-1":
@@ -526,7 +545,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def timeout_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases/AC-SENSITIVE":
@@ -551,7 +570,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def resume_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/rerun-jobs/job-sensitive":
@@ -586,7 +605,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if call["method"] == "GET" and parsed.path.startswith("/api/account/cases/"):
@@ -622,7 +641,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if call["method"] == "GET" and parsed.path == "/api/account/cases/AC-1":
@@ -666,7 +685,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def first_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases/AC-1":
@@ -695,7 +714,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def resume_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases/AC-1":
@@ -745,7 +764,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 def handler(call: dict[str, object]) -> dict[str, object]:
                     parsed = urlsplit(str(call["path"]))
                     if parsed.path == "/health":
-                        return {"app_build": {"ref": "build-1"}}
+                        return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                     if parsed.path == "/api/workspace/admin/account-personas":
                         return _personas()
                     if parsed.path == "/api/account/cases/AC-1":
@@ -783,7 +802,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 def handler(call: dict[str, object]) -> dict[str, object]:
                     parsed = urlsplit(str(call["path"]))
                     if parsed.path == "/health":
-                        return {"app_build": {"ref": "build-1"}}
+                        return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                     if parsed.path == "/api/workspace/admin/account-personas":
                         return _personas()
                     if parsed.path == "/api/account/cases/AC-1":
@@ -813,7 +832,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 def first_handler(call: dict[str, object]) -> dict[str, object]:
                     parsed = urlsplit(str(call["path"]))
                     if parsed.path == "/health":
-                        return {"app_build": {"ref": "build-1"}}
+                        return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                     if parsed.path == "/api/workspace/admin/account-personas":
                         return _personas()
                     if parsed.path == "/api/account/cases/AC-1":
@@ -841,7 +860,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 def resume_handler(call: dict[str, object]) -> dict[str, object]:
                     parsed = urlsplit(str(call["path"]))
                     if parsed.path == "/health":
-                        return {"app_build": {"ref": "build-1"}}
+                        return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                     if parsed.path == "/api/workspace/admin/account-personas":
                         return _personas()
                     if parsed.path == "/api/account/rerun-jobs/job-protocol":
@@ -866,7 +885,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def first_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases/AC-1":
@@ -889,7 +908,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def resume_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/rerun-jobs/job-recovery":
@@ -915,7 +934,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def first_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases/AC-1":
@@ -941,7 +960,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def resume_handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/rerun-jobs/job-timeout":
@@ -963,7 +982,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases/AC-3":
@@ -989,6 +1008,10 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             self.assertEqual(progress["items"]["AC-1"]["status"], "failed")
             self.assertEqual(progress["items"]["AC-2"]["status"], "completed")
             self.assertEqual(progress["items"]["AC-3"]["status"], "skipped")
+            self.assertEqual(
+                progress["items"]["AC-3"]["skip_reason"],
+                "no_longer_automated",
+            )
             posts = [str(call["path"]) for call in request.calls if call["method"] == "POST"]
             self.assertEqual(len(posts), 2)
             persisted = "\n".join(
@@ -1005,9 +1028,39 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 def handler(call: dict[str, object], build_ref=build_ref, suffix=suffix):
                     parsed = urlsplit(str(call["path"]))
                     if parsed.path == "/health":
-                        return {"app_build": {"ref": build_ref}}
+                        return {"app_build": {"ref": build_ref}, "ticket_storage": "postgres"}
                     if parsed.path == "/api/workspace/admin/account-personas":
                         return _personas(suffix)
+                    raise AssertionError(call)
+
+                request = FakeRequest(handler)
+                with self.assertRaises(runner.OperationError):
+                    self._apply(operation_dir, request_json=request)
+                self.assertFalse(any(call["method"] == "POST" for call in request.calls))
+
+    def test_apply_rejects_non_postgres_ticket_storage_before_any_case_post(self) -> None:
+        invalid_storage_values = (
+            ("missing", None),
+            ("memory", "memory"),
+            ("unexpected", "postgresql"),
+        )
+        for label, ticket_storage in invalid_storage_values:
+            with self.subTest(storage=label), tempfile.TemporaryDirectory() as temporary:
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+
+                def handler(call: dict[str, object]) -> dict[str, object]:
+                    parsed = urlsplit(str(call["path"]))
+                    if parsed.path == "/health":
+                        health: dict[str, object] = {"app_build": {"ref": "build-1"}}
+                        if ticket_storage is not None:
+                            health["ticket_storage"] = ticket_storage
+                        return health
+                    if parsed.path == "/api/workspace/admin/account-personas":
+                        return _personas()
+                    if parsed.path == "/api/account/cases/AC-1":
+                        return _case("AC-1")
+                    if call["method"] == "POST":
+                        return {"job_id": "job-storage-gate", "status": "completed"}
                     raise AssertionError(call)
 
                 request = FakeRequest(handler)
@@ -1412,7 +1465,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             def handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
                 if parsed.path == "/health":
-                    return {"app_build": {"ref": "build-1"}}
+                    return {"app_build": {"ref": "build-1"}, "ticket_storage": "postgres"}
                 if parsed.path == "/api/workspace/admin/account-personas":
                     return _personas()
                 if parsed.path == "/api/account/cases":
