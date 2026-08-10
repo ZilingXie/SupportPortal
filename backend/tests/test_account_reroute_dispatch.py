@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import threading
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import BackgroundTasks
 
@@ -91,6 +92,72 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0], job["job_id"])
         self.assertTrue(str(args[1]))
 
+    async def test_dispatch_once_recovers_a_queued_job_when_background_tasks_were_discarded(self) -> None:
+        job = await self._enqueue_single(BackgroundTasks())
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker:
+            await main._dispatch_pending_account_reroute_jobs_once()
+
+        worker.assert_awaited_once()
+        self.assertEqual(worker.await_args.args[0], job["job_id"])
+
+    async def test_endpoint_wrapper_and_dispatcher_compete_for_one_execution_lease(self) -> None:
+        background_tasks = BackgroundTasks()
+        job = await self._enqueue_single(background_tasks)
+        dispatch_once = main._dispatch_pending_account_reroute_jobs_once
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker:
+            await asyncio.gather(
+                background_tasks(),
+                dispatch_once(),
+            )
+
+        self.assertEqual(worker.await_count, 1)
+        self.assertEqual(worker.await_args.args[0], job["job_id"])
+
+    async def test_dispatch_once_does_not_steal_an_active_execution_lease(self) -> None:
+        job = await self._enqueue_single(BackgroundTasks())
+        claimed_at = datetime.now(timezone.utc)
+        claim = self.repository.claim_account_reroute_job_execution(
+            str(job["job_id"]),
+            owner_token="active-dispatch-owner",
+            claimed_at=claimed_at.isoformat(),
+            lease_expires_at=(claimed_at + timedelta(minutes=30)).isoformat(),
+        )
+        self.assertEqual(claim["status"], "acquired")
+
+        with patch.object(main, "_claim_and_run_account_reroute_job", AsyncMock()) as wrapper:
+            await main._dispatch_pending_account_reroute_jobs_once()
+
+        wrapper.assert_not_awaited()
+        stored = self.repository.get_account_reroute_job(str(job["job_id"]))
+        assert stored is not None
+        self.assertEqual(stored["lease_token"], "active-dispatch-owner")
+
+    async def test_expired_dispatch_only_marks_recovery_and_releases_the_global_gate(self) -> None:
+        first = await main._enqueue_account_rerun_job(BackgroundTasks())
+        old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        claim = self.repository.claim_account_reroute_job_execution(
+            str(first["job_id"]),
+            owner_token="expired-dispatch-owner",
+            claimed_at=old_time.isoformat(),
+            lease_expires_at=(old_time + timedelta(minutes=30)).isoformat(),
+        )
+        self.assertEqual(claim["status"], "acquired")
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker:
+            await main._dispatch_pending_account_reroute_jobs_once()
+
+        worker.assert_not_awaited()
+        recovered = self.repository.get_account_reroute_job(str(first["job_id"]))
+        assert recovered is not None
+        self.assertEqual(recovered["status"], "needs_recovery")
+        self.assertEqual(recovered["dispatch_status"], "needs_recovery")
+        self.assertIsNone(recovered["lease_token"])
+
+        second = await main._enqueue_account_rerun_job(BackgroundTasks())
+        self.assertNotEqual(second["job_id"], first["job_id"])
+
     async def test_expired_lease_becomes_needs_recovery_without_running_worker(self) -> None:
         background_tasks = BackgroundTasks()
         job = await self._enqueue_single(background_tasks)
@@ -149,6 +216,71 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AccountRerouteFencingTests(unittest.TestCase):
+    def test_dispatchable_jobs_have_stable_oldest_first_order_and_limit(self) -> None:
+        repository = InMemoryTicketRepository()
+        as_of = datetime(2026, 8, 10, 2, 0, tzinfo=timezone.utc)
+        jobs = {
+            "queued-b": {
+                "job_id": "queued-b",
+                "status": "queued",
+                "dispatch_status": "queued",
+                "created_at": "2026-08-10T01:00:00+00:00",
+                "updated_at": "2026-08-10T01:00:00+00:00",
+            },
+            "queued-a": {
+                "job_id": "queued-a",
+                "status": "queued",
+                "dispatch_status": "queued",
+                "created_at": "2026-08-10T01:00:00+00:00",
+                "updated_at": "2026-08-10T01:00:00+00:00",
+            },
+            "expired": {
+                "job_id": "expired",
+                "status": "running",
+                "dispatch_status": "leased",
+                "lease_token": "expired-owner",
+                "lease_expires_at": "2026-08-10T01:30:00+00:00",
+                "created_at": "2026-08-10T01:30:00+00:00",
+                "updated_at": "2026-08-10T01:30:00+00:00",
+            },
+            "null-lease": {
+                "job_id": "null-lease",
+                "status": "running",
+                "dispatch_status": "leased",
+                "lease_token": "missing-expiry-owner",
+                "lease_expires_at": None,
+                "created_at": "2026-08-10T01:45:00+00:00",
+                "updated_at": "2026-08-10T01:45:00+00:00",
+            },
+            "active": {
+                "job_id": "active",
+                "status": "running",
+                "dispatch_status": "leased",
+                "lease_token": "active-owner",
+                "lease_expires_at": "2026-08-10T02:30:00+00:00",
+                "created_at": "2026-08-10T00:30:00+00:00",
+                "updated_at": "2026-08-10T00:30:00+00:00",
+            },
+            "terminal": {
+                "job_id": "terminal",
+                "status": "completed",
+                "dispatch_status": "completed",
+                "created_at": "2026-08-10T00:15:00+00:00",
+                "updated_at": "2026-08-10T00:15:00+00:00",
+            },
+        }
+        repository._account_reroute_jobs.update(jobs)
+
+        dispatchable = repository.list_dispatchable_account_reroute_jobs(
+            as_of=as_of.isoformat(),
+            limit=3,
+        )
+
+        self.assertEqual(
+            [job["job_id"] for job in dispatchable],
+            ["queued-a", "queued-b", "expired"],
+        )
+
     def test_progress_renews_the_current_execution_lease(self) -> None:
         repository = InMemoryTicketRepository()
         claimed_at = datetime.now(timezone.utc)
@@ -224,6 +356,69 @@ class AccountRerouteFencingTests(unittest.TestCase):
         )
         self.assertEqual(completed["dispatch_status"], "completed")
         self.assertIsNone(completed["lease_token"])
+
+
+class AccountRerouteDispatcherLifecycleTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        stop_dispatcher = getattr(main, "_stop_account_reroute_dispatcher", None)
+        if callable(stop_dispatcher):
+            stop_dispatcher()
+
+    def test_start_is_idempotent_and_stop_signals_then_joins_the_single_thread(self) -> None:
+        fake_thread = Mock()
+        fake_thread.is_alive.return_value = True
+
+        with patch.object(main.threading, "Thread", return_value=fake_thread) as thread_factory:
+            first = main._start_account_reroute_dispatcher()
+            second = main._start_account_reroute_dispatcher()
+
+        self.assertIs(first, fake_thread)
+        self.assertIs(second, fake_thread)
+        thread_factory.assert_called_once()
+        fake_thread.start.assert_called_once_with()
+
+        main._stop_account_reroute_dispatcher()
+
+        self.assertTrue(main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.is_set())
+        fake_thread.join.assert_called_once_with()
+        self.assertIsNone(main._ACCOUNT_REROUTE_DISPATCH_THREAD)
+
+    def test_dispatcher_thread_runs_an_immediate_scan_before_waiting(self) -> None:
+        scanned = threading.Event()
+
+        async def scan_once() -> None:
+            scanned.set()
+
+        with patch.object(main, "_dispatch_pending_account_reroute_jobs_once", side_effect=scan_once):
+            main._start_account_reroute_dispatcher()
+            self.assertTrue(scanned.wait(timeout=2.0))
+            main._stop_account_reroute_dispatcher()
+
+    def test_shutdown_stops_dispatcher_before_closing_repositories(self) -> None:
+        order: list[str] = []
+        original_ticket_repository = main.ticket_repository
+        original_asset_repository = main.asset_repository
+        ticket_repository = InMemoryTicketRepository()
+        ticket_repository.close = lambda: order.append("ticket_repository")
+        asset_repository = Mock()
+        asset_repository.close.side_effect = lambda: order.append("asset_repository")
+        main.ticket_repository = ticket_repository
+        main.asset_repository = asset_repository
+        try:
+            with (
+                patch.object(main, "_stop_account_reroute_dispatcher", side_effect=lambda: order.append("dispatcher")),
+                patch.object(main.event_bus, "close", AsyncMock()),
+                patch.object(main.task_queue, "close", AsyncMock()),
+            ):
+                asyncio.run(main.shutdown_event())
+        finally:
+            main.ticket_repository = original_ticket_repository
+            main.asset_repository = original_asset_repository
+
+        self.assertEqual(
+            order,
+            ["dispatcher", "ticket_repository", "asset_repository"],
+        )
 
 
 if __name__ == "__main__":

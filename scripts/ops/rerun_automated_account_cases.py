@@ -13,7 +13,6 @@ import ipaddress
 import json
 import os
 from pathlib import Path
-import secrets
 import stat
 import sys
 import tempfile
@@ -43,12 +42,16 @@ TERMINAL_JOB_STATUSES = frozenset({"completed", "completed_with_errors", "failed
 RECOVERY_JOB_STATUSES = frozenset({"needs_recovery"})
 SCHEMA_VERSION = "automated-account-rerun-v1"
 MANIFEST_VERSION = "automated-account-rerun-manifest-v1"
+STATE_VERSION = "automated-account-rerun-state-v1"
+POINTER_VERSION = "automated-account-rerun-pointer-v1"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 ACCESS_TOKEN_ENV = "SUPPORTPORTAL_WORKSPACE_ACCESS_TOKEN"
 OPERATION_DIRECTORY_MODE = 0o700
 OPERATION_FILE_MODE = 0o600
-MANIFEST_KEY_FILE = "manifest.key"
 MANIFEST_FILE = "manifest.json"
+CURRENT_FILE = "current.json"
+STATE_FILE_PREFIX = "state-"
+STATE_FILE_DIGITS = 20
 SAFE_CASE_FIELDS = (
     "account_case_id",
     "billing_ticket_id",
@@ -107,6 +110,13 @@ _LOCAL_OPERATION_LOCKS_GUARD = threading.Lock()
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _require_external_secret(access_token: str) -> str:
+    token = str(access_token or "").strip()
+    if not token:
+        raise OperationError(f"{ACCESS_TOKEN_ENV} or access_token is required")
+    return token
 
 
 def validate_base_url(base_url: str) -> str:
@@ -442,17 +452,10 @@ def _read_text_at(directory_fd: int, name: str) -> str:
             os.close(descriptor)
 
 
-def _atomic_write_at(directory_fd: int, name: str, content: str) -> None:
-    existing = _operation_file_lstat(directory_fd, name)
-    if existing is not None:
-        _validate_owned_mode(
-            existing,
-            name=name,
-            expected_mode=OPERATION_FILE_MODE,
-            require_directory=False,
-        )
+def _write_fsynced_temporary_at(directory_fd: int, name: str, content: str) -> str:
     temporary = f".{name}.{uuid4().hex}.tmp"
     descriptor: int | None = None
+    ready = False
     try:
         descriptor = os.open(
             temporary,
@@ -473,13 +476,8 @@ def _atomic_write_at(directory_fd: int, name: str, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(
-            temporary,
-            name,
-            src_dir_fd=directory_fd,
-            dst_dir_fd=directory_fd,
-        )
-        os.fsync(directory_fd)
+        ready = True
+        return temporary
     except OperationError:
         raise
     except OSError as exc:
@@ -487,12 +485,79 @@ def _atomic_write_at(directory_fd: int, name: str, content: str) -> None:
     finally:
         if descriptor is not None:
             os.close(descriptor)
+        if not ready:
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+
+def _publish_temporary_at(
+    directory_fd: int,
+    temporary: str,
+    name: str,
+    *,
+    replace_existing: bool,
+) -> None:
+    try:
+        if replace_existing:
+            os.replace(
+                temporary,
+                name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+        else:
+            os.link(
+                temporary,
+                name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            os.unlink(temporary, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+    except OSError as exc:
+        raise OperationError(f"could not safely publish {name}") from exc
+    finally:
         try:
             os.unlink(temporary, dir_fd=directory_fd)
         except FileNotFoundError:
             pass
         except OSError:
             pass
+
+
+def _atomic_write_at(directory_fd: int, name: str, content: str) -> None:
+    existing = _operation_file_lstat(directory_fd, name)
+    if existing is not None:
+        _validate_owned_mode(
+            existing,
+            name=name,
+            expected_mode=OPERATION_FILE_MODE,
+            require_directory=False,
+        )
+    temporary = _write_fsynced_temporary_at(directory_fd, name, content)
+    _publish_temporary_at(
+        directory_fd,
+        temporary,
+        name,
+        replace_existing=True,
+    )
+
+
+def _atomic_create_at(directory_fd: int, name: str, content: str) -> None:
+    if _operation_file_lstat(directory_fd, name) is not None:
+        raise OperationError(f"operation file already exists: {name}")
+    temporary = _write_fsynced_temporary_at(directory_fd, name, content)
+    _publish_temporary_at(
+        directory_fd,
+        temporary,
+        name,
+        replace_existing=False,
+    )
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -524,67 +589,184 @@ def _canonical_json_bytes(payload: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def _read_manifest_key_at(directory_fd: int) -> bytes:
-    encoded = _read_text_at(directory_fd, MANIFEST_KEY_FILE).strip()
-    try:
-        key = bytes.fromhex(encoded)
-    except ValueError as exc:
-        raise OperationError("manifest.key is invalid") from exc
-    if len(key) != 32:
-        raise OperationError("manifest.key is invalid")
-    return key
+def _operation_hmac_key(access_token: str, operation_id: str) -> bytes:
+    token = _require_external_secret(access_token)
+    normalized_operation_id = str(operation_id or "").strip()
+    if not normalized_operation_id:
+        raise OperationError("operation_id is required for operation signing")
+    context = f"SupportPortal Automated Account rerun\0{normalized_operation_id}".encode("utf-8")
+    return hmac.new(token.encode("utf-8"), context, hashlib.sha256).digest()
 
 
-def _manifest_core(baseline: dict[str, Any], progress: dict[str, Any]) -> dict[str, Any]:
+def _signed_payload(core: dict[str, Any], key: bytes) -> dict[str, Any]:
+    return {
+        **core,
+        "hmac_sha256": hmac.new(key, _canonical_json_bytes(core), hashlib.sha256).hexdigest(),
+    }
+
+
+def _verify_signed_payload(
+    payload: dict[str, Any],
+    *,
+    core_fields: set[str],
+    key: bytes,
+    label: str,
+) -> dict[str, Any]:
+    if set(payload) != core_fields | {"hmac_sha256"}:
+        raise OperationError(f"{label} is invalid")
+    core = {field: payload.get(field) for field in core_fields}
+    expected_hmac = hmac.new(key, _canonical_json_bytes(core), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(str(payload.get("hmac_sha256") or ""), expected_hmac):
+        raise OperationError(f"{label} signature is invalid")
+    return core
+
+
+def _manifest_core(baseline: dict[str, Any]) -> dict[str, Any]:
     return {
         "manifest_version": MANIFEST_VERSION,
         "schema_version": SCHEMA_VERSION,
         "operation_id": baseline.get("operation_id"),
         "baseline_sha256": hashlib.sha256(_canonical_json_bytes(baseline)).hexdigest(),
-        "progress_sha256": hashlib.sha256(_canonical_json_bytes(progress)).hexdigest(),
     }
 
 
 def _write_operation_manifest(
     operation_dir: Path,
     baseline: dict[str, Any],
-    progress: dict[str, Any],
+    *,
+    access_token: str,
 ) -> None:
     operation_dir = _operation_path(operation_dir)
+    key = _operation_hmac_key(access_token, str(baseline.get("operation_id") or ""))
+    manifest = _signed_payload(_manifest_core(baseline), key)
     with _open_operation_directory(operation_dir) as directory_fd:
-        key = _read_manifest_key_at(directory_fd)
-    core = _manifest_core(baseline, progress)
-    manifest = {
-        **core,
-        "hmac_sha256": hmac.new(key, _canonical_json_bytes(core), hashlib.sha256).hexdigest(),
-    }
-    _write_json(operation_dir / MANIFEST_FILE, manifest)
+        _atomic_create_at(
+            directory_fd,
+            MANIFEST_FILE,
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        )
 
 
 def _verify_operation_manifest_at(
     directory_fd: int,
     baseline: dict[str, Any],
-    progress: dict[str, Any],
+    key: bytes,
 ) -> None:
-    key = _read_manifest_key_at(directory_fd)
     manifest = _read_json_at(directory_fd, MANIFEST_FILE)
-    expected_fields = {
+    core_fields = {
         "manifest_version",
         "schema_version",
         "operation_id",
         "baseline_sha256",
-        "progress_sha256",
-        "hmac_sha256",
     }
-    if set(manifest) != expected_fields:
-        raise OperationError("operation manifest is invalid")
-    signed = {field: manifest.get(field) for field in expected_fields if field != "hmac_sha256"}
-    expected_hmac = hmac.new(key, _canonical_json_bytes(signed), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(str(manifest.get("hmac_sha256") or ""), expected_hmac):
-        raise OperationError("operation manifest signature is invalid")
-    expected_core = _manifest_core(baseline, progress)
-    if signed != expected_core:
-        raise OperationError("operation files do not match the signed manifest")
+    signed = _verify_signed_payload(
+        manifest,
+        core_fields=core_fields,
+        key=key,
+        label="operation manifest",
+    )
+    if signed != _manifest_core(baseline):
+        raise OperationError("baseline does not match the signed manifest")
+
+
+def _state_file_name(generation: int) -> str:
+    if (
+        not isinstance(generation, int)
+        or isinstance(generation, bool)
+        or generation < 0
+        or generation >= 10**STATE_FILE_DIGITS
+    ):
+        raise OperationError("operation generation is invalid")
+    return f"{STATE_FILE_PREFIX}{generation:0{STATE_FILE_DIGITS}d}.json"
+
+
+def _state_core(
+    baseline: dict[str, Any],
+    progress: dict[str, Any],
+    generation: int,
+) -> dict[str, Any]:
+    return {
+        "state_version": STATE_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "operation_id": baseline.get("operation_id"),
+        "generation": generation,
+        "progress": progress,
+    }
+
+
+def _pointer_core(
+    baseline: dict[str, Any],
+    generation: int,
+    signed_state: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "pointer_version": POINTER_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "operation_id": baseline.get("operation_id"),
+        "generation": generation,
+        "state_file": _state_file_name(generation),
+        "state_sha256": hashlib.sha256(_canonical_json_bytes(signed_state)).hexdigest(),
+    }
+
+
+def _read_committed_state_at(
+    directory_fd: int,
+    baseline: dict[str, Any],
+    key: bytes,
+) -> tuple[dict[str, Any], int]:
+    pointer = _read_json_at(directory_fd, CURRENT_FILE)
+    pointer_fields = {
+        "pointer_version",
+        "schema_version",
+        "operation_id",
+        "generation",
+        "state_file",
+        "state_sha256",
+    }
+    pointer_core = _verify_signed_payload(
+        pointer,
+        core_fields=pointer_fields,
+        key=key,
+        label="operation pointer",
+    )
+    generation = pointer_core.get("generation")
+    state_file = _state_file_name(generation)
+    expected_pointer_values = {
+        "pointer_version": POINTER_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "operation_id": baseline.get("operation_id"),
+        "generation": generation,
+        "state_file": state_file,
+    }
+    if any(pointer_core.get(field) != value for field, value in expected_pointer_values.items()):
+        raise OperationError("operation pointer does not match this operation")
+
+    signed_state = _read_json_at(directory_fd, state_file)
+    actual_state_sha256 = hashlib.sha256(_canonical_json_bytes(signed_state)).hexdigest()
+    if not hmac.compare_digest(str(pointer_core.get("state_sha256") or ""), actual_state_sha256):
+        raise OperationError("operation pointer does not match its state generation")
+    state_fields = {
+        "state_version",
+        "schema_version",
+        "operation_id",
+        "generation",
+        "progress",
+    }
+    state_core = _verify_signed_payload(
+        signed_state,
+        core_fields=state_fields,
+        key=key,
+        label="operation state generation",
+    )
+    if (
+        state_core.get("state_version") != STATE_VERSION
+        or state_core.get("schema_version") != SCHEMA_VERSION
+        or state_core.get("operation_id") != baseline.get("operation_id")
+        or state_core.get("generation") != generation
+        or not isinstance(state_core.get("progress"), dict)
+    ):
+        raise OperationError("operation state generation does not match this operation")
+    return state_core["progress"], generation
 
 
 def _validate_operation_contract(
@@ -734,13 +916,92 @@ def _report_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _persist_progress(operation_dir: Path, baseline: dict[str, Any], progress: dict[str, Any]) -> None:
+def _existing_state_generations_at(directory_fd: int) -> list[int]:
+    generations: list[int] = []
+    try:
+        names = os.listdir(directory_fd)
+    except OSError as exc:
+        raise OperationError("could not inspect operation generations") from exc
+    suffix = ".json"
+    for name in names:
+        if not name.startswith(STATE_FILE_PREFIX) or not name.endswith(suffix):
+            continue
+        encoded = name[len(STATE_FILE_PREFIX) : -len(suffix)]
+        if len(encoded) == STATE_FILE_DIGITS and encoded.isascii() and encoded.isdigit():
+            generations.append(int(encoded))
+    return generations
+
+
+def _commit_progress_at(
+    directory_fd: int,
+    baseline: dict[str, Any],
+    progress: dict[str, Any],
+    *,
+    key: bytes,
+    initialize: bool,
+) -> int:
+    if initialize:
+        if _operation_file_lstat(directory_fd, CURRENT_FILE) is not None:
+            raise OperationError("operation pointer already exists")
+        current_generation = -1
+    else:
+        _, current_generation = _read_committed_state_at(directory_fd, baseline, key)
+
+    existing_generations = _existing_state_generations_at(directory_fd)
+    next_generation = max([current_generation, *existing_generations], default=-1) + 1
+    state_file = _state_file_name(next_generation)
+    signed_state = _signed_payload(
+        _state_core(baseline, progress, next_generation),
+        key,
+    )
+    _atomic_create_at(
+        directory_fd,
+        state_file,
+        json.dumps(signed_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
+    signed_pointer = _signed_payload(
+        _pointer_core(baseline, next_generation, signed_state),
+        key,
+    )
+    pointer_text = json.dumps(signed_pointer, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if initialize:
+        _atomic_create_at(directory_fd, CURRENT_FILE, pointer_text)
+    else:
+        _atomic_write_at(directory_fd, CURRENT_FILE, pointer_text)
+    return next_generation
+
+
+def _persist_progress(
+    operation_dir: Path,
+    baseline: dict[str, Any],
+    progress: dict[str, Any],
+    *,
+    access_token: str,
+    initialize: bool = False,
+) -> None:
+    access_token = _require_external_secret(access_token)
     progress["updated_at"] = _utc_now()
+    operation_dir = _operation_path(operation_dir)
+    operation_id = str(baseline.get("operation_id") or "")
+    key = _operation_hmac_key(access_token, operation_id)
+    with _open_operation_directory(operation_dir) as directory_fd:
+        stored_baseline = _read_json_at(directory_fd, "baseline.json")
+        if stored_baseline != baseline:
+            raise OperationError("baseline changed while operation state was being committed")
+        _verify_operation_manifest_at(directory_fd, baseline, key)
+        _commit_progress_at(
+            directory_fd,
+            baseline,
+            progress,
+            key=key,
+            initialize=initialize,
+        )
+
+    # Human-readable files are projections rebuilt only after the signed pointer commits.
     _write_json(operation_dir / "progress.json", progress)
     report = _build_report(baseline, progress)
     _write_json(operation_dir / "report.json", report)
     _atomic_write(operation_dir / "report.md", _report_markdown(report))
-    _write_operation_manifest(operation_dir, baseline, progress)
 
 
 def create_dry_run(
@@ -750,6 +1011,7 @@ def create_dry_run(
     request_json: JsonRequest,
     access_token: str = "",
 ) -> Path:
+    access_token = _require_external_secret(access_token)
     normalized_base_url = validate_base_url(base_url)
     runtime = _runtime_snapshot(request_json, access_token=access_token)
     summaries = _discover_automated_cases(request_json, access_token=access_token)
@@ -809,9 +1071,24 @@ def create_dry_run(
             for case_id in frozen_case_ids
         },
     }
-    _atomic_write(operation_dir / MANIFEST_KEY_FILE, secrets.token_hex(32) + "\n")
-    _write_json(operation_dir / "baseline.json", baseline)
-    _persist_progress(operation_dir, baseline, progress)
+    with _open_operation_directory(operation_dir) as directory_fd:
+        _atomic_create_at(
+            directory_fd,
+            "baseline.json",
+            json.dumps(baseline, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        )
+    _write_operation_manifest(
+        operation_dir,
+        baseline,
+        access_token=access_token,
+    )
+    _persist_progress(
+        operation_dir,
+        baseline,
+        progress,
+        access_token=access_token,
+        initialize=True,
+    )
     return operation_dir
 
 
@@ -853,15 +1130,26 @@ def operation_lock(operation_dir: Path) -> Iterator[None]:
                 _LOCAL_OPERATION_LOCKS.discard(canonical)
 
 
-def _load_operation(operation_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _load_operation(
+    operation_dir: Path,
+    *,
+    access_token: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    access_token = _require_external_secret(access_token)
     operation_dir = _operation_path(operation_dir)
     with _open_operation_directory(operation_dir) as directory_fd:
         baseline = _read_json_at(directory_fd, "baseline.json")
-        progress = _read_json_at(directory_fd, "progress.json")
+        operation_id = str(baseline.get("operation_id") or "")
+        key = _operation_hmac_key(access_token, operation_id)
+        _verify_operation_manifest_at(directory_fd, baseline, key)
+        progress, _ = _read_committed_state_at(directory_fd, baseline, key)
         for name in ("report.json", "report.md"):
-            descriptor = _open_operation_file(directory_fd, name, os.O_RDONLY)
+            if _operation_file_lstat(directory_fd, name) is not None:
+                descriptor = _open_operation_file(directory_fd, name, os.O_RDONLY)
+                os.close(descriptor)
+        if _operation_file_lstat(directory_fd, "progress.json") is not None:
+            descriptor = _open_operation_file(directory_fd, "progress.json", os.O_RDONLY)
             os.close(descriptor)
-        _verify_operation_manifest_at(directory_fd, baseline, progress)
     _validate_operation_contract(baseline, progress)
     return baseline, progress
 
@@ -996,11 +1284,12 @@ def apply_operation(
     poll_interval_seconds: float = 3.0,
 ) -> dict[str, Any]:
     operation_dir = _operation_path(operation_dir)
-    baseline, _ = _load_operation(operation_dir)
+    access_token = _require_external_secret(access_token)
+    baseline, _ = _load_operation(operation_dir, access_token=access_token)
     validate_base_url(str(baseline.get("base_url") or ""))
     monotonic_clock = monotonic or time.monotonic
     with operation_lock(operation_dir):
-        baseline, progress = _load_operation(operation_dir)
+        baseline, progress = _load_operation(operation_dir, access_token=access_token)
         runtime = _runtime_snapshot(request_json, access_token=access_token)
         if runtime["app_build_ref"] != baseline.get("app_build_ref"):
             raise OperationError("app_build.ref changed since dry-run")
@@ -1010,7 +1299,7 @@ def apply_operation(
         progress["operation_status"] = "applying"
         progress["stop_reason"] = None
         progress.setdefault("apply_started_at", _utc_now())
-        _persist_progress(operation_dir, baseline, progress)
+        _persist_progress(operation_dir, baseline, progress, access_token=access_token)
         items = progress["items"]
         for case_id in baseline["frozen_case_ids"]:
             item = items.get(case_id)
@@ -1036,11 +1325,11 @@ def apply_operation(
                     item["terminal_error"] = "polling_timeout"
                     progress["operation_status"] = "stopped"
                     progress["stop_reason"] = "polling_timeout"
-                    _persist_progress(operation_dir, baseline, progress)
+                    _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                     return progress
                 except _JobStateStop as exc:
                     _record_job_state_stop(item, progress, exc)
-                    _persist_progress(operation_dir, baseline, progress)
+                    _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                     return progress
                 after = _refresh_case_after_terminal(
                     case_id,
@@ -1048,7 +1337,7 @@ def apply_operation(
                     access_token=access_token,
                 )
                 _record_terminal_item(item, job, after=after)
-                _persist_progress(operation_dir, baseline, progress)
+                _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                 continue
 
             try:
@@ -1063,13 +1352,13 @@ def apply_operation(
                     raise
                 item["status"] = "skipped"
                 item["skip_reason"] = "case_missing"
-                _persist_progress(operation_dir, baseline, progress)
+                _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                 continue
             if not _is_automated_case(current):
                 item["status"] = "skipped"
                 item["skip_reason"] = "no_longer_registered_automation"
                 item["after"] = _safe_case_snapshot(current)
-                _persist_progress(operation_dir, baseline, progress)
+                _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                 continue
 
             started_job: dict[str, Any] | None = None
@@ -1077,7 +1366,7 @@ def apply_operation(
             while retryable_failures < 3:
                 item["status"] = "starting"
                 item["attempts"] = int(item.get("attempts") or 0) + 1
-                _persist_progress(operation_dir, baseline, progress)
+                _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                 try:
                     started_job = _request(
                         request_json,
@@ -1093,12 +1382,12 @@ def apply_operation(
                         item["terminal_error"] = "external_active_job"
                         progress["operation_status"] = "stopped"
                         progress["stop_reason"] = "external_active_job"
-                        _persist_progress(operation_dir, baseline, progress)
+                        _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                         return progress
                     if not _is_retryable_start_error(exc):
                         item["status"] = "failed"
                         item["terminal_error"] = f"rerun_start_http_{exc.status_code}"
-                        _persist_progress(operation_dir, baseline, progress)
+                        _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                         break
                     retryable_failures += 1
                     item["terminal_error"] = f"retryable_rerun_start_http_{exc.status_code}"
@@ -1109,7 +1398,7 @@ def apply_operation(
                     item["status"] = "resumable"
                     progress["operation_status"] = "stopped"
                     progress["stop_reason"] = "three_consecutive_retryable_start_failures"
-                    _persist_progress(operation_dir, baseline, progress)
+                    _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                     return progress
                 continue
 
@@ -1118,7 +1407,7 @@ def apply_operation(
             item["job_id"] = job_id or None
             item["status"] = "polling"
             item["job"] = _safe_job_snapshot(started_job)
-            _persist_progress(operation_dir, baseline, progress)
+            _persist_progress(operation_dir, baseline, progress, access_token=access_token)
             try:
                 started_state = _classify_job_state(started_job, expected_job_id=job_id)
                 job = started_job
@@ -1137,11 +1426,11 @@ def apply_operation(
                 item["terminal_error"] = "polling_timeout"
                 progress["operation_status"] = "stopped"
                 progress["stop_reason"] = "polling_timeout"
-                _persist_progress(operation_dir, baseline, progress)
+                _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                 return progress
             except _JobStateStop as exc:
                 _record_job_state_stop(item, progress, exc)
-                _persist_progress(operation_dir, baseline, progress)
+                _persist_progress(operation_dir, baseline, progress, access_token=access_token)
                 return progress
             after = _refresh_case_after_terminal(
                 case_id,
@@ -1149,11 +1438,11 @@ def apply_operation(
                 access_token=access_token,
             )
             _record_terminal_item(item, job, after=after)
-            _persist_progress(operation_dir, baseline, progress)
+            _persist_progress(operation_dir, baseline, progress, access_token=access_token)
 
         progress["operation_status"] = "completed"
         progress["completed_at"] = _utc_now()
-        _persist_progress(operation_dir, baseline, progress)
+        _persist_progress(operation_dir, baseline, progress, access_token=access_token)
         return progress
 
 
@@ -1225,7 +1514,7 @@ def main(argv: list[str] | None = None) -> int:
         raise OperationError("--resume is only valid together with --apply")
 
     if args.apply:
-        baseline, _ = _load_operation(args.resume)
+        baseline, _ = _load_operation(args.resume, access_token=access_token)
         stored_base_url = validate_base_url(str(baseline.get("base_url") or ""))
         if args.base_url is not None and validate_base_url(args.base_url) != stored_base_url:
             raise OperationError("--base-url does not match the frozen dry-run")

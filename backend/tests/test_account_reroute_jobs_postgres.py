@@ -183,6 +183,9 @@ class PostgresAccountRerouteJobTests(unittest.TestCase):
         self.assertIn("where", indexes)
         self.assertIn("queued", indexes)
         self.assertIn("running", indexes)
+        self.assertIn("idx_support_account_reroute_jobs_dispatch_scan", indexes)
+        self.assertIn("created_at", indexes)
+        self.assertIn("job_id", indexes)
         self.assertIn("needs_recovery", constraints)
         self.assertIn("completed_with_errors", constraints)
 
@@ -318,6 +321,99 @@ class PostgresAccountRerouteJobTests(unittest.TestCase):
 
         self.assertEqual(second["status"], "created")
         self.assertEqual(self._table_count("support_account_reroute_jobs"), 2)
+
+    def test_dispatchable_scan_matches_in_memory_order_and_limit(self) -> None:
+        active_index = "idx_support_account_reroute_jobs_one_active"
+        table = sql.Identifier(self.schema, "support_account_reroute_jobs")
+        try:
+            with psycopg.connect(self.migration_dsn, autocommit=True) as conn:
+                conn.execute(
+                    sql.SQL("DROP INDEX {}").format(
+                        sql.Identifier(self.schema, active_index)
+                    )
+                )
+                for job_id, status, dispatch_status, lease_token, lease_expires_at, created_at in (
+                    ("queued-b", "queued", "queued", None, None, "2026-08-10T01:00:00+00:00"),
+                    ("queued-a", "queued", "queued", None, None, "2026-08-10T01:00:00+00:00"),
+                    ("expired", "running", "leased", "expired-owner", "2026-08-10T01:30:00+00:00", "2026-08-10T01:30:00+00:00"),
+                    ("null-lease", "running", "leased", "missing-expiry-owner", None, "2026-08-10T01:45:00+00:00"),
+                    ("active", "running", "leased", "active-owner", "2026-08-10T02:30:00+00:00", "2026-08-10T00:30:00+00:00"),
+                    ("terminal", "completed", "completed", None, None, "2026-08-10T00:15:00+00:00"),
+                ):
+                    payload = self._job(job_id, created_at=created_at)
+                    payload["status"] = status
+                    conn.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (job_id,request_scope,status,payload,result,dispatch_status,"
+                            "lease_token,lease_expires_at,created_at,updated_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                        ).format(table),
+                        (
+                            job_id,
+                            "POST:/api/account/rerun-jobs",
+                            status,
+                            Json(payload),
+                            Json({}),
+                            dispatch_status,
+                            lease_token,
+                            lease_expires_at,
+                            created_at,
+                            created_at,
+                        ),
+                    )
+            dispatchable = self.repository.list_dispatchable_account_reroute_jobs(
+                as_of="2026-08-10T02:00:00+00:00",
+                limit=3,
+            )
+            self.assertEqual(
+                [job["job_id"] for job in dispatchable],
+                ["queued-a", "queued-b", "expired"],
+            )
+        finally:
+            with psycopg.connect(self.migration_dsn, autocommit=True) as conn:
+                conn.execute(sql.SQL("TRUNCATE {} CASCADE").format(table))
+                conn.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((1)) "
+                        "WHERE status IN ('queued','running')"
+                    ).format(sql.Identifier(active_index), table)
+                )
+
+    def test_expired_dispatch_scan_marks_recovery_and_releases_the_active_gate(self) -> None:
+        first = self._claim(self._job("account-rerun-expired-dispatch"))
+        now = datetime.now(timezone.utc)
+        old_time = now - timedelta(hours=2)
+        claimed = self.repository.claim_account_reroute_job_execution(
+            str(first["job"]["job_id"]),
+            owner_token="abandoned-owner",
+            claimed_at=old_time.isoformat(),
+            lease_expires_at=(old_time + timedelta(minutes=30)).isoformat(),
+        )
+        self.assertEqual(claimed["status"], "acquired")
+
+        dispatchable = self.repository.list_dispatchable_account_reroute_jobs(
+            as_of=now.isoformat(),
+            limit=10,
+        )
+        self.assertEqual(
+            [job["job_id"] for job in dispatchable],
+            ["account-rerun-expired-dispatch"],
+        )
+        recovered = self.repository.claim_account_reroute_job_execution(
+            "account-rerun-expired-dispatch",
+            owner_token="recovery-scanner",
+            claimed_at=now.isoformat(),
+            lease_expires_at=(now + timedelta(minutes=30)).isoformat(),
+        )
+        self.assertEqual(recovered["status"], "needs_recovery")
+
+        second = self._claim(
+            self._job(
+                "account-rerun-after-recovery",
+                created_at=(now + timedelta(seconds=1)).isoformat(),
+            )
+        )
+        self.assertEqual(second["status"], "created")
 
     def test_progress_update_is_fenced_renews_lease_and_terminal_releases_it(self) -> None:
         self._claim(self._job("account-rerun-progress-fence"))

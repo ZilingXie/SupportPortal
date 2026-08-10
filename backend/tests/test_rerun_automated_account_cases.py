@@ -12,6 +12,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from scripts.ops import rerun_automated_account_cases as runner
 
 
+TEST_ACCESS_TOKEN = "secret-admin-token"
+
+
 def _personas(content_suffix: str = "baseline") -> dict[str, object]:
     personas = []
     for key, name in (
@@ -117,13 +120,50 @@ class Clock:
 
 
 class AutomatedAccountCaseRerunTests(unittest.TestCase):
+    def _apply(self, operation_dir: Path, **kwargs):
+        return runner.apply_operation(
+            operation_dir,
+            access_token=TEST_ACCESS_TOKEN,
+            **kwargs,
+        )
+
+    def _load(self, operation_dir: Path):
+        return runner._load_operation(operation_dir, access_token=TEST_ACCESS_TOKEN)
+
+    def _persist(
+        self,
+        operation_dir: Path,
+        baseline: dict[str, object],
+        progress: dict[str, object],
+    ) -> None:
+        runner._persist_progress(
+            operation_dir,
+            baseline,
+            progress,
+            access_token=TEST_ACCESS_TOKEN,
+        )
+
+    def _force_resign_operation(
+        self,
+        operation_dir: Path,
+        baseline: dict[str, object],
+        progress: dict[str, object],
+    ) -> None:
+        key = runner._operation_hmac_key(TEST_ACCESS_TOKEN, str(baseline["operation_id"]))
+        runner._write_json(operation_dir / "baseline.json", baseline)
+        runner._write_json(
+            operation_dir / "manifest.json",
+            runner._signed_payload(runner._manifest_core(baseline), key),
+        )
+        self._persist(operation_dir, baseline, progress)
+
     def _dry_run(self, root: Path, case_ids=("AC-1", "AC-2")) -> tuple[Path, FakeRequest]:
         request = _discovery_request([_case(case_id) for case_id in case_ids])
         operation_dir = runner.create_dry_run(
             base_url="http://127.0.0.1:8000",
             operations_root=root,
             request_json=request,
-            access_token="secret-admin-token",
+            access_token=TEST_ACCESS_TOKEN,
         )
         return operation_dir, request
 
@@ -141,7 +181,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 base_url="http://localhost:8000",
                 operations_root=Path(temporary),
                 request_json=request,
-                access_token="secret-admin-token",
+                access_token=TEST_ACCESS_TOKEN,
             )
 
             baseline = json.loads((operation_dir / "baseline.json").read_text(encoding="utf-8"))
@@ -149,24 +189,50 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             self.assertEqual(baseline["frozen_case_ids"], ["AC-1", "AC-2"])
             self.assertEqual(list(progress["items"]), ["AC-1", "AC-2"])
             self.assertEqual(stat.S_IMODE(operation_dir.stat().st_mode), 0o700)
+            state_files = sorted(operation_dir.glob("state-*.json"))
+            self.assertEqual(len(state_files), 1)
             for name in (
                 "baseline.json",
                 "progress.json",
                 "report.json",
                 "report.md",
                 "manifest.json",
-                "manifest.key",
+                "current.json",
+                state_files[0].name,
             ):
                 self.assertTrue((operation_dir / name).exists(), name)
                 self.assertEqual(stat.S_IMODE((operation_dir / name).stat().st_mode), 0o600)
+            self.assertFalse((operation_dir / "manifest.key").exists())
             persisted = "\n".join(path.read_text(encoding="utf-8") for path in operation_dir.iterdir() if path.is_file())
-            self.assertNotIn("secret-admin-token", persisted)
+            self.assertNotIn(TEST_ACCESS_TOKEN, persisted)
             self.assertNotIn("customer_email", persisted)
             self.assertFalse(any(call["method"] == "POST" for call in request.calls))
             persona_call = next(
                 call for call in request.calls if "/account-personas" in str(call["path"])
             )
-            self.assertEqual(persona_call["headers"]["Authorization"], "Bearer secret-admin-token")
+            self.assertEqual(persona_call["headers"]["Authorization"], f"Bearer {TEST_ACCESS_TOKEN}")
+
+    def test_create_and_apply_require_an_external_signing_secret_before_http(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            create_request = _discovery_request([_case("AC-1")])
+            with self.assertRaises(runner.OperationError):
+                runner.create_dry_run(
+                    base_url="http://127.0.0.1:8000",
+                    operations_root=Path(temporary),
+                    request_json=create_request,
+                    access_token="",
+                )
+            self.assertFalse(create_request.calls)
+
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            apply_request = FakeRequest(lambda call: (_ for _ in ()).throw(AssertionError(call)))
+            with self.assertRaises(runner.OperationError):
+                runner.apply_operation(
+                    operation_dir,
+                    request_json=apply_request,
+                    access_token="",
+                )
+            self.assertFalse(apply_request.calls)
 
     def test_internal_email_reason_never_enters_dry_run_apply_or_resume_artifacts(self) -> None:
         sensitive_reason = (
@@ -200,7 +266,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 base_url="http://127.0.0.1:8000",
                 operations_root=Path(temporary),
                 request_json=_discovery_request([sensitive_case]),
-                access_token="runner-access-token",
+                access_token=TEST_ACCESS_TOKEN,
             )
             assert_artifacts_are_safe(operation_dir)
 
@@ -220,7 +286,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     return {"job_id": "job-sensitive", "status": "running"}
                 raise AssertionError(call)
 
-            timed_out = runner.apply_operation(
+            timed_out = self._apply(
                 operation_dir,
                 request_json=FakeRequest(timeout_handler),
                 sleep=clock.sleep,
@@ -244,7 +310,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             resume = FakeRequest(resume_handler)
-            completed = runner.apply_operation(
+            completed = self._apply(
                 operation_dir,
                 request_json=resume,
                 sleep=lambda _value: None,
@@ -259,7 +325,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
         self.assertEqual(runner.validate_base_url("http://[::1]:8000"), "http://[::1]:8000")
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaises(runner.OperationError):
-                runner.apply_operation(Path(temporary), request_json=FakeRequest(lambda _call: {}))
+                self._apply(Path(temporary), request_json=FakeRequest(lambda _call: {}))
 
     def test_apply_posts_only_single_cases_with_stable_keys_and_waits_sequentially(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -283,7 +349,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             request = FakeRequest(handler)
-            result = runner.apply_operation(operation_dir, request_json=request, sleep=lambda _value: None)
+            result = self._apply(operation_dir, request_json=request, sleep=lambda _value: None)
 
             posts = [call for call in request.calls if call["method"] == "POST"]
             self.assertEqual(
@@ -318,7 +384,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             request = FakeRequest(handler)
-            progress = runner.apply_operation(operation_dir, request_json=request, sleep=lambda _value: None)
+            progress = self._apply(operation_dir, request_json=request, sleep=lambda _value: None)
 
             posts = [call for call in request.calls if call["method"] == "POST"]
             self.assertEqual(len(posts), 3)
@@ -331,6 +397,80 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 if path.is_file()
             )
             self.assertNotIn(sensitive_error, persisted)
+
+    def test_resume_after_post_result_commit_failure_replays_the_same_idempotency_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            jobs_by_key: dict[str, str] = {}
+            side_effect_count = 0
+
+            def idempotent_start(call: dict[str, object]) -> dict[str, object]:
+                nonlocal side_effect_count
+                key = str(call["headers"]["Idempotency-Key"])
+                if key not in jobs_by_key:
+                    jobs_by_key[key] = "job-canonical"
+                    side_effect_count += 1
+                return {"job_id": jobs_by_key[key], "status": "queued"}
+
+            def first_handler(call: dict[str, object]) -> dict[str, object]:
+                parsed = urlsplit(str(call["path"]))
+                if parsed.path == "/health":
+                    return {"app_build": {"ref": "build-1"}}
+                if parsed.path == "/api/workspace/admin/account-personas":
+                    return _personas()
+                if parsed.path == "/api/account/cases/AC-1":
+                    return _case("AC-1")
+                if call["method"] == "POST":
+                    return idempotent_start(call)
+                raise AssertionError(call)
+
+            first = FakeRequest(first_handler)
+            original_persist = runner._persist_progress
+
+            def fail_job_id_commit(operation_dir, baseline, progress, **kwargs):
+                item = progress["items"]["AC-1"]
+                if item.get("job_id") == "job-canonical":
+                    raise runner.OperationError("simulated job-id commit failure")
+                return original_persist(operation_dir, baseline, progress, **kwargs)
+
+            with patch.object(runner, "_persist_progress", side_effect=fail_job_id_commit):
+                with self.assertRaises(runner.OperationError):
+                    self._apply(operation_dir, request_json=first, sleep=lambda _value: None)
+            self.assertEqual(len([call for call in first.calls if call["method"] == "POST"]), 1)
+            _, committed = self._load(operation_dir)
+            self.assertEqual(committed["items"]["AC-1"]["status"], "starting")
+            self.assertIsNone(committed["items"]["AC-1"]["job_id"])
+
+            def resume_handler(call: dict[str, object]) -> dict[str, object]:
+                parsed = urlsplit(str(call["path"]))
+                if parsed.path == "/health":
+                    return {"app_build": {"ref": "build-1"}}
+                if parsed.path == "/api/workspace/admin/account-personas":
+                    return _personas()
+                if parsed.path == "/api/account/cases/AC-1":
+                    return _case("AC-1")
+                if call["method"] == "POST":
+                    return idempotent_start(call)
+                if parsed.path == "/api/account/rerun-jobs/job-canonical":
+                    return {"job_id": "job-canonical", "status": "completed"}
+                raise AssertionError(call)
+
+            resume = FakeRequest(resume_handler)
+            completed = self._apply(operation_dir, request_json=resume, sleep=lambda _value: None)
+            self.assertEqual(completed["operation_status"], "completed")
+            self.assertEqual(completed["items"]["AC-1"]["job_id"], "job-canonical")
+            all_posts = [
+                call
+                for call in [*first.calls, *resume.calls]
+                if call["method"] == "POST"
+            ]
+            self.assertEqual(len(all_posts), 2)
+            self.assertEqual(
+                {str(call["headers"]["Idempotency-Key"]) for call in all_posts},
+                {runner.stable_idempotency_key(completed["operation_id"], "AC-1")},
+            )
+            self.assertEqual(jobs_by_key, {str(all_posts[0]["headers"]["Idempotency-Key"]): "job-canonical"})
+            self.assertEqual(side_effect_count, 1)
 
     def test_start_409_stops_as_external_active_and_nonretryable_503_is_not_retried(self) -> None:
         scenarios = (
@@ -364,7 +504,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     raise AssertionError(call)
 
                 request = FakeRequest(handler)
-                progress = runner.apply_operation(
+                progress = self._apply(
                     operation_dir,
                     request_json=request,
                     sleep=lambda _value: None,
@@ -402,7 +542,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     raise AssertionError(call)
 
                 request = FakeRequest(handler)
-                progress = runner.apply_operation(
+                progress = self._apply(
                     operation_dir,
                     request_json=request,
                     sleep=lambda _value: None,
@@ -437,7 +577,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     raise AssertionError(call)
 
                 first = FakeRequest(first_handler)
-                stopped = runner.apply_operation(
+                stopped = self._apply(
                     operation_dir,
                     request_json=first,
                     sleep=lambda _value: None,
@@ -460,7 +600,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     raise AssertionError(call)
 
                 resume = FakeRequest(resume_handler)
-                completed = runner.apply_operation(
+                completed = self._apply(
                     operation_dir,
                     request_json=resume,
                     sleep=lambda _value: None,
@@ -487,7 +627,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             first = FakeRequest(first_handler)
-            stopped = runner.apply_operation(
+            stopped = self._apply(
                 operation_dir,
                 request_json=first,
                 sleep=lambda _value: None,
@@ -508,7 +648,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             resume = FakeRequest(resume_handler)
-            completed = runner.apply_operation(
+            completed = self._apply(
                 operation_dir,
                 request_json=resume,
                 sleep=lambda _value: None,
@@ -536,7 +676,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             first = FakeRequest(first_handler)
-            timed_out = runner.apply_operation(
+            timed_out = self._apply(
                 operation_dir,
                 request_json=first,
                 sleep=clock.sleep,
@@ -560,7 +700,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             resume = FakeRequest(resume_handler)
-            completed = runner.apply_operation(operation_dir, request_json=resume, sleep=lambda _value: None)
+            completed = self._apply(operation_dir, request_json=resume, sleep=lambda _value: None)
             self.assertEqual(completed["items"]["AC-1"]["status"], "completed")
             self.assertFalse(any(call["method"] == "POST" for call in resume.calls))
 
@@ -594,7 +734,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             request = FakeRequest(handler)
-            progress = runner.apply_operation(operation_dir, request_json=request, sleep=lambda _value: None)
+            progress = self._apply(operation_dir, request_json=request, sleep=lambda _value: None)
             self.assertEqual(progress["items"]["AC-1"]["status"], "failed")
             self.assertEqual(progress["items"]["AC-2"]["status"], "completed")
             self.assertEqual(progress["items"]["AC-3"]["status"], "skipped")
@@ -621,7 +761,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
 
                 request = FakeRequest(handler)
                 with self.assertRaises(runner.OperationError):
-                    runner.apply_operation(operation_dir, request_json=request)
+                    self._apply(operation_dir, request_json=request)
                 self.assertFalse(any(call["method"] == "POST" for call in request.calls))
 
     def test_exclusive_operation_lock_rejects_a_second_apply(self) -> None:
@@ -629,23 +769,189 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
             with runner.operation_lock(operation_dir):
                 with self.assertRaises(runner.OperationError):
-                    runner.apply_operation(operation_dir, request_json=FakeRequest(lambda _call: {}))
+                    self._apply(operation_dir, request_json=FakeRequest(lambda _call: {}))
 
-    def test_manifest_rejects_raw_baseline_or_progress_tampering(self) -> None:
-        for filename in ("baseline.json", "progress.json"):
-            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary:
+    def test_signed_artifacts_reject_baseline_manifest_pointer_or_generation_tampering(self) -> None:
+        for artifact_kind in ("baseline", "manifest", "pointer", "generation"):
+            with self.subTest(artifact_kind=artifact_kind), tempfile.TemporaryDirectory() as temporary:
                 operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
-                artifact_path = operation_dir / filename
-                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
-                if filename == "baseline.json":
-                    artifact["app_build_ref"] = "tampered-build"
+                if artifact_kind == "generation":
+                    artifact_path = next(operation_dir.glob("state-*.json"))
                 else:
-                    artifact["items"]["AC-1"]["attempts"] = 999
+                    artifact_path = operation_dir / {
+                        "baseline": "baseline.json",
+                        "manifest": "manifest.json",
+                        "pointer": "current.json",
+                    }[artifact_kind]
+                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+                if artifact_kind == "baseline":
+                    artifact["app_build_ref"] = "tampered-build"
+                elif artifact_kind == "manifest":
+                    artifact["baseline_sha256"] = "0" * 64
+                elif artifact_kind == "pointer":
+                    artifact["state_sha256"] = "0" * 64
+                else:
+                    artifact["progress"]["items"]["AC-1"]["attempts"] = 999
                 artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
                 os.chmod(artifact_path, 0o600)
 
                 with self.assertRaises(runner.OperationError):
-                    runner._load_operation(operation_dir)
+                    self._load(operation_dir)
+
+    def test_external_secret_is_not_recoverable_from_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            persisted = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in operation_dir.iterdir()
+                if path.is_file()
+            )
+            baseline = json.loads((operation_dir / "baseline.json").read_text(encoding="utf-8"))
+            derived_key = runner._operation_hmac_key(
+                TEST_ACCESS_TOKEN,
+                baseline["operation_id"],
+            )
+            self.assertNotIn(TEST_ACCESS_TOKEN, persisted)
+            self.assertNotIn(derived_key.hex(), persisted)
+            self.assertFalse((operation_dir / "manifest.key").exists())
+            with self.assertRaises(runner.OperationError):
+                runner._load_operation(operation_dir, access_token="different-external-secret")
+
+    def test_commit_failures_before_pointer_publish_keep_the_last_signed_generation(self) -> None:
+        failure_phases = (
+            "generation_write",
+            "generation_publish",
+            "pointer_write",
+            "pointer_publish",
+        )
+        for phase in failure_phases:
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as temporary:
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+                baseline, committed = self._load(operation_dir)
+                candidate = json.loads(json.dumps(committed))
+                candidate["operation_status"] = f"uncommitted-{phase}"
+                pointer_before = (operation_dir / "current.json").read_text(encoding="utf-8")
+                original_write = runner._write_fsynced_temporary_at
+                original_publish = runner._publish_temporary_at
+
+                def fail_write(directory_fd, name, content):
+                    selected = (
+                        phase == "generation_write" and name.startswith("state-")
+                    ) or (phase == "pointer_write" and name == "current.json")
+                    if selected:
+                        raise runner.OperationError(f"simulated {phase}")
+                    return original_write(directory_fd, name, content)
+
+                def fail_publish(directory_fd, temporary_name, name, *, replace_existing):
+                    selected = (
+                        phase == "generation_publish" and name.startswith("state-")
+                    ) or (phase == "pointer_publish" and name == "current.json")
+                    if selected:
+                        raise runner.OperationError(f"simulated {phase}")
+                    return original_publish(
+                        directory_fd,
+                        temporary_name,
+                        name,
+                        replace_existing=replace_existing,
+                    )
+
+                with (
+                    patch.object(runner, "_write_fsynced_temporary_at", side_effect=fail_write),
+                    patch.object(runner, "_publish_temporary_at", side_effect=fail_publish),
+                ):
+                    with self.assertRaises(runner.OperationError):
+                        self._persist(operation_dir, baseline, candidate)
+
+                self.assertEqual(
+                    (operation_dir / "current.json").read_text(encoding="utf-8"),
+                    pointer_before,
+                )
+                _, recovered = self._load(operation_dir)
+                self.assertEqual(recovered["operation_status"], "dry_run_complete")
+
+    def test_orphan_generation_is_ignored_and_a_later_commit_skips_over_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            baseline, committed = self._load(operation_dir)
+            orphan_candidate = json.loads(json.dumps(committed))
+            orphan_candidate["operation_status"] = "orphan-candidate"
+            original_publish = runner._publish_temporary_at
+
+            def fail_pointer_publish(directory_fd, temporary_name, name, *, replace_existing):
+                if name == "current.json":
+                    raise runner.OperationError("simulated pointer publish")
+                return original_publish(
+                    directory_fd,
+                    temporary_name,
+                    name,
+                    replace_existing=replace_existing,
+                )
+
+            with patch.object(runner, "_publish_temporary_at", side_effect=fail_pointer_publish):
+                with self.assertRaises(runner.OperationError):
+                    self._persist(operation_dir, baseline, orphan_candidate)
+
+            _, recovered = self._load(operation_dir)
+            self.assertEqual(recovered["operation_status"], "dry_run_complete")
+            self.assertEqual(len(list(operation_dir.glob("state-*.json"))), 2)
+
+            next_candidate = json.loads(json.dumps(recovered))
+            next_candidate["operation_status"] = "committed-after-orphan"
+            self._persist(operation_dir, baseline, next_candidate)
+            pointer = json.loads((operation_dir / "current.json").read_text(encoding="utf-8"))
+            self.assertEqual(pointer["generation"], 2)
+            self.assertEqual(len(list(operation_dir.glob("state-*.json"))), 3)
+            _, loaded = self._load(operation_dir)
+            self.assertEqual(loaded["operation_status"], "committed-after-orphan")
+
+    def test_report_projection_failure_does_not_roll_back_the_committed_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            baseline, committed = self._load(operation_dir)
+            candidate = json.loads(json.dumps(committed))
+            candidate["operation_status"] = "committed-before-report-failure"
+            pointer_before = (operation_dir / "current.json").read_text(encoding="utf-8")
+            manifest_before = (operation_dir / "manifest.json").read_text(encoding="utf-8")
+            original_write_json = runner._write_json
+
+            def fail_report(path, payload):
+                if Path(path).name == "report.json":
+                    raise runner.OperationError("simulated report projection failure")
+                return original_write_json(path, payload)
+
+            with patch.object(runner, "_write_json", side_effect=fail_report):
+                with self.assertRaises(runner.OperationError):
+                    self._persist(operation_dir, baseline, candidate)
+
+            self.assertNotEqual(
+                (operation_dir / "current.json").read_text(encoding="utf-8"),
+                pointer_before,
+            )
+            self.assertEqual(
+                (operation_dir / "manifest.json").read_text(encoding="utf-8"),
+                manifest_before,
+            )
+            _, recovered = self._load(operation_dir)
+            self.assertEqual(
+                recovered["operation_status"],
+                "committed-before-report-failure",
+            )
+
+    def test_progress_and_report_projections_are_not_execution_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            projection = json.loads((operation_dir / "progress.json").read_text(encoding="utf-8"))
+            projection["items"]["AC-EXTRA"] = dict(projection["items"]["AC-1"])
+            projection["operation_status"] = "tampered-projection"
+            (operation_dir / "progress.json").write_text(json.dumps(projection), encoding="utf-8")
+            os.chmod(operation_dir / "progress.json", 0o600)
+            (operation_dir / "report.json").write_text("{}", encoding="utf-8")
+            os.chmod(operation_dir / "report.json", 0o600)
+
+            baseline, loaded = self._load(operation_dir)
+            self.assertEqual(baseline["frozen_case_ids"], ["AC-1"])
+            self.assertEqual(set(loaded["items"]), {"AC-1"})
+            self.assertEqual(loaded["operation_status"], "dry_run_complete")
 
     def test_resigned_operation_still_requires_exact_scope_case_and_key_contracts(self) -> None:
         mutation_names = (
@@ -675,12 +981,10 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     progress["items"]["AC-1"]["before"]["account_case_id"] = "AC-OTHER"
                 else:
                     progress["items"]["AC-1"]["idempotency_key"] = "tampered-key"
-                runner._write_json(baseline_path, baseline)
-                runner._write_json(progress_path, progress)
-                runner._write_operation_manifest(operation_dir, baseline, progress)
+                self._force_resign_operation(operation_dir, baseline, progress)
 
                 with self.assertRaises(runner.OperationError):
-                    runner._load_operation(operation_dir)
+                    self._load(operation_dir)
 
     def test_operation_files_reject_symlinks_wrong_modes_and_wrong_owner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -689,36 +993,41 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             alias = root / "operation-alias"
             alias.symlink_to(operation_dir, target_is_directory=True)
             with self.assertRaises(runner.OperationError):
-                runner._load_operation(alias)
+                self._load(alias)
 
-        for filename in ("baseline.json", "progress.json", "manifest.json", "manifest.key"):
-            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary:
+        for filename_kind in ("baseline.json", "progress.json", "manifest.json", "current.json", "generation"):
+            with self.subTest(filename=filename_kind), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 operation_dir, _ = self._dry_run(root, case_ids=("AC-1",))
+                filename = (
+                    next(operation_dir.glob("state-*.json")).name
+                    if filename_kind == "generation"
+                    else filename_kind
+                )
                 artifact_path = operation_dir / filename
                 outside_path = root / f"outside-{filename}"
                 artifact_path.rename(outside_path)
                 artifact_path.symlink_to(outside_path)
                 with self.assertRaises(runner.OperationError):
-                    runner._load_operation(operation_dir)
+                    self._load(operation_dir)
 
         with tempfile.TemporaryDirectory() as temporary:
             operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
             os.chmod(operation_dir / "baseline.json", 0o644)
             with self.assertRaises(runner.OperationError):
-                runner._load_operation(operation_dir)
+                self._load(operation_dir)
 
         with tempfile.TemporaryDirectory() as temporary:
             operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
             os.chmod(operation_dir, 0o755)
             with self.assertRaises(runner.OperationError):
-                runner._load_operation(operation_dir)
+                self._load(operation_dir)
 
         with tempfile.TemporaryDirectory() as temporary:
             operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
             with patch.object(runner.os, "getuid", return_value=os.getuid() + 1):
                 with self.assertRaises(runner.OperationError):
-                    runner._load_operation(operation_dir)
+                    self._load(operation_dir)
 
     def test_cli_rejects_resume_symlink_before_constructing_an_http_requester(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -727,7 +1036,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             alias = root / "operation-alias"
             alias.symlink_to(operation_dir, target_is_directory=True)
             with (
-                patch.dict(os.environ, {runner.ACCESS_TOKEN_ENV: "runner-token"}),
+                patch.dict(os.environ, {runner.ACCESS_TOKEN_ENV: TEST_ACCESS_TOKEN}),
                 patch.object(runner, "_http_requester") as requester,
             ):
                 with self.assertRaises(runner.OperationError):
@@ -795,7 +1104,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 }
             )
             baseline = json.loads((operation_dir / "baseline.json").read_text(encoding="utf-8"))
-            runner._persist_progress(operation_dir, baseline, progress)
+            self._persist(operation_dir, baseline, progress)
 
             def handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))
@@ -814,7 +1123,7 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 raise AssertionError(call)
 
             request = FakeRequest(handler)
-            resumed = runner.apply_operation(operation_dir, request_json=request, sleep=lambda _value: None)
+            resumed = self._apply(operation_dir, request_json=request, sleep=lambda _value: None)
 
             self.assertEqual(resumed["items"]["AC-1"]["job_id"], "job-already-terminal")
             self.assertEqual(resumed["items"]["AC-2"]["status"], "completed")

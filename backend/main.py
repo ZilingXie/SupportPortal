@@ -9,6 +9,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass, replace
@@ -1351,6 +1352,9 @@ async def roadmap_html() -> FileResponse:
 
 ticket_repository: TicketRepository = create_ticket_repository()
 asset_repository: AssetRepository = create_asset_repository()
+_ACCOUNT_REROUTE_DISPATCH_STOP_EVENT = threading.Event()
+_ACCOUNT_REROUTE_DISPATCH_THREAD_LOCK = threading.Lock()
+_ACCOUNT_REROUTE_DISPATCH_THREAD: threading.Thread | None = None
 asset_storage = create_asset_storage()
 hub = ConnectionHub()
 event_bus = AsyncRedisEventBus()
@@ -3526,6 +3530,7 @@ def startup_event() -> None:
             initialize_prompt_runtime(ticket_repository, service_name="api")
             _bootstrap_workspace_admin()
             _initialize_asset_repository_with_fallback()
+            _start_account_reroute_dispatcher()
             return
         except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
             last_error = exc
@@ -3551,10 +3556,12 @@ def startup_event() -> None:
     _bootstrap_workspace_admin()
     LOGGER.warning("Falling back to in-memory ticket repository for this process.")
     _initialize_asset_repository_with_fallback()
+    _start_account_reroute_dispatcher()
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
+    _stop_account_reroute_dispatcher()
     await event_bus.close()
     await task_queue.close()
     close_ticket_repository = getattr(ticket_repository, "close", None)
@@ -5042,6 +5049,8 @@ ACCOUNT_FULL_REROUTE_JOB_TICKET_ID = "__account-full-reroute__"
 ACCOUNT_FULL_REROUTE_JOB_EVENT = "account_full_reroute_job"
 ACCOUNT_FULL_REROUTE_STALE_AFTER = timedelta(hours=2)
 ACCOUNT_REROUTE_EXECUTION_LEASE = timedelta(minutes=30)
+ACCOUNT_REROUTE_DISPATCH_BATCH_LIMIT = 100
+ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_ENV = "ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_SECONDS"
 ACCOUNT_CASE_RERUN_IDEMPOTENCY_SCOPE = "account_case_rerun"
 ACCOUNT_CASE_RERUN_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 ACCOUNT_RERUN_STORAGE_ERROR_CODE = "account_storage_temporarily_unavailable"
@@ -5261,6 +5270,80 @@ async def _claim_and_run_account_reroute_job(job_id: str) -> None:
     if claim.get("status") != "acquired":
         return
     await _run_account_full_reroute_job(job_id, lease_token)
+
+
+async def _dispatch_pending_account_reroute_jobs_once() -> int:
+    jobs = await _account_rerun_storage_call(
+        ticket_repository.list_dispatchable_account_reroute_jobs,
+        as_of=now_iso(),
+        limit=ACCOUNT_REROUTE_DISPATCH_BATCH_LIMIT,
+    )
+    attempted = 0
+    for job in jobs:
+        job_id = str(job.get("job_id") or "").strip()
+        if not job_id:
+            continue
+        attempted += 1
+        try:
+            await _claim_and_run_account_reroute_job(job_id)
+        except Exception:
+            LOGGER.exception("Account reroute dispatcher failed job %s", job_id)
+    return attempted
+
+
+def _account_reroute_dispatch_poll_interval_seconds() -> float:
+    configured = _safe_float_env(ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_ENV, 5.0)
+    return max(0.25, min(configured, 300.0))
+
+
+async def _run_account_reroute_dispatch_loop() -> None:
+    interval_seconds = _account_reroute_dispatch_poll_interval_seconds()
+    LOGGER.info(
+        "Account reroute dispatcher started with interval_seconds=%s.",
+        interval_seconds,
+    )
+    while not _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.is_set():
+        try:
+            await _dispatch_pending_account_reroute_jobs_once()
+        except Exception:
+            LOGGER.exception("Account reroute dispatcher scan failed")
+        if _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.wait(interval_seconds):
+            break
+    LOGGER.info("Account reroute dispatcher stopped.")
+
+
+def _run_account_reroute_dispatcher_thread() -> None:
+    asyncio.run(_run_account_reroute_dispatch_loop())
+
+
+def _start_account_reroute_dispatcher() -> threading.Thread:
+    global _ACCOUNT_REROUTE_DISPATCH_THREAD
+    with _ACCOUNT_REROUTE_DISPATCH_THREAD_LOCK:
+        existing = _ACCOUNT_REROUTE_DISPATCH_THREAD
+        if existing is not None and existing.is_alive():
+            return existing
+        _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.clear()
+        thread = threading.Thread(
+            target=_run_account_reroute_dispatcher_thread,
+            name="account-reroute-dispatcher",
+            daemon=True,
+        )
+        _ACCOUNT_REROUTE_DISPATCH_THREAD = thread
+        thread.start()
+        return thread
+
+
+def _stop_account_reroute_dispatcher() -> None:
+    global _ACCOUNT_REROUTE_DISPATCH_THREAD
+    _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.set()
+    with _ACCOUNT_REROUTE_DISPATCH_THREAD_LOCK:
+        thread = _ACCOUNT_REROUTE_DISPATCH_THREAD
+    if thread is None:
+        return
+    thread.join()
+    with _ACCOUNT_REROUTE_DISPATCH_THREAD_LOCK:
+        if _ACCOUNT_REROUTE_DISPATCH_THREAD is thread:
+            _ACCOUNT_REROUTE_DISPATCH_THREAD = None
 
 
 def _account_case_for_identifier(identifier: str) -> dict[str, Any] | None:

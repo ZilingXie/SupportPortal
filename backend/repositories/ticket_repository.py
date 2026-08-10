@@ -1556,6 +1556,13 @@ class TicketRepository(Protocol):
 
     def list_account_reroute_jobs(self, limit: int = 500) -> list[dict[str, Any]]: ...
 
+    def list_dispatchable_account_reroute_jobs(
+        self,
+        *,
+        as_of: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
     def claim_account_reroute_job_execution(
         self,
         job_id: str,
@@ -4093,6 +4100,52 @@ class InMemoryTicketRepository:
             )
             return [copy.deepcopy(item) for item in jobs[:safe_limit]]
 
+    def list_dispatchable_account_reroute_jobs(
+        self,
+        *,
+        as_of: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 100), 5000))
+        as_of_time = datetime.fromisoformat(str(as_of).replace("Z", "+00:00"))
+        if as_of_time.tzinfo is None:
+            as_of_time = as_of_time.replace(tzinfo=timezone.utc)
+        as_of_time = as_of_time.astimezone(timezone.utc)
+
+        def is_dispatchable(job: dict[str, Any]) -> bool:
+            status = str(job.get("status") or "")
+            dispatch_status = str(job.get("dispatch_status") or "")
+            if (status, dispatch_status) == ("queued", "queued"):
+                return True
+            if (status, dispatch_status) != ("running", "leased"):
+                return False
+            lease_value = job.get("lease_expires_at")
+            if not lease_value:
+                return True
+            try:
+                lease_expires_at = datetime.fromisoformat(
+                    str(lease_value).replace("Z", "+00:00")
+                )
+            except ValueError:
+                return False
+            if lease_expires_at.tzinfo is None:
+                lease_expires_at = lease_expires_at.replace(tzinfo=timezone.utc)
+            return lease_expires_at.astimezone(timezone.utc) <= as_of_time
+
+        with self._assignment_lock:
+            jobs = sorted(
+                (
+                    job
+                    for job in self._account_reroute_jobs.values()
+                    if is_dispatchable(job)
+                ),
+                key=lambda item: (
+                    str(item.get("created_at") or ""),
+                    str(item.get("job_id") or ""),
+                ),
+            )
+            return [copy.deepcopy(item) for item in jobs[:safe_limit]]
+
     def claim_account_reroute_job_execution(
         self,
         job_id: str,
@@ -6528,6 +6581,16 @@ class PostgresTicketRepository:
                         "CREATE INDEX IF NOT EXISTS {} ON {} (dispatch_status, lease_expires_at)"
                     ).format(
                         sql.Identifier("idx_support_account_reroute_jobs_dispatch_lease"),
+                        reroute_jobs_table,
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (created_at, job_id, lease_expires_at) "
+                        "WHERE (status='queued' AND dispatch_status='queued') "
+                        "OR (status='running' AND dispatch_status='leased')"
+                    ).format(
+                        sql.Identifier("idx_support_account_reroute_jobs_dispatch_scan"),
                         reroute_jobs_table,
                     )
                 )
@@ -9548,6 +9611,39 @@ class PostgresTicketRepository:
                 return [_account_reroute_job_from_row(row) for row in cur.fetchall()]
 
         return self._run_with_connection_retry("list_account_reroute_jobs", _operation)
+
+    def list_dispatchable_account_reroute_jobs(
+        self,
+        *,
+        as_of: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 100), 5000))
+        as_of_time = datetime.fromisoformat(str(as_of).replace("Z", "+00:00"))
+        if as_of_time.tzinfo is None:
+            as_of_time = as_of_time.replace(tzinfo=timezone.utc)
+        as_of_time = as_of_time.astimezone(timezone.utc)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at FROM {} "
+                        "WHERE (status='queued' AND dispatch_status='queued') "
+                        "OR (status='running' AND dispatch_status='leased' "
+                        "AND (lease_expires_at IS NULL OR lease_expires_at <= %s)) "
+                        "ORDER BY created_at ASC,job_id ASC LIMIT %s"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (as_of_time, safe_limit),
+                )
+                return [_account_reroute_job_from_row(row) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry(
+            "list_dispatchable_account_reroute_jobs",
+            _operation,
+        )
 
     def claim_account_reroute_job_execution(
         self,
