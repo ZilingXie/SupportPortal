@@ -65,6 +65,9 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(filtered["metrics"]["total_account_cases"], 3)
         self.assertEqual(filtered["cases"][0]["category"], "automation")
         self.assertEqual(filtered["cases"][0]["subcategory"], "detailed_invoice")
+        self.assertEqual(filtered["cases"][0]["category_label"], "Account & Billing")
+        self.assertEqual(filtered["cases"][0]["subcategory_label"], "Detailed Invoice")
+        self.assertIn("primary_label", filtered["cases"][0])
 
     def test_account_reply_supersede_marks_old_account_message(self) -> None:
         self.repository.save_ticket(
@@ -1029,16 +1032,25 @@ class AccountAdminFeatureTests(unittest.TestCase):
             for category in payload["route_categories"]
             if category["name"] == "account_billing"
         )
-        self.assertEqual(account_billing["subcategories"], ["account_suspension", "other"])
+        self.assertEqual(
+            account_billing["subcategories"],
+            ["account_suspension", "fraud_account", "detailed_invoice", "other"],
+        )
         self.assertEqual(account_billing["handler_modes"]["account_suspension"], "classification_only")
+        self.assertEqual(account_billing["handler_modes"]["fraud_account"], "billing")
+        self.assertEqual(account_billing["handler_modes"]["detailed_invoice"], "billing")
         automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
         self.assertEqual(
             automation["subcategories"],
-            ["fraud_account", "detailed_invoice", "enablement", "quota", "unregistered"],
+            ["enablement", "quota", "unregistered"],
         )
+        self.assertEqual(automation["display_name"], "Automation Router")
+        self.assertEqual(automation["handler_modes"]["unregistered"], "human_review")
+        self.assertIn("backend_operation_router", payload["stages"])
         self.assertIn("Intent Classifier", payload["system_prompt"])
         self.assertIn("Account & Billing Router", payload["system_prompt"])
         self.assertIn("Automation Router", payload["system_prompt"])
+        self.assertIn("Backend Operations Router", payload["system_prompt"])
 
     def test_persona_seed_catalog_contains_the_three_published_presets(self) -> None:
         expected = {

@@ -8,6 +8,7 @@ import types
 import unittest
 from unittest.mock import patch
 
+from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution, SupportRouteDecision, resolve_support_message
 from backend.services.troubleshooting_intake import TroubleshootingIntakeResult
@@ -803,9 +804,22 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
         )
 
-    def test_billing_detailed_invoice_route_skips_rag_and_prepares_internal_email(self) -> None:
+    @patch("backend.services.billing_automation.extract_detailed_invoice_fields")
+    def test_billing_detailed_invoice_route_skips_rag_and_prepares_internal_email(
+        self,
+        extract_fields_mock,
+    ) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
         from backend.services.support_router import decide_support_route
+
+        extract_fields_mock.return_value = DetailedInvoiceFieldExtraction(
+            status="complete",
+            collected_fields={
+                "issue_date": "6 May 2026",
+                "transaction_id": "1104245232004173824",
+                "amount": "USD 705.97",
+            },
+        )
 
         execution = execute_client_ticket_agent_runtime(
             message=(
@@ -842,12 +856,15 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.tooling_profile, "deterministic_billing_intake")
         self.assertEqual(execution.result.workflow_action, "answer_customer")
         self.assertTrue(execution.result.answer.startswith("Hi Taylor,"))
-        self.assertIn("We’ve escalated your detailed invoice request", execution.result.answer)
         self.assertTrue(execution.result.answer.endswith("Best Regards,\nSid"))
+        extract_fields_mock.assert_called_once()
         self.assertIsNotNone(execution.result.evidence_summary)
         assert execution.result.evidence_summary is not None
         internal_email = execution.result.evidence_summary["billing_internal_email"]
-        self.assertEqual(internal_email["subject"], "Detailed invoice request - Ticket TK-BILL-1")
+        self.assertEqual(
+            internal_email["subject"],
+            "[Billing Request] Detailed invoice request - Ticket TK-BILL-1",
+        )
         self.assertIn("Customer email: C-001", internal_email["body"])
         self.assertIn("Transaction ID: 1104245232004173824", internal_email["body"])
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "detailed_invoice")

@@ -193,6 +193,7 @@ def _route_node(
     capabilities: list[dict[str, str]] | None = None,
     children: list[dict[str, Any]] | None = None,
     persona_scope: str | None = None,
+    workflow: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     node: dict[str, Any] = {
         "key": key,
@@ -207,6 +208,8 @@ def _route_node(
     }
     if persona_scope:
         node["persona_scope"] = persona_scope
+    if workflow:
+        node["workflow"] = dict(workflow)
     return node
 
 
@@ -221,37 +224,15 @@ def _route_agent_navigation() -> dict[str, Any]:
     automation = _route_node(
         "automation-router",
         "Automation Router",
-        "Classifies confirmed backend-operation requests and dispatches registered Automation behavior.",
+        "Classifies confirmed backend-operation requests as Enablement, Quota, or Unregistered and dispatches registered workflows.",
         kind="router",
         is_agent=True,
-        prompt_keys=["account-automation-router-system"],
+        prompt_keys=[
+            "account-backend-operation-router-system",
+            "account-automation-router-system",
+        ],
         persona_scope="account-automation",
         children=[
-            _route_node(
-                "fraud-account",
-                "Fraud Account",
-                "Collects grounded fraud-review information, composes one follow-up, and applies payment safety checks.",
-                kind="automation",
-                is_agent=False,
-                prompt_keys=[
-                    "account-verification-field-extractor-system",
-                ],
-                capabilities=[
-                    _component("fraud-account-handler", "Fraud Account Handler", "Controls follow-up and internal handoff."),
-                    _component("account-verification-payment-safety", "Payment Safety Validator", "Blocks sensitive payment credentials deterministically."),
-                ],
-            ),
-            _route_node(
-                "detailed-invoice",
-                "Detailed Invoice",
-                "Extracts detailed invoice fields and lets the Automation Persona generate the customer reply.",
-                kind="automation",
-                is_agent=False,
-                prompt_keys=["account-detailed-invoice-field-extractor-system"],
-                capabilities=[
-                    _component("billing-handler", "Billing Handler", "Runs the detailed-invoice workflow and internal handoff."),
-                ],
-            ),
             _route_node(
                 "enablement",
                 "Enablement",
@@ -262,6 +243,14 @@ def _route_agent_navigation() -> dict[str, Any]:
                 capabilities=[
                     _component("enablement-handler", "Enablement Handler", "Submits a complete enablement request and prepares confirmation behavior."),
                 ],
+                workflow={
+                    "category": "automation",
+                    "subcategory": "enablement",
+                    "route_family": "automated",
+                    "automation_handler": "enablement",
+                    "status": "registered",
+                    "steps": ["grounded field extraction", "internal handoff", "Persona customer update"],
+                },
             ),
             _route_node(
                 "quota",
@@ -273,6 +262,14 @@ def _route_agent_navigation() -> dict[str, Any]:
                 capabilities=[
                     _component("quota-handler", "Quota Handler", "Handles quota, concurrency, and Big Event capacity requests."),
                 ],
+                workflow={
+                    "category": "automation",
+                    "subcategory": "quota",
+                    "route_family": "automated",
+                    "automation_handler": "quota",
+                    "status": "registered",
+                    "steps": ["grounded capacity extraction", "internal handoff", "Persona customer update"],
+                },
             ),
             _route_node(
                 "unregistered",
@@ -283,13 +280,21 @@ def _route_agent_navigation() -> dict[str, Any]:
                 capabilities=[
                     _component("human-review", "Human Review", "Handles Automation requests without a registered behavior."),
                 ],
+                workflow={
+                    "category": "human_review",
+                    "subcategory": "unregistered",
+                    "route_family": "human_review",
+                    "automation_handler": None,
+                    "status": "fallback",
+                    "steps": ["record candidate", "human review"],
+                },
             ),
         ],
     )
     account_billing = _route_node(
         "account-billing-router",
         "Account & Billing Router",
-        "Classifies Account & Billing requests as Account Suspension or Other.",
+        "Classifies Account & Billing requests as Account Suspension, Fraud Account, Detailed Invoice, or Other.",
         kind="router",
         is_agent=True,
         prompt_keys=["account-account-billing-router-system"],
@@ -304,6 +309,53 @@ def _route_agent_navigation() -> dict[str, Any]:
                 capabilities=[
                     _component("classification-only", "Classification only", "Runs best-effort field extraction only."),
                 ],
+                workflow={
+                    "category": "account_billing",
+                    "subcategory": "account_suspension",
+                    "route_family": "human_review",
+                    "automation_handler": None,
+                    "status": "classification_only",
+                    "steps": ["optional context extraction", "human review"],
+                },
+            ),
+            _route_node(
+                "fraud-account",
+                "Fraud Account",
+                "Collects grounded fraud-review information, composes one follow-up, and applies payment safety checks.",
+                kind="automation",
+                is_agent=False,
+                prompt_keys=["account-verification-field-extractor-system"],
+                capabilities=[
+                    _component("fraud-account-handler", "Fraud Account Handler", "Controls follow-up and internal handoff."),
+                    _component("account-verification-payment-safety", "Payment Safety Validator", "Blocks sensitive payment credentials deterministically."),
+                ],
+                workflow={
+                    "category": "account_billing",
+                    "subcategory": "fraud_account",
+                    "route_family": "automated",
+                    "automation_handler": "billing",
+                    "status": "registered",
+                    "steps": ["grounded field extraction", "one follow-up maximum", "internal handoff", "Persona customer update"],
+                },
+            ),
+            _route_node(
+                "detailed-invoice",
+                "Detailed Invoice",
+                "Extracts detailed invoice fields and lets the Automation Persona generate the customer reply.",
+                kind="automation",
+                is_agent=False,
+                prompt_keys=["account-detailed-invoice-field-extractor-system"],
+                capabilities=[
+                    _component("billing-handler", "Billing Handler", "Runs the detailed-invoice workflow and internal handoff."),
+                ],
+                workflow={
+                    "category": "account_billing",
+                    "subcategory": "detailed_invoice",
+                    "route_family": "automated",
+                    "automation_handler": "billing",
+                    "status": "registered",
+                    "steps": ["grounded field extraction", "internal handoff", "Persona customer update"],
+                },
             ),
             _route_node(
                 "account-billing-other",
@@ -311,6 +363,14 @@ def _route_agent_navigation() -> dict[str, Any]:
                 "Classifies other account and billing requests for downstream human handling.",
                 kind="outcome",
                 is_agent=False,
+                workflow={
+                    "category": "account_billing",
+                    "subcategory": "other",
+                    "route_family": "human_review",
+                    "automation_handler": None,
+                    "status": "human_review",
+                    "steps": ["record classification", "human review"],
+                },
             ),
         ],
     )
@@ -347,6 +407,42 @@ def _route_agent_navigation() -> dict[str, Any]:
     )
 
 
+def _automation_workflow_catalog(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten workflow metadata for the Automation Router overview.
+
+    The navigation tree remains responsible for ownership and deep links; this
+    catalog gives the Admin overview one compact, complete view of registered
+    Automation behavior, including billing-owned automated outcomes.
+    """
+    workflows: list[dict[str, Any]] = []
+
+    def collect(current: dict[str, Any], owner: str) -> None:
+        workflow = current.get("workflow")
+        if isinstance(workflow, dict) and str(workflow.get("status") or "").strip().lower() in {
+            "registered",
+            "fallback",
+        }:
+            workflows.append(
+                {
+                    "key": current.get("key"),
+                    "name": current.get("name"),
+                    "description": current.get("description"),
+                    "kind": current.get("kind"),
+                    "owner_router": owner,
+                    "prompt_keys": list(current.get("prompt_keys") or []),
+                    "capabilities": list(current.get("capabilities") or []),
+                    **dict(workflow),
+                }
+            )
+        next_owner = current.get("name") if current.get("is_agent") else owner
+        for child in current.get("children") or []:
+            if isinstance(child, dict):
+                collect(child, str(next_owner or owner))
+
+    collect(node, str(node.get("name") or "Route Agent"))
+    return workflows
+
+
 def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any]:
     account_route_prompts = [
         _prompt(
@@ -380,12 +476,17 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component(
                     "account-account-billing-router",
                     "Account & Billing Router",
-                    "Classifies /account billing requests as Account Suspension or Other.",
+                    "Classifies /account billing requests as Account Suspension, Fraud Account, Detailed Invoice, or Other.",
                 ),
                 _component(
                     "account-automation-router",
                     "Automation Router",
-                    "Selects Fraud Account, Detailed Invoice, Enablement, Quota, or Unregistered.",
+                    "Selects Enablement, Quota, or diagnostic Unregistered for explicit backend operations.",
+                ),
+                _component(
+                    "account-backend-operation-router",
+                    "Backend Operation Router",
+                    "Active routing stage behind the Automation Router; selects a registered operation or Unregistered.",
                 ),
                 _component(
                     "account-enablement-field-extractor",
@@ -507,10 +608,12 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
             "mcp_servers": [],
         },
     ]
+    route_navigation = _route_agent_navigation()
     route_runtime = routing_config_payload()
     return {
         "agents": agents,
-        "route_navigation": _route_agent_navigation(),
+        "route_navigation": route_navigation,
+        "automation_workflows": _automation_workflow_catalog(route_navigation),
         "route_runtime": {
             "router_prompt_version": route_runtime["router_prompt_version"],
             "stage_details": route_runtime["stage_details"],

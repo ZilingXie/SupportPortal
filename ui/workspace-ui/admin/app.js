@@ -32,6 +32,7 @@ let auditEvents = [];
 let scheduleData = { timezone: "Asia/Shanghai", engineers: [] };
 let automationData = { metrics: {}, cases: [] };
 let automationRouteStatus = "automated";
+let automationCategory = "";
 let agentConfigData = null;
 let agentConfigLoading = false;
 let agentConfigLoadError = "";
@@ -197,6 +198,10 @@ function statusPill(status) {
     ? "is-resolved"
     : "is-offline";
   return `<span class="admin-work-status ${tone}">${escapeHtml(label)}</span>`;
+}
+
+function statusLabel(status) {
+  return String(status || "unknown").replaceAll("_", " ");
 }
 
 function renderLogin() {
@@ -698,6 +703,22 @@ function renderAudit() {
   `;
 }
 
+function automationCaseCategoryLabel(item) {
+  const value = String(item?.category_label || item?.category || "").trim().toLowerCase();
+  return {
+    automation: "Automation",
+    account_billing: "Account & Billing",
+    human_review: "Human Review",
+  }[value] || value.replaceAll("_", " ") || "-";
+}
+
+function automationCaseSubcategoryLabel(item) {
+  const explicit = String(item?.subcategory_label || "").trim();
+  if (explicit) return explicit;
+  const value = String(item?.subcategory || item?.execution_action || "").trim();
+  return value ? value.replaceAll("_", " ") : "-";
+}
+
 function renderAutomatedCases() {
   const metric = automationData.metrics || {};
   const rate = Number(metric.automation_rate || 0) * 100;
@@ -709,8 +730,24 @@ function renderAutomatedCases() {
       <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
       <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
-    </section><form class="admin-filter-bar" data-automation-filter-form><select name="route_status"><option value="" ${automationRouteStatus ? "" : "selected"}>All routes</option><option value="automated" ${automationRouteStatus === "automated" ? "selected" : ""}>Automated</option><option value="not_automated" ${automationRouteStatus === "not_automated" ? "selected" : ""}>Not Automated</option></select><select name="category" aria-label="Automation category"><option value="automation">Automation</option></select><input name="created_from" type="date" aria-label="Created from" /><input name="created_to" type="date" aria-label="Created to" /><button class="btn btn-ghost" type="submit">Apply filters</button></form>
-    <section class="admin-ops-surface"><table class="admin-work-table"><thead><tr><th>Account Case</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Route status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.account_case_id || item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(item.category === "automation" ? "Automation" : item.category || "-")}</td><td>${escapeHtml(String(item.subcategory || "-").replaceAll("_", " "))}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="6">No /account cases.</td></tr>`}</tbody></table></section>`;
+    </section>
+    <form class="admin-filter-bar" data-automation-filter-form>
+      <select name="route_status" aria-label="Automation route status">
+        <option value="" ${automationRouteStatus ? "" : "selected"}>All routes</option>
+        <option value="automated" ${automationRouteStatus === "automated" ? "selected" : ""}>Automated</option>
+        <option value="not_automated" ${automationRouteStatus === "not_automated" ? "selected" : ""}>Not Automated</option>
+      </select>
+      <select name="category" aria-label="Automation category">
+        <option value="" ${automationCategory ? "" : "selected"}>All categories</option>
+        <option value="automation" ${automationCategory === "automation" ? "selected" : ""}>Automation</option>
+        <option value="account_billing" ${automationCategory === "account_billing" ? "selected" : ""}>Account &amp; Billing</option>
+        <option value="human_review" ${automationCategory === "human_review" ? "selected" : ""}>Human Review</option>
+      </select>
+      <input name="created_from" type="date" aria-label="Created from" />
+      <input name="created_to" type="date" aria-label="Created to" />
+      <button class="btn btn-ghost" type="submit">Apply filters</button>
+    </form>
+    <section class="admin-ops-surface"><table class="admin-work-table admin-automation-case-table"><thead><tr><th>Account Case</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Handler</th><th>Route status</th><th>Automation status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.account_case_id || item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(automationCaseCategoryLabel(item))}</td><td>${escapeHtml(automationCaseSubcategoryLabel(item))}</td><td>${escapeHtml(item.automation_handler || "Human Review")}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(statusLabel(item.automation_status || item.status || "not_automated"))}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="8">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
 function agentStatusLabel(status) {
@@ -1109,21 +1146,29 @@ function renderNodeLinks(node, basePath) {
 }
 
 function renderAutomationBehaviorOverview(routeAgent, node) {
-  const behaviors = (node?.children || []).filter(child => !child.is_agent);
+  const configuredWorkflows = Array.isArray(agentConfigData?.automation_workflows)
+    ? agentConfigData.automation_workflows
+    : [];
+  const behaviors = configuredWorkflows.length
+    ? configuredWorkflows
+    : (node?.children || []).filter(child => !child.is_agent);
   if (!behaviors.length) return "";
   return `<section class="admin-automation-behaviors" aria-labelledby="automation-behaviors-title">
-    <header><div><h3 id="automation-behaviors-title">Automation behavior</h3><p>Each behavior extracts business facts; the shared Automation Persona generates the final customer reply.</p></div><span>${behaviors.length}</span></header>
+    <header><div><h3 id="automation-behaviors-title">Automation Workflow</h3><p>Registered workflows show their owning route, handler, lifecycle steps, and shared Automation Persona boundary.</p></div><span>${behaviors.length}</span></header>
     <div class="admin-automation-behavior-list">${behaviors.map((behavior) => {
       const expanded = selectedAutomationBehaviorKey === behavior.key;
       const prompts = promptsForRouteNode(routeAgent, behavior);
-      const entry = { ...routeAgent, key: behavior.key, name: behavior.name, prompts, skills: [], mcp_servers: [] };
+      const routeLabel = [behavior.category, behavior.subcategory].filter(Boolean).join(" / ").replaceAll("_", " ");
+      const handlerLabel = behavior.automation_handler || "Human Review";
+      const steps = Array.isArray(behavior.steps) ? behavior.steps.join(" -> ") : "";
+      const entry = { ...routeAgent, key: behavior.key, name: behavior.name, prompts, skills: [], mcp_servers: [], components: behavior.capabilities || [] };
       return `<section class="admin-automation-behavior ${expanded ? "is-expanded" : ""}">
         <button type="button" data-action="toggle-automation-behavior" data-behavior-key="${escapeHtml(behavior.key)}" aria-expanded="${expanded ? "true" : "false"}" aria-controls="automation-behavior-${escapeHtml(behavior.key)}">
-          <span><strong>${escapeHtml(behavior.name)}</strong><small>${escapeHtml(behavior.description)}</small></span>
-          <span class="admin-automation-behavior-meta">${prompts.length ? `${prompts.length} Prompt${prompts.length === 1 ? "" : "s"}` : "Deterministic"}</span>
+          <span><strong>${escapeHtml(behavior.name)}</strong><small>${escapeHtml([routeLabel, behavior.description].filter(Boolean).join(" · "))}</small></span>
+          <span class="admin-automation-behavior-meta">${escapeHtml(handlerLabel)}${steps ? ` · ${escapeHtml(steps)}` : ""}</span>
           <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
         </button>
-        ${expanded ? `<div id="automation-behavior-${escapeHtml(behavior.key)}" class="admin-automation-behavior-panel"><div><h4>Capabilities</h4>${renderCapabilities(behavior.capabilities || [], behavior.kind)}</div><div><h4>Behavior Prompt</h4>${renderAgentPromptPanel(entry)}</div></div>` : ""}
+        ${expanded ? `<div id="automation-behavior-${escapeHtml(behavior.key)}" class="admin-automation-behavior-panel"><div><h4>Workflow metadata</h4><p class="admin-agent-detail-note">${escapeHtml(`${behavior.route_family || "human_review"} · ${behavior.status || "unregistered"} · handler ${handlerLabel}`)}</p>${steps ? `<p class="admin-agent-detail-note">${escapeHtml(steps)}</p>` : ""}</div><div><h4>Capabilities</h4>${renderCapabilities(behavior.capabilities || [], behavior.kind)}</div><div><h4>Behavior Prompt</h4>${prompts.length ? renderAgentPromptPanel(entry) : `<p class="admin-agent-detail-note">No behavior Prompt configured. This workflow is deterministic or uses the shared Automation Persona.</p>`}</div></div>` : ""}
       </section>`;
     }).join("")}</div>
   </section>`;
@@ -1362,7 +1407,7 @@ async function loadAgentConfig({ render = true, force = false } = {}) {
   if (render) renderAdmin();
   try {
     const payload = await fetchJson("/api/workspace/admin/agent-config");
-    agentConfigData = payload || { agents: [], route_navigation: null, route_runtime: {}, automation_personas: [] };
+    agentConfigData = payload || { agents: [], route_navigation: null, route_runtime: {}, automation_personas: [], automation_workflows: [] };
   } catch (error) {
     agentConfigData = null;
     agentConfigLoadError = error.message;
@@ -1380,6 +1425,7 @@ async function loadAdminData() {
   const environmentRequest = loadEnvironmentConfig({ render: false });
   const automationParams = new URLSearchParams();
   if (automationRouteStatus) automationParams.set("route_status", automationRouteStatus);
+  if (automationCategory) automationParams.set("category", automationCategory);
   try {
     const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload] = await Promise.all([
       fetchJson("/api/workspace/admin/accounts"),
@@ -1710,9 +1756,11 @@ root.addEventListener("submit", (event) => {
     return;
   }
   if (form.matches("[data-automation-filter-form]")) {
-    automationRouteStatus = String(new FormData(form).get("route_status") || "").trim();
+    const formData = new FormData(form);
+    automationRouteStatus = String(formData.get("route_status") || "").trim();
+    automationCategory = String(formData.get("category") || "").trim();
     const params = new URLSearchParams();
-    for (const [key, value] of new FormData(form).entries()) if (String(value).trim()) params.set(key, String(value).trim());
+    for (const [key, value] of formData.entries()) if (String(value).trim()) params.set(key, String(value).trim());
     fetchJson(`/api/workspace/admin/account-automation?${params}`).then((payload) => { automationData = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
     return;
   }

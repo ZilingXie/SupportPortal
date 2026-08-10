@@ -44,7 +44,7 @@ class RoadmapContractTests(unittest.TestCase):
             "限制重复追问",
             "随机延迟 6–10 分钟",
             "不同人设 Prompt 模板",
-            "account verification、account suspension、detailed invoice 和 enablement",
+            "Account &amp; Billing 与 Backend Operation",
             "自动化覆盖率",
             "Automated Cases Dashboard",
             "Route execution + Prompt snapshot",
@@ -53,8 +53,8 @@ class RoadmapContractTests(unittest.TestCase):
             "Zendesk ticket ID 作为 canonical Ticket ID",
             "Zendesk source URL 中的 ticket number",
             "列表与详情统一展示来源 ticket #",
-            "Agent Config 与 Route Strategy 管理面",
-            "18 项",
+            "Agent Config 与 Automation Workflow 管理面",
+            "21 项",
             'class="delivery-group" data-status-group="incomplete" open',
             'class="delivery-group" data-status-group="complete"',
             "Active UI",
@@ -603,6 +603,28 @@ class RoadmapContractTests(unittest.TestCase):
         for term in required_terms:
             with self.subTest(term=term):
                 self.assertIn(term, html_source)
+
+    def test_account_roadmap_uses_v7_domain_ownership_and_persona_rerun_contract(self) -> None:
+        roadmap_source = ROADMAP_PATH.read_text(encoding="utf-8")
+        phase2_source = PHASE2_PATH.read_text(encoding="utf-8")
+        feature_source = Path("docs/feature_list.md").read_text(encoding="utf-8")
+
+        for term in (
+            "Account & Billing 拥有 account_suspension、fraud_account、detailed_invoice、other",
+            "Backend Operation 拥有 enablement、quota、unregistered",
+            "registered automated outcome",
+            "clear Persona assignment; route again",
+            "一次性 live data operation 仍需部署后由操作员明确启动",
+        ):
+            with self.subTest(term=term):
+                self.assertIn(term, roadmap_source)
+        self.assertIn(
+            "Intent Classifier、Agora Router、Account &amp; Billing Router、Backend Operation Router",
+            phase2_source,
+        )
+        self.assertNotIn("最新三层分类", feature_source)
+        self.assertNotIn("自动化结果统一输出 Automation category", roadmap_source)
+        self.assertNotIn("由 Automation subcategory 选择 Billing handler", roadmap_source)
 
     def test_existing_product_lanes_and_architecture_still_render(self) -> None:
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")

@@ -7,23 +7,25 @@ from typing import Any
 from uuid import uuid4
 
 from backend.services.support_router import SupportRouteDecision
+from backend.services.account_route_pipeline import ACCOUNT_ROUTE_PIPELINE_VERSION, account_case_labels
 from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
     build_account_billing_system_prompt,
     build_account_automation_system_prompt,
+    build_account_backend_operation_system_prompt,
     build_account_intent_system_prompt,
 )
 from backend.services.customer_reply_composer import ensure_customer_reply_email_style
-from backend.services.route_correction import VALID_ROUTE_TUPLES
 from backend.services.automation_routing import automation_metadata
 
 
-ROUTER_PROMPT_VERSION = "account-layered-router-v6"
+ROUTER_PROMPT_VERSION = ACCOUNT_ROUTE_PIPELINE_VERSION
 ROUTING_STAGE_DESCRIPTIONS = {
     "intent_classifier": "Classifies Account messages as Conversation, Agora, or Uncertain.",
     "agora_router": "Classifies Agora cases as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
-    "account_billing_router": "Classifies Account & Billing cases as Account Suspension or Other.",
-    "automation_router": "Selects a registered Automation subcategory or Unregistered.",
+    "account_billing_router": "Classifies Account & Billing cases as Account Suspension, Fraud Account, Detailed Invoice, or Other.",
+    "backend_operation_router": "Classifies explicit backend operations as Enablement, Quota, or Unregistered.",
+    "automation_router": "Compatibility alias for legacy Automation payloads; new Account routes use the backend-operation taxonomy.",
     "final_route": "Records the route target and the primary and secondary Account labels.",
 }
 DEFAULT_PERSONA_KEY = "default-support"
@@ -298,6 +300,12 @@ def environment_config_entries(env_path: Path, *, required: bool = False) -> lis
 
 
 def _is_automated(ticket: dict[str, Any]) -> bool:
+    # Legacy billing rows may only carry automation_status. Preserve that
+    # compatibility signal before normalized route_status defaults to false.
+    if not ticket.get("route_family") and str(
+        ticket.get("automation_status") or ticket.get("status") or ""
+    ).strip().lower() in {"automation", "automated"}:
+        return True
     route_status = str(ticket.get("route_status") or "").strip().lower()
     if route_status:
         return route_status == "automated"
@@ -347,6 +355,42 @@ def account_automation_payload(
     if created_to:
         filtered = [item for item in filtered if str(item.get("created_at") or "") <= str(created_to)]
     start = (safe_page - 1) * safe_size
+    def admin_case_view(item: dict[str, Any]) -> dict[str, Any]:
+        record = dict(item)
+        primary_label, secondary_label = account_case_labels(record)
+        raw_category = str(record.get("category") or "").strip().lower()
+        if secondary_label.startswith("Account & Billing /"):
+            raw_category = "account_billing"
+        elif secondary_label.startswith("Automation /"):
+            raw_category = "automation"
+        elif primary_label == "Human Review":
+            raw_category = "human_review"
+        elif raw_category not in {"automation", "account_billing", "human_review"}:
+            raw_category = "human_review"
+        raw_subcategory = str(record.get("subcategory") or "").strip().lower()
+        if not raw_subcategory and " / " in secondary_label:
+            raw_subcategory = secondary_label.rsplit(" / ", 1)[-1].strip().lower().replace(" ", "_")
+        classification = record.get("route_classification")
+        route_reason_code = (
+            classification.get("route_reason_code")
+            if isinstance(classification, dict)
+            else None
+        )
+        record.update(
+            {
+                "primary_label": primary_label,
+                "secondary_label": secondary_label,
+                "category_label": {
+                    "automation": "Automation",
+                    "account_billing": "Account & Billing",
+                    "human_review": "Human Review",
+                }.get(raw_category, raw_category.replace("_", " ").title() or "-"),
+                "subcategory_label": raw_subcategory.replace("_", " ").title() or "-",
+                "route_reason_code": route_reason_code or record.get("route_reason_code"),
+            }
+        )
+        return record
+
     return {
         "metrics": {
             "total_account_cases": total,
@@ -354,7 +398,7 @@ def account_automation_payload(
             "not_automated_cases": total - automated,
             "automation_rate": automated / total if total else 0,
         },
-        "cases": filtered[start : start + safe_size],
+        "cases": [admin_case_view(item) for item in filtered[start : start + safe_size]],
         "page": safe_page,
         "page_size": safe_size,
         "total": len(filtered),
@@ -473,11 +517,13 @@ def route_execution_from_decision(
 
 
 def routing_config_payload() -> dict[str, Any]:
-    automation_subcategories = [
-        route["execution_action"]
-        for route in VALID_ROUTE_TUPLES
-        if route["route_family"] == "automated" and route["execution_action"] != "account_verification"
+    account_billing_subcategories = [
+        "account_suspension",
+        "fraud_account",
+        "detailed_invoice",
+        "other",
     ]
+    automation_subcategories = ["enablement", "quota", "unregistered"]
     route_categories = [
         {
             "name": "conversation",
@@ -497,27 +543,33 @@ def routing_config_payload() -> dict[str, Any]:
             "name": "agora",
             "display_name": "Agora Router",
             "description": "Agora cases are classified as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
-            "execution_actions": ["technical", "non_technical", "account_billing", "automation", "uncategorized"],
+            "execution_actions": ["technical", "non_technical", "account_billing", "backend_operation", "uncategorized"],
             "subcategories": [],
         },
         {
             "name": "account_billing",
             "display_name": "Account & Billing Router",
-            "description": "Account and billing requests are classified as Account Suspension or Other.",
-            "execution_actions": ["account_suspension", "other"],
-            "subcategories": ["account_suspension", "other"],
+            "description": "Account and billing requests are classified as Account Suspension, Fraud Account, Detailed Invoice, or Other.",
+            "execution_actions": account_billing_subcategories,
+            "subcategories": account_billing_subcategories,
             "handler_modes": {
                 "account_suspension": "classification_only",
+                "fraud_account": "billing",
+                "detailed_invoice": "billing",
                 "other": "none",
             },
         },
         {
             "name": "automation",
-            "display_name": "Automation",
-            "description": "Confirmed backend operations are classified into a registered subcategory or Unregistered.",
-            "execution_actions": [*automation_subcategories, "unregistered"],
-            "subcategories": [*automation_subcategories, "unregistered"],
-            "handler_modes": {action: "active" for action in automation_subcategories},
+            "display_name": "Automation Router",
+            "description": "Confirmed backend operations are classified into Enablement, Quota, or diagnostic Unregistered.",
+            "execution_actions": automation_subcategories,
+            "subcategories": list(automation_subcategories),
+            "handler_modes": {
+                "enablement": "active",
+                "quota": "active",
+                "unregistered": "human_review",
+            },
         },
     ]
 
@@ -529,6 +581,7 @@ def routing_config_payload() -> dict[str, Any]:
                 build_account_agora_system_prompt(),
                 build_account_billing_system_prompt(),
                 build_account_automation_system_prompt(),
+                build_account_backend_operation_system_prompt(),
             ]
         ),
         "stages": list(ROUTING_STAGE_DESCRIPTIONS),

@@ -38,11 +38,8 @@ const DEFAULT_FILTER_DEFINITIONS = [
     id: "automation",
     label: "Automation",
     children: [
-      { id: "fraud_account", label: "Fraud Account" },
-      { id: "detailed_invoice", label: "Detailed Invoice" },
       { id: "enablement", label: "Enablement" },
       { id: "quota", label: "Quota" },
-      { id: "unregistered", label: "Unregistered" },
     ],
   },
   {
@@ -50,6 +47,8 @@ const DEFAULT_FILTER_DEFINITIONS = [
     label: "Account & Billing",
     children: [
       { id: "account_suspension", label: "Account Suspension" },
+      { id: "fraud_account", label: "Fraud Account" },
+      { id: "detailed_invoice", label: "Detailed Invoice" },
       { id: "other", label: "Other" },
     ],
   },
@@ -68,6 +67,7 @@ const DEFAULT_FILTER_DEFINITIONS = [
     id: "human_review",
     label: "Human Review",
     children: [
+      { id: "unregistered", label: "Unregistered" },
       { id: "uncategorized", label: "Uncategorized" },
       { id: "uncertain", label: "Uncertain" },
       { id: "non_agora", label: "Non-Agora" },
@@ -147,15 +147,17 @@ const ROUTE_TUPLE_OPTIONS = [
   { scope: "conversation", action: "human_review_required", label: "Conversation / Human Review" },
   { scope: "agora_technical", action: "rag", label: "Agora / Agora Technical" },
   { scope: "agora_non_technical", action: "web_search", label: "Agora / Agora Non-technical" },
-  { scope: "account_suspension", action: "human_review_required", label: "Agora / Account & Billing / Account Suspension" },
-  { scope: "account_billing", action: "human_review_required", label: "Agora / Account & Billing / Other" },
-  { scope: "uncategorized", action: "human_review_required", label: "Agora / Uncategorized" },
-  { scope: "uncertain", action: "human_review_required", label: "Uncertain / Human Review" },
-  { scope: "fraud_account", action: "fraud_account", label: "Automation / Fraud account" },
-  { scope: "automation", action: "detailed_invoice", label: "Automation / Detailed invoice" },
-  { scope: "automation", action: "enablement", label: "Automation / Enablement" },
-  { scope: "automation", action: "quota", label: "Automation / Quota" },
-  { scope: "automation", action: "unregistered", label: "Automation / Unregistered" },
+  { scope: "account_billing", action: "account_suspension", category: "account_billing", subcategory: "account_suspension", label: "Agora / Account & Billing / Account Suspension" },
+  { scope: "account_billing", action: "fraud_account", category: "account_billing", subcategory: "fraud_account", label: "Agora / Account & Billing / Fraud Account" },
+  { scope: "account_billing", action: "detailed_invoice", category: "account_billing", subcategory: "detailed_invoice", label: "Agora / Account & Billing / Detailed Invoice" },
+  { scope: "account_billing", action: "human_review_required", category: "account_billing", subcategory: "other", label: "Agora / Account & Billing / Other" },
+  { scope: "automation", action: "enablement", category: "automation", subcategory: "enablement", label: "Agora / Automation / Enablement" },
+  { scope: "automation", action: "quota", category: "automation", subcategory: "quota", label: "Agora / Automation / Quota" },
+  { scope: "backend_operation", action: "unregistered", category: "human_review", subcategory: "unregistered", label: "Human Review / Unregistered" },
+  { scope: "uncategorized", action: "human_review_required", category: "human_review", subcategory: "uncategorized", label: "Human Review / Uncategorized" },
+  { scope: "uncertain", action: "human_review_required", category: "human_review", subcategory: "uncertain", label: "Human Review / Uncertain" },
+  { scope: "non_agora", action: "human_review_required", category: "human_review", subcategory: "non_agora", label: "Human Review / Non-Agora" },
+  { scope: "human_review", action: "human_review_required", category: "human_review", subcategory: "other", label: "Human Review / Other" },
 ];
 
 const DEFAULT_ROUTE_TUPLE_SELECT_VALUE = "scope|action";
@@ -919,9 +921,11 @@ async function fetchRouteErrorSummary() {
 }
 
 function resetCorrectionState(item = null) {
-  const currentScope = item?.category === "automation" ? "automation" : item?.scope_label;
+  const currentScope = item?.scope_label;
   const selected = ROUTE_TUPLE_OPTIONS.find(
-    (option) => option.scope === currentScope && option.action === (item?.subcategory || item?.execution_action || item?.route)
+    (option) => option.category && option.category === item?.category && option.subcategory === item?.subcategory
+  ) || ROUTE_TUPLE_OPTIONS.find(
+    (option) => option.scope === currentScope && option.action === (item?.execution_action || item?.route)
   );
   state.correctionScope = selected ? selected.scope : "";
   state.correctionAction = selected ? selected.action : "";
@@ -1655,18 +1659,20 @@ async function submitRouteCorrection() {
 
   try {
     const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
+    const selectedOption = ROUTE_TUPLE_OPTIONS.find(
+      (option) => option.scope === state.correctionScope && option.action === state.correctionAction
+    );
+    const correctionPayload = selectedOption?.category
+      ? { category: selectedOption.category, subcategory: selectedOption.subcategory, corrector: "operator" }
+      : {
+          scope_label: state.correctionScope,
+          execution_action: state.correctionAction,
+          corrector: "operator",
+        };
     const response = await fetch(`/api/account/cases/${billingTicketId}/route-correction`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        state.correctionScope === "automation"
-          ? { category: "automation", subcategory: state.correctionAction, corrector: "operator" }
-          : {
-              scope_label: state.correctionScope,
-              execution_action: state.correctionAction,
-              corrector: "operator",
-            }
-      ),
+      body: JSON.stringify(correctionPayload),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {

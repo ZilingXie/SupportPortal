@@ -11,6 +11,7 @@ from backend.services.billing_automation import (
     build_billing_automation_result,
     send_billing_internal_email,
 )
+from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.support_router_prompt import build_route_prompt_hints
 from backend.services.support_router import (
     SupportRouteDecision,
@@ -403,7 +404,18 @@ The documentation states that time: 0 means the rule is applied permanently. How
             response_language="en",
         )
 
+        extraction = DetailedInvoiceFieldExtraction(
+            status="complete",
+            collected_fields={
+                "issue_date": "6 May 2026",
+                "transaction_id": "1104245232004173824",
+                "amount": "USD 705.97",
+            },
+        )
         with patch(
+            "backend.services.billing_automation.extract_detailed_invoice_fields",
+            return_value=extraction,
+        ), patch(
             "backend.services.support_router.send_billing_internal_email",
             return_value={"status": "sent", "reason": ""},
         ) as send_mock:
@@ -686,7 +698,7 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
             result = send_billing_internal_email(email_payload)
 
         self.assertEqual(result["status"], "skipped_config_missing")
-        self.assertIn("BILLING_AUTOMATION_GRAPH_TOKEN_CACHE", result["reason"])
+        self.assertIn("missing Graph token cache", result["reason"])
         smtp_mock.assert_not_called()
 
     def test_send_billing_internal_email_does_not_use_legacy_smtp_when_configured(self) -> None:
@@ -710,7 +722,7 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
             result = send_billing_internal_email(email_payload)
 
         self.assertEqual(result["status"], "skipped_config_missing")
-        self.assertIn("BILLING_AUTOMATION_GRAPH_TOKEN_CACHE", result["reason"])
+        self.assertIn("missing Graph token cache", result["reason"])
         smtp_mock.assert_not_called()
 
     def test_resolve_support_message_excludes_detailed_invoice_amount_disputes(self) -> None:

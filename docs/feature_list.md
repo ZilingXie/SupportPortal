@@ -24,7 +24,7 @@
 - Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。
 - 对话支持上传 txt/log/err 日志附件。
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
-- Automation 类别通过 fraud_account、detailed_invoice、enablement 和 quota 子类分类；风控账户走一次追问和内部流转。非风控 Account Suspension 已迁移到 Account & Billing 子 Router，仅提取可选上下文并保持 not automated。
+- `/account` 将 Automation Router 的 Enablement、Quota、Unregistered 与 Account & Billing 下的 Fraud Account、Detailed Invoice 分开分类；Unregistered 保留为 Human Review 诊断入口，非风控 Account Suspension 仅提取上下文并保持 not automated。
 - Quota 自动化会处理配额审核、并发提升和 Big Event 容量报备，最多追问一次后将现有信息交给内部团队。
 - Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。
 - Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。
@@ -37,7 +37,7 @@
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口支持默认 All 的两级 route filter，按 Automation、Account & Billing、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。
 - Account 入口支持按 ticket # 精准打开 Case，并可对单 Case 执行仅保留客户消息、保留独立审计的完整 Rerun。
-- Account 入口强制使用当前 layered route 并记录 pipeline 版本；Account & Billing 子 Router 将请求细分为 Account Suspension 或 Other。异步 Rerun 会重新执行路由、Account & Billing/Automation 字段提取和 handler reconciliation，并保留审计历史。
+- Account 入口强制使用当前 layered route 并记录 pipeline 版本；Account & Billing 子 Router 将请求细分为 Account Suspension、Fraud Account、Detailed Invoice 或 Other，Backend Operation/Automation Router 将明确后台操作细分为 Enablement、Quota 或 Unregistered。异步 Rerun 会重新执行路由、字段提取和 handler reconciliation，并保留审计历史。
 - Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。
 - Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。
 - Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。
@@ -95,14 +95,14 @@
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 - Dashboard 的 ticket detail 可查看客户消息、路由、RAG、审核和最终结果组成的执行 Flow。
 - `/workspace/admin` 可查看 Client Ticket、Engineer Case、SLA、派单/转派、Engineer schedule coverage、Automated Cases 和 guardrail 指标。
-- `/workspace/admin` 将 Route Strategy 统一纳入 Agent Config，以 Agent-only 层级导航 Route Agent、Agora Router、Account & Billing Router 与 Automation Router；Account Suspension extractor 位于 Account & Billing Router 下，Automation Router 集中管理可执行行为和 Persona。Agent Prompt、正式 skill 与 MCP 状态继续支持 Draft、Scheduled、Active、Diff、Restore 和历史版本管理，Scheduled Prompt 仅在下一次成功的每日部署后统一生效。
+- `/workspace/admin` 将 Route Strategy 统一纳入 Agent Config，以 Agent-only 层级导航 Route Agent、Agora Router、Account & Billing Router、Backend Operation Router 与 Automation Router；Account Suspension、Fraud Account 和 Detailed Invoice 位于 Account & Billing Router 下，Automation Workflow catalog 统一展示五类执行/兜底流程。Account Prompt 支持 managed 版本管理，正式 skill 与 MCP 状态继续支持 Draft、Scheduled、Active、Diff、Restore 和历史版本管理，Scheduled Prompt 仅在下一次成功的每日部署后统一生效。
 - 对话支持上传 txt/log/err 日志附件。
 - Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automation 或非自动化路由。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口支持默认 All 的两级 route filter，按 Automation、Account & Billing、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。
 - Account 入口支持按 ticket # 精准打开 Case，并可对单 Case 执行仅保留客户消息、保留独立审计的完整 Rerun。
-- Account 入口强制使用最新三层分类并记录 pipeline 版本，支持以全新 Case 执行语义异步 Rerun 全部历史 Case；每个 Case 会保留客户消息和路由审计，删除旧 Account AI 回复、reply job、reply execution 后再重建内部邮件与 Persona 回复。
+- Account 入口强制使用当前 v7 分层分类并记录 pipeline 版本，支持以全新 Case 执行语义异步 Rerun 全部历史 Case；每个 Case 会保留客户消息和路由审计，删除旧 Account AI 回复、reply job、reply execution 与 Persona assignment 后再重建内部邮件与 Persona 回复。
 - Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。
 - Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。
 - Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。
