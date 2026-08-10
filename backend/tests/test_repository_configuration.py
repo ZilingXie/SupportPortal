@@ -618,12 +618,12 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def save_account_case", repo_source)
         self.assertIn("def get_account_case", repo_source)
         self.assertIn("def list_account_cases", repo_source)
-        self.assertIn("bt.route_classification ->> 'intent_class'", repo_source)
-        self.assertIn("bt.route_classification ->> 'agora_route'", repo_source)
-        self.assertIn("bt.route_classification ->> 'intent_class'", repo_source)
-        self.assertIn("bt.route_classification ->> 'agora_route'", repo_source)
+        self.assertIn("def _account_case_filter_sql_expression", repo_source)
+        self.assertIn("{alias}.route_classification ->> 'intent_class'", repo_source)
+        self.assertIn("{alias}.route_classification ->> 'agora_route'", repo_source)
+        self.assertIn(".format(alias=alias)", repo_source)
         self.assertIn("'account_billing'", repo_source)
-        self.assertIn("bt.scope_label = 'agora_technical'", repo_source)
+        self.assertIn("{alias}.scope_label = 'agora_technical'", repo_source)
 
     def test_account_reply_jobs_support_bulk_latest_lookup(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")

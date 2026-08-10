@@ -339,6 +339,16 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(automation["secondary_label"], "Account & Billing / Detailed Invoice")
         self.assertEqual(automation["handler_binding_status"], "completed")
 
+        enablement = classification_for_corrected_route(
+            scope_label="automation",
+            route_family="automated",
+            execution_action="enablement",
+        )
+        self.assertEqual(enablement["agora_route"], "backend_operation")
+        self.assertEqual(enablement["backend_operation_subcategory"], "enablement")
+        self.assertEqual(enablement["secondary_label"], "Automation / Enablement")
+        self.assertEqual(enablement["handler_binding_status"], "completed")
+
         account_billing = classification_for_corrected_route(
             scope_label="account_billing",
             route_family="human_review",

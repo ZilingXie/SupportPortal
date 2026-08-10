@@ -98,6 +98,13 @@ def _route_decision(*, action: str, scope_label: str, reason: str) -> types.Simp
         route_family=route_family,
         execution_action=action,
         tooling_profile=tooling_profile,
+        router_source="deterministic",
+        intent_router_attempted=False,
+        intent_router_confidence_threshold=None,
+        intent_router_model_confidence=None,
+        intent_router_fallback_reason=None,
+        intent_router_failure_type=None,
+        intent_router_failure_source=None,
     )
 
 
@@ -226,6 +233,7 @@ class WorkerResilienceTests(unittest.TestCase):
             recovery_window_seconds=210.0,
             recovery_poll_interval_seconds=2.0,
             query_policy="client_accuracy_first",
+            rag_access_mode="official_only",
         )
 
     def test_worker_rag_executor_timeout_with_healthy_service_returns_processing_timeout(self) -> None:
@@ -352,6 +360,13 @@ class WorkerResilienceTests(unittest.TestCase):
             tooling_profile="official_web_search",
             evidence_summary=None,
             packed_evidence=None,
+            router_source="deterministic",
+            intent_router_attempted=False,
+            intent_router_confidence_threshold=None,
+            intent_router_model_confidence=None,
+            intent_router_fallback_reason=None,
+            intent_router_failure_type=None,
+            intent_router_failure_source=None,
         )
 
         def _slow_rag(*_args, **_kwargs):

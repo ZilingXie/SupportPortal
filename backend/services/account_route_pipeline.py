@@ -704,14 +704,24 @@ def classification_for_corrected_route(
         scope_label not in {"account_billing", "billing", "fraud_account", "detailed_invoice"}
         and is_registered_automation(route_family=route_family, execution_action=action)
     ):
-        classification.update(
-            agora_route="automation",
-            automation_subcategory=action,
-            route_target="automation",
-            human_review_reason=None,
-            # Correction is classification-only and must never replay a handler.
-            handler_binding_status="completed",
-        )
+        if action in {"enablement", "quota"}:
+            classification.update(
+                agora_route="backend_operation",
+                backend_operation_subcategory=action,
+                route_target="automation",
+                human_review_reason=None,
+                # Correction is classification-only and must never replay a handler.
+                handler_binding_status="completed",
+            )
+        else:
+            classification.update(
+                agora_route="automation",
+                automation_subcategory=action,
+                route_target="automation",
+                human_review_reason=None,
+                # Correction is classification-only and must never replay a handler.
+                handler_binding_status="completed",
+            )
     elif scope_label == "ticket_resolution":
         classification.update(
             intent_class="conversation",
@@ -1038,12 +1048,45 @@ def _legacy_result(
             }
         )
     if is_registered_automation(route_family=decision.route_family, execution_action=action):
-        classification.update(
-            agora_route="automation",
-            automation_subcategory=action,
-            route_target="automation",
-            handler_binding_status="active",
-        )
+        if action in {"fraud_account", "detailed_invoice"}:
+            classification.update(
+                agora_route="account_billing",
+                account_billing_subcategory=action,
+                route_target="automation",
+                handler_binding_status="active",
+            )
+            decision = _decision(
+                scope_label="account_billing",
+                action=action,
+                confidence=decision.confidence,
+                reason=(
+                    "registered_fraud_account"
+                    if action == "fraud_account"
+                    else "registered_detailed_invoice"
+                ),
+                response_language=decision.response_language,
+                route_family=AUTOMATED_ROUTE_FAMILY,
+                tooling_profile=BILLING_TOOLING_PROFILE,
+                semantic_intent=f"account_billing.{action}",
+                automation_eligibility="eligible",
+                evidence_spans=_sanitize_evidence(decision.evidence_spans),
+                risk_flags=decision.risk_flags,
+                router_source="account_legacy_fallback",
+            )
+        elif action in {"enablement", "quota"}:
+            classification.update(
+                agora_route="backend_operation",
+                backend_operation_subcategory=action,
+                route_target="automation",
+                handler_binding_status="active",
+            )
+        else:
+            classification.update(
+                agora_route="automation",
+                automation_subcategory=action,
+                route_target="automation",
+                handler_binding_status="active",
+            )
     elif decision.scope_label == "ticket_resolution":
         classification.update(
             intent_class="conversation",

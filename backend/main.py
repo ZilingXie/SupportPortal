@@ -4618,6 +4618,26 @@ def _render_billing_resolution_customer_reply(
     except AutomationPersonaError as exc:
         reason = str(exc)
         timestamp = now_iso()
+        route_classification = (
+            dict(billing_ticket.get("route_classification"))
+            if isinstance(billing_ticket.get("route_classification"), dict)
+            else {}
+        )
+        route_classification.update(
+            {
+                "agora_route": "uncategorized",
+                "account_billing_subcategory": None,
+                "automation_subcategory": None,
+                "backend_operation_subcategory": None,
+                "route_target": "human_review",
+                "human_review_reason": reason,
+                "route_reason_code": reason,
+                "handler_binding_status": "human_review",
+            }
+        )
+        primary_label, secondary_label = classification_labels(route_classification)
+        route_classification["primary_label"] = primary_label
+        route_classification["secondary_label"] = secondary_label
         billing_ticket.update(
             {
                 "route": "human_review_required",
@@ -4625,8 +4645,13 @@ def _render_billing_resolution_customer_reply(
                 "route_family": "human_review",
                 "execution_action": "human_review_required",
                 "automation_status": "not_automated",
+                "category": "human_review",
+                "subcategory": "human_review_required",
+                "route_status": "not_automated",
+                "automation_handler": None,
                 "not_automated_reason": reason,
                 "internal_email_send_reason": reason,
+                "route_classification": route_classification,
                 "updated_at": timestamp,
             }
         )

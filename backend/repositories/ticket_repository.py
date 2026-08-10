@@ -15,6 +15,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
+from backend.services.account_billing_handlers import account_billing_metadata
 from backend.services.account_case_filters import (
     account_case_filter_key,
     account_case_filter_memberships,
@@ -406,9 +407,27 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
         normalized.get("account_case_id") or billing_ticket_id
     ).strip()
     execution_action = normalized.get("execution_action") or normalized.get("route")
-    metadata = automation_metadata(
-        route_family=normalized.get("route_family"),
-        execution_action=execution_action,
+    classification = (
+        normalized.get("route_classification")
+        if isinstance(normalized.get("route_classification"), dict)
+        else {}
+    )
+    account_billing_subcategory = str(
+        classification.get("account_billing_subcategory")
+        or (
+            normalized.get("subcategory")
+            if str(normalized.get("category") or "").strip().lower() == "account_billing"
+            else ""
+        )
+        or ""
+    ).strip().lower()
+    metadata = (
+        account_billing_metadata(account_billing_subcategory)
+        if account_billing_subcategory in {"fraud_account", "detailed_invoice"}
+        else automation_metadata(
+            route_family=normalized.get("route_family"),
+            execution_action=execution_action,
+        )
     )
     automation_family = str(normalized.get("route_family") or "").strip().lower() in {
         AUTOMATED_ROUTE_FAMILY,
@@ -419,7 +438,7 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
     else:
         for key, value in metadata.items():
             normalized.setdefault(key, value)
-    if metadata["route_status"] == "automated":
+    if automation_family and metadata["route_status"] == "automated":
         normalized["route_family"] = AUTOMATED_ROUTE_FAMILY
         normalized["execution_action"] = metadata["subcategory"]
         normalized["route"] = metadata["subcategory"]

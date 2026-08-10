@@ -14,13 +14,22 @@ class AutomationRoutingTests(unittest.TestCase):
     def test_registered_subcategories_are_derived_from_handler_registry(self) -> None:
         self.assertEqual(
             REGISTERED_AUTOMATION_SUBCATEGORIES,
-            frozenset({"account_suspension", "account_verification", "detailed_invoice", "enablement", "quota"}),
+            frozenset(
+                {
+                    "account_suspension",
+                    "account_verification",
+                    "fraud_account",
+                    "detailed_invoice",
+                    "enablement",
+                    "quota",
+                }
+            ),
         )
 
     def test_registered_billing_subcategories_share_automation_category(self) -> None:
         for subcategory in (
-            "account_suspension",
             "account_verification",
+            "fraud_account",
             "detailed_invoice",
         ):
             with self.subTest(subcategory=subcategory):
@@ -39,7 +48,7 @@ class AutomationRoutingTests(unittest.TestCase):
 
         self.assertEqual(
             AUTOMATION_HANDLER_REGISTRY["billing"],
-            frozenset({"account_suspension", "account_verification", "detailed_invoice"}),
+            frozenset({"account_verification", "fraud_account", "detailed_invoice"}),
         )
 
     def test_enablement_uses_its_own_handler(self) -> None:
@@ -66,7 +75,7 @@ class AutomationRoutingTests(unittest.TestCase):
         )
         self.assertEqual(AUTOMATION_HANDLER_REGISTRY["quota"], frozenset({"quota"}))
 
-    def test_account_suspension_remains_its_own_registered_subcategory(self) -> None:
+    def test_legacy_account_suspension_uses_its_own_handler(self) -> None:
         self.assertEqual(
             automation_metadata(
                 route_family="automated",
@@ -76,7 +85,7 @@ class AutomationRoutingTests(unittest.TestCase):
                 "category": "automation",
                 "subcategory": "account_suspension",
                 "route_status": "automated",
-                "automation_handler": "billing",
+                "automation_handler": "account_suspension",
             },
         )
 
