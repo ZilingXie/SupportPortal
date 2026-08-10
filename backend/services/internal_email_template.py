@@ -6,17 +6,17 @@ from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
-INTERNAL_EMAIL_TEMPLATE_VERSION = "internal-handoff-v3"
+INTERNAL_EMAIL_TEMPLATE_VERSION = "internal-handoff-v4"
 INTERNAL_EMAIL_HTML_CONTENT_TYPE = "HTML"
 
 _LIGHT_THEME = {
-    "shell": "#F3F8FA",
+    "shell": "#FFFFFF",
     "panel": "#FFFFFF",
-    "surface": "#F5FAFC",
-    "quote": "#FAFCFD",
-    "action": "#EDF8FB",
-    "warning": "#FFF8ED",
-    "success": "#EEF9F4",
+    "surface": "#FFFFFF",
+    "quote": "#FFFFFF",
+    "action": "#FFFFFF",
+    "warning": "#FFFFFF",
+    "success": "#FFFFFF",
     "text": "#142832",
     "muted": "#536873",
     "label": "#006C9B",
@@ -189,7 +189,7 @@ def _render_html(
   <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-shell\" bgcolor=\"{_LIGHT_THEME['shell']}\" style=\"width:100%;background-color:{_LIGHT_THEME['shell']};color:{_LIGHT_THEME['text']};\">
     <tr>
       <td align=\"center\" style=\"padding:28px 12px;\">
-        <table role=\"presentation\" width=\"680\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-panel\" bgcolor=\"{_LIGHT_THEME['panel']}\" style=\"width:100%;max-width:680px;background-color:{_LIGHT_THEME['panel']};color:{_LIGHT_THEME['text']};border-radius:8px;overflow:hidden;\">
+        <table role=\"presentation\" width=\"680\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-panel\" bgcolor=\"{_LIGHT_THEME['panel']}\" style=\"width:100%;max-width:680px;background-color:{_LIGHT_THEME['panel']};color:{_LIGHT_THEME['text']};border:1px solid {_LIGHT_THEME['border']};border-radius:8px;overflow:hidden;\">
           <tr>
             <td class=\"email-label\" style=\"height:6px;background-color:{_LIGHT_THEME['label']};font-size:0;line-height:0;\">&nbsp;</td>
           </tr>
@@ -208,7 +208,7 @@ def _render_html(
           <tr>
             <td class=\"email-pad\" style=\"padding:0 34px 8px;\">
               <p class=\"email-text\" style=\"margin:0 0 18px;font-size:16px;line-height:25px;color:{_LIGHT_THEME['text']};\">{_html_paragraph(intro)}</p>
-              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-surface\" bgcolor=\"{_LIGHT_THEME['surface']}\" style=\"background-color:{_LIGHT_THEME['surface']};color:{_LIGHT_THEME['text']};border-radius:6px;\">
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" class=\"email-surface\" bgcolor=\"{_LIGHT_THEME['surface']}\" style=\"background-color:{_LIGHT_THEME['surface']};color:{_LIGHT_THEME['text']};border:1px solid {_LIGHT_THEME['border']};border-radius:6px;\">
                 <tr><td class=\"email-label\" style=\"padding:16px 18px 8px;font-size:12px;line-height:18px;letter-spacing:.06em;text-transform:uppercase;color:{_LIGHT_THEME['label']};font-weight:bold;\">Request summary</td></tr>
                 <tr><td style=\"padding:0 18px 14px;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\">{summary_html}</table></td></tr>
               </table>
@@ -249,7 +249,7 @@ def _html_section(section: InternalEmailSection) -> str:
         "#fff8ed": "email-warning",
         "#eef9f4": "email-success",
     }.get(tone["background"], "email-surface")
-    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"{tone_class}\" bgcolor=\"{tone['background']}\" style=\"padding:16px 18px;background-color:{tone['background']};color:{_LIGHT_THEME['text']};border-left:4px solid {tone['border']};border-radius:4px;\"><div class=\"email-tone-label\" style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{tone['label']};font-weight:bold;margin-bottom:8px;\">{title}</div>{body}{fields_table}{list_html}</td></tr></table>"""
+    return f"""<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:18px;\"><tr><td class=\"{tone_class}\" bgcolor=\"{tone['background']}\" style=\"padding:16px 18px;background-color:{tone['background']};color:{_LIGHT_THEME['text']};border:1px solid {tone['border']};border-left:4px solid {tone['border']};border-radius:4px;\"><div class=\"email-tone-label\" style=\"font-size:12px;line-height:18px;letter-spacing:.05em;text-transform:uppercase;color:{tone['label']};font-weight:bold;margin-bottom:8px;\">{title}</div>{body}{fields_table}{list_html}</td></tr></table>"""
 
 
 def _html_missing_fields(fields: Sequence[str], title: str) -> str:
@@ -345,7 +345,15 @@ def _safe_http_url(value: Any) -> str | None:
 def _section_tone(tone: str) -> dict[str, str]:
     normalized = _clean_text(tone).lower()
     if normalized == "warning":
-        return {"background": "#fff8ed", "border": "#c77c1a", "label": "#8a5510"}
+        return {
+            "background": _LIGHT_THEME["warning"],
+            "border": _LIGHT_THEME["warning_border"],
+            "label": _LIGHT_THEME["warning_text"],
+        }
     if normalized == "success":
-        return {"background": "#eef9f4", "border": "#25845d", "label": "#176340"}
-    return {"background": "#f5f8fb", "border": "#78a9c1", "label": "#006493"}
+        return {
+            "background": _LIGHT_THEME["success"],
+            "border": _LIGHT_THEME["success_border"],
+            "label": _LIGHT_THEME["success_text"],
+        }
+    return {"background": _LIGHT_THEME["surface"], "border": "#78A9C1", "label": "#006493"}
