@@ -251,7 +251,7 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
             continue
         persona_key = str(raw.get("persona_key") or "").strip()
         published_version_value = raw.get("published_version")
-        if type(published_version_value) is not int:
+        if type(published_version_value) is not int or published_version_value <= 0:
             continue
         published_version = published_version_value
         versions = raw.get("versions") if isinstance(raw.get("versions"), list) else []
@@ -260,7 +260,7 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
             if not isinstance(version, dict):
                 continue
             version_number = version.get("version")
-            if type(version_number) is not int:
+            if type(version_number) is not int or version_number <= 0:
                 continue
             if (
                 version_number == published_version
@@ -298,17 +298,15 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
         approved_content = preset.content
         if approved_content.get("signature") != DEFAULT_PERSONA_SIGNATURE:
             raise OperationError(f"built-in Persona signature mismatch for {persona_key}")
-        if published_version != 1 or selected.get("version") != 1:
-            raise OperationError(f"Persona {persona_key} must publish approved version 1")
         if selected.get("status") != "published":
-            raise OperationError(f"Persona {persona_key} version 1 must be published")
-        if selected.get("created_by") != "system":
-            raise OperationError(f"Persona {persona_key} version 1 must be system-created")
-        if selected.get("change_note") != approved["seed_marker"]:
-            raise OperationError(f"Persona {persona_key} version 1 seed marker is not approved")
+            raise OperationError(
+                f"Persona {persona_key} version {published_version} must be published"
+            )
         selected_content = selected.get("content")
         if selected_content != approved_content:
-            raise OperationError(f"Persona {persona_key} version 1 content is not approved")
+            raise OperationError(
+                f"Persona {persona_key} version {published_version} content is not approved"
+            )
         canonical_content = json.dumps(
             selected_content,
             ensure_ascii=False,
@@ -318,7 +316,9 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
         content_sha256 = hashlib.sha256(canonical_content.encode("utf-8")).hexdigest()
         approved_sha256 = approved["content_sha256"]
         if not hmac.compare_digest(content_sha256, approved_sha256):
-            raise OperationError(f"Persona {persona_key} version 1 content hash is not approved")
+            raise OperationError(
+                f"Persona {persona_key} version {published_version} content hash is not approved"
+            )
         published.append(
             {
                 "persona_key": persona_key,

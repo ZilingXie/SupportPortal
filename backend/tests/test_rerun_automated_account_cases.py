@@ -47,6 +47,41 @@ def _personas(content_suffix: str = "baseline") -> dict[str, object]:
     return {"personas": personas}
 
 
+def _personas_with_warm_upgrade() -> dict[str, object]:
+    payload = json.loads(json.dumps(_personas()))
+    warm = next(
+        item
+        for item in payload["personas"]
+        if item["persona_key"] == "default-support"
+    )
+    approved_content = dict(warm["versions"][0]["content"])
+    warm["published_version"] = 3
+    warm["versions"] = [
+        {
+            "version": 1,
+            "status": "archived",
+            "content": {**approved_content, "instruction": "Historical Warm v1"},
+            "created_by": "system",
+            "change_note": "Seeded Sid Warm preset v1",
+        },
+        {
+            "version": 2,
+            "status": "archived",
+            "content": {**approved_content, "instruction": "Historical Warm v2"},
+            "created_by": "admin-user",
+            "change_note": "Previous production customization",
+        },
+        {
+            "version": 3,
+            "status": "published",
+            "content": approved_content,
+            "created_by": "admin-user",
+            "change_note": "Restore approved Warm content",
+        },
+    ]
+    return payload
+
+
 def _persona_gate_request(persona_payload: dict[str, object]) -> FakeRequest:
     def handler(call: dict[str, object]) -> dict[str, object]:
         parsed = urlsplit(str(call["path"]))
@@ -289,15 +324,37 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
 
         self.assertFalse(any(call["method"] == "POST" for call in request.calls))
 
-    def test_dry_run_rejects_any_non_seeded_persona_metadata_or_content(self) -> None:
+    def test_dry_run_accepts_approved_current_content_after_warm_upgrade(self) -> None:
+        request = _persona_gate_request(_personas_with_warm_upgrade())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir = runner.create_dry_run(
+                base_url="http://127.0.0.1:8000",
+                operations_root=Path(temporary),
+                request_json=request,
+                access_token=TEST_ACCESS_TOKEN,
+                signing_secret=TEST_SIGNING_SECRET,
+            )
+            baseline = json.loads(
+                (operation_dir / "baseline.json").read_text(encoding="utf-8")
+            )
+
+        versions = {
+            item["persona_key"]: item["published_version"]
+            for item in baseline["personas"]
+        }
+        self.assertEqual(
+            versions,
+            {"default-support": 3, "sid-bright": 1, "sid-precise": 1},
+        )
+        self.assertFalse(any(call["method"] == "POST" for call in request.calls))
+
+    def test_dry_run_rejects_unapproved_current_persona_state_or_content(self) -> None:
         mutation_names = (
             "instruction",
             "opener",
             "signature",
-            "published_version",
             "status",
-            "created_by",
-            "change_note",
             "extra_content_field",
             "forged_content_hash",
         )
@@ -318,15 +375,8 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                         content["opener"] = "Hello from a custom Persona"
                     elif mutation_name == "signature":
                         content["signature"] = "Best,\nA different agent"
-                    elif mutation_name == "published_version":
-                        raw["published_version"] = 2
-                        selected["version"] = 2
                     elif mutation_name == "status":
                         selected["status"] = "draft"
-                    elif mutation_name == "created_by":
-                        selected["created_by"] = "admin-user"
-                    elif mutation_name == "change_note":
-                        selected["change_note"] = "Looks close enough"
                     elif mutation_name == "extra_content_field":
                         content["custom_style"] = "unapproved"
                     else:
@@ -399,7 +449,13 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 self.assertFalse(any(call["method"] == "POST" for call in request.calls))
 
     def test_dry_run_rejects_non_integer_persona_versions(self) -> None:
-        for field, value in (("published_version", "1"), ("version", True)):
+        for field, value in (
+            ("published_version", "1"),
+            ("published_version", True),
+            ("published_version", 0),
+            ("published_version", -1),
+            ("version", True),
+        ):
             with self.subTest(field=field):
                 payload = json.loads(json.dumps(_personas()))
                 raw = payload["personas"][0]
@@ -1037,6 +1093,33 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 with self.assertRaises(runner.OperationError):
                     self._apply(operation_dir, request_json=request)
                 self.assertFalse(any(call["method"] == "POST" for call in request.calls))
+
+    def test_published_persona_version_drift_blocks_apply_with_approved_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dry_run_request = _persona_gate_request(_personas_with_warm_upgrade())
+            operation_dir = runner.create_dry_run(
+                base_url="http://127.0.0.1:8000",
+                operations_root=Path(temporary),
+                request_json=dry_run_request,
+                access_token=TEST_ACCESS_TOKEN,
+                signing_secret=TEST_SIGNING_SECRET,
+            )
+            apply_payload = _personas_with_warm_upgrade()
+            warm = next(
+                item
+                for item in apply_payload["personas"]
+                if item["persona_key"] == "default-support"
+            )
+            warm["published_version"] = 4
+            current = dict(warm["versions"][-1])
+            current["version"] = 4
+            warm["versions"].append(current)
+            apply_request = _persona_gate_request(apply_payload)
+
+            with self.assertRaises(runner.OperationError):
+                self._apply(operation_dir, request_json=apply_request)
+
+        self.assertFalse(any(call["method"] == "POST" for call in apply_request.calls))
 
     def test_apply_rejects_non_postgres_ticket_storage_before_any_case_post(self) -> None:
         invalid_storage_values = (

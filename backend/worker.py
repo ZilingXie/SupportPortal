@@ -1450,8 +1450,6 @@ def handle_billing_request_reply(reply: Any) -> str:
             "notify_customer": True, "customer_reply": customer_reply, "created_at": timestamp,
             "source": "billing_reply_email", "billing_reply_message_id": message_id,
         }
-        if attached_asset_ids:
-            asset_repository.mark_attached(attached_asset_ids)
         committed = ticket_repository.commit_automation_reply_result(
             reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
             assistant_message=assistant_message,
@@ -1461,6 +1459,8 @@ def handle_billing_request_reply(reply: Any) -> str:
                     {"event_type": BILLING_RESPONSE_AI_FOLLOWUP_EVENT, "payload": followup_event}],
             completed_at=timestamp,
         )
+        if committed and attached_asset_ids:
+            asset_repository.mark_attached(attached_asset_ids)
         return "completed" if committed else "in_progress"
     except Exception as exc:
         _fail_automation_reply(reply_key, owner_token, exc)

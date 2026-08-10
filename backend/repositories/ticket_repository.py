@@ -36,6 +36,28 @@ ACCOUNT_RERUN_RESET_AI_ONLY = "account_ai_only"
 ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY = "customer_messages_only"
 AccountRerunResetMode = Literal["account_ai_only", "customer_messages_only"]
 
+_BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS = frozenset(
+    {
+        "route",
+        "scope_label",
+        "route_family",
+        "execution_action",
+        "tooling_profile",
+        "category",
+        "subcategory",
+        "route_status",
+        "automation_handler",
+        "automation_status",
+        "customer_reply",
+        "not_automated_reason",
+        "internal_email_send_reason",
+        "route_reason",
+        "policy_decision",
+        "route_classification",
+        "updated_at",
+    }
+)
+
 
 class AccountRerouteLeaseLostError(RuntimeError):
     """Raised when a stale reroute worker attempts to persist progress."""
@@ -1838,6 +1860,19 @@ class TicketRepository(Protocol):
     def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
         ...
 
+    def commit_billing_response_submission(
+        self,
+        token_hash: str,
+        *,
+        billing_ticket_id: str,
+        ticket_id: str,
+        assistant_message: dict[str, Any] | None,
+        account_case_updates: dict[str, Any],
+        events: list[dict[str, Any]],
+        cancel_pending_reply_jobs: bool,
+        completed_at: str,
+    ) -> bool: ...
+
     def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
         ...
 
@@ -2297,6 +2332,12 @@ class InMemoryTicketRepository:
             persona_assignments_snapshot = copy.deepcopy(
                 self._account_persona_assignments
             )
+            automation_reply_claims_snapshot = copy.deepcopy(
+                self._automation_reply_claims
+            )
+            billing_response_tokens_snapshot = copy.deepcopy(
+                self._billing_response_tokens
+            )
             try:
                 ai_messages_deleted = 0
                 messages_deleted = 0
@@ -2347,6 +2388,26 @@ class InMemoryTicketRepository:
                     or ""
                 ).strip()
                 correction = copy.deepcopy(self._billing_route_corrections.get(account_case_id))
+                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                    self._automation_reply_claims = {
+                        key: claim
+                        for key, claim in self._automation_reply_claims.items()
+                        if not (
+                            str(claim.get("client_ticket_id") or "").strip()
+                            == normalized_ticket_id
+                            and str(claim.get("state") or "").strip() != "completed"
+                        )
+                    }
+                    billing_ticket_id = str(
+                        (account_case or {}).get("billing_ticket_id") or ""
+                    ).strip()
+                    if billing_ticket_id:
+                        self._billing_response_tokens = {
+                            key: token
+                            for key, token in self._billing_response_tokens.items()
+                            if str(token.get("billing_ticket_id") or "").strip()
+                            != billing_ticket_id
+                        }
 
                 old_job_ids = {
                     str(job_id)
@@ -2431,6 +2492,8 @@ class InMemoryTicketRepository:
                 self._billing_route_corrections = corrections_snapshot
                 self._workspace_audit_events = audit_snapshot
                 self._account_persona_assignments = persona_assignments_snapshot
+                self._automation_reply_claims = automation_reply_claims_snapshot
+                self._billing_response_tokens = billing_response_tokens_snapshot
                 raise
 
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]:
@@ -4745,20 +4808,89 @@ class InMemoryTicketRepository:
         billing_ticket_id = str(token.get("billing_ticket_id") or "").strip()
         if not billing_ticket_id:
             raise ValueError("billing_ticket_id is required")
-        if token_hash in self._billing_response_tokens:
-            return
-        self._billing_response_tokens[token_hash] = copy.deepcopy(token)
+        with self._assignment_lock:
+            if token_hash in self._billing_response_tokens:
+                return
+            self._billing_response_tokens[token_hash] = copy.deepcopy(token)
 
     def get_billing_response_token(self, token_hash: str) -> dict[str, Any] | None:
         token = self._billing_response_tokens.get(str(token_hash).strip())
         return copy.deepcopy(token) if token is not None else None
 
     def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
-        token = self._billing_response_tokens.get(str(token_hash).strip())
-        if token is None or token.get("used_at") is not None:
-            return False
-        token["used_at"] = used_at
-        return True
+        with self._assignment_lock:
+            token = self._billing_response_tokens.get(str(token_hash).strip())
+            if token is None or token.get("used_at") is not None:
+                return False
+            token["used_at"] = used_at
+            return True
+
+    def commit_billing_response_submission(
+        self,
+        token_hash: str,
+        *,
+        billing_ticket_id: str,
+        ticket_id: str,
+        assistant_message: dict[str, Any] | None,
+        account_case_updates: dict[str, Any],
+        events: list[dict[str, Any]],
+        cancel_pending_reply_jobs: bool,
+        completed_at: str,
+    ) -> bool:
+        normalized_token_hash = str(token_hash or "").strip()
+        normalized_billing_ticket_id = str(billing_ticket_id or "").strip()
+        normalized_ticket_id = str(ticket_id or "").strip()
+        with self._assignment_lock:
+            token = self._billing_response_tokens.get(normalized_token_hash)
+            account_case = self._billing_tickets.get(normalized_billing_ticket_id)
+            ticket = self._tickets.get(normalized_ticket_id)
+            if (
+                token is None
+                or token.get("used_at") is not None
+                or str(token.get("billing_ticket_id") or "").strip()
+                != normalized_billing_ticket_id
+                or account_case is None
+                or str(account_case.get("client_ticket_id") or "").strip()
+                != normalized_ticket_id
+                or ticket is None
+            ):
+                return False
+
+            token_snapshot = copy.deepcopy(token)
+            account_case_snapshot = copy.deepcopy(account_case)
+            ticket_snapshot = copy.deepcopy(ticket)
+            reply_jobs_snapshot = copy.deepcopy(self._account_reply_jobs)
+            events_snapshot = copy.deepcopy(self._events)
+            try:
+                token["used_at"] = completed_at
+                updates = {
+                    key: copy.deepcopy(value)
+                    for key, value in account_case_updates.items()
+                    if key in _BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS
+                }
+                account_case.update(updates)
+                if assistant_message:
+                    ticket.setdefault("messages", []).append(copy.deepcopy(assistant_message))
+                ticket["updated_at"] = completed_at
+                if cancel_pending_reply_jobs:
+                    self.cancel_pending_account_reply_jobs(
+                        normalized_ticket_id,
+                        updated_at=completed_at,
+                    )
+                for event in events:
+                    self.record_event(
+                        normalized_ticket_id,
+                        str(event.get("event_type") or "").strip(),
+                        copy.deepcopy(event.get("payload") or {}),
+                    )
+                return True
+            except Exception:
+                self._billing_response_tokens[normalized_token_hash] = token_snapshot
+                self._billing_tickets[normalized_billing_ticket_id] = account_case_snapshot
+                self._tickets[normalized_ticket_id] = ticket_snapshot
+                self._account_reply_jobs = reply_jobs_snapshot
+                self._events = events_snapshot
+                raise
 
     def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
         billing_ticket_id = str(correction.get("billing_ticket_id") or "").strip()
@@ -9991,6 +10123,8 @@ class PostgresTicketRepository:
         def _operation(conn: psycopg.Connection[Any]) -> bool:
             with conn.transaction():
                 with conn.cursor() as cur:
+                    if not self._lock_account_reply_ticket(cur, str(ticket_id).strip()):
+                        return False
                     cur.execute(
                         sql.SQL("SELECT state, owner_token FROM {} WHERE automation_reply_key=%s FOR UPDATE").format(
                             self._table("support_automation_reply_claims")
@@ -11327,6 +11461,148 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("mark_billing_response_token_used", _operation)
 
+    def commit_billing_response_submission(
+        self,
+        token_hash: str,
+        *,
+        billing_ticket_id: str,
+        ticket_id: str,
+        assistant_message: dict[str, Any] | None,
+        account_case_updates: dict[str, Any],
+        events: list[dict[str, Any]],
+        cancel_pending_reply_jobs: bool,
+        completed_at: str,
+    ) -> bool:
+        normalized_token_hash = str(token_hash or "").strip()
+        normalized_billing_ticket_id = str(billing_ticket_id or "").strip()
+        normalized_ticket_id = str(ticket_id or "").strip()
+        updates = {
+            key: value
+            for key, value in account_case_updates.items()
+            if key in _BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS
+        }
+        for json_field in ("route_classification",):
+            if json_field in updates:
+                updates[json_field] = Json(
+                    updates[json_field]
+                    if isinstance(updates[json_field], dict)
+                    else {}
+                )
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction(), conn.cursor() as cur:
+                if not self._lock_account_reply_ticket(cur, normalized_ticket_id):
+                    return False
+                cur.execute(
+                    sql.SQL(
+                        "SELECT billing_ticket_id FROM {} "
+                        "WHERE billing_ticket_id=%s AND client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_billing_ticket_id, normalized_ticket_id),
+                )
+                if cur.fetchone() is None:
+                    return False
+                cur.execute(
+                    sql.SQL(
+                        "SELECT billing_ticket_id,used_at FROM {} "
+                        "WHERE token_hash=%s FOR UPDATE"
+                    ).format(self._table("support_billing_response_tokens")),
+                    (normalized_token_hash,),
+                )
+                token_row = cur.fetchone()
+                if (
+                    token_row is None
+                    or str(token_row[0] or "").strip() != normalized_billing_ticket_id
+                    or token_row[1] is not None
+                ):
+                    return False
+                cur.execute(
+                    sql.SQL("UPDATE {} SET used_at=%s WHERE token_hash=%s AND used_at IS NULL").format(
+                        self._table("support_billing_response_tokens")
+                    ),
+                    (completed_at, normalized_token_hash),
+                )
+                if cur.rowcount != 1:
+                    return False
+                if updates:
+                    assignments = sql.SQL(", ").join(
+                        sql.SQL("{} = %s").format(sql.Identifier(key))
+                        for key in updates
+                    )
+                    cur.execute(
+                        sql.SQL("UPDATE {} SET {} WHERE billing_ticket_id=%s AND client_ticket_id=%s").format(
+                            self._table("support_account_cases"),
+                            assignments,
+                        ),
+                        (*updates.values(), normalized_billing_ticket_id, normalized_ticket_id),
+                    )
+                    if cur.rowcount != 1:
+                        raise ValueError(
+                            f"account case not found for {normalized_billing_ticket_id}"
+                        )
+                cur.execute(
+                    sql.SQL("UPDATE {} SET updated_at=%s WHERE ticket_id=%s").format(
+                        self._table("support_tickets")
+                    ),
+                    (completed_at, normalized_ticket_id),
+                )
+                if cur.rowcount != 1:
+                    raise ValueError(f"linked support ticket not found for {normalized_ticket_id}")
+                if assistant_message:
+                    meta = _ticket_message_meta(assistant_message)
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (ticket_id,role,content,created_at,sentiment_label,"
+                            "sources,citations,meta) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
+                        ).format(self._table("support_ticket_messages")),
+                        (
+                            normalized_ticket_id,
+                            _normalize_role(assistant_message.get("role")),
+                            str(assistant_message.get("content") or "").strip(),
+                            assistant_message.get("created_at") or completed_at,
+                            _normalize_message_sentiment_label(
+                                assistant_message.get("sentiment_label")
+                            ),
+                            Json(assistant_message.get("sources"))
+                            if assistant_message.get("sources")
+                            else None,
+                            Json(assistant_message.get("citations"))
+                            if assistant_message.get("citations")
+                            else None,
+                            Json(meta),
+                        ),
+                    )
+                if cancel_pending_reply_jobs:
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='cancelled',updated_at=%s "
+                            "WHERE ticket_id=%s AND status IN "
+                            "('queued','preparing','scheduled','publishing','persona_queued',"
+                            "'persona_preparing','persona_scheduled','persona_publishing')"
+                        ).format(self._table("support_account_reply_jobs")),
+                        (completed_at, normalized_ticket_id),
+                    )
+                for event in events:
+                    payload = copy.deepcopy(event.get("payload") or {})
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (ticket_id,event_type,payload,created_at) "
+                            "VALUES (%s,%s,%s,%s)"
+                        ).format(self._table("support_ticket_events")),
+                        (
+                            normalized_ticket_id,
+                            str(event.get("event_type") or "").strip(),
+                            Json(payload),
+                            payload.get("created_at") or completed_at,
+                        ),
+                    )
+                return True
+
+        return self._run_with_connection_retry(
+            "commit_billing_response_submission",
+            _operation,
+        )
+
     def save_billing_route_correction(self, correction: dict[str, Any]) -> None:
         billing_ticket_id = str(correction.get("billing_ticket_id") or "").strip()
         if not billing_ticket_id:
@@ -11759,6 +12035,21 @@ class PostgresTicketRepository:
                     case_row is not None and bool(str(case_row[2] or "").strip())
                 )
                 prior_review_status = str(case_row[3] or "pending").strip() if case_row else "pending"
+
+                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                    cur.execute(
+                        sql.SQL(
+                            "DELETE FROM {} WHERE client_ticket_id=%s AND state<>'completed'"
+                        ).format(self._table("support_automation_reply_claims")),
+                        (normalized_ticket_id,),
+                    )
+                    if billing_ticket_id:
+                        cur.execute(
+                            sql.SQL("DELETE FROM {} WHERE billing_ticket_id=%s").format(
+                                self._table("support_billing_response_tokens")
+                            ),
+                            (billing_ticket_id,),
+                        )
 
                 correction_fields = (
                     "original_scope_label",
@@ -12613,7 +12904,7 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("set_account_persona_enabled", _operation)
 
-    def _resolve_account_persona_with_locked_ticket(
+    def _resolve_account_persona_in_transaction(
         self,
         cur: psycopg.Cursor[Any],
         ticket_id: str,
@@ -12664,9 +12955,7 @@ class PostgresTicketRepository:
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
-                if not self._lock_account_reply_ticket(cur, normalized):
-                    raise ValueError("ticket not found")
-                return self._resolve_account_persona_with_locked_ticket(cur, normalized)
+                return self._resolve_account_persona_in_transaction(cur, normalized)
 
         return self._run_with_connection_retry("resolve_account_persona", _operation)
 
@@ -12717,7 +13006,7 @@ class PostgresTicketRepository:
                     expected_attempt_count=expected_attempt_count,
                 ):
                     return None
-                return self._resolve_account_persona_with_locked_ticket(cur, ticket_id)
+                return self._resolve_account_persona_in_transaction(cur, ticket_id)
 
         return self._run_with_connection_retry(
             "resolve_account_persona_for_claimed_reply",

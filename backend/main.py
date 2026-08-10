@@ -4739,6 +4739,7 @@ def _render_billing_resolution_customer_reply(
     customer_message: str,
     title: str,
     ticket_id: str,
+    persist_failure: bool = True,
 ) -> str:
     behavior = str(
         billing_ticket.get("execution_action")
@@ -4818,11 +4819,12 @@ def _render_billing_resolution_customer_reply(
                 ),
             }
         )
-        ticket_repository.save_billing_ticket(billing_ticket)
-        ticket_repository.cancel_pending_account_reply_jobs(
-            ticket_id,
-            updated_at=timestamp,
-        )
+        if persist_failure:
+            ticket_repository.save_billing_ticket(billing_ticket)
+            ticket_repository.cancel_pending_account_reply_jobs(
+                ticket_id,
+                updated_at=timestamp,
+            )
         return ""
 
 
@@ -4877,14 +4879,6 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
     timestamp = now_iso()
-    token_marked = await async_to_thread(
-        ticket_repository.mark_billing_response_token_used,
-        token_hash,
-        timestamp,
-    )
-    if not token_marked:
-        raise HTTPException(status_code=409, detail="billing response token already submitted")
-
     resolution_event = build_billing_internal_resolution_event(
         billing_ticket_id=billing_ticket_id,
         client_ticket_id=client_ticket_id,
@@ -4897,97 +4891,110 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
         submission["result"],
         submission["notify_customer"],
     )
-    pre_event_status = automation_status if not submission["notify_customer"] else "internal_resolution_submitted"
-    billing_ticket["automation_status"] = pre_event_status
-    billing_ticket["updated_at"] = timestamp
-    await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
-
-    await async_to_thread(
-        ticket_repository.record_event,
-        client_ticket_id,
-        BILLING_RESPONSE_EVENT,
-        resolution_event,
-    )
-    await dispatch_event(["engineer", "dashboard"], resolution_event)
-
     customer_reply = ""
-    customer_notified = False
-    if not submission["notify_customer"]:
-        return {
-            "submitted": True,
-            "billing_ticket_id": billing_ticket_id,
-            "result": submission["result"],
-            "notify_customer": submission["notify_customer"],
-            "customer_notified": False,
-            "automation_status": automation_status,
-        }
+    assistant_message: dict[str, Any] | None = None
+    followup_event: dict[str, Any] | None = None
+    human_review_required = False
+    cancel_pending_reply_jobs = False
+    events = [{"event_type": BILLING_RESPONSE_EVENT, "payload": resolution_event}]
+    billing_ticket["automation_status"] = automation_status
+    billing_ticket["updated_at"] = timestamp
 
-    original_question = str(billing_ticket.get("question") or "").strip()
-    latest_message = latest_customer_message(canonical_ticket)
-    customer_message = "\n".join(
-        part for part in (original_question, latest_message) if part
-    )
-    customer_reply = _render_billing_resolution_customer_reply(
-        billing_ticket=billing_ticket,
-        note=submission["note"],
-        customer_message=customer_message,
-        title=str(billing_ticket.get("title") or canonical_ticket.get("subject") or "").strip(),
+    if submission["notify_customer"]:
+        original_question = str(billing_ticket.get("question") or "").strip()
+        latest_message = latest_customer_message(canonical_ticket)
+        customer_message = "\n".join(
+            part for part in (original_question, latest_message) if part
+        )
+        customer_reply = _render_billing_resolution_customer_reply(
+            billing_ticket=billing_ticket,
+            note=submission["note"],
+            customer_message=customer_message,
+            title=str(
+                billing_ticket.get("title") or canonical_ticket.get("subject") or ""
+            ).strip(),
+            ticket_id=client_ticket_id,
+            persist_failure=False,
+        )
+        if customer_reply:
+            assistant_message = {
+                "role": "assistant",
+                "content": customer_reply,
+                "created_at": timestamp,
+                "content_format": "plaintext",
+                "source": "billing_response_ai",
+            }
+            billing_ticket["customer_reply"] = customer_reply
+            followup_event = {
+                "event": BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+                "billing_ticket_id": billing_ticket_id,
+                "ticket_id": client_ticket_id,
+                "resolution_result": submission["result"],
+                "notify_customer": True,
+                "customer_reply": customer_reply,
+                "created_at": now_iso(),
+                "source": "billing_response_ai",
+            }
+            events.append(
+                {
+                    "event_type": BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+                    "payload": followup_event,
+                }
+            )
+        else:
+            human_review_required = True
+            cancel_pending_reply_jobs = True
+
+    committed = await async_to_thread(
+        ticket_repository.commit_billing_response_submission,
+        token_hash,
+        billing_ticket_id=billing_ticket_id,
         ticket_id=client_ticket_id,
+        assistant_message=assistant_message,
+        account_case_updates=billing_ticket,
+        events=events,
+        cancel_pending_reply_jobs=cancel_pending_reply_jobs,
+        completed_at=timestamp,
     )
-    if not customer_reply:
+    if not committed:
+        raise HTTPException(status_code=409, detail="billing response token already submitted")
+
+    await dispatch_event(["engineer", "dashboard"], resolution_event)
+    if human_review_required:
         return {
             "submitted": True,
             "account_case_id": billing_ticket.get("account_case_id") or billing_ticket_id,
             "billing_ticket_id": billing_ticket_id,
             "result": submission["result"],
-            "notify_customer": submission["notify_customer"],
+            "notify_customer": True,
             "customer_notified": False,
-            "automation_status": str(billing_ticket.get("automation_status") or "not_automated"),
+            "automation_status": str(
+                billing_ticket.get("automation_status") or "not_automated"
+            ),
             "human_review_required": True,
         }
-    assistant_message = {
-        "role": "assistant",
-        "content": customer_reply,
-        "created_at": timestamp,
-        "content_format": "plaintext",
-        "source": "billing_response_ai",
-    }
-    initial_message_count = (
-        len(canonical_ticket.get("messages", []))
-        if isinstance(canonical_ticket.get("messages"), list)
-        else 0
-    )
+    if not submission["notify_customer"]:
+        return {
+            "submitted": True,
+            "billing_ticket_id": billing_ticket_id,
+            "result": submission["result"],
+            "notify_customer": False,
+            "customer_notified": False,
+            "automation_status": automation_status,
+        }
+
+    assert assistant_message is not None and followup_event is not None
     canonical_ticket.setdefault("messages", []).append(assistant_message)
     canonical_ticket["updated_at"] = timestamp
-    billing_ticket["customer_reply"] = customer_reply
-    billing_ticket["automation_status"] = automation_status
-
-    new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
-    await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=new_messages)
-    await async_to_thread(ticket_repository.save_billing_ticket, billing_ticket)
-
-    followup_event = {
-        "event": BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
-        "billing_ticket_id": billing_ticket_id,
-        "ticket_id": client_ticket_id,
-        "resolution_result": submission["result"],
-        "notify_customer": submission["notify_customer"],
-        "customer_reply": customer_reply,
-        "created_at": now_iso(),
-        "source": "billing_response_ai",
-    }
-    await async_to_thread(
-        ticket_repository.record_event,
-        client_ticket_id,
-        BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
-        followup_event,
-    )
     await dispatch_event(["engineer", "dashboard"], followup_event)
     await dispatch_event(
         ["client"],
-        build_client_sync_event(canonical_ticket, BILLING_RESPONSE_AI_FOLLOWUP_EVENT, customer_reply[:200]),
+        build_client_sync_event(
+            canonical_ticket,
+            BILLING_RESPONSE_AI_FOLLOWUP_EVENT,
+            customer_reply[:200],
+        ),
     )
-    customer_notified = True
 
     return {
         "submitted": True,
@@ -4995,7 +5002,7 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
         "billing_ticket_id": billing_ticket_id,
         "result": submission["result"],
         "notify_customer": submission["notify_customer"],
-        "customer_notified": customer_notified,
+        "customer_notified": True,
         "automation_status": automation_status,
         "customer_reply": customer_reply,
     }

@@ -4,6 +4,7 @@ import hashlib
 import os
 import inspect
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
@@ -83,6 +84,64 @@ class BillingResponseTokenRepositoryTests(unittest.TestCase):
         self.assertIn("ON CONFLICT (token_hash) DO NOTHING", save_source)
         self.assertNotIn("used_at = EXCLUDED.used_at", save_source)
         self.assertIn("WHERE token_hash = %s AND used_at IS NULL", mark_source)
+
+    def test_in_memory_submission_rolls_back_all_state_when_event_write_fails(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "TK-ATOMIC",
+                "messages": [{"role": "customer", "content": "Invoice please"}],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-ATOMIC",
+                "billing_ticket_id": "AC-ATOMIC",
+                "client_ticket_id": "TK-ATOMIC",
+                "automation_status": "internal_processing",
+            }
+        )
+        self.repository.save_billing_response_token(
+            {
+                "token_hash": "hash-atomic",
+                "billing_ticket_id": "AC-ATOMIC",
+                "created_at": "2026-08-10T00:00:00+00:00",
+                "used_at": None,
+            }
+        )
+
+        with patch.object(
+            self.repository,
+            "record_event",
+            side_effect=RuntimeError("event write failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "event write failed"):
+                self.repository.commit_billing_response_submission(
+                    "hash-atomic",
+                    billing_ticket_id="AC-ATOMIC",
+                    ticket_id="TK-ATOMIC",
+                    assistant_message={
+                        "role": "assistant",
+                        "content": "stale partial reply",
+                    },
+                    account_case_updates={
+                        "automation_status": "customer_notified",
+                        "customer_reply": "stale partial reply",
+                    },
+                    events=[{"event_type": "billing_customer_followup_generated", "payload": {}}],
+                    cancel_pending_reply_jobs=False,
+                    completed_at="2026-08-10T00:01:00+00:00",
+                )
+
+        token = self.repository.get_billing_response_token("hash-atomic")
+        assert token is not None
+        self.assertIsNone(token.get("used_at"))
+        ticket = self.repository.get_ticket("TK-ATOMIC")
+        assert ticket is not None
+        self.assertEqual([message["role"] for message in ticket["messages"]], ["customer"])
+        account_case = self.repository.get_account_case_by_ticket_id("TK-ATOMIC")
+        assert account_case is not None
+        self.assertEqual(account_case["automation_status"], "internal_processing")
+        self.assertFalse(account_case.get("customer_reply"))
 
 
 class BillingResponseFlowServiceTests(unittest.TestCase):

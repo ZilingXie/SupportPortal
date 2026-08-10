@@ -17,7 +17,10 @@ if importlib.util.find_spec("psycopg") is None:
 
 import psycopg
 
-from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    InMemoryTicketRepository,
+)
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.account_admin import AccountPersonaUnavailableError
 
@@ -2492,8 +2495,11 @@ class WorkerResilienceTests(unittest.TestCase):
 
     def test_handle_billing_request_reply_attaches_pdf_to_customer_message_without_ocr(self) -> None:
         repository = Mock()
+        publication_order: list[str] = []
         repository.claim_automation_reply.return_value = {"status": "acquired"}
-        repository.commit_automation_reply_result.return_value = True
+        repository.commit_automation_reply_result.side_effect = (
+            lambda *_args, **_kwargs: publication_order.append("commit") or True
+        )
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "billing_ticket_id": "BT-TK-ACC-1",
             "client_ticket_id": "TK-ACC-1",
@@ -2522,7 +2528,9 @@ class WorkerResilienceTests(unittest.TestCase):
             "uploaded_at": "2026-07-02T08:14:38Z",
             "attached_at": None,
         }
-        asset_repository.mark_attached.return_value = []
+        asset_repository.mark_attached.side_effect = (
+            lambda *_args, **_kwargs: publication_order.append("attach") or []
+        )
         asset_storage = Mock()
         asset_storage.bucket = "supportportal-assets"
         asset_storage.store_bytes.return_value = {"etag": "etag-1", "checksum": "checksum-1"}
@@ -2574,6 +2582,7 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(stored_asset["extension"], ".pdf")
         self.assertEqual(stored_asset["status"], "uploaded")
         asset_repository.mark_attached.assert_called_once_with(["ASSET-ABCDEF123456000000000000"])
+        self.assertEqual(publication_order, ["commit", "attach"])
         assistant_message = repository.commit_automation_reply_result.call_args.kwargs["assistant_message"]
         self.assertEqual(assistant_message["source"], "billing_reply_email")
         self.assertEqual(assistant_message["attachments"][0]["asset_id"], "ASSET-ABCDEF123456000000000000")
@@ -3689,6 +3698,68 @@ class WorkerResilienceTests(unittest.TestCase):
             "automation_persona_human_review",
             [event["event_type"] for event in repository.list_ticket_events(ticket_id)],
         )
+
+    def test_outlook_reply_commit_stops_after_full_reset_wins_in_memory_fence(self) -> None:
+        ticket_id = "TK-OUTLOOK-RESET-FENCE"
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable the feature.",
+                        "created_at": "2026-03-22T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-OUTLOOK-RESET-FENCE",
+                "billing_ticket_id": "AC-OUTLOOK-RESET-FENCE",
+                "client_ticket_id": ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable the feature.",
+                "automation_handler": "enablement",
+                "automation_status": "internal_processing",
+                "route_status": "automated",
+            }
+        )
+        reply = types.SimpleNamespace(
+            message_id="outlook-reset-fence",
+            subject=(
+                "Re: [Enablement Request] Feature - "
+                f"Ticket {ticket_id}"
+            ),
+            body_text="The feature is ready.",
+        )
+
+        def reset_after_render(**_kwargs):
+            repository.reset_account_rerun_state(
+                ticket_id,
+                reset_at="2026-03-22T00:02:00+00:00",
+                rerun_job_id="account-rerun-outlook-reset-fence",
+                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+            )
+            return "Hi Customer,\n\nThe feature is ready.\n\nBest Regards,\nSid"
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_render_case_persona_reply",
+            side_effect=reset_after_render,
+        ):
+            outcome = worker.handle_enablement_request_reply(reply)
+
+        self.assertEqual(outcome, "in_progress")
+        stored_ticket = repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertEqual([message["role"] for message in stored_ticket["messages"]], ["customer"])
+        stored_case = repository.get_account_case_by_ticket_id(ticket_id)
+        assert stored_case is not None
+        self.assertFalse(stored_case.get("customer_reply"))
+        self.assertNotEqual(stored_case.get("automation_status"), "customer_notified")
+        self.assertEqual(repository.list_ticket_events(ticket_id), [])
 
     def test_internal_reply_renders_with_persisted_persona_assignment(self) -> None:
         account_case = {

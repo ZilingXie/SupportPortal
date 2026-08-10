@@ -2866,6 +2866,87 @@ class AccountIntakeApiTests(unittest.TestCase):
             "resolved_without_customer_notification",
         )
 
+    def test_billing_response_submit_no_notify_rejects_token_reset_before_commit(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        ticket_id = str(create_payload["ticket_id"])
+        original_builder = main.build_billing_internal_resolution_event
+
+        def reset_then_build(**kwargs):
+            self.repository.reset_account_rerun_state(
+                ticket_id,
+                reset_at="2026-07-18T00:01:00+00:00",
+                rerun_job_id="account-rerun-token-reset-no-notify",
+                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+            )
+            return original_builder(**kwargs)
+
+        with patch.object(
+            main,
+            "build_billing_internal_resolution_event",
+            side_effect=reset_then_build,
+        ):
+            response = self.client.post(
+                "/api/billing-response/submit",
+                json={
+                    "token": raw_token,
+                    "result": "completed",
+                    "notify_customer": False,
+                    "note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(
+            self.client.get(f"/api/billing-response?token={raw_token}").status_code,
+            404,
+        )
+        self.assertNotIn(
+            "billing_internal_resolution_submitted",
+            [item["event_type"] for item in self.repository.list_ticket_events(ticket_id)],
+        )
+
+    def test_billing_response_submit_notify_rejects_token_reset_during_render(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        ticket_id = str(create_payload["ticket_id"])
+
+        def reset_then_render(**_kwargs):
+            self.repository.reset_account_rerun_state(
+                ticket_id,
+                reset_at="2026-07-18T00:01:00+00:00",
+                rerun_job_id="account-rerun-token-reset-notify",
+                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+            )
+            return "Hi Customer,\n\nThe invoice is ready.\n\nBest Regards,\nSid"
+
+        with patch.object(
+            main,
+            "_render_billing_resolution_customer_reply",
+            side_effect=reset_then_render,
+        ):
+            response = self.client.post(
+                "/api/billing-response/submit",
+                json={
+                    "token": raw_token,
+                    "result": "completed",
+                    "notify_customer": True,
+                    "note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertFalse(
+            any(
+                message.get("source") == "billing_response_ai"
+                for message in stored_ticket["messages"]
+            )
+        )
+        self.assertNotIn(
+            "billing_customer_followup_generated",
+            [item["event_type"] for item in self.repository.list_ticket_events(ticket_id)],
+        )
+
     def test_billing_response_submit_rejects_second_submit(self) -> None:
         _, raw_token = self._create_invoice_ticket_with_response_token()
         first_response = self.client.post(
@@ -2998,8 +3079,13 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(status_seen_during_dispatch, ["resolved_without_customer_notification"])
 
-    def test_billing_response_submit_notify_failure_keeps_internal_resolution_status(self) -> None:
+    def test_billing_response_submit_render_failure_leaves_token_and_state_unmodified(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        before_billing_ticket = self.repository.get_billing_ticket(
+            str(create_payload["billing_ticket_id"])
+        )
+        self.assertIsNotNone(before_billing_ticket)
+        assert before_billing_ticket is not None
         before_ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
         self.assertIsNotNone(before_ticket)
         assert before_ticket is not None
@@ -3009,8 +3095,9 @@ class AccountIntakeApiTests(unittest.TestCase):
             if message.get("role") == "assistant" and message.get("source") == "billing_response_ai"
         ]
 
-        with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.main.build_customer_followup_from_resolution",
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "_render_billing_resolution_customer_reply",
             side_effect=RuntimeError("followup failed"),
         ):
             with self.assertRaises(RuntimeError):
@@ -3022,7 +3109,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         billing_ticket = self.repository.get_billing_ticket(str(create_payload["billing_ticket_id"]))
         self.assertIsNotNone(billing_ticket)
         assert billing_ticket is not None
-        self.assertEqual(billing_ticket["automation_status"], "internal_resolution_submitted")
+        self.assertEqual(
+            billing_ticket.get("automation_status"),
+            before_billing_ticket.get("automation_status"),
+        )
 
         after_ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
         self.assertIsNotNone(after_ticket)
@@ -3033,6 +3123,9 @@ class AccountIntakeApiTests(unittest.TestCase):
             if message.get("role") == "assistant" and message.get("source") == "billing_response_ai"
         ]
         self.assertEqual(after_response_messages, before_response_messages)
+        lookup_response = self.client.get(f"/api/billing-response?token={raw_token}")
+        self.assertEqual(lookup_response.status_code, 200, lookup_response.text)
+        self.assertFalse(lookup_response.json()["submitted"])
 
     def test_billing_missing_fields_does_not_create_response_token(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch.object(

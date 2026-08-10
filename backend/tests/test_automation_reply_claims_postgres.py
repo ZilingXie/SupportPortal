@@ -10,7 +10,10 @@ from uuid import uuid4
 import psycopg
 from psycopg import sql
 
-from backend.repositories.ticket_repository import PostgresTicketRepository
+from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    PostgresTicketRepository,
+)
 
 
 @unittest.skipUnless(os.getenv("RUN_POSTGRES_INTEGRATION") == "1", "PostgreSQL integration test is opt-in")
@@ -167,6 +170,123 @@ class PostgresAutomationReplyClaimTests(unittest.TestCase):
             self.assertEqual(stored_job["status"], "manual_attention")
             self.assertEqual(result["status"], "manual_attention")
             self.assertEqual(repository.list_account_reply_executions(ticket_id), [])
+        finally:
+            repository.close()
+            with psycopg.connect(migration_dsn, autocommit=True) as conn:
+                conn.execute(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                        sql.Identifier(schema)
+                    )
+                )
+
+    def test_full_reset_invalidates_outlook_claim_and_legacy_token(self) -> None:
+        runtime_dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        migration_dsn = str(os.getenv("TICKET_DB_MIGRATION_DSN") or runtime_dsn).strip()
+        self.assertTrue(runtime_dsn and migration_dsn)
+        schema = f"supportportal_claim_reset_test_{uuid4().hex[:10]}"
+        repository = PostgresTicketRepository(
+            runtime_dsn,
+            schema=schema,
+            migration_dsn=migration_dsn,
+            application_name="supportportal-stale-publication-reset-test",
+        )
+        ticket_id = "12557"
+        billing_ticket_id = "AC-12557"
+        token_hash = "legacy-token-hash-12557"
+        try:
+            repository.initialize()
+            customer_message = {
+                "role": "customer",
+                "content": "Please send the invoice.",
+                "created_at": "2026-08-10T00:00:00+00:00",
+            }
+            repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": "customer-reset",
+                    "requester": "reset@example.com",
+                    "subject": "Invoice",
+                    "status": "open",
+                    "messages": [customer_message],
+                    "created_at": "2026-08-10T00:00:00+00:00",
+                    "updated_at": "2026-08-10T00:00:00+00:00",
+                },
+                new_messages=[customer_message],
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": billing_ticket_id,
+                    "billing_ticket_id": billing_ticket_id,
+                    "client_ticket_id": ticket_id,
+                    "source": "zendesk",
+                    "title": "Invoice",
+                    "question": "Please send the invoice.",
+                    "automation_status": "internal_processing",
+                }
+            )
+            repository.claim_automation_reply(
+                "graph:message-reset",
+                client_ticket_id=ticket_id,
+                handler="billing",
+                owner_token="owner-reset",
+                claimed_at="2026-08-10T00:00:30+00:00",
+                lease_expires_at="2026-08-10T00:15:30+00:00",
+            )
+            repository.save_billing_response_token(
+                {
+                    "token_hash": token_hash,
+                    "billing_ticket_id": billing_ticket_id,
+                    "created_at": "2026-08-10T00:00:30+00:00",
+                    "used_at": None,
+                }
+            )
+
+            repository.reset_account_rerun_state(
+                ticket_id,
+                reset_at="2026-08-10T00:01:00+00:00",
+                rerun_job_id="account-rerun-stale-publication",
+                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+            )
+
+            self.assertFalse(
+                repository.commit_automation_reply_result(
+                    "graph:message-reset",
+                    owner_token="owner-reset",
+                    ticket_id=ticket_id,
+                    assistant_message={
+                        "role": "assistant",
+                        "content": "stale Outlook reply",
+                        "created_at": "2026-08-10T00:02:00+00:00",
+                    },
+                    account_case_updates={"automation_status": "customer_notified"},
+                    events=[],
+                    completed_at="2026-08-10T00:02:00+00:00",
+                )
+            )
+            self.assertFalse(
+                repository.commit_billing_response_submission(
+                    token_hash,
+                    billing_ticket_id=billing_ticket_id,
+                    ticket_id=ticket_id,
+                    assistant_message={
+                        "role": "assistant",
+                        "content": "stale legacy reply",
+                        "created_at": "2026-08-10T00:02:00+00:00",
+                    },
+                    account_case_updates={"automation_status": "customer_notified"},
+                    events=[],
+                    cancel_pending_reply_jobs=False,
+                    completed_at="2026-08-10T00:02:00+00:00",
+                )
+            )
+            self.assertIsNone(repository.get_billing_response_token(token_hash))
+            stored_ticket = repository.get_ticket(ticket_id)
+            assert stored_ticket is not None
+            self.assertEqual(
+                [message["role"] for message in stored_ticket["messages"]],
+                ["customer"],
+            )
+            self.assertEqual(repository.list_ticket_events(ticket_id), [])
         finally:
             repository.close()
             with psycopg.connect(migration_dsn, autocommit=True) as conn:

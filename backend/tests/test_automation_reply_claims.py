@@ -4,7 +4,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
 
-from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    InMemoryTicketRepository,
+)
 
 
 class AutomationReplyClaimTests(unittest.TestCase):
@@ -78,6 +81,49 @@ class AutomationReplyClaimTests(unittest.TestCase):
         )
         self.assertEqual(reclaimed["status"], "acquired")
         self.assertEqual(reclaimed["attempt_count"], 2)
+
+    def test_full_reset_invalidates_processing_claim_before_stale_commit(self) -> None:
+        now = "2026-08-05T00:00:00+00:00"
+        self.repository.claim_automation_reply(
+            "graph:message-reset",
+            client_ticket_id="12555",
+            handler="billing",
+            owner_token="owner-reset",
+            claimed_at=now,
+            lease_expires_at="2026-08-05T00:15:00+00:00",
+        )
+
+        self.repository.reset_account_rerun_state(
+            "12555",
+            reset_at="2026-08-05T00:01:00+00:00",
+            rerun_job_id="account-rerun-reset-claim",
+            reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+        )
+        committed = self.repository.commit_automation_reply_result(
+            "graph:message-reset",
+            owner_token="owner-reset",
+            ticket_id="12555",
+            assistant_message={
+                "role": "assistant",
+                "content": "stale reply",
+                "created_at": "2026-08-05T00:02:00+00:00",
+            },
+            account_case_updates={"automation_status": "customer_notified"},
+            events=[
+                {
+                    "event_type": "billing_customer_followup_generated",
+                    "payload": {"created_at": "2026-08-05T00:02:00+00:00"},
+                }
+            ],
+            completed_at="2026-08-05T00:02:00+00:00",
+        )
+
+        self.assertFalse(committed)
+        self.assertEqual(self.repository.get_ticket("12555")["messages"], [])
+        account_case = self.repository.get_account_case_by_ticket_id("12555")
+        assert account_case is not None
+        self.assertNotEqual(account_case.get("automation_status"), "customer_notified")
+        self.assertEqual(self.repository.list_ticket_events("12555"), [])
 
     def test_schema_documents_claim_backfill_and_unique_guards(self) -> None:
         schema = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
