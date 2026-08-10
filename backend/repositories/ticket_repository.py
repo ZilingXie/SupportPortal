@@ -17,6 +17,7 @@ from psycopg.types.json import Json
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
 from backend.services.account_case_filters import (
     account_case_filter_key,
+    account_case_filter_memberships,
     account_case_filter_keys,
     account_case_filter_matches,
     normalize_account_case_filter,
@@ -201,8 +202,6 @@ def _account_case_matches_route_filter(item: dict[str, Any], route_filter: str |
 
 def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
     """Return the SQL equivalent of account_case_filter_key()."""
-    # The default rendered expression intentionally contains bt.route_classification ->> 'intent_class',
-    # bt.route_classification ->> 'agora_route' and bt.scope_label = 'agora_technical'.
     return sql.SQL(
         """
         CASE
@@ -223,16 +222,26 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 'account_billing:' || CASE
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_suspension'
                                         THEN 'account_suspension'
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'fraud_account'
+                                        THEN 'fraud_account'
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'detailed_invoice'
+                                        THEN 'detailed_invoice'
                                     ELSE 'other'
                                 END
+                            WHEN 'backend_operation' THEN
+                                CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                    WHEN 'enablement' THEN 'automation:enablement'
+                                    WHEN 'quota' THEN 'automation:quota'
+                                    ELSE 'human_review:unregistered'
+                                END
                             WHEN 'automation' THEN
-                                'automation:' || CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
-                                    WHEN 'account_verification' THEN 'fraud_account'
-                                    WHEN 'fraud_account' THEN 'fraud_account'
-                                    WHEN 'detailed_invoice' THEN 'detailed_invoice'
-                                    WHEN 'enablement' THEN 'enablement'
-                                    WHEN 'quota' THEN 'quota'
-                                    ELSE 'unregistered'
+                                CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                    WHEN 'account_verification' THEN 'account_billing:fraud_account'
+                                    WHEN 'fraud_account' THEN 'account_billing:fraud_account'
+                                    WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
+                                    WHEN 'enablement' THEN 'automation:enablement'
+                                    WHEN 'quota' THEN 'automation:quota'
+                                    ELSE 'human_review:unregistered'
                                 END
                             ELSE 'human_review:uncategorized'
                         END
@@ -248,16 +257,26 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 THEN 'account_billing:' || CASE
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_suspension'
                                         THEN 'account_suspension'
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'fraud_account'
+                                        THEN 'fraud_account'
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'detailed_invoice'
+                                        THEN 'detailed_invoice'
                                     ELSE 'other'
                                 END
+                            WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'backend_operation'
+                                THEN CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                    WHEN 'enablement' THEN 'automation:enablement'
+                                    WHEN 'quota' THEN 'automation:quota'
+                                    ELSE 'human_review:unregistered'
+                                END
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'automation'
-                                THEN 'automation:' || CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
-                                    WHEN 'account_verification' THEN 'fraud_account'
-                                    WHEN 'fraud_account' THEN 'fraud_account'
-                                    WHEN 'detailed_invoice' THEN 'detailed_invoice'
-                                    WHEN 'enablement' THEN 'enablement'
-                                    WHEN 'quota' THEN 'quota'
-                                    ELSE 'unregistered'
+                                THEN CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                    WHEN 'account_verification' THEN 'account_billing:fraud_account'
+                                    WHEN 'fraud_account' THEN 'account_billing:fraud_account'
+                                    WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
+                                    WHEN 'enablement' THEN 'automation:enablement'
+                                    WHEN 'quota' THEN 'automation:quota'
+                                    ELSE 'human_review:unregistered'
                                 END
                             ELSE 'human_review:other'
                         END
@@ -266,20 +285,30 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
             WHEN COALESCE({alias}.execution_action, {alias}.route) = 'account_suspension'
                 THEN 'account_billing:account_suspension'
             WHEN LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation') THEN
-                'automation:' || CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
-                    WHEN 'account_verification' THEN 'fraud_account'
-                    WHEN 'fraud_account' THEN 'fraud_account'
-                    WHEN 'detailed_invoice' THEN 'detailed_invoice'
-                    WHEN 'enablement' THEN 'enablement'
-                    WHEN 'quota' THEN 'quota'
-                    ELSE 'unregistered'
+                CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                    WHEN 'account_verification' THEN 'account_billing:fraud_account'
+                    WHEN 'fraud_account' THEN 'account_billing:fraud_account'
+                    WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
+                    WHEN 'enablement' THEN 'automation:enablement'
+                    WHEN 'quota' THEN 'automation:quota'
+                    ELSE 'human_review:unregistered'
                 END
             WHEN {alias}.scope_label = 'ticket_resolution' THEN 'conversation:resolve'
             WHEN {alias}.scope_label IN ('small_talk', 'conversation') THEN 'conversation:follow_up'
             WHEN {alias}.scope_label = 'agora_technical' THEN 'agora_technical'
             WHEN {alias}.scope_label = 'agora_non_technical' THEN 'agora_non_technical'
             WHEN {alias}.scope_label IN ('account_billing', 'billing') THEN
-                'account_billing:' || CASE WHEN {alias}.subcategory = 'account_suspension' THEN 'account_suspension' ELSE 'other' END
+                'account_billing:' || CASE
+                    WHEN {alias}.subcategory IN ('account_suspension', 'fraud_account', 'detailed_invoice') THEN {alias}.subcategory
+                    ELSE 'other'
+                END
+            WHEN {alias}.scope_label IN ('automation', 'backend_operation', 'enablement', 'quota') THEN
+                CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                    WHEN 'enablement' THEN 'automation:enablement'
+                    WHEN 'quota' THEN 'automation:quota'
+                    ELSE 'human_review:unregistered'
+                END
+            WHEN {alias}.scope_label = 'unregistered' THEN 'human_review:unregistered'
             WHEN {alias}.scope_label IN ('uncertain', 'unclear') THEN 'human_review:uncertain'
             WHEN {alias}.scope_label = 'non_agora' THEN 'human_review:non_agora'
             WHEN {alias}.scope_label IN ('human_review', 'uncategorized') THEN 'human_review:uncategorized'
@@ -287,6 +316,25 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
         END
         """.format(alias=alias)
     )
+
+
+def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
+    """Return a text[] containing every group/leaf membership for a case."""
+    primary = _account_case_filter_sql_expression(alias)
+    return sql.SQL(
+        """
+        ARRAY_REMOVE(ARRAY[
+            {primary},
+            CASE WHEN {primary} IN ('account_billing:fraud_account', 'account_billing:detailed_invoice')
+                THEN 'automation' END,
+            CASE WHEN {primary} IN ('account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
+                THEN 'human_review:other' END,
+            CASE WHEN {primary} IN ('account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
+                OR split_part({primary}, ':', 1) = 'human_review'
+                THEN 'human_review' END
+        ]::TEXT[], NULL::TEXT)
+        """
+    ).format(primary=primary)
 
 
 _ACCOUNT_CASE_LIST_FIELDS = (
@@ -1780,11 +1828,8 @@ class InMemoryTicketRepository:
         filter_counts = {key: 0 for key in account_case_filter_keys()}
         filter_counts["all"] = len(all_items)
         for item in all_items:
-            key = account_case_filter_key(item)
-            filter_counts[key] = filter_counts.get(key, 0) + 1
-            group = key.split(":", 1)[0]
-            if group != key:
-                filter_counts[group] = filter_counts.get(group, 0) + 1
+            for key in account_case_filter_memberships(item):
+                filter_counts[key] = filter_counts.get(key, 0) + 1
         if total == 0:
             return [], 0, filter_counts
         last_page_offset = ((total - 1) // safe_limit) * safe_limit
@@ -4545,6 +4590,7 @@ class PostgresTicketRepository:
                         for field in _ACCOUNT_CASE_LIST_FIELDS
                     )
                     filter_expression = _account_case_filter_sql_expression("facet_source")
+                    membership_expression = _account_case_filter_memberships_sql("facet_source")
                     query = sql.SQL(
                         """
                         WITH filtered AS MATERIALIZED (
@@ -4554,17 +4600,28 @@ class PostgresTicketRepository:
                             SELECT {selected_columns} FROM {cases} bt
                             {facet_where_sql}
                         ), classified AS MATERIALIZED (
-                            SELECT facet_source.*, {filter_expression} AS _filter_key
+                            SELECT facet_source.*, {filter_expression} AS _filter_key,
+                                {membership_expression} AS _filter_keys
                             FROM facet_source
+                        ), membership_rows AS MATERIALIZED (
+                            SELECT DISTINCT classified.account_case_id, membership.filter_membership
+                            FROM classified
+                            CROSS JOIN LATERAL unnest(classified._filter_keys) AS membership(filter_membership)
+                        ), group_membership_rows AS MATERIALIZED (
+                            SELECT DISTINCT account_case_id, split_part(filter_membership, ':', 1) AS filter_membership
+                            FROM membership_rows
                         ), page_meta AS (
                             SELECT COUNT(*)::BIGINT AS total FROM filtered
                         ), facet_rows AS (
                             SELECT 'all'::TEXT AS filter_key, COUNT(*)::BIGINT AS item_count FROM classified
                             UNION ALL
-                            SELECT _filter_key, COUNT(*)::BIGINT FROM classified GROUP BY _filter_key
+                            SELECT filter_membership, COUNT(*)::BIGINT
+                            FROM membership_rows
+                            GROUP BY filter_membership
                             UNION ALL
-                            SELECT split_part(_filter_key, ':', 1), COUNT(*)::BIGINT
-                            FROM classified GROUP BY split_part(_filter_key, ':', 1)
+                            SELECT split_part(filter_membership, ':', 1), COUNT(*)::BIGINT
+                            FROM group_membership_rows
+                            GROUP BY split_part(filter_membership, ':', 1)
                         ), facet_counts AS (
                             SELECT COALESCE(jsonb_object_agg(filter_key, item_count), '{{}}'::jsonb) AS counts
                             FROM facet_rows
@@ -4615,6 +4672,7 @@ class PostgresTicketRepository:
                         where_sql=where_sql,
                         facet_where_sql=facet_where_sql,
                         filter_expression=filter_expression,
+                        membership_expression=membership_expression,
                         tickets=self._table("support_tickets"),
                         messages=self._table("support_ticket_messages"),
                         reply_jobs=self._table("support_account_reply_jobs"),
@@ -9786,13 +9844,8 @@ class PostgresTicketRepository:
         if route_filter:
             normalized_filter = normalize_account_case_filter(legacy_label=route_filter)
             if normalized_filter:
-                filter_expression = _account_case_filter_sql_expression("bt")
-                if ":" in normalized_filter:
-                    clauses.append(sql.SQL("{} = %s").format(filter_expression))
-                else:
-                    clauses.append(
-                        sql.SQL("split_part({}, ':', 1) = %s").format(filter_expression)
-                    )
+                membership_expression = _account_case_filter_memberships_sql("bt")
+                clauses.append(sql.SQL("%s = ANY({})").format(membership_expression))
                 params.append(normalized_filter)
         if route_errors_only:
             clauses.append(

@@ -158,6 +158,7 @@ from backend.services.automation_persona import (
     render_automation_reply,
 )
 from backend.services.account_route_pipeline import (
+    account_route_metadata,
     account_case_labels,
     classification_labels,
     classification_for_corrected_route,
@@ -3843,13 +3844,10 @@ def _build_account_ticket_view_model(
     account_billing_subcategory = str(
         route_classification.get("account_billing_subcategory") or ticket.get("subcategory") or ""
     ).strip()
-    metadata = (
-        account_billing_metadata(account_billing_subcategory)
-        if route_classification.get("agora_route") == "account_billing"
-        else automation_metadata(
-            route_family=ticket.get("route_family"),
-            execution_action=execution_action,
-        )
+    metadata = account_route_metadata(
+        classification=route_classification,
+        route_family=ticket.get("route_family"),
+        execution_action=execution_action,
     )
     category = ticket.get("category") or metadata["category"]
     subcategory = ticket.get("subcategory") or metadata["subcategory"]
@@ -3862,7 +3860,12 @@ def _build_account_ticket_view_model(
         AUTOMATED_ROUTE_FAMILY,
         "billing_automation",
     }
-    if automation_family:
+    if route_classification.get("agora_route") in {"account_billing", "backend_operation"}:
+        category = metadata["category"]
+        subcategory = metadata["subcategory"]
+        route_status = metadata["route_status"]
+        automation_handler = metadata["automation_handler"]
+    if automation_family and route_classification.get("agora_route") != "account_billing":
         route_status = metadata["route_status"]
         category = metadata["category"]
         subcategory = metadata["subcategory"]
@@ -4098,10 +4101,10 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
     account_billing_subcategory = str(
         route_classification.get("account_billing_subcategory") or ""
     ).strip()
-    route_metadata = (
-        account_billing_metadata(account_billing_subcategory)
-        if route_classification.get("agora_route") == "account_billing"
-        else automation_metadata(route_family=route_family, execution_action=route)
+    route_metadata = account_route_metadata(
+        classification=route_classification,
+        route_family=route_family,
+        execution_action=route,
     )
     is_automation_route = is_registered_automation(
         route_family=route_family,
@@ -4225,7 +4228,11 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
             )
             route = str(decision.execution_action or decision.route)
             route_family = str(decision.route_family)
-            route_metadata = automation_metadata(route_family=route_family, execution_action=route)
+            route_metadata = account_route_metadata(
+                classification=route_classification,
+                route_family=route_family,
+                execution_action=route,
+            )
             is_automation_route = False
             automation_handler = ""
             is_billing_route = False
@@ -5698,29 +5705,42 @@ async def correct_billing_ticket_route(
     scope_label = request.scope_label
     execution_action = request.execution_action
     if category:
-        if category not in {"automation", "account_billing"}:
+        if category not in {"automation", "account_billing", "human_review"}:
             raise HTTPException(status_code=400, detail=f"invalid category: {request.category!r}")
         execution_action = request.subcategory
         normalized_action = str(execution_action or "").strip().lower()
         if category == "account_billing":
-            execution_action = "human_review_required"
-            scope_label = (
-                "account_suspension"
-                if normalized_action == "account_suspension"
-                else "account_billing"
-            )
+            if normalized_action == "account_suspension":
+                scope_label = "account_suspension"
+                execution_action = "human_review_required"
+            else:
+                scope_label = "account_billing"
+                execution_action = (
+                    normalized_action
+                    if normalized_action in {"fraud_account", "detailed_invoice"}
+                    else "human_review_required"
+                )
+        elif category == "automation":
+            if normalized_action in {"enablement", "quota"}:
+                scope_label = "automation"
+            elif normalized_action in {"account_verification", "fraud_account", "detailed_invoice"}:
+                scope_label = "account_billing"
+                execution_action = "fraud_account" if normalized_action == "account_verification" else normalized_action
+            elif normalized_action == "unregistered":
+                scope_label = "backend_operation"
+                execution_action = "human_review_required"
+            else:
+                scope_label = "automation"
         else:
-            scope_label = (
-                "enablement"
-                if normalized_action == "enablement"
-                else "quota"
-                if normalized_action == "quota"
-                else "fraud_account"
-                if normalized_action == "fraud_account"
-                else "automation"
-                if normalized_action == "unregistered"
-                else "billing"
-            )
+            human_review_scope = {
+                "unregistered": "backend_operation",
+                "uncategorized": "uncategorized",
+                "uncertain": "uncertain",
+                "non_agora": "non_agora",
+                "other": "human_review",
+            }
+            scope_label = human_review_scope.get(normalized_action, "human_review")
+            execution_action = "human_review_required"
     if not scope_label or not execution_action:
         raise HTTPException(
             status_code=400,
@@ -6127,13 +6147,10 @@ async def reply_to_billing_ticket(
         account_billing_subcategory = str(
             route_classification.get("account_billing_subcategory") or ""
         ).strip()
-        route_metadata = (
-            account_billing_metadata(account_billing_subcategory)
-            if route_classification.get("agora_route") == "account_billing"
-            else automation_metadata(
-                route_family=decision.route_family,
-                execution_action=route,
-            )
+        route_metadata = account_route_metadata(
+            classification=route_classification,
+            route_family=decision.route_family,
+            execution_action=route,
         )
         if prior_classification.get("handler_binding_status") == "active":
             route_classification["superseded_automation_handler"] = prior_handler or None
@@ -6178,7 +6195,8 @@ async def reply_to_billing_ticket(
                     subcategory=route,
                 )
                 route = str(decision.execution_action or decision.route)
-                route_metadata = automation_metadata(
+                route_metadata = account_route_metadata(
+                    classification=route_classification,
                     route_family=decision.route_family,
                     execution_action=route,
                 )

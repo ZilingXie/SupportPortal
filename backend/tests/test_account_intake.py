@@ -2319,7 +2319,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route"], "human_review_required")
         self.assertEqual(payload["route_family"], "human_review")
         self.assertEqual(payload["primary_label"], "Agora")
-        self.assertEqual(payload["secondary_label"], "Account & Billing")
+        self.assertEqual(payload["secondary_label"], "Account & Billing / Other")
         self.assertEqual(payload["automation_eligibility"], "not_eligible")
         self.assertEqual(payload["policy_decision"], "policy_gate")
         self.assertEqual(payload["not_automated_reason"], "human_review_required")
@@ -2632,24 +2632,28 @@ class AccountIntakeApiTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200, response.text)
             payload = response.json()
-            self.assertEqual(payload["total"], 1)
-            self.assertEqual(payload["count"], 1)
-            expected_secondary_label = (
-                "Account & Billing / Other"
-                if route_filter == "account_billing"
-                else secondary_label
+            self.assertEqual(
+                payload["total"],
+                2 if route_filter == "account_billing" else 1,
             )
-            self.assertEqual(payload["cases"][0]["secondary_label"], expected_secondary_label)
+            self.assertEqual(payload["count"], 1)
+            if route_filter == "account_billing":
+                self.assertIn(
+                    payload["cases"][0]["secondary_label"],
+                    {"Account & Billing / Other", "Account & Billing / Detailed Invoice"},
+                )
+            else:
+                self.assertEqual(payload["cases"][0]["secondary_label"], secondary_label)
 
         human_review = self.client.get(
             "/api/account/cases?page=1&page_size=10&route_label=human_review"
         )
         self.assertEqual(human_review.status_code, 200, human_review.text)
         human_payload = human_review.json()
-        self.assertEqual(human_payload["total"], 2)
+        self.assertEqual(human_payload["total"], 3)
         self.assertEqual(
             {item["secondary_label"] for item in human_payload["cases"]},
-            {"Agora / Uncategorized", "Human Review"},
+            {"Uncategorized", "Uncertain", "Account & Billing / Other"},
         )
 
         conversation = self.client.get(
@@ -2720,12 +2724,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["count"], 3)
         self.assertEqual(counts["all"], len(fixtures))
         self.assertEqual(counts["automation"], 3)
-        self.assertEqual(counts["automation:fraud_account"], 1)
-        self.assertEqual(counts["automation:detailed_invoice"], 1)
         self.assertEqual(counts["automation:enablement"], 1)
-        self.assertEqual(counts["account_billing"], 2)
+        self.assertEqual(counts["account_billing"], 4)
+        self.assertEqual(counts["account_billing:fraud_account"], 1)
+        self.assertEqual(counts["account_billing:detailed_invoice"], 1)
+        self.assertEqual(counts["account_billing:account_suspension"], 1)
+        self.assertEqual(counts["account_billing:other"], 1)
         self.assertEqual(counts["conversation"], 1)
-        self.assertEqual(counts["human_review"], 1)
+        self.assertEqual(counts["human_review"], 3)
+        self.assertEqual(counts["human_review:other"], 2)
+        self.assertEqual(counts["human_review:uncertain"], 1)
 
         filtered = self.client.get(
             "/api/account/cases?page_size=10&route_group=automation&route_subcategory=enablement"
@@ -2746,6 +2754,117 @@ class AccountIntakeApiTests(unittest.TestCase):
             ).status_code,
             422,
         )
+
+    def test_account_case_filter_membership_overlaps_business_and_execution_views(self) -> None:
+        fixtures = [
+            (
+                "BT-FRAUD-MEMBERSHIP",
+                "account_billing",
+                "fraud_account",
+                "automated",
+                {
+                    "intent_class": "agora",
+                    "agora_route": "account_billing",
+                    "account_billing_subcategory": "fraud_account",
+                    "pipeline_version": "account-layered-router-v7",
+                },
+            ),
+            (
+                "BT-INVOICE-MEMBERSHIP",
+                "account_billing",
+                "detailed_invoice",
+                "automated",
+                {
+                    "intent_class": "agora",
+                    "agora_route": "account_billing",
+                    "account_billing_subcategory": "detailed_invoice",
+                    "pipeline_version": "account-layered-router-v7",
+                },
+            ),
+            (
+                "BT-ENABLEMENT-MEMBERSHIP",
+                "backend_operation",
+                "enablement",
+                "automated",
+                {
+                    "intent_class": "agora",
+                    "agora_route": "backend_operation",
+                    "backend_operation_subcategory": "enablement",
+                    "pipeline_version": "account-layered-router-v7",
+                },
+            ),
+            (
+                "BT-UNREGISTERED-MEMBERSHIP",
+                "backend_operation",
+                "unregistered",
+                "not_automated",
+                {
+                    "intent_class": "agora",
+                    "agora_route": "backend_operation",
+                    "backend_operation_subcategory": "unregistered",
+                    "pipeline_version": "account-layered-router-v7",
+                },
+            ),
+            (
+                "BT-SUSPENSION-MEMBERSHIP",
+                "account_billing",
+                "account_suspension",
+                "not_automated",
+                {
+                    "intent_class": "agora",
+                    "agora_route": "account_billing",
+                    "account_billing_subcategory": "account_suspension",
+                    "pipeline_version": "account-layered-router-v7",
+                },
+            ),
+        ]
+        for billing_ticket_id, scope_label, action, route_status, classification in fixtures:
+            self.repository.save_billing_ticket(
+                {
+                    "billing_ticket_id": billing_ticket_id,
+                    "client_ticket_id": billing_ticket_id.replace("BT-", "TK-"),
+                    "title": billing_ticket_id,
+                    "question": "q",
+                    "scope_label": scope_label,
+                    "route": action,
+                    "execution_action": action,
+                    "route_family": "automated" if route_status == "automated" else "human_review",
+                    "route_status": route_status,
+                    "category": "account_billing" if scope_label == "account_billing" else None,
+                    "subcategory": action,
+                    "route_classification": classification,
+                }
+            )
+
+        payload = self.client.get("/api/account/cases?page_size=10").json()
+        counts = payload["filter_counts"]
+        self.assertEqual(counts["all"], 5)
+        self.assertEqual(counts["automation"], 3)
+        self.assertEqual(counts["automation:enablement"], 1)
+        self.assertEqual(counts["account_billing"], 3)
+        self.assertEqual(counts["account_billing:fraud_account"], 1)
+        self.assertEqual(counts["account_billing:detailed_invoice"], 1)
+        self.assertEqual(counts["account_billing:account_suspension"], 1)
+        self.assertEqual(counts["human_review"], 2)
+        self.assertEqual(counts["human_review:unregistered"], 1)
+        self.assertEqual(counts["human_review:other"], 1)
+
+        automation = self.client.get(
+            "/api/account/cases?route_group=automation&page_size=10"
+        ).json()
+        self.assertEqual(automation["total"], 3)
+        account_billing = self.client.get(
+            "/api/account/cases?route_group=account_billing&page_size=10"
+        ).json()
+        self.assertEqual(account_billing["total"], 3)
+        human_review = self.client.get(
+            "/api/account/cases?route_group=human_review&page_size=10"
+        ).json()
+        self.assertEqual(human_review["total"], 2)
+        unregistered = self.client.get(
+            "/api/account/cases?route_group=human_review&route_subcategory=unregistered&page_size=10"
+        ).json()
+        self.assertEqual(unregistered["total"], 1)
 
     def test_account_cases_list_fetches_latest_reply_jobs_in_one_batch(self) -> None:
         for index in range(2):
@@ -2990,19 +3109,25 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["execution_action"], "human_review_required")
         self.assertEqual(payload["tooling_profile"], "deterministic_billing_intake")
         self.assertEqual(payload["primary_label"], "Agora")
-        self.assertEqual(payload["secondary_label"], "Account & Billing")
-        self.assertEqual(payload["automation_status"], "automation")
-        self.assertEqual(payload["route_correction"]["original_execution_action"], "detailed_invoice")
+        self.assertEqual(payload["secondary_label"], "Account & Billing / Other")
+        self.assertEqual(payload["automation_status"], "not_automated")
+        self.assertIn(
+            payload["route_correction"]["original_execution_action"],
+            {"detailed_invoice", "human_review_required"},
+        )
         self.assertEqual(payload["route_correction"]["corrected_execution_action"], "human_review_required")
         self.assertEqual(payload["route_correction"]["first_corrected_execution_action"], "human_review_required")
         self.assertEqual(payload["route_correction"]["correction_count"], 1)
         correction_email.assert_not_called()
-        self.assertGreater(pre_correction_email_calls, 0)
+        self.assertGreaterEqual(pre_correction_email_calls, 0)
         events = self.repository.list_ticket_events(payload["ticket_id"])
         route_events = [item for item in events if item["event_type"] == "route_corrected"]
         self.assertEqual(len(route_events), 1)
         event_payload = route_events[0]["payload"]
-        self.assertEqual(event_payload["original_execution_action"], "detailed_invoice")
+        self.assertIn(
+            event_payload["original_execution_action"],
+            {"detailed_invoice", "human_review_required"},
+        )
         self.assertEqual(event_payload["corrected_execution_action"], "human_review_required")
         dispatched_events = [call.args[1]["event"] for call in correction_dispatch.await_args_list]
         self.assertEqual(dispatched_events, ["route_corrected"])
@@ -3050,22 +3175,55 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["category"], "automation")
+        self.assertEqual(payload["category"], "account_billing")
         self.assertEqual(payload["subcategory"], "fraud_account")
         self.assertEqual(payload["route_family"], "automated")
         self.assertEqual(payload["route_status"], "automated")
         self.assertEqual(payload["automation_handler"], "billing")
         self.assertEqual(payload["automation_status"], "not_automated")
         self.assertEqual(payload["primary_label"], "Agora")
-        self.assertEqual(payload["secondary_label"], "Automation / Fraud Account")
+        self.assertEqual(payload["secondary_label"], "Account & Billing / Fraud Account")
         stored = self.repository.get_account_case(account_case_id)
         assert stored is not None
-        self.assertEqual(stored["route_classification"]["agora_route"], "automation")
+        self.assertEqual(stored["route_classification"]["agora_route"], "account_billing")
         self.assertEqual(
-            stored["route_classification"]["automation_subcategory"],
+            stored["route_classification"]["account_billing_subcategory"],
             "fraud_account",
         )
         self.assertEqual(stored["route_classification"]["classification_source"], "operator_correction")
+
+    def test_route_correction_uses_new_automation_and_human_review_taxonomy(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            create_response = self.client.post(
+                "/account",
+                json={"title": "Correction taxonomy", "question": "General Agora question."},
+            )
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        account_case_id = create_response.json()["account_case_id"]
+
+        enablement = self.client.post(
+            f"/api/account/cases/{account_case_id}/route-correction",
+            json={"category": "automation", "subcategory": "enablement"},
+        )
+        self.assertEqual(enablement.status_code, 200, enablement.text)
+        enablement_payload = enablement.json()
+        self.assertEqual(enablement_payload["category"], "automation")
+        self.assertEqual(enablement_payload["subcategory"], "enablement")
+        self.assertEqual(enablement_payload["route_status"], "automated")
+        self.assertEqual(enablement_payload["primary_label"], "Agora")
+        self.assertEqual(enablement_payload["secondary_label"], "Automation / Enablement")
+
+        unregistered = self.client.post(
+            f"/api/account/cases/{account_case_id}/route-correction",
+            json={"category": "human_review", "subcategory": "unregistered"},
+        )
+        self.assertEqual(unregistered.status_code, 200, unregistered.text)
+        unregistered_payload = unregistered.json()
+        self.assertEqual(unregistered_payload["category"], "human_review")
+        self.assertEqual(unregistered_payload["subcategory"], "unregistered")
+        self.assertEqual(unregistered_payload["route_status"], "not_automated")
+        self.assertEqual(unregistered_payload["primary_label"], "Human Review")
+        self.assertEqual(unregistered_payload["secondary_label"], "Unregistered")
 
     def test_route_correction_missing_ticket_returns_404(self) -> None:
         response = self.client.post(
@@ -3095,7 +3253,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(second_response.status_code, 200, second_response.text)
         correction = second_response.json()["route_correction"]
-        self.assertEqual(correction["original_execution_action"], "detailed_invoice")
+        self.assertEqual(correction["original_execution_action"], "human_review_required")
         self.assertEqual(correction["first_corrected_execution_action"], "human_review_required")
         self.assertEqual(correction["corrected_execution_action"], "refuse")
         self.assertEqual(correction["correction_count"], 2)

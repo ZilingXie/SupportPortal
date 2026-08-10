@@ -119,7 +119,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ) as invoke_stage:
             result = decide_account_route("Please enable Media Relay from your end.")
 
-        self.assertEqual(result.secondary_label, "Backend Operations / Enablement")
+        self.assertEqual(result.secondary_label, "Automation / Enablement")
         self.assertEqual(result.decision.route_family, "automated")
         self.assertEqual(result.decision.execution_action, "enablement")
         self.assertEqual(result.decision.semantic_intent, "backend_operation.enablement")
@@ -155,7 +155,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ):
             result = decide_account_route("Please activate invoice billing.")
 
-        self.assertEqual(result.secondary_label, "Backend Operations / Unregistered")
+        self.assertEqual(result.secondary_label, "Unregistered")
         self.assertEqual(result.classification["backend_operation_subcategory"], "unregistered")
         self.assertEqual(result.classification["automation_candidate"], "invoice_billing")
         self.assertEqual(result.decision.route_family, "human_review")
@@ -288,7 +288,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
                 "A third-party fraud complaint asks Agora and regulators to extract server logs as evidence."
             )
 
-        self.assertEqual(result.secondary_label, "Agora / Uncategorized")
+        self.assertEqual(result.secondary_label, "Uncategorized")
         self.assertEqual(result.decision.route_family, "human_review")
         self.assertEqual(result.decision.execution_action, "human_review_required")
         self.assertEqual(result.classification["route_reason_code"], "legal_compliance_request")
@@ -336,7 +336,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
             route_family="automated",
             execution_action="detailed_invoice",
         )
-        self.assertEqual(automation["secondary_label"], "Automation / Detailed Invoice")
+        self.assertEqual(automation["secondary_label"], "Account & Billing / Detailed Invoice")
         self.assertEqual(automation["handler_binding_status"], "completed")
 
         account_billing = classification_for_corrected_route(
@@ -662,7 +662,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ) as invoke_stage:
             result = decide_account_route("Please change something on my account.")
 
-        self.assertEqual(result.secondary_label, "Agora / Uncategorized")
+        self.assertEqual(result.secondary_label, "Uncategorized")
         self.assertEqual(result.classification["route_target"], "human_review")
         self.assertEqual(
             result.classification["route_reason_code"],
@@ -694,7 +694,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
                 "Our account was blocked for suspicious activity. Please review our company details."
             )
 
-        self.assertEqual(result.secondary_label, "Automation / Fraud Account")
+        self.assertEqual(result.secondary_label, "Account & Billing / Fraud Account")
         self.assertEqual(result.decision.execution_action, "fraud_account")
         self.assertEqual(result.decision.semantic_intent, "automation.fraud_account_review")
 
@@ -711,8 +711,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ) as invoke_stage:
             result = decide_account_route("Fix my Agora token and reset my AWS password.")
 
-        self.assertEqual(result.primary_label, "Uncertain")
-        self.assertEqual(result.secondary_label, "Human Review")
+        self.assertEqual(result.primary_label, "Human Review")
+        self.assertEqual(result.secondary_label, "Uncertain")
         self.assertEqual(result.classification["route_target"], "human_review")
         self.assertEqual(result.classification["human_review_reason"], "out_of_scope_or_unknown")
         self.assertEqual(invoke_stage.call_count, 1)
@@ -730,8 +730,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ) as invoke_stage:
             result = decide_account_route("Maybe something is wrong.")
 
-        self.assertEqual(result.primary_label, "Uncertain")
-        self.assertEqual(result.secondary_label, "Human Review")
+        self.assertEqual(result.primary_label, "Human Review")
+        self.assertEqual(result.secondary_label, "Uncertain")
         self.assertEqual(result.classification["human_review_reason"], "low_intent_confidence")
         self.assertEqual(result.classification["route_reason_code"], "low_intent_confidence")
         self.assertEqual(invoke_stage.call_count, 1)
@@ -799,8 +799,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ) as invoke_stage:
             result = decide_account_route("Please change something on my account.")
 
-        self.assertEqual(result.primary_label, "Agora")
-        self.assertEqual(result.secondary_label, "Agora / Uncategorized")
+        self.assertEqual(result.primary_label, "Human Review")
+        self.assertEqual(result.secondary_label, "Uncategorized")
         self.assertEqual(result.classification["agora_route"], "uncategorized")
         self.assertEqual(
             result.classification["route_reason_code"],

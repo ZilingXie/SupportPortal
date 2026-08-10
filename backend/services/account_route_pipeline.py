@@ -12,11 +12,12 @@ from typing import Any, Callable
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     REGISTERED_AUTOMATION_SUBCATEGORIES,
+    automation_metadata,
     canonical_automation_subcategory,
     is_registered_automation,
 )
 from backend.services.account_automation_handlers import registered_account_automation_subcategories
-from backend.services.account_billing_handlers import ACCOUNT_BILLING_SUBCATEGORIES
+from backend.services.account_billing_handlers import ACCOUNT_BILLING_SUBCATEGORIES, account_billing_metadata
 from backend.services.billing_automation import BILLING_TOOLING_PROFILE
 from backend.services.enablement_automation import (
     ENABLEMENT_SEMANTIC_INTENT,
@@ -597,18 +598,68 @@ def _labels(classification: dict[str, Any]) -> tuple[str, str]:
             subcategory = str(
                 classification.get("backend_operation_subcategory") or "unregistered"
             ).strip()
-            return "Agora", f"Backend Operations / {subcategory.replace('_', ' ').title()}"
+            if subcategory in {"enablement", "quota"}:
+                return "Agora", f"Automation / {subcategory.replace('_', ' ').title()}"
+            return "Human Review", "Unregistered"
         if route == "automation":
             subcategory = str(
                 classification.get("automation_subcategory") or "unregistered"
             ).strip()
-            return "Agora", f"Automation / {subcategory.replace('_', ' ').title()}"
-        return "Agora", "Agora / Uncategorized"
-    return "Uncertain", "Human Review"
+            if subcategory in {"fraud_account", "account_verification", "detailed_invoice"}:
+                normalized = "fraud_account" if subcategory == "account_verification" else subcategory
+                return "Agora", f"Account & Billing / {normalized.replace('_', ' ').title()}"
+            if subcategory in {"enablement", "quota"}:
+                return "Agora", f"Automation / {subcategory.replace('_', ' ').title()}"
+            return "Human Review", "Unregistered"
+        return "Human Review", "Uncategorized"
+    if str(classification.get("support_scope") or "").strip().lower() == "non_agora":
+        return "Human Review", "Non-Agora"
+    return "Human Review", "Uncertain"
 
 
 def classification_labels(classification: Any) -> tuple[str, str]:
     return _labels(classification if isinstance(classification, dict) else {})
+
+
+def account_route_metadata(
+    *,
+    classification: dict[str, Any] | None,
+    route_family: Any,
+    execution_action: Any,
+) -> dict[str, str | None]:
+    """Resolve persisted category metadata from the layered Account classification."""
+    normalized_classification = classification if isinstance(classification, dict) else {}
+    agora_route = str(normalized_classification.get("agora_route") or "").strip().lower()
+    account_billing_subcategory = str(
+        normalized_classification.get("account_billing_subcategory") or ""
+    ).strip().lower()
+    if agora_route == "account_billing":
+        return account_billing_metadata(account_billing_subcategory)
+    legacy_automation_subcategory = str(
+        normalized_classification.get("automation_subcategory") or ""
+    ).strip().lower()
+    if agora_route == "automation" and legacy_automation_subcategory in {
+        "account_verification",
+        "fraud_account",
+        "detailed_invoice",
+    }:
+        return account_billing_metadata(
+            "fraud_account" if legacy_automation_subcategory == "account_verification" else legacy_automation_subcategory
+        )
+    backend_operation_subcategory = str(
+        normalized_classification.get("backend_operation_subcategory") or ""
+    ).strip().lower()
+    if agora_route == "backend_operation" and backend_operation_subcategory == "unregistered":
+        return {
+            "category": "human_review",
+            "subcategory": "unregistered",
+            "route_status": "not_automated",
+            "automation_handler": None,
+        }
+    return automation_metadata(
+        route_family=route_family,
+        execution_action=execution_action,
+    )
 
 
 def classification_for_corrected_route(
@@ -644,7 +695,10 @@ def classification_for_corrected_route(
         }
     )
     action = canonical_automation_subcategory(execution_action)
-    if is_registered_automation(route_family=route_family, execution_action=action):
+    if (
+        scope_label not in {"account_billing", "billing", "fraud_account", "detailed_invoice"}
+        and is_registered_automation(route_family=route_family, execution_action=action)
+    ):
         classification.update(
             agora_route="automation",
             automation_subcategory=action,
@@ -705,28 +759,28 @@ def classification_for_corrected_route(
             route_target="web",
             human_review_reason=None,
         )
-    elif scope_label == "account_billing":
+    elif scope_label in {"account_billing", "billing", "fraud_account", "detailed_invoice", "automation"}:
         account_billing_subcategory = (
             str(subcategory or "").strip().lower()
             if str(subcategory or "").strip().lower() in ACCOUNT_BILLING_SUBCATEGORIES
+            else "fraud_account"
+            if action in {"account_verification", "fraud_account"}
+            else "detailed_invoice"
+            if action == "detailed_invoice"
             else "other"
         )
+        is_automated_billing = account_billing_subcategory in {"fraud_account", "detailed_invoice"}
         classification.update(
             agora_route="account_billing",
             account_billing_subcategory=account_billing_subcategory,
-            route_target="human_review",
-            human_review_reason="route_corrected_to_human_review",
+            route_target="automation" if is_automated_billing else "human_review",
+            human_review_reason=None if is_automated_billing else "route_corrected_to_human_review",
+            handler_binding_status="completed" if is_automated_billing else None,
         )
-    elif scope_label == "billing" and execution_action == "human_review_required":
+    elif scope_label in {"backend_operation", "automation"} and execution_action in {"unregistered", "human_review_required"}:
         classification.update(
-            agora_route="account_billing",
-            route_target="human_review",
-            human_review_reason="route_corrected_to_human_review",
-        )
-    elif scope_label == "automation" and execution_action == "unregistered":
-        classification.update(
-            agora_route="automation",
-            automation_subcategory="unregistered",
+            agora_route="backend_operation",
+            backend_operation_subcategory="unregistered",
             route_target="human_review",
             human_review_reason="route_corrected_to_human_review",
         )
@@ -747,6 +801,9 @@ def account_case_labels(record: dict[str, Any]) -> tuple[str, str]:
     ):
         return classification_labels(classification)
     if is_registered_automation(route_family=route_family, execution_action=action):
+        if action in {"fraud_account", "account_verification", "detailed_invoice"}:
+            normalized = "fraud_account" if action == "account_verification" else action
+            return "Agora", f"Account & Billing / {normalized.replace('_', ' ').title()}"
         return "Agora", f"Automation / {action.replace('_', ' ').title()}"
     if isinstance(classification, dict) and classification:
         return classification_labels(classification)
@@ -763,8 +820,17 @@ def account_case_labels(record: dict[str, Any]) -> tuple[str, str]:
         subcategory = str(record.get("subcategory") or "other").strip()
         return "Agora", f"Account & Billing / {subcategory.replace('_', ' ').title()}"
     if scope in {"billing", "human_review", "uncategorized"}:
-        return "Agora", "Agora / Uncategorized"
-    return "Uncertain", "Human Review"
+        return "Human Review", "Uncategorized"
+    if scope in {"automation", "backend_operation", "enablement", "quota"}:
+        subcategory = str(record.get("subcategory") or action or "unregistered").strip().lower()
+        if subcategory in {"enablement", "quota"}:
+            return "Agora", f"Automation / {subcategory.replace('_', ' ').title()}"
+        return "Human Review", "Unregistered"
+    if scope in {"uncertain", "unclear"}:
+        return "Human Review", "Uncertain"
+    if scope == "non_agora":
+        return "Human Review", "Non-Agora"
+    return "Human Review", "Other"
 
 
 def _result(

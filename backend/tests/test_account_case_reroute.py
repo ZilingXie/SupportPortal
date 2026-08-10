@@ -26,7 +26,9 @@ def _route_result(
     secondary_label = (
         f"Account & Billing / {action.replace('_', ' ').title()}"
         if agora_route == "account_billing"
-        else f"Backend Operations / {action.replace('_', ' ').title()}"
+        else f"Automation / {action.replace('_', ' ').title()}"
+        if action in {"enablement", "quota"}
+        else "Unregistered"
     )
     classification = {
         "pipeline_version": ACCOUNT_ROUTE_PIPELINE_VERSION,
@@ -83,8 +85,8 @@ def _failed_route_result() -> AccountRouteResult:
         "stage_reason_codes": {"intent_classifier": "intent_classifier_invalid_json"},
         "stage_failure_types": {"intent_classifier": "invalid_json"},
         "stage_attempt_counts": {"intent_classifier": 2},
-        "primary_label": "Uncertain",
-        "secondary_label": "Human Review",
+        "primary_label": "Human Review",
+        "secondary_label": "Uncertain",
     }
     decision = SupportRouteDecision(
         scope_label="uncertain",
@@ -98,8 +100,8 @@ def _failed_route_result() -> AccountRouteResult:
     return AccountRouteResult(
         decision=decision,
         classification=classification,
-        primary_label="Uncertain",
-        secondary_label="Human Review",
+        primary_label="Human Review",
+        secondary_label="Uncertain",
     )
 
 
@@ -127,7 +129,7 @@ class AccountCaseRerouteTests(unittest.TestCase):
 
         result = reroute_account_case(original, route_agent=Mock(return_value=_failed_route_result()))
 
-        self.assertEqual(result.account_case["route_classification"]["secondary_label"], "Human Review")
+        self.assertEqual(result.account_case["route_classification"]["secondary_label"], "Uncertain")
         self.assertEqual(result.account_case["route_family"], "human_review")
         self.assertTrue(result.route_execution["reroute_failed_closed"])
         self.assertEqual(
@@ -270,7 +272,7 @@ class AccountCaseRerouteTests(unittest.TestCase):
         self.assertEqual(unregistered.account_case["route_family"], "human_review")
         self.assertEqual(unregistered.account_case["route_status"], "not_automated")
         self.assertEqual(unregistered.account_case["category"], "human_review")
-        self.assertEqual(unregistered.account_case["subcategory"], "human_review_required")
+        self.assertEqual(unregistered.account_case["subcategory"], "unregistered")
         self.assertIsNone(unregistered.account_case["automation_handler"])
 
     def test_cli_is_dry_run_by_default_and_apply_persists_route_and_audit(self) -> None:

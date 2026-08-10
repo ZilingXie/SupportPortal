@@ -23,18 +23,21 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "execution_action": "human_review_required",
         "route_family": "human_review",
         "tooling_profile": "classification_only",
+        "human_review_subcategory": "other",
     },
     {
         "scope_label": "uncertain",
         "execution_action": "human_review_required",
         "route_family": "human_review",
         "tooling_profile": "classification_only",
+        "human_review_subcategory": "uncertain",
     },
     {
         "scope_label": "uncategorized",
         "execution_action": "human_review_required",
         "route_family": "human_review",
         "tooling_profile": "classification_only",
+        "human_review_subcategory": "uncategorized",
     },
     {
         "scope_label": "account_billing",
@@ -42,6 +45,27 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "route_family": "human_review",
         "tooling_profile": "classification_only",
         "account_billing_subcategory": "other",
+    },
+    {
+        "scope_label": "account_billing",
+        "execution_action": "account_suspension",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+        "account_billing_subcategory": "account_suspension",
+    },
+    {
+        "scope_label": "account_billing",
+        "execution_action": "fraud_account",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
+        "tooling_profile": "deterministic_billing_intake",
+        "account_billing_subcategory": "fraud_account",
+    },
+    {
+        "scope_label": "account_billing",
+        "execution_action": "detailed_invoice",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
+        "tooling_profile": "deterministic_billing_intake",
+        "account_billing_subcategory": "detailed_invoice",
     },
     {
         "scope_label": "account_suspension",
@@ -58,6 +82,32 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "tooling_profile": "classification_only",
     },
     {
+        "scope_label": "backend_operation",
+        "execution_action": "unregistered",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+        "human_review_subcategory": "unregistered",
+    },
+    {
+        "scope_label": "backend_operation",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+        "human_review_subcategory": "unregistered",
+    },
+    {
+        "scope_label": "automation",
+        "execution_action": "enablement",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
+        "tooling_profile": "deterministic_enablement_intake",
+    },
+    {
+        "scope_label": "automation",
+        "execution_action": "quota",
+        "route_family": AUTOMATED_ROUTE_FAMILY,
+        "tooling_profile": "deterministic_quota_intake",
+    },
+    {
         "scope_label": "unclear",
         "execution_action": "human_review_required",
         "route_family": "human_review",
@@ -68,6 +118,7 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "execution_action": "human_review_required",
         "route_family": "human_review",
         "tooling_profile": "classification_only",
+        "human_review_subcategory": "non_agora",
     },
     {
         "scope_label": "ticket_resolution",
@@ -180,20 +231,28 @@ def validate_route_correction(
             f"invalid execution_action {execution_action!r} for scope_label {normalized_scope!r}"
         )
     account_billing_subcategory = match.get("account_billing_subcategory")
-    metadata = (
-        account_billing_metadata(account_billing_subcategory)
-        if account_billing_subcategory
-        else automation_metadata(
+    human_review_subcategory = match.get("human_review_subcategory")
+    if account_billing_subcategory:
+        metadata = account_billing_metadata(account_billing_subcategory)
+    elif human_review_subcategory:
+        metadata = {
+            "category": "human_review",
+            "subcategory": human_review_subcategory,
+            "route_status": "not_automated",
+            "automation_handler": None,
+        }
+    else:
+        metadata = automation_metadata(
             route_family=match["route_family"],
             execution_action=match["execution_action"],
         )
-    )
     return {
         "scope_label": match.get("canonical_scope_label", match["scope_label"]),
         "execution_action": match["execution_action"],
         "route_family": match["route_family"],
         "tooling_profile": match["tooling_profile"],
         "account_billing_subcategory": account_billing_subcategory,
+        "human_review_subcategory": human_review_subcategory,
         **metadata,
     }
 
