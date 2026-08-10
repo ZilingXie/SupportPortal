@@ -1174,6 +1174,31 @@ function renderAutomationBehaviorOverview(routeAgent, node) {
   </section>`;
 }
 
+const AUTOMATION_PERSONA_PRESENTATION = Object.freeze({
+  "sid-precise": { order: 0, style: "Precise", styleKey: "precise" },
+  "sid-bright": { order: 1, style: "Bright", styleKey: "bright" },
+  "default-support": { order: 2, style: "Warm", styleKey: "warm" },
+});
+
+function automationPersonaPresentation(personaKey) {
+  return Object.hasOwn(AUTOMATION_PERSONA_PRESENTATION, personaKey)
+    ? AUTOMATION_PERSONA_PRESENTATION[personaKey]
+    : null;
+}
+
+function orderedAutomationPersonas(personas) {
+  return [...personas].sort((left, right) => {
+    const leftPresentation = automationPersonaPresentation(left.persona_key);
+    const rightPresentation = automationPersonaPresentation(right.persona_key);
+    const leftOrder = leftPresentation?.order ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = rightPresentation?.order ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return String(left.display_name || left.persona_key || "").localeCompare(
+      String(right.display_name || right.persona_key || ""),
+    );
+  });
+}
+
 function personaVersions(persona) {
   return Array.isArray(persona?.versions) ? persona.versions : [];
 }
@@ -1190,7 +1215,9 @@ function personaSignature(content = {}) {
 }
 
 function renderAutomationPersonaPanel() {
-  const personas = Array.isArray(agentConfigData.automation_personas) ? agentConfigData.automation_personas : [];
+  const personas = orderedAutomationPersonas(
+    Array.isArray(agentConfigData.automation_personas) ? agentConfigData.automation_personas : [],
+  );
   const persona = personas.find(item => item.persona_key === selectedPersonaKey) || personas[0];
   if (!persona) return `<div class="admin-agent-empty"><p>No Automation Persona configured.</p></div>`;
   const versions = personaVersions(persona);
@@ -1209,8 +1236,17 @@ function renderAutomationPersonaPanel() {
     <aside class="admin-persona-context">
       <header><div><p class="admin-eyebrow">UNIFIED VOICE</p><h3>Automation Persona</h3></div><button class="admin-icon-btn" type="button" data-action="toggle-persona-create" title="Create Persona" aria-label="Create Persona"><span class="material-symbols-outlined" aria-hidden="true">add</span></button></header>
       <p>Applied after the selected Automation behavior generates its business response.</p>
+      <div class="admin-persona-runtime-notes">
+        <p>For the first Account-only customer-facing reply, runtime randomly selects from enabled Personas with a published version and pins that exact Persona version to the case.</p>
+        <p>Full reruns clear the assignment so a later reply can select again. Reply-only recovery keeps the pinned assignment. Human Review cases do not receive a Persona.</p>
+        <p>If no enabled Persona with a published version is available, the reply moves to Human Review and no customer copy is sent.</p>
+      </div>
       ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><label><span>Signature</span><textarea name="signature" rows="4" required placeholder="Best,&#10;Sid&#10;Support Engineer 2"></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
-      <nav class="admin-persona-list" aria-label="Automation Personas">${personas.map(item => `<button type="button" data-action="select-persona" data-persona-key="${escapeHtml(item.persona_key)}" class="${item.persona_key === persona.persona_key ? "is-active" : ""}"><strong>${escapeHtml(item.display_name)}</strong><small>${item.enabled ? "Enabled" : "Disabled"} · Published v${escapeHtml(item.published_version || "-")}</small></button>`).join("")}</nav>
+      <nav class="admin-persona-list" aria-label="Automation Personas">${personas.map(item => {
+        const presentation = automationPersonaPresentation(item.persona_key);
+        const selected = item.persona_key === persona.persona_key;
+        return `<button type="button" data-action="select-persona" data-persona-key="${escapeHtml(item.persona_key)}" class="${selected ? "is-active" : ""}" aria-pressed="${selected ? "true" : "false"}"><span class="admin-persona-list-heading"><strong>${escapeHtml(item.display_name)}</strong>${presentation ? `<span class="admin-persona-style admin-persona-style--${presentation.styleKey}">${presentation.style}</span>` : ""}</span><small>${item.enabled ? "Enabled" : "Disabled"} · Published v${escapeHtml(item.published_version || "-")}</small></button>`;
+      }).join("")}</nav>
       <button class="btn btn-ghost" type="button" data-action="toggle-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-enabled="${persona.enabled ? "false" : "true"}" ${personaOperationBusy ? "disabled" : ""}>${persona.enabled ? "Disable Persona" : "Enable Persona"}</button>
       <div class="admin-version-list"><h4>Version history</h4>${versions.map(item => `<button type="button" data-action="rollback-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" ${item.status === "draft" || personaOperationBusy ? "disabled" : ""}><strong>v${item.version}</strong><span>${escapeHtml(item.status)}</span><small>${escapeHtml(item.change_note || "No change note")}</small></button>`).join("")}</div>
     </aside>

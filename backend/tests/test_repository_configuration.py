@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,10 +22,13 @@ from backend.repositories.knowledge_repository import (
     create_knowledge_repository,
 )
 from backend.repositories.ticket_repository import (
+    ACCOUNT_RERUN_RESET_AI_ONLY,
     ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
     InMemoryTicketRepository,
     PoolTimeout,
     PostgresTicketRepository,
+    _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
+    _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK,
     create_ticket_repository,
 )
 
@@ -94,6 +98,138 @@ class _ReusableCursor:
         return False
 
 
+class _PublicationLockOrderCursor(_ReusableCursor):
+    def __init__(self, *, published_at: datetime) -> None:
+        super().__init__()
+        self._last_sql = ""
+        self._published_at = published_at
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+
+    def fetchone(self):
+        if "support_tickets" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("TK-ACCOUNT-LOCK-ORDER",)
+        if "support_account_cases" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("enablement", "automated", "enablement", None, None)
+        if "support_account_reply_jobs" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return (
+                "account-reply-lock-order",
+                "TK-ACCOUNT-LOCK-ORDER",
+                datetime(2026, 8, 8, tzinfo=timezone.utc),
+                "persona_publishing",
+                datetime(2026, 8, 8, 0, 1, tzinfo=timezone.utc),
+                1,
+            )
+        if "support_ticket_messages" in self._last_sql and "SELECT" in self._last_sql:
+            return None
+        if "support_ticket_messages" in self._last_sql and "INSERT INTO" in self._last_sql:
+            return (42, self._published_at)
+        return None
+
+
+class _PersonaResolutionLockOrderCursor(_ReusableCursor):
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_sql = ""
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+
+    def fetchone(self):
+        if "support_tickets" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("TK-PERSONA-LOCK-ORDER",)
+        if "support_account_persona_assignments" in self._last_sql:
+            return (
+                "default-support",
+                1,
+                {"instruction": "Pinned Persona"},
+                datetime(2026, 8, 8, tzinfo=timezone.utc),
+            )
+        return None
+
+
+class _AutomationReplyCommitCursor(_ReusableCursor):
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_sql = ""
+        self.rowcount = 0
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+        self.rowcount = 1
+
+    def fetchone(self):
+        if "support_tickets" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("TK-AUTOMATION-COMMIT",)
+        if "support_automation_reply_claims" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("processing", "owner-1")
+        return None
+
+
+class _AutomationReplyClaimCursor(_ReusableCursor):
+    def __init__(self, *, ticket_exists: bool = True) -> None:
+        super().__init__()
+        self._last_sql = ""
+        self._ticket_exists = ticket_exists
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+
+    def fetchone(self):
+        if "support_tickets" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("TK-AUTOMATION-CLAIM",) if self._ticket_exists else None
+        if "INSERT INTO" in self._last_sql and "support_automation_reply_claims" in self._last_sql:
+            timestamp = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            return ("processing", "owner-1", timestamp, 1, timestamp, timestamp)
+        return None
+
+
+class _BillingResponseCommitCursor(_ReusableCursor):
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_sql = ""
+        self.rowcount = 0
+
+    @staticmethod
+    def _sql_text(query) -> str:
+        return query.as_string() if hasattr(query, "as_string") else str(query)
+
+    def execute(self, *args, **kwargs) -> None:
+        super().execute(*args, **kwargs)
+        self._last_sql = self._sql_text(args[0])
+        self.rowcount = 1
+
+    def fetchone(self):
+        if "support_tickets" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("TK-BILLING-COMMIT",)
+        if "support_account_cases" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("AC-BILLING-COMMIT",)
+        if "support_billing_response_tokens" in self._last_sql and "FOR UPDATE" in self._last_sql:
+            return ("AC-BILLING-COMMIT", None)
+        return None
+
+
 class _RowcountCursor(_ReusableCursor):
     def __init__(self, *, rowcount: int) -> None:
         super().__init__()
@@ -148,6 +284,8 @@ class _AccountRerunResetCursor(_ReusableCursor):
             return [("reply-execution-1",)]
         if "support_account_reply_jobs" in self._last_sql:
             return [("reply-job-1",)]
+        if "support_account_persona_assignments" in self._last_sql:
+            return [("12572",)]
         return []
 
 
@@ -262,6 +400,251 @@ class _BorrowingPool(_FakePool):
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_in_memory_account_rerun_claim_converges_concurrent_same_key(self) -> None:
+        repository = InMemoryTicketRepository()
+        barrier = threading.Barrier(2)
+
+        def claim(index: int) -> dict[str, object]:
+            barrier.wait()
+            timestamp = "2026-08-09T00:00:00+00:00"
+            return repository.claim_account_case_rerun(
+                {
+                    "job_id": f"account-rerun-{index}",
+                    "status": "queued",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                job_ticket_id="__account-full-reroute__",
+                event_type="account_full_reroute_job",
+                active_after="2026-08-08T22:00:00+00:00",
+                idempotency_scope="account_case_rerun",
+                idempotency_key="same-concurrent-key",
+                request_scope="POST:/api/account/cases/AC-1/rerun",
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(claim, (1, 2)))
+
+        self.assertEqual(sorted(bool(result["created"]) for result in results), [False, True])
+        self.assertEqual(len({str(result["job"]["job_id"]) for result in results}), 1)
+        self.assertEqual(
+            len(repository.list_account_reroute_jobs()),
+            1,
+        )
+        self.assertEqual(repository.list_ticket_events("__account-full-reroute__"), [])
+
+    def test_postgres_account_rerun_claim_is_one_locked_transaction(self) -> None:
+        timestamp = "2026-08-09T00:00:00+00:00"
+        created_row = (
+            "account-rerun-pg",
+            "POST:/api/account/cases/AC-1/rerun",
+            None,
+            "account_case_rerun",
+            "postgres-atomic-key",
+            "queued",
+            {
+                "job_id": "account-rerun-pg",
+                "status": "queued",
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+            {},
+            "queued",
+            None,
+            None,
+            timestamp,
+            timestamp,
+            None,
+            None,
+        )
+        cursor = _ReusableCursor(
+            fetchone_results=[None, None, None, created_row],
+            fetchall_results=[[]],
+        )
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.claim_account_case_rerun(
+                {
+                    "job_id": "account-rerun-pg",
+                    "status": "queued",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                job_ticket_id="__account-full-reroute__",
+                event_type="account_full_reroute_job",
+                active_after="2026-08-08T22:00:00+00:00",
+                idempotency_scope="account_case_rerun",
+                idempotency_key="postgres-atomic-key",
+                request_scope="POST:/api/account/cases/AC-1/rerun",
+            )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+        rendered = [
+            args[0].as_string() if hasattr(args[0], "as_string") else str(args[0])
+            for args, _kwargs in cursor.executed
+        ]
+        self.assertIn("pg_advisory_xact_lock", rendered[0])
+        self.assertEqual(cursor.executed[0][0][1], _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK)
+        self.assertIn("support_account_reroute_jobs", rendered[1])
+        self.assertIn("support_idempotency_records", rendered[2])
+        self.assertIn("support_account_reroute_jobs", rendered[3])
+        self.assertIn("support_ticket_events", rendered[4])
+        self.assertIn("INSERT INTO", rendered[5])
+        self.assertIn("support_account_reroute_jobs", rendered[5])
+        schema = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_account_reroute_jobs", schema)
+        self.assertIn("idx_support_account_reroute_jobs_one_active", schema)
+
+    def test_postgres_account_detail_revision_uses_assignment_in_one_batch_query(self) -> None:
+        account_case = {
+            "account_case_id": "AC-PERSONA-REVISION",
+            "billing_ticket_id": "AC-PERSONA-REVISION",
+            "client_ticket_id": "TK-PERSONA-REVISION",
+            "updated_at": "2026-08-09T00:00:00+00:00",
+        }
+        ticket = {
+            "ticket_id": "TK-PERSONA-REVISION",
+            "updated_at": "2026-08-09T00:00:00+00:00",
+        }
+        assignment = {
+            "persona_key": "sid-precise",
+            "version": 1,
+            "assigned_at": "2026-08-09T01:00:00+00:00",
+            "display_name": "Sid Precise",
+        }
+        empty_message = (None, None, None, None, None, None, None, None)
+        rows = [
+            ("unassigned", account_case, ticket, *empty_message, None, None, None),
+            ("assigned", account_case, ticket, *empty_message, None, None, assignment),
+        ]
+        cursor = _ReusableCursor(fetchall_results=[rows])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            bundles = repository.get_account_case_details(["unassigned", "assigned"])
+
+        self.assertEqual(len(cursor.executed), 1)
+        self.assertNotEqual(
+            bundles["unassigned"]["detail_revision"],
+            bundles["assigned"]["detail_revision"],
+        )
+        self.assertEqual(bundles["assigned"]["persona_assignment"], assignment)
+        query = cursor.executed[0][0][0].as_string()
+        self.assertIn("support_account_persona_assignments", query)
+        self.assertIn("support_account_personas", query)
+        self.assertNotIn("support_account_prompt_versions", query)
+        self.assertNotIn("persona_row.enabled", query)
+
+    def test_postgres_account_list_revisions_use_assignment_in_single_page_queries(self) -> None:
+        assignment = {
+            "persona_key": "sid-precise",
+            "version": 1,
+            "assigned_at": "2026-08-09T01:00:00+00:00",
+            "display_name": "Sid Precise",
+        }
+        columns = (
+            "account_case_id",
+            "billing_ticket_id",
+            "client_ticket_id",
+            "updated_at",
+            "_total",
+            "_filter_counts",
+            "_route_correction",
+            "_latest_reply_job",
+            "_ticket_updated_at",
+            "_message_count",
+            "_latest_message_at",
+            "_persona_assignment",
+        )
+        common = (
+            "2026-08-09T00:00:00+00:00",
+            2,
+            {"all": 2},
+            None,
+            None,
+            "2026-08-09T00:00:00+00:00",
+            0,
+            None,
+        )
+        rows = [
+            ("AC-NULL", "AC-NULL", "TK-NULL", *common, None),
+            ("AC-ASSIGNED", "AC-ASSIGNED", "TK-ASSIGNED", *common, assignment),
+        ]
+        cursor = _ReusableCursor(fetchall_results=[rows])
+        cursor.description = [(name,) for name in columns]
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            items, total, _filter_counts = repository.list_account_case_page_with_filter_counts(
+                limit=10
+            )
+
+        self.assertEqual(len(cursor.executed), 1)
+        self.assertEqual(total, 2)
+        self.assertEqual(len(items), 2)
+        self.assertNotEqual(items[0]["_detail_revision"], items[1]["_detail_revision"])
+        query = cursor.executed[0][0][0].as_string()
+        self.assertIn("support_account_persona_assignments", query)
+        self.assertIn("support_account_personas", query)
+        self.assertNotIn("support_account_prompt_versions", query)
+        self.assertNotIn("persona_row.enabled", query)
+
+        plain_columns = tuple(name for name in columns if name != "_filter_counts")
+        plain_common = (
+            "2026-08-09T00:00:00+00:00",
+            2,
+            None,
+            None,
+            "2026-08-09T00:00:00+00:00",
+            0,
+            None,
+        )
+        plain_rows = [
+            ("AC-NULL", "AC-NULL", "TK-NULL", *plain_common, None),
+            ("AC-ASSIGNED", "AC-ASSIGNED", "TK-ASSIGNED", *plain_common, assignment),
+        ]
+        plain_cursor = _ReusableCursor(fetchall_results=[plain_rows])
+        plain_cursor.description = [(name,) for name in plain_columns]
+        plain_connection = _ReusableConnection(plain_cursor)
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(plain_connection),
+        ):
+            plain_items, plain_total = repository.list_account_case_page(limit=10)
+
+        self.assertEqual(len(plain_cursor.executed), 1)
+        self.assertEqual(plain_total, 2)
+        self.assertEqual(len(plain_items), 2)
+        self.assertNotEqual(
+            plain_items[0]["_detail_revision"],
+            plain_items[1]["_detail_revision"],
+        )
+        plain_query = plain_cursor.executed[0][0][0].as_string()
+        self.assertIn("support_account_persona_assignments", plain_query)
+        self.assertIn("support_account_personas", plain_query)
+        self.assertNotIn("support_account_prompt_versions", plain_query)
+        self.assertNotIn("persona_row.enabled", plain_query)
+
     def test_postgres_single_case_reset_writes_audit_in_the_reset_transaction(self) -> None:
         cursor = _AccountRerunResetCursor()
         connection = _ReusableConnection(cursor)
@@ -277,6 +660,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
                 reset_at="2026-08-04T00:00:00+00:00",
                 rerun_job_id="account-rerun-test",
                 reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                clear_persona_assignment=True,
                 audit_context={
                     "account_case_id": "AC-12572",
                     "ticket_number": "12572",
@@ -289,14 +673,79 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(connection.rollback_count, 0)
         self.assertEqual(counts["customer_messages_retained"], 2)
         self.assertEqual(counts["messages_deleted"], 4)
+        self.assertEqual(counts["persona_assignments_deleted"], 1)
         self.assertEqual(
             counts["deleted_messages_by_role"],
             {"assistant": 1, "engineer": 1, "internal": 1, "unknown": 1},
         )
-        executed_sql = "\n".join(cursor._sql_text(args[0]) for args, _kwargs in cursor.executed)
+        executed_queries = [cursor._sql_text(args[0]) for args, _kwargs in cursor.executed]
+        executed_sql = "\n".join(executed_queries)
         self.assertIn("support_workspace_audit_events", executed_sql)
         self.assertIn("support_billing_route_corrections", executed_sql)
+        self.assertIn("support_automation_reply_claims", executed_sql)
+        self.assertIn("state<>'completed'", executed_sql.replace(" ", ""))
+        self.assertIn("support_billing_response_tokens", executed_sql)
+        assignment_delete_index = next(
+            index
+            for index, query in enumerate(executed_queries)
+            if "DELETE FROM" in query and "support_account_persona_assignments" in query
+        )
+        audit_insert_index = next(
+            index
+            for index, query in enumerate(executed_queries)
+            if "INSERT INTO" in query and "support_workspace_audit_events" in query
+        )
+        self.assertLess(assignment_delete_index, audit_insert_index)
         self.assertIn("route_review_status='pending'", executed_sql.replace(" ", ""))
+
+    def test_clear_persona_ai_only_reset_invalidates_publication_authority(self) -> None:
+        cursor = _AccountRerunResetCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            repository.reset_account_rerun_state(
+                "12572",
+                reset_at="2026-08-10T00:00:00+00:00",
+                reset_mode=ACCOUNT_RERUN_RESET_AI_ONLY,
+                clear_persona_assignment=True,
+            )
+
+        executed_sql = "\n".join(
+            cursor._sql_text(args[0]) for args, _kwargs in cursor.executed
+        )
+        self.assertIn("support_automation_reply_claims", executed_sql)
+        self.assertIn("state<>'completed'", executed_sql.replace(" ", ""))
+        self.assertIn("support_billing_response_tokens", executed_sql)
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_reply_only_ai_reset_preserves_publication_authority(self) -> None:
+        cursor = _AccountRerunResetCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            repository.reset_account_rerun_state(
+                "12572",
+                reset_at="2026-08-10T00:00:00+00:00",
+                reset_mode=ACCOUNT_RERUN_RESET_AI_ONLY,
+                clear_persona_assignment=False,
+            )
+
+        executed_sql = "\n".join(
+            cursor._sql_text(args[0]) for args, _kwargs in cursor.executed
+        )
+        self.assertNotIn("support_automation_reply_claims", executed_sql)
+        self.assertNotIn("support_billing_response_tokens", executed_sql)
+        self.assertEqual(connection.commit_count, 1)
 
     def test_postgres_single_case_reset_rolls_back_when_audit_insert_fails(self) -> None:
         cursor = _AccountRerunResetCursor(fail_audit_insert=True)
@@ -314,11 +763,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
                     reset_at="2026-08-04T00:00:00+00:00",
                     rerun_job_id="account-rerun-test",
                     reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                    clear_persona_assignment=True,
                     audit_context={"account_case_id": "AC-12572"},
                 )
 
         self.assertEqual(connection.commit_count, 0)
         self.assertEqual(connection.rollback_count, 1)
+        executed_sql = "\n".join(
+            cursor._sql_text(args[0]) for args, _kwargs in cursor.executed
+        )
+        self.assertIn("support_account_persona_assignments", executed_sql)
 
     def test_supersede_account_ai_messages_formats_jsonb_default_literal(self) -> None:
         cursor = _RowcountCursor(rowcount=2)
@@ -355,7 +809,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
         published_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
         cursor = _ReusableCursor(
             fetchone_results=[
-                ("account-reply-new",),
+                ("TK-ACCOUNT-1",),
+                ("enablement", "automated", "enablement", None, None),
+                (
+                    "account-reply-new",
+                    "TK-ACCOUNT-1",
+                    datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    "persona_publishing",
+                    datetime(2026, 8, 3, 0, 1, tzinfo=timezone.utc),
+                    1,
+                ),
                 None,
                 (42, published_at),
             ]
@@ -366,7 +829,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "job_id": "account-reply-new",
             "ticket_id": "TK-ACCOUNT-1",
             "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+            "status": "persona_publishing",
             "scheduled_for": "2026-08-03T00:01:00+00:00",
+            "claimed_at": "2026-08-03T00:01:00+00:00",
+            "attempt_count": 1,
         }
         payload = {
             "replace_existing_reply": True,
@@ -410,7 +876,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
         published_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
         cursor = _ReusableCursor(
             fetchone_results=[
-                ("account-reply-existing",),
+                ("TK-ACCOUNT-1",),
+                ("enablement", "automated", "enablement", None, None),
+                (
+                    "account-reply-existing",
+                    "TK-ACCOUNT-1",
+                    datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    "persona_publishing",
+                    datetime(2026, 8, 3, 0, 1, tzinfo=timezone.utc),
+                    2,
+                ),
                 (42, "Previously generated reply", published_at),
             ]
         )
@@ -420,6 +895,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "job_id": "account-reply-existing",
             "ticket_id": "TK-ACCOUNT-1",
             "trigger_message_created_at": "2026-08-03T00:00:00+00:00",
+            "status": "persona_publishing",
+            "claimed_at": "2026-08-03T00:01:00+00:00",
+            "attempt_count": 2,
         }
 
         with patch.object(
@@ -448,6 +926,248 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertNotIn("INSERT INTO supportportal.support_ticket_messages", rendered_queries)
         self.assertIn("id<>%s", rendered_queries)
         self.assertEqual(connection.commit_count, 1)
+
+    def test_publish_account_reply_locks_ticket_case_then_reply_job(self) -> None:
+        published_at = datetime(2026, 8, 8, tzinfo=timezone.utc)
+        cursor = _PublicationLockOrderCursor(published_at=published_at)
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            repository.publish_account_reply(
+                {
+                    "job_id": "account-reply-lock-order",
+                    "ticket_id": "TK-ACCOUNT-LOCK-ORDER",
+                    "trigger_message_created_at": "2026-08-08T00:00:00+00:00",
+                    "status": "persona_publishing",
+                    "scheduled_for": "2026-08-08T00:01:00+00:00",
+                    "claimed_at": "2026-08-08T00:01:00+00:00",
+                    "attempt_count": 1,
+                },
+                content="Lock publication in canonical order.",
+                payload={},
+                published_at="2026-08-08T00:02:00+00:00",
+                reply_execution={
+                    "execution_id": "reply-account-reply-lock-order",
+                    "ticket_id": "TK-ACCOUNT-LOCK-ORDER",
+                },
+            )
+
+        lock_targets: list[str] = []
+        for args, _kwargs in cursor.executed:
+            query = cursor._sql_text(args[0])
+            if "FOR UPDATE" not in query:
+                continue
+            if "support_tickets" in query:
+                lock_targets.append("ticket")
+            elif "support_account_cases" in query:
+                lock_targets.append("account_case")
+            elif "support_account_reply_jobs" in query:
+                lock_targets.append("reply_job")
+
+        self.assertEqual(lock_targets, ["ticket", "account_case", "reply_job"])
+
+    def test_automation_reply_commit_locks_ticket_before_claim(self) -> None:
+        cursor = _AutomationReplyCommitCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            committed = repository.commit_automation_reply_result(
+                "graph:message-1",
+                owner_token="owner-1",
+                ticket_id="TK-AUTOMATION-COMMIT",
+                assistant_message=None,
+                account_case_updates={},
+                events=[],
+                completed_at="2026-08-10T00:00:00+00:00",
+            )
+
+        self.assertTrue(committed)
+        lock_targets = []
+        for args, _kwargs in cursor.executed:
+            query = cursor._sql_text(args[0])
+            if "FOR UPDATE" not in query:
+                continue
+            if "support_tickets" in query:
+                lock_targets.append("ticket")
+            elif "support_automation_reply_claims" in query:
+                lock_targets.append("claim")
+        self.assertEqual(lock_targets, ["ticket", "claim"])
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_automation_reply_claim_locks_ticket_before_upsert(self) -> None:
+        cursor = _AutomationReplyClaimCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            claim = repository.claim_automation_reply(
+                "graph:message-claim",
+                client_ticket_id="TK-AUTOMATION-CLAIM",
+                handler="billing",
+                owner_token="owner-1",
+                claimed_at="2026-08-10T00:00:00+00:00",
+                lease_expires_at="2026-08-10T00:15:00+00:00",
+            )
+
+        queries = [cursor._sql_text(args[0]) for args, _kwargs in cursor.executed]
+        ticket_lock_index = next(
+            index
+            for index, query in enumerate(queries)
+            if "support_tickets" in query and "FOR UPDATE" in query
+        )
+        claim_upsert_index = next(
+            index
+            for index, query in enumerate(queries)
+            if "INSERT INTO" in query and "support_automation_reply_claims" in query
+        )
+        self.assertLess(ticket_lock_index, claim_upsert_index)
+        self.assertEqual(claim["status"], "acquired")
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_automation_reply_claim_rejects_missing_ticket_before_upsert(self) -> None:
+        cursor = _AutomationReplyClaimCursor(ticket_exists=False)
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            with self.assertRaisesRegex(ValueError, "linked support ticket not found"):
+                repository.claim_automation_reply(
+                    "graph:message-missing-ticket",
+                    client_ticket_id="TK-MISSING",
+                    handler="billing",
+                    owner_token="owner-1",
+                    claimed_at="2026-08-10T00:00:00+00:00",
+                    lease_expires_at="2026-08-10T00:15:00+00:00",
+                )
+
+        self.assertFalse(
+            any(
+                "INSERT INTO" in cursor._sql_text(args[0])
+                and "support_automation_reply_claims" in cursor._sql_text(args[0])
+                for args, _kwargs in cursor.executed
+            )
+        )
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_billing_response_commit_is_one_ticket_fenced_transaction(self) -> None:
+        cursor = _BillingResponseCommitCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            committed = repository.commit_billing_response_submission(
+                "token-hash",
+                billing_ticket_id="AC-BILLING-COMMIT",
+                ticket_id="TK-BILLING-COMMIT",
+                assistant_message={
+                    "role": "assistant",
+                    "content": "Approved customer reply",
+                    "created_at": "2026-08-10T00:00:00+00:00",
+                    "source": "billing_response_ai",
+                },
+                account_case_updates={
+                    "automation_status": "customer_notified",
+                    "customer_reply": "Approved customer reply",
+                },
+                events=[
+                    {
+                        "event_type": "billing_customer_followup_generated",
+                        "payload": {"created_at": "2026-08-10T00:00:00+00:00"},
+                    }
+                ],
+                cancel_pending_reply_jobs=True,
+                completed_at="2026-08-10T00:00:00+00:00",
+            )
+
+        self.assertTrue(committed)
+        queries = [cursor._sql_text(args[0]) for args, _kwargs in cursor.executed]
+        lock_targets = []
+        for query in queries:
+            if "FOR UPDATE" not in query:
+                continue
+            if "support_tickets" in query:
+                lock_targets.append("ticket")
+            elif "support_account_cases" in query:
+                lock_targets.append("account_case")
+            elif "support_billing_response_tokens" in query:
+                lock_targets.append("token")
+        self.assertEqual(lock_targets, ["ticket", "account_case", "token"])
+        rendered_sql = "\n".join(queries)
+        for table in (
+            "support_billing_response_tokens",
+            "support_account_cases",
+            "support_tickets",
+            "support_ticket_messages",
+            "support_account_reply_jobs",
+            "support_ticket_events",
+        ):
+            self.assertIn(table, rendered_sql)
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_resolve_account_persona_uses_optimistic_assignment_without_ticket_lock(self) -> None:
+        cursor = _PersonaResolutionLockOrderCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            schema="supportportal",
+        )
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            assignment = repository.resolve_account_persona("TK-PERSONA-LOCK-ORDER")
+
+        rendered_queries = [
+            cursor._sql_text(args[0])
+            for args, _kwargs in cursor.executed
+            if args
+        ]
+        self.assertFalse(
+            any("support_tickets" in query and "FOR UPDATE" in query for query in rendered_queries)
+        )
+        self.assertTrue(
+            any("support_account_persona_assignments" in query for query in rendered_queries)
+        )
+        self.assertEqual(assignment["persona_key"], "default-support")
 
     def test_ticket_storage_contract_removes_priority_column_and_index(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
@@ -724,7 +1444,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
@@ -738,12 +1461,19 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection.autocommit = True
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         self.assertFalse(connection.autocommit)
         first_sql = str(cursor.executed[0][0][0])
         self.assertIn("pg_advisory_xact_lock", first_sql)
+
+    def test_persona_registry_advisory_lock_reserves_key_four(self) -> None:
+        # Namespace ownership: 1 schema bootstrap, 2 asset bootstrap, 3 archive, 4 Persona registry.
+        self.assertEqual(_ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK, (842918, 4))
 
     def test_ticket_repository_initialize_grants_separate_runtime_role_access(self) -> None:
         cursor = _ReusableCursor()
@@ -757,6 +1487,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         with (
             patch.object(repository, "_connect_for_initialize", return_value=connection),
             patch.object(repository, "_runtime_database_role", return_value="runtime-role"),
+            patch.object(repository, "_ensure_account_persona_presets"),
         ):
             repository.initialize()
 
@@ -787,7 +1518,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://shared", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)
@@ -798,7 +1532,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
 
-        with patch.object(repository, "_connect_for_initialize", return_value=connection):
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
             repository.initialize()
 
         executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed if args)

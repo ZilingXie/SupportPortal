@@ -142,6 +142,40 @@ class RepairAccountCustomerNameTests(unittest.TestCase):
         self.assertNotIn("Alice", serialized_events)
         self.assertNotIn("synthetic@example.com", serialized_events)
 
+    def test_apply_reuses_the_existing_persisted_persona_assignment(self) -> None:
+        assigned = self.repository.resolve_account_persona("12619")
+
+        with patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=AssertionError("repair must reuse the ticket assignment"),
+        ) as chooser:
+            result = repair.apply_repair(
+                self.repository,
+                "12619",
+                "Alice Smith",
+                repaired_at="2026-08-05T01:00:00+00:00",
+                delay_seconds=360,
+            )
+
+        replacement = self.repository.get_account_reply_job(result["replacement_reply_job_id"])
+        assert replacement is not None
+        self.assertEqual(replacement["payload"]["persona_key"], assigned["persona_key"])
+        self.assertEqual(replacement["payload"]["persona_version"], assigned["version"])
+        assignment_metadata = self.repository.get_account_persona_assignment("12619")
+        assert assignment_metadata is not None
+        self.assertEqual(
+            {
+                key: assignment_metadata[key]
+                for key in ("ticket_id", "persona_key", "version")
+            },
+            {
+                "ticket_id": "12619",
+                "persona_key": assigned["persona_key"],
+                "version": assigned["version"],
+            },
+        )
+        chooser.assert_not_called()
+
     def test_cli_reads_name_without_echo_and_does_not_print_it(self) -> None:
         output = io.StringIO()
         with patch.object(repair, "create_ticket_repository", return_value=self.repository), patch.object(

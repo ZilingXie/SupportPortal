@@ -26,7 +26,10 @@ from backend.main import (
     asset_storage,
     ticket_repository,
 )
-from backend.services.account_admin import apply_persona_to_customer_reply
+from backend.services.account_admin import (
+    AccountPersonaUnavailableError,
+    apply_persona_to_customer_reply,
+)
 from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PREPARING,
@@ -40,6 +43,8 @@ from backend.services.automation_persona import (
     extract_automation_resolution_facts,
     render_automation_reply,
 )
+from backend.services.automation_routing import automation_metadata
+from backend.services.account_route_pipeline import classification_labels
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -344,15 +349,64 @@ def _account_reply_message_job_id(message: dict[str, Any]) -> str:
     return str(meta.get("account_reply_job_id") or message.get("account_reply_job_id") or "").strip()
 
 
-def _account_reply_job_still_exists(job: dict[str, Any]) -> bool:
-    job_id = str(job.get("job_id") or "").strip()
-    return bool(job_id) and ticket_repository.get_account_reply_job(job_id) is not None
+def _account_reply_claim_is_current(
+    claimed_job: dict[str, Any],
+    current_job: dict[str, Any] | None,
+    *,
+    expected_status: str,
+) -> bool:
+    if not isinstance(current_job, dict):
+        return False
+    return (
+        str(current_job.get("job_id") or "")
+        == str(claimed_job.get("job_id") or "")
+        and str(current_job.get("ticket_id") or "")
+        == str(claimed_job.get("ticket_id") or "")
+        and str(current_job.get("trigger_message_created_at") or "")
+        == str(claimed_job.get("trigger_message_created_at") or "")
+        and str(current_job.get("status") or "") == expected_status
+        and str(current_job.get("claimed_at") or "")
+        == str(claimed_job.get("claimed_at") or "")
+        and int(current_job.get("attempt_count") or 0)
+        == int(claimed_job.get("attempt_count") or 0)
+    )
+
+
+def _update_claimed_account_reply_job(
+    job: dict[str, Any],
+    *,
+    expected_status: str,
+) -> bool:
+    return ticket_repository.update_claimed_account_reply_job(
+        job,
+        expected_status=expected_status,
+        expected_claimed_at=job.get("claimed_at"),
+        expected_attempt_count=int(job.get("attempt_count") or 0),
+    ) is not None
+
+
+def _resolve_account_persona_for_claimed_reply(
+    job: dict[str, Any],
+    *,
+    expected_status: str,
+) -> dict[str, Any] | None:
+    return ticket_repository.resolve_account_persona_for_claimed_reply(
+        job,
+        expected_status=expected_status,
+        expected_claimed_at=job.get("claimed_at"),
+        expected_attempt_count=int(job.get("attempt_count") or 0),
+    )
 
 
 def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
-    if not _account_reply_job_still_exists(job):
+    claimed_status = str(job.get("status") or "")
+    if not _account_reply_claim_is_current(
+        job,
+        ticket_repository.get_account_reply_job(job_id),
+        expected_status=claimed_status,
+    ):
         return
     ticket = ticket_repository.get_ticket(ticket_id)
     if not job_id or ticket is None:
@@ -363,7 +417,21 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
             raise RuntimeError("unsupported Account reply pipeline")
         payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
         if not payload.get("persona_key") or not payload.get("effective_prompt"):
-            persona = ticket_repository.resolve_account_persona(ticket_id)
+            try:
+                persona = _resolve_account_persona_for_claimed_reply(
+                    job,
+                    expected_status=claimed_status,
+                )
+            except AccountPersonaUnavailableError as exc:
+                _move_automation_reply_to_human_review(
+                    job,
+                    ticket,
+                    str(exc),
+                    policy_decision="account_persona_unavailable_human_review",
+                )
+                return
+            if persona is None:
+                return
             if not isinstance(persona, dict):
                 _move_automation_reply_to_human_review(
                     job,
@@ -407,14 +475,12 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
             else "scheduled"
         )
         job["updated_at"] = now_iso()
-        if _account_reply_job_still_exists(job):
-            ticket_repository.save_account_reply_job(job)
+        _update_claimed_account_reply_job(job, expected_status=claimed_status)
         return
     if not _account_reply_trigger_is_latest(ticket, str(job.get("trigger_message_created_at") or "")):
         job["status"] = "cancelled"
         job["updated_at"] = now_iso()
-        if _account_reply_job_still_exists(job):
-            ticket_repository.save_account_reply_job(job)
+        _update_claimed_account_reply_job(job, expected_status=claimed_status)
         return
 
     trigger_message = next(
@@ -456,16 +522,40 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     draft = str(resolution.answer or "").strip()
     if not draft:
         if str(resolution.route_family or "").strip() == "human_review":
+            evidence = (
+                resolution.evidence_summary
+                if isinstance(resolution.evidence_summary, dict)
+                else {}
+            )
             _move_automation_reply_to_human_review(
                 job,
                 ticket,
                 str(resolution.route_reason or "automation_persona_human_review").strip(),
+                policy_decision=(
+                    "account_persona_unavailable_human_review"
+                    if evidence.get("account_persona_unavailable") is True
+                    else "automation_persona_human_review"
+                ),
             )
             return
         payload["error"] = "AI could not prepare a reliable account-only reply."
         job["status"] = "manual_attention"
     else:
-        persona = ticket_repository.resolve_account_persona(ticket_id)
+        try:
+            persona = _resolve_account_persona_for_claimed_reply(
+                job,
+                expected_status=claimed_status,
+            )
+        except AccountPersonaUnavailableError as exc:
+            _move_automation_reply_to_human_review(
+                job,
+                ticket,
+                str(exc),
+                policy_decision="account_persona_unavailable_human_review",
+            )
+            return
+        if persona is None:
+            return
         rendered_by_automation_persona = bool(
             isinstance(resolution.evidence_summary, dict)
             and resolution.evidence_summary.get("automation_persona_render_status") == "generated"
@@ -482,28 +572,33 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         )
         job["status"] = "scheduled"
     current_job = ticket_repository.get_account_reply_job(job_id)
-    if current_job is None or (
-        isinstance(current_job, dict)
-        and str(current_job.get("status") or "")
-        not in {"preparing", ACCOUNT_REPLY_PERSONA_PREPARING}
+    if not _account_reply_claim_is_current(
+        job,
+        current_job,
+        expected_status=claimed_status,
     ):
         return
     job["payload"] = payload
     job["updated_at"] = now_iso()
-    ticket_repository.save_account_reply_job(job)
+    _update_claimed_account_reply_job(job, expected_status=claimed_status)
 
 
 def _publish_account_reply_job(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
+    claimed_status = str(job.get("status") or "")
     current_job = ticket_repository.get_account_reply_job(job_id)
     ticket = ticket_repository.get_ticket(ticket_id)
     if current_job is None or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
-    if str(current_job.get("status") or "") not in {
+    if claimed_status not in {
         "publishing",
         ACCOUNT_REPLY_PERSONA_PUBLISHING,
-    }:
+    } or not _account_reply_claim_is_current(
+        job,
+        current_job,
+        expected_status=claimed_status,
+    ):
         return
     payload = dict(current_job.get("payload") or {})
     existing_message = next(
@@ -520,7 +615,10 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     ):
         current_job["status"] = "cancelled"
         current_job["updated_at"] = now_iso()
-        ticket_repository.save_account_reply_job(current_job)
+        _update_claimed_account_reply_job(
+            current_job,
+            expected_status=claimed_status,
+        )
         return
 
     if (
@@ -551,7 +649,11 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload["persona_model"] = rendered.model
         payload["persona_prompt_version"] = rendered.prompt_version
         current_job["payload"] = payload
-        ticket_repository.save_account_reply_job(current_job)
+        if not _update_claimed_account_reply_job(
+            current_job,
+            expected_status=claimed_status,
+        ):
+            return
 
     content = str(
         (existing_message or {}).get("content")
@@ -564,7 +666,10 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         current_job["status"] = "manual_attention"
         current_job["payload"] = payload
         current_job["updated_at"] = now_iso()
-        ticket_repository.save_account_reply_job(current_job)
+        _update_claimed_account_reply_job(
+            current_job,
+            expected_status=claimed_status,
+        )
         return
 
     published_at = str((existing_message or {}).get("created_at") or now_iso())
@@ -594,59 +699,73 @@ def _move_automation_reply_to_human_review(
     job: dict[str, Any],
     ticket: dict[str, Any],
     reason: str,
+    *,
+    policy_decision: str = "automation_persona_human_review",
 ) -> None:
     """Stop an Automation send when Persona generation is unavailable."""
-    if not _account_reply_job_still_exists(job):
-        return
-    timestamp = now_iso()
-    payload = dict(job.get("payload") or {})
-    payload["error"] = reason
-    payload["persona_render_status"] = "human_review"
-    job["payload"] = payload
-    job["status"] = "manual_attention"
-    job["updated_at"] = timestamp
-    ticket_repository.save_account_reply_job(job)
-    billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(
-        str(ticket.get("ticket_id") or job.get("ticket_id") or "")
+    expected_status = str(job.get("status") or "")
+    transitioned = ticket_repository.transition_claimed_account_reply_to_human_review(
+        job,
+        expected_status=expected_status,
+        expected_claimed_at=job.get("claimed_at"),
+        expected_attempt_count=int(job.get("attempt_count") or 0),
+        reason=reason,
+        policy_decision=policy_decision,
+        transitioned_at=now_iso(),
     )
-    if billing_ticket is not None:
-        classification = dict(billing_ticket.get("route_classification") or {})
-        classification.update(
-            {
-                "route_target": "human_review",
-                "human_review_reason": reason,
-                "route_reason_code": reason,
-                "handler_binding_status": "human_review",
-            }
-        )
-        billing_ticket.update(
-            {
-                "route": "human_review_required",
-                "scope_label": "human_review",
-                "route_family": "human_review",
-                "execution_action": "human_review_required",
-                "automation_status": "not_automated",
-                "not_automated_reason": reason,
-                "route_classification": classification,
-                "internal_email_send_status": str(
-                    billing_ticket.get("internal_email_send_status") or "not_applicable"
-                ),
-                "internal_email_send_reason": reason,
-                "updated_at": timestamp,
-            }
-        )
-        ticket_repository.save_billing_ticket(billing_ticket)
-        ticket_repository.record_event(
-            str(ticket.get("ticket_id") or job.get("ticket_id") or ""),
-            "automation_persona_human_review",
-            {
-                "event": "automation_persona_human_review",
-                "ticket_id": str(ticket.get("ticket_id") or job.get("ticket_id") or ""),
-                "job_id": str(job.get("job_id") or ""),
-                "reason": reason,
-                "created_at": timestamp,
-            },
-        )
+    if not isinstance(transitioned, dict):
+        return
+    job.clear()
+    job.update(transitioned)
+
+
+def _mark_account_case_for_human_review(
+    account_case: dict[str, Any],
+    *,
+    reason: str,
+    timestamp: str,
+    policy_decision: str,
+) -> None:
+    predicted_action = str(
+        account_case.get("execution_action") or account_case.get("route") or ""
+    ).strip() or None
+    classification = dict(account_case.get("route_classification") or {})
+    classification.update(
+        {
+            "predicted_automation_subcategory": predicted_action,
+            "agora_route": "uncategorized",
+            "account_billing_subcategory": None,
+            "backend_operation_subcategory": None,
+            "automation_subcategory": None,
+            "route_target": "human_review",
+            "human_review_reason": reason,
+            "route_reason_code": reason,
+            "handler_binding_status": "human_review",
+        }
+    )
+    primary_label, secondary_label = classification_labels(classification)
+    classification["primary_label"] = primary_label
+    classification["secondary_label"] = secondary_label
+    account_case.update(
+        {
+            "route": "human_review_required",
+            "scope_label": "human_review",
+            "route_family": "human_review",
+            "execution_action": "human_review_required",
+            "tooling_profile": None,
+            "route_reason": reason,
+            "policy_decision": policy_decision,
+            "automation_status": "not_automated",
+            "not_automated_reason": reason,
+            "route_classification": classification,
+            "internal_email_send_reason": reason,
+            "updated_at": timestamp,
+            **automation_metadata(
+                route_family="human_review",
+                execution_action="human_review_required",
+            ),
+        }
+    )
 
 
 def _render_case_persona_reply(
@@ -663,7 +782,20 @@ def _render_case_persona_reply(
     save_case: Any,
     persist_failure: bool = True,
 ) -> str:
-    persona = ticket_repository.resolve_account_persona(ticket_id)
+    try:
+        persona = ticket_repository.resolve_account_persona(ticket_id)
+    except AccountPersonaUnavailableError as exc:
+        timestamp = now_iso()
+        reason = str(exc)
+        _mark_account_case_for_human_review(
+            case,
+            reason=reason,
+            timestamp=timestamp,
+            policy_decision="account_persona_unavailable_human_review",
+        )
+        if persist_failure:
+            save_case(case)
+        return ""
     known_information = {
         **dict(known_information or {}),
         "ticket_id": ticket_id,
@@ -681,17 +813,11 @@ def _render_case_persona_reply(
         except AutomationPersonaError as exc:
             timestamp = now_iso()
             reason = str(exc)
-            case.update(
-                {
-                    "route": "human_review_required",
-                    "scope_label": "human_review",
-                    "route_family": "human_review",
-                    "execution_action": "human_review_required",
-                    "automation_status": "not_automated",
-                    "not_automated_reason": reason,
-                    "internal_email_send_reason": reason,
-                    "updated_at": timestamp,
-                }
+            _mark_account_case_for_human_review(
+                case,
+                reason=reason,
+                timestamp=timestamp,
+                policy_decision="automation_persona_human_review",
             )
             if persist_failure:
                 save_case(case)
@@ -724,17 +850,11 @@ def _render_case_persona_reply(
     except AutomationPersonaError as exc:
         timestamp = now_iso()
         reason = str(exc)
-        case.update(
-            {
-                "route": "human_review_required",
-                "scope_label": "human_review",
-                "route_family": "human_review",
-                "execution_action": "human_review_required",
-                "automation_status": "not_automated",
-                "not_automated_reason": reason,
-                "internal_email_send_reason": reason,
-                "updated_at": timestamp,
-            }
+        _mark_account_case_for_human_review(
+            case,
+            reason=reason,
+            timestamp=timestamp,
+            policy_decision="automation_persona_human_review",
         )
         if persist_failure:
             save_case(case)
@@ -773,7 +893,11 @@ def _process_claimed_account_reply_jobs(
             operation = "preparation" if to_status in {ACCOUNT_REPLY_PERSONA_PREPARING, "preparing"} else "publication"
             LOGGER.exception("Account reply %s failed for %s", operation, job.get("job_id"))
             current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
-            if current is None or str(current.get("status") or "") == "cancelled":
+            if not _account_reply_claim_is_current(
+                job,
+                current,
+                expected_status=to_status,
+            ):
                 continue
             failed_job = current
             failed_job["status"] = retry_status if int(failed_job.get("attempt_count") or 0) < (3 if operation == "preparation" else 4) else "failed"
@@ -782,7 +906,10 @@ def _process_claimed_account_reply_jobs(
                 "error": str(exc),
             }
             failed_job["updated_at"] = now_iso()
-            ticket_repository.save_account_reply_job(failed_job)
+            _update_claimed_account_reply_job(
+                failed_job,
+                expected_status=to_status,
+            )
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:
@@ -888,7 +1015,19 @@ def _queue_enablement_submission_confirmation(
         resolution_status="submitted_for_review",
         customer_name=str(account_case.get("customer_name") or ""),
     )
-    persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
+    try:
+        persona_assignment = ticket_repository.resolve_account_persona(ticket_id)
+    except AccountPersonaUnavailableError as exc:
+        timestamp = now_iso()
+        reason = str(exc)
+        _mark_account_case_for_human_review(
+            account_case,
+            reason=reason,
+            timestamp=timestamp,
+            policy_decision="account_persona_unavailable_human_review",
+        )
+        ticket_repository.save_account_case(account_case)
+        return False
     created_at = now_iso()
     ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
     reply_payload: dict[str, Any] = {
@@ -1313,8 +1452,6 @@ def handle_billing_request_reply(reply: Any) -> str:
             "notify_customer": True, "customer_reply": customer_reply, "created_at": timestamp,
             "source": "billing_reply_email", "billing_reply_message_id": message_id,
         }
-        if attached_asset_ids:
-            asset_repository.mark_attached(attached_asset_ids)
         committed = ticket_repository.commit_automation_reply_result(
             reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
             assistant_message=assistant_message,
@@ -1324,6 +1461,8 @@ def handle_billing_request_reply(reply: Any) -> str:
                     {"event_type": BILLING_RESPONSE_AI_FOLLOWUP_EVENT, "payload": followup_event}],
             completed_at=timestamp,
         )
+        if committed and attached_asset_ids:
+            asset_repository.mark_attached(attached_asset_ids)
         return "completed" if committed else "in_progress"
     except Exception as exc:
         _fail_automation_reply(reply_key, owner_token, exc)

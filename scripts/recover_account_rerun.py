@@ -21,6 +21,9 @@ from backend.main import (
     _create_account_reply_job,
     ticket_repository,
 )
+from backend.services.account_admin import AccountPersonaUnavailableError
+from backend.services.account_route_pipeline import classification_labels
+from backend.services.automation_routing import automation_metadata
 
 
 def _now() -> str:
@@ -86,6 +89,62 @@ def _mark_customer_confirmation_queued(case: dict[str, Any], delivery_key: str) 
     ticket_repository.save_account_case(case)
 
 
+def _mark_case_persona_unavailable_for_human_review(
+    case: dict[str, Any],
+    *,
+    ticket_id: str,
+    reason: str,
+) -> dict[str, str]:
+    predicted_action = str(
+        case.get("execution_action") or case.get("route") or ""
+    ).strip() or None
+    classification = dict(case.get("route_classification") or {})
+    classification.update(
+        {
+            "predicted_automation_subcategory": predicted_action,
+            "agora_route": "uncategorized",
+            "account_billing_subcategory": None,
+            "backend_operation_subcategory": None,
+            "automation_subcategory": None,
+            "route_target": "human_review",
+            "human_review_reason": reason,
+            "route_reason_code": reason,
+            "handler_binding_status": "human_review",
+        }
+    )
+    primary_label, secondary_label = classification_labels(classification)
+    classification["primary_label"] = primary_label
+    classification["secondary_label"] = secondary_label
+    case.update(
+        {
+            "route": "human_review_required",
+            "scope_label": "human_review",
+            "route_family": "human_review",
+            "execution_action": "human_review_required",
+            "tooling_profile": None,
+            "route_reason": reason,
+            "policy_decision": "account_persona_unavailable_human_review",
+            "automation_status": "not_automated",
+            "not_automated_reason": reason,
+            "route_classification": classification,
+            "internal_email_send_reason": reason,
+            "customer_reply": None,
+            "updated_at": _now(),
+            **automation_metadata(
+                route_family="human_review",
+                execution_action="human_review_required",
+            ),
+        }
+    )
+    ticket_repository.save_account_case(case)
+    return {
+        "account_case_id": str(case.get("account_case_id") or case.get("billing_ticket_id") or ""),
+        "ticket_id": ticket_id,
+        "status": "human_review_required",
+        "reason": reason,
+    }
+
+
 def build_recovery_plan(job_id: str) -> dict[str, Any]:
     cases = ticket_repository.list_account_cases(limit=100_000, offset=0)
     selected = [case for case in cases if _case_rerun_id(case) == job_id]
@@ -149,6 +208,8 @@ def apply_recovery(plan: dict[str, Any]) -> dict[str, Any]:
     created_jobs: list[str] = []
     deleted_jobs: list[str] = []
     archived_cases: list[str] = []
+    human_review_ticket_ids: list[str] = []
+    human_review_cases: list[dict[str, str]] = []
     for ticket_id in plan["archive_cases"]:
         _reset_case_reply_state_preserving_delivery(
             str(ticket_id),
@@ -164,7 +225,19 @@ def apply_recovery(plan: dict[str, Any]) -> dict[str, Any]:
             ticket_id,
             recovery_id=recovery_id,
         )
-        persona = ticket_repository.resolve_published_account_persona(ticket_id)
+        try:
+            persona = ticket_repository.resolve_published_account_persona(ticket_id)
+        except AccountPersonaUnavailableError as exc:
+            reason = str(exc)
+            human_review_cases.append(
+                _mark_case_persona_unavailable_for_human_review(
+                    case,
+                    ticket_id=ticket_id,
+                    reason=reason,
+                )
+            )
+            human_review_ticket_ids.append(ticket_id)
+            continue
         reply_facts = _automation_reply_facts(
             handler=str(item.get("handler") or "automation"),
             action=str(case.get("execution_action") or "automation"),
@@ -194,6 +267,8 @@ def apply_recovery(plan: dict[str, Any]) -> dict[str, Any]:
         "created_reply_job_ids": created_jobs,
         "deleted_reply_job_ids": deleted_jobs,
         "archived_ticket_ids": archived_cases,
+        "human_review_ticket_ids": human_review_ticket_ids,
+        "human_review_cases": human_review_cases,
         "email_resend_count": 0,
     }
 

@@ -17,6 +17,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_SIGNATURE
 from backend.services.workspace_auth import hash_workspace_password
 
 
@@ -316,7 +317,16 @@ class WorkspaceApiTests(unittest.TestCase):
             "client_ticket_id": "TK-AUTO",
             "title": "Invoice",
             "question": "Detailed invoice",
+            "scope_label": "billing",
+            "route_family": "automated",
+            "execution_action": "detailed_invoice",
+            "tooling_profile": "deterministic_billing_intake",
+            "category": "automation",
+            "subcategory": "detailed_invoice",
+            "route_status": "automated",
             "automation_status": "automation",
+            "automation_handler": "billing",
+            "route_classification": {"route_target": "automation"},
             "created_at": "2026-07-21T00:00:00+00:00",
         })
         self.assertEqual(self.client.get("/api/workspace/admin/account-automation").status_code, 401)
@@ -335,7 +345,15 @@ class WorkspaceApiTests(unittest.TestCase):
 
         personas = self.client.get("/api/workspace/admin/account-personas", headers=self._admin_headers())
         self.assertEqual(personas.status_code, 200, personas.text)
-        self.assertEqual(personas.json()["personas"][0]["persona_key"], "default-support")
+        persona_map = {item["persona_key"]: item for item in personas.json()["personas"]}
+        self.assertEqual(set(persona_map), {"default-support", "sid-bright", "sid-precise"})
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            persona = persona_map[preset.persona_key]
+            self.assertEqual(persona["display_name"], preset.display_name)
+            self.assertTrue(persona["enabled"])
+            self.assertEqual(persona["published_version"], 1)
+            self.assertEqual(persona["versions"][0]["content"]["signature"], DEFAULT_PERSONA_SIGNATURE)
+            self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
 
     def test_agent_config_is_admin_only_and_places_personas_on_automation_router(self) -> None:
         self.assertEqual(self.client.get("/api/workspace/admin/agent-config").status_code, 401)
@@ -364,7 +382,15 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(payload["route_navigation"]["key"], "route-agent")
         self.assertTrue(payload["route_navigation"]["is_agent"])
         self.assertFalse(payload["route_navigation"]["children"][0]["is_agent"])
-        self.assertEqual(payload["automation_personas"][0]["persona_key"], "default-support")
+        personas = {item["persona_key"]: item for item in payload["automation_personas"]}
+        self.assertEqual(set(personas), {"default-support", "sid-bright", "sid-precise"})
+        self.assertTrue(all(item["enabled"] and item["published_version"] == 1 for item in personas.values()))
+        self.assertTrue(
+            all(
+                item["versions"][0]["content"]["signature"] == DEFAULT_PERSONA_SIGNATURE
+                for item in personas.values()
+            )
+        )
         self.assertNotIn("OPENAI_API_KEY", response.text)
 
     def test_prompt_version_api_manages_next_deploy_without_changing_active_runtime(self) -> None:
@@ -432,7 +458,13 @@ class WorkspaceApiTests(unittest.TestCase):
             "/api/workspace/admin/account-personas/default-support/versions/1/rollback", headers=headers
         )
         self.assertEqual(rollback.status_code, 200, rollback.text)
-        versions = self.client.get("/api/workspace/admin/account-personas", headers=headers).json()["personas"][0]["versions"]
+        personas = {
+            item["persona_key"]: item
+            for item in self.client.get(
+                "/api/workspace/admin/account-personas", headers=headers
+            ).json()["personas"]
+        }
+        versions = personas["default-support"]["versions"]
         self.assertEqual([item["version"] for item in versions], [1, 2, 3])
 
     def test_environment_config_api_never_returns_values(self) -> None:

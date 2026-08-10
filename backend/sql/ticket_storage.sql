@@ -170,6 +170,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_reply_jobs_ticket_trigger_
         (COALESCE(payload->>'rerun_job_id', ''))
     );
 
+CREATE TABLE IF NOT EXISTS support_account_reroute_jobs (
+    job_id TEXT PRIMARY KEY,
+    request_scope TEXT NOT NULL,
+    account_case_id TEXT,
+    idempotency_scope TEXT,
+    idempotency_key TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN ('queued', 'running', 'completed', 'completed_with_errors', 'failed', 'needs_recovery')
+    ),
+    payload JSONB NOT NULL,
+    result JSONB NOT NULL DEFAULT '{}'::jsonb,
+    dispatch_status TEXT NOT NULL DEFAULT 'queued' CHECK (
+        dispatch_status IN ('queued', 'leased', 'completed', 'needs_recovery')
+    ),
+    lease_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    CHECK (
+        (idempotency_scope IS NULL AND idempotency_key IS NULL)
+        OR (idempotency_scope IS NOT NULL AND idempotency_key IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_reroute_jobs_idempotency
+    ON support_account_reroute_jobs (idempotency_scope, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_reroute_jobs_one_active
+    ON support_account_reroute_jobs ((1))
+    WHERE status IN ('queued', 'running');
+
+CREATE INDEX IF NOT EXISTS idx_support_account_reroute_jobs_dispatch_lease
+    ON support_account_reroute_jobs (dispatch_status, lease_expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_support_account_reroute_jobs_updated
+    ON support_account_reroute_jobs (updated_at DESC, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS support_account_personas (
     persona_key TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,

@@ -660,6 +660,19 @@ function responseErrorMessage(payload, fallback) {
   return fallback;
 }
 
+function createSingleCaseRerunIdempotencyKey() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") {
+    return `account-case-rerun:${cryptoApi.randomUUID()}`;
+  }
+  if (typeof cryptoApi?.getRandomValues !== "function") {
+    throw new Error("Secure request identifiers are unavailable in this browser.");
+  }
+  const entropy = new Uint32Array(4);
+  cryptoApi.getRandomValues(entropy);
+  return `account-case-rerun:${Array.from(entropy, (value) => value.toString(16).padStart(8, "0")).join("")}`;
+}
+
 async function refreshAfterReroute(targetCaseId = "") {
   invalidateSummaryCache();
   if (targetCaseId) invalidateDetailCache(targetCaseId);
@@ -785,6 +798,7 @@ async function startSingleCaseRerun() {
     const response = await fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
       method: "POST",
       cache: "no-store",
+      headers: { "Idempotency-Key": snapshot.idempotencyKey },
     });
     const payload = await readResponsePayload(response);
     if (!response.ok) {
@@ -800,6 +814,9 @@ async function startSingleCaseRerun() {
     showToast(`Rerun started for Case #${snapshot.ticketNumber}`);
   } catch (err) {
     state.rerouteError = err instanceof Error ? err.message : "Could not rerun this Account Case.";
+    if (state.rerouteTargetSnapshot === snapshot && !isActiveRerouteJob()) {
+      state.rerouteConfirmationOpen = true;
+    }
   } finally {
     state.isStartingReroute = false;
     render();
@@ -1443,6 +1460,28 @@ function renderRouteErrorSummaryPanel() {
   `;
 }
 
+const ACCOUNT_PERSONA_PRESENTATION = Object.freeze({
+  "sid-precise": { style: "Precise", styleKey: "precise" },
+  "sid-bright": { style: "Bright", styleKey: "bright" },
+  "default-support": { style: "Warm", styleKey: "warm" },
+});
+
+function renderPersonaAssignment(item) {
+  if (!isAutomatedRoute(item)) return "";
+  const assignment = item?.persona_assignment;
+  if (!assignment || typeof assignment !== "object") {
+    return `<div class="meta-row persona-assignment"><span class="meta-label">Persona</span><span class="meta-value persona-assignment__value">Not assigned yet</span></div>`;
+  }
+  const personaKey = String(assignment.persona_key || "").trim();
+  const presentation = Object.hasOwn(ACCOUNT_PERSONA_PRESENTATION, personaKey)
+    ? ACCOUNT_PERSONA_PRESENTATION[personaKey]
+    : null;
+  const displayName = String(assignment.display_name || personaKey || "Unknown Persona").trim();
+  const version = Number(assignment.version);
+  const versionLabel = Number.isInteger(version) && version > 0 ? `v${version}` : "Version unavailable";
+  return `<div class="meta-row persona-assignment"><span class="meta-label">Persona</span><span class="meta-value persona-assignment__value"><strong>${escapeHtml(displayName)}</strong><span class="persona-version-badge">${escapeHtml(versionLabel)}</span>${presentation ? `<span class="persona-style-badge persona-style-badge--${presentation.styleKey}">${presentation.style}</span>` : ""}</span></div>`;
+}
+
 function renderDetailView() {
   const item = state.activeItem;
   if (!item && state.detailLoading) {
@@ -1519,6 +1558,7 @@ function renderDetailView() {
           <span class="meta-label">Status</span>
           <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         </div>
+        ${renderPersonaAssignment(item)}
         ${
           routeClassification.automation_mode
             ? `<div class="meta-row"><span class="meta-label">Automation mode</span><span class="meta-value">${escapeHtml(String(routeClassification.automation_mode).replaceAll("_", " "))}</span></div>`
@@ -1758,7 +1798,7 @@ function renderRerouteStatus() {
   return `
     <div class="reroute-status ${failed || job.status === "failed" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
       <strong>${job.status === "failed" ? "Rerun failed" : "Rerun complete"}</strong>
-      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted</span>
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
     </div>
   `;
 }
@@ -1793,6 +1833,7 @@ function renderRerouteConfirmation() {
               <li>Existing Account-only AI replies and reply jobs will be deleted before each case starts again.</li>
               <li>Account & Billing classification extractors also run again; they never send email or customer replies.</li>
             </ul>`}
+        <p>The pinned Persona assignment will be cleared. Only if the rerun produces a new Automation customer reply will runtime select again from Personas that are enabled and have a published version; the same Persona may be selected again.</p>
         <div class="reroute-modal__actions">
           <button class="ghost-button" type="button" data-action="close-reroute-confirmation">Cancel</button>
           <button class="${singleCase ? "danger-button" : "primary-button"}" type="button" data-action="${singleCase ? "confirm-single-rerun" : "confirm-reroute"}" ${state.isStartingReroute ? "disabled" : ""}>
@@ -1978,6 +2019,7 @@ function bind() {
       state.rerouteTargetSnapshot = {
         caseId: accountCaseIdentifier(state.activeItem),
         ticketNumber: accountTicketNumber(state.activeItem),
+        idempotencyKey: createSingleCaseRerunIdempotencyKey(),
       };
       state.rerouteConfirmationOpen = true;
       render();

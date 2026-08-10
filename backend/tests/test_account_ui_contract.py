@@ -102,6 +102,187 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), ["12572", "12572", "", ""])
 
+    def test_single_case_rerun_reuses_one_idempotency_key_per_confirmation_intent(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        start = app_source.index("async function startSingleCaseRerun")
+        end = app_source.index("\nasync function", start + 1)
+        start_source = app_source[start:end]
+
+        self.assertIn("function createSingleCaseRerunIdempotencyKey", app_source)
+        self.assertIn("idempotencyKey", app_source)
+        self.assertIn('"Idempotency-Key": snapshot.idempotencyKey', start_source)
+        self.assertNotIn("randomUUID", start_source)
+        self.assertIn("state.rerouteTargetSnapshot = null", start_source)
+        self.assertIn("state.rerouteConfirmationOpen = true", start_source)
+
+        open_handler = app_source.index("[data-action='open-single-rerun-confirmation']")
+        close_handler = app_source.index("[data-action='close-reroute-confirmation']", open_handler)
+        open_source = app_source[open_handler:close_handler]
+        self.assertIn("createSingleCaseRerunIdempotencyKey", open_source)
+        self.assertIn("idempotencyKey", open_source)
+
+        script = (
+            "const state = {"
+            "rerouteTargetSnapshot: { caseId: 'AC-12568', ticketNumber: '12568', "
+            "idempotencyKey: 'stable-confirmation-key' }, "
+            "isStartingReroute: false, rerouteConfirmationOpen: true, rerouteError: '', "
+            "rerouteJob: null, rerouteActiveTargetCaseId: '' };\n"
+            "let requestKeys = [];\n"
+            "let shouldSucceed = false;\n"
+            "function isActiveRerouteJob() { return false; }\n"
+            "function render() {}\n"
+            "function showToast() {}\n"
+            "function responseErrorMessage(_payload, fallback) { return fallback; }\n"
+            "async function readResponsePayload(response) { return response.payload; }\n"
+            "async function fetch(_url, options) {\n"
+            "  requestKeys.push(options.headers['Idempotency-Key']);\n"
+            "  if (!shouldSucceed) throw new Error('network unavailable');\n"
+            "  return { ok: true, status: 202, payload: { job_id: 'job-replayed', status: 'queued' } };\n"
+            "}\n"
+            f"{start_source}\n"
+            "(async () => {\n"
+            "  const originalSnapshot = state.rerouteTargetSnapshot;\n"
+            "  await startSingleCaseRerun();\n"
+            "  const reopenedAfterFailure = state.rerouteConfirmationOpen;\n"
+            "  const sameSnapshotAfterFailure = state.rerouteTargetSnapshot === originalSnapshot;\n"
+            "  await startSingleCaseRerun();\n"
+            "  shouldSucceed = true;\n"
+            "  await startSingleCaseRerun();\n"
+            "  console.log(JSON.stringify({ requestKeys, reopenedAfterFailure, "
+            "sameSnapshotAfterFailure, snapshotAfterSuccess: state.rerouteTargetSnapshot, "
+            "jobId: state.rerouteJob?.job_id }));\n"
+            "})().catch((error) => { console.error(error); process.exit(1); });\n"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        retry_result = json.loads(result.stdout)
+        self.assertEqual(retry_result["requestKeys"], ["stable-confirmation-key"] * 3)
+        self.assertTrue(retry_result["reopenedAfterFailure"])
+        self.assertTrue(retry_result["sameSnapshotAfterFailure"])
+        self.assertIsNone(retry_result["snapshotAfterSuccess"])
+        self.assertEqual(retry_result["jobId"], "job-replayed")
+
+    def test_account_detail_persona_assignment_is_visible_only_for_automated_cases(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        self.assertIn("const ACCOUNT_PERSONA_PRESENTATION", app_source)
+        self.assertIn("function renderPersonaAssignment", app_source)
+        helper_start = app_source.index("const ACCOUNT_PERSONA_PRESENTATION")
+        helper_end = app_source.index("\nfunction renderDetailView", helper_start)
+        helper_source = app_source[helper_start:helper_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }}
+        function isAutomatedRoute(item) {{ return String(item?.route_status || '').trim() === 'automated'; }}
+        {helper_source}
+        console.log(JSON.stringify({{
+          assigned: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: {{ persona_key: 'sid-bright', version: 2, display_name: 'Sid Bright' }} }}),
+          unassigned: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: null }}),
+          humanReview: renderPersonaAssignment({{ route_status: 'not_automated', persona_assignment: {{ persona_key: 'sid-bright', version: 2, display_name: 'Sid Bright' }} }}),
+          custom: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: {{ persona_key: 'custom-calm', version: 4, display_name: 'Custom Calm' }} }}),
+          constructorKey: renderPersonaAssignment({{ route_status: 'automated', persona_assignment: {{ persona_key: 'constructor', version: 5, display_name: 'Constructor Voice' }} }}),
+        }}));
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = json.loads(result.stdout)
+        self.assertIn("Sid Bright", rendered["assigned"])
+        self.assertIn("v2", rendered["assigned"])
+        self.assertIn("Bright", rendered["assigned"])
+        self.assertIn("Not assigned yet", rendered["unassigned"])
+        self.assertEqual(rendered["humanReview"], "")
+        self.assertIn("Custom Calm", rendered["custom"])
+        self.assertNotIn("Precise", rendered["custom"])
+        self.assertNotIn("Bright", rendered["custom"])
+        self.assertNotIn("Warm", rendered["custom"])
+        self.assertIn("Constructor Voice", rendered["constructorKey"])
+        self.assertIn("v5", rendered["constructorKey"])
+        self.assertNotIn("persona-style-badge", rendered["constructorKey"])
+        self.assertNotIn("undefined", rendered["constructorKey"])
+
+        detail_start = app_source.index("function renderDetailView")
+        detail_end = app_source.index("\nfunction", detail_start + 1)
+        self.assertIn("renderPersonaAssignment(item)", app_source[detail_start:detail_end])
+
+    def test_account_rerun_summary_always_reports_persona_assignment_resets(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        status_start = app_source.index("function renderRerouteStatus")
+        status_end = app_source.index("\nfunction", status_start + 1)
+        status_source = app_source[status_start:status_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? ''); }}
+        function isActiveRerouteJob() {{ return false; }}
+        const state = {{ rerouteError: '', rerouteJob: null }};
+        {status_source}
+        function renderWithResetCount(count) {{
+          state.rerouteJob = {{ status: 'completed', succeeded: 1, changed: 1, persona_assignments_deleted: count }};
+          return renderRerouteStatus();
+        }}
+        console.log(JSON.stringify([renderWithResetCount(0), renderWithResetCount(3)]));
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        zero, nonzero = json.loads(result.stdout)
+        self.assertIn("0 Persona assignments reset", zero)
+        self.assertIn("3 Persona assignments reset", nonzero)
+
+    def test_account_rerun_confirmation_explains_persona_reselection_for_single_and_all(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        confirmation_start = app_source.index("function renderRerouteConfirmation")
+        confirmation_end = app_source.index("\nfunction", confirmation_start + 1)
+        confirmation_source = app_source[confirmation_start:confirmation_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? ''); }}
+        const state = {{
+          rerouteConfirmationOpen: true,
+          rerouteTargetSnapshot: null,
+          isStartingReroute: false,
+        }};
+        {confirmation_source}
+        const allCases = renderRerouteConfirmation();
+        state.rerouteTargetSnapshot = {{ caseId: 'AC-12562', ticketNumber: '12562' }};
+        const singleCase = renderRerouteConfirmation();
+        console.log(JSON.stringify([singleCase, allCases]));
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        single_case, all_cases = json.loads(result.stdout)
+        for rendered in (single_case, all_cases):
+            self.assertIn("pinned Persona assignment will be cleared", rendered)
+            self.assertIn("Only if the rerun produces a new Automation customer reply", rendered)
+            self.assertIn("enabled and have a published version", rendered)
+            self.assertIn("same Persona may be selected again", rendered)
+
+    def test_account_persona_detail_styles_cover_desktop_tablet_and_mobile_contract(self) -> None:
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+        for marker in (
+            ".persona-assignment",
+            ".persona-style-badge",
+            "overflow-wrap: anywhere",
+            "@media (max-width: 960px)",
+            "@media (max-width: 640px)",
+            "overflow-x: hidden",
+        ):
+            self.assertIn(marker, styles)
+
     def test_account_app_posts_title_and_question_to_account_endpoint(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
@@ -265,6 +446,19 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("filterCountsVersion", app_source)
         self.assertIn("countsVersion", app_source)
         self.assertIn("countsVersion >=", app_source)
+        self.assertIn("expectedRevision && entry.revision !== expectedRevision", app_source)
+        self.assertIn(
+            'findDetailCacheEntry(identifier, String(item.detail_revision || ""))',
+            app_source,
+        )
+        self.assertIn(
+            'const expectedRevision = String(summary?.detail_revision || "")',
+            app_source,
+        )
+        self.assertIn(
+            'findDetailCacheEntry(ticketId, String(summary?.detail_revision || ""))',
+            app_source,
+        )
         self.assertIn('window.addEventListener("pagehide"', app_source)
         self.assertIn('document.addEventListener("visibilitychange"', app_source)
         self.assertIn('cache: "no-store"', app_source)

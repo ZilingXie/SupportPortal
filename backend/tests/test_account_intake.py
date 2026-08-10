@@ -25,6 +25,7 @@ from backend.repositories.ticket_repository import (
     ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
     InMemoryTicketRepository,
 )
+from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
@@ -479,6 +480,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert published is not None
         return published
 
+    def _admit_account_reroute_job(self, job: dict[str, object]) -> dict[str, object]:
+        result = self.repository.claim_account_case_rerun(
+            job,
+            active_after="2000-01-01T00:00:00+00:00",
+            request_scope="test:account-reroute-worker",
+        )
+        self.assertEqual(result["status"], "created")
+        return dict(result["job"])
+
     def _create_invoice_ticket_with_response_token(self) -> tuple[dict[str, object], str]:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.send_billing_internal_email",
@@ -519,19 +529,71 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertEqual(created["status"], "queued")
             self.assertEqual(created["mode"], "fresh_case_rerun")
             self.assertEqual(created["reset_mode"], ACCOUNT_RERUN_RESET_AI_ONLY)
+            self.assertEqual(created["persona_assignments_deleted"], 0)
             self.assertTrue(created["job_id"].startswith("account-rerun-"))
-            runner.assert_awaited_once_with(created["job_id"])
+            runner.assert_awaited_once()
+            self.assertEqual(runner.await_args.args[0], created["job_id"])
+            self.assertTrue(str(runner.await_args.args[1]))
 
             latest = self.client.get("/api/account/rerun-jobs/latest")
             self.assertEqual(latest.status_code, 200, latest.text)
-            self.assertEqual(latest.json()["job_id"], created["job_id"])
+            latest_payload = latest.json()
+            self.assertEqual(latest_payload["job_id"], created["job_id"])
+            self.assertEqual(latest_payload["status"], "running")
 
             detail = self.client.get(f"/api/account/rerun-jobs/{created['job_id']}")
             self.assertEqual(detail.status_code, 200, detail.text)
-            self.assertEqual(detail.json()["status"], "queued")
+            self.assertEqual(detail.json()["job_id"], created["job_id"])
+            self.assertEqual(detail.json()["status"], "running")
 
             duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
+
+    def test_account_rerun_admission_gate_blocks_full_and_single_jobs_in_both_directions(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12568",
+                "customer_id": "customer@example.com",
+                "subject": "Shared rerun admission gate",
+                "status": "open",
+                "messages": [],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12568",
+                "client_ticket_id": "12568",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            }
+        )
+        headers = {"Idempotency-Key": "shared-gate-single-12568"}
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            full_job = self.client.post("/api/account/rerun-jobs")
+            blocked_single = self.client.post("/api/account/cases/12568/rerun", headers=headers)
+
+            self.assertEqual(full_job.status_code, 202, full_job.text)
+            self.assertEqual(blocked_single.status_code, 409, blocked_single.text)
+
+            completed_at = main.now_iso()
+            lease_token = str(runner.await_args.args[1])
+            main._save_account_full_reroute_job(
+                {
+                    **full_job.json(),
+                    "status": "completed",
+                    "updated_at": completed_at,
+                    "completed_at": completed_at,
+                },
+                lease_token=lease_token,
+            )
+            single_job = self.client.post("/api/account/cases/12568/rerun", headers=headers)
+            blocked_full = self.client.post("/api/account/rerun-jobs")
+
+        self.assertEqual(single_job.status_code, 202, single_job.text)
+        self.assertEqual(blocked_full.status_code, 409, blocked_full.text)
+        self.assertEqual(runner.await_count, 2)
 
     def test_account_single_case_rerun_targets_only_requested_case(self) -> None:
         self.repository.save_ticket(
@@ -557,7 +619,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
 
         with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
-            response = self.client.post("/api/account/cases/12562/rerun")
+            response = self.client.post(
+                "/api/account/cases/12562/rerun",
+                headers={"Idempotency-Key": "single-case-12562-first"},
+            )
 
         self.assertEqual(response.status_code, 202, response.text)
         payload = response.json()
@@ -568,10 +633,136 @@ class AccountIntakeApiTests(unittest.TestCase):
             ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
         )
         self.assertEqual(payload["audit_actor_id"], "account_ui")
-        runner.assert_awaited_once_with(payload["job_id"])
+        self.assertEqual(payload["persona_assignments_deleted"], 0)
+        runner.assert_awaited_once()
+        self.assertEqual(runner.await_args.args[0], payload["job_id"])
+        self.assertTrue(str(runner.await_args.args[1]))
 
-        duplicate = self.client.post("/api/account/cases/AC-12562/rerun")
+        duplicate = self.client.post(
+            "/api/account/cases/AC-12562/rerun",
+            headers={"Idempotency-Key": "single-case-12562-second"},
+        )
         self.assertEqual(duplicate.status_code, 409, duplicate.text)
+
+    def test_account_single_case_rerun_replays_same_job_and_schedules_worker_once(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12564",
+                "customer_id": "customer@example.com",
+                "subject": "Replay-safe Account Case",
+                "status": "open",
+                "messages": [],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12564",
+                "client_ticket_id": "12564",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            }
+        )
+        headers = {"Idempotency-Key": "single-case-12564-replay"}
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            first = self.client.post("/api/account/cases/12564/rerun", headers=headers)
+            replay = self.client.post("/api/account/cases/AC-12564/rerun", headers=headers)
+
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(replay.status_code, 202, replay.text)
+        first_payload = first.json()
+        replay_payload = replay.json()
+        self.assertEqual(first_payload["status"], "queued")
+        self.assertEqual(replay_payload["job_id"], first_payload["job_id"])
+        self.assertEqual(replay_payload["status"], "running")
+        runner.assert_awaited_once()
+        self.assertEqual(runner.await_args.args[0], first_payload["job_id"])
+        self.assertTrue(str(runner.await_args.args[1]))
+        jobs = self.repository.list_account_reroute_jobs()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["job_id"], first_payload["job_id"])
+        self.assertEqual(jobs[0]["status"], "running")
+        self.assertEqual(
+            self.repository.list_ticket_events(main.ACCOUNT_FULL_REROUTE_JOB_TICKET_ID),
+            [],
+        )
+
+    def test_account_single_case_rerun_rejects_same_key_for_another_case(self) -> None:
+        for ticket_id in ("12565", "12566"):
+            self.repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": "customer@example.com",
+                    "subject": "Scoped Account Case",
+                    "status": "open",
+                    "messages": [],
+                }
+            )
+            self.repository.save_account_case(
+                {
+                    "account_case_id": f"AC-{ticket_id}",
+                    "client_ticket_id": ticket_id,
+                    "route_status": "automated",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                }
+            )
+        headers = {"Idempotency-Key": "single-case-cross-case-conflict"}
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            first = self.client.post("/api/account/cases/12565/rerun", headers=headers)
+            conflict = self.client.post("/api/account/cases/12566/rerun", headers=headers)
+
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(conflict.json()["detail"]["code"], "idempotency_scope_conflict")
+        runner.assert_awaited_once()
+
+    def test_account_single_case_rerun_allows_no_key_but_rejects_a_malformed_key(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12567",
+                "customer_id": "customer@example.com",
+                "subject": "Validated Account Case",
+                "status": "open",
+                "messages": [],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12567",
+                "client_ticket_id": "12567",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            }
+        )
+
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            missing = self.client.post("/api/account/cases/12567/rerun")
+            malformed = self.client.post(
+                "/api/account/cases/12567/rerun",
+                headers={"Idempotency-Key": "contains spaces"},
+            )
+            empty = self.client.post(
+                "/api/account/cases/12567/rerun",
+                headers={"Idempotency-Key": ""},
+            )
+
+        self.assertEqual(missing.status_code, 202, missing.text)
+        payload = missing.json()
+        self.assertEqual(payload["scope"], "single_case")
+        self.assertEqual(payload["target_case_ids"], ["AC-12567"])
+        self.assertEqual(malformed.status_code, 422, malformed.text)
+        self.assertEqual(malformed.json()["detail"]["code"], "invalid_idempotency_key")
+        self.assertEqual(empty.status_code, 422, empty.text)
+        self.assertEqual(empty.json()["detail"]["code"], "invalid_idempotency_key")
+        runner.assert_awaited_once()
+        stored = self.repository.get_account_reroute_job(payload["job_id"])
+        assert stored is not None
+        self.assertIsNone(stored.get("idempotency_scope"))
+        self.assertIsNone(stored.get("idempotency_key"))
 
     def test_single_case_rerun_worker_does_not_process_other_cases(self) -> None:
         for ticket_id, case_id in (("12562", "AC-12562"), ("12563", "AC-12563")):
@@ -607,6 +798,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "secondary_label": "Agora / Uncategorized",
                 }
             )
+        self.repository.resolve_account_persona("12562")
 
         result = SimpleNamespace(
             account_case={
@@ -655,7 +847,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest["scope"], "single_case")
         self.assertEqual(latest["total"], 1)
         self.assertEqual(latest["processed"], 1)
+        self.assertEqual(latest["persona_assignments_deleted"], 1)
         self.assertEqual(latest["route_counts"], {"Human Review / Uncategorized": 1})
+        self.assertIsNone(self.repository.get_account_persona_assignment("12562"))
         self.assertEqual(
             self.repository.get_account_case("AC-12563")["secondary_label"],
             "Agora / Uncategorized",
@@ -675,6 +869,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             [event["event_type"] for event in audit_events],
             ["account_case_full_rerun_completed", "account_case_full_rerun_reset"],
         )
+        self.assertEqual(audit_events[0]["payload"]["persona_assignments_deleted"], 1)
+        self.assertEqual(audit_events[1]["payload"]["persona_assignments_deleted"], 1)
         self.assertNotIn("Private manual note", json.dumps(audit_events))
 
     def test_account_case_lookup_uses_exact_ticket_number(self) -> None:
@@ -820,9 +1016,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
 
     def test_account_full_reroute_returns_retryable_503_when_storage_is_unavailable(self) -> None:
-        with patch.object(
-            main,
-            "_account_full_reroute_jobs",
+        with patch.object(main, "_ACCOUNT_RERUN_STORAGE_RETRY_DELAYS", (0.0, 0.0, 0.0, 0.0)), patch.object(
+            self.repository,
+            "claim_account_case_rerun",
             side_effect=psycopg.OperationalError("ticket db pool acquire budget exhausted"),
         ), patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
             response = self.client.post("/api/account/rerun-jobs")
@@ -835,9 +1031,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         runner.assert_not_awaited()
 
     def test_account_full_reroute_does_not_schedule_when_job_persistence_fails(self) -> None:
-        with patch.object(main, "_account_full_reroute_jobs", return_value=[]), patch.object(
-            main,
-            "_save_account_full_reroute_job",
+        with patch.object(main, "_ACCOUNT_RERUN_STORAGE_RETRY_DELAYS", (0.0, 0.0, 0.0, 0.0)), patch.object(
+            self.repository,
+            "claim_account_case_rerun",
             side_effect=psycopg.OperationalError("ticket db pool acquire budget exhausted"),
         ), patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
             response = self.client.post("/api/account/rerun-jobs")
@@ -904,8 +1100,18 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "payload": {"content": "Old Account reply"},
             }
         )
+        with patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-07-31T08:32:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=lambda candidates: next(
+                candidate for candidate in candidates if candidate["persona_key"] == "sid-bright"
+            ),
+        ):
+            old_assignment = self.repository.resolve_account_persona("12513")
         created_at = main.now_iso()
-        main._save_account_full_reroute_job(
+        self._admit_account_reroute_job(
             {
                 "job_id": "account-reroute-test",
                 "status": "queued",
@@ -968,10 +1174,21 @@ class AccountIntakeApiTests(unittest.TestCase):
             main,
             "_send_enablement_internal_email_attempt",
             AsyncMock(return_value=("sent", "")),
-        ) as sender:
+        ) as sender, patch(
+            "backend.repositories.ticket_repository._utc_now",
+            return_value="2026-08-01T00:00:00+00:00",
+        ), patch(
+            "backend.repositories.ticket_repository.random.choice",
+            side_effect=lambda candidates: next(
+                candidate
+                for candidate in candidates
+                if candidate["persona_key"] == old_assignment["persona_key"]
+            ),
+        ) as chooser:
             asyncio.run(main._run_account_full_reroute_job("account-reroute-test"))
 
         sender.assert_awaited_once()
+        self.assertEqual(chooser.call_count, 1)
         stored = self.repository.get_account_case("AC-12513")
         assert stored is not None
         self.assertEqual(stored["internal_email_send_status"], "sent")
@@ -980,6 +1197,13 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert reply_job is not None
         self.assertEqual(reply_job["trigger_message_created_at"], "2026-07-31T08:30:00+00:00")
         self.assertIn(":rerun:account-reroute-test", reply_job["payload"]["automation_delivery_key"])
+        new_assignment = self.repository.get_account_persona_assignment("12513")
+        assert new_assignment is not None
+        self.assertEqual(new_assignment["persona_key"], old_assignment["persona_key"])
+        self.assertEqual(new_assignment["version"], old_assignment["version"])
+        self.assertNotEqual(new_assignment["assigned_at"], old_assignment["assigned_at"])
+        self.assertEqual(reply_job["payload"]["persona_key"], new_assignment["persona_key"])
+        self.assertEqual(reply_job["payload"]["persona_version"], new_assignment["version"])
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None
         self.assertEqual(latest_job["status"], "completed")
@@ -989,6 +1213,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest_job["reply_jobs_deleted"], 1)
         self.assertEqual(latest_job["reply_executions_deleted"], 1)
         self.assertEqual(latest_job["customer_replies_cleared"], 1)
+        self.assertEqual(latest_job["persona_assignments_deleted"], 1)
         self.assertIsNone(self.repository.get_account_reply_job("old-account-reply"))
         self.assertEqual(self.repository.list_account_reply_executions("12513"), [])
         stored_ticket = self.repository.get_ticket("12513")
@@ -997,6 +1222,234 @@ class AccountIntakeApiTests(unittest.TestCase):
             [message["role"] for message in stored_ticket["messages"]],
             ["customer"],
         )
+
+    def test_full_reroute_automated_internal_email_without_customer_reply_does_not_pin_persona(self) -> None:
+        ticket_id = "12513-NO-REPLY"
+        account_case_id = "AC-12513-NO-REPLY"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "requester": "customer@example.com",
+                "subject": "Enablement without confirmation",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Process this internally without a customer reply.",
+                        "created_at": "2026-07-31T09:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        account_case = {
+            "account_case_id": account_case_id,
+            "billing_ticket_id": account_case_id,
+            "client_ticket_id": ticket_id,
+            "route": "enablement",
+            "scope_label": "automation",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+        }
+        self.repository.save_account_case(account_case)
+        self.repository.resolve_account_persona(ticket_id)
+        job = asyncio.run(
+            main._enqueue_account_rerun_job(SimpleNamespace(add_task=lambda *args: None))
+        )
+        updated_case = {
+            **account_case,
+            "category": "automation",
+            "subcategory": "enablement",
+            "internal_email_send_status": "pending",
+            "internal_email_payload": {"delivery_key": "delivery-no-reply"},
+            "route_classification": {
+                "primary_label": "Agora",
+                "secondary_label": "Automation / Enablement",
+            },
+        }
+        result = SimpleNamespace(
+            account_case=updated_case,
+            route_execution={"ticket_id": ticket_id, "classification": updated_case["route_classification"]},
+            changed=True,
+            handler_status="completed",
+            internal_email_to_send={
+                "to": "internal@example.com",
+                "subject": "Enablement",
+                "body": "Request",
+                "delivery_key": "delivery-no-reply",
+            },
+            email_handler="enablement",
+            customer_reply="",
+            reply_kind=None,
+            asked_field_keys=(),
+        )
+        original_resolve = self.repository.resolve_account_persona
+
+        with patch.object(main, "reprocess_account_case", return_value=result), patch.object(
+            main,
+            "_send_enablement_internal_email_attempt",
+            AsyncMock(return_value=("sent", "")),
+        ) as sender, patch.object(
+            self.repository,
+            "resolve_account_persona",
+            wraps=original_resolve,
+        ) as resolve:
+            asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
+
+        sender.assert_awaited_once()
+        resolve.assert_not_called()
+        self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
+        self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
+        latest_job = main._account_full_reroute_job(job["job_id"])
+        assert latest_job is not None
+        self.assertEqual(latest_job["status"], "completed")
+        self.assertEqual(latest_job["persona_assignments_deleted"], 1)
+        self.assertEqual(latest_job["replies_scheduled"], 0)
+
+    def test_full_reroute_persona_unavailable_moves_case_to_human_review_before_email(self) -> None:
+        ticket = {
+            "ticket_id": "12514",
+            "customer_id": "customer@example.com",
+            "requester": "customer@example.com",
+            "subject": "Enable media relay",
+            "status": "open",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable media relay for alpha.",
+                    "created_at": "2026-07-31T08:30:00+00:00",
+                }
+            ],
+        }
+        account_case = {
+            "account_case_id": "AC-12514",
+            "billing_ticket_id": "AC-12514",
+            "client_ticket_id": "12514",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "internal_email_send_status": "pending",
+            "internal_email_payload": {"delivery_key": "enablement:AC-12514:v1"},
+        }
+        self.repository.save_ticket(ticket)
+        self.repository.save_account_case(account_case)
+        self.repository.resolve_account_persona("12514")
+        created_at = main.now_iso()
+        self._admit_account_reroute_job(
+            {
+                "job_id": "account-reroute-persona-unavailable",
+                "status": "queued",
+                "total": 0,
+                "processed": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "changed": 0,
+                "route_counts": {},
+                "handler_counts": {},
+                "emails_sent": 0,
+                "emails_skipped": 0,
+                "emails_failed": 0,
+                "replies_scheduled": 0,
+                "failures": [],
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+        )
+        updated_case = {
+            **account_case,
+            "route": "enablement",
+            "execution_action": "enablement",
+            "route_family": "automated",
+            "route_status": "automated",
+            "category": "automation",
+            "subcategory": "enablement",
+            "automation_handler": "enablement",
+            "customer_reply": None,
+            "internal_email_send_status": "pending",
+            "internal_email_payload": {"delivery_key": "delivery-12514"},
+            "collected_fields": {
+                "app_id": "alpha",
+                "requested_feature": "media_relay",
+            },
+            "route_classification": {
+                "intent_class": "agora",
+                "agora_route": "backend_operation",
+                "account_billing_subcategory": None,
+                "backend_operation_subcategory": "enablement",
+                "automation_subcategory": None,
+                "primary_label": "Agora",
+                "secondary_label": "Automation / Enablement",
+                "route_target": "automation",
+            },
+        }
+        result = SimpleNamespace(
+            account_case=updated_case,
+            route_execution={"ticket_id": "12514", "classification": updated_case["route_classification"]},
+            changed=True,
+            handler_status="completed",
+            internal_email_to_send={
+                "to": "internal@example.com",
+                "subject": "Enablement",
+                "body": "Request",
+                "delivery_key": "delivery-12514",
+            },
+            email_handler="enablement",
+            customer_reply="",
+            reply_kind="submission_confirmation",
+            asked_field_keys=(),
+        )
+        call_order: list[str] = []
+
+        def unavailable_persona(_ticket_id: str) -> dict[str, object]:
+            call_order.append("persona")
+            raise AccountPersonaUnavailableError("no enabled published persona")
+
+        async def unexpected_email(_attempt: dict[str, object]) -> tuple[str, str]:
+            call_order.append("email")
+            return "sent", ""
+
+        with patch.object(main, "reprocess_account_case", return_value=result), patch.object(
+            self.repository,
+            "resolve_account_persona",
+            side_effect=unavailable_persona,
+        ), patch.object(
+            main,
+            "_send_enablement_internal_email_attempt",
+            AsyncMock(side_effect=unexpected_email),
+        ) as sender:
+            asyncio.run(main._run_account_full_reroute_job("account-reroute-persona-unavailable"))
+
+        self.assertEqual(call_order, ["persona"])
+        sender.assert_not_awaited()
+        stored = self.repository.get_account_case("AC-12514")
+        assert stored is not None
+        self.assertEqual(stored["route"], "human_review_required")
+        self.assertEqual(stored["automation_status"], "not_automated")
+        self.assertEqual(
+            stored["route_classification"]["human_review_reason"],
+            "no enabled published persona",
+        )
+        self.assertIsNone(stored["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(stored["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(stored["route_classification"]["automation_subcategory"])
+        self.assertEqual(stored["route_classification"]["primary_label"], "Human Review")
+        self.assertEqual(stored["route_classification"]["secondary_label"], "Uncategorized")
+        self.assertIsNone(self.repository.get_latest_account_reply_job("12514"))
+        executions = self.repository.list_account_route_executions("12514")
+        self.assertEqual(len(executions), 1)
+        self.assertEqual(
+            executions[0]["classification"]["human_review_reason"],
+            "no enabled published persona",
+        )
+        rerun_job = main._account_full_reroute_job("account-reroute-persona-unavailable")
+        assert rerun_job is not None
+        self.assertEqual(rerun_job["status"], "completed")
+        self.assertEqual(rerun_job["succeeded"], 1)
+        self.assertEqual(rerun_job["failed"], 0)
+        self.assertEqual(rerun_job["persona_assignments_deleted"], 1)
+        self.assertIsNone(self.repository.get_account_persona_assignment("12514"))
 
     def test_account_rerun_storage_call_retries_transient_pool_failure(self) -> None:
         attempts = 0
@@ -1254,8 +1707,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         replies = self.repository.list_account_reply_executions(payload["ticket_id"])
         self.assertEqual(len(replies), 1)
-        self.assertEqual(replies[0]["persona_key"], "default-support")
-        self.assertEqual(replies[0]["persona_version"], 1)
+        assignment = self.repository.get_account_persona_assignment(payload["ticket_id"])
+        assert assignment is not None
+        self.assertIn(
+            assignment["persona_key"],
+            {"default-support", "sid-bright", "sid-precise"},
+        )
+        self.assertEqual(
+            (replies[0]["persona_key"], replies[0]["persona_version"]),
+            (assignment["persona_key"], assignment["version"]),
+        )
         self.assertEqual(replies[0]["reply_kind"], "detailed_invoice")
 
     def test_account_intake_routes_enablement_and_sends_internal_request(self) -> None:
@@ -1305,6 +1766,501 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(email_payload["recipient_config_key"], "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL")
         self.assertIn("[Enablement Request]", email_payload["subject"])
         self.assertIn(payload["account_case_id"], email_payload["body"])
+
+    def test_account_intake_persona_unavailable_persists_human_review_without_automation_side_effects(self) -> None:
+        unhandled_client = TestClient(main.app, raise_server_exceptions=False)
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            self.repository,
+            "resolve_account_persona",
+            side_effect=AccountPersonaUnavailableError("no enabled published persona"),
+        ), patch.object(
+            main,
+            "_send_enablement_internal_email_attempt",
+            AsyncMock(),
+        ) as sender:
+            response = unhandled_client.post(
+                "/account",
+                json={
+                    "title": "Enable Media Relay Feature",
+                    "question": (
+                        "My App ID is : 7da36383d624411698e5c0bc1fda6324. "
+                        "Please enable Media Relay from your end."
+                    ),
+                    "customer_email": "customer@example.com",
+                },
+            )
+        unhandled_client.close()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        sender.assert_not_awaited()
+        payload = response.json()
+        self.assertEqual(payload["status"], "not_automated")
+        self.assertEqual(payload["route"], "human_review_required")
+        self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
+        account_case = self.repository.get_account_case(payload["account_case_id"])
+        assert account_case is not None
+        self.assertEqual(
+            account_case["route_classification"]["human_review_reason"],
+            "no enabled published persona",
+        )
+        self.assertIsNone(account_case["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(account_case["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        self.assertEqual(account_case["route_classification"]["primary_label"], "Human Review")
+        self.assertEqual(account_case["route_classification"]["secondary_label"], "Uncategorized")
+
+    def test_support_message_persona_unavailable_returns_human_review_without_rendering(self) -> None:
+        resolution = SupportResolution(
+            answer="",
+            confidence=0.9,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="enablement",
+            scope_label="automation",
+            route_reason="registered_enablement",
+            route_confidence=0.9,
+            search_used=False,
+            route_family="automated",
+            execution_action="enablement",
+            evidence_summary={
+                "enablement_missing_fields": ["app_id"],
+                "enablement_collected_fields": {},
+                "enablement_internal_email_send_status": "not_ready",
+                "enablement_requires_human_review": False,
+            },
+        )
+        with patch.object(main, "resolve_support_route_message", return_value=resolution), patch.object(
+            self.repository,
+            "resolve_account_persona",
+            side_effect=AccountPersonaUnavailableError("no enabled published persona"),
+        ), patch.object(main, "render_automation_reply") as render:
+            rendered = main.resolve_support_message(
+                "Please enable media relay.",
+                ticket_id="12515",
+            )
+
+        self.assertEqual(rendered.answer, "")
+        self.assertEqual(rendered.route_family, "human_review")
+        self.assertEqual(rendered.route_reason, "no enabled published persona")
+        self.assertIs(rendered.evidence_summary["account_persona_unavailable"], True)
+        render.assert_not_called()
+
+    def test_support_message_persona_render_failure_does_not_mark_persona_unavailable(self) -> None:
+        resolution = SupportResolution(
+            answer="",
+            confidence=0.9,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="enablement",
+            scope_label="automation",
+            route_reason="registered_enablement",
+            route_confidence=0.9,
+            search_used=False,
+            route_family="automated",
+            execution_action="enablement",
+            evidence_summary={
+                "enablement_missing_fields": ["app_id"],
+                "enablement_collected_fields": {},
+                "enablement_internal_email_send_status": "not_ready",
+                "enablement_requires_human_review": False,
+            },
+        )
+        with patch.object(main, "resolve_support_route_message", return_value=resolution), patch.object(
+            self.repository,
+            "get_account_case_by_ticket_id",
+            return_value={"customer_name": "Alice"},
+        ), patch.object(
+            self.repository,
+            "resolve_account_persona",
+            return_value={"persona_key": "helpful", "version": 1, "content": {}},
+        ), patch.object(
+            main,
+            "render_automation_reply",
+            side_effect=AutomationPersonaError("persona render failed"),
+        ):
+            rendered = main.resolve_support_message(
+                "Please enable media relay.",
+                ticket_id="12515",
+            )
+
+        self.assertEqual(rendered.answer, "")
+        self.assertEqual(rendered.route_family, "human_review")
+        self.assertEqual(rendered.route_reason, "persona render failed")
+        self.assertNotIn("account_persona_unavailable", rendered.evidence_summary)
+
+    def test_billing_resolution_persona_unavailable_stops_customer_copy(self) -> None:
+        customer_message_created_at = "2026-08-08T00:00:00+00:00"
+        billing_ticket = {
+            "billing_ticket_id": "AC-12516",
+            "account_case_id": "AC-12516",
+            "client_ticket_id": "12516",
+            "execution_action": "detailed_invoice",
+            "route": "detailed_invoice",
+            "route_family": "automated",
+            "category": "account_billing",
+            "subcategory": "detailed_invoice",
+            "route_status": "automated",
+            "automation_handler": "billing",
+            "tooling_profile": "deterministic_billing_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "intent_class": "agora",
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "detailed_invoice",
+                "backend_operation_subcategory": None,
+                "automation_subcategory": None,
+                "route_target": "automation",
+                "handler_binding_status": "active",
+                "primary_label": "Agora",
+                "secondary_label": "Account & Billing / Detailed Invoice",
+            },
+            "customer_name": "Alice",
+        }
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12516",
+                "customer_id": "alice@example.com",
+                "requester": "alice@example.com",
+                "subject": "Invoice request",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please send the invoice.",
+                        "created_at": customer_message_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(billing_ticket)
+        self.repository.save_account_reply_job(
+            {
+                "job_id": "account-reply-billing-unavailable",
+                "ticket_id": "12516",
+                "trigger_message_created_at": customer_message_created_at,
+                "status": "persona_scheduled",
+                "scheduled_for": "2026-08-08T00:01:00+00:00",
+                "payload": {
+                    "generated_content": "This delayed reply must not be sent.",
+                    "effective_prompt": {"instruction": "Pinned prompt"},
+                    "persona_key": "default-support",
+                    "persona_version": 1,
+                },
+                "created_at": "2026-08-08T00:00:30+00:00",
+            }
+        )
+        with patch.object(
+            self.repository,
+            "resolve_account_persona",
+            side_effect=AccountPersonaUnavailableError("no enabled published persona"),
+        ), patch.object(main, "render_automation_reply") as render:
+            reply = main._render_billing_resolution_customer_reply(
+                billing_ticket=billing_ticket,
+                note="The detailed invoice is ready.",
+                customer_message="Please send the invoice.",
+                title="Invoice request",
+                ticket_id="12516",
+            )
+
+        original_publish = self.repository.publish_account_reply
+        with patch.object(
+            self.repository,
+            "publish_account_reply",
+            wraps=original_publish,
+        ) as publish:
+            claimed = self.repository.claim_account_reply_jobs(
+                from_status="persona_scheduled",
+                to_status="persona_publishing",
+                now_value="2026-08-08T00:02:00+00:00",
+                limit=10,
+                due_only=False,
+            )
+            for claimed_job in claimed:
+                worker._publish_account_reply_job(claimed_job)
+
+        self.assertEqual(reply, "")
+        render.assert_not_called()
+        stored = self.repository.get_billing_ticket("AC-12516")
+        stored_job = self.repository.get_account_reply_job(
+            "account-reply-billing-unavailable"
+        )
+        assert stored is not None
+        assert stored_job is not None
+        self.assertEqual(stored_job["status"], "cancelled")
+        self.assertEqual(claimed, [])
+        publish.assert_not_called()
+        messages = self.repository.get_ticket("12516")["messages"]
+        self.assertFalse(
+            any(
+                str(message.get("source") or "") == "account_ai"
+                for message in messages
+                if isinstance(message, dict)
+            )
+        )
+        self.assertEqual(stored["route"], "human_review_required")
+        self.assertEqual(stored["not_automated_reason"], "no enabled published persona")
+        self.assertEqual(stored["category"], "human_review")
+        self.assertEqual(stored["subcategory"], "human_review_required")
+        self.assertEqual(stored["route_status"], "not_automated")
+        self.assertIsNone(stored["automation_handler"])
+        self.assertIsNone(stored["tooling_profile"])
+        self.assertEqual(stored["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(stored["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(stored["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(stored["route_classification"]["automation_subcategory"])
+        self.assertEqual(stored["route_classification"]["primary_label"], "Human Review")
+        self.assertEqual(stored["route_classification"]["secondary_label"], "Uncategorized")
+        self.assertNotIn(
+            "predicted_automation_subcategory",
+            stored["route_classification"],
+        )
+
+    def test_claimed_delayed_reply_cannot_publish_after_case_moves_to_human_review(self) -> None:
+        ticket_id = "12516-CLAIMED"
+        job_id = "account-reply-billing-claimed"
+        trigger_created_at = "2026-08-08T00:10:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "claimed@example.com",
+                "requester": "claimed@example.com",
+                "subject": "Claimed invoice reply",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please send the invoice.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": f"AC-{ticket_id}",
+                "account_case_id": f"AC-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "route": "human_review_required",
+                "scope_label": "human_review",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "category": "human_review",
+                "subcategory": "human_review_required",
+                "route_status": "not_automated",
+                "automation_handler": None,
+                "automation_status": "not_automated",
+                "policy_decision": "account_persona_unavailable_human_review",
+                "not_automated_reason": "no enabled published persona",
+                "route_reason": "no enabled published persona",
+            }
+        )
+        job = self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_publishing",
+                "scheduled_for": "2026-08-08T00:11:00+00:00",
+                "payload": {
+                    "generated_content": "This claimed reply must not be sent.",
+                    "effective_prompt": {"instruction": "Pinned prompt"},
+                    "persona_key": "default-support",
+                    "persona_version": 1,
+                },
+                "claimed_at": "2026-08-08T00:11:00+00:00",
+                "created_at": "2026-08-08T00:10:30+00:00",
+            }
+        )
+
+        worker._publish_account_reply_job(job)
+
+        stored_job = self.repository.get_account_reply_job(job_id)
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        stored_case = self.repository.get_billing_ticket(f"AC-{ticket_id}")
+        assert stored_job is not None
+        assert stored_ticket is not None
+        assert stored_case is not None
+        self.assertEqual(stored_job["status"], "manual_attention")
+        self.assertEqual(stored_job["payload"]["persona_render_status"], "human_review")
+        self.assertEqual(
+            stored_job["payload"]["error"],
+            "no enabled published persona",
+        )
+        self.assertEqual(
+            [
+                message
+                for message in stored_ticket["messages"]
+                if str(message.get("source") or "") == "account_ai"
+            ],
+            [],
+        )
+        self.assertFalse(stored_case.get("customer_reply"))
+        self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
+
+    def test_reset_deleted_claimed_job_cannot_be_recreated_by_stale_publish(self) -> None:
+        ticket_id = "12516-RESET-FIRST"
+        job_id = "account-reply-reset-first"
+        trigger_created_at = "2026-08-08T00:20:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "reset-first@example.com",
+                "requester": "reset-first@example.com",
+                "subject": "Reset claimed reply",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable this feature.",
+                        "created_at": trigger_created_at,
+                    }
+                ],
+            }
+        )
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": f"AC-{ticket_id}",
+                "account_case_id": f"AC-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "route": "enablement",
+                "scope_label": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "category": "automation",
+                "subcategory": "enablement",
+                "route_status": "automated",
+                "automation_handler": "enablement",
+                "automation_status": "internal_processing",
+            }
+        )
+        stale_job = self.repository.save_account_reply_job(
+            {
+                "job_id": job_id,
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": trigger_created_at,
+                "status": "persona_publishing",
+                "scheduled_for": "2026-08-08T00:21:00+00:00",
+                "payload": {
+                    "generated_content": "This stale reply must not be sent.",
+                    "persona_key": "default-support",
+                    "persona_version": 1,
+                },
+                "claimed_at": "2026-08-08T00:21:00+00:00",
+                "created_at": "2026-08-08T00:20:30+00:00",
+            }
+        )
+
+        reset_result = self.repository.reset_account_rerun_state(
+            ticket_id,
+            reset_at="2026-08-08T00:22:00+00:00",
+            rerun_job_id="account-rerun-reset-first",
+            clear_persona_assignment=True,
+        )
+        with self.assertRaises(KeyError):
+            self.repository.publish_account_reply(
+                stale_job,
+                content="This stale reply must not be sent.",
+                payload=dict(stale_job["payload"]),
+                published_at="2026-08-08T00:23:00+00:00",
+                reply_execution={
+                    "execution_id": f"reply-{job_id}",
+                    "ticket_id": ticket_id,
+                    "reply_kind": "enablement",
+                },
+            )
+
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        stored_case = self.repository.get_billing_ticket(f"AC-{ticket_id}")
+        assert stored_ticket is not None
+        assert stored_case is not None
+        self.assertEqual(reset_result["reply_jobs_deleted"], 1)
+        self.assertIsNone(self.repository.get_account_reply_job(job_id))
+        self.assertEqual(self.repository.list_account_reply_executions(ticket_id), [])
+        self.assertFalse(stored_case.get("customer_reply"))
+        self.assertEqual(
+            [
+                message
+                for message in stored_ticket["messages"]
+                if str(message.get("source") or "") == "account_ai"
+            ],
+            [],
+        )
+
+    def test_billing_resolution_persona_render_failure_uses_generic_human_review(self) -> None:
+        billing_ticket = {
+            "billing_ticket_id": "AC-12517",
+            "account_case_id": "AC-12517",
+            "client_ticket_id": "12517",
+            "execution_action": "detailed_invoice",
+            "route": "detailed_invoice",
+            "route_family": "automated",
+            "category": "account_billing",
+            "subcategory": "detailed_invoice",
+            "route_status": "automated",
+            "automation_handler": "billing",
+            "tooling_profile": "deterministic_billing_intake",
+            "automation_status": "automation",
+            "route_classification": {
+                "intent_class": "agora",
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "detailed_invoice",
+                "backend_operation_subcategory": None,
+                "route_target": "automation",
+                "automation_subcategory": None,
+                "handler_binding_status": "active",
+                "primary_label": "Agora",
+                "secondary_label": "Account & Billing / Detailed Invoice",
+            },
+            "customer_name": "Alice",
+        }
+        with patch.object(
+            self.repository,
+            "resolve_account_persona",
+            return_value={"persona_key": "sid-warm", "version": 1, "content": {}},
+        ), patch.object(
+            main,
+            "extract_automation_resolution_facts",
+            return_value={
+                "customer_shareable_facts": ["The detailed invoice is ready."],
+                "customer_action": None,
+                "next_step": None,
+                "status": "completed",
+            },
+        ), patch.object(
+            main,
+            "render_automation_reply",
+            side_effect=AutomationPersonaError("persona render failed"),
+        ):
+            reply = main._render_billing_resolution_customer_reply(
+                billing_ticket=billing_ticket,
+                note="The detailed invoice is ready.",
+                customer_message="Please send the invoice.",
+                title="Invoice request",
+                ticket_id="12517",
+            )
+
+        self.assertEqual(reply, "")
+        stored = self.repository.get_billing_ticket("AC-12517")
+        assert stored is not None
+        self.assertEqual(stored["policy_decision"], "automation_persona_human_review")
+        self.assertEqual(stored["route"], "human_review_required")
+        self.assertEqual(stored["category"], "human_review")
+        self.assertEqual(stored["subcategory"], "human_review_required")
+        self.assertEqual(stored["route_status"], "not_automated")
+        self.assertIsNone(stored["automation_handler"])
+        self.assertIsNone(stored["tooling_profile"])
+        self.assertEqual(stored["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(stored["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(stored["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(stored["route_classification"]["automation_subcategory"])
+        self.assertEqual(stored["route_classification"]["primary_label"], "Human Review")
+        self.assertEqual(stored["route_classification"]["secondary_label"], "Uncategorized")
+        self.assertNotIn(
+            "predicted_automation_subcategory",
+            stored["route_classification"],
+        )
 
     def test_quota_intake_asks_once_then_sends_available_details(self) -> None:
         decision = SupportRouteDecision(
@@ -1432,6 +2388,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
+        self.assertIsNone(payload["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(payload["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(payload["route_classification"]["automation_subcategory"])
         self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
         send_email.assert_not_called()
 
@@ -1515,6 +2474,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
+        self.assertIsNone(payload["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(payload["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(payload["route_classification"]["automation_subcategory"])
         latest_reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(latest_reply_job)
         assert latest_reply_job is not None
@@ -2158,6 +3120,89 @@ class AccountIntakeApiTests(unittest.TestCase):
             "resolved_without_customer_notification",
         )
 
+    def test_billing_response_submit_no_notify_rejects_token_reset_before_commit(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        ticket_id = str(create_payload["ticket_id"])
+        original_builder = main.build_billing_internal_resolution_event
+
+        def reset_then_build(**kwargs):
+            self.repository.reset_account_rerun_state(
+                ticket_id,
+                reset_at="2026-07-18T00:01:00+00:00",
+                rerun_job_id="account-rerun-token-reset-no-notify",
+                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                clear_persona_assignment=True,
+            )
+            return original_builder(**kwargs)
+
+        with patch.object(
+            main,
+            "build_billing_internal_resolution_event",
+            side_effect=reset_then_build,
+        ):
+            response = self.client.post(
+                "/api/billing-response/submit",
+                json={
+                    "token": raw_token,
+                    "result": "completed",
+                    "notify_customer": False,
+                    "note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(
+            self.client.get(f"/api/billing-response?token={raw_token}").status_code,
+            404,
+        )
+        self.assertNotIn(
+            "billing_internal_resolution_submitted",
+            [item["event_type"] for item in self.repository.list_ticket_events(ticket_id)],
+        )
+
+    def test_billing_response_submit_notify_rejects_token_reset_during_render(self) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        ticket_id = str(create_payload["ticket_id"])
+
+        def reset_then_render(**_kwargs):
+            self.repository.reset_account_rerun_state(
+                ticket_id,
+                reset_at="2026-07-18T00:01:00+00:00",
+                rerun_job_id="account-rerun-token-reset-notify",
+                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                clear_persona_assignment=True,
+            )
+            return "Hi Customer,\n\nThe invoice is ready.\n\nBest Regards,\nSid"
+
+        with patch.object(
+            main,
+            "_render_billing_resolution_customer_reply",
+            side_effect=reset_then_render,
+        ):
+            response = self.client.post(
+                "/api/billing-response/submit",
+                json={
+                    "token": raw_token,
+                    "result": "completed",
+                    "notify_customer": True,
+                    "note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        stored_ticket = self.repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        self.assertFalse(
+            any(
+                message.get("source") == "billing_response_ai"
+                for message in stored_ticket["messages"]
+            )
+        )
+        self.assertNotIn(
+            "billing_customer_followup_generated",
+            [item["event_type"] for item in self.repository.list_ticket_events(ticket_id)],
+        )
+
     def test_billing_response_submit_rejects_second_submit(self) -> None:
         _, raw_token = self._create_invoice_ticket_with_response_token()
         first_response = self.client.post(
@@ -2290,7 +3335,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(status_seen_during_dispatch, ["resolved_without_customer_notification"])
 
-    def test_billing_response_submit_notify_failure_keeps_internal_resolution_status(self) -> None:
+    def test_billing_response_submit_persona_failure_commits_human_review_atomically(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
         before_ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
         self.assertIsNotNone(before_ticket)
@@ -2319,7 +3364,23 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert billing_ticket is not None
         self.assertEqual(billing_ticket["automation_status"], "not_automated")
         self.assertEqual(billing_ticket["route_family"], "human_review")
+        self.assertEqual(billing_ticket["category"], "human_review")
+        self.assertEqual(billing_ticket["subcategory"], "human_review_required")
+        self.assertEqual(billing_ticket["route_status"], "not_automated")
+        self.assertIsNone(billing_ticket["automation_handler"])
+        self.assertIsNone(billing_ticket["tooling_profile"])
+        self.assertEqual(
+            billing_ticket["policy_decision"],
+            "automation_persona_human_review",
+        )
         self.assertEqual(billing_ticket["not_automated_reason"], "automation_persona_failed")
+        classification = billing_ticket["route_classification"]
+        self.assertIsNone(classification["account_billing_subcategory"])
+        self.assertIsNone(classification["backend_operation_subcategory"])
+        self.assertIsNone(classification["automation_subcategory"])
+        self.assertEqual(classification["primary_label"], "Human Review")
+        self.assertEqual(classification["secondary_label"], "Uncategorized")
+        self.assertNotIn("predicted_automation_subcategory", classification)
 
         after_ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
         self.assertIsNotNone(after_ticket)
@@ -2330,6 +3391,59 @@ class AccountIntakeApiTests(unittest.TestCase):
             if message.get("role") == "assistant" and message.get("source") == "billing_response_ai"
         ]
         self.assertEqual(after_response_messages, before_response_messages)
+        lookup_response = self.client.get(f"/api/billing-response?token={raw_token}")
+        self.assertEqual(lookup_response.status_code, 200, lookup_response.text)
+        self.assertTrue(lookup_response.json()["submitted"])
+        self.assertEqual(
+            [
+                item["event_type"]
+                for item in self.repository.list_ticket_events(str(create_payload["ticket_id"]))
+                if item["event_type"]
+                in {
+                    "billing_internal_resolution_submitted",
+                    "billing_customer_followup_generated",
+                }
+            ],
+            ["billing_internal_resolution_submitted"],
+        )
+
+    def test_billing_response_submit_unexpected_render_failure_leaves_token_and_state_unmodified(
+        self,
+    ) -> None:
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
+        billing_ticket_id = str(create_payload["billing_ticket_id"])
+        ticket_id = str(create_payload["ticket_id"])
+        before_billing_ticket = self.repository.get_billing_ticket(billing_ticket_id)
+        before_ticket = self.repository.get_ticket(ticket_id)
+        before_events = self.repository.list_ticket_events(ticket_id)
+        self.assertIsNotNone(before_billing_ticket)
+        self.assertIsNotNone(before_ticket)
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "_render_billing_resolution_customer_reply",
+            side_effect=RuntimeError("followup failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "followup failed"):
+                self.client.post(
+                    "/api/billing-response/submit",
+                    json={
+                        "token": raw_token,
+                        "result": "completed",
+                        "notify_customer": True,
+                        "note": "",
+                    },
+                )
+
+        self.assertEqual(
+            self.repository.get_billing_ticket(billing_ticket_id),
+            before_billing_ticket,
+        )
+        self.assertEqual(self.repository.get_ticket(ticket_id), before_ticket)
+        self.assertEqual(self.repository.list_ticket_events(ticket_id), before_events)
+        lookup_response = self.client.get(f"/api/billing-response?token={raw_token}")
+        self.assertEqual(lookup_response.status_code, 200, lookup_response.text)
+        self.assertFalse(lookup_response.json()["submitted"])
 
     def test_billing_missing_fields_does_not_create_response_token(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
@@ -3062,6 +4176,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "created_at": f"2026-07-28T00:0{index}:00+00:00",
                 }
             )
+            self.repository.resolve_account_persona(ticket_id)
 
         original_page = self.repository.list_account_case_page_with_filter_counts
         original_batch = self.repository.get_latest_account_reply_jobs
@@ -3085,6 +4200,10 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.repository,
             "get_latest_account_reply_job",
             side_effect=AssertionError("list API must not query reply jobs one ticket at a time"),
+        ), patch.object(
+            self.repository,
+            "get_account_persona_assignment",
+            side_effect=AssertionError("list API must not query Persona assignments one ticket at a time"),
         ):
             response = self.client.get("/api/account/cases?page_size=30&route_status=automation")
 
@@ -3181,6 +4300,162 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(single.status_code, 200, single.text)
         self.assertEqual(batch.status_code, 200, batch.text)
         self.assertEqual(batch.json()["details"], [single.json()])
+
+    def test_account_case_revision_tracks_persona_assignment_identity(self) -> None:
+        ticket_id = "TK-PERSONA-REVISION"
+        case_id = f"BT-{ticket_id}"
+        self._save_billing_ticket(ticket_id=ticket_id, automation_status="automation")
+
+        def revisions() -> tuple[str, str, str]:
+            page = self.client.get("/api/account/cases?page=1&page_size=10")
+            single = self.client.get(f"/api/account/cases/{case_id}")
+            batch = self.client.post(
+                "/api/account/cases/batch-details",
+                json={"case_ids": [case_id]},
+            )
+            self.assertEqual(page.status_code, 200, page.text)
+            self.assertEqual(single.status_code, 200, single.text)
+            self.assertEqual(batch.status_code, 200, batch.text)
+            return (
+                page.json()["cases"][0]["detail_revision"],
+                single.json()["detail_revision"],
+                batch.json()["details"][0]["detail_revision"],
+            )
+
+        unassigned = revisions()
+        self.assertEqual(len(set(unassigned)), 1)
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id] = {
+                "ticket_id": ticket_id,
+                "persona_key": "sid-precise",
+                "version": 1,
+                "assigned_at": "2026-08-09T01:00:00+00:00",
+            }
+        assigned = revisions()
+
+        self.assertEqual(len(set(assigned)), 1)
+        self.assertNotEqual(assigned[0], unassigned[0])
+
+        stable = revisions()
+        self.assertEqual(stable, assigned)
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id]["persona_key"] = "sid-bright"
+        reassigned = revisions()
+        self.assertEqual(len(set(reassigned)), 1)
+        self.assertNotEqual(reassigned[0], assigned[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id]["version"] = 2
+        new_version = revisions()
+        self.assertEqual(len(set(new_version)), 1)
+        self.assertNotEqual(new_version[0], reassigned[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments[ticket_id]["assigned_at"] = (
+                "2026-08-09T01:01:00+00:00"
+            )
+        reassigned_at = revisions()
+        self.assertEqual(len(set(reassigned_at)), 1)
+        self.assertNotEqual(reassigned_at[0], new_version[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_personas["sid-bright"]["display_name"] = "Sid Brighter"
+        renamed = revisions()
+        self.assertEqual(len(set(renamed)), 1)
+        self.assertNotEqual(renamed[0], reassigned_at[0])
+
+        with self.repository._assignment_lock:
+            self.repository._account_persona_assignments.pop(ticket_id)
+        cleared = revisions()
+        self.assertEqual(len(set(cleared)), 1)
+        self.assertNotEqual(cleared[0], renamed[0])
+        self.assertEqual(cleared, unassigned)
+
+    def test_account_case_details_include_persisted_persona_assignment_without_prompt_content(self) -> None:
+        ticket_id = "TK-PERSONA-DETAIL"
+        self._save_billing_ticket(ticket_id=ticket_id, automation_status="automation")
+        draft = self.repository.create_account_persona_draft(
+            "sid-bright",
+            content={
+                "instruction": "SECRET PERSONA PROMPT",
+                "opener": "Hello",
+                "signature": "Best,\nSid",
+            },
+            change_note="Persona detail contract",
+            based_on_version=1,
+            actor_id="admin",
+            created_at="2026-08-09T01:00:00+00:00",
+        )
+        self.repository.publish_account_persona_version(
+            "sid-bright",
+            draft["version"],
+            actor_id="admin",
+            published_at="2026-08-09T01:01:00+00:00",
+        )
+        self.repository.set_account_persona_enabled("sid-precise", False)
+        self.repository.set_account_persona_enabled("default-support", False)
+        assigned = self.repository.resolve_account_persona(ticket_id)
+        self.assertEqual((assigned["persona_key"], assigned["version"]), ("sid-bright", 2))
+        superseding_draft = self.repository.create_account_persona_draft(
+            "sid-bright",
+            content={
+                "instruction": "New published voice",
+                "opener": "Hi",
+                "signature": "Regards,\nSid",
+            },
+            change_note="Supersede assigned version",
+            based_on_version=2,
+            actor_id="admin",
+            created_at="2026-08-09T01:02:00+00:00",
+        )
+        self.repository.publish_account_persona_version(
+            "sid-bright",
+            superseding_draft["version"],
+            actor_id="admin",
+            published_at="2026-08-09T01:03:00+00:00",
+        )
+        self.repository.set_account_persona_enabled("sid-precise", True)
+        self.repository.set_account_persona_enabled("sid-bright", False)
+
+        with patch.object(
+            self.repository,
+            "get_account_persona_assignment",
+            side_effect=AssertionError("detail API must use the batched detail bundle"),
+        ):
+            single = self.client.get("/api/account/cases/BT-TK-PERSONA-DETAIL")
+            batch = self.client.post(
+                "/api/account/cases/batch-details",
+                json={"case_ids": ["BT-TK-PERSONA-DETAIL"]},
+            )
+
+        self.assertEqual(single.status_code, 200, single.text)
+        self.assertEqual(batch.status_code, 200, batch.text)
+        single_assignment = single.json()["persona_assignment"]
+        self.assertEqual(batch.json()["details"][0]["persona_assignment"], single_assignment)
+        self.assertEqual(
+            single_assignment,
+            {
+                "persona_key": "sid-bright",
+                "version": 2,
+                "assigned_at": assigned["assigned_at"],
+                "display_name": "Sid Bright",
+            },
+        )
+        self.assertNotIn("content", single_assignment)
+        self.assertNotIn("enabled", single_assignment)
+        self.assertNotIn("SECRET PERSONA PROMPT", single.text)
+
+    def test_account_case_detail_returns_null_when_persona_is_not_assigned(self) -> None:
+        self._save_billing_ticket(
+            ticket_id="TK-PERSONA-UNASSIGNED",
+            automation_status="automation",
+        )
+
+        response = self.client.get("/api/account/cases/BT-TK-PERSONA-UNASSIGNED")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()["persona_assignment"])
 
     def test_delete_all_billing_tickets_is_not_allowed_and_preserves_account_list(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_SIGNATURE
 from backend.services.agent_config import build_agent_config_payload
 from backend.services.engineer_plan_agent import ENGINEER_PLAN_SKILLS
 
@@ -19,26 +20,26 @@ class AgentConfigTests(unittest.TestCase):
         raise KeyError(key)
 
     def test_catalog_groups_real_agents_and_places_personas_on_automation_router(self) -> None:
-        payload = build_agent_config_payload(
-            [
-                {
-                    "persona_key": "default-support",
-                    "display_name": "Default Support",
-                    "enabled": True,
-                    "published_version": 1,
-                    "versions": [
-                        {
-                            "version": 1,
-                            "status": "published",
-                            "content": {"instruction": "Calm", "signoff_name": "Sid"},
-                            "change_note": "Initial",
-                            "created_at": "2026-07-20T00:00:00+00:00",
-                            "published_at": "2026-07-20T00:00:00+00:00",
-                        }
-                    ],
-                }
-            ]
-        )
+        seeded_personas = [
+            {
+                "persona_key": preset.persona_key,
+                "display_name": preset.display_name,
+                "enabled": True,
+                "published_version": 1,
+                "versions": [
+                    {
+                        "version": 1,
+                        "status": "published",
+                        "content": preset.content,
+                        "change_note": preset.seed_marker,
+                        "created_at": "2026-07-20T00:00:00+00:00",
+                        "published_at": "2026-07-20T00:00:00+00:00",
+                    }
+                ],
+            }
+            for preset in ACCOUNT_PERSONA_PRESETS
+        ]
+        payload = build_agent_config_payload(seeded_personas)
 
         self.assertEqual(
             [agent["key"] for agent in payload["agents"]],
@@ -48,8 +49,16 @@ class AgentConfigTests(unittest.TestCase):
         self.assertNotIn("related_services", payload)
         automation = self._navigation_node(payload["route_navigation"], "automation-router")
         self.assertEqual(automation["persona_scope"], "account-automation")
-        self.assertEqual(payload["automation_personas"][0]["persona_key"], "default-support")
-        self.assertEqual(payload["automation_personas"][0]["published_version"], 1)
+        personas = {item["persona_key"]: item for item in payload["automation_personas"]}
+        self.assertEqual(set(personas), {"default-support", "sid-bright", "sid-precise"})
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            persona = personas[preset.persona_key]
+            self.assertEqual(persona["display_name"], preset.display_name)
+            self.assertTrue(persona["enabled"])
+            self.assertEqual(persona["published_version"], 1)
+            self.assertEqual(persona["versions"][0]["content"]["instruction"], preset.content["instruction"])
+            self.assertEqual(persona["versions"][0]["content"]["opener"], "")
+            self.assertEqual(persona["versions"][0]["content"]["signature"], DEFAULT_PERSONA_SIGNATURE)
 
     def test_catalog_exposes_prompt_skill_and_empty_mcp_contracts(self) -> None:
         payload = build_agent_config_payload([])
