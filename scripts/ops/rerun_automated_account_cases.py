@@ -8,10 +8,13 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
 from pathlib import Path
+import secrets
+import stat
 import sys
 import tempfile
 import threading
@@ -36,9 +39,16 @@ from backend.services.automation_routing import (  # noqa: E402
 EXPECTED_PERSONA_KEYS = frozenset({"sid-precise", "sid-bright", "default-support"})
 TERMINAL_ITEM_STATUSES = frozenset({"completed", "failed", "skipped"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
+TERMINAL_JOB_STATUSES = frozenset({"completed", "completed_with_errors", "failed"})
+RECOVERY_JOB_STATUSES = frozenset({"needs_recovery"})
 SCHEMA_VERSION = "automated-account-rerun-v1"
+MANIFEST_VERSION = "automated-account-rerun-manifest-v1"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 ACCESS_TOKEN_ENV = "SUPPORTPORTAL_WORKSPACE_ACCESS_TOKEN"
+OPERATION_DIRECTORY_MODE = 0o700
+OPERATION_FILE_MODE = 0o600
+MANIFEST_KEY_FILE = "manifest.key"
+MANIFEST_FILE = "manifest.json"
 SAFE_CASE_FIELDS = (
     "account_case_id",
     "billing_ticket_id",
@@ -301,33 +311,325 @@ def _discover_automated_cases(
     return discovered
 
 
-def _atomic_write(path: Path, content: str) -> None:
-    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+def _operation_path(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(Path(path).expanduser())))
+
+
+def _validate_owned_mode(
+    metadata: os.stat_result,
+    *,
+    name: str,
+    expected_mode: int,
+    require_directory: bool,
+) -> None:
+    expected_kind = stat.S_ISDIR if require_directory else stat.S_ISREG
+    if not expected_kind(metadata.st_mode):
+        expected_type = "directory" if require_directory else "regular file"
+        raise OperationError(f"{name} must be a non-symlink {expected_type}")
+    if metadata.st_uid != os.getuid():
+        raise OperationError(f"{name} must be owned by the current user")
+    if stat.S_IMODE(metadata.st_mode) != expected_mode:
+        raise OperationError(f"{name} must have mode {expected_mode:04o}")
+
+
+@contextmanager
+def _open_operation_directory(operation_dir: Path) -> Iterator[int]:
+    canonical = _operation_path(operation_dir)
     try:
+        before = os.lstat(canonical)
+    except OSError as exc:
+        raise OperationError("--apply must resume an existing dry-run operation directory") from exc
+    _validate_owned_mode(
+        before,
+        name="operation directory",
+        expected_mode=OPERATION_DIRECTORY_MODE,
+        require_directory=True,
+    )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            canonical,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        after = os.fstat(descriptor)
+        _validate_owned_mode(
+            after,
+            name="operation directory",
+            expected_mode=OPERATION_DIRECTORY_MODE,
+            require_directory=True,
+        )
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise OperationError("operation directory changed while it was opened")
+        yield descriptor
+    except OperationError:
+        raise
+    except OSError as exc:
+        raise OperationError("could not securely open operation directory") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _operation_file_lstat(directory_fd: int, name: str) -> os.stat_result | None:
+    try:
+        return os.lstat(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise OperationError(f"could not inspect {name}") from exc
+
+
+def _open_operation_file(
+    directory_fd: int,
+    name: str,
+    flags: int,
+    *,
+    create: bool = False,
+) -> int:
+    before = _operation_file_lstat(directory_fd, name)
+    if before is not None:
+        _validate_owned_mode(
+            before,
+            name=name,
+            expected_mode=OPERATION_FILE_MODE,
+            require_directory=False,
+        )
+    elif not create:
+        raise OperationError(f"required operation file is missing: {name}")
+    descriptor: int | None = None
+    try:
+        open_flags = flags | os.O_NOFOLLOW
+        if create:
+            open_flags |= os.O_CREAT
+        descriptor = os.open(
+            name,
+            open_flags,
+            OPERATION_FILE_MODE,
+            dir_fd=directory_fd,
+        )
+        if before is None:
+            os.fchmod(descriptor, OPERATION_FILE_MODE)
+        after = os.fstat(descriptor)
+        _validate_owned_mode(
+            after,
+            name=name,
+            expected_mode=OPERATION_FILE_MODE,
+            require_directory=False,
+        )
+        if before is not None and (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise OperationError(f"{name} changed while it was opened")
+        return descriptor
+    except OperationError:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise OperationError(f"could not securely open {name}") from exc
+
+
+def _read_text_at(directory_fd: int, name: str) -> str:
+    descriptor = _open_operation_file(directory_fd, name, os.O_RDONLY)
+    try:
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            return handle.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise OperationError(f"could not read {name}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _atomic_write_at(directory_fd: int, name: str, content: str) -> None:
+    existing = _operation_file_lstat(directory_fd, name)
+    if existing is not None:
+        _validate_owned_mode(
+            existing,
+            name=name,
+            expected_mode=OPERATION_FILE_MODE,
+            require_directory=False,
+        )
+    temporary = f".{name}.{uuid4().hex}.tmp"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            OPERATION_FILE_MODE,
+            dir_fd=directory_fd,
+        )
+        os.fchmod(descriptor, OPERATION_FILE_MODE)
+        metadata = os.fstat(descriptor)
+        _validate_owned_mode(
+            metadata,
+            name=temporary,
+            expected_mode=OPERATION_FILE_MODE,
+            require_directory=False,
+        )
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = None
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        os.chmod(path, 0o600)
+        os.replace(
+            temporary,
+            name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+    except OperationError:
+        raise
+    except OSError as exc:
+        raise OperationError(f"could not safely write {name}") from exc
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path = Path(path)
+    with _open_operation_directory(path.parent) as directory_fd:
+        _atomic_write_at(directory_fd, path.name, content)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     _atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
-def _read_json(path: Path) -> dict[str, Any]:
+def _read_json_at(directory_fd: int, name: str) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise OperationError(f"could not read {path.name}") from exc
+        value = json.loads(_read_text_at(directory_fd, name))
+    except json.JSONDecodeError as exc:
+        raise OperationError(f"could not read {name}") from exc
     if not isinstance(value, dict):
-        raise OperationError(f"{path.name} must contain a JSON object")
+        raise OperationError(f"{name} must contain a JSON object")
     return value
+
+
+def _canonical_json_bytes(payload: dict[str, Any]) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _read_manifest_key_at(directory_fd: int) -> bytes:
+    encoded = _read_text_at(directory_fd, MANIFEST_KEY_FILE).strip()
+    try:
+        key = bytes.fromhex(encoded)
+    except ValueError as exc:
+        raise OperationError("manifest.key is invalid") from exc
+    if len(key) != 32:
+        raise OperationError("manifest.key is invalid")
+    return key
+
+
+def _manifest_core(baseline: dict[str, Any], progress: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "manifest_version": MANIFEST_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "operation_id": baseline.get("operation_id"),
+        "baseline_sha256": hashlib.sha256(_canonical_json_bytes(baseline)).hexdigest(),
+        "progress_sha256": hashlib.sha256(_canonical_json_bytes(progress)).hexdigest(),
+    }
+
+
+def _write_operation_manifest(
+    operation_dir: Path,
+    baseline: dict[str, Any],
+    progress: dict[str, Any],
+) -> None:
+    operation_dir = _operation_path(operation_dir)
+    with _open_operation_directory(operation_dir) as directory_fd:
+        key = _read_manifest_key_at(directory_fd)
+    core = _manifest_core(baseline, progress)
+    manifest = {
+        **core,
+        "hmac_sha256": hmac.new(key, _canonical_json_bytes(core), hashlib.sha256).hexdigest(),
+    }
+    _write_json(operation_dir / MANIFEST_FILE, manifest)
+
+
+def _verify_operation_manifest_at(
+    directory_fd: int,
+    baseline: dict[str, Any],
+    progress: dict[str, Any],
+) -> None:
+    key = _read_manifest_key_at(directory_fd)
+    manifest = _read_json_at(directory_fd, MANIFEST_FILE)
+    expected_fields = {
+        "manifest_version",
+        "schema_version",
+        "operation_id",
+        "baseline_sha256",
+        "progress_sha256",
+        "hmac_sha256",
+    }
+    if set(manifest) != expected_fields:
+        raise OperationError("operation manifest is invalid")
+    signed = {field: manifest.get(field) for field in expected_fields if field != "hmac_sha256"}
+    expected_hmac = hmac.new(key, _canonical_json_bytes(signed), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(str(manifest.get("hmac_sha256") or ""), expected_hmac):
+        raise OperationError("operation manifest signature is invalid")
+    expected_core = _manifest_core(baseline, progress)
+    if signed != expected_core:
+        raise OperationError("operation files do not match the signed manifest")
+
+
+def _validate_operation_contract(
+    baseline: dict[str, Any],
+    progress: dict[str, Any],
+) -> None:
+    operation_id = str(baseline.get("operation_id") or "")
+    frozen_case_ids = baseline.get("frozen_case_ids")
+    cases = baseline.get("cases")
+    items = progress.get("items")
+    if (
+        not operation_id
+        or operation_id.strip() != operation_id
+        or baseline.get("schema_version") != SCHEMA_VERSION
+        or progress.get("schema_version") != SCHEMA_VERSION
+        or progress.get("operation_id") != operation_id
+        or baseline.get("mode") != "dry_run"
+        or not isinstance(frozen_case_ids, list)
+        or not isinstance(cases, dict)
+        or not isinstance(items, dict)
+    ):
+        raise OperationError("operation files do not match the Automated rerun schema")
+    if any(
+        not isinstance(case_id, str) or not case_id or case_id.strip() != case_id
+        for case_id in frozen_case_ids
+    ):
+        raise OperationError("frozen Case IDs must be non-empty canonical strings")
+    if len(frozen_case_ids) != len(set(frozen_case_ids)):
+        raise OperationError("frozen Case IDs must be unique")
+    frozen_set = set(frozen_case_ids)
+    if set(cases) != frozen_set or set(items) != frozen_set:
+        raise OperationError("frozen Case, baseline, and progress sets must match exactly")
+    for case_id in frozen_case_ids:
+        case = cases.get(case_id)
+        item = items.get(case_id)
+        if not isinstance(case, dict) or not isinstance(item, dict):
+            raise OperationError(f"operation state is invalid for frozen Case {case_id}")
+        if str(case.get("account_case_id") or "").strip() != case_id:
+            raise OperationError(f"baseline Case identity does not match {case_id}")
+        if str(item.get("case_id") or "").strip() != case_id:
+            raise OperationError(f"progress Case identity does not match {case_id}")
+        if item.get("before") != case:
+            raise OperationError(f"progress baseline snapshot does not match {case_id}")
+        if item.get("idempotency_key") != stable_idempotency_key(operation_id, case_id):
+            raise OperationError(f"progress idempotency key does not match {case_id}")
 
 
 def _persona_key(case: dict[str, Any] | None) -> str:
@@ -438,6 +740,7 @@ def _persist_progress(operation_dir: Path, baseline: dict[str, Any], progress: d
     report = _build_report(baseline, progress)
     _write_json(operation_dir / "report.json", report)
     _atomic_write(operation_dir / "report.md", _report_markdown(report))
+    _write_operation_manifest(operation_dir, baseline, progress)
 
 
 def create_dry_run(
@@ -468,8 +771,8 @@ def create_dry_run(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     operation_id = f"automated-account-rerun-{timestamp}-{uuid4().hex[:8]}"
     operation_dir = operations_root / operation_id
-    operation_dir.mkdir(mode=0o700)
-    os.chmod(operation_dir, 0o700)
+    operation_dir.mkdir(mode=OPERATION_DIRECTORY_MODE)
+    os.chmod(operation_dir, OPERATION_DIRECTORY_MODE)
     created_at = _utc_now()
     baseline = {
         "schema_version": SCHEMA_VERSION,
@@ -506,6 +809,7 @@ def create_dry_run(
             for case_id in frozen_case_ids
         },
     }
+    _atomic_write(operation_dir / MANIFEST_KEY_FILE, secrets.token_hex(32) + "\n")
     _write_json(operation_dir / "baseline.json", baseline)
     _persist_progress(operation_dir, baseline, progress)
     return operation_dir
@@ -513,57 +817,86 @@ def create_dry_run(
 
 @contextmanager
 def operation_lock(operation_dir: Path) -> Iterator[None]:
-    canonical = Path(operation_dir).resolve()
+    canonical = _operation_path(operation_dir)
     with _LOCAL_OPERATION_LOCKS_GUARD:
         if canonical in _LOCAL_OPERATION_LOCKS:
             raise OperationError("another apply process already holds this operation lock")
         _LOCAL_OPERATION_LOCKS.add(canonical)
-    lock_path = canonical / "operation.lock"
-    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-    os.chmod(lock_path, 0o600)
+    descriptor: int | None = None
     acquired = False
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
-        except BlockingIOError as exc:
-            raise OperationError("another apply process already holds this operation lock") from exc
-        yield
+        with _open_operation_directory(canonical) as directory_fd:
+            descriptor = _open_operation_file(
+                directory_fd,
+                "operation.lock",
+                os.O_RDWR,
+                create=True,
+            )
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except BlockingIOError as exc:
+                raise OperationError("another apply process already holds this operation lock") from exc
+            except OSError as exc:
+                raise OperationError("could not acquire operation lock") from exc
+            yield
     finally:
-        if acquired:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
-        with _LOCAL_OPERATION_LOCKS_GUARD:
-            _LOCAL_OPERATION_LOCKS.discard(canonical)
+        try:
+            if descriptor is not None:
+                try:
+                    if acquired:
+                        fcntl.flock(descriptor, fcntl.LOCK_UN)
+                finally:
+                    os.close(descriptor)
+        finally:
+            with _LOCAL_OPERATION_LOCKS_GUARD:
+                _LOCAL_OPERATION_LOCKS.discard(canonical)
 
 
 def _load_operation(operation_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    baseline_path = operation_dir / "baseline.json"
-    progress_path = operation_dir / "progress.json"
-    if not operation_dir.is_dir() or not baseline_path.is_file() or not progress_path.is_file():
-        raise OperationError("--apply must resume an existing dry-run operation directory")
-    baseline = _read_json(baseline_path)
-    progress = _read_json(progress_path)
-    if (
-        baseline.get("schema_version") != SCHEMA_VERSION
-        or progress.get("schema_version") != SCHEMA_VERSION
-        or baseline.get("operation_id") != progress.get("operation_id")
-        or baseline.get("mode") != "dry_run"
-        or not isinstance(baseline.get("frozen_case_ids"), list)
-        or not isinstance(progress.get("items"), dict)
-    ):
-        raise OperationError("operation files do not match the Automated rerun schema")
+    operation_dir = _operation_path(operation_dir)
+    with _open_operation_directory(operation_dir) as directory_fd:
+        baseline = _read_json_at(directory_fd, "baseline.json")
+        progress = _read_json_at(directory_fd, "progress.json")
+        for name in ("report.json", "report.md"):
+            descriptor = _open_operation_file(directory_fd, name, os.O_RDONLY)
+            os.close(descriptor)
+        _verify_operation_manifest_at(directory_fd, baseline, progress)
+    _validate_operation_contract(baseline, progress)
     return baseline, progress
 
 
 def _is_retryable_start_error(error: HttpError) -> bool:
     detail = error.payload.get("detail")
     retryable = detail.get("retryable") if isinstance(detail, dict) else False
-    return error.status_code in {409, 503} or retryable is True
+    return error.status_code == 503 and retryable is True
 
 
 class _PollTimeout(OperationError):
     pass
+
+
+class _JobStateStop(OperationError):
+    def __init__(self, reason: str, job: dict[str, Any]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.job = job
+
+
+def _classify_job_state(job: dict[str, Any], *, expected_job_id: str) -> str:
+    job_id = job.get("job_id")
+    status = job.get("status")
+    if not isinstance(job_id, str) or not job_id or job_id != expected_job_id:
+        raise _JobStateStop("rerun_job_protocol_error", job)
+    if not isinstance(status, str) or not status or status.strip() != status:
+        raise _JobStateStop("rerun_job_protocol_error", job)
+    if status in ACTIVE_JOB_STATUSES:
+        return "active"
+    if status in TERMINAL_JOB_STATUSES:
+        return "terminal"
+    if status in RECOVERY_JOB_STATUSES:
+        raise _JobStateStop("rerun_job_needs_recovery", job)
+    raise _JobStateStop("rerun_job_protocol_error", job)
 
 
 def _poll_job(
@@ -586,12 +919,14 @@ def _poll_job(
                 access_token=access_token,
             )
         except HttpError as exc:
-            if exc.status_code != 503:
-                raise
+            if not _is_retryable_start_error(exc):
+                raise _JobStateStop(
+                    "rerun_job_protocol_error",
+                    {"job_id": job_id},
+                ) from exc
             job = {"job_id": job_id, "status": "running"}
-        if str(job.get("job_id") or "") != job_id:
-            raise OperationError("rerun job response changed job_id")
-        if str(job.get("status") or "") not in ACTIVE_JOB_STATUSES:
+        state = _classify_job_state(job, expected_job_id=job_id)
+        if state == "terminal":
             return job
         if monotonic() >= deadline:
             raise _PollTimeout(f"polling timed out for {job_id}")
@@ -624,11 +959,30 @@ def _record_terminal_item(
     *,
     after: dict[str, Any] | None,
 ) -> None:
-    status = str(job.get("status") or "failed")
+    status = str(job.get("status") or "")
+    if status not in TERMINAL_JOB_STATUSES:
+        raise OperationError("cannot record a non-terminal rerun job")
     item["status"] = "completed" if status == "completed" else "failed"
     item["job"] = _safe_job_snapshot(job)
     item["after"] = after
-    item["terminal_error"] = None if status == "completed" else "rerun_job_failed"
+    if status == "completed":
+        item["terminal_error"] = None
+    elif status == "completed_with_errors":
+        item["terminal_error"] = "rerun_job_completed_with_errors"
+    else:
+        item["terminal_error"] = "rerun_job_failed"
+
+
+def _record_job_state_stop(
+    item: dict[str, Any],
+    progress: dict[str, Any],
+    error: _JobStateStop,
+) -> None:
+    item["status"] = "resumable"
+    item["job"] = _safe_job_snapshot(error.job)
+    item["terminal_error"] = error.reason
+    progress["operation_status"] = "stopped"
+    progress["stop_reason"] = error.reason
 
 
 def apply_operation(
@@ -641,7 +995,7 @@ def apply_operation(
     poll_timeout_seconds: float = 900.0,
     poll_interval_seconds: float = 3.0,
 ) -> dict[str, Any]:
-    operation_dir = Path(operation_dir).expanduser().resolve()
+    operation_dir = _operation_path(operation_dir)
     baseline, _ = _load_operation(operation_dir)
     validate_base_url(str(baseline.get("base_url") or ""))
     monotonic_clock = monotonic or time.monotonic
@@ -682,6 +1036,10 @@ def apply_operation(
                     item["terminal_error"] = "polling_timeout"
                     progress["operation_status"] = "stopped"
                     progress["stop_reason"] = "polling_timeout"
+                    _persist_progress(operation_dir, baseline, progress)
+                    return progress
+                except _JobStateStop as exc:
+                    _record_job_state_stop(item, progress, exc)
                     _persist_progress(operation_dir, baseline, progress)
                     return progress
                 after = _refresh_case_after_terminal(
@@ -730,6 +1088,13 @@ def apply_operation(
                     )
                     break
                 except HttpError as exc:
+                    if exc.status_code == 409:
+                        item["status"] = "resumable"
+                        item["terminal_error"] = "external_active_job"
+                        progress["operation_status"] = "stopped"
+                        progress["stop_reason"] = "external_active_job"
+                        _persist_progress(operation_dir, baseline, progress)
+                        return progress
                     if not _is_retryable_start_error(exc):
                         item["status"] = "failed"
                         item["terminal_error"] = f"rerun_start_http_{exc.status_code}"
@@ -750,20 +1115,15 @@ def apply_operation(
 
             item["terminal_error"] = None
             job_id = str(started_job.get("job_id") or "").strip()
-            if not job_id:
-                item["status"] = "failed"
-                item["terminal_error"] = "rerun_start_missing_job_id"
-                _persist_progress(operation_dir, baseline, progress)
-                continue
-            item["job_id"] = job_id
+            item["job_id"] = job_id or None
             item["status"] = "polling"
             item["job"] = _safe_job_snapshot(started_job)
             _persist_progress(operation_dir, baseline, progress)
             try:
-                job = (
-                    started_job
-                    if str(started_job.get("status") or "") not in ACTIVE_JOB_STATUSES
-                    else _poll_job(
+                started_state = _classify_job_state(started_job, expected_job_id=job_id)
+                job = started_job
+                if started_state == "active":
+                    job = _poll_job(
                         job_id,
                         request_json=request_json,
                         access_token=access_token,
@@ -772,12 +1132,15 @@ def apply_operation(
                         timeout_seconds=poll_timeout_seconds,
                         interval_seconds=poll_interval_seconds,
                     )
-                )
             except _PollTimeout:
                 item["status"] = "resumable"
                 item["terminal_error"] = "polling_timeout"
                 progress["operation_status"] = "stopped"
                 progress["stop_reason"] = "polling_timeout"
+                _persist_progress(operation_dir, baseline, progress)
+                return progress
+            except _JobStateStop as exc:
+                _record_job_state_stop(item, progress, exc)
                 _persist_progress(operation_dir, baseline, progress)
                 return progress
             after = _refresh_case_after_terminal(
@@ -862,7 +1225,7 @@ def main(argv: list[str] | None = None) -> int:
         raise OperationError("--resume is only valid together with --apply")
 
     if args.apply:
-        baseline, _ = _load_operation(args.resume.expanduser().resolve())
+        baseline, _ = _load_operation(args.resume)
         stored_base_url = validate_base_url(str(baseline.get("base_url") or ""))
         if args.base_url is not None and validate_base_url(args.base_url) != stored_base_url:
             raise OperationError("--base-url does not match the frozen dry-run")

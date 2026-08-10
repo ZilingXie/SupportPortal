@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from scripts.ops import rerun_automated_account_cases as runner
@@ -147,7 +149,14 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             self.assertEqual(baseline["frozen_case_ids"], ["AC-1", "AC-2"])
             self.assertEqual(list(progress["items"]), ["AC-1", "AC-2"])
             self.assertEqual(stat.S_IMODE(operation_dir.stat().st_mode), 0o700)
-            for name in ("baseline.json", "progress.json", "report.json", "report.md"):
+            for name in (
+                "baseline.json",
+                "progress.json",
+                "report.json",
+                "report.md",
+                "manifest.json",
+                "manifest.key",
+            ):
                 self.assertTrue((operation_dir / name).exists(), name)
                 self.assertEqual(stat.S_IMODE((operation_dir / name).stat().st_mode), 0o600)
             persisted = "\n".join(path.read_text(encoding="utf-8") for path in operation_dir.iterdir() if path.is_file())
@@ -323,6 +332,190 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
             )
             self.assertNotIn(sensitive_error, persisted)
 
+    def test_start_409_stops_as_external_active_and_nonretryable_503_is_not_retried(self) -> None:
+        scenarios = (
+            (
+                409,
+                {"detail": "an Account rerun job is already running"},
+                "resumable",
+                "external_active_job",
+            ),
+            (
+                503,
+                {"detail": {"code": "unrelated_failure", "retryable": False}},
+                "failed",
+                None,
+            ),
+        )
+        for status_code, payload, expected_item_status, expected_stop_reason in scenarios:
+            with self.subTest(status_code=status_code), tempfile.TemporaryDirectory() as temporary:
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+
+                def handler(call: dict[str, object]) -> dict[str, object]:
+                    parsed = urlsplit(str(call["path"]))
+                    if parsed.path == "/health":
+                        return {"app_build": {"ref": "build-1"}}
+                    if parsed.path == "/api/workspace/admin/account-personas":
+                        return _personas()
+                    if parsed.path == "/api/account/cases/AC-1":
+                        return _case("AC-1")
+                    if call["method"] == "POST":
+                        raise runner.HttpError(status_code, payload)
+                    raise AssertionError(call)
+
+                request = FakeRequest(handler)
+                progress = runner.apply_operation(
+                    operation_dir,
+                    request_json=request,
+                    sleep=lambda _value: None,
+                )
+
+                posts = [call for call in request.calls if call["method"] == "POST"]
+                self.assertEqual(len(posts), 1)
+                self.assertEqual(progress["items"]["AC-1"]["status"], expected_item_status)
+                self.assertEqual(progress["stop_reason"], expected_stop_reason)
+                if status_code == 409:
+                    self.assertEqual(
+                        progress["items"]["AC-1"]["terminal_error"],
+                        "external_active_job",
+                    )
+
+    def test_completed_with_errors_and_failed_are_terminal_without_extra_polling(self) -> None:
+        for job_status, expected_item_status in (
+            ("completed", "completed"),
+            ("completed_with_errors", "failed"),
+            ("failed", "failed"),
+        ):
+            with self.subTest(job_status=job_status), tempfile.TemporaryDirectory() as temporary:
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+
+                def handler(call: dict[str, object]) -> dict[str, object]:
+                    parsed = urlsplit(str(call["path"]))
+                    if parsed.path == "/health":
+                        return {"app_build": {"ref": "build-1"}}
+                    if parsed.path == "/api/workspace/admin/account-personas":
+                        return _personas()
+                    if parsed.path == "/api/account/cases/AC-1":
+                        return _case("AC-1")
+                    if call["method"] == "POST":
+                        return {"job_id": "job-terminal", "status": job_status}
+                    raise AssertionError(call)
+
+                request = FakeRequest(handler)
+                progress = runner.apply_operation(
+                    operation_dir,
+                    request_json=request,
+                    sleep=lambda _value: None,
+                )
+
+                self.assertEqual(progress["items"]["AC-1"]["status"], expected_item_status)
+                self.assertFalse(
+                    any("/api/account/rerun-jobs/" in str(call["path"]) for call in request.calls)
+                )
+
+    def test_poll_protocol_errors_stop_resumably_and_resume_never_reposts(self) -> None:
+        invalid_statuses = (None, "unexpected-transient", 42)
+        for invalid_status in invalid_statuses:
+            with self.subTest(status=invalid_status), tempfile.TemporaryDirectory() as temporary:
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+
+                def first_handler(call: dict[str, object]) -> dict[str, object]:
+                    parsed = urlsplit(str(call["path"]))
+                    if parsed.path == "/health":
+                        return {"app_build": {"ref": "build-1"}}
+                    if parsed.path == "/api/workspace/admin/account-personas":
+                        return _personas()
+                    if parsed.path == "/api/account/cases/AC-1":
+                        return _case("AC-1")
+                    if call["method"] == "POST":
+                        return {"job_id": "job-protocol", "status": "queued"}
+                    if parsed.path == "/api/account/rerun-jobs/job-protocol":
+                        response: dict[str, object] = {"job_id": "job-protocol"}
+                        if invalid_status is not None:
+                            response["status"] = invalid_status
+                        return response
+                    raise AssertionError(call)
+
+                first = FakeRequest(first_handler)
+                stopped = runner.apply_operation(
+                    operation_dir,
+                    request_json=first,
+                    sleep=lambda _value: None,
+                )
+                self.assertEqual(stopped["items"]["AC-1"]["status"], "resumable")
+                self.assertEqual(stopped["items"]["AC-1"]["terminal_error"], "rerun_job_protocol_error")
+                self.assertEqual(stopped["stop_reason"], "rerun_job_protocol_error")
+                self.assertEqual(len([call for call in first.calls if call["method"] == "POST"]), 1)
+
+                def resume_handler(call: dict[str, object]) -> dict[str, object]:
+                    parsed = urlsplit(str(call["path"]))
+                    if parsed.path == "/health":
+                        return {"app_build": {"ref": "build-1"}}
+                    if parsed.path == "/api/workspace/admin/account-personas":
+                        return _personas()
+                    if parsed.path == "/api/account/rerun-jobs/job-protocol":
+                        return {"job_id": "job-protocol", "status": "completed"}
+                    if parsed.path == "/api/account/cases/AC-1":
+                        return _case("AC-1")
+                    raise AssertionError(call)
+
+                resume = FakeRequest(resume_handler)
+                completed = runner.apply_operation(
+                    operation_dir,
+                    request_json=resume,
+                    sleep=lambda _value: None,
+                )
+                self.assertEqual(completed["items"]["AC-1"]["status"], "completed")
+                self.assertFalse(any(call["method"] == "POST" for call in resume.calls))
+
+    def test_needs_recovery_stops_and_resume_only_polls_the_existing_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+
+            def first_handler(call: dict[str, object]) -> dict[str, object]:
+                parsed = urlsplit(str(call["path"]))
+                if parsed.path == "/health":
+                    return {"app_build": {"ref": "build-1"}}
+                if parsed.path == "/api/workspace/admin/account-personas":
+                    return _personas()
+                if parsed.path == "/api/account/cases/AC-1":
+                    return _case("AC-1")
+                if call["method"] == "POST":
+                    return {"job_id": "job-recovery", "status": "running"}
+                if parsed.path == "/api/account/rerun-jobs/job-recovery":
+                    return {"job_id": "job-recovery", "status": "needs_recovery"}
+                raise AssertionError(call)
+
+            first = FakeRequest(first_handler)
+            stopped = runner.apply_operation(
+                operation_dir,
+                request_json=first,
+                sleep=lambda _value: None,
+            )
+            self.assertEqual(stopped["items"]["AC-1"]["status"], "resumable")
+            self.assertEqual(stopped["stop_reason"], "rerun_job_needs_recovery")
+
+            def resume_handler(call: dict[str, object]) -> dict[str, object]:
+                parsed = urlsplit(str(call["path"]))
+                if parsed.path == "/health":
+                    return {"app_build": {"ref": "build-1"}}
+                if parsed.path == "/api/workspace/admin/account-personas":
+                    return _personas()
+                if parsed.path == "/api/account/rerun-jobs/job-recovery":
+                    return {"job_id": "job-recovery", "status": "completed"}
+                if parsed.path == "/api/account/cases/AC-1":
+                    return _case("AC-1")
+                raise AssertionError(call)
+
+            resume = FakeRequest(resume_handler)
+            completed = runner.apply_operation(
+                operation_dir,
+                request_json=resume,
+                sleep=lambda _value: None,
+            )
+            self.assertEqual(completed["items"]["AC-1"]["status"], "completed")
+            self.assertFalse(any(call["method"] == "POST" for call in resume.calls))
+
     def test_poll_timeout_stops_and_resume_polls_same_job_without_posting_again(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
@@ -438,6 +631,157 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                 with self.assertRaises(runner.OperationError):
                     runner.apply_operation(operation_dir, request_json=FakeRequest(lambda _call: {}))
 
+    def test_manifest_rejects_raw_baseline_or_progress_tampering(self) -> None:
+        for filename in ("baseline.json", "progress.json"):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary:
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+                artifact_path = operation_dir / filename
+                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+                if filename == "baseline.json":
+                    artifact["app_build_ref"] = "tampered-build"
+                else:
+                    artifact["items"]["AC-1"]["attempts"] = 999
+                artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+                os.chmod(artifact_path, 0o600)
+
+                with self.assertRaises(runner.OperationError):
+                    runner._load_operation(operation_dir)
+
+    def test_resigned_operation_still_requires_exact_scope_case_and_key_contracts(self) -> None:
+        mutation_names = (
+            "duplicate_frozen_id",
+            "case_set_mismatch",
+            "item_set_mismatch",
+            "case_id_mismatch",
+            "before_snapshot_mismatch",
+            "idempotency_key_mismatch",
+        )
+        for mutation_name in mutation_names:
+            with self.subTest(mutation=mutation_name), tempfile.TemporaryDirectory() as temporary:
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+                baseline_path = operation_dir / "baseline.json"
+                progress_path = operation_dir / "progress.json"
+                baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+                progress = json.loads(progress_path.read_text(encoding="utf-8"))
+                if mutation_name == "duplicate_frozen_id":
+                    baseline["frozen_case_ids"].append("AC-1")
+                elif mutation_name == "case_set_mismatch":
+                    baseline["cases"]["AC-EXTRA"] = _case("AC-EXTRA")
+                elif mutation_name == "item_set_mismatch":
+                    progress["items"]["AC-EXTRA"] = dict(progress["items"]["AC-1"])
+                elif mutation_name == "case_id_mismatch":
+                    baseline["cases"]["AC-1"]["account_case_id"] = "AC-OTHER"
+                elif mutation_name == "before_snapshot_mismatch":
+                    progress["items"]["AC-1"]["before"]["account_case_id"] = "AC-OTHER"
+                else:
+                    progress["items"]["AC-1"]["idempotency_key"] = "tampered-key"
+                runner._write_json(baseline_path, baseline)
+                runner._write_json(progress_path, progress)
+                runner._write_operation_manifest(operation_dir, baseline, progress)
+
+                with self.assertRaises(runner.OperationError):
+                    runner._load_operation(operation_dir)
+
+    def test_operation_files_reject_symlinks_wrong_modes_and_wrong_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            operation_dir, _ = self._dry_run(root, case_ids=("AC-1",))
+            alias = root / "operation-alias"
+            alias.symlink_to(operation_dir, target_is_directory=True)
+            with self.assertRaises(runner.OperationError):
+                runner._load_operation(alias)
+
+        for filename in ("baseline.json", "progress.json", "manifest.json", "manifest.key"):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                operation_dir, _ = self._dry_run(root, case_ids=("AC-1",))
+                artifact_path = operation_dir / filename
+                outside_path = root / f"outside-{filename}"
+                artifact_path.rename(outside_path)
+                artifact_path.symlink_to(outside_path)
+                with self.assertRaises(runner.OperationError):
+                    runner._load_operation(operation_dir)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            os.chmod(operation_dir / "baseline.json", 0o644)
+            with self.assertRaises(runner.OperationError):
+                runner._load_operation(operation_dir)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            os.chmod(operation_dir, 0o755)
+            with self.assertRaises(runner.OperationError):
+                runner._load_operation(operation_dir)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            with patch.object(runner.os, "getuid", return_value=os.getuid() + 1):
+                with self.assertRaises(runner.OperationError):
+                    runner._load_operation(operation_dir)
+
+    def test_cli_rejects_resume_symlink_before_constructing_an_http_requester(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            operation_dir, _ = self._dry_run(root, case_ids=("AC-1",))
+            alias = root / "operation-alias"
+            alias.symlink_to(operation_dir, target_is_directory=True)
+            with (
+                patch.dict(os.environ, {runner.ACCESS_TOKEN_ENV: "runner-token"}),
+                patch.object(runner, "_http_requester") as requester,
+            ):
+                with self.assertRaises(runner.OperationError):
+                    runner.main(["--resume", str(alias), "--apply"])
+            requester.assert_not_called()
+
+    def test_lock_symlink_failure_preserves_target_and_cleans_local_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            operation_dir, _ = self._dry_run(root, case_ids=("AC-1",))
+            outside = root / "outside-lock-target"
+            outside.write_text("must-not-change", encoding="utf-8")
+            os.chmod(outside, 0o644)
+            lock_path = operation_dir / "operation.lock"
+            lock_path.symlink_to(outside)
+
+            with self.assertRaises(runner.OperationError):
+                with runner.operation_lock(operation_dir):
+                    pass
+
+            self.assertEqual(outside.read_text(encoding="utf-8"), "must-not-change")
+            self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o644)
+            self.assertFalse(runner._LOCAL_OPERATION_LOCKS)
+            lock_path.unlink()
+            with runner.operation_lock(operation_dir):
+                pass
+            self.assertFalse(runner._LOCAL_OPERATION_LOCKS)
+
+    def test_unlock_failure_still_closes_and_clears_local_lock_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            original_flock = runner.fcntl.flock
+            unlock_descriptors: list[int] = []
+
+            def fail_unlock(descriptor: int, operation: int) -> None:
+                if operation == runner.fcntl.LOCK_UN:
+                    unlock_descriptors.append(descriptor)
+                    raise OSError("simulated unlock failure")
+                original_flock(descriptor, operation)
+
+            try:
+                with patch.object(runner.fcntl, "flock", side_effect=fail_unlock):
+                    with self.assertRaises(OSError):
+                        with runner.operation_lock(operation_dir):
+                            pass
+                self.assertFalse(runner._LOCAL_OPERATION_LOCKS)
+            finally:
+                for descriptor in unlock_descriptors:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+                runner._LOCAL_OPERATION_LOCKS.clear()
+
     def test_resume_skips_terminal_items_and_never_rediscovers_the_frozen_target_set(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             operation_dir, _ = self._dry_run(Path(temporary))
@@ -450,7 +794,8 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     "job": {"job_id": "job-already-terminal", "status": "completed"},
                 }
             )
-            progress_path.write_text(json.dumps(progress), encoding="utf-8")
+            baseline = json.loads((operation_dir / "baseline.json").read_text(encoding="utf-8"))
+            runner._persist_progress(operation_dir, baseline, progress)
 
             def handler(call: dict[str, object]) -> dict[str, object]:
                 parsed = urlsplit(str(call["path"]))

@@ -41,6 +41,7 @@ import psycopg
 from backend.repositories.ticket_repository import (
     ACCOUNT_RERUN_RESET_AI_ONLY,
     ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+    AccountRerouteLeaseLostError,
     InMemoryTicketRepository,
     TicketRepository,
     create_ticket_repository,
@@ -5040,6 +5041,7 @@ def list_billing_tickets(
 ACCOUNT_FULL_REROUTE_JOB_TICKET_ID = "__account-full-reroute__"
 ACCOUNT_FULL_REROUTE_JOB_EVENT = "account_full_reroute_job"
 ACCOUNT_FULL_REROUTE_STALE_AFTER = timedelta(hours=2)
+ACCOUNT_REROUTE_EXECUTION_LEASE = timedelta(minutes=30)
 ACCOUNT_CASE_RERUN_IDEMPOTENCY_SCOPE = "account_case_rerun"
 ACCOUNT_CASE_RERUN_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 ACCOUNT_RERUN_STORAGE_ERROR_CODE = "account_storage_temporarily_unavailable"
@@ -5075,18 +5077,60 @@ def _validated_account_case_rerun_idempotency_key(value: str | None) -> str:
     return normalized
 
 
+_ACCOUNT_REROUTE_INTERNAL_FIELDS = {
+    "request_scope",
+    "account_case_id",
+    "idempotency_scope",
+    "idempotency_key",
+    "dispatch_status",
+    "lease_token",
+    "lease_expires_at",
+    "result",
+}
+
+
+def _public_account_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: copy.deepcopy(value)
+        for key, value in job.items()
+        if key not in _ACCOUNT_REROUTE_INTERNAL_FIELDS
+    }
+
+
 def _account_full_reroute_jobs(*, limit: int = 500) -> list[dict[str, Any]]:
+    dedicated_jobs = ticket_repository.list_account_reroute_jobs(limit=limit)
     events = ticket_repository.list_ticket_events(ACCOUNT_FULL_REROUTE_JOB_TICKET_ID, limit=limit)
-    return [
+    legacy_jobs = [
         dict(event.get("payload") or {})
         for event in events
         if str(event.get("event_type") or "") == ACCOUNT_FULL_REROUTE_JOB_EVENT
         and isinstance(event.get("payload"), dict)
     ]
+    by_job_id: dict[str, dict[str, Any]] = {}
+    for job in dedicated_jobs:
+        job_id = str(job.get("job_id") or "").strip()
+        if job_id:
+            by_job_id[job_id] = job
+    for job in legacy_jobs:
+        job_id = str(job.get("job_id") or "").strip()
+        if job_id and job_id not in by_job_id:
+            by_job_id[job_id] = job
+    jobs = sorted(
+        by_job_id.values(),
+        key=lambda item: (
+            str(item.get("updated_at") or ""),
+            str(item.get("created_at") or ""),
+        ),
+        reverse=True,
+    )
+    return [_public_account_reroute_job(job) for job in jobs[:limit]]
 
 
 def _account_full_reroute_job(job_id: str) -> dict[str, Any] | None:
     normalized = str(job_id or "").strip()
+    dedicated_job = ticket_repository.get_account_reroute_job(normalized)
+    if dedicated_job is not None:
+        return _public_account_reroute_job(dedicated_job)
     return next(
         (job for job in _account_full_reroute_jobs() if str(job.get("job_id") or "") == normalized),
         None,
@@ -5105,7 +5149,23 @@ def _account_full_reroute_job_is_active(job: dict[str, Any] | None) -> bool:
     return datetime.now(timezone.utc) - updated_at.astimezone(timezone.utc) < ACCOUNT_FULL_REROUTE_STALE_AFTER
 
 
-def _save_account_full_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
+def _save_account_full_reroute_job(
+    job: dict[str, Any],
+    *,
+    lease_token: str | None = None,
+) -> dict[str, Any]:
+    if lease_token:
+        return ticket_repository.update_account_reroute_job(
+            job,
+            lease_token=lease_token,
+            lease_expires_at=(
+                datetime.now(timezone.utc) + ACCOUNT_REROUTE_EXECUTION_LEASE
+            ).isoformat(),
+        )
+    if ticket_repository.get_account_reroute_job(str(job.get("job_id") or "")) is not None:
+        raise AccountRerouteLeaseLostError(
+            f"Account reroute progress requires a lease for {job.get('job_id')}"
+        )
     payload = {**job, "event": ACCOUNT_FULL_REROUTE_JOB_EVENT}
     ticket_repository.record_event(
         ACCOUNT_FULL_REROUTE_JOB_TICKET_ID,
@@ -5174,8 +5234,33 @@ async def _account_rerun_storage_call(method: Any, *args: Any, **kwargs: Any) ->
     raise RuntimeError("Account rerun storage operation did not execute")
 
 
-async def _save_account_full_reroute_job_with_retry(job: dict[str, Any]) -> dict[str, Any]:
-    return await _account_rerun_storage_call(_save_account_full_reroute_job, job)
+async def _save_account_full_reroute_job_with_retry(
+    job: dict[str, Any],
+    *,
+    lease_token: str,
+) -> dict[str, Any]:
+    return await _account_rerun_storage_call(
+        _save_account_full_reroute_job,
+        job,
+        lease_token=lease_token,
+    )
+
+
+async def _claim_and_run_account_reroute_job(job_id: str) -> None:
+    claimed_at = now_iso()
+    lease_token = f"account-reroute-lease-{uuid4().hex}"
+    claim = await _account_rerun_storage_call(
+        ticket_repository.claim_account_reroute_job_execution,
+        job_id,
+        owner_token=lease_token,
+        claimed_at=claimed_at,
+        lease_expires_at=(
+            datetime.now(timezone.utc) + ACCOUNT_REROUTE_EXECUTION_LEASE
+        ).isoformat(),
+    )
+    if claim.get("status") != "acquired":
+        return
+    await _run_account_full_reroute_job(job_id, lease_token)
 
 
 def _account_case_for_identifier(identifier: str) -> dict[str, Any] | None:
@@ -5259,7 +5344,7 @@ async def _enqueue_account_rerun_job(
         active_after=(datetime.now(timezone.utc) - ACCOUNT_FULL_REROUTE_STALE_AFTER).isoformat(),
         idempotency_scope=(ACCOUNT_CASE_RERUN_IDEMPOTENCY_SCOPE if idempotency_key else None),
         idempotency_key=idempotency_key,
-        request_scope=request_scope,
+        request_scope=request_scope or "POST:/api/account/rerun-jobs",
     )
     if claim.get("status") == "scope_conflict":
         raise HTTPException(
@@ -5274,9 +5359,16 @@ async def _enqueue_account_rerun_job(
     canonical_job = claim.get("job")
     if not isinstance(canonical_job, dict):
         raise RuntimeError("Account rerun claim did not return a canonical job")
-    if claim.get("created") is True:
-        background_tasks.add_task(_run_account_full_reroute_job, canonical_job["job_id"])
-    return canonical_job
+    dispatch_state = (
+        str(canonical_job.get("status") or ""),
+        str(canonical_job.get("dispatch_status") or ""),
+    )
+    if dispatch_state in {("queued", "queued"), ("running", "leased")}:
+        background_tasks.add_task(
+            _claim_and_run_account_reroute_job,
+            canonical_job["job_id"],
+        )
+    return _public_account_reroute_job(canonical_job)
 
 
 async def _record_account_rerun_terminal_audit(
@@ -5339,7 +5431,11 @@ def _account_rerun_reply_wait_timeout_seconds() -> float:
     return max(30.0, _safe_float_env("ACCOUNT_RERUN_REPLY_WAIT_TIMEOUT_SECONDS", 900.0))
 
 
-async def _wait_for_account_rerun_replies(job: dict[str, Any]) -> None:
+async def _wait_for_account_rerun_replies(
+    job: dict[str, Any],
+    *,
+    lease_token: str,
+) -> None:
     reply_job_ids = [str(item).strip() for item in job.get("reply_job_ids") or [] if str(item).strip()]
     if not reply_job_ids or not bool(job.get("wait_for_replies")):
         job["reply_jobs_pending"] = 0
@@ -5359,7 +5455,7 @@ async def _wait_for_account_rerun_replies(job: dict[str, Any]) -> None:
         job["reply_jobs_manual_attention"] = sum(1 for item in jobs if item and item.get("status") == "manual_attention")
         job["reply_jobs_failed"] = sum(1 for item in jobs if item and item.get("status") == "failed")
         job["updated_at"] = now_iso()
-        await _save_account_full_reroute_job_with_retry(job)
+        await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
         if not pending and not missing:
             return
         if time.monotonic() >= deadline:
@@ -5459,13 +5555,34 @@ async def _reconcile_account_rerun_failures(job: dict[str, Any]) -> None:
             LOGGER.warning("Could not reconcile Account rerun case %s: %s", case_id, exc)
 
 
-async def _run_account_full_reroute_job(job_id: str) -> None:
-    job = _account_full_reroute_job(job_id)
+async def _run_account_full_reroute_job(
+    job_id: str,
+    lease_token: str | None = None,
+) -> None:
+    if not lease_token:
+        claimed_at = now_iso()
+        candidate_token = f"account-reroute-lease-{uuid4().hex}"
+        claim = await _account_rerun_storage_call(
+            ticket_repository.claim_account_reroute_job_execution,
+            job_id,
+            owner_token=candidate_token,
+            claimed_at=claimed_at,
+            lease_expires_at=(
+                datetime.now(timezone.utc) + ACCOUNT_REROUTE_EXECUTION_LEASE
+            ).isoformat(),
+        )
+        if claim.get("status") != "acquired":
+            return
+        lease_token = candidate_token
+    job = await _account_rerun_storage_call(
+        ticket_repository.get_account_reroute_job,
+        job_id,
+    )
     if job is None:
         return
     started_at = now_iso()
     job.update(status="running", phase="Routing and extracting", started_at=started_at, updated_at=started_at)
-    await _save_account_full_reroute_job_with_retry(job)
+    await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
     try:
         target_case_ids = {
             str(item or "").strip()
@@ -5489,7 +5606,7 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
             )
         job["total"] = len(cases)
         job["updated_at"] = now_iso()
-        await _save_account_full_reroute_job_with_retry(job)
+        await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
         for account_case in cases:
             case_id = str(
                 account_case.get("account_case_id")
@@ -5638,7 +5755,10 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     case_email_expected = True
                     job["phase"] = "Sending internal emails"
                     job["updated_at"] = now_iso()
-                    await _save_account_full_reroute_job_with_retry(job)
+                    await _save_account_full_reroute_job_with_retry(
+                        job,
+                        lease_token=lease_token,
+                    )
                     fresh_email = copy.deepcopy(result.internal_email_to_send)
                     fresh_email["delivery_key"] = _fresh_rerun_delivery_key(fresh_email, job_id)
                     updated_case["internal_email_payload"] = fresh_email
@@ -5677,7 +5797,10 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                     case_stage = "reply"
                     job["phase"] = "Scheduling Persona replies"
                     job["updated_at"] = now_iso()
-                    await _save_account_full_reroute_job_with_retry(job)
+                    await _save_account_full_reroute_job_with_retry(
+                        job,
+                        lease_token=lease_token,
+                    )
                     trigger_message_created_at = latest_customer_message_created_at(canonical_ticket)
                     if not trigger_message_created_at:
                         raise ValueError(
@@ -5733,6 +5856,8 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
                 )
                 job["changed"] += int(case_changed)
                 job["succeeded"] += 1
+            except AccountRerouteLeaseLostError:
+                raise
             except Exception as exc:
                 LOGGER.exception("Account full reroute failed for %s", case_id)
                 if client_ticket_id and not case_reply_job_id:
@@ -5766,11 +5891,17 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
             finally:
                 job["processed"] += 1
                 job["updated_at"] = now_iso()
-                await _save_account_full_reroute_job_with_retry(job)
+                await _save_account_full_reroute_job_with_retry(
+                    job,
+                    lease_token=lease_token,
+                )
         job["phase"] = "Waiting for replies"
         job["updated_at"] = now_iso()
-        await _save_account_full_reroute_job_with_retry(job)
-        await _wait_for_account_rerun_replies(job)
+        await _save_account_full_reroute_job_with_retry(
+            job,
+            lease_token=lease_token,
+        )
+        await _wait_for_account_rerun_replies(job, lease_token=lease_token)
         await _reconcile_account_rerun_failures(job)
         completed_at = now_iso()
         terminal_status = (
@@ -5798,7 +5929,13 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
             completed_at=completed_at,
             updated_at=completed_at,
         )
-        await _save_account_full_reroute_job_with_retry(job)
+        await _save_account_full_reroute_job_with_retry(
+            job,
+            lease_token=lease_token,
+        )
+    except AccountRerouteLeaseLostError:
+        LOGGER.warning("Account reroute worker lost its execution lease for %s", job_id)
+        return
     except Exception as exc:
         LOGGER.exception("Account full reroute job failed")
         failed_at = now_iso()
@@ -5821,7 +5958,10 @@ async def _run_account_full_reroute_job(job_id: str) -> None:
             completed_at=failed_at,
             updated_at=failed_at,
         )
-        await _save_account_full_reroute_job_with_retry(job)
+        await _save_account_full_reroute_job_with_retry(
+            job,
+            lease_token=lease_token,
+        )
 
 
 @app.post("/api/account/rerun-jobs", status_code=202)

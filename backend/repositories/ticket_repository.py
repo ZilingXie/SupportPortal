@@ -37,6 +37,10 @@ ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY = "customer_messages_only"
 AccountRerunResetMode = Literal["account_ai_only", "customer_messages_only"]
 
 
+class AccountRerouteLeaseLostError(RuntimeError):
+    """Raised when a stale reroute worker attempts to persist progress."""
+
+
 def _normalize_account_rerun_reset_mode(value: str) -> AccountRerunResetMode:
     normalized = str(value or ACCOUNT_RERUN_RESET_AI_ONLY).strip().lower()
     if normalized not in {
@@ -217,6 +221,15 @@ _SCHEMA_BOOTSTRAP_ADVISORY_LOCK = (842918, 1)
 _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK = (842918, 4)
 # Namespace 842918 key 5 serializes Account rerun admission across API processes.
 _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK = (842918, 5)
+_ACCOUNT_REROUTE_ACTIVE_STATUSES = {"queued", "running"}
+_ACCOUNT_REROUTE_TERMINAL_STATUSES = {
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "needs_recovery",
+}
+_ACCOUNT_REROUTE_STATUSES = _ACCOUNT_REROUTE_ACTIVE_STATUSES | _ACCOUNT_REROUTE_TERMINAL_STATUSES
+_ACCOUNT_REROUTE_DISPATCH_STATUSES = {"queued", "leased", "completed", "needs_recovery"}
 
 
 def _account_rerun_payload_is_active(payload: dict[str, Any], *, active_after: str) -> bool:
@@ -232,6 +245,26 @@ def _account_rerun_payload_is_active(payload: dict[str, Any], *, active_after: s
     except ValueError:
         return False
     return updated_at.astimezone(timezone.utc) >= threshold.astimezone(timezone.utc)
+
+
+def _account_reroute_job_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    payload = copy.deepcopy(row[6]) if isinstance(row[6], dict) else {}
+    payload.update(
+        {
+            "job_id": str(row[0]),
+            "request_scope": str(row[1]),
+            "account_case_id": str(row[2] or "").strip() or None,
+            "status": str(row[5]),
+            "dispatch_status": str(row[8]),
+            "lease_token": str(row[9] or "").strip() or None,
+            "lease_expires_at": _to_iso(row[10]) if row[10] else None,
+            "created_at": _to_iso(row[11]),
+            "updated_at": _to_iso(row[12]),
+            "started_at": _to_iso(row[13]) if row[13] else None,
+            "completed_at": _to_iso(row[14]) if row[14] else None,
+        }
+    )
+    return payload
 
 
 def _choose_account_persona(candidates: list[Any]) -> Any:
@@ -1511,12 +1544,33 @@ class TicketRepository(Protocol):
         self,
         job: dict[str, Any],
         *,
-        job_ticket_id: str,
-        event_type: str,
         active_after: str,
+        job_ticket_id: str | None = None,
+        event_type: str | None = None,
         idempotency_scope: str | None = None,
         idempotency_key: str | None = None,
         request_scope: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def get_account_reroute_job(self, job_id: str) -> dict[str, Any] | None: ...
+
+    def list_account_reroute_jobs(self, limit: int = 500) -> list[dict[str, Any]]: ...
+
+    def claim_account_reroute_job_execution(
+        self,
+        job_id: str,
+        *,
+        owner_token: str,
+        claimed_at: str,
+        lease_expires_at: str,
+    ) -> dict[str, Any]: ...
+
+    def update_account_reroute_job(
+        self,
+        job: dict[str, Any],
+        *,
+        lease_token: str,
+        lease_expires_at: str | None = None,
     ) -> dict[str, Any]: ...
 
     def claim_automation_reply(
@@ -2122,6 +2176,7 @@ class InMemoryTicketRepository:
         self._engineer_schedules: dict[tuple[str, int], dict[str, Any]] = {}
         self._workspace_audit_events: list[dict[str, Any]] = []
         self._idempotency_records: dict[tuple[str, str], dict[str, Any]] = {}
+        self._account_reroute_jobs: dict[str, dict[str, Any]] = {}
         self._automation_reply_claims: dict[str, dict[str, Any]] = {}
         self._rollout_counters: dict[str, int] = {}
         self._rollout_events: dict[tuple[str, str], int] = {}
@@ -3908,22 +3963,27 @@ class InMemoryTicketRepository:
         self,
         job: dict[str, Any],
         *,
-        job_ticket_id: str,
-        event_type: str,
         active_after: str,
+        job_ticket_id: str | None = None,
+        event_type: str | None = None,
         idempotency_scope: str | None = None,
         idempotency_key: str | None = None,
         request_scope: str | None = None,
     ) -> dict[str, Any]:
         normalized_scope = str(idempotency_scope or "").strip()
         normalized_key = str(idempotency_key or "").strip()
-        normalized_request_scope = str(request_scope or "").strip()
-        if any((normalized_scope, normalized_key, normalized_request_scope)) and not all(
-            (normalized_scope, normalized_key, normalized_request_scope)
-        ):
-            raise ValueError("idempotency_scope, idempotency_key, and request_scope must be provided together")
+        normalized_request_scope = (
+            str(request_scope or "").strip()
+            or str(job.get("scope") or "").strip()
+        )
+        if not normalized_request_scope:
+            raise ValueError("request_scope is required")
+        if bool(normalized_scope) != bool(normalized_key):
+            raise ValueError("idempotency_scope and idempotency_key must be provided together")
 
         def latest_job(job_id: str) -> dict[str, Any] | None:
+            if not job_ticket_id or not event_type:
+                return None
             return next(
                 (
                     copy.deepcopy(event["payload"])
@@ -3937,6 +3997,20 @@ class InMemoryTicketRepository:
 
         with self._assignment_lock:
             if normalized_key:
+                existing_job = next(
+                    (
+                        copy.deepcopy(candidate)
+                        for candidate in self._account_reroute_jobs.values()
+                        if str(candidate.get("idempotency_scope") or "") == normalized_scope
+                        and str(candidate.get("idempotency_key") or "") == normalized_key
+                    ),
+                    None,
+                )
+                if existing_job is not None:
+                    if str(existing_job.get("request_scope") or "") != normalized_request_scope:
+                        return {"status": "scope_conflict", "created": False, "job": None}
+                    return {"status": "replayed", "created": False, "job": existing_job}
+
                 existing = self._idempotency_records.get((normalized_scope, normalized_key))
                 if isinstance(existing, dict):
                     response = existing.get("response_payload")
@@ -3946,52 +4020,178 @@ class InMemoryTicketRepository:
                     canonical_job = latest_job(str(response.get("job_id") or "")) or copy.deepcopy(stored_job)
                     return {"status": "replayed", "created": False, "job": canonical_job}
 
-            latest_by_job: dict[str, dict[str, Any]] = {}
-            for event in reversed(self._events):
-                if (
-                    str(event.get("ticket_id") or "") != job_ticket_id
-                    or str(event.get("event_type") or "") != event_type
-                    or not isinstance(event.get("payload"), dict)
-                ):
-                    continue
-                job_id = str(event["payload"].get("job_id") or "").strip()
-                if job_id and job_id not in latest_by_job:
-                    latest_by_job[job_id] = event["payload"]
             active_job = next(
                 (
                     copy.deepcopy(candidate)
-                    for candidate in latest_by_job.values()
-                    if _account_rerun_payload_is_active(candidate, active_after=active_after)
+                    for candidate in self._account_reroute_jobs.values()
+                    if str(candidate.get("status") or "") in _ACCOUNT_REROUTE_ACTIVE_STATUSES
                 ),
                 None,
             )
+            if active_job is None and job_ticket_id and event_type:
+                latest_by_job: dict[str, dict[str, Any]] = {}
+                for event in reversed(self._events):
+                    if (
+                        str(event.get("ticket_id") or "") != job_ticket_id
+                        or str(event.get("event_type") or "") != event_type
+                        or not isinstance(event.get("payload"), dict)
+                    ):
+                        continue
+                    event_job_id = str(event["payload"].get("job_id") or "").strip()
+                    if event_job_id and event_job_id not in latest_by_job:
+                        latest_by_job[event_job_id] = event["payload"]
+                active_job = next(
+                    (
+                        copy.deepcopy(candidate)
+                        for candidate in latest_by_job.values()
+                        if _account_rerun_payload_is_active(candidate, active_after=active_after)
+                    ),
+                    None,
+                )
             if active_job is not None:
                 return {"status": "active_conflict", "created": False, "job": active_job}
 
             saved_job = copy.deepcopy(job)
-            self._events.append(
+            job_id = str(saved_job.get("job_id") or "").strip()
+            if not job_id:
+                raise ValueError("job_id is required")
+            status = str(saved_job.get("status") or "queued").strip()
+            if status not in _ACCOUNT_REROUTE_STATUSES:
+                raise ValueError(f"invalid Account reroute job status: {status}")
+            saved_job.update(
                 {
-                    "ticket_id": job_ticket_id,
-                    "event_type": event_type,
-                    "payload": saved_job,
-                    "created_at": saved_job.get("created_at") or _utc_now(),
+                    "job_id": job_id,
+                    "request_scope": normalized_request_scope,
+                    "account_case_id": str(saved_job.get("account_case_id") or "").strip() or None,
+                    "idempotency_scope": normalized_scope or None,
+                    "idempotency_key": normalized_key or None,
+                    "status": status,
+                    "dispatch_status": "queued",
+                    "lease_token": None,
+                    "lease_expires_at": None,
+                    "result": {},
                 }
             )
-            if normalized_key:
-                response_payload = {
-                    "request_scope": normalized_request_scope,
-                    "job_id": str(saved_job.get("job_id") or ""),
-                    "job": copy.deepcopy(saved_job),
-                }
-                self._idempotency_records[(normalized_scope, normalized_key)] = {
-                    "scope": normalized_scope,
-                    "idempotency_key": normalized_key,
-                    "state": "completed",
-                    "response_payload": response_payload,
-                    "created_at": saved_job.get("created_at") or _utc_now(),
-                    "updated_at": saved_job.get("updated_at") or _utc_now(),
-                }
+            self._account_reroute_jobs[job_id] = saved_job
             return {"status": "created", "created": True, "job": saved_job}
+
+    def get_account_reroute_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            job = self._account_reroute_jobs.get(str(job_id or "").strip())
+            return copy.deepcopy(job) if job is not None else None
+
+    def list_account_reroute_jobs(self, limit: int = 500) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 500), 5000))
+        with self._assignment_lock:
+            jobs = sorted(
+                self._account_reroute_jobs.values(),
+                key=lambda item: (
+                    str(item.get("updated_at") or ""),
+                    str(item.get("created_at") or ""),
+                ),
+                reverse=True,
+            )
+            return [copy.deepcopy(item) for item in jobs[:safe_limit]]
+
+    def claim_account_reroute_job_execution(
+        self,
+        job_id: str,
+        *,
+        owner_token: str,
+        claimed_at: str,
+        lease_expires_at: str,
+    ) -> dict[str, Any]:
+        normalized_job_id = str(job_id or "").strip()
+        normalized_owner = str(owner_token or "").strip()
+        if not normalized_job_id or not normalized_owner:
+            raise ValueError("job_id and owner_token are required")
+        claimed_time = datetime.fromisoformat(str(claimed_at).replace("Z", "+00:00"))
+        with self._assignment_lock:
+            job = self._account_reroute_jobs.get(normalized_job_id)
+            if job is None:
+                return {"status": "not_found", "job": None}
+            if str(job.get("status") or "") in _ACCOUNT_REROUTE_TERMINAL_STATUSES:
+                return {"status": "terminal", "job": copy.deepcopy(job)}
+            if str(job.get("dispatch_status") or "") == "leased":
+                expires_value = job.get("lease_expires_at")
+                expires_at = (
+                    datetime.fromisoformat(str(expires_value).replace("Z", "+00:00"))
+                    if expires_value
+                    else None
+                )
+                if expires_at is None or expires_at <= claimed_time:
+                    job.update(
+                        status="needs_recovery",
+                        dispatch_status="needs_recovery",
+                        lease_token=None,
+                        lease_expires_at=None,
+                        recovery_reason="execution_lease_expired",
+                        updated_at=claimed_at,
+                        completed_at=claimed_at,
+                    )
+                    job["result"] = copy.deepcopy(job)
+                    return {"status": "needs_recovery", "job": copy.deepcopy(job)}
+                return {"status": "in_progress", "job": copy.deepcopy(job)}
+            if str(job.get("dispatch_status") or "") != "queued":
+                return {"status": "terminal", "job": copy.deepcopy(job)}
+            job.update(
+                status="running",
+                dispatch_status="leased",
+                lease_token=normalized_owner,
+                lease_expires_at=lease_expires_at,
+                started_at=job.get("started_at") or claimed_at,
+                updated_at=claimed_at,
+            )
+            return {
+                "status": "acquired",
+                "lease_token": normalized_owner,
+                "job": copy.deepcopy(job),
+            }
+
+    def update_account_reroute_job(
+        self,
+        job: dict[str, Any],
+        *,
+        lease_token: str,
+        lease_expires_at: str | None = None,
+    ) -> dict[str, Any]:
+        job_id = str(job.get("job_id") or "").strip()
+        normalized_token = str(lease_token or "").strip()
+        status = str(job.get("status") or "").strip()
+        if status not in ({"running"} | _ACCOUNT_REROUTE_TERMINAL_STATUSES):
+            raise ValueError(f"invalid Account reroute progress status: {status}")
+        with self._assignment_lock:
+            current = self._account_reroute_jobs.get(job_id)
+            if (
+                current is None
+                or str(current.get("dispatch_status") or "") != "leased"
+                or str(current.get("lease_token") or "") != normalized_token
+            ):
+                raise AccountRerouteLeaseLostError(f"Account reroute lease lost for {job_id}")
+            saved = copy.deepcopy(job)
+            saved.update(
+                request_scope=current.get("request_scope"),
+                account_case_id=current.get("account_case_id"),
+                idempotency_scope=current.get("idempotency_scope"),
+                idempotency_key=current.get("idempotency_key"),
+                lease_token=normalized_token,
+                lease_expires_at=(
+                    str(lease_expires_at or "").strip()
+                    or current.get("lease_expires_at")
+                ),
+                dispatch_status="leased",
+            )
+            if status in _ACCOUNT_REROUTE_TERMINAL_STATUSES:
+                saved["dispatch_status"] = (
+                    "needs_recovery" if status == "needs_recovery" else "completed"
+                )
+                saved["lease_token"] = None
+                saved["lease_expires_at"] = None
+                saved["result"] = copy.deepcopy(job)
+            else:
+                saved["result"] = copy.deepcopy(current.get("result") or {})
+            self._account_reroute_jobs[job_id] = saved
+            return copy.deepcopy(saved)
 
     def claim_automation_reply(
         self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
@@ -6271,6 +6471,72 @@ class PostgresTicketRepository:
                     ).format(
                         sql.Identifier("idx_support_account_reply_jobs_ticket_trigger_rerun"),
                         reply_jobs_table,
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            job_id TEXT PRIMARY KEY,
+                            request_scope TEXT NOT NULL,
+                            account_case_id TEXT,
+                            idempotency_scope TEXT,
+                            idempotency_key TEXT,
+                            status TEXT NOT NULL CHECK (
+                                status IN ('queued','running','completed','completed_with_errors','failed','needs_recovery')
+                            ),
+                            payload JSONB NOT NULL,
+                            result JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            dispatch_status TEXT NOT NULL DEFAULT 'queued' CHECK (
+                                dispatch_status IN ('queued','leased','completed','needs_recovery')
+                            ),
+                            lease_token TEXT,
+                            lease_expires_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            started_at TIMESTAMPTZ,
+                            completed_at TIMESTAMPTZ,
+                            CHECK (
+                                (idempotency_scope IS NULL AND idempotency_key IS NULL)
+                                OR (idempotency_scope IS NOT NULL AND idempotency_key IS NOT NULL)
+                            )
+                        )
+                        """
+                    ).format(self._table("support_account_reroute_jobs"))
+                )
+                reroute_jobs_table = self._table("support_account_reroute_jobs")
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} "
+                        "(idempotency_scope, idempotency_key) WHERE idempotency_key IS NOT NULL"
+                    ).format(
+                        sql.Identifier("idx_support_account_reroute_jobs_idempotency"),
+                        reroute_jobs_table,
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((1)) "
+                        "WHERE status IN ('queued','running')"
+                    ).format(
+                        sql.Identifier("idx_support_account_reroute_jobs_one_active"),
+                        reroute_jobs_table,
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (dispatch_status, lease_expires_at)"
+                    ).format(
+                        sql.Identifier("idx_support_account_reroute_jobs_dispatch_lease"),
+                        reroute_jobs_table,
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (updated_at DESC, created_at DESC)"
+                    ).format(
+                        sql.Identifier("idx_support_account_reroute_jobs_updated"),
+                        reroute_jobs_table,
                     )
                 )
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (persona_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, published_version INTEGER, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)").format(self._table("support_account_personas")))
@@ -9086,20 +9352,23 @@ class PostgresTicketRepository:
         self,
         job: dict[str, Any],
         *,
-        job_ticket_id: str,
-        event_type: str,
         active_after: str,
+        job_ticket_id: str | None = None,
+        event_type: str | None = None,
         idempotency_scope: str | None = None,
         idempotency_key: str | None = None,
         request_scope: str | None = None,
     ) -> dict[str, Any]:
         normalized_scope = str(idempotency_scope or "").strip()
         normalized_key = str(idempotency_key or "").strip()
-        normalized_request_scope = str(request_scope or "").strip()
-        if any((normalized_scope, normalized_key, normalized_request_scope)) and not all(
-            (normalized_scope, normalized_key, normalized_request_scope)
-        ):
-            raise ValueError("idempotency_scope, idempotency_key, and request_scope must be provided together")
+        normalized_request_scope = (
+            str(request_scope or "").strip()
+            or str(job.get("scope") or "").strip()
+        )
+        if not normalized_request_scope:
+            raise ValueError("request_scope is required")
+        if bool(normalized_scope) != bool(normalized_key):
+            raise ValueError("idempotency_scope and idempotency_key must be provided together")
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
@@ -9108,6 +9377,22 @@ class PostgresTicketRepository:
                     _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK,
                 )
                 if normalized_key:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                            "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                            "created_at,updated_at,started_at,completed_at FROM {} "
+                            "WHERE idempotency_scope=%s AND idempotency_key=%s FOR UPDATE"
+                        ).format(self._table("support_account_reroute_jobs")),
+                        (normalized_scope, normalized_key),
+                    )
+                    dedicated_row = cur.fetchone()
+                    if dedicated_row is not None:
+                        existing_job = _account_reroute_job_from_row(dedicated_row)
+                        if str(existing_job.get("request_scope") or "") != normalized_request_scope:
+                            return {"status": "scope_conflict", "created": False, "job": None}
+                        return {"status": "replayed", "created": False, "job": existing_job}
+
                     cur.execute(
                         sql.SQL(
                             "SELECT response_payload FROM {} "
@@ -9122,14 +9407,16 @@ class PostgresTicketRepository:
                             return {"status": "scope_conflict", "created": False, "job": None}
                         stored_job = response.get("job") if isinstance(response.get("job"), dict) else {}
                         canonical_job_id = str(response.get("job_id") or "")
-                        cur.execute(
-                            sql.SQL(
-                                "SELECT payload FROM {} WHERE ticket_id=%s AND event_type=%s "
-                                "AND payload->>'job_id'=%s ORDER BY created_at DESC,id DESC LIMIT 1"
-                            ).format(self._table("support_ticket_events")),
-                            (job_ticket_id, event_type, canonical_job_id),
-                        )
-                        event_row = cur.fetchone()
+                        event_row = None
+                        if job_ticket_id and event_type:
+                            cur.execute(
+                                sql.SQL(
+                                    "SELECT payload FROM {} WHERE ticket_id=%s AND event_type=%s "
+                                    "AND payload->>'job_id'=%s ORDER BY created_at DESC,id DESC LIMIT 1"
+                                ).format(self._table("support_ticket_events")),
+                                (job_ticket_id, event_type, canonical_job_id),
+                            )
+                            event_row = cur.fetchone()
                         canonical_job = (
                             event_row[0]
                             if event_row is not None and isinstance(event_row[0], dict)
@@ -9139,49 +9426,278 @@ class PostgresTicketRepository:
 
                 cur.execute(
                     sql.SQL(
-                        "SELECT DISTINCT ON ((payload->>'job_id')) payload FROM {} "
-                        "WHERE ticket_id=%s AND event_type=%s AND COALESCE(payload->>'job_id','')<>'' "
-                        "ORDER BY (payload->>'job_id'),created_at DESC,id DESC"
-                    ).format(self._table("support_ticket_events")),
-                    (job_ticket_id, event_type),
+                        "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at FROM {} "
+                        "WHERE status IN ('queued','running') "
+                        "ORDER BY created_at ASC LIMIT 1 FOR UPDATE"
+                    ).format(self._table("support_account_reroute_jobs"))
                 )
-                active_job = next(
-                    (
-                        row[0]
-                        for row in cur.fetchall()
-                        if isinstance(row[0], dict)
-                        and _account_rerun_payload_is_active(row[0], active_after=active_after)
-                    ),
-                    None,
+                dedicated_active_row = cur.fetchone()
+                active_job = (
+                    _account_reroute_job_from_row(dedicated_active_row)
+                    if dedicated_active_row is not None
+                    else None
                 )
+                if active_job is None and job_ticket_id and event_type:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT DISTINCT ON ((payload->>'job_id')) payload FROM {} "
+                            "WHERE ticket_id=%s AND event_type=%s AND COALESCE(payload->>'job_id','')<>'' "
+                            "ORDER BY (payload->>'job_id'),created_at DESC,id DESC"
+                        ).format(self._table("support_ticket_events")),
+                        (job_ticket_id, event_type),
+                    )
+                    active_job = next(
+                        (
+                            event_row[0]
+                            for event_row in cur.fetchall()
+                            if isinstance(event_row[0], dict)
+                            and _account_rerun_payload_is_active(
+                                event_row[0], active_after=active_after
+                            )
+                        ),
+                        None,
+                    )
                 if active_job is not None:
                     return {"status": "active_conflict", "created": False, "job": active_job}
 
                 saved_job = copy.deepcopy(job)
+                job_id = str(saved_job.get("job_id") or "").strip()
+                if not job_id:
+                    raise ValueError("job_id is required")
+                target_case_ids = [
+                    str(item or "").strip()
+                    for item in saved_job.get("target_case_ids") or []
+                    if str(item or "").strip()
+                ]
+                account_case_id = (
+                    str(saved_job.get("account_case_id") or "").strip()
+                    or (target_case_ids[0] if len(target_case_ids) == 1 else "")
+                    or None
+                )
+                created_at = saved_job.get("created_at") or _utc_now()
+                updated_at = saved_job.get("updated_at") or created_at
                 cur.execute(
                     sql.SQL(
-                        "INSERT INTO {} (ticket_id,event_type,payload) VALUES (%s,%s,%s)"
-                    ).format(self._table("support_ticket_events")),
-                    (job_ticket_id, event_type, Json(saved_job)),
+                        "INSERT INTO {} (job_id,request_scope,account_case_id,idempotency_scope,"
+                        "idempotency_key,status,payload,result,dispatch_status,lease_token,"
+                        "lease_expires_at,created_at,updated_at,started_at,completed_at) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'queued',NULL,NULL,%s,%s,%s,%s) "
+                        "RETURNING job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (
+                        job_id,
+                        normalized_request_scope,
+                        account_case_id,
+                        normalized_scope or None,
+                        normalized_key or None,
+                        str(saved_job.get("status") or "queued").strip(),
+                        Json(saved_job),
+                        Json({}),
+                        created_at,
+                        updated_at,
+                        saved_job.get("started_at"),
+                        saved_job.get("completed_at"),
+                    ),
                 )
-                if normalized_key:
-                    response_payload = {
-                        "request_scope": normalized_request_scope,
-                        "job_id": str(saved_job.get("job_id") or ""),
-                        "job": copy.deepcopy(saved_job),
-                    }
-                    created_at = saved_job.get("created_at") or _utc_now()
-                    updated_at = saved_job.get("updated_at") or created_at
-                    cur.execute(
-                        sql.SQL(
-                            "INSERT INTO {} (scope,idempotency_key,state,response_payload,created_at,updated_at) "
-                            "VALUES (%s,%s,'completed',%s,%s,%s)"
-                        ).format(self._table("support_idempotency_records")),
-                        (normalized_scope, normalized_key, Json(response_payload), created_at, updated_at),
-                    )
-                return {"status": "created", "created": True, "job": saved_job}
+                created_row = cur.fetchone()
+                assert created_row is not None
+                return {
+                    "status": "created",
+                    "created": True,
+                    "job": _account_reroute_job_from_row(created_row),
+                }
 
         return self._run_with_connection_retry("claim_account_case_rerun", _operation)
+
+    def get_account_reroute_job(self, job_id: str) -> dict[str, Any] | None:
+        normalized_job_id = str(job_id or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at FROM {} WHERE job_id=%s"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (normalized_job_id,),
+                )
+                row = cur.fetchone()
+                return _account_reroute_job_from_row(row) if row is not None else None
+
+        return self._run_with_connection_retry("get_account_reroute_job", _operation)
+
+    def list_account_reroute_jobs(self, limit: int = 500) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 500), 5000))
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at FROM {} "
+                        "ORDER BY updated_at DESC,created_at DESC LIMIT %s"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (safe_limit,),
+                )
+                return [_account_reroute_job_from_row(row) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry("list_account_reroute_jobs", _operation)
+
+    def claim_account_reroute_job_execution(
+        self,
+        job_id: str,
+        *,
+        owner_token: str,
+        claimed_at: str,
+        lease_expires_at: str,
+    ) -> dict[str, Any]:
+        normalized_job_id = str(job_id or "").strip()
+        normalized_owner = str(owner_token or "").strip()
+        if not normalized_job_id or not normalized_owner:
+            raise ValueError("job_id and owner_token are required")
+        claimed_time = datetime.fromisoformat(str(claimed_at).replace("Z", "+00:00"))
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at FROM {} "
+                        "WHERE job_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (normalized_job_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return {"status": "not_found", "job": None}
+                current = _account_reroute_job_from_row(row)
+                if str(current.get("status") or "") in _ACCOUNT_REROUTE_TERMINAL_STATUSES:
+                    return {"status": "terminal", "job": current}
+                if str(current.get("dispatch_status") or "") == "leased":
+                    current_expiry = row[10]
+                    if current_expiry is not None and current_expiry > claimed_time:
+                        return {"status": "in_progress", "job": current}
+                    current.update(
+                        status="needs_recovery",
+                        dispatch_status="needs_recovery",
+                        lease_token=None,
+                        lease_expires_at=None,
+                        recovery_reason="execution_lease_expired",
+                        updated_at=claimed_at,
+                        completed_at=claimed_at,
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='needs_recovery',payload=%s,result=%s,"
+                            "dispatch_status='needs_recovery',lease_token=NULL,lease_expires_at=NULL,"
+                            "updated_at=%s,completed_at=%s WHERE job_id=%s"
+                        ).format(self._table("support_account_reroute_jobs")),
+                        (
+                            Json(current),
+                            Json(current),
+                            claimed_at,
+                            claimed_at,
+                            normalized_job_id,
+                        ),
+                    )
+                    return {"status": "needs_recovery", "job": current}
+                if str(current.get("dispatch_status") or "") != "queued":
+                    return {"status": "terminal", "job": current}
+                current.update(
+                    status="running",
+                    dispatch_status="leased",
+                    lease_token=normalized_owner,
+                    lease_expires_at=lease_expires_at,
+                    started_at=current.get("started_at") or claimed_at,
+                    updated_at=claimed_at,
+                )
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='running',payload=%s,dispatch_status='leased',"
+                        "lease_token=%s,lease_expires_at=%s,started_at=COALESCE(started_at,%s),"
+                        "updated_at=%s WHERE job_id=%s"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (
+                        Json(current),
+                        normalized_owner,
+                        lease_expires_at,
+                        claimed_at,
+                        claimed_at,
+                        normalized_job_id,
+                    ),
+                )
+                return {
+                    "status": "acquired",
+                    "lease_token": normalized_owner,
+                    "job": current,
+                }
+
+        return self._run_with_connection_retry(
+            "claim_account_reroute_job_execution", _operation
+        )
+
+    def update_account_reroute_job(
+        self,
+        job: dict[str, Any],
+        *,
+        lease_token: str,
+        lease_expires_at: str | None = None,
+    ) -> dict[str, Any]:
+        job_id = str(job.get("job_id") or "").strip()
+        normalized_token = str(lease_token or "").strip()
+        status = str(job.get("status") or "").strip()
+        if status not in ({"running"} | _ACCOUNT_REROUTE_TERMINAL_STATUSES):
+            raise ValueError(f"invalid Account reroute progress status: {status}")
+        terminal = status in _ACCOUNT_REROUTE_TERMINAL_STATUSES
+        dispatch_status = (
+            "needs_recovery"
+            if status == "needs_recovery"
+            else "completed" if terminal else "leased"
+        )
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s,payload=%s,result=%s,dispatch_status=%s,"
+                        "lease_token=CASE WHEN %s THEN NULL ELSE lease_token END,"
+                        "lease_expires_at=CASE WHEN %s THEN NULL ELSE COALESCE(%s,lease_expires_at) END,"
+                        "updated_at=%s,started_at=COALESCE(started_at,%s),completed_at=%s "
+                        "WHERE job_id=%s AND dispatch_status='leased' AND lease_token=%s "
+                        "RETURNING job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (
+                        status,
+                        Json(job),
+                        Json(job if terminal else {}),
+                        dispatch_status,
+                        terminal,
+                        terminal,
+                        lease_expires_at,
+                        job.get("updated_at") or _utc_now(),
+                        job.get("started_at"),
+                        job.get("completed_at") if terminal else None,
+                        job_id,
+                        normalized_token,
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise AccountRerouteLeaseLostError(
+                        f"Account reroute lease lost for {job_id}"
+                    )
+                return _account_reroute_job_from_row(row)
+
+        return self._run_with_connection_retry("update_account_reroute_job", _operation)
 
     def claim_automation_reply(
         self, automation_reply_key: str, *, client_ticket_id: str, handler: str,

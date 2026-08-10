@@ -356,15 +356,41 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(sorted(bool(result["created"]) for result in results), [False, True])
         self.assertEqual(len({str(result["job"]["job_id"]) for result in results}), 1)
         self.assertEqual(
-            len(repository.list_ticket_events("__account-full-reroute__")),
+            len(repository.list_account_reroute_jobs()),
             1,
         )
+        self.assertEqual(repository.list_ticket_events("__account-full-reroute__"), [])
 
     def test_postgres_account_rerun_claim_is_one_locked_transaction(self) -> None:
-        cursor = _ReusableCursor(fetchone_results=[None], fetchall_results=[[]])
+        timestamp = "2026-08-09T00:00:00+00:00"
+        created_row = (
+            "account-rerun-pg",
+            "POST:/api/account/cases/AC-1/rerun",
+            None,
+            "account_case_rerun",
+            "postgres-atomic-key",
+            "queued",
+            {
+                "job_id": "account-rerun-pg",
+                "status": "queued",
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+            {},
+            "queued",
+            None,
+            None,
+            timestamp,
+            timestamp,
+            None,
+            None,
+        )
+        cursor = _ReusableCursor(
+            fetchone_results=[None, None, None, created_row],
+            fetchall_results=[[]],
+        )
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
-        timestamp = "2026-08-09T00:00:00+00:00"
 
         with patch.object(
             repository,
@@ -395,14 +421,15 @@ class RepositoryConfigurationTests(unittest.TestCase):
         ]
         self.assertIn("pg_advisory_xact_lock", rendered[0])
         self.assertEqual(cursor.executed[0][0][1], _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK)
-        self.assertIn("support_idempotency_records", rendered[1])
-        self.assertIn("support_ticket_events", rendered[2])
-        self.assertIn("INSERT INTO", rendered[3])
-        self.assertIn("support_ticket_events", rendered[3])
-        self.assertIn("INSERT INTO", rendered[4])
-        self.assertIn("support_idempotency_records", rendered[4])
+        self.assertIn("support_account_reroute_jobs", rendered[1])
+        self.assertIn("support_idempotency_records", rendered[2])
+        self.assertIn("support_account_reroute_jobs", rendered[3])
+        self.assertIn("support_ticket_events", rendered[4])
+        self.assertIn("INSERT INTO", rendered[5])
+        self.assertIn("support_account_reroute_jobs", rendered[5])
         schema = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
-        self.assertIn("PRIMARY KEY (scope, idempotency_key)", schema)
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_account_reroute_jobs", schema)
+        self.assertIn("idx_support_account_reroute_jobs_one_active", schema)
 
     def test_postgres_account_detail_revision_uses_assignment_in_one_batch_query(self) -> None:
         account_case = {

@@ -281,6 +281,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert published is not None
         return published
 
+    def _admit_account_reroute_job(self, job: dict[str, object]) -> dict[str, object]:
+        result = self.repository.claim_account_case_rerun(
+            job,
+            active_after="2000-01-01T00:00:00+00:00",
+            request_scope="test:account-reroute-worker",
+        )
+        self.assertEqual(result["status"], "created")
+        return dict(result["job"])
+
     def _create_invoice_ticket_with_response_token(self) -> tuple[dict[str, object], str]:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.send_billing_internal_email",
@@ -323,15 +332,20 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertEqual(created["reset_mode"], ACCOUNT_RERUN_RESET_AI_ONLY)
             self.assertEqual(created["persona_assignments_deleted"], 0)
             self.assertTrue(created["job_id"].startswith("account-rerun-"))
-            runner.assert_awaited_once_with(created["job_id"])
+            runner.assert_awaited_once()
+            self.assertEqual(runner.await_args.args[0], created["job_id"])
+            self.assertTrue(str(runner.await_args.args[1]))
 
             latest = self.client.get("/api/account/rerun-jobs/latest")
             self.assertEqual(latest.status_code, 200, latest.text)
-            self.assertEqual(latest.json()["job_id"], created["job_id"])
+            latest_payload = latest.json()
+            self.assertEqual(latest_payload["job_id"], created["job_id"])
+            self.assertEqual(latest_payload["status"], "running")
 
             detail = self.client.get(f"/api/account/rerun-jobs/{created['job_id']}")
             self.assertEqual(detail.status_code, 200, detail.text)
-            self.assertEqual(detail.json()["status"], "queued")
+            self.assertEqual(detail.json()["job_id"], created["job_id"])
+            self.assertEqual(detail.json()["status"], "running")
 
             duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
@@ -365,13 +379,15 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertEqual(blocked_single.status_code, 409, blocked_single.text)
 
             completed_at = main.now_iso()
+            lease_token = str(runner.await_args.args[1])
             main._save_account_full_reroute_job(
                 {
                     **full_job.json(),
                     "status": "completed",
                     "updated_at": completed_at,
                     "completed_at": completed_at,
-                }
+                },
+                lease_token=lease_token,
             )
             single_job = self.client.post("/api/account/cases/12568/rerun", headers=headers)
             blocked_full = self.client.post("/api/account/rerun-jobs")
@@ -419,7 +435,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(payload["audit_actor_id"], "account_ui")
         self.assertEqual(payload["persona_assignments_deleted"], 0)
-        runner.assert_awaited_once_with(payload["job_id"])
+        runner.assert_awaited_once()
+        self.assertEqual(runner.await_args.args[0], payload["job_id"])
+        self.assertTrue(str(runner.await_args.args[1]))
 
         duplicate = self.client.post(
             "/api/account/cases/AC-12562/rerun",
@@ -454,14 +472,22 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(first.status_code, 202, first.text)
         self.assertEqual(replay.status_code, 202, replay.text)
-        self.assertEqual(replay.json(), first.json())
-        runner.assert_awaited_once_with(first.json()["job_id"])
-        events = [
-            event
-            for event in self.repository.list_ticket_events(main.ACCOUNT_FULL_REROUTE_JOB_TICKET_ID)
-            if event["event_type"] == main.ACCOUNT_FULL_REROUTE_JOB_EVENT
-        ]
-        self.assertEqual(len(events), 1)
+        first_payload = first.json()
+        replay_payload = replay.json()
+        self.assertEqual(first_payload["status"], "queued")
+        self.assertEqual(replay_payload["job_id"], first_payload["job_id"])
+        self.assertEqual(replay_payload["status"], "running")
+        runner.assert_awaited_once()
+        self.assertEqual(runner.await_args.args[0], first_payload["job_id"])
+        self.assertTrue(str(runner.await_args.args[1]))
+        jobs = self.repository.list_account_reroute_jobs()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["job_id"], first_payload["job_id"])
+        self.assertEqual(jobs[0]["status"], "running")
+        self.assertEqual(
+            self.repository.list_ticket_events(main.ACCOUNT_FULL_REROUTE_JOB_TICKET_ID),
+            [],
+        )
 
     def test_account_single_case_rerun_rejects_same_key_for_another_case(self) -> None:
         for ticket_id in ("12565", "12566"):
@@ -871,7 +897,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         ):
             old_assignment = self.repository.resolve_account_persona("12513")
         created_at = main.now_iso()
-        main._save_account_full_reroute_job(
+        self._admit_account_reroute_job(
             {
                 "job_id": "account-reroute-test",
                 "status": "queued",
@@ -1097,7 +1123,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.repository.save_account_case(account_case)
         self.repository.resolve_account_persona("12514")
         created_at = main.now_iso()
-        main._save_account_full_reroute_job(
+        self._admit_account_reroute_job(
             {
                 "job_id": "account-reroute-persona-unavailable",
                 "status": "queued",
