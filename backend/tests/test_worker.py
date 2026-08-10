@@ -2593,11 +2593,25 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertNotIn("sent to your email", assistant_message["content"].lower())
 
     def test_billing_reply_poller_is_disabled_by_default(self) -> None:
-        with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": ""}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "AUTOMATION_REPLY_POLL_ENABLED": "",
+                "BILLING_AUTOMATION_REPLY_POLL_ENABLED": "",
+            },
+            clear=False,
+        ):
             self.assertFalse(worker._billing_reply_poller_enabled_from_env())
 
     def test_billing_reply_poller_enabled_from_env(self) -> None:
-        with patch.dict(os.environ, {"BILLING_AUTOMATION_REPLY_POLL_ENABLED": "true"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "AUTOMATION_REPLY_POLL_ENABLED": "",
+                "BILLING_AUTOMATION_REPLY_POLL_ENABLED": "true",
+            },
+            clear=False,
+        ):
             self.assertTrue(worker._billing_reply_poller_enabled_from_env())
 
     def test_automation_reply_poller_config_takes_precedence(self) -> None:
