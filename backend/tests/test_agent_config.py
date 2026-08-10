@@ -59,9 +59,11 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(route_prompts["account-intent-classifier-system"]["version"], "account-intent-v2")
         self.assertEqual(route_prompts["account-agora-router-system"]["version"], "account-agora-v6")
         self.assertEqual(route_prompts["account-automation-router-system"]["version"], "account-automation-v7")
+        self.assertEqual(route_prompts["account-backend-operation-router-system"]["version"], "account-backend-operation-v1")
         self.assertEqual(route_prompts["account-account-billing-router-system"]["version"], "account-billing-v1")
         self.assertEqual(route_prompts["account-agora-router-system"]["metadata"]["scope"], "/account")
-        self.assertEqual(route_prompts["account-automation-router-system"]["metadata"]["managed"], False)
+        self.assertEqual(route_prompts["account-automation-router-system"]["metadata"]["managed"], True)
+        self.assertEqual(route_prompts["account-backend-operation-router-system"]["metadata"]["managed"], True)
         self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["metadata"]["managed"], True)
         self.assertEqual(route_prompts["account-enablement-field-extractor-system"]["version"], "account-enablement-fields-v3")
         self.assertEqual(route_prompts["account-quota-field-extractor-system"]["version"], "account-quota-fields-v1")
@@ -136,21 +138,29 @@ class AgentConfigTests(unittest.TestCase):
         automation = self._navigation_node(route_navigation, "automation-router")
         self.assertEqual(
             [item["key"] for item in automation["children"]],
-            ["fraud-account", "detailed-invoice", "enablement", "quota", "unregistered"],
+            ["enablement", "quota", "unregistered"],
         )
         account_billing = self._navigation_node(route_navigation, "account-billing-router")
         self.assertEqual(
             [item["key"] for item in account_billing["children"]],
-            ["account-suspension", "account-billing-other"],
+            ["account-suspension", "fraud-account", "detailed-invoice", "account-billing-other"],
         )
         self.assertEqual(
             account_billing["prompt_keys"],
             ["account-account-billing-router-system"],
         )
-        self.assertEqual(automation["prompt_keys"], ["account-automation-router-system"])
+        self.assertEqual(
+            automation["prompt_keys"],
+            ["account-backend-operation-router-system", "account-automation-router-system"],
+        )
         self.assertFalse(any("persona" in child for child in automation["children"]))
         fraud = self._navigation_node(route_navigation, "fraud-account")
         self.assertEqual(fraud["prompt_keys"], ["account-verification-field-extractor-system"])
+        self.assertEqual(len(payload["automation_workflows"]), 5)
+        self.assertEqual(
+            [item["subcategory"] for item in payload["automation_workflows"]],
+            ["fraud_account", "detailed_invoice", "enablement", "quota", "unregistered"],
+        )
         self.assertTrue(payload["route_runtime"]["router_prompt_version"])
         self.assertTrue(payload["route_runtime"]["stage_details"])
 

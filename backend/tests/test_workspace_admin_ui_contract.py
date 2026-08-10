@@ -90,6 +90,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "environmentLoadError", "loadEnvironmentConfig",
             "agentConfigLoadError", "loadAgentConfig", "data-action=\"retry-agent-config\"",
             "data-action=\"retry-environment-config\"", "automation_personas", "route_navigation",
+            "automation_workflows", "Automation Workflow", "All categories", "Account & Billing", "Handler",
             "data-persona-draft-form", 'data-action="publish-persona"',
             'data-action="rollback-persona"', 'data-action="toggle-persona"',
             "description.toLowerCase()", "admin-config-description", "admin-config-copy",
@@ -100,7 +101,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
 
         self.run_admin_app_script(
             """
-            automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ client_ticket_id: 'TK-1', title: 'Invoice', automation_status: 'automation' }] };
+            automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ account_case_id: 'AC-1', title: 'Invoice', category: 'account_billing', subcategory: 'detailed_invoice', category_label: 'Account & Billing', subcategory_label: 'Detailed Invoice', automation_handler: 'billing', route_status: 'automated', automation_status: 'internal_pending' }] };
             agentConfigData = {
               agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', components: [], prompts: [{ key: 'automation-system', name: 'Automation Router', version: 'v1', component_key: 'automation-router', content: 'actual prompt', metadata: {} }], skills: [], mcp_servers: [] }],
               route_navigation: { key: 'route-agent', kind: 'agent', is_agent: true, name: 'Route Agent', description: 'Routes requests.', status: 'active', prompt_keys: [], capabilities: [], children: [
@@ -122,6 +123,9 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               { name: 'TICKET_DB_DSN', description: 'PostgreSQL connection string for ticket storage.' }
             ] };
             if (!renderAutomatedCases().includes('25.0%')) throw new Error('automation ratio missing');
+            const casesMarkup = renderAutomatedCases();
+            if (!casesMarkup.includes('Account &amp; Billing') || !casesMarkup.includes('Detailed Invoice') || !casesMarkup.includes('billing') || !casesMarkup.includes('Automation status')) throw new Error('Automated Cases taxonomy columns missing');
+            if (!casesMarkup.includes('All categories')) throw new Error('Automated Cases category filter missing');
             selectedAgentPath = [];
             const catalogMarkup = renderAgentConfig();
             if (!catalogMarkup.includes('Route Agent') || catalogMarkup.includes('Billing Automation') || catalogMarkup.includes('Related services')) throw new Error('top-level Agent catalog is invalid');
@@ -346,6 +350,12 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             const defaultMarkup = renderAutomatedCases();
             if (!defaultMarkup.includes('<option value="automated" selected>Automated</option>')) {
               throw new Error('Automated option is not selected by default');
+            }
+            if (!defaultMarkup.includes('<option value="" selected>All categories</option>')) {
+              throw new Error('All categories is not selected by default');
+            }
+            if (!defaultMarkup.includes('<th>Handler</th>') || !defaultMarkup.includes('<th>Automation status</th>')) {
+              throw new Error('Automated Cases handler/status columns are missing');
             }
             automationRouteStatus = '';
             const allRoutesMarkup = renderAutomatedCases();

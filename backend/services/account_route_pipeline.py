@@ -157,7 +157,7 @@ class AccountRouteResult:
     stage_attempts: dict[str, AccountRouteStageAttempt] = field(default_factory=dict)
 
 
-def account_router_prompt_catalog() -> list[dict[str, str]]:
+def account_router_prompt_catalog() -> list[dict[str, Any]]:
     return [
         {
             "key": ACCOUNT_INTENT_PROMPT_KEY,
@@ -165,6 +165,7 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-intent-classifier",
             "content": build_account_intent_system_prompt(),
             "version": ACCOUNT_INTENT_PROMPT_VERSION,
+            "managed": True,
         },
         {
             "key": ACCOUNT_AGORA_PROMPT_KEY,
@@ -172,6 +173,7 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-agora-router",
             "content": build_account_agora_system_prompt(),
             "version": ACCOUNT_AGORA_PROMPT_VERSION,
+            "managed": True,
         },
         {
             "key": ACCOUNT_AUTOMATION_PROMPT_KEY,
@@ -179,6 +181,7 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-automation-router",
             "content": build_account_automation_system_prompt(),
             "version": ACCOUNT_AUTOMATION_PROMPT_VERSION,
+            "managed": True,
         },
         {
             "key": ACCOUNT_BACKEND_OPERATION_PROMPT_KEY,
@@ -186,6 +189,7 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-backend-operation-router",
             "content": build_account_backend_operation_system_prompt(),
             "version": ACCOUNT_BACKEND_OPERATION_PROMPT_VERSION,
+            "managed": True,
         },
         {
             "key": ACCOUNT_BILLING_PROMPT_KEY,
@@ -193,6 +197,7 @@ def account_router_prompt_catalog() -> list[dict[str, str]]:
             "component_key": "account-account-billing-router",
             "content": build_account_billing_system_prompt(),
             "version": ACCOUNT_BILLING_PROMPT_VERSION,
+            "managed": True,
         },
         {
             "key": "account-enablement-field-extractor-system",
