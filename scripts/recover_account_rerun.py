@@ -103,6 +103,8 @@ def _mark_case_persona_unavailable_for_human_review(
         {
             "predicted_automation_subcategory": predicted_action,
             "agora_route": "uncategorized",
+            "account_billing_subcategory": None,
+            "backend_operation_subcategory": None,
             "automation_subcategory": None,
             "route_target": "human_review",
             "human_review_reason": reason,

@@ -581,6 +581,8 @@ def _field_extraction_human_review(
         {
             "predicted_automation_subcategory": subcategory,
             "agora_route": "uncategorized",
+            "account_billing_subcategory": None,
+            "backend_operation_subcategory": None,
             "automation_subcategory": None,
             "route_target": "human_review",
             "human_review_reason": reason,
@@ -7031,6 +7033,8 @@ async def reply_to_billing_ticket(
                 {
                     "predicted_automation_subcategory": failed_subcategory,
                     "agora_route": "uncategorized",
+                    "account_billing_subcategory": None,
+                    "backend_operation_subcategory": None,
                     "automation_subcategory": None,
                     "route_target": "human_review",
                     "human_review_reason": failure_reason,

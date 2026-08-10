@@ -51,8 +51,10 @@ class RecoverAccountRerunTests(unittest.TestCase):
                 "automation_handler": handler,
                 "route_classification": {
                     "intent_class": "agora",
-                    "agora_route": "automation",
-                    "automation_subcategory": "enablement",
+                    "agora_route": "backend_operation",
+                    "account_billing_subcategory": None,
+                    "backend_operation_subcategory": "enablement",
+                    "automation_subcategory": None,
                     "route_target": "automation",
                     "handler_binding_status": "active",
                     "primary_label": "Agora",
@@ -141,9 +143,11 @@ class RecoverAccountRerunTests(unittest.TestCase):
         self.assertEqual(account_case["route_status"], "not_automated")
         self.assertIsNone(account_case["automation_handler"])
         self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
+        self.assertIsNone(account_case["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(account_case["route_classification"]["backend_operation_subcategory"])
         self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
-        self.assertEqual(account_case["route_classification"]["primary_label"], "Agora")
-        self.assertEqual(account_case["route_classification"]["secondary_label"], "Agora / Uncategorized")
+        self.assertEqual(account_case["route_classification"]["primary_label"], "Human Review")
+        self.assertEqual(account_case["route_classification"]["secondary_label"], "Uncategorized")
         self.assertEqual(account_case["internal_email_payload"]["delivery_key"], delivery_key)
         self.assertEqual(account_case["internal_email_send_status"], "sent")
         self.assertEqual(account_case["internal_email_send_reason"], "no enabled published persona")

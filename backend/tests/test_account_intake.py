@@ -2388,6 +2388,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
+        self.assertIsNone(payload["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(payload["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(payload["route_classification"]["automation_subcategory"])
         self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
         send_email.assert_not_called()
 
@@ -2471,6 +2474,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
+        self.assertIsNone(payload["route_classification"]["account_billing_subcategory"])
+        self.assertIsNone(payload["route_classification"]["backend_operation_subcategory"])
+        self.assertIsNone(payload["route_classification"]["automation_subcategory"])
         latest_reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(latest_reply_job)
         assert latest_reply_job is not None
