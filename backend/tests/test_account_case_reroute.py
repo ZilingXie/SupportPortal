@@ -10,14 +10,32 @@ from backend.services.account_route_pipeline import ACCOUNT_ROUTE_PIPELINE_VERSI
 from backend.services.support_router import SupportRouteDecision
 
 
-def _route_result(*, action: str = "account_suspension") -> AccountRouteResult:
+def _route_result(
+    *,
+    action: str = "account_suspension",
+    agora_route: str = "account_billing",
+) -> AccountRouteResult:
+    is_backend_automation = agora_route == "backend_operation" and action in {"enablement", "quota"}
+    is_account_billing_automation = agora_route == "account_billing" and action in {
+        "fraud_account",
+        "detailed_invoice",
+    }
+    decision_action = action if is_backend_automation or is_account_billing_automation else "human_review_required"
+    decision_scope = action if is_backend_automation else "account_billing" if agora_route == "account_billing" else "backend_operation"
+    decision_family = "automated" if is_backend_automation or is_account_billing_automation else "human_review"
+    secondary_label = (
+        f"Account & Billing / {action.replace('_', ' ').title()}"
+        if agora_route == "account_billing"
+        else f"Backend Operations / {action.replace('_', ' ').title()}"
+    )
     classification = {
         "pipeline_version": ACCOUNT_ROUTE_PIPELINE_VERSION,
         "intent_class": "agora",
         "conversation_action": None,
-        "agora_route": "account_billing",
+        "agora_route": agora_route,
         "automation_subcategory": None,
-        "account_billing_subcategory": action,
+        "account_billing_subcategory": action if agora_route == "account_billing" else None,
+        "backend_operation_subcategory": action if agora_route == "backend_operation" else None,
         "route_target": "human_review",
         "route_reason_code": f"registered_{action}",
         "stage_confidences": {
@@ -31,25 +49,25 @@ def _route_result(*, action: str = "account_suspension") -> AccountRouteResult:
             "account_billing_router": f"registered_{action}",
         },
         "primary_label": "Agora",
-        "secondary_label": "Account & Billing / Account Suspension",
+        "secondary_label": secondary_label,
         "handler_binding_status": None,
     }
     decision = SupportRouteDecision(
-        scope_label="account_billing",
-        route="human_review_required",
-        route_family="human_review",
-        execution_action="human_review_required",
+        scope_label=decision_scope,
+        route=decision_action,
+        route_family=decision_family,
+        execution_action=decision_action,
         confidence=0.97,
         reason=f"registered_{action}",
-        semantic_intent=f"account_billing.{action}",
-        automation_eligibility="not_eligible",
+        semantic_intent=f"{agora_route}.{action}",
+        automation_eligibility="eligible" if decision_family == "automated" else "not_eligible",
         router_source="account_layered_llm",
     )
     return AccountRouteResult(
         decision=decision,
         classification=classification,
         primary_label="Agora",
-        secondary_label="Account & Billing / Account Suspension",
+        secondary_label=secondary_label,
         prompt_snapshots={"intent_classifier": {"system_prompt": "system", "user_prompt": "user"}},
     )
 
@@ -188,6 +206,72 @@ class AccountCaseRerouteTests(unittest.TestCase):
         self.assertIsNone(result.account_case["route_classification"]["handler_binding_status"])
         self.assertEqual(result.account_case["route_status"], "not_automated")
         self.assertEqual(result.account_case["automation_status"], "not_automated")
+
+    def test_account_billing_automation_keeps_domain_category_and_handler(self) -> None:
+        for action in ("detailed_invoice", "fraud_account"):
+            with self.subTest(action=action):
+                result = reroute_account_case(
+                    {
+                        "account_case_id": "AC-1",
+                        "billing_ticket_id": "AC-1",
+                        "client_ticket_id": "1",
+                        "title": action,
+                        "question": f"Please process {action}.",
+                    },
+                    route_agent=Mock(
+                        return_value=_route_result(action=action, agora_route="account_billing")
+                    ),
+                )
+
+                self.assertEqual(result.account_case["category"], "account_billing")
+                self.assertEqual(result.account_case["subcategory"], action)
+                self.assertEqual(result.account_case["route_status"], "automated")
+                self.assertEqual(result.account_case["automation_handler"], "billing")
+                self.assertEqual(
+                    result.account_case["route_classification"]["secondary_label"],
+                    f"Account & Billing / {action.replace('_', ' ').title()}",
+                )
+
+    def test_backend_operation_handlers_are_automation_and_unregistered_is_human_review(self) -> None:
+        for action in ("enablement", "quota"):
+            with self.subTest(action=action):
+                result = reroute_account_case(
+                    {
+                        "account_case_id": "AC-1",
+                        "billing_ticket_id": "AC-1",
+                        "client_ticket_id": "1",
+                        "title": action,
+                        "question": f"Please process {action}.",
+                    },
+                    route_agent=Mock(
+                        return_value=_route_result(action=action, agora_route="backend_operation")
+                    ),
+                )
+
+                self.assertEqual(result.account_case["category"], "automation")
+                self.assertEqual(result.account_case["subcategory"], action)
+                self.assertEqual(result.account_case["route_status"], "automated")
+                self.assertEqual(result.account_case["automation_handler"], action)
+
+        unregistered = reroute_account_case(
+            {
+                "account_case_id": "AC-1",
+                "billing_ticket_id": "AC-1",
+                "client_ticket_id": "1",
+                "title": "Unknown operation",
+                "question": "Please process an operation we do not recognize.",
+            },
+            route_agent=Mock(
+                return_value=_route_result(action="unregistered", agora_route="backend_operation")
+            ),
+        )
+
+        self.assertEqual(unregistered.account_case["route"], "human_review_required")
+        self.assertEqual(unregistered.account_case["route_family"], "human_review")
+        self.assertEqual(unregistered.account_case["route_status"], "not_automated")
+        self.assertEqual(unregistered.account_case["category"], "human_review")
+        self.assertEqual(unregistered.account_case["subcategory"], "human_review_required")
+        self.assertIsNone(unregistered.account_case["automation_handler"])
 
     def test_cli_is_dry_run_by_default_and_apply_persists_route_and_audit(self) -> None:
         item = {

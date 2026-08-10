@@ -3835,9 +3835,21 @@ def _build_account_ticket_view_model(
     billing_ticket_id = str(ticket.get("billing_ticket_id") or account_case_id or "").strip() or None
     status = str(ticket.get("status") or ticket.get("automation_status") or "").strip() or "not_automated"
     execution_action = ticket.get("execution_action") or ticket.get("route")
-    metadata = automation_metadata(
-        route_family=ticket.get("route_family"),
-        execution_action=execution_action,
+    route_classification = (
+        dict(ticket.get("route_classification"))
+        if isinstance(ticket.get("route_classification"), dict)
+        else {}
+    )
+    account_billing_subcategory = str(
+        route_classification.get("account_billing_subcategory") or ticket.get("subcategory") or ""
+    ).strip()
+    metadata = (
+        account_billing_metadata(account_billing_subcategory)
+        if route_classification.get("agora_route") == "account_billing"
+        else automation_metadata(
+            route_family=ticket.get("route_family"),
+            execution_action=execution_action,
+        )
     )
     category = ticket.get("category") or metadata["category"]
     subcategory = ticket.get("subcategory") or metadata["subcategory"]
@@ -3860,11 +3872,6 @@ def _build_account_ticket_view_model(
         normalized_route = metadata["subcategory"]
         normalized_execution_action = metadata["subcategory"]
     primary_label, secondary_label = account_case_labels(ticket)
-    route_classification = (
-        dict(ticket.get("route_classification"))
-        if isinstance(ticket.get("route_classification"), dict)
-        else {}
-    )
     route_reason_code = str(
         route_classification.get("route_reason_code") or "legacy_reason_unavailable"
     ).strip()

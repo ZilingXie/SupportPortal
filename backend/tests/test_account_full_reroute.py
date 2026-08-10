@@ -7,9 +7,11 @@ from unittest.mock import Mock
 from backend.services.account_case_reroute import AccountCaseReroute
 from backend.services.account_full_reroute import reprocess_account_case
 from backend.services.account_suspension_field_extractor import AccountSuspensionFieldExtraction
+from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
 from backend.services.billing_automation import BillingAutomationResult
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
+from backend.services.quota_field_extractor import QuotaFieldExtraction
 
 
 def _case(*, action: str = "enablement") -> dict[str, object]:
@@ -96,8 +98,15 @@ class AccountFullRerouteTests(unittest.TestCase):
         original = {
             **_case(action="detailed_invoice"),
             "automation_handler": "billing",
-            "category": "automation",
+            "category": "account_billing",
             "subcategory": "detailed_invoice",
+            "route_classification": {
+                "pipeline_version": "account-layered-router-v7",
+                "intent_class": "agora",
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "detailed_invoice",
+                "secondary_label": "Account & Billing / Detailed Invoice",
+            },
         }
         extraction = DetailedInvoiceFieldExtraction(
             status="complete",
@@ -128,7 +137,157 @@ class AccountFullRerouteTests(unittest.TestCase):
         self.assertEqual(build_billing.call_args.kwargs["use_llm_field_extractor"], True)
         self.assertEqual(build_billing.call_args.kwargs["generate_customer_reply"], False)
         self.assertEqual(result.account_case["collected_fields"]["transaction_id"], "TX-123")
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertEqual(result.account_case["subcategory"], "detailed_invoice")
+        self.assertEqual(result.account_case["route_status"], "automated")
+        self.assertEqual(result.account_case["automation_handler"], "billing")
         self.assertEqual(result.reply_kind, "submission_confirmation")
+
+    def test_fraud_account_reroute_uses_billing_handler_but_keeps_account_billing_category(self) -> None:
+        original = {
+            **_case(action="fraud_account"),
+            "category": "account_billing",
+            "subcategory": "fraud_account",
+            "automation_handler": "billing",
+            "route_classification": {
+                "pipeline_version": "account-layered-router-v7",
+                "intent_class": "agora",
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "fraud_account",
+                "secondary_label": "Account & Billing / Fraud Account",
+            },
+        }
+        extraction = AccountVerificationFieldExtraction(
+            status="complete",
+            collected_fields={
+                "company_information": "Example Corp",
+                "contact_information": "Taylor, +1 555 0100",
+                "use_case": "Video calling",
+                "payment_information": "No payment yet",
+            },
+        )
+        build_fraud = Mock(
+            return_value=SimpleNamespace(
+                extraction=extraction,
+                missing_fields=[],
+                collected_fields=dict(extraction.collected_fields),
+                internal_email={"delivery_key": "fraud:AC-1:v1"},
+                customer_reply="",
+                requires_human_review=False,
+                follow_up_count=0,
+                proceed_with_missing_fields=False,
+            )
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            reroute=Mock(return_value=_reroute_result(original)),
+            build_fraud=build_fraud,
+        )
+
+        build_fraud.assert_called_once()
+        self.assertEqual(result.handler_status, "completed")
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertEqual(result.account_case["subcategory"], "fraud_account")
+        self.assertEqual(result.account_case["route_status"], "automated")
+        self.assertEqual(result.account_case["automation_handler"], "billing")
+        self.assertIsNotNone(result.internal_email_to_send)
+
+    def test_quota_reroute_reextracts_with_quota_handler(self) -> None:
+        original = {
+            **_case(action="quota"),
+            "category": "automation",
+            "subcategory": "quota",
+            "automation_handler": "quota",
+            "route_classification": {
+                "pipeline_version": "account-layered-router-v7",
+                "intent_class": "agora",
+                "agora_route": "backend_operation",
+                "backend_operation_subcategory": "quota",
+                "secondary_label": "Backend Operations / Quota",
+            },
+        }
+        extraction = QuotaFieldExtraction(
+            status="complete",
+            collected_fields={"app_id": "app-alpha", "requested_quota": "10000"},
+            grounding_status="passed",
+        )
+        extract_quota = Mock(return_value=extraction)
+        build_quota = Mock(
+            return_value=SimpleNamespace(
+                missing_fields=[],
+                collected_fields=dict(extraction.collected_fields),
+                internal_email={"delivery_key": "quota:AC-1:v1"},
+                follow_up_count=0,
+                proceed_with_missing_fields=False,
+            )
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_quota=extract_quota,
+            build_quota=build_quota,
+        )
+
+        extract_quota.assert_called_once()
+        build_quota.assert_called_once()
+        self.assertEqual(result.account_case["category"], "automation")
+        self.assertEqual(result.account_case["subcategory"], "quota")
+        self.assertEqual(result.account_case["automation_handler"], "quota")
+        self.assertIsNotNone(result.internal_email_to_send)
+
+    def test_unregistered_reroute_clears_stale_automation_state_without_running_handler(self) -> None:
+        original = {
+            **_case(),
+            "collected_fields": {"app_id": "stale"},
+            "missing_fields": ["requested_feature"],
+            "customer_reply": "stale reply",
+            "internal_email_payload": {"delivery_key": "stale"},
+            "internal_email_send_status": "sent",
+            "automation_context": {"handler": "enablement"},
+        }
+        unregistered = {
+            **original,
+            "route": "human_review_required",
+            "execution_action": "human_review_required",
+            "route_family": "human_review",
+            "route_status": "not_automated",
+            "category": "human_review",
+            "subcategory": "human_review_required",
+            "automation_handler": None,
+            "route_classification": {
+                "pipeline_version": "account-layered-router-v7",
+                "intent_class": "agora",
+                "agora_route": "backend_operation",
+                "backend_operation_subcategory": "unregistered",
+                "route_target": "human_review",
+                "secondary_label": "Backend Operations / Unregistered",
+            },
+        }
+        extract_enablement = Mock()
+        build_enablement = Mock()
+
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            reroute=Mock(return_value=_reroute_result(unregistered)),
+            extract_enablement=extract_enablement,
+            build_enablement=build_enablement,
+        )
+
+        extract_enablement.assert_not_called()
+        build_enablement.assert_not_called()
+        self.assertEqual(result.handler_status, "not_automated")
+        self.assertEqual(result.account_case["category"], "human_review")
+        self.assertEqual(result.account_case["subcategory"], "human_review_required")
+        self.assertEqual(result.account_case["collected_fields"], {})
+        self.assertEqual(result.account_case["missing_fields"], [])
+        self.assertIsNone(result.account_case["internal_email_payload"])
+        self.assertEqual(result.account_case["internal_email_send_status"], "not_applicable")
+        self.assertEqual(result.account_case["automation_context"], {})
 
     def test_non_automation_clears_stale_handler_state(self) -> None:
         original = {

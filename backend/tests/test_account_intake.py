@@ -252,6 +252,35 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(view["stage_attempt_counts"], {"intent_classifier": 2})
         self.assertEqual(view["stage_recovered"], {"intent_classifier": False})
 
+    def test_account_case_view_preserves_account_billing_automation_category(self) -> None:
+        view = main._build_account_ticket_view_model(
+            {
+                "account_case_id": "AC-12710",
+                "billing_ticket_id": "AC-12710",
+                "client_ticket_id": "12710",
+                "category": "account_billing",
+                "subcategory": "detailed_invoice",
+                "route": "detailed_invoice",
+                "execution_action": "detailed_invoice",
+                "route_family": "automated",
+                "route_status": "automated",
+                "automation_handler": "billing",
+                "route_classification": {
+                    "pipeline_version": "account-layered-router-v7",
+                    "intent_class": "agora",
+                    "agora_route": "account_billing",
+                    "account_billing_subcategory": "detailed_invoice",
+                },
+            },
+            correction=None,
+        )
+
+        self.assertEqual(view["category"], "account_billing")
+        self.assertEqual(view["subcategory"], "detailed_invoice")
+        self.assertEqual(view["route_status"], "automated")
+        self.assertEqual(view["automation_handler"], "billing")
+        self.assertEqual(view["secondary_label"], "Account & Billing / Detailed Invoice")
+
     def tearDown(self) -> None:
         self._account_verification_follow_up_patcher.stop()
         self._account_verification_extractor_patcher.stop()
