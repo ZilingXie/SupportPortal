@@ -12,6 +12,64 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-10 - Account Admin taxonomy, managed Prompts, and Automation Workflow catalog
+
+- Area or subsystem: `/workspace/admin/#agent-config` and Automated Cases Admin surfaces
+- Prompt or model version: `account-layered-router-v7` / `account-backend-operation-v1`; model configuration unchanged
+- Summary: Synchronized Admin Agent Config with the v7 layered `/account` taxonomy. Account & Billing owns Account Suspension,
+  Fraud Account, Detailed Invoice, and Other; Automation/Backend Operation owns Enablement, Quota, and diagnostic Unregistered.
+  Managed route Prompts now expose their active versions, and the Admin Automation Workflow catalog includes registered
+  billing-owned automated outcomes as well as Enablement, Quota, and the Human Review fallback.
+- Reason: Operators must see the same ownership and execution boundaries used by `/account`, without treating every
+  Account & Billing label as an Automation Router child or hiding automated billing workflows from the Admin view.
+- Affected files or config:
+  - `backend/services/account_admin.py`
+  - `backend/services/agent_config.py`
+  - `backend/services/account_route_pipeline.py`
+  - `ui/workspace-ui/admin/app.js`
+  - `backend/tests/test_workspace_admin_ui_contract.py`
+  - `backend/tests/test_account_admin_features.py`
+  - `backend/tests/test_agent_config.py`
+  - `backend/tests/test_workspace_api.py`
+- Expected behavior change:
+  - Agent Config shows Intent Classifier, Agora Router, Account & Billing Router, Backend Operation Router, and Automation Router hierarchy.
+  - Prompt management marks the `/account` routing stages as managed and keeps Prompt version metadata visible.
+  - Automation Workflow shows Fraud Account, Detailed Invoice, Enablement, Quota, and Unregistered with handler,
+    route-family, status, and lifecycle steps.
+  - Automated Cases keeps the default automated route view but supports category filtering and displays Category,
+    Subcategory, Handler, Route status, and Automation status.
+- Verification:
+  - `/tmp/supportportal-account-route-venv/bin/python -m pytest -q backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_account_admin_features.py backend/tests/test_agent_config.py backend/tests/test_workspace_api.py` (64 passed)
+  - `/tmp/supportportal-account-route-venv/bin/python -m py_compile backend/services/account_admin.py backend/services/agent_config.py backend/services/account_route_pipeline.py`
+  - `node --check ui/workspace-ui/admin/app.js`
+
+## 2026-08-10 - Account route taxonomy v7 and Backend Operations stage
+
+- Area or subsystem: `/account` Intent Classifier, Agora Router, Account & Billing Router, and Backend Operations Router
+- Prompt or model version: `account-layered-router-v7` / `account-backend-operation-v1`; model configuration unchanged
+- Summary: Split explicit backend operations from Account & Billing classification. Account & Billing now owns
+  `account_suspension`, `fraud_account`, `detailed_invoice`, and `other`; Backend Operations owns `enablement`,
+  `quota`, and diagnostic `unregistered`.
+- Reason: Detailed invoice and fraud-review requests have a concrete next action and should enter the existing
+  billing automation contract directly, while feature enablement and quota operations need a separate expandable
+  taxonomy. Unregistered remains visible for discovering future automation candidates.
+- Affected files or config:
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_billing_handlers.py`
+  - `backend/services/support_router.py`
+  - `backend/tests/test_account_route_pipeline.py`
+- Expected behavior change:
+  - New `/account` routes emit `backend_operation` for Enablement/Quota/Unregistered and emit Account & Billing
+    subcategories directly for Detailed Invoice/Fraud Account.
+  - Registered Detailed Invoice, Fraud Account, Enablement, and Quota routes are marked automated; Account
+    Suspension, Account & Billing Other, and Backend Operations Unregistered fail closed to Human Review.
+  - The old `automation` Agora payload remains an input-only compatibility alias; the shared `/client` router is
+    not changed.
+- Verification:
+  - `rtk /tmp/supportportal-account-route-venv/bin/python -m pytest -q backend/tests/test_account_route_pipeline.py backend/tests/test_agent_config.py`
+  - `rtk git diff --check`
+
 ## 2026-08-07 - Internal automation email light-only Outlook compatibility
 
 - Area or subsystem: `/account` Automation internal handoff HTML template

@@ -168,6 +168,11 @@ class SupportRouteDecision:
     intent_router_failure_type: str | None = None
     intent_router_failure_source: str | None = None
 
+    @property
+    def route_status(self) -> str:
+        """Expose the persisted automation status without changing legacy routing."""
+        return "automated" if self.route_family == "automated" else "not_automated"
+
     def __post_init__(self) -> None:
         route_family, execution_action, tooling_profile = _route_contract_for_scope(
             scope_label=self.scope_label,

@@ -289,16 +289,24 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("routeErrorSummary", app_source)
         self.assertIn("ROUTE_TUPLE_OPTIONS", app_source)
         self.assertIn(
-            '{ scope: "account_suspension", action: "human_review_required", label: "Agora / Account & Billing / Account Suspension" }',
+            '{ scope: "account_billing", action: "account_suspension", category: "account_billing", subcategory: "account_suspension", label: "Agora / Account & Billing / Account Suspension" }',
+            app_source,
+        )
+        self.assertIn(
+            '{ scope: "account_billing", action: "fraud_account", category: "account_billing", subcategory: "fraud_account", label: "Agora / Account & Billing / Fraud Account" }',
+            app_source,
+        )
+        self.assertIn(
+            '{ scope: "backend_operation", action: "unregistered", category: "human_review", subcategory: "unregistered", label: "Human Review / Unregistered" }',
             app_source,
         )
         self.assertNotIn("Automation / Account suspension", app_source)
         self.assertIn(
-            '{ scope: "automation", action: "enablement", label: "Automation / Enablement" }',
+            '{ scope: "automation", action: "enablement", category: "automation", subcategory: "enablement", label: "Agora / Automation / Enablement" }',
             app_source,
         )
         self.assertIn(
-            '{ scope: "automation", action: "quota", label: "Automation / Quota" }',
+            '{ scope: "automation", action: "quota", category: "automation", subcategory: "quota", label: "Agora / Automation / Quota" }',
             app_source,
         )
         self.assertIn("scope|action", app_source)
@@ -308,9 +316,9 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("/route-correction", app_source)
         self.assertIn("Conversation / Follow-up", app_source)
         self.assertIn("Agora / Account & Billing", app_source)
-        self.assertIn("Agora / Uncategorized", app_source)
-        self.assertIn("Automation / Unregistered", app_source)
-        self.assertIn("Uncertain / Human Review", app_source)
+        self.assertIn("Human Review / Uncategorized", app_source)
+        self.assertIn("Human Review / Unregistered", app_source)
+        self.assertIn("Human Review / Uncertain", app_source)
         self.assertIn("scope_label", app_source)
         self.assertIn("execution_action", app_source)
         self.assertIn("corrector", app_source)

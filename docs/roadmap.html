@@ -1431,7 +1431,7 @@
       <ul class="hero-bullets" aria-label="Roadmap summary">
         <li><strong>项目定位：</strong>建设基于 agent 的工单系统，不把 AI 包装成完全替代真人的 support engineer。</li>
         <li><strong>当前阶段：</strong>Phase 1 已完成；Phase 2 聚焦确定性 automation 与 controlled validation，Phase 3 承接 AI 首次回复和 Slack 工程师流程。</li>
-        <li><strong>Phase 2：</strong>收口 account verification、account suspension、detailed invoice、enablement，完善字段规则、回复节奏、Prompt 模板和 automation coverage。</li>
+        <li><strong>Phase 2：</strong>收口 Account &amp; Billing 与 Backend Operation taxonomy，完善 Fraud Account、Detailed Invoice、Enablement、Quota 的字段规则、回复节奏、Prompt 管理和 automation coverage。</li>
         <li><strong>Phase 3：</strong>客户继续从 Zendesk 开单，AI 首次回复后按 Round Robin 分配给工程师，Slack、Guardrail 与 Admin 控制组成内部处理链路。</li>
         <li><strong>长期边界：</strong>Engineer multi-agent 与 AgentRelay 自主调查不占用 Phase 3，继续作为后续长期计划。</li>
       </ul>
@@ -1469,11 +1469,11 @@
             <li><strong>Reply timing：</strong>已为所有 <code>/account</code> 客户消息落地持久化 6–10 分钟随机延迟，AI 回复只发布在 account thread。</li>
             <li><strong>Prompt：</strong>维护不同人设的受控回复模板、发布版本、比较与回滚。</li>
             <li><strong>Automation reply：</strong>Behavior 只提取结构化事实；intake、延迟 job 和 Outlook follow-up 均在最终发送前统一调用 Automation Persona，失败直接进入 Human Review。</li>
-            <li><strong>Scope：</strong>自动化覆盖 account verification、account suspension、detailed invoice 与 enablement。</li>
+            <li><strong>Scope：</strong>自动化覆盖 Account &amp; Billing 下的 Fraud Account、Detailed Invoice，以及 Backend Operation 下的 Enablement、Quota；非风控 Account Suspension 保持 classification-only。</li>
             <li><strong>Metrics：</strong>以全部 /account ticket 为分母展示 routed-to-Automated 占比，并据此决定是否扩充 category。</li>
             <li><strong>Account filters：</strong>/account 默认使用 All，并按 Automation、Account &amp; Billing、Conversation、Human Review 等 route group/leaf 提供分页和同一快照的 case counts。</li>
             <li><strong>Single Case operations：</strong>/account 可按 ticket # 精准打开 Case，并对单 Case 执行仅保留客户消息、保留独立 workspace audit 的完整 Rerun。</li>
-            <li><strong>Admin：</strong>新增 Automated Cases 与 Environment Config 控制面；Route Strategy 已合并到 Agent Config 的 Agent-only 层级导航，route outcome 仅在 Overview 解释，Automation Router 统一管理 Persona 并原位展开具体行为的 Prompt 或 deterministic capability。Agent Config 继续支持 Prompt Draft、Scheduled、Active、Diff、Restore 与历史版本，并绑定每日成功部署统一生效。</li>
+            <li><strong>Admin：</strong>新增 Automated Cases 与 Environment Config 控制面；Route Strategy 已合并到 Agent Config 的 Agent-only 层级导航，展示 Account &amp; Billing、Backend Operation、Automation Router 及五个 Automation Workflow。Managed Account Prompt 支持 Draft、Scheduled、Active、Diff、Restore 与历史版本，并绑定每日成功部署统一生效。</li>
           </ul>
           <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-&gt;</span></a>
         </article>
@@ -2078,16 +2078,17 @@ flowchart TD
         short: "Automation",
         title: "Automated Case intake / routing",
         status: "doing",
-        thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router 和 Automation Router，并同时记录大标签、小标签与稳定 reason code。Account & Billing 以 account_suspension、other 为子类；Automation 以 fraud_account、detailed_invoice、enablement、quota 作为规范 subcategory。`/client` 继续使用原共享 Router。",
+        thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router、Backend Operation Router 和 Automation Router，并同时记录大标签、小标签与稳定 reason code。Account & Billing 以 account_suspension、fraud_account、detailed_invoice、other 为子类；Automation Router 以 enablement、quota、unregistered 作为规范 backend-operation subcategory。`/client` 继续使用原共享 Router。",
         done: [
           { summary: "`/account` 已强制采用当前三层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行三层路由、Field Extractor 与 Automation handler reconciliation。每个 Case 保留客户消息和路由审计，旧 Account AI 回复、reply job 与 reply execution 会先物理删除，再按 delivery binding 重建内部邮件与 Persona 回复。", prs: [] },
           { summary: "`/account` 已支持按 ticket # 精准搜索，并可对单 Case 执行完整 Rerun：客户消息原样保留，所有 AI、Engineer、Manual 与 Internal 消息以及当前 route correction 被清除，独立 workspace audit 持久保留。", prs: [] },
-          { summary: "Automated Case 已使用 `category=automation`、规范 subcategory、`route_family=automated` 和独立 `route_status`；非风控 Account Suspension 已迁移到 `category=account_billing`，由 Account & Billing Router 分类并仅提取上下文，不触发追问、邮件或客户回复。", prs: [] },
+          { summary: "Registered automated outcomes 使用 `route_family=automated` 和独立 `route_status`；Enablement/Quota 使用 `category=automation`，Fraud Account/Detailed Invoice 保留 `category=account_billing`，非风控 Account Suspension 仅提取上下文，不触发追问、邮件或客户回复。", prs: [] },
           { summary: "Enablement handler 已支持明确的后台功能开通请求，首个验收场景为 Media Relay；系统收集 App ID、发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Quota handler 已支持配额审核、并发提升和 Big Event 容量报备；系统以 LLM 收集产品、App ID、目标容量与活动信息，最多追问一次后发送内部邮件并处理 Outlook 回复。", prs: [] },
           { summary: "Enablement 字段采集已切换为 LLM grounded extraction：App ID 不限制格式，模型必须引用客户原文；missing 只追问一次，uncertain、ambiguous 或 grounding 失败均转 Human Review 并取消待发送追问。", prs: [] },
           { summary: "Account Verification 已使用独立 LLM extractor 收集 Company、Contact、Use Case 与安全 Payment 概况；可选 Website/App ID 不再阻塞，最多追问一次，仍缺失时按现有信息发送内部邮件。", prs: [] },
-          { summary: "Account Automation intake 已覆盖 `fraud_account`、`detailed_invoice`、`enablement` 和 `quota`；Account & Billing registry 单独注册 classification-only 的 `account_suspension` extractor，避免产生 Automation 副作用。", prs: [409, 412, 426, 488] },
+          { summary: "Account Automation intake 已覆盖 Account & Billing 下的 `fraud_account`、`detailed_invoice` 与 Backend Operation 下的 `enablement`、`quota`；`unregistered` 继续作为 Human Review 诊断入口，Account & Billing registry 单独注册 classification-only 的 `account_suspension` extractor。", prs: [409, 412, 426, 488] },
+          { summary: "Admin Agent Config 已同步 v7 layered taxonomy：managed routing Prompt、Backend Operation/Automation hierarchy、五项 Automation Workflow catalog，以及支持 Category、Subcategory、Handler 和 Automation status 的 Automated Cases 表格。", prs: [] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
@@ -2121,7 +2122,7 @@ flowchart TD
         ],
         architecture: {
           title: "Automated Case Flow: Route -> Handler -> Customer Follow-up",
-          summary: "Automation category 通过 subcategory 选择已注册 handler；Behavior 只提取字段和处理事实，intake、延迟 job 与 Outlook reply follow-up 在最终发送前统一由 Automation Persona 生成客户文案。Persona 或事实抽取失败时转 Human Review，不发送兜底文案。",
+          summary: "Backend Operation 与 Account & Billing 的 registered automated outcome 共同选择已注册 handler；Behavior 只提取字段和处理事实，intake、延迟 job 与 Outlook reply follow-up 在最终发送前统一由 Automation Persona 生成客户文案。Persona 或事实抽取失败时转 Human Review，不发送兜底文案。",
           mermaid: [
             "flowchart TD",
             "  Z[\"Zendesk webhook / N8n internal forward\"] --> I[\"Billing intake: content + external_id + comments + metadata\"]",

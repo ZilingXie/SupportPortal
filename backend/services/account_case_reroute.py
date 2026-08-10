@@ -5,13 +5,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.services.account_admin import route_execution_from_decision
-from backend.services.account_billing_handlers import account_billing_metadata
 from backend.services.account_route_pipeline import (
     ACCOUNT_ROUTE_PIPELINE_VERSION,
     AccountRouteResult,
+    account_route_metadata,
     decide_account_route,
 )
-from backend.services.automation_routing import automation_metadata
 from backend.services.support_router import decide_support_route
 
 
@@ -78,13 +77,10 @@ def reroute_account_case(
     account_billing_subcategory = str(
         classification.get("account_billing_subcategory") or ""
     ).strip()
-    metadata = (
-        account_billing_metadata(account_billing_subcategory)
-        if classification.get("agora_route") == "account_billing"
-        else automation_metadata(
-            route_family=decision.route_family,
-            execution_action=action,
-        )
+    metadata = account_route_metadata(
+        classification=classification,
+        route_family=decision.route_family,
+        execution_action=action,
     )
 
     same_active_automation = (
