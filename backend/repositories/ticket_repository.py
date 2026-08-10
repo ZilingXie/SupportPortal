@@ -2388,7 +2388,7 @@ class InMemoryTicketRepository:
                     or ""
                 ).strip()
                 correction = copy.deepcopy(self._billing_route_corrections.get(account_case_id))
-                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                if clear_persona_assignment:
                     self._automation_reply_claims = {
                         key: claim
                         for key, claim in self._automation_reply_claims.items()
@@ -4364,8 +4364,13 @@ class InMemoryTicketRepository:
         owner_token: str, claimed_at: str, lease_expires_at: str,
     ) -> dict[str, Any]:
         key = str(automation_reply_key or "").strip()
+        normalized_ticket_id = str(client_ticket_id or "").strip()
+        if not key or not normalized_ticket_id or not owner_token:
+            raise ValueError("automation_reply_key, client_ticket_id, and owner_token are required")
         now_value = datetime.fromisoformat(str(claimed_at).replace("Z", "+00:00"))
         with self._assignment_lock:
+            if normalized_ticket_id not in self._tickets:
+                raise ValueError(f"linked support ticket not found for {normalized_ticket_id}")
             existing = self._automation_reply_claims.get(key)
             if existing and existing["state"] == "completed":
                 return {"status": "already_completed", **copy.deepcopy(existing)}
@@ -4379,7 +4384,7 @@ class InMemoryTicketRepository:
                     return {"status": "in_progress", **copy.deepcopy(existing)}
             attempts = int((existing or {}).get("attempt_count") or 0) + 1
             record = {
-                "automation_reply_key": key, "client_ticket_id": client_ticket_id,
+                "automation_reply_key": key, "client_ticket_id": normalized_ticket_id,
                 "handler": handler, "state": "processing", "owner_token": owner_token,
                 "lease_expires_at": lease_expires_at, "attempt_count": attempts,
                 "error_code": None, "created_at": (existing or {}).get("created_at") or claimed_at,
@@ -10039,12 +10044,17 @@ class PostgresTicketRepository:
         owner_token: str, claimed_at: str, lease_expires_at: str,
     ) -> dict[str, Any]:
         key = str(automation_reply_key or "").strip()
-        if not key or not owner_token:
-            raise ValueError("automation_reply_key and owner_token are required")
+        normalized_ticket_id = str(client_ticket_id or "").strip()
+        if not key or not normalized_ticket_id or not owner_token:
+            raise ValueError("automation_reply_key, client_ticket_id, and owner_token are required")
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction():
                 with conn.cursor() as cur:
+                    if not self._lock_account_reply_ticket(cur, normalized_ticket_id):
+                        raise ValueError(
+                            f"linked support ticket not found for {normalized_ticket_id}"
+                        )
                     cur.execute(
                         sql.SQL(
                             """
@@ -10064,7 +10074,7 @@ class PostgresTicketRepository:
                             RETURNING state, owner_token, lease_expires_at, attempt_count, created_at, updated_at
                             """
                         ).format(*([self._table("support_automation_reply_claims")] * 6)),
-                        (key, client_ticket_id, handler, owner_token, lease_expires_at, claimed_at, claimed_at),
+                        (key, normalized_ticket_id, handler, owner_token, lease_expires_at, claimed_at, claimed_at),
                     )
                     row = cur.fetchone()
                     if row is not None:
@@ -12036,7 +12046,7 @@ class PostgresTicketRepository:
                 )
                 prior_review_status = str(case_row[3] or "pending").strip() if case_row else "pending"
 
-                if normalized_reset_mode == ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY:
+                if clear_persona_assignment:
                     cur.execute(
                         sql.SQL(
                             "DELETE FROM {} WHERE client_ticket_id=%s AND state<>'completed'"

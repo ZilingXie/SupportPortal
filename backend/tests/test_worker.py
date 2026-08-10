@@ -3741,6 +3741,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 reset_at="2026-03-22T00:02:00+00:00",
                 rerun_job_id="account-rerun-outlook-reset-fence",
                 reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                clear_persona_assignment=True,
             )
             return "Hi Customer,\n\nThe feature is ready.\n\nBest Regards,\nSid"
 

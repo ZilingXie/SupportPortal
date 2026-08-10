@@ -2877,6 +2877,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 reset_at="2026-07-18T00:01:00+00:00",
                 rerun_job_id="account-rerun-token-reset-no-notify",
                 reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                clear_persona_assignment=True,
             )
             return original_builder(**kwargs)
 
@@ -2915,6 +2916,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 reset_at="2026-07-18T00:01:00+00:00",
                 rerun_job_id="account-rerun-token-reset-notify",
                 reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
+                clear_persona_assignment=True,
             )
             return "Hi Customer,\n\nThe invoice is ready.\n\nBest Regards,\nSid"
 
