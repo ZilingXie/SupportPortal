@@ -1572,6 +1572,14 @@ class TicketRepository(Protocol):
         lease_expires_at: str,
     ) -> dict[str, Any]: ...
 
+    def release_account_reroute_job_execution(
+        self,
+        job: dict[str, Any],
+        *,
+        lease_token: str,
+        released_at: str,
+    ) -> dict[str, Any]: ...
+
     def update_account_reroute_job(
         self,
         job: dict[str, Any],
@@ -4243,6 +4251,48 @@ class InMemoryTicketRepository:
                 saved["result"] = copy.deepcopy(job)
             else:
                 saved["result"] = copy.deepcopy(current.get("result") or {})
+            self._account_reroute_jobs[job_id] = saved
+            return copy.deepcopy(saved)
+
+    def release_account_reroute_job_execution(
+        self,
+        job: dict[str, Any],
+        *,
+        lease_token: str,
+        released_at: str,
+    ) -> dict[str, Any]:
+        job_id = str(job.get("job_id") or "").strip()
+        normalized_token = str(lease_token or "").strip()
+        normalized_released_at = str(released_at or "").strip()
+        if not job_id or not normalized_token or not normalized_released_at:
+            raise ValueError("job_id, lease_token, and released_at are required")
+        if str(job.get("status") or "") != "running":
+            raise AccountRerouteLeaseLostError(
+                f"Account reroute lease lost for {job_id}"
+            )
+        with self._assignment_lock:
+            current = self._account_reroute_jobs.get(job_id)
+            if (
+                current is None
+                or str(current.get("status") or "") != "running"
+                or str(current.get("dispatch_status") or "") != "leased"
+                or str(current.get("lease_token") or "") != normalized_token
+            ):
+                raise AccountRerouteLeaseLostError(f"Account reroute lease lost for {job_id}")
+            saved = copy.deepcopy(job)
+            saved.update(
+                request_scope=current.get("request_scope"),
+                account_case_id=current.get("account_case_id"),
+                idempotency_scope=current.get("idempotency_scope"),
+                idempotency_key=current.get("idempotency_key"),
+                status="queued",
+                dispatch_status="queued",
+                lease_token=None,
+                lease_expires_at=None,
+                updated_at=normalized_released_at,
+                completed_at=None,
+                result=copy.deepcopy(current.get("result") or {}),
+            )
             self._account_reroute_jobs[job_id] = saved
             return copy.deepcopy(saved)
 
@@ -9794,6 +9844,63 @@ class PostgresTicketRepository:
                 return _account_reroute_job_from_row(row)
 
         return self._run_with_connection_retry("update_account_reroute_job", _operation)
+
+    def release_account_reroute_job_execution(
+        self,
+        job: dict[str, Any],
+        *,
+        lease_token: str,
+        released_at: str,
+    ) -> dict[str, Any]:
+        job_id = str(job.get("job_id") or "").strip()
+        normalized_token = str(lease_token or "").strip()
+        normalized_released_at = str(released_at or "").strip()
+        if not job_id or not normalized_token or not normalized_released_at:
+            raise ValueError("job_id, lease_token, and released_at are required")
+        if str(job.get("status") or "") != "running":
+            raise AccountRerouteLeaseLostError(
+                f"Account reroute lease lost for {job_id}"
+            )
+        checkpoint = copy.deepcopy(job)
+        checkpoint.update(
+            status="queued",
+            dispatch_status="queued",
+            lease_token=None,
+            lease_expires_at=None,
+            updated_at=normalized_released_at,
+            completed_at=None,
+        )
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='queued',payload=%s,dispatch_status='queued',"
+                        "lease_token=NULL,lease_expires_at=NULL,updated_at=%s,completed_at=NULL "
+                        "WHERE job_id=%s AND status='running' AND dispatch_status='leased' "
+                        "AND lease_token=%s "
+                        "RETURNING job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (
+                        Json(checkpoint),
+                        normalized_released_at,
+                        job_id,
+                        normalized_token,
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise AccountRerouteLeaseLostError(
+                        f"Account reroute lease lost for {job_id}"
+                    )
+                return _account_reroute_job_from_row(row)
+
+        return self._run_with_connection_retry(
+            "release_account_reroute_job_execution",
+            _operation,
+        )
 
     def claim_automation_reply(
         self, automation_reply_key: str, *, client_ticket_id: str, handler: str,

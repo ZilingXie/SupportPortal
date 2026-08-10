@@ -3561,9 +3561,15 @@ def startup_event() -> None:
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
-    _stop_account_reroute_dispatcher()
+    dispatcher_stopped = _stop_account_reroute_dispatcher()
     await event_bus.close()
     await task_queue.close()
+    if not dispatcher_stopped:
+        LOGGER.error(
+            "Account reroute dispatcher is still running; ticket and asset "
+            "repositories must remain open until process exit."
+        )
+        return
     close_ticket_repository = getattr(ticket_repository, "close", None)
     if callable(close_ticket_repository):
         close_ticket_repository()
@@ -5051,6 +5057,8 @@ ACCOUNT_FULL_REROUTE_STALE_AFTER = timedelta(hours=2)
 ACCOUNT_REROUTE_EXECUTION_LEASE = timedelta(minutes=30)
 ACCOUNT_REROUTE_DISPATCH_BATCH_LIMIT = 100
 ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_ENV = "ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_SECONDS"
+ACCOUNT_REROUTE_DISPATCH_SHUTDOWN_TIMEOUT_ENV = "ACCOUNT_REROUTE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS"
+ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS = 2.0
 ACCOUNT_CASE_RERUN_IDEMPOTENCY_SCOPE = "account_case_rerun"
 ACCOUNT_CASE_RERUN_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 ACCOUNT_RERUN_STORAGE_ERROR_CODE = "account_storage_temporarily_unavailable"
@@ -5095,6 +5103,7 @@ _ACCOUNT_REROUTE_INTERNAL_FIELDS = {
     "lease_token",
     "lease_expires_at",
     "result",
+    "completed_case_ids",
 }
 
 
@@ -5255,7 +5264,32 @@ async def _save_account_full_reroute_job_with_retry(
     )
 
 
-async def _claim_and_run_account_reroute_job(job_id: str) -> None:
+async def _release_account_reroute_job_for_shutdown(
+    job: dict[str, Any],
+    *,
+    lease_token: str,
+) -> None:
+    released_at = now_iso()
+    job["updated_at"] = released_at
+    await _account_rerun_storage_call(
+        ticket_repository.release_account_reroute_job_execution,
+        job,
+        lease_token=lease_token,
+        released_at=released_at,
+    )
+
+
+def _account_reroute_stop_requested(stop_event: threading.Event | None) -> bool:
+    return stop_event is not None and stop_event.is_set()
+
+
+async def _claim_and_run_account_reroute_job(
+    job_id: str,
+    *,
+    stop_event: threading.Event | None = None,
+) -> None:
+    if _account_reroute_stop_requested(stop_event):
+        return
     claimed_at = now_iso()
     lease_token = f"account-reroute-lease-{uuid4().hex}"
     claim = await _account_rerun_storage_call(
@@ -5269,10 +5303,19 @@ async def _claim_and_run_account_reroute_job(job_id: str) -> None:
     )
     if claim.get("status") != "acquired":
         return
-    await _run_account_full_reroute_job(job_id, lease_token)
+    await _run_account_full_reroute_job(
+        job_id,
+        lease_token,
+        stop_event=stop_event,
+    )
 
 
-async def _dispatch_pending_account_reroute_jobs_once() -> int:
+async def _dispatch_pending_account_reroute_jobs_once(
+    *,
+    stop_event: threading.Event | None = None,
+) -> int:
+    if _account_reroute_stop_requested(stop_event):
+        return 0
     jobs = await _account_rerun_storage_call(
         ticket_repository.list_dispatchable_account_reroute_jobs,
         as_of=now_iso(),
@@ -5280,12 +5323,17 @@ async def _dispatch_pending_account_reroute_jobs_once() -> int:
     )
     attempted = 0
     for job in jobs:
+        if _account_reroute_stop_requested(stop_event):
+            break
         job_id = str(job.get("job_id") or "").strip()
         if not job_id:
             continue
         attempted += 1
         try:
-            await _claim_and_run_account_reroute_job(job_id)
+            await _claim_and_run_account_reroute_job(
+                job_id,
+                stop_event=stop_event,
+            )
         except Exception:
             LOGGER.exception("Account reroute dispatcher failed job %s", job_id)
     return attempted
@@ -5293,6 +5341,14 @@ async def _dispatch_pending_account_reroute_jobs_once() -> int:
 
 def _account_reroute_dispatch_poll_interval_seconds() -> float:
     configured = _safe_float_env(ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_ENV, 5.0)
+    return max(0.25, min(configured, 300.0))
+
+
+def _account_reroute_dispatch_shutdown_timeout_seconds() -> float:
+    configured = _safe_float_env(
+        ACCOUNT_REROUTE_DISPATCH_SHUTDOWN_TIMEOUT_ENV,
+        30.0,
+    )
     return max(0.25, min(configured, 300.0))
 
 
@@ -5304,7 +5360,9 @@ async def _run_account_reroute_dispatch_loop() -> None:
     )
     while not _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.is_set():
         try:
-            await _dispatch_pending_account_reroute_jobs_once()
+            await _dispatch_pending_account_reroute_jobs_once(
+                stop_event=_ACCOUNT_REROUTE_DISPATCH_STOP_EVENT,
+            )
         except Exception:
             LOGGER.exception("Account reroute dispatcher scan failed")
         if _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.wait(interval_seconds):
@@ -5333,17 +5391,26 @@ def _start_account_reroute_dispatcher() -> threading.Thread:
         return thread
 
 
-def _stop_account_reroute_dispatcher() -> None:
+def _stop_account_reroute_dispatcher() -> bool:
     global _ACCOUNT_REROUTE_DISPATCH_THREAD
     _ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.set()
     with _ACCOUNT_REROUTE_DISPATCH_THREAD_LOCK:
         thread = _ACCOUNT_REROUTE_DISPATCH_THREAD
     if thread is None:
-        return
-    thread.join()
+        return True
+    timeout_seconds = _account_reroute_dispatch_shutdown_timeout_seconds()
+    thread.join(timeout=timeout_seconds)
+    if thread.is_alive():
+        LOGGER.error(
+            "Account reroute dispatcher did not stop within %.3f seconds; "
+            "its repositories must remain open until process exit.",
+            timeout_seconds,
+        )
+        return False
     with _ACCOUNT_REROUTE_DISPATCH_THREAD_LOCK:
         if _ACCOUNT_REROUTE_DISPATCH_THREAD is thread:
             _ACCOUNT_REROUTE_DISPATCH_THREAD = None
+    return True
 
 
 def _account_case_for_identifier(identifier: str) -> dict[str, Any] | None:
@@ -5412,6 +5479,7 @@ async def _enqueue_account_rerun_job(
         "reply_jobs_failed": 0,
         "reply_wait_timed_out": False,
         "wait_for_replies": True,
+        "completed_case_ids": [],
         "failures": [],
         "recovered_cases": [],
         "created_at": created_at,
@@ -5518,11 +5586,14 @@ async def _wait_for_account_rerun_replies(
     job: dict[str, Any],
     *,
     lease_token: str,
-) -> None:
+    stop_event: threading.Event | None = None,
+) -> bool:
+    if _account_reroute_stop_requested(stop_event):
+        return False
     reply_job_ids = [str(item).strip() for item in job.get("reply_job_ids") or [] if str(item).strip()]
     if not reply_job_ids or not bool(job.get("wait_for_replies")):
         job["reply_jobs_pending"] = 0
-        return
+        return True
     terminal_statuses = {"published", "manual_attention", "cancelled", "failed"}
     deadline = time.monotonic() + _account_rerun_reply_wait_timeout_seconds()
     while True:
@@ -5540,12 +5611,18 @@ async def _wait_for_account_rerun_replies(
         job["updated_at"] = now_iso()
         await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
         if not pending and not missing:
-            return
+            return True
         if time.monotonic() >= deadline:
             job["reply_wait_timed_out"] = True
             job["failures"].append({"scope": "replies", "error": "reply jobs did not reach a terminal state before timeout"})
-            return
-        await asyncio.sleep(2)
+            return True
+        if stop_event is None:
+            await asyncio.sleep(ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS)
+        elif await async_to_thread(
+            stop_event.wait,
+            ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS,
+        ):
+            return False
 
 
 async def _reconcile_account_rerun_failures(job: dict[str, Any]) -> None:
@@ -5641,6 +5718,8 @@ async def _reconcile_account_rerun_failures(job: dict[str, Any]) -> None:
 async def _run_account_full_reroute_job(
     job_id: str,
     lease_token: str | None = None,
+    *,
+    stop_event: threading.Event | None = None,
 ) -> None:
     if not lease_token:
         claimed_at = now_iso()
@@ -5663,33 +5742,52 @@ async def _run_account_full_reroute_job(
     )
     if job is None:
         return
-    started_at = now_iso()
-    job.update(status="running", phase="Routing and extracting", started_at=started_at, updated_at=started_at)
+    resume_phase = str(job.get("phase") or "").strip()
+    started_at = str(job.get("started_at") or "").strip() or now_iso()
+    job.update(status="running", started_at=started_at, updated_at=now_iso())
+    if resume_phase != "Waiting for replies":
+        job["phase"] = "Routing and extracting"
     await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
     try:
-        target_case_ids = {
-            str(item or "").strip()
-            for item in list(job.get("target_case_ids") or [])
-            if str(item or "").strip()
-        }
-        if target_case_ids:
-            cases = []
-            for target_case_id in target_case_ids:
-                account_case = await _account_rerun_storage_call(
-                    _account_case_for_identifier,
-                    target_case_id,
-                )
-                if isinstance(account_case, dict):
-                    cases.append(account_case)
-        else:
-            cases = await _account_rerun_storage_call(
-                ticket_repository.list_account_cases,
-                limit=100_000,
-                offset=0,
+        if _account_reroute_stop_requested(stop_event):
+            await _release_account_reroute_job_for_shutdown(
+                job,
+                lease_token=lease_token,
             )
-        job["total"] = len(cases)
-        job["updated_at"] = now_iso()
-        await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
+            return
+        if resume_phase == "Waiting for replies":
+            cases: list[dict[str, Any]] = []
+        else:
+            target_case_ids = {
+                str(item or "").strip()
+                for item in list(job.get("target_case_ids") or [])
+                if str(item or "").strip()
+            }
+            if target_case_ids:
+                cases = []
+                for target_case_id in target_case_ids:
+                    account_case = await _account_rerun_storage_call(
+                        _account_case_for_identifier,
+                        target_case_id,
+                    )
+                    if isinstance(account_case, dict):
+                        cases.append(account_case)
+            else:
+                cases = await _account_rerun_storage_call(
+                    ticket_repository.list_account_cases,
+                    limit=100_000,
+                    offset=0,
+                )
+            job["total"] = max(int(job.get("total") or 0), len(cases))
+            job["updated_at"] = now_iso()
+            await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
+        completed_case_ids = list(dict.fromkeys(
+            str(item or "").strip()
+            for item in job.get("completed_case_ids") or []
+            if str(item or "").strip()
+        ))
+        completed_case_id_set = set(completed_case_ids)
+        job["completed_case_ids"] = completed_case_ids
         for account_case in cases:
             case_id = str(
                 account_case.get("account_case_id")
@@ -5697,6 +5795,14 @@ async def _run_account_full_reroute_job(
                 or account_case.get("client_ticket_id")
                 or "unknown"
             )
+            if case_id in completed_case_id_set:
+                continue
+            if _account_reroute_stop_requested(stop_event):
+                await _release_account_reroute_job_for_shutdown(
+                    job,
+                    lease_token=lease_token,
+                )
+                return
             client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
             case_stage = "started"
             case_reply_expected = False
@@ -5972,19 +6078,45 @@ async def _run_account_full_reroute_job(
                         }
                     )
             finally:
-                job["processed"] += 1
+                if case_id not in completed_case_id_set:
+                    completed_case_id_set.add(case_id)
+                    completed_case_ids.append(case_id)
+                    job["completed_case_ids"] = completed_case_ids
+                    job["processed"] += 1
                 job["updated_at"] = now_iso()
                 await _save_account_full_reroute_job_with_retry(
                     job,
                     lease_token=lease_token,
                 )
+                if _account_reroute_stop_requested(stop_event):
+                    await _release_account_reroute_job_for_shutdown(
+                        job,
+                        lease_token=lease_token,
+                    )
+                    return
         job["phase"] = "Waiting for replies"
         job["updated_at"] = now_iso()
         await _save_account_full_reroute_job_with_retry(
             job,
             lease_token=lease_token,
         )
-        await _wait_for_account_rerun_replies(job, lease_token=lease_token)
+        if _account_reroute_stop_requested(stop_event):
+            await _release_account_reroute_job_for_shutdown(
+                job,
+                lease_token=lease_token,
+            )
+            return
+        replies_finished = await _wait_for_account_rerun_replies(
+            job,
+            lease_token=lease_token,
+            stop_event=stop_event,
+        )
+        if not replies_finished or _account_reroute_stop_requested(stop_event):
+            await _release_account_reroute_job_for_shutdown(
+                job,
+                lease_token=lease_token,
+            )
+            return
         await _reconcile_account_rerun_failures(job)
         completed_at = now_iso()
         terminal_status = (

@@ -456,6 +456,46 @@ class PostgresAccountRerouteJobTests(unittest.TestCase):
         self.assertIsNone(completed["lease_token"])
         self.assertIsNone(completed["lease_expires_at"])
 
+    def test_release_requeues_checkpoint_for_new_worker_and_fences_old_token(self) -> None:
+        first = self._claim(self._job("account-rerun-release-reclaim"))
+        now = datetime.now(timezone.utc)
+        first_claim = self.repository.claim_account_reroute_job_execution(
+            str(first["job"]["job_id"]),
+            owner_token="lease-one",
+            claimed_at=now.isoformat(),
+            lease_expires_at=(now + timedelta(minutes=30)).isoformat(),
+        )
+        checkpoint = dict(first_claim["job"])
+        checkpoint.update(
+            phase="Waiting for replies",
+            completed_case_ids=["AC-PG-1"],
+            processed=1,
+        )
+
+        released = self.repository.release_account_reroute_job_execution(
+            checkpoint,
+            lease_token="lease-one",
+            released_at=(now + timedelta(seconds=1)).isoformat(),
+        )
+        self.assertEqual(released["status"], "queued")
+        self.assertEqual(released["dispatch_status"], "queued")
+        self.assertIsNone(released["lease_token"])
+        self.assertEqual(released["completed_case_ids"], ["AC-PG-1"])
+
+        second_claim = self.repository.claim_account_reroute_job_execution(
+            "account-rerun-release-reclaim",
+            owner_token="lease-two",
+            claimed_at=(now + timedelta(seconds=2)).isoformat(),
+            lease_expires_at=(now + timedelta(minutes=31)).isoformat(),
+        )
+        self.assertEqual(second_claim["status"], "acquired")
+        self.assertEqual(second_claim["job"]["phase"], "Waiting for replies")
+        with self.assertRaises(AccountRerouteLeaseLostError):
+            self.repository.update_account_reroute_job(
+                checkpoint,
+                lease_token="lease-one",
+            )
+
     def test_concurrent_same_key_admission_creates_one_row(self) -> None:
         barrier = threading.Barrier(2)
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 import threading
+import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -115,6 +117,22 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker.await_count, 1)
         self.assertEqual(worker.await_args.args[0], job["job_id"])
 
+    async def test_api_background_wrapper_ignores_the_dispatcher_stop_event(self) -> None:
+        background_tasks = BackgroundTasks()
+        job = await self._enqueue_single(background_tasks)
+        stop_was_set = main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.is_set()
+        main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.set()
+        try:
+            with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker:
+                await background_tasks()
+        finally:
+            if not stop_was_set:
+                main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.clear()
+
+        worker.assert_awaited_once()
+        self.assertEqual(worker.await_args.args[0], job["job_id"])
+        self.assertIsNone(worker.await_args.kwargs["stop_event"])
+
     async def test_dispatch_once_does_not_steal_an_active_execution_lease(self) -> None:
         job = await self._enqueue_single(BackgroundTasks())
         claimed_at = datetime.now(timezone.utc)
@@ -197,6 +215,7 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             "lease_token",
             "lease_expires_at",
             "result",
+            "completed_case_ids",
         ):
             self.assertNotIn(internal_key, job)
 
@@ -213,6 +232,125 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         matches = [item for item in jobs if item["job_id"] == job["job_id"]]
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]["processed"], 0)
+
+    async def test_dispatcher_stop_checkpoints_case_and_resume_does_not_repeat_side_effects(self) -> None:
+        self.repository.initialize()
+        ticket_id = "dispatch-resume-1"
+        case_id = "AC-DISPATCH-RESUME-1"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "subject": "Enable media relay",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable media relay for app alpha.",
+                        "created_at": "2026-08-10T01:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        account_case = {
+            "account_case_id": case_id,
+            "billing_ticket_id": case_id,
+            "client_ticket_id": ticket_id,
+            "route": "enablement",
+            "scope_label": "automation",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+        }
+        self.repository.save_account_case(account_case)
+        queued = await main._enqueue_account_rerun_job(
+            BackgroundTasks(),
+            target_case_ids=[case_id],
+            idempotency_key="dispatch-resume-side-effects",
+            request_scope=f"POST:/api/account/cases/{case_id}/rerun",
+        )
+        updated_case = {
+            **account_case,
+            "category": "automation",
+            "subcategory": "enablement",
+            "internal_email_send_status": "pending",
+            "internal_email_payload": {"delivery_key": "dispatch-resume-delivery"},
+            "collected_fields": {
+                "app_id": "alpha",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "route_classification": {
+                "primary_label": "Agora",
+                "secondary_label": "Automation / Enablement",
+            },
+        }
+        result = SimpleNamespace(
+            account_case=updated_case,
+            route_execution={
+                "ticket_id": ticket_id,
+                "classification": updated_case["route_classification"],
+            },
+            changed=True,
+            handler_status="completed",
+            internal_email_to_send={
+                "to": "internal@example.com",
+                "subject": "Enablement",
+                "body": "Request",
+                "delivery_key": "dispatch-resume-delivery",
+            },
+            email_handler="enablement",
+            customer_reply="",
+            reply_kind="submission_confirmation",
+            asked_field_keys=(),
+        )
+        stop_event = threading.Event()
+
+        async def send_and_stop(_attempt: dict[str, object]) -> tuple[str, str]:
+            stop_event.set()
+            return "sent", ""
+
+        with (
+            patch.object(main, "reprocess_account_case", return_value=result) as reprocess,
+            patch.object(
+                main,
+                "_send_enablement_internal_email_attempt",
+                AsyncMock(side_effect=send_and_stop),
+            ) as sender,
+        ):
+            await main._claim_and_run_account_reroute_job(
+                str(queued["job_id"]),
+                stop_event=stop_event,
+            )
+            checkpoint = self.repository.get_account_reroute_job(str(queued["job_id"]))
+            assert checkpoint is not None
+            self.assertEqual(checkpoint["status"], "queued")
+            self.assertEqual(checkpoint["dispatch_status"], "queued")
+            self.assertEqual(checkpoint["completed_case_ids"], [case_id])
+            self.assertEqual(checkpoint["processed"], 1)
+            first_reply_job = self.repository.get_latest_account_reply_job(ticket_id)
+            assert first_reply_job is not None
+            first_reply_job["status"] = "published"
+            self.repository.save_account_reply_job(first_reply_job)
+
+            stop_event.clear()
+            await main._claim_and_run_account_reroute_job(
+                str(queued["job_id"]),
+                stop_event=stop_event,
+            )
+
+        completed = self.repository.get_account_reroute_job(str(queued["job_id"]))
+        assert completed is not None
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["processed"], 1)
+        self.assertEqual(completed["replies_scheduled"], 1)
+        reprocess.assert_called_once()
+        sender.assert_awaited_once()
+        self.assertEqual(
+            self.repository.get_latest_account_reply_job(ticket_id)["job_id"],
+            first_reply_job["job_id"],
+        )
 
 
 class AccountRerouteFencingTests(unittest.TestCase):
@@ -357,6 +495,81 @@ class AccountRerouteFencingTests(unittest.TestCase):
         self.assertEqual(completed["dispatch_status"], "completed")
         self.assertIsNone(completed["lease_token"])
 
+    def test_release_requeues_checkpoint_and_fences_old_or_terminal_owners(self) -> None:
+        repository = InMemoryTicketRepository()
+        created_at = datetime.now(timezone.utc)
+        repository.claim_account_case_rerun(
+            {
+                "job_id": "account-rerun-release",
+                "scope": "all_cases",
+                "status": "queued",
+                "processed": 0,
+                "created_at": created_at.isoformat(),
+                "updated_at": created_at.isoformat(),
+            },
+            active_after=created_at.isoformat(),
+            request_scope="POST:/api/account/rerun-jobs",
+        )
+        first_claim = repository.claim_account_reroute_job_execution(
+            "account-rerun-release",
+            owner_token="lease-one",
+            claimed_at=created_at.isoformat(),
+            lease_expires_at=(created_at + timedelta(minutes=30)).isoformat(),
+        )
+        checkpoint = dict(first_claim["job"])
+        checkpoint.update(
+            phase="Waiting for replies",
+            completed_case_ids=["AC-1"],
+            processed=1,
+        )
+        released_at = (created_at + timedelta(seconds=1)).isoformat()
+
+        with self.assertRaises(AccountRerouteLeaseLostError):
+            repository.release_account_reroute_job_execution(
+                checkpoint,
+                lease_token="wrong-owner",
+                released_at=released_at,
+            )
+
+        released = repository.release_account_reroute_job_execution(
+            checkpoint,
+            lease_token="lease-one",
+            released_at=released_at,
+        )
+        self.assertEqual(released["status"], "queued")
+        self.assertEqual(released["dispatch_status"], "queued")
+        self.assertIsNone(released["lease_token"])
+        self.assertIsNone(released["lease_expires_at"])
+        self.assertEqual(released["phase"], "Waiting for replies")
+        self.assertEqual(released["completed_case_ids"], ["AC-1"])
+
+        second_claim = repository.claim_account_reroute_job_execution(
+            "account-rerun-release",
+            owner_token="lease-two",
+            claimed_at=(created_at + timedelta(seconds=2)).isoformat(),
+            lease_expires_at=(created_at + timedelta(minutes=31)).isoformat(),
+        )
+        self.assertEqual(second_claim["status"], "acquired")
+        with self.assertRaises(AccountRerouteLeaseLostError):
+            repository.update_account_reroute_job(
+                checkpoint,
+                lease_token="lease-one",
+            )
+
+        terminal = dict(second_claim["job"])
+        terminal.update(
+            status="completed",
+            completed_at=(created_at + timedelta(seconds=3)).isoformat(),
+            updated_at=(created_at + timedelta(seconds=3)).isoformat(),
+        )
+        repository.update_account_reroute_job(terminal, lease_token="lease-two")
+        with self.assertRaises(AccountRerouteLeaseLostError):
+            repository.release_account_reroute_job_execution(
+                terminal,
+                lease_token="lease-two",
+                released_at=(created_at + timedelta(seconds=4)).isoformat(),
+            )
+
 
 class AccountRerouteDispatcherLifecycleTests(unittest.TestCase):
     def tearDown(self) -> None:
@@ -366,33 +579,285 @@ class AccountRerouteDispatcherLifecycleTests(unittest.TestCase):
 
     def test_start_is_idempotent_and_stop_signals_then_joins_the_single_thread(self) -> None:
         fake_thread = Mock()
-        fake_thread.is_alive.return_value = True
+        fake_thread.is_alive.side_effect = (True, False)
 
-        with patch.object(main.threading, "Thread", return_value=fake_thread) as thread_factory:
+        with (
+            patch.object(main.threading, "Thread", return_value=fake_thread) as thread_factory,
+            patch.object(
+                main,
+                "_account_reroute_dispatch_shutdown_timeout_seconds",
+                return_value=1.25,
+            ),
+        ):
             first = main._start_account_reroute_dispatcher()
             second = main._start_account_reroute_dispatcher()
+            stopped = main._stop_account_reroute_dispatcher()
 
         self.assertIs(first, fake_thread)
         self.assertIs(second, fake_thread)
         thread_factory.assert_called_once()
         fake_thread.start.assert_called_once_with()
 
-        main._stop_account_reroute_dispatcher()
-
         self.assertTrue(main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.is_set())
-        fake_thread.join.assert_called_once_with()
+        self.assertTrue(stopped)
+        fake_thread.join.assert_called_once_with(timeout=1.25)
         self.assertIsNone(main._ACCOUNT_REROUTE_DISPATCH_THREAD)
+
+    def test_stop_timeout_is_bounded_and_keeps_the_live_daemon_reference(self) -> None:
+        fake_thread = Mock()
+        fake_thread.is_alive.return_value = True
+
+        with (
+            patch.object(main.threading, "Thread", return_value=fake_thread) as thread_factory,
+            patch.object(
+                main,
+                "_account_reroute_dispatch_shutdown_timeout_seconds",
+                return_value=0.25,
+            ),
+            self.assertLogs(main.LOGGER, level="ERROR") as logs,
+        ):
+            main._start_account_reroute_dispatcher()
+            stopped = main._stop_account_reroute_dispatcher()
+
+        self.assertFalse(stopped)
+        fake_thread.join.assert_called_once_with(timeout=0.25)
+        self.assertIs(main._ACCOUNT_REROUTE_DISPATCH_THREAD, fake_thread)
+        self.assertTrue(thread_factory.call_args.kwargs["daemon"])
+        self.assertIn("repositories must remain open", "\n".join(logs.output))
+        main._ACCOUNT_REROUTE_DISPATCH_THREAD = None
 
     def test_dispatcher_thread_runs_an_immediate_scan_before_waiting(self) -> None:
         scanned = threading.Event()
 
-        async def scan_once() -> None:
+        async def scan_once(*, stop_event: threading.Event | None = None) -> None:
+            self.assertIs(stop_event, main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT)
             scanned.set()
 
         with patch.object(main, "_dispatch_pending_account_reroute_jobs_once", side_effect=scan_once):
             main._start_account_reroute_dispatcher()
             self.assertTrue(scanned.wait(timeout=2.0))
             main._stop_account_reroute_dispatcher()
+
+    def test_shutdown_interrupts_reply_wait_requeues_job_and_then_closes_repositories(self) -> None:
+        original_ticket_repository = main.ticket_repository
+        original_asset_repository = main.asset_repository
+        repository = InMemoryTicketRepository()
+        reply_job_id = "reply-wait-shutdown"
+        repository.save_account_reply_job(
+            {
+                "job_id": reply_job_id,
+                "ticket_id": "reply-wait-ticket",
+                "status": "pending",
+            }
+        )
+        created_at = datetime.now(timezone.utc)
+        job_id = "account-rerun-reply-wait-shutdown"
+        checkpoint = {
+            "job_id": job_id,
+            "scope": "single_case",
+            "target_case_ids": ["AC-REPLY-WAIT"],
+            "status": "queued",
+            "phase": "Waiting for replies",
+            "total": 1,
+            "processed": 1,
+            "failed": 0,
+            "completed_case_ids": ["AC-REPLY-WAIT"],
+            "wait_for_replies": True,
+            "reply_job_ids": [reply_job_id],
+            "failures": [],
+            "route_counts": {},
+            "handler_counts": {},
+            "created_at": created_at.isoformat(),
+            "started_at": created_at.isoformat(),
+            "updated_at": created_at.isoformat(),
+        }
+        repository.claim_account_case_rerun(
+            checkpoint,
+            active_after=(created_at - timedelta(hours=1)).isoformat(),
+            request_scope="POST:/api/account/cases/AC-REPLY-WAIT/rerun",
+        )
+        reply_poll_started = threading.Event()
+        original_get_reply_job = repository.get_account_reply_job
+        close_order: list[str] = []
+        repository.close = Mock(side_effect=lambda: close_order.append("ticket_repository"))
+        asset_repository = Mock()
+        asset_repository.close.side_effect = lambda: close_order.append("asset_repository")
+        main.ticket_repository = repository
+        main.asset_repository = asset_repository
+        dispatcher: threading.Thread | None = None
+
+        def get_reply_job_and_signal(job_identifier: str) -> dict[str, object] | None:
+            reply_poll_started.set()
+            return original_get_reply_job(job_identifier)
+
+        try:
+            with (
+                patch.object(
+                    repository,
+                    "get_account_reply_job",
+                    side_effect=get_reply_job_and_signal,
+                ),
+                patch.object(
+                    main,
+                    "_account_reroute_dispatch_shutdown_timeout_seconds",
+                    return_value=0.5,
+                ),
+                patch.object(main.event_bus, "close", AsyncMock()) as close_event_bus,
+                patch.object(main.task_queue, "close", AsyncMock()) as close_task_queue,
+            ):
+                dispatcher = main._start_account_reroute_dispatcher()
+                self.assertTrue(reply_poll_started.wait(timeout=2.0))
+                started = time.monotonic()
+                asyncio.run(main.shutdown_event())
+                elapsed = time.monotonic() - started
+
+            self.assertLess(elapsed, 1.5)
+            self.assertFalse(dispatcher.is_alive())
+            self.assertIsNone(main._ACCOUNT_REROUTE_DISPATCH_THREAD)
+            stored = repository.get_account_reroute_job(job_id)
+            assert stored is not None
+            self.assertEqual(stored["status"], "queued")
+            self.assertEqual(stored["dispatch_status"], "queued")
+            self.assertEqual(stored["phase"], "Waiting for replies")
+            self.assertEqual(stored["completed_case_ids"], ["AC-REPLY-WAIT"])
+            reclaimed = repository.claim_account_reroute_job_execution(
+                job_id,
+                owner_token="replacement-worker",
+                claimed_at=datetime.now(timezone.utc).isoformat(),
+                lease_expires_at=(
+                    datetime.now(timezone.utc) + timedelta(minutes=30)
+                ).isoformat(),
+            )
+            self.assertEqual(reclaimed["status"], "acquired")
+            self.assertEqual(close_order, ["ticket_repository", "asset_repository"])
+            close_event_bus.assert_awaited_once_with()
+            close_task_queue.assert_awaited_once_with()
+        finally:
+            pending_reply = original_get_reply_job(reply_job_id)
+            if isinstance(pending_reply, dict):
+                pending_reply["status"] = "published"
+                repository.save_account_reply_job(pending_reply)
+            main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.set()
+            if dispatcher is not None:
+                dispatcher.join(timeout=3.0)
+            main._stop_account_reroute_dispatcher()
+            main.ticket_repository = original_ticket_repository
+            main.asset_repository = original_asset_repository
+
+    def test_shutdown_timeout_leaves_repositories_open_for_a_blocked_case(self) -> None:
+        original_ticket_repository = main.ticket_repository
+        original_asset_repository = main.asset_repository
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket_id = "blocked-reroute-ticket"
+        case_id = "AC-BLOCKED-REROUTE"
+        repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "blocked@example.com",
+                "subject": "Blocked reroute",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please check this request.",
+                        "created_at": "2026-08-10T01:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        account_case = {
+            "account_case_id": case_id,
+            "billing_ticket_id": case_id,
+            "client_ticket_id": ticket_id,
+            "route": "enablement",
+            "scope_label": "automation",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "route_classification": {
+                "primary_label": "Agora",
+                "secondary_label": "Automation / Enablement",
+            },
+        }
+        repository.save_account_case(account_case)
+        ticket_close = Mock()
+        repository.close = ticket_close
+        asset_repository = Mock()
+        main.ticket_repository = repository
+        main.asset_repository = asset_repository
+        queued = asyncio.run(
+            main._enqueue_account_rerun_job(
+                BackgroundTasks(),
+                target_case_ids=[case_id],
+                idempotency_key="blocked-reroute-shutdown",
+                request_scope=f"POST:/api/account/cases/{case_id}/rerun",
+            )
+        )
+        reprocess_started = threading.Event()
+        unblock_reprocess = threading.Event()
+        dispatcher: threading.Thread | None = None
+        reprocess_result = SimpleNamespace(
+            account_case=account_case,
+            route_execution={
+                "ticket_id": ticket_id,
+                "classification": account_case["route_classification"],
+            },
+            changed=False,
+            handler_status="completed",
+            internal_email_to_send=None,
+            email_handler=None,
+            customer_reply="",
+            reply_kind="",
+            asked_field_keys=(),
+        )
+
+        def blocked_reprocess(*_args: object, **_kwargs: object) -> object:
+            reprocess_started.set()
+            if not unblock_reprocess.wait(timeout=5.0):
+                raise RuntimeError("test timed out waiting to unblock reroute")
+            return reprocess_result
+
+        try:
+            with (
+                patch.object(main, "reprocess_account_case", side_effect=blocked_reprocess),
+                patch.object(
+                    main,
+                    "_account_reroute_dispatch_shutdown_timeout_seconds",
+                    return_value=0.1,
+                ),
+                patch.object(main.event_bus, "close", AsyncMock()) as close_event_bus,
+                patch.object(main.task_queue, "close", AsyncMock()) as close_task_queue,
+                self.assertLogs(main.LOGGER, level="ERROR") as logs,
+            ):
+                dispatcher = main._start_account_reroute_dispatcher()
+                self.assertTrue(reprocess_started.wait(timeout=2.0))
+                started = time.monotonic()
+                asyncio.run(main.shutdown_event())
+                elapsed = time.monotonic() - started
+
+            self.assertLess(elapsed, 1.0)
+            self.assertTrue(dispatcher.is_alive())
+            self.assertTrue(dispatcher.daemon)
+            self.assertIs(main._ACCOUNT_REROUTE_DISPATCH_THREAD, dispatcher)
+            stored = repository.get_account_reroute_job(str(queued["job_id"]))
+            assert stored is not None
+            self.assertEqual(stored["status"], "running")
+            self.assertEqual(stored["dispatch_status"], "leased")
+            ticket_close.assert_not_called()
+            asset_repository.close.assert_not_called()
+            close_event_bus.assert_awaited_once_with()
+            close_task_queue.assert_awaited_once_with()
+            self.assertIn("repositories must remain open", "\n".join(logs.output))
+        finally:
+            unblock_reprocess.set()
+            main._ACCOUNT_REROUTE_DISPATCH_STOP_EVENT.set()
+            if dispatcher is not None:
+                dispatcher.join(timeout=3.0)
+            main._stop_account_reroute_dispatcher()
+            main.ticket_repository = original_ticket_repository
+            main.asset_repository = original_asset_repository
 
     def test_shutdown_stops_dispatcher_before_closing_repositories(self) -> None:
         order: list[str] = []
@@ -406,7 +871,11 @@ class AccountRerouteDispatcherLifecycleTests(unittest.TestCase):
         main.asset_repository = asset_repository
         try:
             with (
-                patch.object(main, "_stop_account_reroute_dispatcher", side_effect=lambda: order.append("dispatcher")),
+                patch.object(
+                    main,
+                    "_stop_account_reroute_dispatcher",
+                    side_effect=lambda: order.append("dispatcher") or True,
+                ),
                 patch.object(main.event_bus, "close", AsyncMock()),
                 patch.object(main.task_queue, "close", AsyncMock()),
             ):
