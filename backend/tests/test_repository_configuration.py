@@ -619,6 +619,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def get_account_case", repo_source)
         self.assertIn("def list_account_cases", repo_source)
         self.assertIn("def _account_case_filter_sql_expression", repo_source)
+        self.assertIn("WHEN STRPOS({primary}, ':') > 0", repo_source)
+        self.assertIn("THEN split_part({primary}, ':', 1) END", repo_source)
         self.assertIn("{alias}.route_classification ->> 'intent_class'", repo_source)
         self.assertIn("{alias}.route_classification ->> 'agora_route'", repo_source)
         self.assertIn(".format(alias=alias)", repo_source)
