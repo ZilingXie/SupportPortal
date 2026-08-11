@@ -1473,7 +1473,7 @@
             <li><strong>Metrics：</strong>以全部 /account ticket 为分母展示 routed-to-Automated 占比，并据此决定是否扩充 category。</li>
             <li><strong>Account filters：</strong>/account 默认使用 All，并按 Automated、Backend Operation、Account &amp; Billing、Conversation、Human Review 等 route group/leaf 提供分页和同一快照的 case counts；Automated 是按 route_status 的独立执行筛选，不再承载 Enablement/Quota 子类。</li>
             <li><strong>Single Case operations：</strong>/account 可按 ticket # 精准打开 Case，并对单 Case 执行仅保留客户消息、保留独立 workspace audit 的完整 Rerun；reset 会清除旧 Persona assignment，仍需 Automation 回复时再独立随机选择并固定版本。</li>
-            <li><strong>Admin：</strong>新增 Automated Cases 与 Environment Config 控制面；Agent Config 展示 v7 taxonomy、managed route Prompt 和 registered workflow。Automation Router 在唯一 Persona workspace 中独立管理三套 preset 的 Draft、Publish、Rollback 与 Enable/Disable，具体 Behavior 仍只原位管理 Prompt 或 deterministic capability。</li>
+            <li><strong>Admin：</strong>新增 Automated Cases 与 Environment Config 控制面；Agent Config 展示 v8 taxonomy、Security &amp; Compliance outcome、managed route Prompt 和 registered workflow。Automation Router 在唯一 Persona workspace 中独立管理三套 preset 的 Draft、Publish、Rollback 与 Enable/Disable，具体 Behavior 仍只原位管理 Prompt 或 deterministic capability。</li>
             <li><strong>Rollout：</strong>已提供 dry-run-first、可恢复的 operator-controlled Automated-only rerun 工具；它冻结操作开始时的 Automated Case 集合并逐单调用完整 Rerun，部署不会自动执行这次一次性数据操作。</li>
           </ul>
           <a class="phase-action" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">打开 Phase 2 交付记录 <span aria-hidden="true">-&gt;</span></a>
@@ -2079,9 +2079,9 @@ flowchart TD
         short: "Automation",
         title: "Automated Case intake / routing",
         status: "doing",
-        thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router 与 Backend Operation Router，并同时记录大标签、小标签与稳定 reason code。Account & Billing 拥有 account_suspension、fraud_account、detailed_invoice、other；Backend Operation 拥有 enablement、quota、unregistered。已注册结果再选择对应 Automation handler；`/client` 继续使用原共享 Router。",
+        thesis: "Phase 2 将 `/account` 分类拆成 Intent Classifier、Agora Router、Account & Billing Router 与 Backend Operation Router，并同时记录大标签、小标签与稳定 reason code。Agora Router 新增 Security & Compliance classification-only outcome；Account & Billing 拥有 account_suspension、fraud_account、detailed_invoice、other；Backend Operation 拥有 enablement、quota、unregistered。已注册结果再选择对应 Automation handler；`/client` 继续使用原共享 Router。",
         done: [
-          { summary: "`/account` 已强制采用当前 v7 分层分类，不受 legacy/shadow 配置影响；Account UI 可启动持久化异步任务，对全部历史 Case 重新执行路由、Field Extractor 与 Automation handler reconciliation。每个 Case 保留客户消息和路由审计，旧 Account AI 回复、reply job、reply execution 与 Persona assignment 会先清除，再按 delivery binding 重建内部邮件，并在需要回复时重新随机选择并固定 Persona 版本。", prs: [] },
+          { summary: "`/account` 已强制采用当前 v8 分层分类，不受 legacy/shadow 配置影响；Agora Router 新增 Security & Compliance classification-only outcome，Account UI 可启动持久化异步任务，对全部历史 Case 重新执行路由、Field Extractor 与 Automation handler reconciliation。每个 Case 保留客户消息和路由审计，旧 Account AI 回复、reply job、reply execution 与 Persona assignment 会先清除，再按 delivery binding 重建内部邮件，并在需要回复时重新随机选择并固定 Persona 版本。", prs: [] },
           { summary: "`/account` 已支持按 ticket # 精准搜索，并可对单 Case 执行完整 Rerun：客户消息原样保留，所有 AI、Engineer、Manual 与 Internal 消息、当前 route correction 及旧 Persona assignment 被清除，独立 workspace audit 持久保留。", prs: [] },
           { summary: "Automation Persona registry 已交付 Sid Precise、Sid Bright、Sid Warm 三套独立 preset；首次回复从 enabled/published candidates 随机选择并固定精确版本，后续发布或停用不改写现有 assignment。", prs: [] },
           { summary: "已提供 dry-run-first、可恢复的 Automated-only rollout runner，由操作员审核冻结集合后逐单执行完整 Rerun；一次性 live data operation 不由部署自动触发。", prs: [] },
@@ -2091,7 +2091,7 @@ flowchart TD
           { summary: "Enablement 字段采集已切换为 LLM grounded extraction：App ID 不限制格式，模型必须引用客户原文；missing 只追问一次，uncertain、ambiguous 或 grounding 失败均转 Human Review 并取消待发送追问。", prs: [] },
           { summary: "Account Verification 已使用独立 LLM extractor 收集 Company、Contact、Use Case 与安全 Payment 概况；可选 Website/App ID 不再阻塞，最多追问一次，仍缺失时按现有信息发送内部邮件。", prs: [] },
           { summary: "Account Automation intake 已覆盖 Account & Billing 下的 `fraud_account`、`detailed_invoice` 与 Backend Operation 下的 `enablement`、`quota`；`unregistered` 继续作为 Human Review 诊断入口，Account & Billing registry 单独注册 classification-only 的 `account_suspension` extractor。", prs: [409, 412, 426, 488] },
-          { summary: "Admin Agent Config 已同步 v7 layered taxonomy：managed routing Prompt、Backend Operation/Automation hierarchy、五项 Automation Workflow catalog，以及支持 Backend Operation/Account & Billing Category、Subcategory、Handler 和 Automation status 的 Automated Cases 表格。", prs: [] },
+          { summary: "Admin Agent Config 已同步 v8 layered taxonomy：managed routing Prompt、Security & Compliance outcome、Backend Operation/Automation hierarchy、五项 Automation Workflow catalog，以及支持 Backend Operation/Account & Billing Category、Subcategory、Handler 和 Automation status 的 Automated Cases 表格。", prs: [] },
           { summary: "`/account` 已支持 HTTP 与手动 UI 创建客户工单，展示单一 canonical `TK-...` ticket id、route、Automation / Not automated 状态和历史详情。", prs: [432, 440, 442, 446, 506] },
           { summary: "Billing companion 数据保持内部 key，但对外 view-model 固定只暴露 canonical ticket id，source 统一为 `manual` / `api` 并保留 source links。", prs: [440, 446, 472, 481, 492] },
           { summary: "内部 billing 邮件链路已完成 action-specific destination env、真实发送、SMTP fail-closed 和发送验证。", prs: [416, 419, 421] },
@@ -2181,7 +2181,7 @@ flowchart TD
         short: "Routing",
         title: "Routing rules",
         status: "doing",
-        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；v7 按 Account & Billing 与 Backend Operation 保留业务归属，registered outcome 再输出 automated route family、独立 route_status 与 handler，非自动化路由保持所属 domain 或进入 Human Review。",
+        thesis: "路由已从 regex 主导的两段式升级为 LLM semantic router + policy gate + deterministic fallback 架构；v8 按 Security & Compliance、Account & Billing 与 Backend Operation 保留业务归属，registered outcome 再输出 automated route family、独立 route_status 与 handler，非自动化路由保持所属 domain 或进入 Human Review。",
         done: [
           { summary: "Routing tab 和架构图已独立维护，固定 deterministic fast path、LLM semantic router、policy gate、fallback 和 route contract 的边界。", prs: [474, 496, 518] },
           { summary: "LLM router 已升级为 semantic intent taxonomy 输出，并把 billing intent、evidence spans、risk flags 和 automation eligibility 纳入 route decision。", prs: [477] },
@@ -2211,7 +2211,7 @@ flowchart TD
           "`conservative_agora_technical_fallback` 对技术问题是安全兜底，但 billing 风险场景不能无条件进 RAG；fallback 前应增加 billing-risk sniff，把 refund/dispute/legal/account access restore 等送 billing_review。",
           "当前 `billing_review` 客户可见体验还不完整：主链路复用 refusal copy，容易让客户误以为 billing 请求不在支持范围内；下一步应改成人工审核确认语，并进入内部待办/queue。",
           "TK-ACC-68BAC7 已修复：扩展后的 deterministic 白名单可命中 `Account temporarily suspended` 和 `account has been suspended due to insufficient balance`，不再误判为 web_search。",
-          "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `agora_non_technical`；需要在 golden set 中持续补充边界 case。",
+          "下一步风险：billing terms / plan change / pricing inquiry 类 case 可能仍被 LLM 归为 `account_billing` 或 `uncategorized`；需要在 golden set 中持续补充边界 case。",
           "TK-ACC-C31612 修复验证：长正文末尾 thank you 不再触发 small_talk，LLM semantic-first 可正确识别 billing intent；短纯感谢仍保持 controlled_response。",
         ],
         next: [
@@ -2255,6 +2255,7 @@ flowchart TD
             "  BR --> C",
             "  F --> C",
             "  C -->|agora_technical| RAG[\"agora_docs_rag / rag / agora_docs_only\"]",
+            "  C -->|security_compliance| SC[\"classification_only / human_review\"]",
             "  C -->|agora_non_technical| WEB[\"web_company_info / web_search / official_web_search\"]",
             "  C -->|non_agora| REF[\"fallback_or_refuse / refuse\"]",
             "  C -->|small_talk| ST[\"general_chat / controlled_response or refuse\"]",

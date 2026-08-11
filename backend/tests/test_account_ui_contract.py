@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260811-account-backend-operation-filter-1", html)
+        self.assertIn("20260811-account-security-compliance-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -351,7 +351,8 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('label: "Non-Agora"', app_source)
         self.assertIn('{ id: "all", label: "All", children: [] }', app_source)
         self.assertIn('{ id: "agora_technical", label: "Tech", children: [] }', app_source)
-        self.assertIn('{ id: "agora_non_technical", label: "Non-tech", children: [] }', app_source)
+        self.assertIn('{ id: "security_compliance", label: "Security & Compliance", children: [] }', app_source)
+        self.assertNotIn('{ id: "agora_non_technical", label: "Non-tech", children: [] }', app_source)
         self.assertIn('id: "conversation"', app_source)
         self.assertIn('id: "human_review"', app_source)
         self.assertIn("PAGE_SIZE", app_source)

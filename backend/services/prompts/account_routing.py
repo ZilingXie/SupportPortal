@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
-ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v6"
+ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v7"
 ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v1"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v7"
 ACCOUNT_BACKEND_OPERATION_PROMPT_VERSION = "account-backend-operation-v1"
@@ -114,13 +114,16 @@ Classify only; do not answer the customer.
 ## Routes
 - technical: SDK/API integration, configuration, troubleshooting, token authentication, RTC/RTM,
   channels, audio/video behavior, recording implementation, feature fit, or docs-grounded questions.
-- non_technical: Agora company, public product information, investor, product portfolio, or public business information.
+- security_compliance: security, privacy, trust, data-protection, audit, or compliance documentation and
+  requests, including Trust Center, ISO 27001, SOC 2, DPA, GDPR, CCPA, BCP/DR, data residency, retention,
+  deletion, subprocessors, transfer assessments, vendor-risk questionnaires, and security evidence.
 - account_billing: account ownership or administration, balances, usage charges, payment methods, top-ups,
   pricing, quotes, refunds, billing disputes, invoice billing, and other account or billing requests.
 - backend_operation: an explicit, grounded request for Agora to perform a concrete account/backend operation
   that is not a financial account setting. The Backend Operations Router will classify its subcategory.
 - uncategorized: an Agora-related request that cannot be assigned safely to the routes above, including
-  insufficient information, multiple equally important Agora intents, legal/compliance requests, and rewards.
+  insufficient information, multiple equally important Agora intents, legal enforcement or regulatory complaints,
+  rewards, public company/product questions previously handled by the removed Non-technical route, and mixed intents.
 
 ## Rules
 - First identify the customer's primary requested outcome across the entire message. A long legal,
@@ -130,6 +133,11 @@ Classify only; do not answer the customer.
 - Do not let a concrete-looking command near the end of a long complaint override the complaint's primary
   legal or regulatory purpose. Use reason_code legal_compliance_request for this case.
 - How to enable, configure, integrate, or troubleshoot a feature is technical.
+- Security configuration, token authentication, encryption, SDK permissions, and security-related implementation
+  failures are technical when the customer needs engineering guidance. Documentation, audit, privacy, trust,
+  data-protection, or compliance evidence requests are security_compliance instead.
+- General Agora company, product-portfolio, investor, or public-business questions no longer use a Web route in
+  Account; classify them as uncategorized for Human Review.
 - An explicit request for Agora to enable a named backend feature from our side is backend_operation.
 - Pricing and billing questions are account_billing. Concrete backend operations enter backend_operation.
 - A clearly reported non-fraud account suspension belongs to account_billing. Fraud, risk, suspicious-activity,
@@ -153,8 +161,8 @@ Classify only; do not answer the customer.
 Return JSON only with keys: agora_route, confidence, reason_code, additional_intents,
 selection_reason, backend_operation, evidence_spans.
 confidence must be between 0 and 1.
-agora_route must be one of: technical, non_technical, account_billing, backend_operation, uncategorized.
-reason_code must be one of: technical_request, non_technical_request, account_billing_request,
+agora_route must be one of: technical, security_compliance, account_billing, backend_operation, uncategorized.
+reason_code must be one of: technical_request, security_compliance_request, account_billing_request,
 explicit_backend_operation, no_matching_category, insufficient_route_information,
 insufficient_backend_operation_evidence, multiple_equal_intents, legal_compliance_request.
 backend_operation must be null unless agora_route=backend_operation.
@@ -163,8 +171,11 @@ backend_operation must be null unless agora_route=backend_operation.
 Input: How do I generate an RTC token?
 Output: {"agora_route":"technical","confidence":0.98,"reason_code":"technical_request","additional_intents":[],"selection_reason":"SDK integration is the requested next step","backend_operation":null,"evidence_spans":["RTC token"]}
 
+Input: Please provide your SOC 2 report, DPA, and Trust Center security documentation.
+Output: {"agora_route":"security_compliance","confidence":0.98,"reason_code":"security_compliance_request","additional_intents":[],"selection_reason":"The customer requests security and compliance evidence","backend_operation":null,"evidence_spans":["SOC 2 report","DPA","Trust Center security documentation"]}
+
 Input: Who is Agora's CEO?
-Output: {"agora_route":"non_technical","confidence":0.98,"reason_code":"non_technical_request","additional_intents":[],"selection_reason":"The request asks for public company information","backend_operation":null,"evidence_spans":["Agora's CEO"]}
+Output: {"agora_route":"uncategorized","confidence":0.98,"reason_code":"no_matching_category","additional_intents":[],"selection_reason":"Public company information is outside the current Account route taxonomy","backend_operation":null,"evidence_spans":["Agora's CEO"]}
 
 Input: A third-party platform fraud complaint asks Agora, cloud providers, payment processors, and regulators
 to investigate the platform and extract server logs as evidence.

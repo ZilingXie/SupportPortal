@@ -4,7 +4,10 @@ from typing import Any
 
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
 from backend.services.account_billing_handlers import account_billing_metadata
-from backend.services.account_case_filters import backend_operation_metadata
+from backend.services.account_case_filters import (
+    backend_operation_metadata,
+    security_compliance_metadata,
+)
 
 VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
@@ -178,6 +181,12 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "tooling_profile": "agora_docs_only",
     },
     {
+        "scope_label": "security_compliance",
+        "execution_action": "human_review_required",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+    },
+    {
         "scope_label": "agora_non_technical",
         "execution_action": "web_search",
         "route_family": "web_company_info",
@@ -226,6 +235,11 @@ def validate_route_correction(
 ) -> dict[str, Any]:
     normalized_scope = _normalize(scope_label)
     normalized_action = _normalize(execution_action)
+    if normalized_scope == "agora_non_technical":
+        # Preserve the deprecated input contract while preventing a new
+        # Account correction from recreating the removed Web route.
+        normalized_scope = "uncategorized"
+        normalized_action = "human_review_required"
     if normalized_scope == "automation" and normalized_action in {
         "enablement",
         "quota",
@@ -247,6 +261,8 @@ def validate_route_correction(
         metadata = account_billing_metadata(account_billing_subcategory)
     elif backend_operation_subcategory:
         metadata = backend_operation_metadata(backend_operation_subcategory)
+    elif normalized_scope == "security_compliance":
+        metadata = security_compliance_metadata()
     elif human_review_subcategory:
         if normalized_scope == "backend_operation" and human_review_subcategory == "unregistered":
             metadata = backend_operation_metadata("unregistered")

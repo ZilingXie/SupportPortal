@@ -525,6 +525,61 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.classification["route_target"], "rag")
         self.assertEqual(invoke_stage.call_count, 2)
 
+    def test_security_compliance_is_classification_only_human_review(self) -> None:
+        attempts = [
+            _attempt({
+                "intent_class": "agora",
+                "intent_confidence": 0.99,
+                "reason_code": "agora_case",
+            }),
+            _attempt({
+                "agora_route": "security_compliance",
+                "confidence": 0.98,
+                "reason_code": "security_compliance_request",
+                "backend_operation": None,
+            }),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ) as invoke_stage:
+            result = decide_account_route(
+                "Please provide your SOC 2 report, DPA, and Trust Center security documentation."
+            )
+
+        self.assertEqual(result.primary_label, "Agora")
+        self.assertEqual(result.secondary_label, "Security & Compliance")
+        self.assertEqual(result.classification["agora_route"], "security_compliance")
+        self.assertEqual(result.classification["route_target"], "human_review")
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.decision.semantic_intent, "security_compliance")
+        self.assertEqual(invoke_stage.call_count, 2)
+
+    def test_legacy_non_technical_llm_output_fails_closed_to_uncategorized(self) -> None:
+        attempts = [
+            _attempt({
+                "intent_class": "agora",
+                "intent_confidence": 0.99,
+                "reason_code": "agora_case",
+            }),
+            _attempt({
+                "agora_route": "non_technical",
+                "confidence": 0.98,
+                "reason_code": "non_technical_request",
+                "backend_operation": None,
+            }),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ):
+            result = decide_account_route("Who is Agora's CEO?")
+
+        self.assertEqual(result.secondary_label, "Uncategorized")
+        self.assertEqual(result.classification["agora_route"], "uncategorized")
+        self.assertEqual(result.classification["route_reason_code"], "legacy_non_technical_route")
+
     def test_enablement_uses_all_three_stages(self) -> None:
         attempts = [
             _attempt(

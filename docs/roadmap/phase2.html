@@ -616,7 +616,7 @@
       <div class="release-copy">
         <p class="release-kicker">Phase 2 Delivery Record</p>
         <h1>确定性 Automation + Controlled Validation</h1>
-        <p class="release-summary">会议第一阶段对应实际 Phase 2：先把 Account &amp; Billing 与 Backend Operation 的分层 taxonomy 做稳，再用真实流量验证 Fraud Account、Detailed Invoice、Enablement、Quota 的字段收集与自动化覆盖率。</p>
+        <p class="release-summary">会议第一阶段对应实际 Phase 2：先把 Security &amp; Compliance、Account &amp; Billing 与 Backend Operation 的分层 taxonomy 做稳，再用真实流量验证 Fraud Account、Detailed Invoice、Enablement、Quota 的字段收集与自动化覆盖率。</p>
         <ul class="release-meta">
           <li>4 类确定性 automation</li>
           <li>6 项会议行动</li>
@@ -705,13 +705,13 @@
           <div class="delivery-group-body">
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>Account layered 分类</h3><p><code>/account</code> 强制使用当前 Intent Classifier、Agora Router、Account &amp; Billing Router、Backend Operation Router 与 registered Automation handler binding，不受 legacy/shadow 配置影响；后续保存二级标签、稳定 reason code 和 pipeline 版本。Account UI 可启动持久化异步任务，对全部历史 Case 重新执行路由、Field Extractor 和 handler reconciliation；旧待发布追问与 Persona assignment 会被清除，新满足条件的 Automation 才重新选择固定 Persona 并执行内部邮件与 Account-only 回复。<code>/client</code> 继续使用原共享 Router。</p></div>
+          <div class="delivery-main"><h3>Account layered 分类</h3><p><code>/account</code> 强制使用当前 Intent Classifier、Agora Router、Account &amp; Billing Router、Backend Operation Router 与 registered Automation handler binding，不受 legacy/shadow 配置影响；Agora Router 新增 Security &amp; Compliance classification-only outcome，继续保存二级标签、稳定 reason code 和 pipeline 版本。Account UI 可启动持久化异步任务，对全部历史 Case 重新执行路由、Field Extractor 和 handler reconciliation；旧待发布追问与 Persona assignment 会被清除，新满足条件的 Automation 才重新选择固定 Persona 并执行内部邮件与 Account-only 回复。<code>/client</code> 继续使用原共享 Router。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>Backend Operation 与 Account &amp; Billing 范围</h3><p>Account &amp; Billing Router 负责 Account Suspension、Fraud Account、Detailed Invoice 和 Other；其中 Fraud Account、Detailed Invoice 仍可进入 automated route family，Account Suspension 只提取暂停状态、已知原因和客户已采取动作，保持 not automated。Backend Operation/Automation Router 负责 Enablement、Quota 和用于发现分类缺口的 Unregistered；Unregistered 直接进入 Human Review，并保留 Backend Operation 业务标签。</p></div>
+          <div class="delivery-main"><h3>Security &amp; Compliance、Backend Operation 与 Account &amp; Billing 范围</h3><p>Agora Router 将安全、隐私、信任、审计和合规材料请求归入 Security &amp; Compliance，classification-only 并进入 Human Review；Account &amp; Billing Router 负责 Account Suspension、Fraud Account、Detailed Invoice 和 Other；其中 Fraud Account、Detailed Invoice 仍可进入 automated route family，Account Suspension 只提取暂停状态、已知原因和客户已采取动作，保持 not automated。Backend Operation/Automation Router 负责 Enablement、Quota 和用于发现分类缺口的 Unregistered；Unregistered 直接进入 Human Review，并保留 Backend Operation 业务标签。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
@@ -733,7 +733,7 @@
         </article>
         <article class="delivery-row" data-category="reliability" data-status="done">
           <div class="delivery-category">Reliability</div>
-          <div class="delivery-main"><h3>Agent Config 与 Automation Workflow 管理面</h3><p>Admin 展示 <code>/account</code> 的 Intent Classifier、Agora Router、Account &amp; Billing Router、Backend Operation Router 与 Automation Router；Fraud Account、Detailed Invoice、Enablement、Quota 和 Unregistered 统一进入 Automation Workflow catalog，Account Suspension classification-only extractor 保持在 Account &amp; Billing Router 下。Account routing Prompt 纳入 managed Draft、Publish、Diff、Restore 和版本历史管理，Automated Cases 表格同步展示 Backend Operation/Account &amp; Billing Category、Subcategory、Handler 和 Automation status。</p></div>
+          <div class="delivery-main"><h3>Agent Config 与 Automation Workflow 管理面</h3><p>Admin 展示 <code>/account</code> 的 Intent Classifier、Agora Router、Security &amp; Compliance outcome、Account &amp; Billing Router、Backend Operation Router 与 Automation Router；Fraud Account、Detailed Invoice、Enablement、Quota 和 Unregistered 统一进入 Automation Workflow catalog，Account Suspension classification-only extractor 保持在 Account &amp; Billing Router 下。Account routing Prompt 纳入 managed Draft、Publish、Diff、Restore 和版本历史管理，Automated Cases 表格同步展示 Backend Operation/Account &amp; Billing Category、Subcategory、Handler 和 Automation status。</p></div>
           <div class="pr-links"><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/651">PR #651</a></div>
         </article>
         <article class="delivery-row" data-category="quality" data-status="done">
@@ -880,7 +880,7 @@
       </header>
       <div class="flow reveal">
         <div class="flow-step"><span>01</span><strong>Zendesk intake</strong><p>接收真实 ticket，保留 external ID 与幂等判断。</p></div>
-        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>进入 Account &amp; Billing 或 Backend Operation；registered automated outcomes 为 Fraud Account、Detailed Invoice、Enablement 和 Quota，Account Suspension 与 Unregistered 进入 Human Review 边界。</p></div>
+        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>Agora Router 先识别 Technical、Security &amp; Compliance、Account &amp; Billing 或 Backend Operation；registered automated outcomes 为 Fraud Account、Detailed Invoice、Enablement 和 Quota，Security &amp; Compliance、Account Suspension 与 Unregistered 进入 Human Review 边界。</p></div>
         <div class="flow-step"><span>03</span><strong>Bounded collection</strong><p>按 required / optional 规则收集字段，限制重复追问。</p></div>
         <div class="flow-step"><span>04</span><strong>Human-style reply</strong><p>随机 6–10 分钟，使用受控人设 Prompt 模板。</p></div>
         <div class="flow-step"><span>05</span><strong>Coverage review</strong><p>统计解决率、route accuracy 与失败原因，决定是否扩类。</p></div>

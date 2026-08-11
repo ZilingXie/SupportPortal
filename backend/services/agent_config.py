@@ -377,13 +377,20 @@ def _route_agent_navigation() -> dict[str, Any]:
     agora = _route_node(
         "agora-router",
         "Agora Router",
-        "Classifies Agora requests as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+        "Classifies Agora requests as Technical, Security & Compliance, Account & Billing, Backend Operation, or Uncategorized.",
         kind="router",
         is_agent=True,
         prompt_keys=["account-agora-router-system"],
         children=[
             _route_node("agora-technical", "Agora Technical", "Routes technical Agora product and SDK questions to technical support.", kind="outcome", is_agent=False),
-            _route_node("agora-non-technical", "Agora Non-technical", "Routes non-technical Agora product questions to the appropriate support workflow.", kind="outcome", is_agent=False),
+            _route_node("security-compliance", "Security & Compliance", "Records security, privacy, trust, audit, and compliance requests for Human Review.", kind="outcome", is_agent=False, workflow={
+                "category": "security_compliance",
+                "subcategory": None,
+                "route_family": "human_review",
+                "automation_handler": None,
+                "status": "classification_only",
+                "steps": ["record classification", "human review"],
+            }),
             account_billing,
             automation,
             human_review("agora-uncategorized", "Handles Agora requests that the router cannot categorize reliably."),
@@ -471,7 +478,7 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component(
                     "account-agora-router",
                     "Agora Router",
-                    "Classifies Agora requests as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+                    "Classifies Agora requests as Technical, Security & Compliance, Account & Billing, Backend Operation, or Uncategorized.",
                 ),
                 _component(
                     "account-account-billing-router",
