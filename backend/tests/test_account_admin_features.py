@@ -968,6 +968,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             user_prompt="user snapshot",
         )
         self.assertEqual(execution["router_prompt_version"], ROUTER_PROMPT_VERSION)
+        self.assertEqual(execution["reason_code"], "billing_request")
         self.assertEqual(execution["system_prompt"], "system snapshot")
         self.assertEqual(execution["user_prompt"], "user snapshot")
         self.assertTrue(execution["prompt_snapshot_available"])
@@ -1011,6 +1012,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             },
         )
 
+        self.assertEqual(execution["reason_code"], "intent_classifier_invalid_json")
         stage = execution["stages"][0]
         self.assertEqual(stage["status"], "failed")
         self.assertEqual(stage["failure_type"], "invalid_json")

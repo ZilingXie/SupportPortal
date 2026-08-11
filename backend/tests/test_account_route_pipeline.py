@@ -10,6 +10,8 @@ from backend.services.account_route_pipeline import (
     AccountRouteStageAttempt,
     ACCOUNT_ROUTE_PIPELINE_VERSION,
     _invoke_stage,
+    _validate_account_billing_payload,
+    _validate_agora_payload,
     account_case_labels,
     classification_for_corrected_route,
     decide_account_route,
@@ -18,6 +20,7 @@ from backend.services.llm_factory import LlmTextResult
 from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
     build_account_automation_system_prompt,
+    build_account_billing_system_prompt,
 )
 from backend.services.support_router import SupportRouteDecision
 
@@ -39,7 +42,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
             _attempt({
                 "account_billing_subcategory": "detailed_invoice",
                 "confidence": 0.97,
-                "reason_code": "registered_detailed_invoice",
+                "reason_code": "detailed_invoice_requested",
             }),
         ]
 
@@ -59,6 +62,10 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.decision.execution_action, "detailed_invoice")
         self.assertEqual(result.decision.semantic_intent, "account_billing.detailed_invoice")
         self.assertEqual(result.decision.automation_eligibility, "eligible")
+        self.assertEqual(
+            result.classification["route_reason_code"],
+            "detailed_invoice_requested",
+        )
         self.assertEqual(
             [call.kwargs["stage_name"] for call in invoke_stage.call_args_list],
             ["intent_classifier", "agora_router", "account_billing_router"],
@@ -261,9 +268,11 @@ class AccountRoutePipelineTests(unittest.TestCase):
     def test_agora_prompt_prioritizes_legal_compliance_complaints_over_evidence_commands(self) -> None:
         prompt = build_account_agora_system_prompt()
 
-        self.assertIn("legal_compliance_request", prompt)
+        self.assertIn("legal_enforcement_request", prompt)
         self.assertIn("third-party fraud complaint", prompt)
         self.assertIn("extract logs, preserve evidence", prompt)
+        self.assertIn("vendor due diligence", prompt)
+        self.assertIn("security questionnaire", prompt)
 
     def test_legal_compliance_agora_route_stops_before_automation_router(self) -> None:
         attempts = [
@@ -275,7 +284,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
             _attempt({
                 "agora_route": "uncategorized",
                 "confidence": 0.98,
-                "reason_code": "legal_compliance_request",
+                "reason_code": "legal_enforcement_request",
                 "backend_operation": None,
                 "evidence_spans": ["third-party fraud complaint", "extract server logs"],
             }),
@@ -291,8 +300,139 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.secondary_label, "Uncategorized")
         self.assertEqual(result.decision.route_family, "human_review")
         self.assertEqual(result.decision.execution_action, "human_review_required")
-        self.assertEqual(result.classification["route_reason_code"], "legal_compliance_request")
+        self.assertEqual(result.classification["route_reason_code"], "legal_enforcement_request")
         self.assertEqual(invoke_stage.call_count, 2)
+
+    def test_legacy_legal_reason_code_is_canonicalized_in_audit(self) -> None:
+        attempts = [
+            _attempt({"intent_class": "agora", "intent_confidence": 0.99, "reason_code": "agora_case"}),
+            _attempt({
+                "agora_route": "uncategorized",
+                "confidence": 0.98,
+                "reason_code": "legal_compliance_request",
+                "backend_operation": None,
+            }),
+        ]
+        with patch("backend.services.account_route_pipeline._invoke_stage", side_effect=attempts):
+            result = decide_account_route("A legal complaint asks Agora to preserve evidence.")
+
+        self.assertEqual(result.classification["route_reason_code"], "legal_enforcement_request")
+        self.assertEqual(
+            result.classification["stage_reason_codes"]["agora_router"],
+            "legal_enforcement_request",
+        )
+
+    def test_security_compliance_keeps_broken_document_as_additional_technical_intent(self) -> None:
+        attempts = [
+            _attempt({"intent_class": "agora", "intent_confidence": 0.99, "reason_code": "agora_case"}),
+            _attempt({
+                "agora_route": "security_compliance",
+                "confidence": 0.98,
+                "reason_code": "security_compliance_request",
+                "additional_intents": ["technical"],
+                "backend_operation": None,
+            }),
+        ]
+        with patch("backend.services.account_route_pipeline._invoke_stage", side_effect=attempts):
+            result = decide_account_route(
+                "The Trust Center document returns 404; please send the SOC 2 package."
+            )
+
+        self.assertEqual(result.secondary_label, "Security & Compliance")
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.classification["additional_intents"], ["technical"])
+        self.assertEqual(result.classification["route_reason_code"], "security_compliance_request")
+
+    def test_account_billing_prompt_distinguishes_detailed_invoice_from_other(self) -> None:
+        prompt = build_account_billing_system_prompt()
+
+        self.assertIn("detailed, itemized, full-detail", prompt)
+        self.assertIn("missing_invoice", prompt)
+        self.assertIn("invoice_charge_dispute", prompt)
+        self.assertIn("invoice_payment_reconciliation", prompt)
+        self.assertIn("Subject: detail invoice", prompt)
+        self.assertIn("ordinary request to resend or copy an invoice remains other", prompt)
+
+    def test_invoice_and_legal_reason_code_validators_accept_new_contract(self) -> None:
+        self.assertIsNone(
+            _validate_account_billing_payload(
+                {
+                    "account_billing_subcategory": "detailed_invoice",
+                    "confidence": 0.98,
+                    "reason_code": "detailed_invoice_requested",
+                }
+            )
+        )
+        self.assertIsNone(
+            _validate_account_billing_payload(
+                {
+                    "account_billing_subcategory": "other",
+                    "confidence": 0.98,
+                    "reason_code": "invoice_payment_reconciliation",
+                }
+            )
+        )
+        self.assertIsNone(
+            _validate_agora_payload(
+                {
+                    "agora_route": "uncategorized",
+                    "confidence": 0.98,
+                    "reason_code": "legal_enforcement_request",
+                }
+            )
+        )
+        self.assertIsNone(
+            _validate_agora_payload(
+                {
+                    "agora_route": "uncategorized",
+                    "confidence": 0.98,
+                    "reason_code": "legal_compliance_request",
+                }
+            )
+        )
+
+    def test_invoice_negative_reason_codes_force_account_billing_other(self) -> None:
+        cases = [
+            (
+                "The usage charge is wrong.",
+                "invoice_charge_dispute",
+            ),
+            (
+                "The payment and invoice records do not match.",
+                "invoice_payment_reconciliation",
+            ),
+            (
+                "We cannot find the invoice.",
+                "missing_invoice",
+            ),
+        ]
+        for message, reason_code in cases:
+            with self.subTest(reason_code=reason_code):
+                attempts = [
+                    _attempt({"intent_class": "agora", "intent_confidence": 0.99, "reason_code": "agora_case"}),
+                    _attempt({
+                        "agora_route": "account_billing",
+                        "confidence": 0.98,
+                        "reason_code": "account_billing_request",
+                        "backend_operation": None,
+                    }),
+                    _attempt({
+                        "account_billing_subcategory": "detailed_invoice",
+                        "confidence": 0.97,
+                        "reason_code": reason_code,
+                    }),
+                ]
+                with patch(
+                    "backend.services.account_route_pipeline._invoke_stage",
+                    side_effect=attempts,
+                ):
+                    result = decide_account_route(message)
+
+                self.assertEqual(result.secondary_label, "Account & Billing / Other")
+                self.assertEqual(result.classification["account_billing_subcategory"], "other")
+                self.assertEqual(result.classification["route_reason_code"], reason_code)
+                self.assertEqual(result.decision.route_family, "human_review")
+                self.assertEqual(result.decision.route_status, "not_automated")
 
     def test_automation_prompt_treats_complete_suspension_review_template_as_fraud_evidence(self) -> None:
         prompt = build_account_automation_system_prompt()
@@ -307,11 +447,12 @@ class AccountRoutePipelineTests(unittest.TestCase):
         fixture_path = Path(__file__).parent / "fixtures" / "account_route_golden_cases.json"
         cases = json.loads(fixture_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(len(cases), 18)
+        self.assertEqual(len(cases), 24)
         self.assertEqual({item["case_id"] for item in cases}, {
             "12515", "12512", "12511", "12506", "12505", "12502", "12500",
             "12497", "12496", "12486", "12484", "12480", "12479", "12476",
-            "12460", "12458", "12456", "12572",
+            "12460", "12458", "12456", "12572", "12584", "12622", "12585",
+            "12724", "12708", "10075",
         })
         self.assertTrue(all(item["primary_label"] == "Agora" for item in cases))
         self.assertNotIn("Support Request", {item["primary_label"] for item in cases})
@@ -321,6 +462,15 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(by_case_id["12458"]["reason_code"], "technical_request")
         self.assertEqual(by_case_id["12572"]["secondary_label"], "Account & Billing / Other")
         self.assertEqual(by_case_id["12572"]["reason_code"], "account_billing_other")
+        self.assertEqual(by_case_id["12584"]["secondary_label"], "Account & Billing / Other")
+        self.assertEqual(by_case_id["12584"]["reason_code"], "invoice_charge_dispute")
+        self.assertEqual(by_case_id["12622"]["reason_code"], "invoice_payment_reconciliation")
+        self.assertEqual(by_case_id["12585"]["reason_code"], "missing_invoice")
+        self.assertEqual(by_case_id["12724"]["secondary_label"], "Security & Compliance")
+        self.assertEqual(by_case_id["12708"]["secondary_label"], "Backend Operation / Enablement")
+        self.assertEqual(by_case_id["10075"]["secondary_label"], "Account & Billing / Detailed Invoice")
+        self.assertEqual(by_case_id["10075"]["route_status"], "automated")
+        self.assertEqual(by_case_id["10075"]["automation_handler"], "billing")
 
     def test_route_correction_uses_layered_labels_without_activating_handler(self) -> None:
         conversation = classification_for_corrected_route(

@@ -64,7 +64,7 @@ from backend.services.support_router_prompt import build_route_prompt_hints
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v8"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v9"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_BILLING_PROMPT_KEY = "account-account-billing-router-system"
@@ -92,8 +92,13 @@ _AUTOMATION_SUBCATEGORIES = {
 _ACCOUNT_BILLING_REASON_CODES = {
     "registered_account_suspension",
     "registered_fraud_account",
-    "registered_detailed_invoice",
+    "detailed_invoice_requested",
+    "missing_invoice",
+    "invoice_charge_dispute",
+    "invoice_payment_reconciliation",
     "account_billing_other",
+    # Compatibility input alias from account-layered-router-v8.
+    "registered_detailed_invoice",
 }
 _INTENT_REASON_CODES = {
     "conversation_resolution",
@@ -112,8 +117,21 @@ _AGORA_REASON_CODES = {
     "insufficient_route_information",
     "insufficient_backend_operation_evidence",
     "multiple_equal_intents",
-    "legal_compliance_request",
+    "legal_enforcement_request",
     "legacy_non_technical_route",
+}
+_AGORA_REASON_ALIASES = {
+    # Compatibility input alias from account-layered-router-v8.
+    "legal_compliance_request": "legal_enforcement_request",
+}
+_ACCOUNT_BILLING_REASON_ALIASES = {
+    # Compatibility input alias from account-layered-router-v8.
+    "registered_detailed_invoice": "detailed_invoice_requested",
+}
+_ACCOUNT_BILLING_INVOICE_OTHER_REASONS = {
+    "missing_invoice",
+    "invoice_charge_dispute",
+    "invoice_payment_reconciliation",
 }
 _AUTOMATION_REASON_CODES = {
     "registered_fraud_account",
@@ -285,8 +303,14 @@ def _sanitize_evidence(values: Any) -> list[str]:
     return sanitized
 
 
-def _controlled_reason(value: Any, allowed: set[str], fallback: str) -> str:
+def _controlled_reason(
+    value: Any,
+    allowed: set[str],
+    fallback: str,
+    aliases: dict[str, str] | None = None,
+) -> str:
     normalized = str(value or "").strip().lower()
+    normalized = dict(aliases or {}).get(normalized, normalized)
     return normalized if normalized in allowed else fallback
 
 
@@ -393,24 +417,41 @@ def _validate_intent_payload(payload: dict[str, Any]) -> str | None:
 
 
 def _validate_agora_payload(payload: dict[str, Any]) -> str | None:
-    required = _require_fields(payload, ("agora_route", "confidence"))
+    required = _require_fields(payload, ("agora_route", "confidence", "reason_code"))
     if required:
         return required
     if str(payload.get("agora_route") or "").strip().lower() not in _AGORA_ROUTES:
         return "invalid_enum"
     if not _valid_confidence(payload.get("confidence")):
         return "invalid_confidence"
+    if _controlled_reason(
+        payload.get("reason_code"),
+        _AGORA_REASON_CODES,
+        "",
+        aliases=_AGORA_REASON_ALIASES,
+    ) not in _AGORA_REASON_CODES:
+        return "invalid_enum"
     return None
 
 
 def _validate_account_billing_payload(payload: dict[str, Any]) -> str | None:
-    required = _require_fields(payload, ("account_billing_subcategory", "confidence"))
+    required = _require_fields(
+        payload,
+        ("account_billing_subcategory", "confidence", "reason_code"),
+    )
     if required:
         return required
     if str(payload.get("account_billing_subcategory") or "").strip().lower() not in ACCOUNT_BILLING_SUBCATEGORIES:
         return "invalid_enum"
     if not _valid_confidence(payload.get("confidence")):
         return "invalid_confidence"
+    if _controlled_reason(
+        payload.get("reason_code"),
+        _ACCOUNT_BILLING_REASON_CODES,
+        "",
+        aliases=_ACCOUNT_BILLING_REASON_ALIASES,
+    ) not in _ACCOUNT_BILLING_REASON_CODES:
+        return "invalid_enum"
     return None
 
 
@@ -1096,7 +1137,7 @@ def _legacy_result(
                 reason=(
                     "registered_fraud_account"
                     if action == "fraud_account"
-                    else "registered_detailed_invoice"
+                    else "detailed_invoice_requested"
                 ),
                 response_language=decision.response_language,
                 route_family=AUTOMATED_ROUTE_FAMILY,
@@ -1415,6 +1456,7 @@ def decide_account_route(
         agora_payload.get("reason_code"),
         _AGORA_REASON_CODES,
         agora_reason_defaults.get(agora_route, "invalid_agora_output"),
+        aliases=_AGORA_REASON_ALIASES,
     )
     if agora_attempt.payload is None and agora_attempt.failure_type:
         agora_reason = _stage_failure_reason("agora_router", agora_attempt)
@@ -1538,7 +1580,17 @@ def decide_account_route(
                 "registered_account_suspension"
                 if subcategory == "account_suspension"
                 else "account_billing_other",
+                aliases=_ACCOUNT_BILLING_REASON_ALIASES,
             )
+            if account_billing_reason in _ACCOUNT_BILLING_INVOICE_OTHER_REASONS:
+                subcategory = "other"
+            elif account_billing_reason == "detailed_invoice_requested":
+                subcategory = "detailed_invoice"
+            elif subcategory == "detailed_invoice":
+                # A detailed invoice route requires the explicit stable reason code.
+                # Fail closed to Other when the model emits an inconsistent pair.
+                subcategory = "other"
+                account_billing_reason = "invalid_account_billing_output"
         billing_additional_intents = [
             " ".join(str(value or "").split()).strip()[:120]
             for value in list(account_billing_payload.get("additional_intents") or [])[:4]
