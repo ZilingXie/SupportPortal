@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 import os
+from pathlib import Path
+import tempfile
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -688,14 +690,16 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
             "body": "Hi team",
         }
 
-        with patch.dict(
-            os.environ,
-            {
-                "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "client-secret",
-            },
-            clear=True,
-        ), patch("smtplib.SMTP_SSL") as smtp_mock:
-            result = send_billing_internal_email(email_payload)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "client-secret",
+                    "MSGRAPH_TOKEN_CACHE": str(Path(temp_dir) / "missing-token-cache.json"),
+                },
+                clear=True,
+            ), patch("smtplib.SMTP_SSL") as smtp_mock:
+                result = send_billing_internal_email(email_payload)
 
         self.assertEqual(result["status"], "skipped_config_missing")
         self.assertIn("missing Graph token cache", result["reason"])
@@ -709,17 +713,19 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
             "body": "Hi team",
         }
 
-        with patch.dict(
-            os.environ,
-            {
-                "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "client-secret",
-                "BILLING_AUTOMATION_SMTP_PASSWORD": "app-password",
-                "BILLING_AUTOMATION_SMTP_HOST": "smtp.163.com",
-                "BILLING_AUTOMATION_SMTP_PORT": "465",
-            },
-            clear=True,
-        ), patch("smtplib.SMTP_SSL") as smtp_mock:
-            result = send_billing_internal_email(email_payload)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "client-secret",
+                    "BILLING_AUTOMATION_SMTP_PASSWORD": "app-password",
+                    "BILLING_AUTOMATION_SMTP_HOST": "smtp.163.com",
+                    "BILLING_AUTOMATION_SMTP_PORT": "465",
+                    "MSGRAPH_TOKEN_CACHE": str(Path(temp_dir) / "missing-token-cache.json"),
+                },
+                clear=True,
+            ), patch("smtplib.SMTP_SSL") as smtp_mock:
+                result = send_billing_internal_email(email_payload)
 
         self.assertEqual(result["status"], "skipped_config_missing")
         self.assertIn("missing Graph token cache", result["reason"])

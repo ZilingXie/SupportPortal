@@ -5576,17 +5576,22 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.repository.save_ticket = save_ticket_spy  # type: ignore[method-assign]
 
         # Reply with field info.
-        reply_response = self.client.post(
-            f"/api/account/billing-tickets/{bt_id}/reply",
-            json={
-                "message": (
-                    "Company name: Acme Corp. Company registered country and address: Singapore. "
-                    "My name is Taylor. Company address: Singapore. "
-                    "Phone number: +65-12345678. "
-                    "Use case: live streaming. No payment has been made yet."
-                ),
-            },
-        )
+        with patch.object(
+            main,
+            "_send_billing_internal_email_attempt",
+            AsyncMock(return_value=("skipped_config_missing", "mail disabled in unit test")),
+        ):
+            reply_response = self.client.post(
+                f"/api/account/billing-tickets/{bt_id}/reply",
+                json={
+                    "message": (
+                        "Company name: Acme Corp. Company registered country and address: Singapore. "
+                        "My name is Taylor. Company address: Singapore. "
+                        "Phone number: +65-12345678. "
+                        "Use case: live streaming. No payment has been made yet."
+                    ),
+                },
+            )
 
         self.assertEqual(reply_response.status_code, 200, reply_response.text)
         reply_payload = reply_response.json()

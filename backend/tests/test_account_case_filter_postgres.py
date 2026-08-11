@@ -35,7 +35,7 @@ class AccountCaseFilterPostgresParityTests(unittest.TestCase):
         self.assertTrue(dsn, "TICKET_DB_DSN is required for PostgreSQL filter parity tests")
         membership_expression = _account_case_filter_memberships_sql("fixture")
         query = sql.SQL(
-            "SELECT {} FROM (VALUES (" 
+            "SELECT {} FROM (VALUES ("
             "%s::jsonb, %s::text, %s::text, %s::text, %s::text, %s::text, %s::text"
             ")) AS fixture(route_classification, execution_action, route, route_family, "
             "scope_label, route_status, subcategory)"
