@@ -24,6 +24,7 @@ from backend.services.account_case_filters import (
     account_case_filter_memberships,
     account_case_filter_keys,
     account_case_filter_matches,
+    backend_operation_metadata,
     normalize_account_case_filter,
 )
 try:
@@ -411,18 +412,18 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 END
                             WHEN 'backend_operation' THEN
                                 CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
-                                    WHEN 'enablement' THEN 'automation:enablement'
-                                    WHEN 'quota' THEN 'automation:quota'
-                                    ELSE 'human_review:unregistered'
+                                    WHEN 'enablement' THEN 'backend_operation:enablement'
+                                    WHEN 'quota' THEN 'backend_operation:quota'
+                                    ELSE 'backend_operation:unregistered'
                                 END
                             WHEN 'automation' THEN
                                 CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
                                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
-                                    WHEN 'enablement' THEN 'automation:enablement'
-                                    WHEN 'quota' THEN 'automation:quota'
-                                    ELSE 'human_review:unregistered'
+                                    WHEN 'enablement' THEN 'backend_operation:enablement'
+                                    WHEN 'quota' THEN 'backend_operation:quota'
+                                    ELSE 'backend_operation:unregistered'
                                 END
                             ELSE 'human_review:uncategorized'
                         END
@@ -446,18 +447,18 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 END
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'backend_operation'
                                 THEN CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
-                                    WHEN 'enablement' THEN 'automation:enablement'
-                                    WHEN 'quota' THEN 'automation:quota'
-                                    ELSE 'human_review:unregistered'
+                                    WHEN 'enablement' THEN 'backend_operation:enablement'
+                                    WHEN 'quota' THEN 'backend_operation:quota'
+                                    ELSE 'backend_operation:unregistered'
                                 END
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'automation'
                                 THEN CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
                                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
-                                    WHEN 'enablement' THEN 'automation:enablement'
-                                    WHEN 'quota' THEN 'automation:quota'
-                                    ELSE 'human_review:unregistered'
+                                    WHEN 'enablement' THEN 'backend_operation:enablement'
+                                    WHEN 'quota' THEN 'backend_operation:quota'
+                                    ELSE 'backend_operation:unregistered'
                                 END
                             ELSE 'human_review:other'
                         END
@@ -465,14 +466,14 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                 END
             WHEN COALESCE({alias}.execution_action, {alias}.route) = 'account_suspension'
                 THEN 'account_billing:account_suspension'
-            WHEN LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation') THEN
-                CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                    WHEN LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation') THEN
+                        CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
-                    WHEN 'enablement' THEN 'automation:enablement'
-                    WHEN 'quota' THEN 'automation:quota'
-                    ELSE 'human_review:unregistered'
+                    WHEN 'enablement' THEN 'backend_operation:enablement'
+                    WHEN 'quota' THEN 'backend_operation:quota'
+                    ELSE 'backend_operation:unregistered'
                 END
             WHEN {alias}.scope_label = 'ticket_resolution' THEN 'conversation:resolve'
             WHEN {alias}.scope_label IN ('small_talk', 'conversation') THEN 'conversation:follow_up'
@@ -485,11 +486,11 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                 END
             WHEN {alias}.scope_label IN ('automation', 'backend_operation', 'enablement', 'quota') THEN
                 CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
-                    WHEN 'enablement' THEN 'automation:enablement'
-                    WHEN 'quota' THEN 'automation:quota'
-                    ELSE 'human_review:unregistered'
+                    WHEN 'enablement' THEN 'backend_operation:enablement'
+                    WHEN 'quota' THEN 'backend_operation:quota'
+                    ELSE 'backend_operation:unregistered'
                 END
-            WHEN {alias}.scope_label = 'unregistered' THEN 'human_review:unregistered'
+            WHEN {alias}.scope_label = 'unregistered' THEN 'backend_operation:unregistered'
             WHEN {alias}.scope_label IN ('uncertain', 'unclear') THEN 'human_review:uncertain'
             WHEN {alias}.scope_label = 'non_agora' THEN 'human_review:non_agora'
             WHEN {alias}.scope_label IN ('human_review', 'uncategorized') THEN 'human_review:uncategorized'
@@ -508,16 +509,21 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
             {primary},
             CASE WHEN STRPOS({primary}, ':') > 0
                 THEN split_part({primary}, ':', 1) END,
-            CASE WHEN {primary} IN ('account_billing:fraud_account', 'account_billing:detailed_invoice')
+            CASE WHEN LOWER(COALESCE({alias}.route_status, '')) = 'automated'
+                    OR LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation')
                 THEN 'automation' END,
+            CASE {primary}
+                WHEN 'backend_operation:enablement' THEN 'automation:enablement'
+                WHEN 'backend_operation:quota' THEN 'automation:quota'
+            END,
             CASE WHEN {primary} IN ('account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
                 THEN 'human_review:other' END,
-            CASE WHEN {primary} IN ('account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
+            CASE WHEN {primary} IN ('backend_operation:unregistered', 'account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
                 OR split_part({primary}, ':', 1) = 'human_review'
                 THEN 'human_review' END
         ]::TEXT[], NULL::TEXT)
         """
-    ).format(primary=primary)
+        ).format(primary=primary, alias=sql.Identifier(alias))
 
 
 _ACCOUNT_CASE_LIST_FIELDS = (
@@ -619,14 +625,30 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
         )
         or ""
     ).strip().lower()
-    metadata = (
-        account_billing_metadata(account_billing_subcategory)
-        if account_billing_subcategory in {"fraud_account", "detailed_invoice"}
-        else automation_metadata(
-            route_family=normalized.get("route_family"),
-            execution_action=execution_action,
+    classification_route = str(classification.get("agora_route") or "").strip().lower()
+    backend_operation_subcategory = str(
+        classification.get("backend_operation_subcategory")
+        or (
+            classification.get("automation_subcategory")
+            if classification_route == "automation"
+            else normalized.get("subcategory")
         )
-    )
+        if classification_route in {"backend_operation", "automation"}
+        else ""
+    ).strip().lower()
+    if backend_operation_subcategory not in {"enablement", "quota", "unregistered"}:
+        backend_operation_subcategory = ""
+    if backend_operation_subcategory:
+        metadata = backend_operation_metadata(backend_operation_subcategory)
+    else:
+        metadata = (
+            account_billing_metadata(account_billing_subcategory)
+            if account_billing_subcategory in {"fraud_account", "detailed_invoice"}
+            else automation_metadata(
+                route_family=normalized.get("route_family"),
+                execution_action=execution_action,
+            )
+        )
     automation_family = str(normalized.get("route_family") or "").strip().lower() in {
         AUTOMATED_ROUTE_FAMILY,
         "billing_automation",

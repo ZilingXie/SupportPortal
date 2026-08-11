@@ -707,6 +707,7 @@ function automationCaseCategoryLabel(item) {
   const value = String(item?.category_label || item?.category || "").trim().toLowerCase();
   return {
     automation: "Automation",
+    backend_operation: "Backend Operation",
     account_billing: "Account & Billing",
     human_review: "Human Review",
   }[value] || value.replaceAll("_", " ") || "-";
@@ -740,6 +741,7 @@ function renderAutomatedCases() {
       <select name="category" aria-label="Automation category">
         <option value="" ${automationCategory ? "" : "selected"}>All categories</option>
         <option value="automation" ${automationCategory === "automation" ? "selected" : ""}>Automation</option>
+        <option value="backend_operation" ${automationCategory === "backend_operation" ? "selected" : ""}>Backend Operation</option>
         <option value="account_billing" ${automationCategory === "account_billing" ? "selected" : ""}>Account &amp; Billing</option>
         <option value="human_review" ${automationCategory === "human_review" ? "selected" : ""}>Human Review</option>
       </select>

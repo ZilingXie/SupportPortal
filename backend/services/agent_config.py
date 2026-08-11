@@ -244,7 +244,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                     _component("enablement-handler", "Enablement Handler", "Submits a complete enablement request and prepares confirmation behavior."),
                 ],
                 workflow={
-                    "category": "automation",
+                    "category": "backend_operation",
                     "subcategory": "enablement",
                     "route_family": "automated",
                     "automation_handler": "enablement",
@@ -263,7 +263,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                     _component("quota-handler", "Quota Handler", "Handles quota, concurrency, and Big Event capacity requests."),
                 ],
                 workflow={
-                    "category": "automation",
+                    "category": "backend_operation",
                     "subcategory": "quota",
                     "route_family": "automated",
                     "automation_handler": "quota",
@@ -281,7 +281,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                     _component("human-review", "Human Review", "Handles Automation requests without a registered behavior."),
                 ],
                 workflow={
-                    "category": "human_review",
+                    "category": "backend_operation",
                     "subcategory": "unregistered",
                     "route_family": "human_review",
                     "automation_handler": None,

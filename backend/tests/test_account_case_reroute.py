@@ -26,9 +26,9 @@ def _route_result(
     secondary_label = (
         f"Account & Billing / {action.replace('_', ' ').title()}"
         if agora_route == "account_billing"
-        else f"Automation / {action.replace('_', ' ').title()}"
+        else f"Backend Operation / {action.replace('_', ' ').title()}"
         if action in {"enablement", "quota"}
-        else "Unregistered"
+        else "Backend Operation / Unregistered"
     )
     classification = {
         "pipeline_version": ACCOUNT_ROUTE_PIPELINE_VERSION,
@@ -234,7 +234,7 @@ class AccountCaseRerouteTests(unittest.TestCase):
                     f"Account & Billing / {action.replace('_', ' ').title()}",
                 )
 
-    def test_backend_operation_handlers_are_automation_and_unregistered_is_human_review(self) -> None:
+    def test_backend_operation_handlers_are_automated_and_unregistered_is_human_review(self) -> None:
         for action in ("enablement", "quota"):
             with self.subTest(action=action):
                 result = reroute_account_case(
@@ -250,7 +250,7 @@ class AccountCaseRerouteTests(unittest.TestCase):
                     ),
                 )
 
-                self.assertEqual(result.account_case["category"], "automation")
+                self.assertEqual(result.account_case["category"], "backend_operation")
                 self.assertEqual(result.account_case["subcategory"], action)
                 self.assertEqual(result.account_case["route_status"], "automated")
                 self.assertEqual(result.account_case["automation_handler"], action)
@@ -271,7 +271,7 @@ class AccountCaseRerouteTests(unittest.TestCase):
         self.assertEqual(unregistered.account_case["route"], "human_review_required")
         self.assertEqual(unregistered.account_case["route_family"], "human_review")
         self.assertEqual(unregistered.account_case["route_status"], "not_automated")
-        self.assertEqual(unregistered.account_case["category"], "human_review")
+        self.assertEqual(unregistered.account_case["category"], "backend_operation")
         self.assertEqual(unregistered.account_case["subcategory"], "unregistered")
         self.assertIsNone(unregistered.account_case["automation_handler"])
 

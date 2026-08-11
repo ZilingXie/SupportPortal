@@ -66,13 +66,13 @@ def _fraud_account_route_result() -> AccountRouteResult:
         },
         "handler_binding_status": "active",
         "primary_label": "Agora",
-        "secondary_label": "Automation / Fraud Account",
+        "secondary_label": "Account & Billing / Fraud Account",
     }
     return AccountRouteResult(
         decision=decision,
         classification=classification,
         primary_label="Agora",
-        secondary_label="Automation / Fraud Account",
+        secondary_label="Account & Billing / Fraud Account",
     )
 
 
@@ -1150,7 +1150,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             },
             "route_classification": {
                 "primary_label": "Agora",
-                "secondary_label": "Automation / Enablement",
+                "secondary_label": "Backend Operation / Enablement",
             },
         }
         result = SimpleNamespace(
@@ -1267,7 +1267,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             "internal_email_payload": {"delivery_key": "delivery-no-reply"},
             "route_classification": {
                 "primary_label": "Agora",
-                "secondary_label": "Automation / Enablement",
+                "secondary_label": "Backend Operation / Enablement",
             },
         }
         result = SimpleNamespace(
@@ -1380,7 +1380,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "backend_operation_subcategory": "enablement",
                 "automation_subcategory": None,
                 "primary_label": "Agora",
-                "secondary_label": "Automation / Enablement",
+                "secondary_label": "Backend Operation / Enablement",
                 "route_target": "automation",
             },
         }
@@ -1565,7 +1565,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                     "email_expected": True,
                     "reply_job_id": "account-reply-reconcile-test",
                     "changed": True,
-                    "route_key": "Agora / Automation / Enablement",
+                    "route_key": "Agora / Backend Operation / Enablement",
                     "handler_status": "active",
                 }
             ],
@@ -1742,7 +1742,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["category"], "automation")
+        self.assertEqual(payload["category"], "backend_operation")
         self.assertEqual(payload["subcategory"], "enablement")
         self.assertEqual(payload["route_family"], "automated")
         self.assertEqual(payload["route_status"], "automated")
@@ -2281,7 +2281,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             "route_reason_code": "registered_quota",
             "handler_binding_status": "active",
             "primary_label": "Agora",
-            "secondary_label": "Automation / Quota",
+            "secondary_label": "Backend Operation / Quota",
             "stage_confidences": {"intent_classifier": 0.99, "agora_router": 0.98, "automation_router": 0.98},
             "stage_reason_codes": {
                 "intent_classifier": "agora_case",
@@ -4008,7 +4008,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             [item["label"] for item in payload["filter_definitions"]],
             [
                 "All",
-                "Automation",
+                "Automated",
+                "Backend Operation",
                 "Account & Billing",
                 "Tech",
                 "Non-tech",
@@ -4023,6 +4024,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(counts["all"], len(fixtures))
         self.assertEqual(counts["automation"], 3)
         self.assertEqual(counts["automation:enablement"], 1)
+        self.assertEqual(counts["backend_operation"], 1)
+        self.assertEqual(counts["backend_operation:enablement"], 1)
         self.assertEqual(counts["account_billing"], 4)
         self.assertEqual(counts["account_billing:fraud_account"], 1)
         self.assertEqual(counts["account_billing:detailed_invoice"], 1)
@@ -4666,11 +4669,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(enablement.status_code, 200, enablement.text)
         enablement_payload = enablement.json()
-        self.assertEqual(enablement_payload["category"], "automation")
+        self.assertEqual(enablement_payload["category"], "backend_operation")
         self.assertEqual(enablement_payload["subcategory"], "enablement")
         self.assertEqual(enablement_payload["route_status"], "automated")
         self.assertEqual(enablement_payload["primary_label"], "Agora")
-        self.assertEqual(enablement_payload["secondary_label"], "Automation / Enablement")
+        self.assertEqual(enablement_payload["secondary_label"], "Backend Operation / Enablement")
 
         unregistered = self.client.post(
             f"/api/account/cases/{account_case_id}/route-correction",
@@ -4678,11 +4681,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(unregistered.status_code, 200, unregistered.text)
         unregistered_payload = unregistered.json()
-        self.assertEqual(unregistered_payload["category"], "human_review")
+        self.assertEqual(unregistered_payload["category"], "backend_operation")
         self.assertEqual(unregistered_payload["subcategory"], "unregistered")
         self.assertEqual(unregistered_payload["route_status"], "not_automated")
-        self.assertEqual(unregistered_payload["primary_label"], "Human Review")
-        self.assertEqual(unregistered_payload["secondary_label"], "Unregistered")
+        self.assertEqual(unregistered_payload["primary_label"], "Agora")
+        self.assertEqual(unregistered_payload["secondary_label"], "Backend Operation / Unregistered")
 
     def test_route_correction_missing_ticket_returns_404(self) -> None:
         response = self.client.post(

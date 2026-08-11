@@ -7,7 +7,11 @@ from typing import Any
 from uuid import uuid4
 
 from backend.services.support_router import SupportRouteDecision
-from backend.services.account_route_pipeline import ACCOUNT_ROUTE_PIPELINE_VERSION, account_case_labels
+from backend.services.account_route_pipeline import (
+    ACCOUNT_ROUTE_PIPELINE_VERSION,
+    account_case_labels,
+    account_route_metadata,
+)
 from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
     build_account_billing_system_prompt,
@@ -348,7 +352,16 @@ def account_automation_payload(
         filtered = [
             item
             for item in filtered
-            if normalized_category == str(item.get("category") or "").lower()
+            if normalized_category
+            == str(
+                account_route_metadata(
+                    classification=item.get("route_classification"),
+                    route_family=item.get("route_family"),
+                    execution_action=item.get("execution_action") or item.get("route"),
+                ).get("category")
+                or item.get("category")
+                or ""
+            ).lower()
         ]
     if created_from:
         filtered = [item for item in filtered if str(item.get("created_at") or "") >= str(created_from)]
@@ -358,14 +371,21 @@ def account_automation_payload(
     def admin_case_view(item: dict[str, Any]) -> dict[str, Any]:
         record = dict(item)
         primary_label, secondary_label = account_case_labels(record)
-        raw_category = str(record.get("category") or "").strip().lower()
+        metadata = account_route_metadata(
+            classification=record.get("route_classification"),
+            route_family=record.get("route_family"),
+            execution_action=record.get("execution_action") or record.get("route"),
+        )
+        raw_category = str(metadata.get("category") or record.get("category") or "").strip().lower()
         if secondary_label.startswith("Account & Billing /"):
             raw_category = "account_billing"
+        elif secondary_label.startswith("Backend Operation /"):
+            raw_category = "backend_operation"
         elif secondary_label.startswith("Automation /"):
             raw_category = "automation"
         elif primary_label == "Human Review":
             raw_category = "human_review"
-        elif raw_category not in {"automation", "account_billing", "human_review"}:
+        elif raw_category not in {"automation", "backend_operation", "account_billing", "human_review"}:
             raw_category = "human_review"
         raw_subcategory = str(record.get("subcategory") or "").strip().lower()
         if not raw_subcategory and " / " in secondary_label:
@@ -382,6 +402,7 @@ def account_automation_payload(
                 "secondary_label": secondary_label,
                 "category_label": {
                     "automation": "Automation",
+                    "backend_operation": "Backend Operation",
                     "account_billing": "Account & Billing",
                     "human_review": "Human Review",
                 }.get(raw_category, raw_category.replace("_", " ").title() or "-"),
@@ -542,7 +563,7 @@ def routing_config_payload() -> dict[str, Any]:
         {
             "name": "agora",
             "display_name": "Agora Router",
-            "description": "Agora cases are classified as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+            "description": "Agora cases are classified as Technical, Non-technical, Account & Billing, Backend Operation, or Uncategorized.",
             "execution_actions": ["technical", "non_technical", "account_billing", "backend_operation", "uncategorized"],
             "subcategories": [],
         },
@@ -560,8 +581,8 @@ def routing_config_payload() -> dict[str, Any]:
             },
         },
         {
-            "name": "automation",
-            "display_name": "Automation Router",
+            "name": "backend_operation",
+            "display_name": "Backend Operation Router",
             "description": "Confirmed backend operations are classified into Enablement, Quota, or diagnostic Unregistered.",
             "execution_actions": automation_subcategories,
             "subcategories": list(automation_subcategories),

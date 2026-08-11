@@ -36,10 +36,16 @@ const DEFAULT_FILTER_DEFINITIONS = [
   { id: "all", label: "All", children: [] },
   {
     id: "automation",
-    label: "Automation",
+    label: "Automated",
+    children: [],
+  },
+  {
+    id: "backend_operation",
+    label: "Backend Operation",
     children: [
       { id: "enablement", label: "Enablement" },
       { id: "quota", label: "Quota" },
+      { id: "unregistered", label: "Unregistered" },
     ],
   },
   {
@@ -151,9 +157,9 @@ const ROUTE_TUPLE_OPTIONS = [
   { scope: "account_billing", action: "fraud_account", category: "account_billing", subcategory: "fraud_account", label: "Agora / Account & Billing / Fraud Account" },
   { scope: "account_billing", action: "detailed_invoice", category: "account_billing", subcategory: "detailed_invoice", label: "Agora / Account & Billing / Detailed Invoice" },
   { scope: "account_billing", action: "human_review_required", category: "account_billing", subcategory: "other", label: "Agora / Account & Billing / Other" },
-  { scope: "automation", action: "enablement", category: "automation", subcategory: "enablement", label: "Agora / Automation / Enablement" },
-  { scope: "automation", action: "quota", category: "automation", subcategory: "quota", label: "Agora / Automation / Quota" },
-  { scope: "backend_operation", action: "unregistered", category: "human_review", subcategory: "unregistered", label: "Human Review / Unregistered" },
+  { scope: "backend_operation", action: "enablement", category: "backend_operation", subcategory: "enablement", label: "Agora / Backend Operation / Enablement" },
+  { scope: "backend_operation", action: "quota", category: "backend_operation", subcategory: "quota", label: "Agora / Backend Operation / Quota" },
+  { scope: "backend_operation", action: "unregistered", category: "backend_operation", subcategory: "unregistered", label: "Agora / Backend Operation / Unregistered" },
   { scope: "uncategorized", action: "human_review_required", category: "human_review", subcategory: "uncategorized", label: "Human Review / Uncategorized" },
   { scope: "uncertain", action: "human_review_required", category: "human_review", subcategory: "uncertain", label: "Human Review / Uncertain" },
   { scope: "non_agora", action: "human_review_required", category: "human_review", subcategory: "non_agora", label: "Human Review / Non-Agora" },
@@ -197,9 +203,11 @@ function classificationLabels(item) {
 
 function renderClassificationBadges(item) {
   const { primary, secondary } = classificationLabels(item);
-  if (!primary && !secondary) return "";
+  const automated = isAutomatedRoute(item);
+  if (!primary && !secondary && !automated) return "";
   return `
     <span class="route-labels" aria-label="Route classification">
+      ${automated ? '<span class="route-label route-label--automated">Automated</span>' : ""}
       ${primary ? `<span class="route-label route-label--primary">${escapeHtml(primary)}</span>` : ""}
       ${secondary ? `<span class="route-label route-label--secondary">${escapeHtml(secondary)}</span>` : ""}
     </span>
@@ -1036,7 +1044,7 @@ function isAutomatedRoute(item) {
 }
 
 function displayRouteStatus(item) {
-  return isAutomatedRoute(item) ? "automation" : "not_automated";
+  return isAutomatedRoute(item) ? "automated" : "not_automated";
 }
 
 function renderFilterCount(count) {

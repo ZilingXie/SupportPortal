@@ -4,6 +4,7 @@ from typing import Any
 
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
 from backend.services.account_billing_handlers import account_billing_metadata
+from backend.services.account_case_filters import backend_operation_metadata
 
 VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
@@ -96,16 +97,18 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
         "human_review_subcategory": "unregistered",
     },
     {
-        "scope_label": "automation",
+        "scope_label": "backend_operation",
         "execution_action": "enablement",
         "route_family": AUTOMATED_ROUTE_FAMILY,
         "tooling_profile": "deterministic_enablement_intake",
+        "backend_operation_subcategory": "enablement",
     },
     {
-        "scope_label": "automation",
+        "scope_label": "backend_operation",
         "execution_action": "quota",
         "route_family": AUTOMATED_ROUTE_FAMILY,
         "tooling_profile": "deterministic_quota_intake",
+        "backend_operation_subcategory": "quota",
     },
     {
         "scope_label": "unclear",
@@ -223,6 +226,13 @@ def validate_route_correction(
 ) -> dict[str, Any]:
     normalized_scope = _normalize(scope_label)
     normalized_action = _normalize(execution_action)
+    if normalized_scope == "automation" and normalized_action in {
+        "enablement",
+        "quota",
+        "unregistered",
+        "human_review_required",
+    }:
+        normalized_scope = "backend_operation"
     match = _TUPLE_INDEX.get((normalized_scope, normalized_action))
     if match is None:
         if normalized_scope not in _VALID_SCOPES:
@@ -231,16 +241,22 @@ def validate_route_correction(
             f"invalid execution_action {execution_action!r} for scope_label {normalized_scope!r}"
         )
     account_billing_subcategory = match.get("account_billing_subcategory")
+    backend_operation_subcategory = match.get("backend_operation_subcategory")
     human_review_subcategory = match.get("human_review_subcategory")
     if account_billing_subcategory:
         metadata = account_billing_metadata(account_billing_subcategory)
+    elif backend_operation_subcategory:
+        metadata = backend_operation_metadata(backend_operation_subcategory)
     elif human_review_subcategory:
-        metadata = {
-            "category": "human_review",
-            "subcategory": human_review_subcategory,
-            "route_status": "not_automated",
-            "automation_handler": None,
-        }
+        if normalized_scope == "backend_operation" and human_review_subcategory == "unregistered":
+            metadata = backend_operation_metadata("unregistered")
+        else:
+            metadata = {
+                "category": "human_review",
+                "subcategory": human_review_subcategory,
+                "route_status": "not_automated",
+                "automation_handler": None,
+            }
     else:
         metadata = automation_metadata(
             route_family=match["route_family"],
@@ -252,6 +268,7 @@ def validate_route_correction(
         "route_family": match["route_family"],
         "tooling_profile": match["tooling_profile"],
         "account_billing_subcategory": account_billing_subcategory,
+        "backend_operation_subcategory": backend_operation_subcategory,
         "human_review_subcategory": human_review_subcategory,
         **metadata,
     }
