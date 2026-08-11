@@ -711,7 +711,7 @@
         </article>
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
-          <div class="delivery-main"><h3>Security &amp; Compliance、Backend Operation 与 Account &amp; Billing 范围</h3><p>Agora Router 将安全、隐私、信任、审计和合规材料请求归入 Security &amp; Compliance，classification-only 并进入 Human Review；Account &amp; Billing Router 负责 Account Suspension、Fraud Account、Detailed Invoice 和 Other；其中 Fraud Account、Detailed Invoice 仍可进入 automated route family，Account Suspension 只提取暂停状态、已知原因和客户已采取动作，保持 not automated。Backend Operation/Automation Router 负责 Enablement、Quota 和用于发现分类缺口的 Unregistered；Unregistered 直接进入 Human Review，并保留 Backend Operation 业务标签。</p></div>
+          <div class="delivery-main"><h3>Security &amp; Compliance、Backend Operation 与 Account &amp; Billing 范围</h3><p>Agora Router 将安全、隐私、信任、审计和合规材料请求归入 Security &amp; Compliance，classification-only 并保持 Security &amp; Compliance primary label；它不加入严格的 Human Review filter。Account &amp; Billing Router 负责 Account Suspension、Fraud Account、Detailed Invoice 和 Other；其中 Fraud Account、Detailed Invoice 仍可进入 automated route family，Account Suspension 只提取暂停状态、已知原因和客户已采取动作，保持 not automated。Backend Operation/Automation Router 负责 Enablement、Quota 和用于发现分类缺口的 Unregistered；Unregistered 保留 Backend Operation / Unregistered 业务标签，作为诊断 fallback，不属于 registered Automation 或 Human Review filter。</p></div>
           <div class="status-meta"><span class="status-chip done">已完成</span></div>
           <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
@@ -880,7 +880,7 @@
       </header>
       <div class="flow reveal">
         <div class="flow-step"><span>01</span><strong>Zendesk intake</strong><p>接收真实 ticket，保留 external ID 与幂等判断。</p></div>
-        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>Agora Router 先识别 Technical、Security &amp; Compliance、Account &amp; Billing 或 Backend Operation；registered automated outcomes 为 Fraud Account、Detailed Invoice、Enablement 和 Quota，Security &amp; Compliance、Account Suspension 与 Unregistered 进入 Human Review 边界。</p></div>
+        <div class="flow-step"><span>02</span><strong>Scope route</strong><p>Agora Router 先识别 Technical、Security &amp; Compliance、Account &amp; Billing 或 Backend Operation；registered automated outcomes 为 Fraud Account、Detailed Invoice、Enablement 和 Quota，Security &amp; Compliance 与 Account Suspension 进入 Human Review 处理边界但不加入 Human Review filter，Unregistered 保留在 Backend Operation 作为诊断 fallback。</p></div>
         <div class="flow-step"><span>03</span><strong>Bounded collection</strong><p>按 required / optional 规则收集字段，限制重复追问。</p></div>
         <div class="flow-step"><span>04</span><strong>Human-style reply</strong><p>随机 6–10 分钟，使用受控人设 Prompt 模板。</p></div>
         <div class="flow-step"><span>05</span><strong>Coverage review</strong><p>统计解决率、route accuracy 与失败原因，决定是否扩类。</p></div>

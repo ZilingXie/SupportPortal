@@ -224,7 +224,7 @@ def _route_agent_navigation() -> dict[str, Any]:
     automation = _route_node(
         "automation-router",
         "Automation Router",
-        "Classifies confirmed backend-operation requests as Enablement, Quota, or Unregistered and dispatches registered workflows.",
+        "Coordinates the four registered Automation outcomes across Account & Billing and Backend Operation; Unregistered is a diagnostic fallback for requests without a registered workflow.",
         kind="router",
         is_agent=True,
         prompt_keys=[
@@ -274,11 +274,11 @@ def _route_agent_navigation() -> dict[str, Any]:
             _route_node(
                 "unregistered",
                 "Unregistered",
-                "Records an unregistered backend operation and falls back to Human Review.",
+                "Records an unregistered backend operation for diagnosis. It remains Backend Operation / Unregistered and is not a registered Automation or Human Review filter member.",
                 kind="fallback",
                 is_agent=False,
                 capabilities=[
-                    _component("human-review", "Human Review", "Handles Automation requests without a registered behavior."),
+                    _component("unregistered-diagnostic", "Unregistered diagnostic", "Surfaces Automation taxonomy gaps for operator review without assigning a registered handler."),
                 ],
                 workflow={
                     "category": "backend_operation",
@@ -488,7 +488,7 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component(
                     "account-automation-router",
                     "Automation Router",
-                    "Selects Enablement, Quota, or diagnostic Unregistered for explicit backend operations.",
+                    "Coordinates four registered Automation outcomes and retains Unregistered as a diagnostic fallback.",
                 ),
                 _component(
                     "account-backend-operation-router",

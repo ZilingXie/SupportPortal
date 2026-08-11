@@ -149,6 +149,10 @@ class AgentConfigTests(unittest.TestCase):
             [item["key"] for item in automation["children"]],
             ["enablement", "quota", "unregistered"],
         )
+        self.assertIn("four registered Automation outcomes", automation["description"])
+        unregistered = self._navigation_node(route_navigation, "unregistered")
+        self.assertEqual(unregistered["workflow"]["status"], "fallback")
+        self.assertIn("not a registered Automation or Human Review filter member", unregistered["description"])
         account_billing = self._navigation_node(route_navigation, "account-billing-router")
         self.assertEqual(
             [item["key"] for item in account_billing["children"]],
@@ -169,6 +173,10 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(
             [item["subcategory"] for item in payload["automation_workflows"]],
             ["fraud_account", "detailed_invoice", "enablement", "quota", "unregistered"],
+        )
+        self.assertEqual(
+            [item["status"] for item in payload["automation_workflows"]],
+            ["registered", "registered", "registered", "registered", "fallback"],
         )
         self.assertTrue(payload["route_runtime"]["router_prompt_version"])
         self.assertTrue(payload["route_runtime"]["stage_details"])

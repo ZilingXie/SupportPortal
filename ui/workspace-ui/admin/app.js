@@ -684,19 +684,32 @@ function renderAudit() {
   return `
     <header class="admin-main-header"><div><p>Account, schedule, and assignment administration events.</p></div></header>
     <section class="admin-pool-panel panel-card">
-      <table class="admin-work-table"><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Target</th><th>Reason</th></tr></thead><tbody>
+      <table class="admin-work-table"><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Target</th><th>Classification reason code</th><th>Execution reason code</th></tr></thead><tbody>
         ${
           auditEvents.length
             ? auditEvents
                 .map(
-                  (event) => `<tr><td>${escapeHtml(formatDateTime(event.created_at))}</td><td>${escapeHtml(
-                    event.event_type
-                  )}</td><td>${escapeHtml(event.actor_id)}</td><td>${escapeHtml(event.target_id || "-")}</td><td>${escapeHtml(
-                    event.payload?.reason || "-"
-                  )}</td></tr>`
+                  (event) => {
+                    const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+                    const classificationReason =
+                      payload.classification_reason_code ||
+                      payload.route_reason_code ||
+                      payload.route_classification?.reason_code ||
+                      payload.reason ||
+                      event.classification_reason_code ||
+                      event.route_reason ||
+                      "-";
+                    const executionReason =
+                      payload.execution_reason_code || event.execution_reason_code || "-";
+                    return `<tr><td>${escapeHtml(formatDateTime(event.created_at))}</td><td>${escapeHtml(
+                      event.event_type
+                    )}</td><td>${escapeHtml(event.actor_id)}</td><td>${escapeHtml(event.target_id || "-")}</td><td>${escapeHtml(
+                      classificationReason
+                    )}</td><td>${escapeHtml(executionReason)}</td></tr>`;
+                  }
                 )
                 .join("")
-            : `<tr><td colspan="5">No audit events.</td></tr>`
+            : `<tr><td colspan="6">No audit events.</td></tr>`
         }
       </tbody></table>
     </section>
@@ -1156,21 +1169,23 @@ function renderAutomationBehaviorOverview(routeAgent, node) {
     : (node?.children || []).filter(child => !child.is_agent);
   if (!behaviors.length) return "";
   return `<section class="admin-automation-behaviors" aria-labelledby="automation-behaviors-title">
-    <header><div><h3 id="automation-behaviors-title">Automation Workflow</h3><p>Registered workflows show their owning route, handler, lifecycle steps, and shared Automation Persona boundary.</p></div><span>${behaviors.length}</span></header>
+    <header><div><h3 id="automation-behaviors-title">Automation Workflow</h3><p>Four registered outcomes run Automation workflows. Unregistered is a diagnostic fallback and stays under Backend Operation; it is not a registered Automated child or Human Review filter member.</p></div><span>${behaviors.length}</span></header>
     <div class="admin-automation-behavior-list">${behaviors.map((behavior) => {
       const expanded = selectedAutomationBehaviorKey === behavior.key;
       const prompts = promptsForRouteNode(routeAgent, behavior);
       const routeLabel = [behavior.category, behavior.subcategory].filter(Boolean).join(" / ").replaceAll("_", " ");
-      const handlerLabel = behavior.automation_handler || "Human Review";
+      const isRegistered = String(behavior.status || "").trim().toLowerCase() === "registered";
+      const workflowStatus = isRegistered ? "Registered" : "Diagnostic fallback";
+      const handlerLabel = behavior.automation_handler || "No registered handler";
       const steps = Array.isArray(behavior.steps) ? behavior.steps.join(" -> ") : "";
       const entry = { ...routeAgent, key: behavior.key, name: behavior.name, prompts, skills: [], mcp_servers: [], components: behavior.capabilities || [] };
       return `<section class="admin-automation-behavior ${expanded ? "is-expanded" : ""}">
         <button type="button" data-action="toggle-automation-behavior" data-behavior-key="${escapeHtml(behavior.key)}" aria-expanded="${expanded ? "true" : "false"}" aria-controls="automation-behavior-${escapeHtml(behavior.key)}">
           <span><strong>${escapeHtml(behavior.name)}</strong><small>${escapeHtml([routeLabel, behavior.description].filter(Boolean).join(" · "))}</small></span>
-          <span class="admin-automation-behavior-meta">${escapeHtml(handlerLabel)}${steps ? ` · ${escapeHtml(steps)}` : ""}</span>
+          <span class="admin-automation-behavior-meta">${escapeHtml(workflowStatus)} · ${escapeHtml(handlerLabel)}${steps ? ` · ${escapeHtml(steps)}` : ""}</span>
           <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
         </button>
-        ${expanded ? `<div id="automation-behavior-${escapeHtml(behavior.key)}" class="admin-automation-behavior-panel"><div><h4>Workflow metadata</h4><p class="admin-agent-detail-note">${escapeHtml(`${behavior.route_family || "human_review"} · ${behavior.status || "unregistered"} · handler ${handlerLabel}`)}</p>${steps ? `<p class="admin-agent-detail-note">${escapeHtml(steps)}</p>` : ""}</div><div><h4>Capabilities</h4>${renderCapabilities(behavior.capabilities || [], behavior.kind)}</div><div><h4>Behavior Prompt</h4>${prompts.length ? renderAgentPromptPanel(entry) : `<p class="admin-agent-detail-note">No behavior Prompt configured. This workflow is deterministic or uses the shared Automation Persona.</p>`}</div></div>` : ""}
+        ${expanded ? `<div id="automation-behavior-${escapeHtml(behavior.key)}" class="admin-automation-behavior-panel"><div><h4>Workflow metadata</h4><p class="admin-agent-detail-note">${escapeHtml(`${behavior.route_family || "human_review"} · ${workflowStatus} · handler ${handlerLabel}`)}</p>${steps ? `<p class="admin-agent-detail-note">${escapeHtml(steps)}</p>` : ""}</div><div><h4>Capabilities</h4>${renderCapabilities(behavior.capabilities || [], behavior.kind)}</div><div><h4>Behavior Prompt</h4>${prompts.length ? renderAgentPromptPanel(entry) : `<p class="admin-agent-detail-note">No behavior Prompt configured. This workflow is deterministic or uses the shared Automation Persona.</p>`}</div></div>` : ""}
       </section>`;
     }).join("")}</div>
   </section>`;

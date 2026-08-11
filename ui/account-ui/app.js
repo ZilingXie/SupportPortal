@@ -37,7 +37,12 @@ const DEFAULT_FILTER_DEFINITIONS = [
   {
     id: "automation",
     label: "Automated",
-    children: [],
+    children: [
+      { id: "fraud_account", label: "Account & Billing / Fraud Account" },
+      { id: "detailed_invoice", label: "Account & Billing / Detailed Invoice" },
+      { id: "enablement", label: "Backend Operation / Enablement" },
+      { id: "quota", label: "Backend Operation / Quota" },
+    ],
   },
   {
     id: "backend_operation",
@@ -73,7 +78,6 @@ const DEFAULT_FILTER_DEFINITIONS = [
     id: "human_review",
     label: "Human Review",
     children: [
-      { id: "unregistered", label: "Unregistered" },
       { id: "uncategorized", label: "Uncategorized" },
       { id: "uncertain", label: "Uncertain" },
       { id: "non_agora", label: "Non-Agora" },
@@ -203,11 +207,9 @@ function classificationLabels(item) {
 
 function renderClassificationBadges(item) {
   const { primary, secondary } = classificationLabels(item);
-  const automated = isAutomatedRoute(item);
-  if (!primary && !secondary && !automated) return "";
+  if (!primary && !secondary) return "";
   return `
     <span class="route-labels" aria-label="Route classification">
-      ${automated ? '<span class="route-label route-label--automated">Automated</span>' : ""}
       ${primary ? `<span class="route-label route-label--primary">${escapeHtml(primary)}</span>` : ""}
       ${secondary ? `<span class="route-label route-label--secondary">${escapeHtml(secondary)}</span>` : ""}
     </span>
