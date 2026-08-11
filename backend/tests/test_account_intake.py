@@ -3938,10 +3938,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(human_review.status_code, 200, human_review.text)
         human_payload = human_review.json()
-        self.assertEqual(human_payload["total"], 3)
+        self.assertEqual(human_payload["total"], 2)
         self.assertEqual(
             {item["secondary_label"] for item in human_payload["cases"]},
-            {"Uncategorized", "Uncertain", "Account & Billing / Other"},
+            {"Uncategorized", "Uncertain"},
         )
 
         conversation = self.client.get(
@@ -3961,6 +3961,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             ("fraud", "automated", "automation", "fraud_account", "fraud_account"),
             ("invoice", "automated", "automation", "detailed_invoice", "detailed_invoice"),
             ("enablement", "automated", "automation", "enablement", "enablement"),
+            ("quota", "automated", "automation", "quota", "quota"),
             ("suspension", "not_automated", "account_billing", "account_suspension", "account_suspension"),
             ("billing-other", "not_automated", "account_billing", "other", "other"),
             ("technical", "not_automated", "agora_technical", None, None),
@@ -4007,24 +4008,44 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "Human Review",
             ],
         )
+        automation_definition = next(
+            group for group in payload["filter_definitions"] if group["id"] == "automation"
+        )
+        self.assertEqual(
+            {child["id"] for child in automation_definition["children"]},
+            {"fraud_account", "detailed_invoice", "enablement", "quota"},
+        )
         counts = payload["filter_counts"]
         self.assertEqual(payload["total"], len(fixtures))
         self.assertEqual(payload["page"], 2)
         self.assertEqual(payload["count"], 3)
         self.assertEqual(counts["all"], len(fixtures))
-        self.assertEqual(counts["automation"], 3)
+        self.assertEqual(counts["automation"], 4)
+        self.assertEqual(counts["automation:fraud_account"], 1)
+        self.assertEqual(counts["automation:detailed_invoice"], 1)
         self.assertEqual(counts["automation:enablement"], 1)
-        self.assertEqual(counts["backend_operation"], 1)
+        self.assertEqual(counts["automation:quota"], 1)
+        self.assertEqual(counts["backend_operation"], 2)
         self.assertEqual(counts["backend_operation:enablement"], 1)
+        self.assertEqual(counts["backend_operation:quota"], 1)
         self.assertEqual(counts["account_billing"], 4)
         self.assertEqual(counts["account_billing:fraud_account"], 1)
         self.assertEqual(counts["account_billing:detailed_invoice"], 1)
         self.assertEqual(counts["account_billing:account_suspension"], 1)
         self.assertEqual(counts["account_billing:other"], 1)
         self.assertEqual(counts["conversation"], 1)
-        self.assertEqual(counts["human_review"], 3)
-        self.assertEqual(counts["human_review:other"], 2)
+        self.assertEqual(counts["human_review"], 1)
+        self.assertEqual(counts["human_review:other"], 0)
         self.assertEqual(counts["human_review:uncertain"], 1)
+        self.assertNotIn(
+            "unregistered",
+            {
+                child["id"]
+                for child in next(
+                    group for group in payload["filter_definitions"] if group["id"] == "human_review"
+                )["children"]
+            },
+        )
 
         filtered = self.client.get(
             "/api/account/cases?page_size=10&route_group=automation&route_subcategory=enablement"
@@ -4131,14 +4152,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         counts = payload["filter_counts"]
         self.assertEqual(counts["all"], 5)
         self.assertEqual(counts["automation"], 3)
+        self.assertEqual(counts["automation:fraud_account"], 1)
+        self.assertEqual(counts["automation:detailed_invoice"], 1)
         self.assertEqual(counts["automation:enablement"], 1)
         self.assertEqual(counts["account_billing"], 3)
         self.assertEqual(counts["account_billing:fraud_account"], 1)
         self.assertEqual(counts["account_billing:detailed_invoice"], 1)
         self.assertEqual(counts["account_billing:account_suspension"], 1)
-        self.assertEqual(counts["human_review"], 2)
-        self.assertEqual(counts["human_review:unregistered"], 1)
-        self.assertEqual(counts["human_review:other"], 1)
+        self.assertEqual(counts["human_review"], 0)
+        self.assertNotIn("human_review:unregistered", counts)
+        self.assertEqual(counts["human_review:other"], 0)
 
         automation = self.client.get(
             "/api/account/cases?route_group=automation&page_size=10"
@@ -4151,11 +4174,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         human_review = self.client.get(
             "/api/account/cases?route_group=human_review&page_size=10"
         ).json()
-        self.assertEqual(human_review["total"], 2)
+        self.assertEqual(human_review["total"], 0)
         unregistered = self.client.get(
             "/api/account/cases?route_group=human_review&route_subcategory=unregistered&page_size=10"
         ).json()
         self.assertEqual(unregistered["total"], 1)
+        legacy_automation = self.client.get(
+            "/api/account/cases?route_label=automation:enablement&page_size=10"
+        )
+        self.assertEqual(legacy_automation.status_code, 200, legacy_automation.text)
+        self.assertEqual(legacy_automation.json()["total"], 1)
 
     def test_account_cases_list_fetches_latest_reply_jobs_in_one_batch(self) -> None:
         for index in range(2):

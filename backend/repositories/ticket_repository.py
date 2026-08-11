@@ -378,6 +378,8 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 'account_billing:' || CASE
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_suspension'
                                         THEN 'account_suspension'
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_verification'
+                                        THEN 'fraud_account'
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'fraud_account'
                                         THEN 'fraud_account'
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'detailed_invoice'
@@ -415,6 +417,8 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 THEN 'account_billing:' || CASE
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_suspension'
                                         THEN 'account_suspension'
+                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_verification'
+                                        THEN 'fraud_account'
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'fraud_account'
                                         THEN 'fraud_account'
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'detailed_invoice'
@@ -458,6 +462,7 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
             WHEN {alias}.scope_label IN ('security_compliance', 'agora_security_compliance') THEN 'security_compliance'
             WHEN {alias}.scope_label IN ('account_billing', 'billing') THEN
                 'account_billing:' || CASE
+                    WHEN {alias}.subcategory = 'account_verification' THEN 'fraud_account'
                     WHEN {alias}.subcategory IN ('account_suspension', 'fraud_account', 'detailed_invoice') THEN {alias}.subcategory
                     ELSE 'other'
                 END
@@ -486,19 +491,26 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
             {primary},
             CASE WHEN STRPOS({primary}, ':') > 0
                 THEN split_part({primary}, ':', 1) END,
-            CASE WHEN LOWER(COALESCE({alias}.route_status, '')) = 'automated'
+            CASE WHEN (
+                    LOWER(COALESCE({alias}.route_status, '')) = 'automated'
                     OR LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation')
-                THEN 'automation' END,
-            CASE {primary}
-                WHEN 'backend_operation:enablement' THEN 'automation:enablement'
-                WHEN 'backend_operation:quota' THEN 'automation:quota'
-            END,
-            CASE WHEN {primary} IN ('account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
-                THEN 'human_review:other' END,
-            CASE WHEN {primary} IN ('backend_operation:unregistered', 'account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
-                OR split_part({primary}, ':', 1) = 'human_review'
+                ) AND {primary} IN (
+                    'account_billing:fraud_account',
+                    'account_billing:detailed_invoice',
+                    'backend_operation:enablement',
+                    'backend_operation:quota'
+                ) THEN 'automation' END,
+            CASE WHEN (
+                    LOWER(COALESCE({alias}.route_status, '')) = 'automated'
+                    OR LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation')
+                ) THEN CASE {primary}
+                    WHEN 'account_billing:fraud_account' THEN 'automation:fraud_account'
+                    WHEN 'account_billing:detailed_invoice' THEN 'automation:detailed_invoice'
+                    WHEN 'backend_operation:enablement' THEN 'automation:enablement'
+                    WHEN 'backend_operation:quota' THEN 'automation:quota'
+                END END,
+            CASE WHEN split_part({primary}, ':', 1) = 'human_review'
                 THEN 'human_review' END
-            ,CASE WHEN {primary} = 'security_compliance' THEN 'human_review' END
         ]::TEXT[], NULL::TEXT)
         """
         ).format(primary=primary, alias=sql.Identifier(alias))
@@ -11475,9 +11487,19 @@ class PostgresTicketRepository:
         if route_filter:
             normalized_filter = normalize_account_case_filter(legacy_label=route_filter)
             if normalized_filter:
-                membership_expression = _account_case_filter_memberships_sql("bt")
-                clauses.append(sql.SQL("%s = ANY({})").format(membership_expression))
-                params.append(normalized_filter)
+                if normalized_filter == "human_review:unregistered":
+                    # Deprecated compatibility query. It intentionally uses
+                    # the canonical primary expression directly so the alias
+                    # cannot leak into membership arrays or facet counts.
+                    clauses.append(
+                        sql.SQL("{} = 'backend_operation:unregistered'").format(
+                            _account_case_filter_sql_expression("bt")
+                        )
+                    )
+                else:
+                    membership_expression = _account_case_filter_memberships_sql("bt")
+                    clauses.append(sql.SQL("%s = ANY({})").format(membership_expression))
+                    params.append(normalized_filter)
         if route_errors_only:
             clauses.append(
                 sql.SQL(

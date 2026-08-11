@@ -4988,7 +4988,7 @@ def list_billing_tickets(
     route_errors: bool = False,
     route_label: str | None = Query(
         default=None,
-        pattern="^(human_review|conversation|agora_technical|security_compliance|agora_non_technical|account_billing|uncertain|automation|all)$",
+        pattern="^(human_review|conversation|agora_technical|security_compliance|agora_non_technical|account_billing|uncertain|automation|automation:(fraud_account|detailed_invoice|enablement|quota)|human_review:unregistered|all)$",
     ),
     route_group: str | None = Query(
         default=None,
