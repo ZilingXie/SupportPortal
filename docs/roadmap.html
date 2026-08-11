@@ -257,7 +257,7 @@
       line-height: 1.45;
     }
 
-    .phase-tracker, .meeting-section {
+    .phase-tracker {
       margin: 24px 0;
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -268,7 +268,7 @@
       overflow: hidden;
     }
 
-    .phase-tracker header, .meeting-section header {
+    .phase-tracker header {
       display: flex;
       justify-content: space-between;
       gap: 18px;
@@ -277,7 +277,7 @@
       border-bottom: 1px solid var(--line);
     }
 
-    .phase-tracker h2, .meeting-section h2 {
+    .phase-tracker h2 {
       margin: 0;
       font-family: Georgia, "Times New Roman", serif;
       font-size: clamp(24px, 3.2vw, 40px);
@@ -285,7 +285,7 @@
       letter-spacing: -0.05em;
     }
 
-    .phase-tracker header p, .meeting-section header p {
+    .phase-tracker header p {
       max-width: 560px;
       margin: 0;
       color: var(--muted);
@@ -353,7 +353,7 @@
       background: rgba(31, 79, 104, 0.16);
     }
 
-    .phase-gate-list, .meeting-list {
+    .phase-gate-list {
       list-style: none;
       display: grid;
       gap: 10px;
@@ -361,14 +361,14 @@
       padding: 0;
     }
 
-    .phase-gate-list li, .meeting-list li {
+    .phase-gate-list li {
       position: relative;
       padding-left: 20px;
       color: #3f4943;
       line-height: 1.52;
     }
 
-    .phase-gate-list li::before, .meeting-list li::before {
+    .phase-gate-list li::before {
       content: "";
       position: absolute;
       left: 0;
@@ -378,60 +378,6 @@
       border-radius: 50%;
       background: var(--signal);
       transform: translateY(-50%);
-    }
-
-    .meeting-section {
-      margin-top: 34px;
-    }
-
-    .meeting-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 1px;
-      background: var(--line);
-    }
-
-    .meeting-card {
-      min-width: 0;
-      padding: 18px;
-      background: rgba(251, 247, 236, 0.84);
-    }
-
-    .meeting-card h3 {
-      margin: 8px 0 10px;
-      font-size: 22px;
-      line-height: 1.12;
-      letter-spacing: -0.025em;
-    }
-
-    .meeting-kicker {
-      color: var(--blueprint);
-      font-size: 12px;
-      font-weight: 850;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-    }
-
-    .meeting-minutes-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 18px;
-    }
-
-    .meeting-minutes-card {
-      min-width: 0;
-      padding: 16px;
-      border: 1px solid rgba(29, 37, 34, 0.12);
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.34);
-    }
-
-    .meeting-minutes-card h5 {
-      margin: 6px 0 10px;
-      font-size: 17px;
-      line-height: 1.16;
-      letter-spacing: -0.02em;
     }
 
     .toolbar {
@@ -1027,10 +973,6 @@
       background: var(--line);
     }
 
-    .meeting-lane-body {
-      grid-template-columns: 1fr;
-    }
-
     .lane-followup {
       padding: 26px;
       border-top: 1px solid var(--line);
@@ -1399,9 +1341,9 @@
     }
 
     @media (max-width: 980px) {
-      .hero-grid, .hero-bullets, .lane-head, .lane-body, .phase-grid, .meeting-grid, .meeting-minutes-grid { grid-template-columns: 1fr; }
-      .phase-tracker header, .meeting-section header { display: block; }
-      .phase-tracker header p, .meeting-section header p { margin-top: 10px; }
+      .hero-grid, .hero-bullets, .lane-head, .lane-body, .phase-grid { grid-template-columns: 1fr; }
+      .phase-tracker header { display: block; }
+      .phase-tracker header p { margin-top: 10px; }
       .ring { justify-self: start; width: 116px; height: 116px; }
       .toolbar { position: static; }
       .section-title { display: block; }
@@ -1412,8 +1354,8 @@
 
     @media (max-width: 640px) {
       .page { width: min(100% - 20px, 1440px); padding-top: 10px; }
-      .hero, .hero-judgment, .lane-head, .panel, .lane-followup, .phase-card, .meeting-card { padding: 20px; }
-      .phase-tracker header, .meeting-section header { padding: 20px; }
+      .hero, .hero-judgment, .lane-head, .panel, .lane-followup, .phase-card { padding: 20px; }
+      .phase-tracker header { padding: 20px; }
       .hero { min-height: auto; }
       .hero::after { opacity: 0.28; }
       .task { grid-template-columns: auto 1fr; }
@@ -1507,6 +1449,7 @@
     <nav class="toolbar" aria-label="Roadmap filters">
       <a class="phase-filter-link" href="./roadmap/phase2.html" aria-label="打开 Phase 2 交付页面">Phase 2 <span aria-hidden="true">-></span></a>
       <a class="phase-filter-link" href="./roadmap/phase3.html" aria-label="打开 Phase 3 计划页面">Phase 3 <span aria-hidden="true">-></span></a>
+      <a class="phase-filter-link" href="./roadmap/meetings.html" aria-label="打开 Meeting 页面">Meetings <span aria-hidden="true">-></span></a>
       <div class="filter" id="laneFilters"></div>
       <input id="searchInput" class="search" type="search" placeholder="搜索任务、来源或计划">
     </nav>
@@ -1861,105 +1804,6 @@ flowchart TD
     ];
 
     const LANES = [
-      {
-        id: "meeting-minutes",
-        short: "Meeting",
-        title: "AI Agent 工单系统落地对齐会",
-        status: "doing",
-        thesis: "日期：2026-06-18；参会人：derek, zac, alex, emma。会议纪要卡片只记录本次 transcript 的关键内容、决策背景和下一步计划，不混入额外进展或 review/source 模块。",
-        meeting_minutes: [
-          {
-            kicker: "Positioning",
-            title: "项目定位与阶段节奏",
-            points: [
-              "目标是基于 agent 的工单系统，不是马上用 AI support engineer 全量替代真人。",
-              "Phase 1 先提升效率和质量：减少 copy/paste 到外部 AI，让工单系统有雏形、可追踪、可观测、可解释。",
-              "Phase 1 已把 AgentRelay communication foundation 纳入地基；Phase 2 扩大 AI 主动处理、人 approve 和真实 evidence agent 接入；Phase 3 再进入 governed agent-to-agent 自主调查。"
-            ]
-          },
-          {
-            kicker: "Customer Reply",
-            title: "客户可见回复体验",
-            points: [
-              "回复不能像 AI 秒回，最快不能超过 5 分钟，要有 hi/thanks、自然开场、签名和必要 support package 引导。",
-              "customer-facing 和 internal-facing 必须隔离：内部日志、代码、客户名、app id / certificate 等不能原样暴露给客户。",
-              "AI 可以润色英文和格式，但对外输出必须经过敏感信息和表达边界控制。"
-            ]
-          },
-          {
-            kicker: "Workflow",
-            title: "工单界面与 Zendesk 迁移",
-            points: [
-              "必须保留工单界面和 admin dashboard，审计需要系统化抽样查看 case、SLA、通过率和操作历史。",
-              "Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口；客户仍先进 Zendesk，内部通过 Zendesk webhook / N8n 转到 Roadmap 系统验证。",
-              "Not automated case 先按每第 10 单创建 Engineer Case，验证后在 9/1 前切到 100%。"
-            ]
-          },
-          {
-            kicker: "Review Debate",
-            title: "AI review 人 vs 人 review AI",
-            points: [
-              "Phase 1 可用 AI review 人做 guardrail；AI 只检查 conclusion / proof / next step 是否齐全，不负责判断真实根因。",
-              "Phase 2 转向人 review AI：AI 先调查、生成 draft，人 approve / revise / override，必要时追问 AI 继续 verify。",
-              "会议结论是节奏问题而非方向冲突：先保守上 guardrail，再逐步让 AI 承担更多调查和起草。"
-            ]
-          },
-          {
-            kicker: "Case Types",
-            title: "三类 case 边界",
-            points: [
-              "fully_automated：完全自动化的 invoice、文档链接、标准字段收集等稳定 case，前期可审核，稳定后抽查。",
-              "ai_draft_human_approve：AI 能调查并生成答复，人负责正确性、敏感信息、客户表达和责任签字。",
-              "unable_to_resolve_handoff：AI 和研发 agent 都无法给出可验证结论时停止乱猜，转真人、CSD 或 SME task。"
-            ]
-          },
-          {
-            kicker: "Billing POC",
-            title: "Billing 与 route 近期 POC",
-            points: [
-              "先做 invoice / account suspension / company verification 等 billing 小类，验证 route、字段收集、内部请求和客户回执闭环。",
-              "agent 发邮件或内部请求后，要通过邮件回执/邮箱轮询继续流程；未收到回复时必须有 SLA 提醒和 fallback。",
-              "dashboard 需要展示 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate。"
-            ]
-          },
-          {
-            kicker: "Next",
-            title: "下一步计划",
-            points: [
-              "收口 billing route 验证 + 邮件回执 + dashboard 三件事，先跑真实 Zendesk case。",
-              "保留 engineer reply 通过/拒绝 demo，但只作为 POC 卡片事项，不单独开 section。",
-              "用少量真实 case 对比保守 workflow 和成熟 agent 自主循环，重点看边界、成本和权限。"
-            ]
-          },
-          {
-            kicker: "Agent Architecture",
-            title: "Agent 架构分歧",
-            points: [
-              "保守 workflow 方案强调 Summary / Plan / Execute / Review 可观测、可审计、可定位是哪一步出错。",
-              "成熟 agent 自主循环方案强调减少人为拆分，只有需要 context isolation 时才拆 subagent，否则容易割裂上下文。",
-              "下一步用真实 case 对比手搓 harness、成熟 agent 框架和研发 agent 接入方式，重点看效果、token 成本和权限边界。"
-            ]
-          },
-          {
-            kicker: "Compliance",
-            title: "合规、审计与权限",
-            points: [
-              "第三方聊天工具不作为审计 source of truth，权限、记录归档和客户数据治理必须留在工单系统。",
-              "工单系统必须能解释客户误发敏感信息时如何防泄露、谁能看、AI 如何使用、历史如何留存。",
-              "权限动作也要有 guardrail，例如支持人员能改配置不代表可以随意改；超过安全阈值要进入审批。"
-            ]
-          },
-          {
-            kicker: "Phase 3",
-            title: "AgentRelay 通信基础已进入 Phase 1",
-            points: [
-              "AgentRelay 已完成 A2A-shaped task relay、MCP tools、token auth、thread reuse、completion ownership 和 audit events，可作为 SupportPortal 后续跨 Agent 协作地基。",
-              "Support 场景里的映射是：Support Agent 创建 task，Billing / Log / R&D / Data Agent 返回 artifact，结果投递回原始 case thread，再进入 guardrail 与 final approve。",
-              "当前仍不能表述为自主调查完成；下一步是接真实 evidence tools、权限审计、成本门禁和 replay/metrics gate。"
-            ]
-          }
-        ]
-      },
       {
         id: "engineer-multi-agent",
         short: "Multi-Agent",
@@ -2552,23 +2396,6 @@ flowchart TD
       `).join("");
     }
 
-    function renderMeetingMinutes(minutes) {
-      if (!Array.isArray(minutes) || !minutes.length) return "";
-      return `
-        <div class="meeting-minutes-grid" aria-label="会议纪要卡片">
-          ${minutes.map((item) => `
-            <article class="meeting-minutes-card">
-              <span class="meeting-kicker">${escapeHtml(item.kicker)}</span>
-              <h5>${escapeHtml(item.title)}</h5>
-              <ul class="meeting-list">
-                ${item.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}
-              </ul>
-            </article>
-          `).join("")}
-        </div>
-      `;
-    }
-
     function laneMatches(lane) {
       if (activeLane !== "all" && lane.id !== activeLane) return false;
       if (!query) return true;
@@ -2583,9 +2410,6 @@ flowchart TD
           ...(table.rows || []).flatMap((row) => Object.values(row))
         ])
         .join(" ");
-      const meetingHaystack = (lane.meeting_minutes || [])
-        .flatMap((item) => [item.kicker, item.title, ...(item.points || [])])
-        .join(" ");
       const haystack = [
         lane.title,
         lane.short,
@@ -2599,7 +2423,6 @@ flowchart TD
         lane.architecture?.comparison_table?.summary || "",
         comparisonHaystack,
         extraTableHaystack,
-        meetingHaystack,
         ...(lane.next || []).map((task) => `${task.label} ${task.horizon} ${STATUS_LABELS[taskStatus(task)]}`),
         ...(lane.sources || [])
       ].join(" ").toLowerCase();
@@ -2662,38 +2485,7 @@ flowchart TD
       `;
     }
 
-    function renderMeetingLane(lane, index) {
-      const progress = laneProgress(lane);
-      const note = state[`lane:${lane.id}:note`] || "";
-      return `
-        <article class="lane" style="animation-delay:${index * 70}ms" data-lane="${lane.id}">
-          <header class="lane-head">
-            <div>
-              <p class="lane-kicker">${escapeHtml(lane.short)}</p>
-              <h3>${escapeHtml(lane.title)}</h3>
-              <p class="lane-summary">${escapeHtml(lane.thesis)}</p>
-            </div>
-            <div class="status-stamp"><span class="dot ${lane.status}"></span>${escapeHtml(STATUS_LABELS[lane.status])}</div>
-            <div class="ring" style="--progress:${progress}"><span>${progress}%</span></div>
-          </header>
-          <div class="lane-body meeting-lane-body">
-            <section class="panel meeting-minutes-panel">
-              <h4>会议内容</h4>
-              ${renderMeetingMinutes(lane.meeting_minutes)}
-            </section>
-          </div>
-          <div class="lane-followup">
-            <div class="notes">
-              <label for="note-${lane.id}">Roadmap 备注</label>
-              <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
-            </div>
-          </div>
-        </article>
-      `;
-    }
-
     function renderLane(lane, index) {
-      if (lane.id === "meeting-minutes") return renderMeetingLane(lane, index);
       const progress = laneProgress(lane);
       const note = state[`lane:${lane.id}:note`] || "";
       return `
@@ -2713,7 +2505,6 @@ flowchart TD
               <ul class="evidence-list">
                 ${lane.done.map(renderDoneItem).join("")}
               </ul>
-              ${renderMeetingMinutes(lane.meeting_minutes)}
               <details class="sources">
                 <summary>证据来源</summary>
                 <ul class="source-list">
