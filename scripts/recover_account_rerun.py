@@ -22,8 +22,10 @@ from backend.main import (
     ticket_repository,
 )
 from backend.services.account_admin import AccountPersonaUnavailableError
-from backend.services.account_route_pipeline import classification_labels
-from backend.services.automation_routing import automation_metadata
+from backend.services.account_automation_reconciliation import (
+    reconcile_automation_execution_failure,
+    reconciliation_reason_code,
+)
 
 
 def _now() -> str:
@@ -94,46 +96,30 @@ def _mark_case_persona_unavailable_for_human_review(
     *,
     ticket_id: str,
     reason: str,
-) -> dict[str, str]:
-    predicted_action = str(
-        case.get("execution_action") or case.get("route") or ""
-    ).strip() or None
-    classification = dict(case.get("route_classification") or {})
-    classification.update(
-        {
-            "predicted_automation_subcategory": predicted_action,
-            "agora_route": "uncategorized",
-            "account_billing_subcategory": None,
-            "backend_operation_subcategory": None,
-            "automation_subcategory": None,
-            "route_target": "human_review",
-            "human_review_reason": reason,
-            "route_reason_code": reason,
-            "handler_binding_status": "human_review",
-        }
+) -> dict[str, Any]:
+    execution_reason_code = reconciliation_reason_code(
+        handler=str(
+            case.get("automation_handler")
+            or case.get("execution_action")
+            or case.get("route")
+            or "automation"
+        ).strip(),
+        phase="persona",
+        detail="unavailable",
     )
-    primary_label, secondary_label = classification_labels(classification)
-    classification["primary_label"] = primary_label
-    classification["secondary_label"] = secondary_label
+    case = reconcile_automation_execution_failure(
+        case,
+        reason_code=execution_reason_code,
+        context={
+            "policy_decision": "account_persona_unavailable_human_review",
+            "failure_detail": reason,
+        },
+    )
     case.update(
         {
-            "route": "human_review_required",
-            "scope_label": "human_review",
-            "route_family": "human_review",
-            "execution_action": "human_review_required",
-            "tooling_profile": None,
-            "route_reason": reason,
             "policy_decision": "account_persona_unavailable_human_review",
-            "automation_status": "not_automated",
-            "not_automated_reason": reason,
-            "route_classification": classification,
-            "internal_email_send_reason": reason,
-            "customer_reply": None,
+            "execution_reason_code": execution_reason_code,
             "updated_at": _now(),
-            **automation_metadata(
-                route_family="human_review",
-                execution_action="human_review_required",
-            ),
         }
     )
     ticket_repository.save_account_case(case)

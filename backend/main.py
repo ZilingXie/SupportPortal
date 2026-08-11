@@ -81,6 +81,10 @@ from backend.services.account_suspension_field_extractor import (
     extract_account_suspension_fields,
 )
 from backend.services.account_full_reroute import reprocess_account_case
+from backend.services.account_automation_reconciliation import (
+    reconcile_automation_execution_failure,
+    reconciliation_reason_code,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     automation_metadata,
@@ -568,139 +572,37 @@ def _build_account_suspension_classification_attempt(
     }
 
 
-def _field_extraction_human_review(
-    *,
-    decision: SupportRouteDecision,
-    classification: dict[str, Any],
-    extraction: EnablementFieldExtraction | AccountVerificationFieldExtraction | QuotaFieldExtraction | DetailedInvoiceFieldExtraction,
-    subcategory: str,
-) -> tuple[SupportRouteDecision, dict[str, Any]]:
-    reason = f"{subcategory}_field_extraction_{extraction.status}"
-    updated_classification = dict(classification)
-    updated_classification.update(
-        {
-            "predicted_automation_subcategory": subcategory,
-            "agora_route": "uncategorized",
-            "account_billing_subcategory": None,
-            "backend_operation_subcategory": None,
-            "automation_subcategory": None,
-            "route_target": "human_review",
-            "human_review_reason": reason,
-            "route_reason_code": reason,
-            "handler_binding_status": "human_review",
-            "field_extraction": extraction.audit_payload(),
-        }
-    )
-    primary_label, secondary_label = classification_labels(updated_classification)
-    updated_classification["primary_label"] = primary_label
-    updated_classification["secondary_label"] = secondary_label
-    updated_decision = SupportRouteDecision(
-        **{
-            **decision.__dict__,
-            "scope_label": "human_review",
-            "route": "human_review_required",
-            "route_family": "human_review",
-            "execution_action": "human_review_required",
-            "tooling_profile": None,
-            "not_automated_reason": reason,
-            "policy_decision": "field_extraction_human_review",
-        }
-    )
-    return updated_decision, updated_classification
-
-
-def _account_persona_unavailable_human_review(
-    *,
-    decision: SupportRouteDecision,
-    classification: dict[str, Any],
-    reason: str,
-) -> tuple[SupportRouteDecision, dict[str, Any]]:
-    updated_classification = dict(classification)
-    updated_classification.update(
-        {
-            "predicted_automation_subcategory": str(
-                decision.execution_action or decision.route or ""
-            ).strip()
-            or None,
-            "agora_route": "uncategorized",
-            "account_billing_subcategory": None,
-            "backend_operation_subcategory": None,
-            "automation_subcategory": None,
-            "route_target": "human_review",
-            "human_review_reason": reason,
-            "route_reason_code": reason,
-            "handler_binding_status": "human_review",
-        }
-    )
-    primary_label, secondary_label = classification_labels(updated_classification)
-    updated_classification["primary_label"] = primary_label
-    updated_classification["secondary_label"] = secondary_label
-    updated_decision = SupportRouteDecision(
-        **{
-            **decision.__dict__,
-            "scope_label": "human_review",
-            "route": "human_review_required",
-            "route_family": "human_review",
-            "execution_action": "human_review_required",
-            "tooling_profile": None,
-            "not_automated_reason": reason,
-            "policy_decision": "account_persona_unavailable_human_review",
-        }
-    )
-    return updated_decision, updated_classification
-
-
 def _rerun_account_persona_unavailable_human_review(
     *,
     account_case: dict[str, Any],
     route_execution: dict[str, Any],
     reason: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    classification = dict(account_case.get("route_classification") or {})
-    classification.update(
-        {
-            "predicted_automation_subcategory": str(
-                account_case.get("execution_action") or account_case.get("route") or ""
-            ).strip()
-            or None,
-            "agora_route": "uncategorized",
-            "account_billing_subcategory": None,
-            "backend_operation_subcategory": None,
-            "automation_subcategory": None,
-            "route_target": "human_review",
-            "human_review_reason": reason,
-            "route_reason_code": reason,
-            "handler_binding_status": "human_review",
-        }
+    handler = str(
+        account_case.get("automation_handler")
+        or account_case.get("execution_action")
+        or account_case.get("route")
+        or "automation"
+    ).strip()
+    execution_reason_code = reconciliation_reason_code(
+        handler=handler,
+        phase="persona",
+        detail="unavailable",
     )
-    primary_label, secondary_label = classification_labels(classification)
-    classification["primary_label"] = primary_label
-    classification["secondary_label"] = secondary_label
-    updated_case = {
-        **account_case,
-        "route": "human_review_required",
-        "scope_label": "human_review",
-        "route_family": "human_review",
-        "execution_action": "human_review_required",
-        "tooling_profile": None,
-        "route_reason": reason,
-        "policy_decision": "account_persona_unavailable_human_review",
-        "not_automated_reason": reason,
-        "automation_status": "not_automated",
-        "missing_fields": [],
-        "collected_fields": {},
-        "customer_reply": None,
-        "internal_email_payload": None,
-        "internal_email_send_status": "not_applicable",
-        "internal_email_send_reason": reason,
-        "automation_context": {},
-        "route_classification": classification,
-        **automation_metadata(route_family="human_review", execution_action="human_review_required"),
-    }
+    updated_case = reconcile_automation_execution_failure(
+        account_case,
+        reason_code=execution_reason_code,
+        context={
+            "policy_decision": "account_persona_unavailable_human_review",
+            "failure_detail": reason,
+        },
+    )
+    updated_case["policy_decision"] = "account_persona_unavailable_human_review"
+    updated_case["execution_reason_code"] = execution_reason_code
     updated_execution = {
         **route_execution,
-        "final_route": "human_review_required",
-        "classification": classification,
+        "final_route": str(updated_case.get("execution_action") or updated_case.get("route") or ""),
+        "classification": dict(updated_case.get("route_classification") or {}),
     }
     return updated_case, updated_execution
 
@@ -740,20 +642,6 @@ def _automation_reply_facts(
         resolution_status="awaiting_customer",
         source_facts=resolution_facts,
         customer_name=customer_name,
-    )
-
-
-def _enablement_extraction_human_review(
-    *,
-    decision: SupportRouteDecision,
-    classification: dict[str, Any],
-    extraction: EnablementFieldExtraction,
-) -> tuple[SupportRouteDecision, dict[str, Any]]:
-    return _field_extraction_human_review(
-        decision=decision,
-        classification=classification,
-        extraction=extraction,
-        subcategory="enablement",
     )
 
 
@@ -3962,6 +3850,7 @@ def _route_error_fields(
 
 def _route_diagnostic_fields(classification: dict[str, Any]) -> dict[str, Any]:
     return {
+        "execution_reason_code": classification.get("execution_reason_code"),
         "route_failure_family": classification.get("route_failure_family"),
         "stage_failure_types": dict(classification.get("stage_failure_types") or {}),
         "stage_failure_sources": dict(classification.get("stage_failure_sources") or {}),
@@ -4105,7 +3994,8 @@ _ACCOUNT_CASE_SUMMARY_FIELDS = (
     "automation_mode",
     "primary_label",
     "secondary_label",
-    "route_reason_code",
+        "route_reason_code",
+        "execution_reason_code",
     "route_failure_family",
     "stage_failure_types",
     "stage_failure_sources",
@@ -4283,6 +4173,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         and route == "human_review_required"
     )
     persona_assignment: dict[str, Any] | None = None
+    execution_reason_code: str | None = None
     ticket_saved = False
     if is_automation_route:
         await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
@@ -4290,20 +4181,11 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         try:
             persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, ticket_id)
         except AccountPersonaUnavailableError as exc:
-            decision, route_classification = _account_persona_unavailable_human_review(
-                decision=decision,
-                classification=route_classification,
-                reason=str(exc),
+            execution_reason_code = reconciliation_reason_code(
+                handler=automation_handler or route,
+                phase="persona",
+                detail="unavailable",
             )
-            route = str(decision.execution_action or decision.route or "").strip()
-            route_family = str(decision.route_family or "").strip()
-            route_metadata = automation_metadata(
-                route_family=route_family,
-                execution_action=route,
-            )
-            is_automation_route = False
-            automation_handler = ""
-            is_billing_route = False
 
     resolution: SupportResolution | None = None
     response_status = "not_automated"
@@ -4320,7 +4202,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
     internal_email_send_reason = ""
     account_billing_registration = account_billing_handler(account_billing_subcategory)
 
-    if is_automation_route:
+    if is_automation_route and not execution_reason_code:
         response_status = "automation"
         handler_registration = account_automation_handler(route)
         if handler_registration is None:
@@ -4403,25 +4285,30 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
             extraction,
             (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction, DetailedInvoiceFieldExtraction),
         ):
-            decision, route_classification = _field_extraction_human_review(
-                decision=decision,
-                classification=route_classification,
+            execution_reason_code = f"{automation_handler or route}_field_extraction_{extraction.status}"
+            execution_failure_case = reconcile_automation_execution_failure(
+                {
+                    "route_classification": route_classification,
+                    "automation_context": automation_context,
+                    "collected_fields": dict(automation_attempt.get("collected_fields") or {}),
+                },
+                reason_code=execution_reason_code,
                 extraction=extraction,
-                subcategory=route,
             )
-            route = str(decision.execution_action or decision.route)
-            route_family = str(decision.route_family)
-            route_metadata = account_route_metadata(
-                classification=route_classification,
-                route_family=route_family,
-                execution_action=route,
-            )
+            route_classification = dict(execution_failure_case.get("route_classification") or {})
+            automation_context = dict(execution_failure_case.get("automation_context") or {})
             is_automation_route = False
-            automation_handler = ""
             is_billing_route = False
-            response_status = "not_automated"
-            collected_fields = dict(automation_attempt["collected_fields"])
-            internal_email_send_reason = str(automation_attempt["internal_email_send_reason"])
+            response_status = "human_review_required"
+            collected_fields = dict(extraction.collected_fields)
+            missing_fields = []
+            internal_email_payload = None
+            internal_email_send_status = "not_applicable"
+            internal_email_send_reason = execution_reason_code
+            billing_email_attempt = None
+            enablement_email_attempt = None
+            quota_email_attempt = None
+            automation_attempt = None
         else:
             missing_fields = list(automation_attempt["missing_fields"])
             collected_fields = dict(automation_attempt["collected_fields"])
@@ -4453,6 +4340,25 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         internal_email_send_reason = "account_billing_classification_only"
         route_classification["field_extraction"] = extraction.audit_payload()
         route_prompt_snapshots.update(dict(classification_attempt["prompt_snapshots"]))
+    if execution_reason_code:
+        execution_failure_case = reconcile_automation_execution_failure(
+            {
+                "route_classification": route_classification,
+                "automation_context": automation_context,
+                "collected_fields": collected_fields,
+            },
+            reason_code=execution_reason_code,
+        )
+        route_classification = dict(execution_failure_case.get("route_classification") or {})
+        automation_context = dict(execution_failure_case.get("automation_context") or {})
+        response_status = "human_review_required"
+        internal_email_payload = None
+        internal_email_send_status = "not_applicable"
+        internal_email_send_reason = execution_reason_code
+        if not collected_fields:
+            collected_fields = dict(execution_failure_case.get("collected_fields") or {})
+        if not missing_fields:
+            missing_fields = []
     if not ticket_saved:
         await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
 
@@ -4532,6 +4438,23 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
         billing_ticket["updated_at"] = now_iso()
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        if internal_email_send_status != "sent":
+            response_status = "human_review_required"
+            execution_reason_code = reconciliation_reason_code(
+                handler=automation_handler or "billing",
+                phase="internal_email",
+                detail=internal_email_send_status or "failed",
+            )
+            billing_ticket.update(
+                reconcile_automation_execution_failure(
+                    billing_ticket,
+                    reason_code=execution_reason_code,
+                )
+            )
+            route_classification = dict(billing_ticket.get("route_classification") or {})
+            internal_email_send_status = "not_applicable"
+            internal_email_send_reason = execution_reason_code
+            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
         if internal_email_send_status == "sent" and billing_email_attempt:
             confirmation_facts = _automation_reply_facts(
                 handler=automation_handler or "billing",
@@ -4560,6 +4483,22 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
         billing_ticket["internal_email_payload"] = dict(enablement_email_attempt["internal_email_to_send"])
+        if internal_email_send_status != "sent":
+            response_status = "human_review_required"
+            execution_reason_code = reconciliation_reason_code(
+                handler="enablement",
+                phase="internal_email",
+                detail=internal_email_send_status or "failed",
+            )
+            billing_ticket.update(
+                reconcile_automation_execution_failure(
+                    billing_ticket,
+                    reason_code=execution_reason_code,
+                )
+            )
+            route_classification = dict(billing_ticket.get("route_classification") or {})
+            internal_email_send_status = "not_applicable"
+            internal_email_send_reason = execution_reason_code
         if internal_email_send_status == "sent":
             confirmation_facts = _automation_reply_facts(
                 handler="enablement",
@@ -4591,6 +4530,22 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         billing_ticket["internal_email_send_status"] = internal_email_send_status
         billing_ticket["internal_email_send_reason"] = internal_email_send_reason
         billing_ticket["internal_email_payload"] = dict(quota_email_attempt["internal_email_to_send"])
+        if internal_email_send_status != "sent":
+            response_status = "human_review_required"
+            execution_reason_code = reconciliation_reason_code(
+                handler="quota",
+                phase="internal_email",
+                detail=internal_email_send_status or "failed",
+            )
+            billing_ticket.update(
+                reconcile_automation_execution_failure(
+                    billing_ticket,
+                    reason_code=execution_reason_code,
+                )
+            )
+            route_classification = dict(billing_ticket.get("route_classification") or {})
+            internal_email_send_status = "not_applicable"
+            internal_email_send_reason = execution_reason_code
         if internal_email_send_status == "sent":
             confirmation_facts = _automation_reply_facts(
                 handler="quota",
@@ -4675,6 +4630,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
     await async_to_thread(ticket_repository.record_event, ticket_id, event["event"], event)
     response_payload = {
         "status": response_status,
+        "automation_status": response_status,
         "route": route or None,
         "ticket_id": ticket_id,
         "account_case_id": account_case_id,
@@ -4688,6 +4644,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         "collected_fields": collected_fields,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
+        "execution_reason_code": execution_reason_code,
         "semantic_intent": decision.semantic_intent or None,
         "route_family": decision.route_family,
         **route_metadata,
@@ -4802,50 +4759,32 @@ def _render_billing_resolution_customer_reply(
     except (AccountPersonaUnavailableError, AutomationPersonaError) as exc:
         reason = str(exc)
         timestamp = now_iso()
+        persona_unavailable = isinstance(exc, AccountPersonaUnavailableError)
         policy_decision = (
             "account_persona_unavailable_human_review"
-            if isinstance(exc, AccountPersonaUnavailableError)
+            if persona_unavailable
             else "automation_persona_human_review"
         )
-        route_classification = (
-            dict(billing_ticket.get("route_classification"))
-            if isinstance(billing_ticket.get("route_classification"), dict)
-            else {}
+        execution_reason_code = reconciliation_reason_code(
+            handler=str(billing_ticket.get("automation_handler") or behavior or "billing"),
+            phase="persona" if persona_unavailable else "persona_render",
+            detail="unavailable" if persona_unavailable else "failed",
         )
-        route_classification.update(
-            {
-                "agora_route": "uncategorized",
-                "account_billing_subcategory": None,
-                "automation_subcategory": None,
-                "backend_operation_subcategory": None,
-                "route_target": "human_review",
-                "human_review_reason": reason,
-                "route_reason_code": reason,
-                "handler_binding_status": "human_review",
-            }
+        billing_ticket.update(
+            reconcile_automation_execution_failure(
+                billing_ticket,
+                reason_code=execution_reason_code,
+                context={
+                    "policy_decision": policy_decision,
+                    "failure_detail": reason,
+                },
+            )
         )
-        primary_label, secondary_label = classification_labels(route_classification)
-        route_classification["primary_label"] = primary_label
-        route_classification["secondary_label"] = secondary_label
         billing_ticket.update(
             {
-                "route": "human_review_required",
-                "scope_label": "human_review",
-                "route_family": "human_review",
-                "execution_action": "human_review_required",
-                "tooling_profile": None,
-                "route_reason": reason,
                 "policy_decision": policy_decision,
-                "automation_status": "not_automated",
-                "not_automated_reason": reason,
-                "internal_email_send_reason": reason,
-                "route_classification": route_classification,
+                "execution_reason_code": execution_reason_code,
                 "updated_at": timestamp,
-                **account_route_metadata(
-                    classification=route_classification,
-                    route_family="human_review",
-                    execution_action="human_review_required",
-                ),
             }
         )
         if persist_failure:
@@ -6077,6 +6016,20 @@ async def _run_account_full_reroute_job(
                     send_status, send_reason = await sender(attempt)
                     updated_case["internal_email_send_status"] = send_status
                     updated_case["internal_email_send_reason"] = send_reason
+                    if send_status != "sent":
+                        failure_reason = reconciliation_reason_code(
+                            handler=result.email_handler or "automation",
+                            phase="internal_email",
+                            detail=send_status or "failed",
+                        )
+                        updated_case = reconcile_automation_execution_failure(
+                            updated_case,
+                            reason_code=failure_reason,
+                            context={"rerun_job_id": job_id},
+                        )
+                        updated_case["execution_reason_code"] = failure_reason
+                        case_handler_status = "human_review"
+                        reply_ready = False
                     updated_case["updated_at"] = now_iso()
                     # Persist a successful delivery before creating the reply job. If Persona
                     # preparation or job creation fails, the delivery retry poller must not send
@@ -6909,29 +6862,34 @@ async def reply_to_billing_ticket(
                 extraction,
                 (EnablementFieldExtraction, AccountVerificationFieldExtraction, QuotaFieldExtraction, DetailedInvoiceFieldExtraction),
             ):
-                decision, route_classification = _field_extraction_human_review(
-                    decision=decision,
-                    classification=route_classification,
+                execution_reason_code = f"{route}_field_extraction_{extraction.status}"
+                execution_failure_case = reconcile_automation_execution_failure(
+                    {
+                        "route_classification": route_classification,
+                        "automation_context": dict(automation_attempt.get("automation_context") or prior_automation_context),
+                        "collected_fields": dict(extraction.collected_fields),
+                    },
+                    reason_code=execution_reason_code,
                     extraction=extraction,
-                    subcategory=route,
                 )
-                route = str(decision.execution_action or decision.route)
-                route_metadata = account_route_metadata(
-                    classification=route_classification,
-                    route_family=decision.route_family,
-                    execution_action=route,
-                )
+                route_classification = dict(execution_failure_case.get("route_classification") or {})
                 billing_ticket.update(
-                    route=route,
-                    scope_label=decision.scope_label,
-                    route_family=decision.route_family,
-                    execution_action=route,
-                    tooling_profile=decision.tooling_profile,
-                    policy_decision=decision.policy_decision,
-                    not_automated_reason=decision.not_automated_reason,
-                    automation_status="not_automated",
+                    automation_status="human_review_required",
+                    execution_reason_code=execution_reason_code,
+                    missing_fields=[],
+                    collected_fields=dict(extraction.collected_fields),
+                    customer_reply=None,
+                    internal_email_payload=None,
+                    internal_email_send_status="not_applicable",
+                    internal_email_send_reason=execution_reason_code,
                     route_classification=route_classification,
-                    **route_metadata,
+                )
+                is_automation_route = False
+                automation_attempt = None
+                await async_to_thread(
+                    ticket_repository.cancel_pending_account_reply_jobs,
+                    client_ticket_id,
+                    updated_at=timestamp,
                 )
             else:
                 registration = account_automation_handler(route)
@@ -7039,37 +6997,16 @@ async def reply_to_billing_ticket(
                 )
             )
             failure_reason = f"{failed_subcategory}_field_extraction_{extraction.status}"
-            current_classification = (
-                dict(billing_ticket.get("route_classification"))
-                if isinstance(billing_ticket.get("route_classification"), dict)
-                else prior_classification
+            execution_failure_case = reconcile_automation_execution_failure(
+                billing_ticket,
+                reason_code=failure_reason,
+                extraction=extraction,
+                context=dict(automation_attempt.get("automation_context") or prior_automation_context),
             )
-            current_classification.update(
-                {
-                    "predicted_automation_subcategory": failed_subcategory,
-                    "agora_route": "uncategorized",
-                    "account_billing_subcategory": None,
-                    "backend_operation_subcategory": None,
-                    "automation_subcategory": None,
-                    "route_target": "human_review",
-                    "human_review_reason": failure_reason,
-                    "route_reason_code": failure_reason,
-                    "handler_binding_status": "human_review",
-                    "field_extraction": extraction.audit_payload(),
-                }
-            )
-            primary_label, secondary_label = classification_labels(current_classification)
-            current_classification["primary_label"] = primary_label
-            current_classification["secondary_label"] = secondary_label
+            current_classification = dict(execution_failure_case.get("route_classification") or {})
             billing_ticket.update(
-                route="human_review_required",
-                scope_label="human_review",
-                route_family="human_review",
-                execution_action="human_review_required",
-                tooling_profile=None,
-                policy_decision="field_extraction_human_review",
-                not_automated_reason=failure_reason,
-                automation_status="not_automated",
+                execution_reason_code=failure_reason,
+                automation_status="human_review_required",
                 missing_fields=[],
                 collected_fields=dict(extraction.collected_fields),
                 customer_reply=None,
@@ -7078,7 +7015,6 @@ async def reply_to_billing_ticket(
                 internal_email_send_reason=f"field_extraction_{extraction.status}",
                 route_classification=current_classification,
                 automation_context=dict(automation_attempt.get("automation_context") or prior_automation_context),
-                **automation_metadata(route_family="human_review", execution_action="human_review_required"),
             )
             await async_to_thread(
                 ticket_repository.cancel_pending_account_reply_jobs,

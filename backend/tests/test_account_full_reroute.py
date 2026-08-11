@@ -450,11 +450,13 @@ class AccountFullRerouteTests(unittest.TestCase):
         )
 
         self.assertEqual(result.handler_status, "human_review")
-        self.assertEqual(result.account_case["route_status"], "not_automated")
-        self.assertEqual(result.account_case["route_family"], "human_review")
+        self.assertEqual(result.account_case["route_status"], "automated")
+        self.assertEqual(result.account_case["route_family"], "automated")
+        self.assertEqual(result.account_case["automation_status"], "human_review_required")
+        self.assertEqual(result.account_case["execution_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(result.account_case["collected_fields"], {"requested_feature": "media_relay"})
         self.assertEqual(
-            result.account_case["route_classification"]["route_reason_code"],
+            result.account_case["route_classification"]["execution_reason_code"],
             "enablement_field_extraction_uncertain",
         )
 

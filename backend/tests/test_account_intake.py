@@ -1425,23 +1425,24 @@ class AccountIntakeApiTests(unittest.TestCase):
         sender.assert_not_awaited()
         stored = self.repository.get_account_case("AC-12514")
         assert stored is not None
-        self.assertEqual(stored["route"], "human_review_required")
-        self.assertEqual(stored["automation_status"], "not_automated")
+        self.assertEqual(stored["route"], "enablement")
+        self.assertEqual(stored["automation_status"], "human_review_required")
+        self.assertEqual(stored["route_family"], "automated")
+        self.assertEqual(stored["route_status"], "automated")
+        self.assertEqual(stored["automation_handler"], "enablement")
+        self.assertEqual(stored["execution_reason_code"], "enablement_persona_unavailable")
+        self.assertEqual(stored["route_classification"]["handler_binding_status"], "human_review")
+        self.assertEqual(stored["route_classification"]["primary_label"], "Agora")
         self.assertEqual(
-            stored["route_classification"]["human_review_reason"],
-            "no enabled published persona",
+            stored["route_classification"]["secondary_label"],
+            "Backend Operation / Enablement",
         )
-        self.assertIsNone(stored["route_classification"]["account_billing_subcategory"])
-        self.assertIsNone(stored["route_classification"]["backend_operation_subcategory"])
-        self.assertIsNone(stored["route_classification"]["automation_subcategory"])
-        self.assertEqual(stored["route_classification"]["primary_label"], "Human Review")
-        self.assertEqual(stored["route_classification"]["secondary_label"], "Uncategorized")
         self.assertIsNone(self.repository.get_latest_account_reply_job("12514"))
         executions = self.repository.list_account_route_executions("12514")
         self.assertEqual(len(executions), 1)
         self.assertEqual(
-            executions[0]["classification"]["human_review_reason"],
-            "no enabled published persona",
+            executions[0]["classification"]["execution_reason_code"],
+            "enablement_persona_unavailable",
         )
         rerun_job = main._account_full_reroute_job("account-reroute-persona-unavailable")
         assert rerun_job is not None
@@ -1794,20 +1795,23 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         sender.assert_not_awaited()
         payload = response.json()
-        self.assertEqual(payload["status"], "not_automated")
-        self.assertEqual(payload["route"], "human_review_required")
+        self.assertEqual(payload["status"], "human_review_required")
+        self.assertEqual(payload["route"], "enablement")
+        self.assertEqual(payload["route_family"], "automated")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["category"], "backend_operation")
+        self.assertEqual(payload["subcategory"], "enablement")
+        self.assertEqual(payload["automation_handler"], "enablement")
+        self.assertEqual(payload["execution_reason_code"], "enablement_persona_unavailable")
         self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
         account_case = self.repository.get_account_case(payload["account_case_id"])
         assert account_case is not None
+        self.assertEqual(account_case["route_classification"]["handler_binding_status"], "human_review")
+        self.assertEqual(account_case["route_classification"]["primary_label"], "Agora")
         self.assertEqual(
-            account_case["route_classification"]["human_review_reason"],
-            "no enabled published persona",
+            account_case["route_classification"]["secondary_label"],
+            "Backend Operation / Enablement",
         )
-        self.assertIsNone(account_case["route_classification"]["account_billing_subcategory"])
-        self.assertIsNone(account_case["route_classification"]["backend_operation_subcategory"])
-        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
-        self.assertEqual(account_case["route_classification"]["primary_label"], "Human Review")
-        self.assertEqual(account_case["route_classification"]["secondary_label"], "Uncategorized")
 
     def test_support_message_persona_unavailable_returns_human_review_without_rendering(self) -> None:
         resolution = SupportResolution(
@@ -1999,23 +2003,15 @@ class AccountIntakeApiTests(unittest.TestCase):
                 if isinstance(message, dict)
             )
         )
-        self.assertEqual(stored["route"], "human_review_required")
-        self.assertEqual(stored["not_automated_reason"], "no enabled published persona")
-        self.assertEqual(stored["category"], "human_review")
-        self.assertEqual(stored["subcategory"], "human_review_required")
-        self.assertEqual(stored["route_status"], "not_automated")
-        self.assertIsNone(stored["automation_handler"])
-        self.assertIsNone(stored["tooling_profile"])
-        self.assertEqual(stored["route_classification"]["route_target"], "human_review")
-        self.assertIsNone(stored["route_classification"]["account_billing_subcategory"])
-        self.assertIsNone(stored["route_classification"]["backend_operation_subcategory"])
-        self.assertIsNone(stored["route_classification"]["automation_subcategory"])
-        self.assertEqual(stored["route_classification"]["primary_label"], "Human Review")
-        self.assertEqual(stored["route_classification"]["secondary_label"], "Uncategorized")
-        self.assertNotIn(
-            "predicted_automation_subcategory",
-            stored["route_classification"],
-        )
+        self.assertEqual(stored["route"], "detailed_invoice")
+        self.assertEqual(stored["automation_status"], "human_review_required")
+        self.assertEqual(stored["route_family"], "automated")
+        self.assertEqual(stored["category"], "account_billing")
+        self.assertEqual(stored["subcategory"], "detailed_invoice")
+        self.assertEqual(stored["route_status"], "automated")
+        self.assertEqual(stored["automation_handler"], "billing")
+        self.assertEqual(stored["execution_reason_code"], "billing_persona_unavailable")
+        self.assertEqual(stored["route_classification"]["handler_binding_status"], "human_review")
 
     def test_claimed_delayed_reply_cannot_publish_after_case_moves_to_human_review(self) -> None:
         ticket_id = "12516-CLAIMED"
@@ -2245,22 +2241,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         stored = self.repository.get_billing_ticket("AC-12517")
         assert stored is not None
         self.assertEqual(stored["policy_decision"], "automation_persona_human_review")
-        self.assertEqual(stored["route"], "human_review_required")
-        self.assertEqual(stored["category"], "human_review")
-        self.assertEqual(stored["subcategory"], "human_review_required")
-        self.assertEqual(stored["route_status"], "not_automated")
-        self.assertIsNone(stored["automation_handler"])
-        self.assertIsNone(stored["tooling_profile"])
-        self.assertEqual(stored["route_classification"]["route_target"], "human_review")
-        self.assertIsNone(stored["route_classification"]["account_billing_subcategory"])
-        self.assertIsNone(stored["route_classification"]["backend_operation_subcategory"])
-        self.assertIsNone(stored["route_classification"]["automation_subcategory"])
-        self.assertEqual(stored["route_classification"]["primary_label"], "Human Review")
-        self.assertEqual(stored["route_classification"]["secondary_label"], "Uncategorized")
-        self.assertNotIn(
-            "predicted_automation_subcategory",
-            stored["route_classification"],
-        )
+        self.assertEqual(stored["route"], "detailed_invoice")
+        self.assertEqual(stored["automation_status"], "human_review_required")
+        self.assertEqual(stored["route_family"], "automated")
+        self.assertEqual(stored["category"], "account_billing")
+        self.assertEqual(stored["subcategory"], "detailed_invoice")
+        self.assertEqual(stored["route_status"], "automated")
+        self.assertEqual(stored["automation_handler"], "billing")
+        self.assertEqual(stored["execution_reason_code"], "billing_persona_render_failed")
+        self.assertEqual(stored["route_classification"]["handler_binding_status"], "human_review")
 
     def test_quota_intake_asks_once_then_sends_available_details(self) -> None:
         decision = SupportRouteDecision(
@@ -2353,7 +2342,8 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["internal_email_send_status"], "retry")
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertEqual(payload["execution_reason_code"], "enablement_internal_email_retry")
         self.assertIsNone(payload["ai_reply_status"])
         self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
 
@@ -2380,17 +2370,19 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["route_status"], "not_automated")
-        self.assertEqual(payload["route_family"], "human_review")
-        self.assertEqual(payload["primary_label"], "Human Review")
-        self.assertEqual(payload["secondary_label"], "Uncategorized")
-        self.assertEqual(payload["route_reason_code"], "enablement_field_extraction_uncertain")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["route_family"], "automated")
+        self.assertEqual(payload["category"], "backend_operation")
+        self.assertEqual(payload["subcategory"], "enablement")
+        self.assertEqual(payload["automation_handler"], "enablement")
+        self.assertEqual(payload["primary_label"], "Agora")
+        self.assertEqual(payload["secondary_label"], "Backend Operation / Enablement")
+        self.assertEqual(payload["automation_status"], "human_review_required")
+        self.assertEqual(payload["execution_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
-        self.assertIsNone(payload["route_classification"]["account_billing_subcategory"])
-        self.assertIsNone(payload["route_classification"]["backend_operation_subcategory"])
-        self.assertIsNone(payload["route_classification"]["automation_subcategory"])
+        self.assertEqual(payload["route_classification"]["backend_operation_subcategory"], "enablement")
         self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
         send_email.assert_not_called()
 
@@ -2467,16 +2459,18 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(reviewed.status_code, 200, reviewed.text)
         payload = reviewed.json()
-        self.assertEqual(payload["route_status"], "not_automated")
-        self.assertEqual(payload["route_family"], "human_review")
-        self.assertEqual(payload["primary_label"], "Human Review")
-        self.assertEqual(payload["secondary_label"], "Uncategorized")
-        self.assertEqual(payload["route_reason_code"], "enablement_field_extraction_uncertain")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["route_family"], "automated")
+        self.assertEqual(payload["category"], "backend_operation")
+        self.assertEqual(payload["subcategory"], "enablement")
+        self.assertEqual(payload["automation_handler"], "enablement")
+        self.assertEqual(payload["primary_label"], "Agora")
+        self.assertEqual(payload["secondary_label"], "Backend Operation / Enablement")
+        self.assertEqual(payload["automation_status"], "human_review_required")
+        self.assertEqual(payload["execution_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
-        self.assertIsNone(payload["route_classification"]["account_billing_subcategory"])
-        self.assertIsNone(payload["route_classification"]["backend_operation_subcategory"])
-        self.assertIsNone(payload["route_classification"]["automation_subcategory"])
+        self.assertEqual(payload["route_classification"]["backend_operation_subcategory"], "enablement")
         latest_reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(latest_reply_job)
         assert latest_reply_job is not None
@@ -2797,8 +2791,8 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["internal_email_send_status"], "failed")
-        self.assertEqual(payload["internal_email_send_reason"], "boom")
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertEqual(payload["internal_email_send_reason"], "billing_internal_email_failed")
         self.assertTrue(captured_payloads)
         body = captured_payloads[0]["body"]
         self.assertIn("reply directly to this email in Outlook", body)
@@ -2807,8 +2801,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
-        stored_body = bt["internal_email_payload"]["body"]
-        self.assertNotIn("/response?token=", stored_body)
+        self.assertIsNone(bt["internal_email_payload"])
 
     def test_billing_response_lookup_returns_context_for_valid_token(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
@@ -3362,25 +3355,21 @@ class AccountIntakeApiTests(unittest.TestCase):
         billing_ticket = self.repository.get_billing_ticket(str(create_payload["billing_ticket_id"]))
         self.assertIsNotNone(billing_ticket)
         assert billing_ticket is not None
-        self.assertEqual(billing_ticket["automation_status"], "not_automated")
-        self.assertEqual(billing_ticket["route_family"], "human_review")
-        self.assertEqual(billing_ticket["category"], "human_review")
-        self.assertEqual(billing_ticket["subcategory"], "human_review_required")
-        self.assertEqual(billing_ticket["route_status"], "not_automated")
-        self.assertIsNone(billing_ticket["automation_handler"])
-        self.assertIsNone(billing_ticket["tooling_profile"])
+        self.assertEqual(billing_ticket["automation_status"], "human_review_required")
+        self.assertEqual(billing_ticket["route"], "detailed_invoice")
+        self.assertEqual(billing_ticket["route_family"], "automated")
+        self.assertEqual(billing_ticket["category"], "account_billing")
+        self.assertEqual(billing_ticket["subcategory"], "detailed_invoice")
+        self.assertEqual(billing_ticket["route_status"], "automated")
+        self.assertEqual(billing_ticket["automation_handler"], "billing")
         self.assertEqual(
             billing_ticket["policy_decision"],
             "automation_persona_human_review",
         )
-        self.assertEqual(billing_ticket["not_automated_reason"], "automation_persona_failed")
+        self.assertEqual(billing_ticket["execution_reason_code"], "billing_persona_render_failed")
         classification = billing_ticket["route_classification"]
-        self.assertIsNone(classification["account_billing_subcategory"])
-        self.assertIsNone(classification["backend_operation_subcategory"])
-        self.assertIsNone(classification["automation_subcategory"])
-        self.assertEqual(classification["primary_label"], "Human Review")
-        self.assertEqual(classification["secondary_label"], "Uncategorized")
-        self.assertNotIn("predicted_automation_subcategory", classification)
+        self.assertEqual(classification["account_billing_subcategory"], "detailed_invoice")
+        self.assertEqual(classification["handler_binding_status"], "human_review")
 
         after_ticket = self.repository.get_ticket(str(create_payload["ticket_id"]))
         self.assertIsNotNone(after_ticket)
@@ -3499,7 +3488,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["client_ticket_id"], payload["ticket_id"])
-        self.assertEqual(bt["automation_status"], "automation")
+        self.assertEqual(bt["automation_status"], "human_review_required")
         self.assertEqual(bt["route"], "detailed_invoice")
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["external_id"], "ext-123")
@@ -3508,7 +3497,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt["route_reason"])
         self.assertIsNotNone(bt["route_confidence"])
         self.assertIsNone(bt["customer_reply"])
-        self.assertEqual(bt["internal_email_send_status"], "skipped_config_missing")
+        self.assertEqual(bt["internal_email_send_status"], "not_applicable")
+        self.assertEqual(bt["execution_reason_code"], "billing_internal_email_skipped_config_missing")
 
     def test_account_intake_saves_non_automated_billing_ticket(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
@@ -3654,7 +3644,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["status"], "human_review_required")
         self.assertEqual(payload["route"], "detailed_invoice")
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])

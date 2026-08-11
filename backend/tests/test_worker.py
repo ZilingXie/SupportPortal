@@ -3123,29 +3123,21 @@ class WorkerResilienceTests(unittest.TestCase):
                 self.assertEqual(handled, "completed")
                 commit = repository.commit_automation_reply_result.call_args.kwargs
                 self.assertIsNone(commit["assistant_message"])
+                updates = commit["account_case_updates"]
+                self.assertEqual(updates["route"], account_case["execution_action"])
+                self.assertEqual(updates["automation_status"], "human_review_required")
+                self.assertEqual(updates["category"], "automation")
+                self.assertEqual(updates["subcategory"], account_case["execution_action"])
+                self.assertEqual(updates["route_status"], "automated")
+                self.assertEqual(updates["automation_handler"], handler)
+                self.assertEqual(updates["tooling_profile"], f"deterministic_{handler}_intake")
+                self.assertEqual(updates["execution_reason_code"], f"{handler}_persona_unavailable")
                 self.assertEqual(
-                    commit["account_case_updates"]["route"],
-                    "human_review_required",
+                    updates["route_classification"]["route_target"],
+                    "automation",
                 )
-                self.assertEqual(
-                    commit["account_case_updates"]["not_automated_reason"],
-                    "no enabled published persona",
-                )
-                self.assertEqual(commit["account_case_updates"]["category"], "human_review")
-                self.assertEqual(
-                    commit["account_case_updates"]["subcategory"],
-                    "human_review_required",
-                )
-                self.assertEqual(commit["account_case_updates"]["route_status"], "not_automated")
-                self.assertIsNone(commit["account_case_updates"]["automation_handler"])
-                self.assertIsNone(commit["account_case_updates"]["tooling_profile"])
-                self.assertEqual(
-                    commit["account_case_updates"]["route_classification"]["route_target"],
-                    "human_review",
-                )
-                self.assertIsNone(
-                    commit["account_case_updates"]["route_classification"]["automation_subcategory"]
-                )
+                self.assertEqual(updates["route_classification"]["handler_binding_status"], "human_review")
+                self.assertEqual(updates["route_classification"]["automation_subcategory"], account_case["execution_action"])
                 render.assert_not_called()
 
     def test_internal_followups_persona_render_failure_persist_generic_human_review(self) -> None:
@@ -3258,25 +3250,13 @@ class WorkerResilienceTests(unittest.TestCase):
                 self.assertIsNone(commit["assistant_message"])
                 updates = commit["account_case_updates"]
                 self.assertEqual(updates["policy_decision"], "automation_persona_human_review")
-                self.assertEqual(updates["route"], "human_review_required")
-                self.assertEqual(updates["category"], "human_review")
-                self.assertEqual(updates["subcategory"], "human_review_required")
-                self.assertEqual(updates["route_status"], "not_automated")
-                self.assertIsNone(updates["automation_handler"])
-                self.assertIsNone(updates["tooling_profile"])
-                self.assertEqual(updates["route_classification"]["route_target"], "human_review")
-                self.assertIsNone(
-                    updates["route_classification"]["account_billing_subcategory"]
-                )
-                self.assertIsNone(
-                    updates["route_classification"]["backend_operation_subcategory"]
-                )
-                self.assertIsNone(updates["route_classification"]["automation_subcategory"])
-                self.assertEqual(updates["route_classification"]["primary_label"], "Human Review")
-                self.assertEqual(
-                    updates["route_classification"]["secondary_label"],
-                    "Uncategorized",
-                )
+                self.assertEqual(updates["automation_status"], "human_review_required")
+                self.assertEqual(updates["route_family"], "automated")
+                self.assertEqual(updates["route_status"], "automated")
+                self.assertEqual(updates["automation_handler"], handler)
+                self.assertEqual(updates["execution_reason_code"], f"{handler}_persona_render_failed")
+                self.assertEqual(updates["route_classification"]["route_target"], "automation")
+                self.assertEqual(updates["route_classification"]["handler_binding_status"], "human_review")
                 render.assert_called_once()
 
     def test_case_persona_extraction_failure_persists_generic_human_review(self) -> None:
@@ -3329,18 +3309,15 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(reply, "")
         save_case.assert_called_once_with(account_case)
         self.assertEqual(account_case["policy_decision"], "automation_persona_human_review")
-        self.assertEqual(account_case["route"], "human_review_required")
-        self.assertEqual(account_case["category"], "human_review")
-        self.assertEqual(account_case["subcategory"], "human_review_required")
-        self.assertEqual(account_case["route_status"], "not_automated")
-        self.assertIsNone(account_case["automation_handler"])
-        self.assertIsNone(account_case["tooling_profile"])
-        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
-        self.assertIsNone(account_case["route_classification"]["account_billing_subcategory"])
-        self.assertIsNone(account_case["route_classification"]["backend_operation_subcategory"])
-        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
-        self.assertEqual(account_case["route_classification"]["primary_label"], "Human Review")
-        self.assertEqual(account_case["route_classification"]["secondary_label"], "Uncategorized")
+        self.assertEqual(account_case["route"], "enablement")
+        self.assertEqual(account_case["automation_status"], "human_review_required")
+        self.assertEqual(account_case["route_status"], "automated")
+        self.assertEqual(account_case["automation_handler"], "enablement")
+        self.assertEqual(account_case["execution_reason_code"], "enablement_persona_render_failed")
+        self.assertEqual(account_case["route_classification"]["route_target"], "automation")
+        self.assertEqual(account_case["route_classification"]["handler_binding_status"], "human_review")
+        self.assertEqual(account_case["route_classification"]["primary_label"], "Agora")
+        self.assertEqual(account_case["route_classification"]["secondary_label"], "Automation / Enablement")
         render.assert_not_called()
 
     def test_enablement_confirmation_persona_unavailable_does_not_create_reply_job(self) -> None:
@@ -3384,15 +3361,15 @@ class WorkerResilienceTests(unittest.TestCase):
             created = worker._queue_enablement_submission_confirmation(account_case)
 
         self.assertFalse(created)
-        self.assertEqual(account_case["route"], "human_review_required")
-        self.assertEqual(account_case["not_automated_reason"], "no enabled published persona")
-        self.assertEqual(account_case["category"], "human_review")
-        self.assertEqual(account_case["subcategory"], "human_review_required")
-        self.assertEqual(account_case["route_status"], "not_automated")
-        self.assertIsNone(account_case["automation_handler"])
-        self.assertIsNone(account_case["tooling_profile"])
-        self.assertEqual(account_case["route_classification"]["route_target"], "human_review")
-        self.assertIsNone(account_case["route_classification"]["automation_subcategory"])
+        self.assertEqual(account_case["route"], "enablement")
+        self.assertEqual(account_case["automation_status"], "human_review_required")
+        self.assertEqual(account_case["category"], "automation")
+        self.assertEqual(account_case["subcategory"], "enablement")
+        self.assertEqual(account_case["route_status"], "automated")
+        self.assertEqual(account_case["automation_handler"], "enablement")
+        self.assertEqual(account_case["execution_reason_code"], "enablement_persona_unavailable")
+        self.assertEqual(account_case["route_classification"]["route_target"], "automation")
+        self.assertEqual(account_case["route_classification"]["handler_binding_status"], "human_review")
         repository.cancel_pending_account_reply_jobs.assert_not_called()
         repository.save_account_reply_job.assert_not_called()
         repository.save_account_case.assert_called_once_with(account_case)

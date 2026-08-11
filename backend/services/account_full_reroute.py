@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
 from backend.services.account_billing_handlers import account_billing_handler
 from backend.services.account_case_reroute import AccountCaseReroute, reroute_account_case
 from backend.services.account_suspension_field_extractor import (
@@ -14,7 +15,6 @@ from backend.services.account_verification_automation import (
     AccountVerificationAutomationResult,
     build_account_verification_automation_result,
 )
-from backend.services.automation_routing import automation_metadata
 from backend.services.billing_automation import BillingAutomationResult, build_billing_automation_result
 from backend.services.enablement_automation import (
     EnablementAutomationResult,
@@ -106,32 +106,14 @@ def _field_extraction_human_review(
     extraction: Any,
 ) -> dict[str, Any]:
     reason = f"{action}_field_extraction_{extraction.status}"
-    classification = dict(case.get("route_classification") or {})
-    classification.update(
-        predicted_automation_subcategory=action,
-        agora_route="uncategorized",
-        automation_subcategory=None,
-        route_target="human_review",
-        human_review_reason=reason,
-        route_reason_code=reason,
-        handler_binding_status="human_review",
-        field_extraction=extraction.audit_payload(),
-        automation_reprocessed=True,
+    updated = reconcile_automation_execution_failure(
+        case,
+        reason_code=reason,
+        extraction=extraction,
+        context={"automation_reprocessed": True},
     )
-    classification["secondary_label"] = "Agora / Uncategorized"
-    return {
-        **case,
-        "route": "human_review_required",
-        "scope_label": "human_review",
-        "route_family": "human_review",
-        "execution_action": "human_review_required",
-        "tooling_profile": None,
-        "route_reason": reason,
-        "policy_decision": "field_extraction_human_review",
-        "not_automated_reason": reason,
-        "route_classification": classification,
-        **automation_metadata(route_family="human_review", execution_action="human_review_required"),
-    }
+    updated["execution_reason_code"] = reason
+    return updated
 
 
 def reprocess_account_case(
@@ -331,14 +313,14 @@ def reprocess_account_case(
 
     if requires_human_review and extraction is not None:
         review_case = _field_extraction_human_review(current, action=action, extraction=extraction)
-        updated = _clear_automation_state(
-            review_case,
-            reason=f"{action}_field_extraction_{extraction.status}",
-        )
+        updated = dict(review_case)
         updated["collected_fields"] = dict(extraction.collected_fields)
-        updated["automation_context"] = automation_context
+        updated["automation_context"] = {
+            **dict(updated.get("automation_context") or {}),
+            **automation_context,
+        }
         execution = dict(rerouted.route_execution)
-        execution["final_route"] = "human_review_required"
+        execution["final_route"] = str(updated.get("execution_action") or updated.get("route") or action)
         execution["classification"] = dict(updated.get("route_classification") or {})
         return AccountFullRerouteResult(
             updated,
