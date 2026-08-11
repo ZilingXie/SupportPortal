@@ -798,6 +798,11 @@ button:disabled {
   color: white;
 }
 
+.route-label--automated {
+  background: #dceff1;
+  color: var(--success);
+}
+
 .route-label--secondary {
   background: var(--secondary-fixed, #e0e0ff);
   color: var(--secondary);

@@ -119,7 +119,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ) as invoke_stage:
             result = decide_account_route("Please enable Media Relay from your end.")
 
-        self.assertEqual(result.secondary_label, "Automation / Enablement")
+        self.assertEqual(result.secondary_label, "Backend Operation / Enablement")
         self.assertEqual(result.decision.route_family, "automated")
         self.assertEqual(result.decision.execution_action, "enablement")
         self.assertEqual(result.decision.semantic_intent, "backend_operation.enablement")
@@ -155,7 +155,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ):
             result = decide_account_route("Please activate invoice billing.")
 
-        self.assertEqual(result.secondary_label, "Unregistered")
+        self.assertEqual(result.secondary_label, "Backend Operation / Unregistered")
         self.assertEqual(result.classification["backend_operation_subcategory"], "unregistered")
         self.assertEqual(result.classification["automation_candidate"], "invoice_billing")
         self.assertEqual(result.decision.route_family, "human_review")
@@ -346,7 +346,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         )
         self.assertEqual(enablement["agora_route"], "backend_operation")
         self.assertEqual(enablement["backend_operation_subcategory"], "enablement")
-        self.assertEqual(enablement["secondary_label"], "Automation / Enablement")
+        self.assertEqual(enablement["secondary_label"], "Backend Operation / Enablement")
         self.assertEqual(enablement["handler_binding_status"], "completed")
 
         account_billing = classification_for_corrected_route(
@@ -563,7 +563,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
             )
 
         self.assertEqual(result.primary_label, "Agora")
-        self.assertEqual(result.secondary_label, "Automation / Enablement")
+        self.assertEqual(result.secondary_label, "Backend Operation / Enablement")
         self.assertEqual(result.classification["route_target"], "automation")
         self.assertEqual(result.classification["handler_binding_status"], "active")
         self.assertEqual(result.decision.route_family, "automated")
@@ -856,7 +856,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
             result = decide_account_route("Please increase our RTC concurrency limit.")
 
         self.assertEqual(result.primary_label, "Agora")
-        self.assertEqual(result.secondary_label, "Automation / Quota")
+        self.assertEqual(result.secondary_label, "Backend Operation / Quota")
         self.assertEqual(result.classification["automation_subcategory"], "quota")
         self.assertIsNone(result.classification["automation_candidate"])
         self.assertEqual(result.classification["route_reason_code"], "registered_quota")

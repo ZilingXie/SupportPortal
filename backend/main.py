@@ -6411,7 +6411,7 @@ async def correct_billing_ticket_route(
     scope_label = request.scope_label
     execution_action = request.execution_action
     if category:
-        if category not in {"automation", "account_billing", "human_review"}:
+        if category not in {"automation", "backend_operation", "account_billing", "human_review"}:
             raise HTTPException(status_code=400, detail=f"invalid category: {request.category!r}")
         execution_action = request.subcategory
         normalized_action = str(execution_action or "").strip().lower()
@@ -6426,9 +6426,9 @@ async def correct_billing_ticket_route(
                     if normalized_action in {"fraud_account", "detailed_invoice"}
                     else "human_review_required"
                 )
-        elif category == "automation":
+        elif category in {"automation", "backend_operation"}:
             if normalized_action in {"enablement", "quota"}:
-                scope_label = "automation"
+                scope_label = "backend_operation"
             elif normalized_action in {"account_verification", "fraud_account", "detailed_invoice"}:
                 scope_label = "account_billing"
                 execution_action = "fraud_account" if normalized_action == "account_verification" else normalized_action
@@ -6436,7 +6436,7 @@ async def correct_billing_ticket_route(
                 scope_label = "backend_operation"
                 execution_action = "human_review_required"
             else:
-                scope_label = "automation"
+                scope_label = "backend_operation"
         else:
             human_review_scope = {
                 "unregistered": "backend_operation",

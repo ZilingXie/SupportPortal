@@ -1025,7 +1025,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertTrue(all(stage["name"] and stage["description"] for stage in payload["stage_details"]))
         self.assertEqual(
             [category["name"] for category in payload["route_categories"]],
-            ["conversation", "intent", "agora", "account_billing", "automation"],
+            ["conversation", "intent", "agora", "account_billing", "backend_operation"],
         )
         account_billing = next(
             category
@@ -1039,12 +1039,12 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(account_billing["handler_modes"]["account_suspension"], "classification_only")
         self.assertEqual(account_billing["handler_modes"]["fraud_account"], "billing")
         self.assertEqual(account_billing["handler_modes"]["detailed_invoice"], "billing")
-        automation = next(category for category in payload["route_categories"] if category["name"] == "automation")
+        automation = next(category for category in payload["route_categories"] if category["name"] == "backend_operation")
         self.assertEqual(
             automation["subcategories"],
             ["enablement", "quota", "unregistered"],
         )
-        self.assertEqual(automation["display_name"], "Automation Router")
+        self.assertEqual(automation["display_name"], "Backend Operation Router")
         self.assertEqual(automation["handler_modes"]["unregistered"], "human_review")
         self.assertIn("backend_operation_router", payload["stages"])
         self.assertIn("Intent Classifier", payload["system_prompt"])

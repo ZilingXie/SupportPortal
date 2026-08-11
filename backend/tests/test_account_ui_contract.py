@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260806-account-case-rerun-search-1", html)
+        self.assertIn("20260811-account-backend-operation-filter-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -491,16 +491,16 @@ class AccountUiContractTests(unittest.TestCase):
             app_source,
         )
         self.assertIn(
-            '{ scope: "backend_operation", action: "unregistered", category: "human_review", subcategory: "unregistered", label: "Human Review / Unregistered" }',
+            '{ scope: "backend_operation", action: "unregistered", category: "backend_operation", subcategory: "unregistered", label: "Agora / Backend Operation / Unregistered" }',
             app_source,
         )
         self.assertNotIn("Automation / Account suspension", app_source)
         self.assertIn(
-            '{ scope: "automation", action: "enablement", category: "automation", subcategory: "enablement", label: "Agora / Automation / Enablement" }',
+            '{ scope: "backend_operation", action: "enablement", category: "backend_operation", subcategory: "enablement", label: "Agora / Backend Operation / Enablement" }',
             app_source,
         )
         self.assertIn(
-            '{ scope: "automation", action: "quota", category: "automation", subcategory: "quota", label: "Agora / Automation / Quota" }',
+            '{ scope: "backend_operation", action: "quota", category: "backend_operation", subcategory: "quota", label: "Agora / Backend Operation / Quota" }',
             app_source,
         )
         self.assertIn("scope|action", app_source)
@@ -511,7 +511,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("Conversation / Follow-up", app_source)
         self.assertIn("Agora / Account & Billing", app_source)
         self.assertIn("Human Review / Uncategorized", app_source)
-        self.assertIn("Human Review / Unregistered", app_source)
+        self.assertIn("Agora / Backend Operation / Unregistered", app_source)
         self.assertIn("Human Review / Uncertain", app_source)
         self.assertIn("scope_label", app_source)
         self.assertIn("execution_action", app_source)
@@ -577,7 +577,7 @@ class AccountUiContractTests(unittest.TestCase):
             json.loads(result.stdout),
             {
                 "matches": [True, False, True],
-                "displayStatuses": ["automation", "not_automated", "automation"],
+                "displayStatuses": ["automated", "not_automated", "automated"],
             },
         )
         self.assertEqual(app_source.count("const itemStatus = displayRouteStatus(item);"), 2)
