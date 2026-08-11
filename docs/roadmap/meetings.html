@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SupportPortal Meetings</title>
+  <style>
+    :root {
+      --canvas: #f2f0e9;
+      --surface: #fffefa;
+      --surface-soft: #f8f8f3;
+      --ink: #18221e;
+      --muted: #66706a;
+      --line: #d7d8d1;
+      --line-strong: #b9bdb5;
+      --forest: #173f35;
+      --forest-soft: #dce9e3;
+      --blue: #315f78;
+      --blue-soft: #dce9f0;
+      --orange: #c45f32;
+      --orange-soft: #f5e4dc;
+      --yellow-soft: #f2e9c8;
+      --green: #2e6b4f;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    a { color: inherit; }
+    button, input, select { font: inherit; }
+
+    .page {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 20px 0 72px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 44px;
+      margin-bottom: 16px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .topbar-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 18px;
+    }
+
+    .topbar a {
+      color: var(--forest);
+      text-decoration: none;
+    }
+
+    .topbar a:hover { text-decoration: underline; }
+
+    .header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.42fr);
+      gap: 28px;
+      padding: clamp(28px, 5vw, 58px);
+      border: 1px solid #102f28;
+      border-radius: var(--radius);
+      background: var(--forest);
+      color: #f8fbf9;
+    }
+
+    .kicker {
+      margin: 0 0 14px;
+      color: #add2c2;
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, h4 { letter-spacing: 0; }
+
+    h1 {
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(42px, 6vw, 72px);
+      line-height: 0.96;
+      font-weight: 780;
+    }
+
+    .header-copy {
+      max-width: 720px;
+      margin: 20px 0 0;
+      color: #d6e5df;
+      font-size: 17px;
+      line-height: 1.65;
+    }
+
+    .header-note {
+      align-self: end;
+      margin: 0;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.22);
+      color: #bdd3ca;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      align-self: end;
+      gap: 1px;
+      min-width: 0;
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .metric {
+      min-height: 116px;
+      padding: 18px;
+      background: #214b40;
+    }
+
+    .metric:nth-child(2) { background: #2c586a; }
+    .metric:nth-child(3) { background: #d56b3c; }
+
+    .metric strong {
+      display: block;
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 10px;
+      color: inherit;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .tools {
+      position: sticky;
+      top: 12px;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 190px auto;
+      gap: 10px;
+      margin: 22px 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(242, 240, 233, 0.94);
+      backdrop-filter: blur(12px);
+    }
+
+    .tools label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    .tools input, .tools select {
+      min-height: 42px;
+      width: 100%;
+      padding: 0 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    .tool-summary {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-height: 42px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .meeting-shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 28px;
+      align-items: start;
+    }
+
+    .meeting-index {
+      position: sticky;
+      top: 88px;
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .index-title {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .index-link {
+      display: grid;
+      gap: 4px;
+      padding: 12px 13px;
+      border-left: 3px solid var(--line-strong);
+      color: var(--muted);
+      text-decoration: none;
+      transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+    }
+
+    .index-link:hover, .index-link.active {
+      border-color: var(--orange);
+      background: var(--orange-soft);
+      color: var(--ink);
+    }
+
+    .index-date {
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .index-name {
+      font-size: 14px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .meeting-list {
+      display: grid;
+      gap: 56px;
+      min-width: 0;
+    }
+
+    .meeting-record {
+      scroll-margin-top: 92px;
+      padding-bottom: 42px;
+      border-bottom: 1px solid var(--line-strong);
+      min-width: 0;
+    }
+
+    .meeting-record:last-child { border-bottom: 0; }
+
+    .meeting-record-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .meeting-date {
+      margin: 0 0 8px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .meeting-record h2 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(28px, 4vw, 46px);
+      line-height: 1.04;
+      font-weight: 780;
+      overflow-wrap: anywhere;
+    }
+
+    .meeting-summary {
+      max-width: 800px;
+      margin: 16px 0 0;
+      color: #46524a;
+      font-size: 15px;
+      line-height: 1.68;
+    }
+
+    .meeting-people {
+      min-width: 180px;
+      padding: 12px 14px;
+      border-left: 3px solid var(--blue);
+      background: var(--blue-soft);
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .meeting-people strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--blue);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .record-section { margin-top: 28px; }
+
+    .record-section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .record-section h3 {
+      margin: 0;
+      font-size: 21px;
+      font-weight: 780;
+    }
+
+    .section-hint {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .topic-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .topic {
+      min-width: 0;
+      padding: 18px;
+      background: var(--surface);
+    }
+
+    .topic-label {
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .topic h4 {
+      margin: 7px 0 10px;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .topic ul {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .topic li {
+      position: relative;
+      padding-left: 17px;
+      color: #46524a;
+      font-size: 14px;
+      line-height: 1.58;
+    }
+
+    .topic li::before {
+      content: "";
+      position: absolute;
+      top: 0.72em;
+      left: 0;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--orange);
+      transform: translateY(-50%);
+    }
+
+    .work-items {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .work-items table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .work-items th, .work-items td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      line-height: 1.5;
+    }
+
+    .work-items th {
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .work-items tr:last-child td { border-bottom: 0; }
+    .work-owner { width: 132px; font-weight: 780; }
+    .work-status { width: 112px; }
+    .work-proof { color: var(--muted); }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 8px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .status.todo { border-color: #d7b29f; background: var(--orange-soft); color: #8a4229; }
+    .status.confirm { border-color: #dbc98e; background: var(--yellow-soft); color: #6d5725; }
+    .status.monitor { border-color: #a8c6b8; background: var(--forest-soft); color: var(--green); }
+
+    .empty {
+      display: none;
+      padding: 44px 0;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      margin-top: 50px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 860px) {
+      .header { grid-template-columns: 1fr; }
+      .header-note { align-self: auto; }
+      .meeting-shell { grid-template-columns: 1fr; }
+      .meeting-index { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .index-title { grid-column: 1 / -1; }
+      .tools { grid-template-columns: minmax(0, 1fr) 190px; }
+      .tool-summary { grid-column: 1 / -1; justify-content: flex-start; }
+    }
+
+    @media (max-width: 600px) {
+      .page { width: min(100% - 20px, 1240px); padding-top: 10px; }
+      .topbar { align-items: flex-start; }
+      .topbar-links { justify-content: flex-start; }
+      .header { padding: 28px 22px; }
+      h1 { font-size: 44px; }
+      .metrics { grid-template-columns: 1fr; }
+      .metric { min-height: auto; }
+      .tools { position: static; grid-template-columns: 1fr; }
+      .tool-summary { grid-column: auto; }
+      .meeting-index { grid-template-columns: 1fr; }
+      .index-title { grid-column: auto; }
+      .meeting-record-head { grid-template-columns: 1fr; }
+      .meeting-people { min-width: 0; }
+      .topic-grid { grid-template-columns: 1fr; }
+      .record-section-head { display: block; }
+      .section-hint { margin-top: 6px; }
+      .footer { display: block; }
+      .footer span + span { display: block; margin-top: 8px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <nav class="topbar" aria-label="Meeting navigation">
+      <a href="../roadmap.html">&larr; 返回整体 Roadmap</a>
+      <span class="topbar-links">
+        <strong>Meeting</strong>
+        <a href="../roadmap.html#lanes">查看主线进度 &rarr;</a>
+      </span>
+    </nav>
+
+    <header class="header">
+      <div>
+        <p class="kicker">SupportPortal / Meeting Archive</p>
+        <h1>会议记录</h1>
+        <p class="header-copy">集中记录项目会议中的重点 Topic、已确认事实和 Work Item。会议结论与当前代码、测试和部署证据分开维护；讨论中的计划会明确标记为待完成或待确认。</p>
+        <p class="header-note">当前记录按日期倒序排列。新增会议时沿用同一结构，确保负责人、验收条件和未决风险都可追踪。</p>
+      </div>
+      <div class="metrics" id="metrics" aria-label="Meeting summary"></div>
+    </header>
+
+    <section class="tools" aria-label="Meeting filters">
+      <label for="meetingSearch">搜索会议、Topic 或 Work Item</label>
+      <input id="meetingSearch" type="search" placeholder="搜索会议、Topic 或 Work Item">
+      <label for="statusFilter">Work Item 状态</label>
+      <select id="statusFilter">
+        <option value="all">全部状态</option>
+        <option value="todo">待完成</option>
+        <option value="confirm">待确认</option>
+        <option value="monitor">持续复盘</option>
+      </select>
+      <div class="tool-summary" id="resultSummary" aria-live="polite"></div>
+    </section>
+
+    <div class="meeting-shell">
+      <aside class="meeting-index" id="meetingIndex" aria-label="Meeting index"></aside>
+      <section class="meeting-list" id="meetingList" aria-label="Meeting records"></section>
+    </div>
+    <p class="empty" id="emptyState">没有匹配的会议或 Work Item。</p>
+
+    <footer class="footer">
+      <span>文件：docs/roadmap/meetings.html</span>
+      <span>本页面是会议档案，不替代代码、测试、changelog 或 feature_list 的正式状态。</span>
+    </footer>
+  </main>
+
+  <script>
+    const MEETINGS = [
+      {
+        id: "ticketing-system-2026-08-10",
+        date: "2026-08-10",
+        dateLabel: "2026-08-10",
+        title: "Ticketing System 第一阶段对齐会",
+        peopleLabel: "相关负责人",
+        people: ["zac", "jojo", "suhird", "bdr", "emma", "derek"],
+        summary: "第一阶段目标是直接减少进入人工队列的 Zendesk 工单量，而不是让所有 Support 工程师使用 AI 辅助处理。当前系统已部署在 AWS VM，Zendesk 工单通过自部署 n8n 导入，AI 回复仍保存在内部系统中，尚未真实写回 Zendesk 或发送给客户。",
+        topics: [
+          {
+            label: "Scope",
+            title: "第一阶段目标与当前状态",
+            points: [
+              "8 月 1 日以来约分析 129 个 Case，其中 24 个可自动化，约占 18%；路由调整后预计约 20%。",
+              "当前可自动化 Case 中超过 90% 为 Media Relay Enablement；系统已有分类、处理记录和 Admin Dashboard。",
+              "团队倾向先进行可随时停止的短期生产试运行，再根据逐单复盘决定是否扩大范围。"
+            ]
+          },
+          {
+            label: "Routing",
+            title: "分类、负责人和人工边界",
+            points: [
+              "Enablement 由 AI 告知客户处理中，并通知指定人员手动开通；收到 Done 或 Enabled 后再生成客户回复。",
+              "Fraud 负责信息收集，Account Suspension 统一交由负责人人工判断，Billing / Detailed Invoice 路由给 jojo。",
+              "Compliance / Security、法务、敏感投诉交给 emma / derek；Technical Troubleshooting、Quota / PCW 和不确定类型继续人工处理。"
+            ]
+          },
+          {
+            label: "Safety",
+            title: "重点客户、发送身份与故障降级",
+            points: [
+              "Support Package、大客户和指定 CID 应尽量绕过 AI，n8n 过滤需要结合 Tag、CID、Requester Email 等条件。",
+              "不能继续使用个人账号发送 AI 回复，应确认通用 Support 或 AI 专用账号的名称、邮箱展示和 API 权限。",
+              "AI 或自动化链路异常时必须告警，Zendesk 工单始终保留人工接管路径。"
+            ]
+          },
+          {
+            label: "Go-live",
+            title: "写回 Zendesk 与受控试运行",
+            points: [
+              "会议讨论了本周五或下周一开始真实写回 Zendesk，倾向争取下周一，最终日期需要复核后确认。",
+              "上线前必须完成真实写回、生产 AI API 账号和数据留存确认，以及混合意图、错误分类、客户追问和人工接管测试。",
+              "上线后先运行两天，由 zac、emma 和相关负责人每天复盘前一天 AI 处理的全部 Case。"
+            ]
+          },
+          {
+            label: "Work model",
+            title: "内部交接与长期任务机制",
+            points: [
+              "短期可以使用邮件完成 Enablement 等内部通知，但需要补充明确 Owner、SLA、提醒和升级机制。",
+              "长期考虑类似 Label Market 的任务机制，承接 Enablement、bdr 和其他内部交接。",
+              "9 月 Zendesk License 缩减方案尚未最终确定，Manager License 暂时保留。"
+            ]
+          }
+        ],
+        workItems: [
+          { owner: "zac", action: "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。", status: "todo", proof: "逐类完成 route、内部通知、客户回复和关单链路验证。" },
+          { owner: "zac", action: "新增并完善 Compliance / Security 分类。", status: "todo", proof: "敏感 Case 不生成客户回复并能稳定进入 emma / derek 人工接管。" },
+          { owner: "zac", action: "完成 AI 回复真实写回 Zendesk 的生产链路。", status: "todo", proof: "真实 Zendesk Ticket 中可看到正确发送身份、客户回复和审计记录。" },
+          { owner: "zac", action: "确认生产 AI API 账号、数据留存和客户数据安全要求。", status: "confirm", proof: "确认账号类型、客户内容 / CID 的留存和训练策略，并记录结果。" },
+          { owner: "zac", action: "增加 AI 故障告警和人工接管机制。", status: "todo", proof: "模拟 AI 或 n8n 故障时产生告警，Zendesk Case 仍可人工处理。" },
+          { owner: "zac", action: "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。", status: "confirm", proof: "完成发送身份的端到端测试，不使用个人账号。" },
+          { owner: "zac", action: "在 Admin Dashboard 中增加 Zendesk Ticket 直达链接，并补齐重点客户过滤。", status: "todo", proof: "Dashboard 可直达 Ticket；Tag、CID、Requester Email 过滤路径可验证。" },
+          { owner: "jojo", action: "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。", status: "todo", proof: "Billing 路由、内部通知、客户回复和关单结果与预期一致。" },
+          { owner: "suhird / bdr", action: "承接 Account Suspension 和 Fraud 类工单，确认人工判断边界。", status: "todo", proof: "覆盖 Fraud、余额、套餐限制等停用原因，并能转 Support 介入。" },
+          { owner: "emma / derek", action: "人工接管 Compliance、Security、法务及其他敏感工单。", status: "todo", proof: "客户侧不泄露内部信息，Case 保持统一人工口径。" },
+          { owner: "zac / emma / derek", action: "受控试运行期间每天复盘前一天 AI 处理的全部 Case。", status: "monitor", proof: "连续两天记录分类、回复、内部转交、关单和异常结果。" }
+        ]
+      },
+      {
+        id: "agent-system-2026-06-18",
+        date: "2026-06-18",
+        dateLabel: "2026-06-18",
+        title: "AI Agent 工单系统落地对齐会",
+        peopleLabel: "参会人",
+        people: ["derek", "zac", "alex", "emma"],
+        summary: "会议确定以 agent 工单系统为长期方向，先用可追踪、可审计的保守 workflow 提升效率和回复质量，再逐步扩大 AI 调查与 AgentRelay 协作边界。",
+        topics: [
+          {
+            label: "Positioning",
+            title: "项目定位与阶段节奏",
+            points: [
+              "目标是建设基于 agent 的工单系统，不立即用 AI support engineer 全量替代真人。",
+              "Phase 1 先提升效率、可追踪性、可观测性和可解释性；Phase 2 扩大 AI 主动处理和人工 approve；Phase 3 再进入 governed agent-to-agent 自主调查。",
+              "AgentRelay communication foundation 已进入地基，但不能表述为自主调查已经完成。"
+            ]
+          },
+          {
+            label: "Customer Reply",
+            title: "客户可见回复体验",
+            points: [
+              "回复不能像 AI 秒回，最快不能超过 5 分钟，需要自然开场、签名和必要的 Support Package 引导。",
+              "Customer-facing 和 internal-facing 必须隔离，内部日志、代码、客户名、App ID 和 Certificate 不能原样暴露。",
+              "AI 可以润色英文和格式，但对外输出必须经过敏感信息与表达边界控制。"
+            ]
+          },
+          {
+            label: "Workflow",
+            title: "工单界面与 Zendesk 迁移",
+            points: [
+              "保留工单界面和 Admin Dashboard，审计需要系统化抽样查看 Case、SLA、通过率和操作历史。",
+              "Phase 1 只接 Zendesk 转发和内部中转，不迁移客户入口；客户仍先进 Zendesk。",
+              "Not automated Case 先按每第 10 单创建 Engineer Case，验证后在 9 月 1 日前切到 100%。"
+            ]
+          },
+          {
+            label: "Review",
+            title: "AI review 人与人 review AI",
+            points: [
+              "Phase 1 可用 AI review 人做 Guardrail；AI 只检查 conclusion / proof / next step 是否齐全，不负责判断真实根因。",
+              "Phase 2 转向人 review AI：AI 调查并生成 draft，人 approve、revise 或 override。",
+              "两种方案是节奏差异，不是方向冲突：先保守上 Guardrail，再逐步增加 AI 调查和起草责任。"
+            ]
+          },
+          {
+            label: "Case Types",
+            title: "三类 Case 边界",
+            points: [
+              "fully_automated：稳定的 invoice、文档链接和标准字段收集等 Case。",
+              "ai_draft_human_approve：AI 调查并生成答复，人负责正确性、敏感信息、客户表达和责任签字。",
+              "unable_to_resolve_handoff：无法给出可验证结论时停止猜测，转真人、CSD 或 SME task。"
+            ]
+          },
+          {
+            label: "Billing POC",
+            title: "Billing 与 route 近期 POC",
+            points: [
+              "优先验证 invoice / account suspension / company verification 等 Billing 小类的 route、字段收集、内部请求和客户回执闭环。",
+              "agent 发邮件或内部请求后，要通过邮件回执/邮箱轮询继续流程，未收到回复时提供 SLA 提醒和 fallback。",
+              "Dashboard 需要展示 route_accuracy、automation_coverage、not_automated_reason、response_latency 和 approve / reject rate。"
+            ]
+          },
+          {
+            label: "Next",
+            title: "下一步计划",
+            points: [
+              "收口 Billing route 验证、邮件回执和 Dashboard 三件事，先跑真实 Zendesk Case。",
+              "保留 Engineer reply 通过 / 拒绝 demo，作为 POC 卡片事项。",
+              "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。"
+            ]
+          },
+          {
+            label: "Compliance",
+            title: "合规、审计与权限",
+            points: [
+              "第三方聊天工具不作为审计 source of truth，权限、记录归档和客户数据治理必须留在工单系统。",
+              "系统必须能解释敏感信息误发时如何防泄露、谁能看、AI 如何使用和历史如何留存。",
+              "配置权限也需要 Guardrail，超过安全阈值要进入审批。"
+            ]
+          },
+          {
+            label: "AgentRelay",
+            title: "通信基础与长期边界",
+            points: [
+              "AgentRelay 已具备 A2A-shaped task relay、MCP tools、token auth、thread reuse、completion ownership 和 audit events。",
+              "后续可由 Support Agent 创建 task，Billing / Log / R&D / Data Agent 返回 artifact，再回到原始 Case thread。",
+              "真正接入前仍需真实 evidence tools、权限审计、成本门禁和 replay / metrics gate。"
+            ]
+          }
+        ],
+        workItems: [
+          { owner: "zac / 团队", action: "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。", status: "todo", proof: "用真实 Zendesk Case 验证 route、内部请求、回执、关单和指标。" },
+          { owner: "项目团队", action: "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。", status: "confirm", proof: "为三类 Case 建立统一处理和升级契约。" },
+          { owner: "项目团队", action: "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。", status: "todo", proof: "抽样检查客户回复、内部日志、权限和历史留存。" },
+          { owner: "项目团队", action: "验证邮件回执轮询、SLA 提醒和未回复 fallback。", status: "todo", proof: "覆盖已回复、超时和内部任务无法完成三条路径。" },
+          { owner: "项目团队", action: "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。", status: "todo", proof: "比较边界覆盖、效果、token 成本、权限和可审计性。" },
+          { owner: "项目团队", action: "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。", status: "monitor", proof: "Roadmap 和 Meeting 页面均不把通信基础误写成自主闭环。" }
+        ]
+      }
+    ];
+
+    const STATUS_LABELS = {
+      todo: "待完成",
+      confirm: "待确认",
+      monitor: "持续复盘"
+    };
+    const state = { query: "", status: "all" };
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        '"': "&quot;"
+      }[char]));
+    }
+
+    function meetingSearchText(meeting) {
+      return [
+        meeting.date,
+        meeting.title,
+        meeting.summary,
+        ...(meeting.people || []),
+        ...(meeting.topics || []).flatMap((topic) => [topic.label, topic.title, ...(topic.points || [])]),
+        ...(meeting.workItems || []).flatMap((item) => [item.owner, item.action, item.proof, STATUS_LABELS[item.status]])
+      ].join(" ").toLowerCase();
+    }
+
+    function visibleMeetings() {
+      return MEETINGS.filter((meeting) => {
+        const matchesQuery = !state.query || meetingSearchText(meeting).includes(state.query);
+        const matchesStatus = state.status === "all" || meeting.workItems.some((item) => item.status === state.status);
+        return matchesQuery && matchesStatus;
+      });
+    }
+
+    function visibleWorkItems(meeting) {
+      return meeting.workItems.filter((item) => state.status === "all" || item.status === state.status);
+    }
+
+    function renderMetrics() {
+      const workItemCount = MEETINGS.reduce((sum, meeting) => sum + meeting.workItems.length, 0);
+      const openCount = MEETINGS.reduce((sum, meeting) => sum + meeting.workItems.filter((item) => item.status !== "monitor").length, 0);
+      const metrics = [
+        { value: MEETINGS.length, label: "已记录会议" },
+        { value: workItemCount, label: "Work Items" },
+        { value: openCount, label: "待完成 / 待确认" }
+      ];
+      document.getElementById("metrics").innerHTML = metrics.map((metric) => `
+        <div class="metric"><strong>${escapeHtml(metric.value)}</strong><span>${escapeHtml(metric.label)}</span></div>
+      `).join("");
+    }
+
+    function renderIndex(meetings) {
+      const index = document.getElementById("meetingIndex");
+      index.innerHTML = `<p class="index-title">按日期浏览</p>${meetings.map((meeting) => `
+        <a class="index-link" href="#${escapeHtml(meeting.id)}" data-index-link="${escapeHtml(meeting.id)}">
+          <span class="index-date">${escapeHtml(meeting.dateLabel)}</span>
+          <span class="index-name">${escapeHtml(meeting.title)}</span>
+        </a>
+      `).join("")}`;
+    }
+
+    function renderTopics(topics) {
+      return topics.map((topic) => `
+        <article class="topic">
+          <span class="topic-label">${escapeHtml(topic.label)}</span>
+          <h4>${escapeHtml(topic.title)}</h4>
+          <ul>${topic.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ul>
+        </article>
+      `).join("");
+    }
+
+    function renderWorkItems(items) {
+      return `
+        <div class="work-items">
+          <table>
+            <thead><tr><th scope="col">Owner</th><th scope="col">Work Item</th><th scope="col">状态</th><th scope="col">验收 / 证据</th></tr></thead>
+            <tbody>${items.map((item) => `
+              <tr>
+                <td class="work-owner">${escapeHtml(item.owner)}</td>
+                <td>${escapeHtml(item.action)}</td>
+                <td class="work-status"><span class="status ${escapeHtml(item.status)}">${escapeHtml(STATUS_LABELS[item.status])}</span></td>
+                <td class="work-proof">${escapeHtml(item.proof)}</td>
+              </tr>
+            `).join("")}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderMeetings(meetings) {
+      const list = document.getElementById("meetingList");
+      list.innerHTML = meetings.map((meeting) => {
+        const workItems = visibleWorkItems(meeting);
+        return `
+          <article class="meeting-record" id="${escapeHtml(meeting.id)}">
+            <header class="meeting-record-head">
+              <div>
+                <p class="meeting-date">${escapeHtml(meeting.dateLabel)}</p>
+                <h2>${escapeHtml(meeting.title)}</h2>
+                <p class="meeting-summary">${escapeHtml(meeting.summary)}</p>
+              </div>
+              <div class="meeting-people"><strong>${escapeHtml(meeting.peopleLabel)}</strong>${escapeHtml(meeting.people.join("、"))}</div>
+            </header>
+            <section class="record-section" aria-labelledby="topics-${escapeHtml(meeting.id)}">
+              <div class="record-section-head">
+                <h3 id="topics-${escapeHtml(meeting.id)}">重点 Topics</h3>
+                <p class="section-hint">保留会议结论、边界和未决方向</p>
+              </div>
+              <div class="topic-grid">${renderTopics(meeting.topics)}</div>
+            </section>
+            <section class="record-section" aria-labelledby="work-${escapeHtml(meeting.id)}">
+              <div class="record-section-head">
+                <h3 id="work-${escapeHtml(meeting.id)}">Work Items</h3>
+                <p class="section-hint">${workItems.length} 项符合当前筛选</p>
+              </div>
+              ${workItems.length ? renderWorkItems(workItems) : `<p class="empty" style="display:block">当前会议没有符合筛选条件的 Work Item。</p>`}
+            </section>
+          </article>
+        `;
+      }).join("");
+      document.getElementById("emptyState").style.display = meetings.length ? "none" : "block";
+    }
+
+    function render() {
+      const meetings = visibleMeetings();
+      renderMetrics();
+      renderIndex(meetings);
+      renderMeetings(meetings);
+      document.getElementById("resultSummary").textContent = `显示 ${meetings.length} / ${MEETINGS.length} 场会议`;
+    }
+
+    document.addEventListener("input", (event) => {
+      if (event.target.id !== "meetingSearch") return;
+      state.query = event.target.value.trim().toLowerCase();
+      render();
+      document.getElementById("meetingSearch").value = state.query;
+    });
+
+    document.addEventListener("change", (event) => {
+      if (event.target.id !== "statusFilter") return;
+      state.status = event.target.value;
+      render();
+      document.getElementById("statusFilter").value = state.status;
+    });
+
+    document.addEventListener("click", (event) => {
+      const link = event.target.closest("[data-index-link]");
+      if (!link) return;
+      document.querySelectorAll("[data-index-link]").forEach((item) => item.classList.remove("active"));
+      link.classList.add("active");
+    });
+
+    render();
+  </script>
+</body>
+</html>

@@ -10,6 +10,7 @@ os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 
 ROADMAP_PATH = Path("docs/roadmap.html")
+MEETINGS_PATH = Path("docs/roadmap/meetings.html")
 PHASE1_PATH = Path("docs/roadmap/phase1.html")
 PHASE2_PATH = Path("docs/roadmap/phase2.html")
 PHASE3_PATH = Path("docs/roadmap/phase3.html")
@@ -454,6 +455,7 @@ class RoadmapContractTests(unittest.TestCase):
         try:
             checks = [
                 ("/roadmap.html", "整体落地优化计划"),
+                ("/roadmap/meetings.html", "SupportPortal Meetings"),
                 ("/roadmap/phase1.html", "SupportPortal Phase 1"),
                 ("/roadmap/phase2.html", "Phase 2 Delivery Record"),
                 ("/roadmap/phase3.html", "Phase 3 Plan"),
@@ -477,6 +479,23 @@ class RoadmapContractTests(unittest.TestCase):
                         self.assertTrue(response.content.startswith(b"\xff\xd8\xff"))
                     else:
                         self.assertIn(marker, response.text)
+        finally:
+            client.close()
+
+    def test_meetings_page_static_route_serves_new_archive(self) -> None:
+        from fastapi.testclient import TestClient
+
+        import backend.main as main
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        main.ticket_repository = InMemoryTicketRepository()
+        main.ticket_repository.initialize()
+        client = TestClient(main.app)
+        try:
+            response = client.get("/roadmap/meetings.html")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("SupportPortal Meetings", response.text)
+            self.assertIn("ticketing-system-2026-08-10", response.text)
         finally:
             client.close()
 
@@ -527,30 +546,38 @@ class RoadmapContractTests(unittest.TestCase):
         self.assertNotIn("来源：docs + tests", html_source)
         self.assertNotIn("四条优化主线，一张可追踪进度板", html_source)
 
-    def test_meeting_minutes_are_a_filterable_lane(self) -> None:
-        html_source = ROADMAP_PATH.read_text(encoding="utf-8")
+    def test_meetings_page_contains_migrated_and_new_records(self) -> None:
+        roadmap_source = ROADMAP_PATH.read_text(encoding="utf-8")
+        meetings_source = MEETINGS_PATH.read_text(encoding="utf-8")
         required_terms = [
-            'id: "meeting-minutes"',
-            'short: "Meeting"',
-            "AI Agent 工单系统落地对齐会",
+            "SupportPortal Meetings",
+            "const MEETINGS",
+            "ticketing-system-2026-08-10",
+            "agent-system-2026-06-18",
+            "2026-08-10",
             "2026-06-18",
-            "derek, zac, alex, emma",
-            "会议纪要卡片",
-            "meeting_minutes",
-            "meeting-minutes-grid",
-            "meeting-minutes-card",
+            "重点 Topics",
+            "Work Items",
+            "Ticketing System 第一阶段对齐会",
+            "AI Agent 工单系统落地对齐会",
+            '"zac", "jojo", "suhird", "bdr", "emma", "derek"',
+            '"derek", "zac", "alex", "emma"',
+            "AI 回复仍保存在内部系统中",
+            "尚未真实写回 Zendesk",
+            "Support Package、大客户和指定 CID",
+            "route_accuracy",
+            "fully_automated",
+            "ai_draft_human_approve",
+            "unable_to_resolve_handoff",
             "AI review 人",
             "人 review AI",
             "第三方聊天工具不作为审计 source of truth",
             "billing route 验证",
-            "renderMeetingMinutes",
-            "renderMeetingLane",
             "下一步计划",
-            'title: "下一步计划"',
             "最快不能超过 5 分钟",
             "AI 只检查 conclusion / proof / next step",
             "invoice / account suspension / company verification",
-            "Zendesk webhook / N8n",
+            "Zendesk 转发和内部中转",
             "每第 10 单创建 Engineer Case",
             "AgentRelay communication foundation",
             "governed agent-to-agent 自主调查",
@@ -558,31 +585,25 @@ class RoadmapContractTests(unittest.TestCase):
         ]
         for term in required_terms:
             with self.subTest(term=term):
-                self.assertIn(term, html_source)
+                self.assertIn(term, meetings_source)
 
-        self.assertNotIn('class="meeting-section"', html_source)
-        self.assertNotIn("const MEETING_TRACKS", html_source)
-        self.assertLess(html_source.index('id: "meeting-minutes"'), html_source.index('id: "engineer-multi-agent"'))
-        meeting_lane_source = html_source[
-            html_source.index('id: "meeting-minutes"') : html_source.index('id: "engineer-multi-agent"')
-        ]
+        self.assertIn('href="./roadmap/meetings.html"', roadmap_source)
+        self.assertNotIn('id: "meeting-minutes"', roadmap_source)
         for removed_term in [
-            "done: [",
-            "review: [",
-            "sources: [",
-            "next: [",
-            "lane.next.map(renderTask)",
-            "task-board",
-            "已完成进展",
-            "未完成计划",
-            "证据来源",
-            "Review 结论",
+            "meeting_minutes",
+            "renderMeetingMinutes",
+            "renderMeetingLane",
+            "meeting-minutes-grid",
+            "meeting-minutes-card",
+            "meeting-lane-body",
         ]:
             with self.subTest(removed_term=removed_term):
-                self.assertNotIn(removed_term, meeting_lane_source)
+                self.assertNotIn(removed_term, roadmap_source)
 
     def test_billing_and_route_plans_reflect_meeting_next_steps(self) -> None:
         html_source = ROADMAP_PATH.read_text(encoding="utf-8")
+        meetings_source = MEETINGS_PATH.read_text(encoding="utf-8")
+        combined_source = html_source + meetings_source
         required_terms = [
             "Phase 1 只接 Zendesk 转发/内部中转，不迁移客户入口",
             "Not automated case",
@@ -602,7 +623,7 @@ class RoadmapContractTests(unittest.TestCase):
         ]
         for term in required_terms:
             with self.subTest(term=term):
-                self.assertIn(term, html_source)
+                self.assertIn(term, combined_source)
 
     def test_account_roadmap_uses_v7_domain_ownership_and_persona_rerun_contract(self) -> None:
         roadmap_source = ROADMAP_PATH.read_text(encoding="utf-8")
