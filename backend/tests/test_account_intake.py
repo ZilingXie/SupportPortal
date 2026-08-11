@@ -1698,7 +1698,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v7")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v8")
         self.assertEqual(executions[0]["classification"]["intent_class"], "agora")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn(
@@ -4012,7 +4012,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "Backend Operation",
                 "Account & Billing",
                 "Tech",
-                "Non-tech",
+                "Security & Compliance",
                 "Conversation",
                 "Human Review",
             ],

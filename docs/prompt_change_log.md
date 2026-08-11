@@ -3459,3 +3459,23 @@ For each new entry, record:
   - Unsent v1 HTML payloads are rebuilt as v2 while delivery keys and attempt metadata remain unchanged; sent payloads are never rewritten or resent.
 - Verification:
   - Theme contract, HTML escaping, Graph content type, four-family payload upgrade, and sent-payload preservation tests pass.
+
+## 2026-08-11 - Account Security & Compliance taxonomy
+
+- Area or subsystem: `/account` Agora Router, Account filters, and Admin Agent Config
+- Prompt or model version: `account-layered-router-v8`, `account-agora-v7`
+- Summary: Replaced the Account-only Non-technical Agora route with a Security & Compliance classification-only outcome. Security, privacy, trust, audit, data-protection, and compliance evidence requests now receive the `security_compliance` label and remain in Human Review; public company/product questions and legacy Non-technical outputs fail closed to Uncategorized.
+- Reason: Non-technical mixed public-information requests did not represent a stable Account support workflow, while security and compliance requests need a distinct operational label without Web or Automation execution.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/account_case_filters.py`
+  - `backend/services/route_correction.py`
+  - Account UI and Admin Agent Config contracts
+- Expected behavior change:
+  - SOC 2, ISO, DPA, GDPR, Trust Center, security questionnaire, data residency, retention, and similar requests route to `Agora / Security & Compliance` with `route_status=not_automated` and no handler.
+  - Token, encryption, authentication, SDK permission, and security implementation troubleshooting remains `Agora Technical`.
+  - Historical `agora_non_technical` reads remain compatible, but new layered runs and corrections normalize that removed route to `Agora / Uncategorized`.
+  - Security & Compliance cases appear in both the Security & Compliance and Human Review filters.
+- Verification:
+  - Account route, filter/API, route correction, UI/Admin contract, compile, JavaScript syntax, and feature-list checks.

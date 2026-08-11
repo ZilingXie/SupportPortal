@@ -4008,7 +4008,11 @@ def _build_account_ticket_view_model(
         AUTOMATED_ROUTE_FAMILY,
         "billing_automation",
     }
-    if route_classification.get("agora_route") in {"account_billing", "backend_operation"}:
+    if route_classification.get("agora_route") in {
+        "account_billing",
+        "backend_operation",
+        "security_compliance",
+    }:
         category = metadata["category"]
         subcategory = metadata["subcategory"]
         route_status = metadata["route_status"]
@@ -4063,7 +4067,9 @@ def _build_account_ticket_view_model(
         "execution_action": normalized_execution_action,
         "automation_handler": automation_handler,
         "automation_mode": route_classification.get("automation_mode") or (
-            "classification_only" if subcategory == "account_suspension" else "active"
+            "classification_only"
+            if subcategory == "account_suspension" or category == "security_compliance"
+            else "active"
             if route_status == "automated" else None
         ),
         "primary_label": primary_label,
@@ -5043,11 +5049,11 @@ def list_billing_tickets(
     route_errors: bool = False,
     route_label: str | None = Query(
         default=None,
-        pattern="^(human_review|conversation|agora_technical|agora_non_technical|account_billing|uncertain|automation|all)$",
+        pattern="^(human_review|conversation|agora_technical|security_compliance|agora_non_technical|account_billing|uncertain|automation|all)$",
     ),
     route_group: str | None = Query(
         default=None,
-        pattern="^(all|automation|account_billing|agora_technical|agora_non_technical|conversation|human_review)$",
+        pattern="^(all|automation|backend_operation|account_billing|agora_technical|security_compliance|agora_non_technical|conversation|human_review)$",
     ),
     route_subcategory: str | None = Query(
         default=None,
@@ -6411,11 +6417,20 @@ async def correct_billing_ticket_route(
     scope_label = request.scope_label
     execution_action = request.execution_action
     if category:
-        if category not in {"automation", "backend_operation", "account_billing", "human_review"}:
+        if category not in {
+            "automation",
+            "backend_operation",
+            "account_billing",
+            "security_compliance",
+            "human_review",
+        }:
             raise HTTPException(status_code=400, detail=f"invalid category: {request.category!r}")
         execution_action = request.subcategory
         normalized_action = str(execution_action or "").strip().lower()
-        if category == "account_billing":
+        if category == "security_compliance":
+            scope_label = "security_compliance"
+            execution_action = "human_review_required"
+        elif category == "account_billing":
             if normalized_action == "account_suspension":
                 scope_label = "account_suspension"
                 execution_action = "human_review_required"

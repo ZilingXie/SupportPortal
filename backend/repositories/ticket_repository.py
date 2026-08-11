@@ -400,6 +400,7 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                         CASE COALESCE({alias}.route_classification ->> 'agora_route', 'uncategorized')
                             WHEN 'technical' THEN 'agora_technical'
                             WHEN 'non_technical' THEN 'agora_non_technical'
+                            WHEN 'security_compliance' THEN 'security_compliance'
                             WHEN 'account_billing' THEN
                                 'account_billing:' || CASE
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_suspension'
@@ -435,6 +436,8 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 THEN 'agora_technical'
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'non_technical'
                                 THEN 'agora_non_technical'
+                            WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'security_compliance'
+                                THEN 'security_compliance'
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'account_billing'
                                 THEN 'account_billing:' || CASE
                                     WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_suspension'
@@ -479,6 +482,7 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
             WHEN {alias}.scope_label IN ('small_talk', 'conversation') THEN 'conversation:follow_up'
             WHEN {alias}.scope_label = 'agora_technical' THEN 'agora_technical'
             WHEN {alias}.scope_label = 'agora_non_technical' THEN 'agora_non_technical'
+            WHEN {alias}.scope_label IN ('security_compliance', 'agora_security_compliance') THEN 'security_compliance'
             WHEN {alias}.scope_label IN ('account_billing', 'billing') THEN
                 'account_billing:' || CASE
                     WHEN {alias}.subcategory IN ('account_suspension', 'fraud_account', 'detailed_invoice') THEN {alias}.subcategory
@@ -521,6 +525,7 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
             CASE WHEN {primary} IN ('backend_operation:unregistered', 'account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
                 OR split_part({primary}, ':', 1) = 'human_review'
                 THEN 'human_review' END
+            ,CASE WHEN {primary} = 'security_compliance' THEN 'human_review' END
         ]::TEXT[], NULL::TEXT)
         """
         ).format(primary=primary, alias=sql.Identifier(alias))

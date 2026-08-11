@@ -26,7 +26,7 @@ from backend.services.automation_routing import automation_metadata
 ROUTER_PROMPT_VERSION = ACCOUNT_ROUTE_PIPELINE_VERSION
 ROUTING_STAGE_DESCRIPTIONS = {
     "intent_classifier": "Classifies Account messages as Conversation, Agora, or Uncertain.",
-    "agora_router": "Classifies Agora cases as Technical, Non-technical, Account & Billing, Automation, or Uncategorized.",
+    "agora_router": "Classifies Agora cases as Technical, Security & Compliance, Account & Billing, Backend Operation, or Uncategorized.",
     "account_billing_router": "Classifies Account & Billing cases as Account Suspension, Fraud Account, Detailed Invoice, or Other.",
     "backend_operation_router": "Classifies explicit backend operations as Enablement, Quota, or Unregistered.",
     "automation_router": "Compatibility alias for legacy Automation payloads; new Account routes use the backend-operation taxonomy.",
@@ -383,9 +383,17 @@ def account_automation_payload(
             raw_category = "backend_operation"
         elif secondary_label.startswith("Automation /"):
             raw_category = "automation"
+        elif secondary_label == "Security & Compliance" or raw_category == "security_compliance":
+            raw_category = "security_compliance"
         elif primary_label == "Human Review":
             raw_category = "human_review"
-        elif raw_category not in {"automation", "backend_operation", "account_billing", "human_review"}:
+        elif raw_category not in {
+            "automation",
+            "backend_operation",
+            "account_billing",
+            "security_compliance",
+            "human_review",
+        }:
             raw_category = "human_review"
         raw_subcategory = str(record.get("subcategory") or "").strip().lower()
         if not raw_subcategory and " / " in secondary_label:
@@ -404,6 +412,7 @@ def account_automation_payload(
                     "automation": "Automation",
                     "backend_operation": "Backend Operation",
                     "account_billing": "Account & Billing",
+                    "security_compliance": "Security & Compliance",
                     "human_review": "Human Review",
                 }.get(raw_category, raw_category.replace("_", " ").title() or "-"),
                 "subcategory_label": raw_subcategory.replace("_", " ").title() or "-",
@@ -563,8 +572,8 @@ def routing_config_payload() -> dict[str, Any]:
         {
             "name": "agora",
             "display_name": "Agora Router",
-            "description": "Agora cases are classified as Technical, Non-technical, Account & Billing, Backend Operation, or Uncategorized.",
-            "execution_actions": ["technical", "non_technical", "account_billing", "backend_operation", "uncategorized"],
+            "description": "Agora cases are classified as Technical, Security & Compliance, Account & Billing, Backend Operation, or Uncategorized.",
+            "execution_actions": ["technical", "security_compliance", "account_billing", "backend_operation", "uncategorized"],
             "subcategories": [],
         },
         {

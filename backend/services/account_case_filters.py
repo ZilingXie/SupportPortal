@@ -34,7 +34,7 @@ ACCOUNT_CASE_FILTER_GROUPS: tuple[dict[str, Any], ...] = (
         ),
     },
     {"id": "agora_technical", "label": "Tech", "children": ()},
-    {"id": "agora_non_technical", "label": "Non-tech", "children": ()},
+    {"id": "security_compliance", "label": "Security & Compliance", "children": ()},
     {
         "id": "conversation",
         "label": "Conversation",
@@ -70,6 +70,7 @@ _LEGACY_ROUTE_FILTERS = {
     "account_billing": "account_billing",
     "uncertain": "human_review:uncertain",
 }
+_DEPRECATED_GROUP_FILTERS = {"agora_non_technical"}
 _BACKEND_OPERATION_SUBCATEGORIES = {"enablement", "quota", "unregistered"}
 _AUTOMATION_SUBCATEGORIES = {"enablement", "quota"}
 _ACCOUNT_BILLING_SUBCATEGORIES = {
@@ -123,6 +124,10 @@ def normalize_account_case_filter(
             if normalized_subcategory:
                 raise ValueError("All does not accept a route_subcategory")
             return None
+        if normalized_group in _DEPRECATED_GROUP_FILTERS:
+            if normalized_subcategory:
+                raise ValueError("deprecated route_group does not accept a route_subcategory")
+            return normalized_group
         if normalized_group not in _GROUPS_BY_ID:
             raise ValueError("unsupported route_group")
         children = _CHILDREN_BY_GROUP[normalized_group]
@@ -157,6 +162,16 @@ def backend_operation_metadata(subcategory: Any) -> dict[str, str | None]:
         "subcategory": normalized,
         "route_status": "automated" if automated else "not_automated",
         "automation_handler": normalized if automated else None,
+    }
+
+
+def security_compliance_metadata() -> dict[str, str | None]:
+    """Return the classification-only metadata for Security & Compliance."""
+    return {
+        "category": "security_compliance",
+        "subcategory": None,
+        "route_status": "not_automated",
+        "automation_handler": None,
     }
 
 
@@ -207,6 +222,8 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
                 return "agora_technical"
             if agora_route == "non_technical":
                 return "agora_non_technical"
+            if agora_route == "security_compliance":
+                return "security_compliance"
             if agora_route == "account_billing":
                 return f"account_billing:{_account_billing_leaf(item, classification)}"
             if agora_route == "backend_operation":
@@ -235,6 +252,8 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
                 return "agora_technical"
             if agora_route == "non_technical":
                 return "agora_non_technical"
+            if agora_route == "security_compliance":
+                return "security_compliance"
             if agora_route == "account_billing":
                 return f"account_billing:{_account_billing_leaf(item, classification)}"
             if agora_route == "backend_operation":
@@ -271,6 +290,8 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
         return "agora_technical"
     if scope == "agora_non_technical":
         return "agora_non_technical"
+    if scope in {"security_compliance", "agora_security_compliance"}:
+        return "security_compliance"
     if scope in {"account_billing", "billing"}:
         return f"account_billing:{_account_billing_leaf(item)}"
     if scope in {"automation", "backend_operation", "enablement", "quota"}:
@@ -311,6 +332,8 @@ def account_case_filter_memberships(item: dict[str, Any]) -> frozenset[str]:
         memberships.add(f"automation:{primary.split(':', 1)[1]}")
     if primary == "backend_operation:unregistered":
         memberships.add("human_review:unregistered")
+        memberships.add("human_review")
+    if primary == "security_compliance":
         memberships.add("human_review")
     if primary in {"account_billing:account_suspension", "account_billing:other", "conversation:human_review"}:
         memberships.add("human_review:other")

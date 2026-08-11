@@ -59,7 +59,7 @@ const DEFAULT_FILTER_DEFINITIONS = [
     ],
   },
   { id: "agora_technical", label: "Tech", children: [] },
-  { id: "agora_non_technical", label: "Non-tech", children: [] },
+  { id: "security_compliance", label: "Security & Compliance", children: [] },
   {
     id: "conversation",
     label: "Conversation",
@@ -152,7 +152,7 @@ const ROUTE_TUPLE_OPTIONS = [
   { scope: "conversation", action: "follow_up", label: "Conversation / Follow-up" },
   { scope: "conversation", action: "human_review_required", label: "Conversation / Human Review" },
   { scope: "agora_technical", action: "rag", label: "Agora / Agora Technical" },
-  { scope: "agora_non_technical", action: "web_search", label: "Agora / Agora Non-technical" },
+  { scope: "security_compliance", action: "human_review_required", category: "security_compliance", label: "Agora / Security & Compliance" },
   { scope: "account_billing", action: "account_suspension", category: "account_billing", subcategory: "account_suspension", label: "Agora / Account & Billing / Account Suspension" },
   { scope: "account_billing", action: "fraud_account", category: "account_billing", subcategory: "fraud_account", label: "Agora / Account & Billing / Fraud Account" },
   { scope: "account_billing", action: "detailed_invoice", category: "account_billing", subcategory: "detailed_invoice", label: "Agora / Account & Billing / Detailed Invoice" },

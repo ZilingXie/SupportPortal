@@ -18,7 +18,10 @@ from backend.services.automation_routing import (
 )
 from backend.services.account_automation_handlers import registered_account_automation_subcategories
 from backend.services.account_billing_handlers import ACCOUNT_BILLING_SUBCATEGORIES, account_billing_metadata
-from backend.services.account_case_filters import backend_operation_metadata
+from backend.services.account_case_filters import (
+    backend_operation_metadata,
+    security_compliance_metadata,
+)
 from backend.services.billing_automation import BILLING_TOOLING_PROFILE
 from backend.services.enablement_automation import (
     ENABLEMENT_SEMANTIC_INTENT,
@@ -61,7 +64,7 @@ from backend.services.support_router_prompt import build_route_prompt_hints
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v7"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v8"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_BILLING_PROMPT_KEY = "account-account-billing-router-system"
@@ -74,6 +77,7 @@ _CONVERSATION_ACTIONS = {"resolve", "follow_up", "human_review"}
 _AGORA_ROUTES = {
     "technical",
     "non_technical",
+    "security_compliance",
     "account_billing",
     "backend_operation",
     # Deprecated input alias retained for callers that still emit the old route.
@@ -101,6 +105,7 @@ _INTENT_REASON_CODES = {
 _AGORA_REASON_CODES = {
     "technical_request",
     "non_technical_request",
+    "security_compliance_request",
     "account_billing_request",
     "explicit_backend_operation",
     "no_matching_category",
@@ -108,6 +113,7 @@ _AGORA_REASON_CODES = {
     "insufficient_backend_operation_evidence",
     "multiple_equal_intents",
     "legal_compliance_request",
+    "legacy_non_technical_route",
 }
 _AUTOMATION_REASON_CODES = {
     "registered_fraud_account",
@@ -595,6 +601,8 @@ def _labels(classification: dict[str, Any]) -> tuple[str, str]:
             return "Agora", "Agora Technical"
         if route == "non_technical":
             return "Agora", "Agora Non-technical"
+        if route == "security_compliance":
+            return "Agora", "Security & Compliance"
         if route == "account_billing":
             subcategory = str(
                 classification.get("account_billing_subcategory") or "other"
@@ -639,6 +647,8 @@ def account_route_metadata(
     ).strip().lower()
     if agora_route == "account_billing":
         return account_billing_metadata(account_billing_subcategory)
+    if agora_route == "security_compliance":
+        return security_compliance_metadata()
     legacy_automation_subcategory = str(
         normalized_classification.get("automation_subcategory") or ""
     ).strip().lower()
@@ -778,9 +788,19 @@ def classification_for_corrected_route(
         )
     elif scope_label == "agora_non_technical" and execution_action == "web_search":
         classification.update(
-            agora_route="non_technical",
-            route_target="web",
-            human_review_reason=None,
+            # Deprecated Account correction input remains accepted, but no
+            # new Account Case may be routed to the removed Web category.
+            agora_route="uncategorized",
+            route_target="human_review",
+            human_review_reason="legacy_non_technical_route",
+            route_reason_code="legacy_non_technical_route",
+        )
+    elif scope_label in {"security_compliance", "agora_security_compliance"}:
+        classification.update(
+            agora_route="security_compliance",
+            route_target="human_review",
+            human_review_reason="route_corrected_to_human_review",
+            route_reason_code="route_corrected_by_operator",
         )
     elif scope_label in {"account_billing", "billing", "fraud_account", "detailed_invoice", "automation"}:
         account_billing_subcategory = (
@@ -843,6 +863,8 @@ def account_case_labels(record: dict[str, Any]) -> tuple[str, str]:
         return "Agora", "Agora Technical"
     if scope == "agora_non_technical":
         return "Agora", "Agora Non-technical"
+    if scope in {"security_compliance", "agora_security_compliance"}:
+        return "Agora", "Security & Compliance"
     if scope == "account_billing":
         subcategory = str(record.get("subcategory") or "other").strip()
         return "Agora", f"Account & Billing / {subcategory.replace('_', ' ').title()}"
@@ -1383,6 +1405,7 @@ def decide_account_route(
     agora_reason_defaults = {
         "technical": "technical_request",
         "non_technical": "non_technical_request",
+        "security_compliance": "security_compliance_request",
         "account_billing": "account_billing_request",
         "backend_operation": "explicit_backend_operation",
         "automation": "explicit_backend_operation",
@@ -1404,6 +1427,11 @@ def decide_account_route(
         agora_reason = "low_agora_route_confidence"
     elif agora_route != "uncategorized":
         agora_reason = agora_reason_defaults[agora_route]
+    if agora_route == "non_technical":
+        # The old Account Web category is retained only for historical reads.
+        # A current layered run must fail closed into Human Review.
+        agora_route = "uncategorized"
+        agora_reason = "legacy_non_technical_route"
     backend_operation = _backend_operation(agora_payload.get("backend_operation"))
     if agora_route in {"backend_operation", "automation"} and backend_operation is None:
         agora_route = "uncategorized"
@@ -1442,18 +1470,28 @@ def decide_account_route(
             ),
             attempts,
         ))
-    if agora_route in {"technical", "non_technical"}:
-        classification["route_target"] = "rag" if agora_route == "technical" else "web"
+    if agora_route in {"technical", "security_compliance"}:
+        if agora_route == "technical":
+            classification["route_target"] = "rag"
+        else:
+            classification["route_target"] = "human_review"
+            classification["human_review_reason"] = agora_reason
+        decision_scope = "agora_technical" if agora_route == "technical" else "security_compliance"
+        decision_action = "rag" if agora_route == "technical" else "human_review_required"
+        decision_family = "rag_product_support" if agora_route == "technical" else "human_review"
+        decision_tooling = "rag_only" if agora_route == "technical" else "classification_only"
         return finish(_result(
             classification,
             _decision(
-                scope_label="agora_technical" if agora_route == "technical" else "agora_non_technical",
-                action="rag" if agora_route == "technical" else "web_search",
+                scope_label=decision_scope,
+                action=decision_action,
                 confidence=min(intent_confidence, agora_confidence),
                 reason=agora_reason,
                 response_language=response_language,
-                route_family="rag_product_support" if agora_route == "technical" else "web_company_info",
-                tooling_profile="rag_only" if agora_route == "technical" else "official_web_search",
+                route_family=decision_family,
+                tooling_profile=decision_tooling,
+                semantic_intent=("security_compliance" if agora_route == "security_compliance" else None),
+                not_automated_reason=(agora_reason if agora_route == "security_compliance" else None),
                 evidence_spans=classification["evidence_spans"],
             ),
             attempts,

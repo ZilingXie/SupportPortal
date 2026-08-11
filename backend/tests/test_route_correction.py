@@ -42,6 +42,25 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         self.assertEqual(result["route_family"], "agora_docs_rag")
         self.assertEqual(result["tooling_profile"], "agora_docs_only")
 
+    def test_security_compliance_is_classification_only(self) -> None:
+        result = validate_route_correction(
+            scope_label="security_compliance",
+            execution_action="human_review_required",
+        )
+        self.assertEqual(result["category"], "security_compliance")
+        self.assertIsNone(result["subcategory"])
+        self.assertEqual(result["route_family"], "human_review")
+        self.assertEqual(result["tooling_profile"], "classification_only")
+
+    def test_legacy_non_technical_correction_normalizes_to_uncategorized(self) -> None:
+        result = validate_route_correction(
+            scope_label="agora_non_technical",
+            execution_action="web_search",
+        )
+        self.assertEqual(result["scope_label"], "uncategorized")
+        self.assertEqual(result["execution_action"], "human_review_required")
+        self.assertEqual(result["category"], "human_review")
+
     def test_valid_enablement_derives_automated_tuple(self) -> None:
         result = validate_route_correction(scope_label="enablement", execution_action="enablement")
         self.assertEqual(result["scope_label"], "enablement")
@@ -103,6 +122,7 @@ class RouteCorrectionValidationTests(unittest.TestCase):
             ("billing", "human_review_required", "billing_review", "deterministic_billing_intake"),
             ("billing", "refuse", "fallback_or_refuse", "no_agora_docs_refusal"),
             ("agora_technical", "rag", "agora_docs_rag", "agora_docs_only"),
+            ("security_compliance", "human_review_required", "human_review", "classification_only"),
             ("agora_non_technical", "web_search", "web_company_info", "official_web_search"),
             ("agora_non_technical", "refuse", "web_company_info", "no_agora_docs_refusal"),
             ("small_talk", "controlled_response", "general_chat", "controlled_acknowledgement"),
