@@ -468,7 +468,13 @@ class AccountAdminFeatureTests(unittest.TestCase):
                 "route": "enablement",
                 "scope_label": "automation",
                 "route_family": "automated",
+                "route_status": "automated",
                 "execution_action": "enablement",
+                "category": "backend_operation",
+                "subcategory": "enablement",
+                "automation_handler": "enablement",
+                "primary_label": "Agora",
+                "secondary_label": "Backend Operation / Enablement",
                 "tooling_profile": "deterministic_enablement_intake",
                 "automation_status": "automation",
                 "collected_fields": {"app_id": "canonical-app"},
@@ -516,12 +522,28 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(self.repository.get_account_reply_job(job_id), transitioned)
         stored_case = self.repository.get_billing_ticket("AC-CLAIMED-HUMAN-REVIEW")
         assert stored_case is not None
-        self.assertEqual(stored_case["route"], "human_review_required")
+        self.assertEqual(stored_case["route"], "enablement")
+        self.assertEqual(stored_case["route_family"], "automated")
+        self.assertEqual(stored_case["route_status"], "automated")
+        self.assertEqual(stored_case["category"], "backend_operation")
+        self.assertEqual(stored_case["subcategory"], "enablement")
+        self.assertEqual(stored_case["automation_handler"], "enablement")
+        self.assertEqual(stored_case["primary_label"], "Agora")
+        self.assertEqual(stored_case["secondary_label"], "Backend Operation / Enablement")
+        self.assertEqual(stored_case["automation_status"], "human_review_required")
+        self.assertEqual(stored_case["execution_reason_code"], "no enabled published persona")
         self.assertEqual(stored_case["policy_decision"], "account_persona_unavailable_human_review")
         self.assertEqual(stored_case["collected_fields"], {"app_id": "canonical-app"})
-        self.assertEqual(stored_case["automation_context"], {"canonical_marker": "keep"})
+        self.assertEqual(
+            stored_case["automation_context"],
+            {
+                "canonical_marker": "keep",
+                "execution_status": "human_review_required",
+                "execution_reason_code": "no enabled published persona",
+            },
+        )
         self.assertEqual(stored_case["route_classification"]["canonical_marker"], "keep")
-        self.assertEqual(stored_case["route_classification"]["route_target"], "human_review")
+        self.assertNotIn("route_target", stored_case["route_classification"])
         events = self.repository.list_ticket_events(ticket_id)
         self.assertEqual([event["event_type"] for event in events], ["automation_persona_human_review"])
         self.assertEqual(events[0]["payload"]["job_id"], job_id)
@@ -968,6 +990,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             user_prompt="user snapshot",
         )
         self.assertEqual(execution["router_prompt_version"], ROUTER_PROMPT_VERSION)
+        self.assertEqual(execution["reason_code"], "billing_request")
         self.assertEqual(execution["system_prompt"], "system snapshot")
         self.assertEqual(execution["user_prompt"], "user snapshot")
         self.assertTrue(execution["prompt_snapshot_available"])
@@ -1011,6 +1034,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             },
         )
 
+        self.assertEqual(execution["reason_code"], "intent_classifier_invalid_json")
         stage = execution["stages"][0]
         self.assertEqual(stage["status"], "failed")
         self.assertEqual(stage["failure_type"], "invalid_json")

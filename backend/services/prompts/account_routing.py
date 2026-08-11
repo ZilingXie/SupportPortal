@@ -4,8 +4,8 @@ import json
 from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
-ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v7"
-ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v1"
+ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v8"
+ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v2"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v7"
 ACCOUNT_BACKEND_OPERATION_PROMPT_VERSION = "account-backend-operation-v1"
 ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
@@ -116,7 +116,8 @@ Classify only; do not answer the customer.
   channels, audio/video behavior, recording implementation, feature fit, or docs-grounded questions.
 - security_compliance: security, privacy, trust, data-protection, audit, or compliance documentation and
   requests, including Trust Center, ISO 27001, SOC 2, DPA, GDPR, CCPA, BCP/DR, data residency, retention,
-  deletion, subprocessors, transfer assessments, vendor-risk questionnaires, and security evidence.
+  deletion, subprocessors, transfer assessments, vendor due diligence, vendor-risk questionnaires,
+  security questionnaires, NDA-gated security materials, and other security evidence.
 - account_billing: account ownership or administration, balances, usage charges, payment methods, top-ups,
   pricing, quotes, refunds, billing disputes, invoice billing, and other account or billing requests.
 - backend_operation: an explicit, grounded request for Agora to perform a concrete account/backend operation
@@ -127,15 +128,17 @@ Classify only; do not answer the customer.
 
 ## Rules
 - First identify the customer's primary requested outcome across the entire message. A long legal,
-  regulatory, compliance, enforcement, or third-party fraud complaint is uncategorized even if a later
+  regulatory, enforcement, or third-party fraud complaint is uncategorized even if a later
   paragraph asks Agora to extract logs, preserve evidence, investigate, freeze assets, or disclose data.
   Those evidence-preservation and enforcement demands are not normal Agora backend operations.
 - Do not let a concrete-looking command near the end of a long complaint override the complaint's primary
-  legal or regulatory purpose. Use reason_code legal_compliance_request for this case.
+  legal or regulatory purpose. Use reason_code legal_enforcement_request for this case.
 - How to enable, configure, integrate, or troubleshoot a feature is technical.
 - Security configuration, token authentication, encryption, SDK permissions, and security-related implementation
   failures are technical when the customer needs engineering guidance. Documentation, audit, privacy, trust,
-  data-protection, or compliance evidence requests are security_compliance instead.
+  data-protection, compliance evidence, vendor due diligence, or security questionnaire requests are
+  security_compliance instead. If a requested security document link is broken, keep the primary route
+  security_compliance and record a technical intent in additional_intents.
 - General Agora company, product-portfolio, investor, or public-business questions no longer use a Web route in
   Account; classify them as uncategorized for Human Review.
 - An explicit request for Agora to enable a named backend feature from our side is backend_operation.
@@ -164,7 +167,7 @@ confidence must be between 0 and 1.
 agora_route must be one of: technical, security_compliance, account_billing, backend_operation, uncategorized.
 reason_code must be one of: technical_request, security_compliance_request, account_billing_request,
 explicit_backend_operation, no_matching_category, insufficient_route_information,
-insufficient_backend_operation_evidence, multiple_equal_intents, legal_compliance_request.
+insufficient_backend_operation_evidence, multiple_equal_intents, legal_enforcement_request.
 backend_operation must be null unless agora_route=backend_operation.
 
 ## Examples
@@ -174,12 +177,15 @@ Output: {"agora_route":"technical","confidence":0.98,"reason_code":"technical_re
 Input: Please provide your SOC 2 report, DPA, and Trust Center security documentation.
 Output: {"agora_route":"security_compliance","confidence":0.98,"reason_code":"security_compliance_request","additional_intents":[],"selection_reason":"The customer requests security and compliance evidence","backend_operation":null,"evidence_spans":["SOC 2 report","DPA","Trust Center security documentation"]}
 
+Input: Our Trust Center security document returns 404. Please send the security questionnaire and BCP/DR materials.
+Output: {"agora_route":"security_compliance","confidence":0.98,"reason_code":"security_compliance_request","additional_intents":["technical"],"selection_reason":"The primary request is security and compliance evidence; the broken link is a secondary technical issue","backend_operation":null,"evidence_spans":["Trust Center security document returns 404","security questionnaire","BCP/DR materials"]}
+
 Input: Who is Agora's CEO?
 Output: {"agora_route":"uncategorized","confidence":0.98,"reason_code":"no_matching_category","additional_intents":[],"selection_reason":"Public company information is outside the current Account route taxonomy","backend_operation":null,"evidence_spans":["Agora's CEO"]}
 
 Input: A third-party platform fraud complaint asks Agora, cloud providers, payment processors, and regulators
 to investigate the platform and extract server logs as evidence.
-Output: {"agora_route":"uncategorized","confidence":0.98,"reason_code":"legal_compliance_request","additional_intents":[],"selection_reason":"The primary request is a legal and regulatory complaint, not a normal Agora backend operation","backend_operation":null,"evidence_spans":["third-party platform fraud complaint","regulators","extract server logs as evidence"]}
+Output: {"agora_route":"uncategorized","confidence":0.98,"reason_code":"legal_enforcement_request","additional_intents":[],"selection_reason":"The primary request is a legal and regulatory complaint, not a normal Agora backend operation","backend_operation":null,"evidence_spans":["third-party platform fraud complaint","regulators","extract server logs as evidence"]}
 
 Input: Please enable Media Relay from your end for my App ID.
 Output: {"agora_route":"backend_operation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer explicitly requests activation from Agora's side","backend_operation":{"action":"enable","target":"media_relay","evidence":"enable Media Relay from your end"},"evidence_spans":["enable Media Relay from your end"]}
@@ -221,8 +227,10 @@ Classify only; do not answer the customer and do not perform any action.
   or inaccessible because of balance, payment, package, quota, plan, usage, or another non-fraud account state.
 - fraud_account: an account is restricted because of explicit fraud, suspicious activity, risk, or security
   review evidence, including a request to provide the four fraud-review information groups.
-- detailed_invoice: a request for a transaction-level or otherwise detailed invoice.
+- detailed_invoice: an explicit request for a detailed, itemized, full-detail, transaction-level, or line-item
+  invoice/receipt, including a top-up receipt requested for an internal audit.
 - other: refunds, balances, payment methods, pricing, account administration, invoice billing, billing disputes,
+  missing invoices, usage or charge investigations, payment/invoice reconciliation, ordinary invoice copies,
   and all other Account & Billing requests.
 
 ## Rules
@@ -231,6 +239,14 @@ Classify only; do not answer the customer and do not perform any action.
 - A technical failure remains outside this Router when suspension is only incidental context.
 - When a non-fraud suspension and another billing request are both substantive, choose account_suspension and
   preserve the other intent in additional_intents.
+- Choose detailed_invoice only when the customer explicitly asks for detailed, itemized, transaction-level,
+  full-detail, or line-item billing information. A mention of an invoice, receipt, top-up, usage, or charge
+  alone is not enough.
+- Missing invoice requests use reason_code missing_invoice. Charge or usage disputes use
+  invoice_charge_dispute. A mismatch between payment and invoice records uses invoice_payment_reconciliation.
+  These reason codes always map to other, even when the message contains the word invoice.
+- A detailed receipt is eligible only when the customer asks for the full/detail/itemized/transaction-level
+  receipt or invoice. An ordinary request to resend or copy an invoice remains other.
 - All fields extracted later are optional. Do not infer a cause that the customer did not state.
 
 ## Output
@@ -238,7 +254,8 @@ Return JSON only with keys: account_billing_subcategory, confidence, reason_code
 additional_intents, evidence_spans.
 account_billing_subcategory must be one of: account_suspension, fraud_account, detailed_invoice, other.
 reason_code must be one of: registered_account_suspension, registered_fraud_account,
-registered_detailed_invoice, account_billing_other.
+detailed_invoice_requested, missing_invoice, invoice_charge_dispute,
+invoice_payment_reconciliation, account_billing_other.
 
 ## Examples
 Input: Our account was suspended after the balance ran out. We topped up yesterday but it still says stopped.
@@ -249,6 +266,18 @@ Output: {"account_billing_subcategory":"account_suspension","confidence":0.97,"r
 
 Input: Please refund the unused balance and change our payment method.
 Output: {"account_billing_subcategory":"other","confidence":0.98,"reason_code":"account_billing_other","additional_intents":["refund","payment_method"],"evidence_spans":["refund the unused balance","change our payment method"]}
+
+Input: The usage charge on our invoice is higher than expected. Please investigate the minutes and correct the charge.
+Output: {"account_billing_subcategory":"other","confidence":0.98,"reason_code":"invoice_charge_dispute","additional_intents":["usage_investigation"],"evidence_spans":["usage charge on our invoice is higher than expected","investigate the minutes","correct the charge"]}
+
+Input: The payment is present but the invoice does not match our payment records. Please reconcile them.
+Output: {"account_billing_subcategory":"other","confidence":0.98,"reason_code":"invoice_payment_reconciliation","additional_intents":["payment_reconciliation"],"evidence_spans":["invoice does not match our payment records","reconcile them"]}
+
+Input: We cannot find the invoice for the top-up transaction. Please send the invoice copy.
+Output: {"account_billing_subcategory":"other","confidence":0.98,"reason_code":"missing_invoice","additional_intents":[],"evidence_spans":["cannot find the invoice","send the invoice copy"]}
+
+Input: Subject: detail invoice. Recently I did top up from console. I need detail Recept for company internal audit. Please provide me the full detail recept for my top up.
+Output: {"account_billing_subcategory":"detailed_invoice","confidence":0.98,"reason_code":"detailed_invoice_requested","additional_intents":[],"evidence_spans":["detail invoice","detail Recept for company internal audit","full detail recept for my top up"]}
 """.strip()
 
 

@@ -95,6 +95,103 @@ class EnablementFieldExtractorTests(unittest.TestCase):
         self.assertEqual(result.status, "uncertain")
         self.assertEqual(result.failure_type, "verification_failed")
 
+    def test_unique_exact_quote_repairs_wrong_source_message_id(self) -> None:
+        message = "Please enable Media Relay for app project-alpha."
+        primary = {
+            "status": "complete",
+            "fields": {
+                "app_id": {
+                    "value": "project-alpha",
+                    "source_message_id": "wrong-message",
+                    "source_quote": "app project-alpha",
+                    "confidence": 0.99,
+                },
+                "requested_feature": {
+                    "value": "media_relay",
+                    "original_label": "Media Relay",
+                    "source_message_id": "wrong-message",
+                    "source_quote": "enable Media Relay",
+                    "confidence": 0.99,
+                },
+            },
+        }
+        verified = {
+            "status": "complete",
+            "fields": {
+                "app_id": {
+                    "value": "project-alpha",
+                    "source_message_id": "wrong-message",
+                    "source_quote": "app project-alpha",
+                    "confidence": 0.99,
+                },
+                "requested_feature": {
+                    "value": "media_relay",
+                    "original_label": "Media Relay",
+                    "source_message_id": "wrong-message",
+                    "source_quote": "enable Media Relay",
+                    "confidence": 0.99,
+                },
+            },
+        }
+        responses = iter([primary, verified])
+
+        result = extract_enablement_fields(
+            ticket_subject="Enable Media Relay",
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": message}],
+            invoke=lambda **_: next(responses),
+        )
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.source_message_ids["app_id"], "m1")
+        self.assertEqual(result.source_message_ids["requested_feature"], "m1")
+
+    def test_complete_without_app_id_candidate_runs_verification(self) -> None:
+        message = "Please enable Media Relay for app project-alpha."
+        responses = iter(
+            [
+                {
+                    "status": "complete",
+                    "fields": {
+                        "requested_feature": {
+                            "value": "media_relay",
+                            "original_label": "Media Relay",
+                            "source_message_id": "m1",
+                            "source_quote": "enable Media Relay",
+                            "confidence": 0.99,
+                        }
+                    },
+                },
+                {
+                    "status": "complete",
+                    "fields": {
+                        "app_id": {
+                            "value": "project-alpha",
+                            "source_message_id": "m1",
+                            "source_quote": "app project-alpha",
+                            "confidence": 0.99,
+                        },
+                        "requested_feature": {
+                            "value": "media_relay",
+                            "original_label": "Media Relay",
+                            "source_message_id": "m1",
+                            "source_quote": "enable Media Relay",
+                            "confidence": 0.99,
+                        },
+                    },
+                },
+            ]
+        )
+
+        result = extract_enablement_fields(
+            ticket_subject="Enable Media Relay",
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": message}],
+            invoke=lambda **_: next(responses),
+        )
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.collected_fields["app_id"], "project-alpha")
+        self.assertEqual(result.audit_payload()["verification_status"], "corrected_missing")
+
     def test_missing_app_id_is_corrected_by_verification_pass(self) -> None:
         message = "Please enable Media Relay. My app ID is project-alpha."
         responses = iter(

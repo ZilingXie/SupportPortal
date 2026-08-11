@@ -3476,6 +3476,50 @@ For each new entry, record:
   - SOC 2, ISO, DPA, GDPR, Trust Center, security questionnaire, data residency, retention, and similar requests route to `Agora / Security & Compliance` with `route_status=not_automated` and no handler.
   - Token, encryption, authentication, SDK permission, and security implementation troubleshooting remains `Agora Technical`.
   - Historical `agora_non_technical` reads remain compatible, but new layered runs and corrections normalize that removed route to `Agora / Uncategorized`.
-  - Security & Compliance cases appear in both the Security & Compliance and Human Review filters.
+  - Security & Compliance cases use the Security & Compliance primary filter only; they are not members of the strict Human Review filter.
 - Verification:
   - Account route, filter/API, route correction, UI/Admin contract, compile, JavaScript syntax, and feature-list checks.
+
+## 2026-08-11 - Invoice and Security & Compliance route boundary hardening
+
+- Area or subsystem: /account Agora Router and Account & Billing Router
+- Prompt or model version: account-layered-router-v9, account-agora-v8, account-billing-v2
+- Summary: Tightened Detailed Invoice to explicit detailed/itemized/transaction-level or line-item invoice/receipt requests, added stable invoice reason codes for missing invoices, charge disputes, and payment/invoice reconciliation, and expanded Security & Compliance examples for Trust Center, ISO, SOC 2, DPA, BCP/DR, vendor due diligence, NDA-gated materials, and security questionnaires.
+- Reason: Usage investigations, invoice disputes, missing invoices, and payment reconciliation were being confused with Detailed Invoice automation; security documentation requests were also too close to the legal enforcement fallback.
+- Affected files or config:
+  - backend/services/prompts/account_routing.py
+  - backend/services/account_route_pipeline.py
+  - backend/services/account_admin.py
+  - backend/services/agent_config.py managed prompt catalog output
+  - backend/tests/fixtures/account_route_golden_cases.json
+- Expected behavior change:
+  - Explicit detailed invoice or full-detail top-up receipt requests route to Account & Billing / Detailed Invoice with route_status=automated, route_family=automated, and the Billing handler.
+  - Missing invoice, invoice charge/usage disputes, and payment/invoice reconciliation route to Account & Billing / Other with route_status=not_automated.
+  - Trust Center, ISO, SOC 2, DPA, BCP/DR, vendor due diligence, NDA-gated security material, and security questionnaire requests route to Security & Compliance; a broken document link is retained as an additional technical intent.
+  - Legal enforcement requests use legal_enforcement_request; the previous legal_compliance_request is accepted only as a compatibility input alias and is canonicalized in audit output.
+  - Route execution audit now exposes the stable top-level reason_code alongside stage reason codes.
+- Verification:
+  - Targeted Account route, prompt/catalog, Admin audit, and golden-fixture tests; no /client, shared legacy router, lifecycle, filter membership, UI, stack restart, or formal Case rerun changes.
+
+## 2026-08-11 - Account filter and Agent Config taxonomy display
+
+- Area or subsystem: `/account` filter UI, Admin Agent Config, and managed Account prompt catalog presentation
+- Prompt or model version: `account-agora-v8`, `account-billing-v2`, `account-enablement-fields-v3`, `account-layered-router-v9`
+- Summary: Synchronized the visible taxonomy with the layered Account route contract. Automated now exposes the four registered children across Account & Billing and Backend Operation; Unregistered remains a Backend Operation diagnostic fallback. Classification reason codes and execution reason codes are displayed separately in Admin audit.
+- Reason: The previous UI fallback omitted Automated children, duplicated the Automated badge next to Primary/Secondary labels, and described Unregistered and Human Review with overlapping membership.
+- Affected files or config:
+  - `ui/account-ui/app.js`
+  - `ui/account-ui/index.html`
+  - `ui/workspace-ui/admin/app.js`
+  - `ui/workspace-ui/admin/index.html`
+  - `backend/services/agent_config.py`
+  - `docs/feature_list.md`
+  - `docs/roadmap.html`
+  - `docs/roadmap/phase2.html`
+- Expected behavior change:
+  - Account filter dropdowns show full registered Automation paths and counts; All and groups without real children remain disabled.
+  - Classification badges show only Primary and Secondary. The case status area remains the single source of truth for Automated / Not automated.
+  - Admin Agent Config identifies four registered Automation workflows and labels Unregistered as a diagnostic fallback without a registered handler or Human Review membership.
+  - Admin audit separates classification reason code from execution reason code with compatibility fallbacks for older events.
+- Verification:
+  - Account UI and Admin UI/API contract tests, Agent Config/prompt catalog tests, Node syntax checks, `python3 scripts/verify_feature_list.py`, and `git diff --check`.

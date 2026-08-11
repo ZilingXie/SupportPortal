@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS support_account_cases (
     route_confidence REAL,
     matched_signals JSONB,
     automation_status TEXT NOT NULL,
+    execution_reason_code TEXT,
     missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
     collected_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
     customer_reply TEXT,

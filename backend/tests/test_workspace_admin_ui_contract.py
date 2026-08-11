@@ -91,6 +91,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "agentConfigLoadError", "loadAgentConfig", "data-action=\"retry-agent-config\"",
             "data-action=\"retry-environment-config\"", "automation_personas", "route_navigation",
             "automation_workflows", "Automation Workflow", "All categories", "Account & Billing", "Handler",
+            "Classification reason code", "Execution reason code", "Diagnostic fallback", "Four registered outcomes",
             "data-persona-draft-form", 'data-action="publish-persona"',
             'data-action="rollback-persona"', 'data-action="toggle-persona"',
             "description.toLowerCase()", "admin-config-description", "admin-config-copy",
@@ -102,6 +103,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.run_admin_app_script(
             """
             automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ account_case_id: 'AC-1', title: 'Invoice', category: 'account_billing', subcategory: 'detailed_invoice', category_label: 'Account & Billing', subcategory_label: 'Detailed Invoice', automation_handler: 'billing', route_status: 'automated', automation_status: 'internal_pending' }] };
+            auditEvents = [{ created_at: '2026-08-11T00:00:00Z', event_type: 'account_route', actor_id: 'system', target_id: 'AC-1', payload: { classification_reason_code: 'detailed_invoice_requested', execution_reason_code: 'internal_email_sent' } }];
             agentConfigData = {
               agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', components: [], prompts: [{ key: 'automation-system', name: 'Automation Router', version: 'v1', component_key: 'automation-router', content: 'actual prompt', metadata: {} }], skills: [], mcp_servers: [] }],
               route_navigation: { key: 'route-agent', kind: 'agent', is_agent: true, name: 'Route Agent', description: 'Routes requests.', status: 'active', prompt_keys: [], capabilities: [], children: [
@@ -126,6 +128,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             const casesMarkup = renderAutomatedCases();
             if (!casesMarkup.includes('Account &amp; Billing') || !casesMarkup.includes('Detailed Invoice') || !casesMarkup.includes('billing') || !casesMarkup.includes('Automation status')) throw new Error('Automated Cases taxonomy columns missing');
             if (!casesMarkup.includes('All categories')) throw new Error('Automated Cases category filter missing');
+            const auditMarkup = renderAudit();
+            if (!auditMarkup.includes('Classification reason code') || !auditMarkup.includes('Execution reason code') || !auditMarkup.includes('detailed_invoice_requested') || !auditMarkup.includes('internal_email_sent')) throw new Error('audit reason code columns missing');
             selectedAgentPath = [];
             const catalogMarkup = renderAgentConfig();
             if (!catalogMarkup.includes('Route Agent') || catalogMarkup.includes('Billing Automation') || catalogMarkup.includes('Related services')) throw new Error('top-level Agent catalog is invalid');
@@ -197,7 +201,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260731-agent-only-navigation-1", index)
+        self.assertIn("20260811-admin-agent-config-taxonomy-1", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -558,7 +562,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260731-agent-only-navigation-1", html)
+        self.assertIn("20260811-admin-agent-config-taxonomy-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

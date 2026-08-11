@@ -43,8 +43,10 @@ from backend.services.automation_persona import (
     extract_automation_resolution_facts,
     render_automation_reply,
 )
-from backend.services.automation_routing import automation_metadata
-from backend.services.account_route_pipeline import classification_labels
+from backend.services.account_automation_reconciliation import (
+    reconcile_automation_execution_failure,
+    reconciliation_reason_code,
+)
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -726,46 +728,24 @@ def _mark_account_case_for_human_review(
     timestamp: str,
     policy_decision: str,
 ) -> None:
-    predicted_action = str(
-        account_case.get("execution_action") or account_case.get("route") or ""
-    ).strip() or None
-    classification = dict(account_case.get("route_classification") or {})
-    classification.update(
-        {
-            "predicted_automation_subcategory": predicted_action,
-            "agora_route": "uncategorized",
-            "account_billing_subcategory": None,
-            "backend_operation_subcategory": None,
-            "automation_subcategory": None,
-            "route_target": "human_review",
-            "human_review_reason": reason,
-            "route_reason_code": reason,
-            "handler_binding_status": "human_review",
-        }
+    persona_unavailable = policy_decision == "account_persona_unavailable_human_review"
+    reason_code = reconciliation_reason_code(
+        handler=str(account_case.get("automation_handler") or account_case.get("execution_action") or "automation"),
+        phase="persona" if persona_unavailable else "persona_render",
+        detail="unavailable" if persona_unavailable else "failed",
     )
-    primary_label, secondary_label = classification_labels(classification)
-    classification["primary_label"] = primary_label
-    classification["secondary_label"] = secondary_label
     account_case.update(
-        {
-            "route": "human_review_required",
-            "scope_label": "human_review",
-            "route_family": "human_review",
-            "execution_action": "human_review_required",
-            "tooling_profile": None,
-            "route_reason": reason,
-            "policy_decision": policy_decision,
-            "automation_status": "not_automated",
-            "not_automated_reason": reason,
-            "route_classification": classification,
-            "internal_email_send_reason": reason,
-            "updated_at": timestamp,
-            **automation_metadata(
-                route_family="human_review",
-                execution_action="human_review_required",
-            ),
-        }
+        reconcile_automation_execution_failure(
+            account_case,
+            reason_code=reason_code,
+            context={
+                "policy_decision": policy_decision,
+                "failure_detail": reason,
+            },
+        )
     )
+    account_case["policy_decision"] = policy_decision
+    account_case["updated_at"] = timestamp
 
 
 def _render_case_persona_reply(

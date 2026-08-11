@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260811-account-security-compliance-1", html)
+        self.assertIn("20260811-account-filter-taxonomy-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -339,10 +339,10 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('params.set("route_errors", "true")', app_source)
         self.assertIn('params.set("route_group", group)', app_source)
         self.assertIn('params.set("route_subcategory", leaf)', app_source)
-        self.assertIn('{ id: "fraud_account", label: "Fraud Account" }', app_source)
-        self.assertIn('{ id: "detailed_invoice", label: "Detailed Invoice" }', app_source)
-        self.assertIn('{ id: "enablement", label: "Enablement" }', app_source)
-        self.assertIn('{ id: "quota", label: "Quota" }', app_source)
+        self.assertIn('{ id: "fraud_account", label: "Account & Billing / Fraud Account" }', app_source)
+        self.assertIn('{ id: "detailed_invoice", label: "Account & Billing / Detailed Invoice" }', app_source)
+        self.assertIn('{ id: "enablement", label: "Backend Operation / Enablement" }', app_source)
+        self.assertIn('{ id: "quota", label: "Backend Operation / Quota" }', app_source)
         self.assertIn('{ id: "unregistered", label: "Unregistered" }', app_source)
         self.assertIn("Account & Billing / Account Suspension", app_source)
         self.assertIn("Account & Billing / Other", app_source)
@@ -355,6 +355,9 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertNotIn('{ id: "agora_non_technical", label: "Non-tech", children: [] }', app_source)
         self.assertIn('id: "conversation"', app_source)
         self.assertIn('id: "human_review"', app_source)
+        human_review_block = app_source[app_source.index('id: "human_review"'):app_source.index("\n  },\n];", app_source.index('id: "human_review"'))]
+        self.assertNotIn('{ id: "unregistered", label: "Unregistered" }', human_review_block)
+        self.assertNotIn("route-label--automated", app_source)
         self.assertIn("PAGE_SIZE", app_source)
         self.assertIn("currentPage", app_source)
         self.assertIn("const PAGE_SIZE = 10", app_source)
@@ -428,6 +431,32 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertEqual(view_models[1]["options"][0]["count"], 2)
         self.assertEqual(view_models[2]["groupKey"], "agora_technical")
         self.assertTrue(view_models[2]["selectDisabled"])
+
+    def test_account_filter_automated_children_use_full_paths_and_badges_do_not_duplicate_status(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        self.assertIn('label: "Account & Billing / Fraud Account"', app_source)
+        self.assertIn('label: "Account & Billing / Detailed Invoice"', app_source)
+        self.assertIn('label: "Backend Operation / Enablement"', app_source)
+        self.assertIn('label: "Backend Operation / Quota"', app_source)
+        self.assertNotIn("route-label--automated", app_source)
+
+        helper_start = app_source.index("function escapeHtml")
+        helper_end = app_source.index("\nfunction routeClass", helper_start)
+        helpers = app_source[helper_start:helper_end]
+        badge_start = app_source.index("function classificationLabels")
+        badge_end = app_source.index("\n// Build the readable", badge_start)
+        badge_helpers = app_source[badge_start:badge_end]
+        script = f"""
+        function isAutomatedRoute() {{ return true; }}
+        {helpers}
+        {badge_helpers}
+        const markup = renderClassificationBadges({{ primary_label: 'Account & Billing', secondary_label: 'Detailed Invoice', route_status: 'automated' }});
+        if (!markup.includes('Account &amp; Billing') || !markup.includes('Detailed Invoice')) throw new Error('classification badges missing primary/secondary');
+        if (markup.includes('Automated')) throw new Error('Automated status duplicated in classification badges');
+        console.log('ok');
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_account_app_uses_memory_only_two_level_cache_and_batch_prefetch(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")

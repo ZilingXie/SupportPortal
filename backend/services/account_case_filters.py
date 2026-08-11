@@ -12,7 +12,12 @@ ACCOUNT_CASE_FILTER_GROUPS: tuple[dict[str, Any], ...] = (
     {
         "id": "automation",
         "label": "Automated",
-        "children": (),
+        "children": (
+            {"id": "fraud_account", "label": "Account & Billing / Fraud Account"},
+            {"id": "detailed_invoice", "label": "Account & Billing / Detailed Invoice"},
+            {"id": "enablement", "label": "Backend Operation / Enablement"},
+            {"id": "quota", "label": "Backend Operation / Quota"},
+        ),
     },
     {
         "id": "backend_operation",
@@ -48,7 +53,6 @@ ACCOUNT_CASE_FILTER_GROUPS: tuple[dict[str, Any], ...] = (
         "id": "human_review",
         "label": "Human Review",
         "children": (
-            {"id": "unregistered", "label": "Unregistered"},
             {"id": "uncategorized", "label": "Uncategorized"},
             {"id": "uncertain", "label": "Uncertain"},
             {"id": "non_agora", "label": "Non-Agora"},
@@ -72,7 +76,12 @@ _LEGACY_ROUTE_FILTERS = {
 }
 _DEPRECATED_GROUP_FILTERS = {"agora_non_technical"}
 _BACKEND_OPERATION_SUBCATEGORIES = {"enablement", "quota", "unregistered"}
-_AUTOMATION_SUBCATEGORIES = {"enablement", "quota"}
+_AUTOMATION_SUBCATEGORIES = {
+    "fraud_account",
+    "detailed_invoice",
+    "enablement",
+    "quota",
+}
 _ACCOUNT_BILLING_SUBCATEGORIES = {
     "account_suspension",
     "fraud_account",
@@ -80,12 +89,12 @@ _ACCOUNT_BILLING_SUBCATEGORIES = {
     "other",
 }
 _HUMAN_REVIEW_SUBCATEGORIES = {
-    "unregistered",
     "uncategorized",
     "uncertain",
     "non_agora",
     "other",
 }
+_LEGACY_HUMAN_REVIEW_UNREGISTERED = "human_review:unregistered"
 
 
 def account_case_filter_definitions() -> list[dict[str, Any]]:
@@ -115,15 +124,17 @@ def normalize_account_case_filter(
     if normalized_subcategory and not normalized_group:
         raise ValueError("route_subcategory requires route_group")
     if normalized_group:
-        # Pre-taxonomy callers used automation:<leaf> for registered backend
-        # operations. Keep those requests working while exposing the new
-        # business-domain group as the canonical key.
-        if normalized_group == "automation" and normalized_subcategory in _BACKEND_OPERATION_SUBCATEGORIES:
-            normalized_group = "backend_operation"
         if normalized_group == "all":
             if normalized_subcategory:
                 raise ValueError("All does not accept a route_subcategory")
             return None
+        # This leaf was removed from the canonical Human Review taxonomy, but
+        # retain its old query semantics for clients that have not migrated.
+        if (
+            normalized_group == "human_review"
+            and normalized_subcategory == "unregistered"
+        ):
+            return _LEGACY_HUMAN_REVIEW_UNREGISTERED
         if normalized_group in _DEPRECATED_GROUP_FILTERS:
             if normalized_subcategory:
                 raise ValueError("deprecated route_group does not accept a route_subcategory")
@@ -145,8 +156,8 @@ def normalize_account_case_filter(
             return normalized_legacy
         if ":" in normalized_legacy:
             group_id, child_id = normalized_legacy.split(":", 1)
-            if group_id == "automation" and child_id in _BACKEND_OPERATION_SUBCATEGORIES:
-                group_id = "backend_operation"
+            if normalized_legacy == _LEGACY_HUMAN_REVIEW_UNREGISTERED:
+                return _LEGACY_HUMAN_REVIEW_UNREGISTERED
             return normalize_account_case_filter(group=group_id, subcategory=child_id)
         raise ValueError("unsupported route_label")
     return None
@@ -175,30 +186,50 @@ def security_compliance_metadata() -> dict[str, str | None]:
     }
 
 
+def _first_nonempty_route_value(*values: Any) -> str:
+    for value in values:
+        normalized = str(value or "").strip().lower()
+        if normalized:
+            return normalized
+    return ""
+
+
 def _account_billing_leaf(item: dict[str, Any], classification: dict[str, Any] | None = None) -> str:
     source = classification if isinstance(classification, dict) else item.get("route_classification")
-    candidate = (
-        source.get("account_billing_subcategory")
-        if isinstance(source, dict)
-        else None
-    )
-    candidate = str(candidate or item.get("subcategory") or "other").strip().lower()
+    candidate = _first_nonempty_route_value(
+        source.get("account_billing_subcategory") if isinstance(source, dict) else None,
+        item.get("subcategory"),
+    ) or "other"
+    if candidate == "account_verification":
+        candidate = "fraud_account"
     return candidate if candidate in _ACCOUNT_BILLING_SUBCATEGORIES else "other"
 
 
 def _backend_operation_leaf(item: dict[str, Any], classification: dict[str, Any] | None = None) -> str:
     source = classification if isinstance(classification, dict) else item.get("route_classification")
-    candidate = (
-        source.get("backend_operation_subcategory")
-        if isinstance(source, dict)
-        else None
+    candidate = _first_nonempty_route_value(
+        source.get("backend_operation_subcategory") if isinstance(source, dict) else None,
+        source.get("automation_subcategory") if isinstance(source, dict) else None,
+        item.get("subcategory"),
+        item.get("execution_action"),
+        item.get("route"),
     )
-    if not candidate and isinstance(source, dict):
-        candidate = source.get("automation_subcategory")
-    candidate = str(candidate or "").strip().lower()
-    if candidate not in {"enablement", "quota", "unregistered"}:
-        candidate = str(item.get("subcategory") or item.get("execution_action") or item.get("route") or "").strip().lower()
     return candidate if candidate in {"enablement", "quota", "unregistered"} else "unregistered"
+
+
+def _automation_leaf(item: dict[str, Any], classification: dict[str, Any] | None = None) -> str:
+    source = classification if isinstance(classification, dict) else item.get("route_classification")
+    candidate = _first_nonempty_route_value(
+        source.get("automation_subcategory") if isinstance(source, dict) else None,
+        item.get("subcategory"),
+        item.get("execution_action"),
+        item.get("route"),
+    )
+    if candidate in {"account_verification", "fraud_account", "detailed_invoice"}:
+        return candidate
+    if candidate in _BACKEND_OPERATION_SUBCATEGORIES:
+        return candidate
+    return "unregistered"
 
 
 def account_case_filter_key(item: dict[str, Any]) -> str:
@@ -230,13 +261,7 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
                 leaf = _backend_operation_leaf(item, classification)
                 return f"backend_operation:{leaf}"
             if agora_route == "automation":
-                candidate = str(
-                    classification.get("automation_subcategory")
-                    or item.get("subcategory")
-                    or item.get("execution_action")
-                    or item.get("route")
-                    or ""
-                ).strip().lower()
+                candidate = _automation_leaf(item, classification)
                 if candidate in {"fraud_account", "account_verification", "detailed_invoice"}:
                     return f"account_billing:{'fraud_account' if candidate == 'account_verification' else candidate}"
                 if candidate in _BACKEND_OPERATION_SUBCATEGORIES:
@@ -260,7 +285,7 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
                 leaf = _backend_operation_leaf(item, classification)
                 return f"backend_operation:{leaf}"
             if agora_route == "automation":
-                candidate = str(classification.get("automation_subcategory") or "").strip().lower()
+                candidate = _automation_leaf(item, classification)
                 if candidate in {"fraud_account", "account_verification", "detailed_invoice"}:
                     return f"account_billing:{'fraud_account' if candidate == 'account_verification' else candidate}"
                 if candidate in _BACKEND_OPERATION_SUBCATEGORIES:
@@ -312,10 +337,9 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
 def account_case_filter_memberships(item: dict[str, Any]) -> frozenset[str]:
     """Return all filter keys that should include an Account case.
 
-    Billing automation is intentionally represented in both business and
-    execution views. Human-review membership similarly includes manual
-    Account & Billing outcomes so the Human Review button is operationally
-    useful without changing the canonical case label.
+    Registered automation is intentionally represented in both its business
+    group and the cross-business execution view. Human Review is strict: only
+    canonical ``human_review:*`` primary keys receive that membership.
     """
     primary = account_case_filter_key(item)
     memberships = {primary}
@@ -323,21 +347,19 @@ def account_case_filter_memberships(item: dict[str, Any]) -> frozenset[str]:
         memberships.add(primary.split(":", 1)[0])
     route_status = str(item.get("route_status") or "").strip().lower()
     route_family = str(item.get("route_family") or "").strip().lower()
-    if route_status == "automated" or route_family in {"automated", "billing_automation"}:
+    automation_child_by_primary = {
+        "account_billing:fraud_account": "fraud_account",
+        "account_billing:detailed_invoice": "detailed_invoice",
+        "backend_operation:enablement": "enablement",
+        "backend_operation:quota": "quota",
+    }
+    if (
+        (route_status == "automated" or route_family in {"automated", "billing_automation"})
+        and primary in automation_child_by_primary
+    ):
+        automation_child = automation_child_by_primary[primary]
         memberships.add("automation")
-    # Preserve count/filter aliases for clients that still send the old
-    # Automation leaf keys. New definitions intentionally expose only the
-    # Backend Operation children.
-    if primary in {"backend_operation:enablement", "backend_operation:quota"}:
-        memberships.add(f"automation:{primary.split(':', 1)[1]}")
-    if primary == "backend_operation:unregistered":
-        memberships.add("human_review:unregistered")
-        memberships.add("human_review")
-    if primary == "security_compliance":
-        memberships.add("human_review")
-    if primary in {"account_billing:account_suspension", "account_billing:other", "conversation:human_review"}:
-        memberships.add("human_review:other")
-        memberships.add("human_review")
+        memberships.add(f"automation:{automation_child}")
     if primary.startswith("human_review:"):
         memberships.add("human_review")
     return frozenset(memberships)
@@ -346,6 +368,10 @@ def account_case_filter_memberships(item: dict[str, Any]) -> frozenset[str]:
 def account_case_filter_matches(item: dict[str, Any], filter_key: str | None) -> bool:
     if not filter_key:
         return True
+    if filter_key == _LEGACY_HUMAN_REVIEW_UNREGISTERED:
+        # Deprecated compatibility only. This intentionally does not appear
+        # in canonical memberships, definitions, or facet counts.
+        return account_case_filter_key(item) == "backend_operation:unregistered"
     return filter_key in account_case_filter_memberships(item)
 
 
@@ -357,5 +383,4 @@ def account_case_filter_keys() -> tuple[str, ...]:
             continue
         keys.append(group_id)
         keys.extend(f"{group_id}:{child['id']}" for child in group["children"])
-    keys.extend(f"automation:{subcategory}" for subcategory in ("enablement", "quota"))
     return tuple(keys)

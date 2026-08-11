@@ -30,7 +30,10 @@ from backend.repositories.ticket_repository import (
     _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
     _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK,
     create_ticket_repository,
+    _account_case_filter_memberships_sql,
 )
+from backend.services.account_case_filters import account_case_filter_memberships
+from backend.tests.account_case_filter_fixtures import ACCOUNT_CASE_FILTER_PARITY_FIXTURES
 
 
 class _BenchmarkPrepCursor:
@@ -400,6 +403,25 @@ class _BorrowingPool(_FakePool):
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_account_filter_python_and_postgres_membership_fixture_parity(self) -> None:
+        for _name, item, expected in ACCOUNT_CASE_FILTER_PARITY_FIXTURES:
+            self.assertEqual(account_case_filter_memberships(item), expected)
+
+        sql_text = _account_case_filter_memberships_sql("bt").as_string()
+        for child in (
+            "automation:fraud_account",
+            "automation:detailed_invoice",
+            "automation:enablement",
+            "automation:quota",
+        ):
+            self.assertIn(child, sql_text)
+        self.assertIn("'account_billing:fraud_account'", sql_text)
+        self.assertIn("'backend_operation:quota'", sql_text)
+        self.assertIn("NULLIF(BTRIM", sql_text)
+        self.assertIn("ELSE 'human_review:uncategorized'", sql_text)
+        self.assertNotIn("human_review:unregistered", sql_text)
+        self.assertIn("split_part", sql_text)
+
     def test_in_memory_account_rerun_claim_converges_concurrent_same_key(self) -> None:
         repository = InMemoryTicketRepository()
         barrier = threading.Barrier(2)
@@ -1105,6 +1127,11 @@ class RepositoryConfigurationTests(unittest.TestCase):
                 account_case_updates={
                     "automation_status": "customer_notified",
                     "customer_reply": "Approved customer reply",
+                    "execution_reason_code": "enablement_internal_email_failed",
+                    "missing_fields": [],
+                    "collected_fields": {"requested_feature": "media_relay"},
+                    "internal_email_payload": None,
+                    "automation_context": {},
                 },
                 events=[
                     {
@@ -1139,6 +1166,18 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "support_ticket_events",
         ):
             self.assertIn(table, rendered_sql)
+        case_update = next(
+            args
+            for args, _kwargs in cursor.executed
+            if "support_account_cases" in cursor._sql_text(args[0])
+            and " SET " in cursor._sql_text(args[0])
+        )
+        update_values = case_update[1]
+        self.assertEqual(update_values[2], "enablement_internal_email_failed")
+        self.assertEqual(update_values[3].obj, [])
+        self.assertEqual(update_values[4].obj, {"requested_feature": "media_relay"})
+        self.assertIsNone(update_values[5])
+        self.assertEqual(update_values[6].obj, {})
         self.assertEqual(connection.commit_count, 1)
 
     def test_resolve_account_persona_uses_optimistic_assignment_without_ticket_lock(self) -> None:
@@ -1303,6 +1342,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("billing_ticket_id TEXT PRIMARY KEY", sql_source)
         self.assertIn("client_ticket_id TEXT NOT NULL UNIQUE REFERENCES support_tickets", sql_source)
         self.assertIn("automation_status TEXT NOT NULL", sql_source)
+        self.assertIn("execution_reason_code TEXT", sql_source)
         self.assertIn("missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb", sql_source)
         self.assertIn("collected_fields JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
         self.assertIn("semantic_intent TEXT", sql_source)

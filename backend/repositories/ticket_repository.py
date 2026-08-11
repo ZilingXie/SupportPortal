@@ -19,6 +19,7 @@ from psycopg.types.json import Json
 from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
 from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_billing_handlers import account_billing_metadata
+from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
 from backend.services.account_case_filters import (
     account_case_filter_key,
     account_case_filter_memberships,
@@ -51,9 +52,15 @@ _BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS = frozenset(
         "route_status",
         "automation_handler",
         "automation_status",
+        "execution_reason_code",
+        "missing_fields",
+        "collected_fields",
         "customer_reply",
+        "internal_email_payload",
+        "internal_email_send_status",
         "not_automated_reason",
         "internal_email_send_reason",
+        "automation_context",
         "route_reason",
         "policy_decision",
         "route_classification",
@@ -333,50 +340,16 @@ def _account_case_with_human_review_transition(
     policy_decision: str,
     transitioned_at: str,
 ) -> dict[str, Any]:
-    from backend.services.account_route_pipeline import classification_labels
-
-    updated = copy.deepcopy(account_case)
-    predicted_action = str(
-        updated.get("execution_action") or updated.get("route") or ""
-    ).strip() or None
-    classification = dict(updated.get("route_classification") or {})
-    classification.update(
-        {
-            "predicted_automation_subcategory": predicted_action,
-            "agora_route": "uncategorized",
-            "account_billing_subcategory": None,
-            "backend_operation_subcategory": None,
-            "automation_subcategory": None,
-            "route_target": "human_review",
-            "human_review_reason": reason,
-            "route_reason_code": reason,
-            "handler_binding_status": "human_review",
-        }
+    updated = reconcile_automation_execution_failure(
+        account_case,
+        reason_code=reason,
+        context={"policy_decision": policy_decision},
     )
-    primary_label, secondary_label = classification_labels(classification)
-    classification["primary_label"] = primary_label
-    classification["secondary_label"] = secondary_label
     updated.update(
         {
-            "route": "human_review_required",
-            "scope_label": "human_review",
-            "route_family": "human_review",
-            "execution_action": "human_review_required",
-            "tooling_profile": None,
-            "route_reason": reason,
             "policy_decision": policy_decision,
-            "automation_status": "not_automated",
-            "not_automated_reason": reason,
-            "route_classification": classification,
-            "internal_email_send_status": str(
-                updated.get("internal_email_send_status") or "not_applicable"
-            ),
-            "internal_email_send_reason": reason,
+            "execution_reason_code": reason,
             "updated_at": transitioned_at,
-            **automation_metadata(
-                route_family="human_review",
-                execution_action="human_review_required",
-            ),
         }
     )
     return updated
@@ -403,22 +376,24 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                             WHEN 'security_compliance' THEN 'security_compliance'
                             WHEN 'account_billing' THEN
                                 'account_billing:' || CASE
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_suspension'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_suspension'
                                         THEN 'account_suspension'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'fraud_account'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_verification'
                                         THEN 'fraud_account'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'detailed_invoice'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'fraud_account'
+                                        THEN 'fraud_account'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'detailed_invoice'
                                         THEN 'detailed_invoice'
                                     ELSE 'other'
                                 END
                             WHEN 'backend_operation' THEN
-                                CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'backend_operation_subcategory'), ''), NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'enablement' THEN 'backend_operation:enablement'
                                     WHEN 'quota' THEN 'backend_operation:quota'
                                     ELSE 'backend_operation:unregistered'
                                 END
                             WHEN 'automation' THEN
-                                CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
@@ -440,22 +415,24 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 THEN 'security_compliance'
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'account_billing'
                                 THEN 'account_billing:' || CASE
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_suspension'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_suspension'
                                         THEN 'account_suspension'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'fraud_account'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_verification'
                                         THEN 'fraud_account'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'detailed_invoice'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'fraud_account'
+                                        THEN 'fraud_account'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'detailed_invoice'
                                         THEN 'detailed_invoice'
                                     ELSE 'other'
                                 END
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'backend_operation'
-                                THEN CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                THEN CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'backend_operation_subcategory'), ''), NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'enablement' THEN 'backend_operation:enablement'
                                     WHEN 'quota' THEN 'backend_operation:quota'
                                     ELSE 'backend_operation:unregistered'
                                 END
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'automation'
-                                THEN CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                THEN CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
@@ -463,14 +440,14 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                     WHEN 'quota' THEN 'backend_operation:quota'
                                     ELSE 'backend_operation:unregistered'
                                 END
-                            ELSE 'human_review:other'
+                            ELSE 'human_review:uncategorized'
                         END
                     ELSE 'human_review:uncertain'
                 END
             WHEN COALESCE({alias}.execution_action, {alias}.route) = 'account_suspension'
                 THEN 'account_billing:account_suspension'
                     WHEN LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation') THEN
-                        CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                        CASE COALESCE(NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
@@ -485,11 +462,12 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
             WHEN {alias}.scope_label IN ('security_compliance', 'agora_security_compliance') THEN 'security_compliance'
             WHEN {alias}.scope_label IN ('account_billing', 'billing') THEN
                 'account_billing:' || CASE
-                    WHEN {alias}.subcategory IN ('account_suspension', 'fraud_account', 'detailed_invoice') THEN {alias}.subcategory
+                    WHEN LOWER(BTRIM(COALESCE({alias}.subcategory, ''))) = 'account_verification' THEN 'fraud_account'
+                    WHEN LOWER(BTRIM(COALESCE({alias}.subcategory, ''))) IN ('account_suspension', 'fraud_account', 'detailed_invoice') THEN LOWER(BTRIM({alias}.subcategory))
                     ELSE 'other'
                 END
             WHEN {alias}.scope_label IN ('automation', 'backend_operation', 'enablement', 'quota') THEN
-                CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                CASE COALESCE(NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                     WHEN 'enablement' THEN 'backend_operation:enablement'
                     WHEN 'quota' THEN 'backend_operation:quota'
                     ELSE 'backend_operation:unregistered'
@@ -513,19 +491,24 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
             {primary},
             CASE WHEN STRPOS({primary}, ':') > 0
                 THEN split_part({primary}, ':', 1) END,
-            CASE WHEN LOWER(COALESCE({alias}.route_status, '')) = 'automated'
+            CASE WHEN (
+                    LOWER(COALESCE({alias}.route_status, '')) = 'automated'
                     OR LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation')
-                THEN 'automation' END,
-            CASE {primary}
-                WHEN 'backend_operation:enablement' THEN 'automation:enablement'
-                WHEN 'backend_operation:quota' THEN 'automation:quota'
-            END,
-            CASE WHEN {primary} IN ('account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
-                THEN 'human_review:other' END,
-            CASE WHEN {primary} IN ('backend_operation:unregistered', 'account_billing:account_suspension', 'account_billing:other', 'conversation:human_review')
-                OR split_part({primary}, ':', 1) = 'human_review'
-                THEN 'human_review' END
-            ,CASE WHEN {primary} = 'security_compliance' THEN 'human_review' END
+                ) AND {primary} IN (
+                    'account_billing:fraud_account',
+                    'account_billing:detailed_invoice',
+                    'backend_operation:enablement',
+                    'backend_operation:quota'
+                ) THEN 'automation' END,
+            CASE WHEN (
+                    LOWER(COALESCE({alias}.route_status, '')) = 'automated'
+                    OR LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation')
+                ) THEN CASE {primary}
+                    WHEN 'account_billing:fraud_account' THEN 'automation:fraud_account'
+                    WHEN 'account_billing:detailed_invoice' THEN 'automation:detailed_invoice'
+                    WHEN 'backend_operation:enablement' THEN 'automation:enablement'
+                    WHEN 'backend_operation:quota' THEN 'automation:quota'
+                END END
         ]::TEXT[], NULL::TEXT)
         """
         ).format(primary=primary, alias=sql.Identifier(alias))
@@ -543,6 +526,7 @@ _ACCOUNT_CASE_LIST_FIELDS = (
     "execution_action",
     "route_confidence",
     "automation_status",
+    "execution_reason_code",
     "category",
     "subcategory",
     "route_status",
@@ -7355,6 +7339,7 @@ class PostgresTicketRepository:
                             route_confidence REAL,
                             matched_signals JSONB,
                             automation_status TEXT NOT NULL,
+                            execution_reason_code TEXT,
                             missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
                             collected_fields JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             customer_reply TEXT,
@@ -7413,6 +7398,11 @@ class PostgresTicketRepository:
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS automation_handler TEXT").format(
                         self._table("support_account_cases"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS execution_reason_code TEXT"
+                    ).format(self._table("support_account_cases"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -10227,6 +10217,7 @@ class PostgresTicketRepository:
         allowed_case_fields = {
             "route", "scope_label", "route_family", "execution_action", "tooling_profile",
             "category", "subcategory", "route_status", "automation_handler", "automation_status",
+            "execution_reason_code",
             "customer_reply", "not_automated_reason", "internal_email_send_reason",
             "route_reason", "policy_decision", "route_classification", "updated_at",
         }
@@ -11279,7 +11270,7 @@ class PostgresTicketRepository:
                                 created_by, customer_name, title, question, route, scope_label,
                                 route_family, execution_action, tooling_profile,
                                 route_reason, route_confidence, matched_signals,
-                                automation_status, missing_fields, collected_fields,
+                                automation_status, execution_reason_code, missing_fields, collected_fields,
                                 customer_reply, internal_email_payload,
                                 internal_email_send_status, internal_email_send_reason,
                                 semantic_intent, automation_eligibility, policy_decision,
@@ -11287,7 +11278,7 @@ class PostgresTicketRepository:
                                 router_source, category, subcategory, route_status,
                                 automation_handler, route_classification, automation_context, created_at, updated_at
                             )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (billing_ticket_id) DO UPDATE SET
                                 account_case_id = EXCLUDED.account_case_id,
                                 client_ticket_id = EXCLUDED.client_ticket_id,
@@ -11306,6 +11297,7 @@ class PostgresTicketRepository:
                                 route_confidence = EXCLUDED.route_confidence,
                                 matched_signals = EXCLUDED.matched_signals,
                                 automation_status = EXCLUDED.automation_status,
+                                execution_reason_code = EXCLUDED.execution_reason_code,
                                 missing_fields = EXCLUDED.missing_fields,
                                 collected_fields = EXCLUDED.collected_fields,
                                 customer_reply = EXCLUDED.customer_reply,
@@ -11347,6 +11339,7 @@ class PostgresTicketRepository:
                             float(billing_ticket["route_confidence"]) if billing_ticket.get("route_confidence") is not None else None,
                             Json(billing_ticket.get("matched_signals")) if isinstance(billing_ticket.get("matched_signals"), list) else None,
                             str(billing_ticket.get("automation_status") or "").strip(),
+                            str(billing_ticket.get("execution_reason_code") or "").strip() or None,
                             Json(billing_ticket.get("missing_fields")) if isinstance(billing_ticket.get("missing_fields"), list) else Json([]),
                             Json(billing_ticket.get("collected_fields")) if isinstance(billing_ticket.get("collected_fields"), dict) else Json({}),
                             str(billing_ticket.get("customer_reply") or "").strip() or None,
@@ -11492,9 +11485,19 @@ class PostgresTicketRepository:
         if route_filter:
             normalized_filter = normalize_account_case_filter(legacy_label=route_filter)
             if normalized_filter:
-                membership_expression = _account_case_filter_memberships_sql("bt")
-                clauses.append(sql.SQL("%s = ANY({})").format(membership_expression))
-                params.append(normalized_filter)
+                if normalized_filter == "human_review:unregistered":
+                    # Deprecated compatibility query. It intentionally uses
+                    # the canonical primary expression directly so the alias
+                    # cannot leak into membership arrays or facet counts.
+                    clauses.append(
+                        sql.SQL("{} = 'backend_operation:unregistered'").format(
+                            _account_case_filter_sql_expression("bt")
+                        )
+                    )
+                else:
+                    membership_expression = _account_case_filter_memberships_sql("bt")
+                    clauses.append(sql.SQL("%s = ANY({})").format(membership_expression))
+                    params.append(normalized_filter)
         if route_errors_only:
             clauses.append(
                 sql.SQL(
@@ -11594,13 +11597,21 @@ class PostgresTicketRepository:
             for key, value in account_case_updates.items()
             if key in _BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS
         }
-        for json_field in ("route_classification",):
+        for json_field in (
+            "route_classification",
+            "missing_fields",
+            "collected_fields",
+            "internal_email_payload",
+            "automation_context",
+        ):
             if json_field in updates:
-                updates[json_field] = Json(
-                    updates[json_field]
-                    if isinstance(updates[json_field], dict)
-                    else {}
-                )
+                value = updates[json_field]
+                if json_field == "internal_email_payload" and value is None:
+                    continue
+                if json_field == "missing_fields":
+                    updates[json_field] = Json(value if isinstance(value, list) else [])
+                else:
+                    updates[json_field] = Json(value if isinstance(value, dict) else {})
 
         def _operation(conn: psycopg.Connection[Any]) -> bool:
             with conn.transaction(), conn.cursor() as cur:
@@ -12539,7 +12550,9 @@ class PostgresTicketRepository:
                         sql.SQL(
                             "UPDATE {} SET route=%s,scope_label=%s,route_family=%s,"
                             "execution_action=%s,tooling_profile=%s,route_reason=%s,"
-                            "policy_decision=%s,automation_status=%s,not_automated_reason=%s,"
+                            "policy_decision=%s,automation_status=%s,execution_reason_code=%s,not_automated_reason=%s,"
+                            "missing_fields=%s,collected_fields=%s,customer_reply=NULL,"
+                            "internal_email_payload=%s,automation_context=%s,"
                             "route_classification=%s,internal_email_send_status=%s,"
                             "internal_email_send_reason=%s,category=%s,subcategory=%s,"
                             "route_status=%s,automation_handler=%s,updated_at=%s "
@@ -12554,7 +12567,12 @@ class PostgresTicketRepository:
                             transitioned_case.get("route_reason"),
                             transitioned_case.get("policy_decision"),
                             transitioned_case.get("automation_status"),
+                            transitioned_case.get("execution_reason_code"),
                             transitioned_case.get("not_automated_reason"),
+                            Json(transitioned_case.get("missing_fields") or []),
+                            Json(transitioned_case.get("collected_fields") or {}),
+                            None,
+                            Json(transitioned_case.get("automation_context") or {}),
                             Json(transitioned_case.get("route_classification") or {}),
                             transitioned_case.get("internal_email_send_status"),
                             transitioned_case.get("internal_email_send_reason"),
