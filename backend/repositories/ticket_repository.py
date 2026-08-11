@@ -376,24 +376,24 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                             WHEN 'security_compliance' THEN 'security_compliance'
                             WHEN 'account_billing' THEN
                                 'account_billing:' || CASE
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_suspension'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_suspension'
                                         THEN 'account_suspension'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'account_verification'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_verification'
                                         THEN 'fraud_account'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'fraud_account'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'fraud_account'
                                         THEN 'fraud_account'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', {alias}.subcategory, '') = 'detailed_invoice'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'detailed_invoice'
                                         THEN 'detailed_invoice'
                                     ELSE 'other'
                                 END
                             WHEN 'backend_operation' THEN
-                                CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'backend_operation_subcategory'), ''), NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'enablement' THEN 'backend_operation:enablement'
                                     WHEN 'quota' THEN 'backend_operation:quota'
                                     ELSE 'backend_operation:unregistered'
                                 END
                             WHEN 'automation' THEN
-                                CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
@@ -415,24 +415,24 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                 THEN 'security_compliance'
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'account_billing'
                                 THEN 'account_billing:' || CASE
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_suspension'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_suspension'
                                         THEN 'account_suspension'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'account_verification'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'account_verification'
                                         THEN 'fraud_account'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'fraud_account'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'fraud_account'
                                         THEN 'fraud_account'
-                                    WHEN COALESCE({alias}.route_classification ->> 'account_billing_subcategory', '') = 'detailed_invoice'
+                                    WHEN COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'account_billing_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), '') = 'detailed_invoice'
                                         THEN 'detailed_invoice'
                                     ELSE 'other'
                                 END
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'backend_operation'
-                                THEN CASE COALESCE({alias}.route_classification ->> 'backend_operation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                THEN CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'backend_operation_subcategory'), ''), NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'enablement' THEN 'backend_operation:enablement'
                                     WHEN 'quota' THEN 'backend_operation:quota'
                                     ELSE 'backend_operation:unregistered'
                                 END
                             WHEN COALESCE({alias}.route_classification ->> 'agora_route', 'unclear') = 'automation'
-                                THEN CASE COALESCE({alias}.route_classification ->> 'automation_subcategory', {alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                                THEN CASE COALESCE(NULLIF(BTRIM({alias}.route_classification ->> 'automation_subcategory'), ''), NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
@@ -440,14 +440,14 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
                                     WHEN 'quota' THEN 'backend_operation:quota'
                                     ELSE 'backend_operation:unregistered'
                                 END
-                            ELSE 'human_review:other'
+                            ELSE 'human_review:uncategorized'
                         END
                     ELSE 'human_review:uncertain'
                 END
             WHEN COALESCE({alias}.execution_action, {alias}.route) = 'account_suspension'
                 THEN 'account_billing:account_suspension'
                     WHEN LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation') THEN
-                        CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                        CASE COALESCE(NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                     WHEN 'account_verification' THEN 'account_billing:fraud_account'
                     WHEN 'fraud_account' THEN 'account_billing:fraud_account'
                     WHEN 'detailed_invoice' THEN 'account_billing:detailed_invoice'
@@ -462,12 +462,12 @@ def _account_case_filter_sql_expression(alias: str = "bt") -> sql.SQL:
             WHEN {alias}.scope_label IN ('security_compliance', 'agora_security_compliance') THEN 'security_compliance'
             WHEN {alias}.scope_label IN ('account_billing', 'billing') THEN
                 'account_billing:' || CASE
-                    WHEN {alias}.subcategory = 'account_verification' THEN 'fraud_account'
-                    WHEN {alias}.subcategory IN ('account_suspension', 'fraud_account', 'detailed_invoice') THEN {alias}.subcategory
+                    WHEN LOWER(BTRIM(COALESCE({alias}.subcategory, ''))) = 'account_verification' THEN 'fraud_account'
+                    WHEN LOWER(BTRIM(COALESCE({alias}.subcategory, ''))) IN ('account_suspension', 'fraud_account', 'detailed_invoice') THEN LOWER(BTRIM({alias}.subcategory))
                     ELSE 'other'
                 END
             WHEN {alias}.scope_label IN ('automation', 'backend_operation', 'enablement', 'quota') THEN
-                CASE COALESCE({alias}.subcategory, {alias}.execution_action, {alias}.route, '')
+                CASE COALESCE(NULLIF(BTRIM({alias}.subcategory), ''), NULLIF(BTRIM({alias}.execution_action), ''), NULLIF(BTRIM({alias}.route), ''), '')
                     WHEN 'enablement' THEN 'backend_operation:enablement'
                     WHEN 'quota' THEN 'backend_operation:quota'
                     ELSE 'backend_operation:unregistered'

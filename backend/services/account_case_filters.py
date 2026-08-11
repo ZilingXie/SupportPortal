@@ -186,14 +186,20 @@ def security_compliance_metadata() -> dict[str, str | None]:
     }
 
 
+def _first_nonempty_route_value(*values: Any) -> str:
+    for value in values:
+        normalized = str(value or "").strip().lower()
+        if normalized:
+            return normalized
+    return ""
+
+
 def _account_billing_leaf(item: dict[str, Any], classification: dict[str, Any] | None = None) -> str:
     source = classification if isinstance(classification, dict) else item.get("route_classification")
-    candidate = (
-        source.get("account_billing_subcategory")
-        if isinstance(source, dict)
-        else None
-    )
-    candidate = str(candidate or item.get("subcategory") or "other").strip().lower()
+    candidate = _first_nonempty_route_value(
+        source.get("account_billing_subcategory") if isinstance(source, dict) else None,
+        item.get("subcategory"),
+    ) or "other"
     if candidate == "account_verification":
         candidate = "fraud_account"
     return candidate if candidate in _ACCOUNT_BILLING_SUBCATEGORIES else "other"
@@ -201,17 +207,29 @@ def _account_billing_leaf(item: dict[str, Any], classification: dict[str, Any] |
 
 def _backend_operation_leaf(item: dict[str, Any], classification: dict[str, Any] | None = None) -> str:
     source = classification if isinstance(classification, dict) else item.get("route_classification")
-    candidate = (
-        source.get("backend_operation_subcategory")
-        if isinstance(source, dict)
-        else None
+    candidate = _first_nonempty_route_value(
+        source.get("backend_operation_subcategory") if isinstance(source, dict) else None,
+        source.get("automation_subcategory") if isinstance(source, dict) else None,
+        item.get("subcategory"),
+        item.get("execution_action"),
+        item.get("route"),
     )
-    if not candidate and isinstance(source, dict):
-        candidate = source.get("automation_subcategory")
-    candidate = str(candidate or "").strip().lower()
-    if candidate not in {"enablement", "quota", "unregistered"}:
-        candidate = str(item.get("subcategory") or item.get("execution_action") or item.get("route") or "").strip().lower()
     return candidate if candidate in {"enablement", "quota", "unregistered"} else "unregistered"
+
+
+def _automation_leaf(item: dict[str, Any], classification: dict[str, Any] | None = None) -> str:
+    source = classification if isinstance(classification, dict) else item.get("route_classification")
+    candidate = _first_nonempty_route_value(
+        source.get("automation_subcategory") if isinstance(source, dict) else None,
+        item.get("subcategory"),
+        item.get("execution_action"),
+        item.get("route"),
+    )
+    if candidate in {"account_verification", "fraud_account", "detailed_invoice"}:
+        return candidate
+    if candidate in _BACKEND_OPERATION_SUBCATEGORIES:
+        return candidate
+    return "unregistered"
 
 
 def account_case_filter_key(item: dict[str, Any]) -> str:
@@ -243,13 +261,7 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
                 leaf = _backend_operation_leaf(item, classification)
                 return f"backend_operation:{leaf}"
             if agora_route == "automation":
-                candidate = str(
-                    classification.get("automation_subcategory")
-                    or item.get("subcategory")
-                    or item.get("execution_action")
-                    or item.get("route")
-                    or ""
-                ).strip().lower()
+                candidate = _automation_leaf(item, classification)
                 if candidate in {"fraud_account", "account_verification", "detailed_invoice"}:
                     return f"account_billing:{'fraud_account' if candidate == 'account_verification' else candidate}"
                 if candidate in _BACKEND_OPERATION_SUBCATEGORIES:
@@ -273,7 +285,7 @@ def account_case_filter_key(item: dict[str, Any]) -> str:
                 leaf = _backend_operation_leaf(item, classification)
                 return f"backend_operation:{leaf}"
             if agora_route == "automation":
-                candidate = str(classification.get("automation_subcategory") or "").strip().lower()
+                candidate = _automation_leaf(item, classification)
                 if candidate in {"fraud_account", "account_verification", "detailed_invoice"}:
                     return f"account_billing:{'fraud_account' if candidate == 'account_verification' else candidate}"
                 if candidate in _BACKEND_OPERATION_SUBCATEGORIES:

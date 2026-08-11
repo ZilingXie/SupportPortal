@@ -33,6 +33,7 @@ from backend.repositories.ticket_repository import (
     _account_case_filter_memberships_sql,
 )
 from backend.services.account_case_filters import account_case_filter_memberships
+from backend.tests.account_case_filter_fixtures import ACCOUNT_CASE_FILTER_PARITY_FIXTURES
 
 
 class _BenchmarkPrepCursor:
@@ -403,91 +404,8 @@ class _BorrowingPool(_FakePool):
 
 class RepositoryConfigurationTests(unittest.TestCase):
     def test_account_filter_python_and_postgres_membership_fixture_parity(self) -> None:
-        fixtures = (
-            (
-                {
-                    "route_status": "automated",
-                    "route_family": "automated",
-                    "route_classification": {
-                        "intent_class": "agora",
-                        "agora_route": "account_billing",
-                        "account_billing_subcategory": "fraud_account",
-                    },
-                },
-                {"account_billing:fraud_account", "account_billing", "automation", "automation:fraud_account"},
-            ),
-            (
-                {
-                    "route_status": "automated",
-                    "route_family": "automated",
-                    "route_classification": {
-                        "intent_class": "agora",
-                        "agora_route": "account_billing",
-                        "account_billing_subcategory": "detailed_invoice",
-                    },
-                },
-                {"account_billing:detailed_invoice", "account_billing", "automation", "automation:detailed_invoice"},
-            ),
-            (
-                {
-                    "route_status": "automated",
-                    "route_family": "automated",
-                    "route_classification": {
-                        "intent_class": "agora",
-                        "agora_route": "backend_operation",
-                        "backend_operation_subcategory": "enablement",
-                    },
-                },
-                {"backend_operation:enablement", "backend_operation", "automation", "automation:enablement"},
-            ),
-            (
-                {
-                    "route_status": "automated",
-                    "route_family": "automated",
-                    "route_classification": {
-                        "intent_class": "agora",
-                        "agora_route": "backend_operation",
-                        "backend_operation_subcategory": "quota",
-                    },
-                },
-                {"backend_operation:quota", "backend_operation", "automation", "automation:quota"},
-            ),
-            (
-                {
-                    "route_status": "not_automated",
-                    "route_family": "human_review",
-                    "route_classification": {
-                        "intent_class": "agora",
-                        "agora_route": "backend_operation",
-                        "backend_operation_subcategory": "unregistered",
-                    },
-                },
-                {"backend_operation:unregistered", "backend_operation"},
-            ),
-            (
-                {
-                    "route_status": "not_automated",
-                    "route_family": "human_review",
-                    "route_classification": {
-                        "intent_class": "agora",
-                        "agora_route": "security_compliance",
-                    },
-                },
-                {"security_compliance"},
-            ),
-            (
-                {
-                    "route_status": "not_automated",
-                    "route_family": "human_review",
-                    "route_classification": {
-                        "intent_class": "uncertain",
-                    },
-                },
-                {"human_review:uncertain", "human_review"},
-            ),
-        )
-        for item, expected in fixtures:
-            self.assertEqual(account_case_filter_memberships(item), frozenset(expected))
+        for _name, item, expected in ACCOUNT_CASE_FILTER_PARITY_FIXTURES:
+            self.assertEqual(account_case_filter_memberships(item), expected)
 
         sql_text = _account_case_filter_memberships_sql("bt").as_string()
         for child in (
@@ -499,6 +417,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
             self.assertIn(child, sql_text)
         self.assertIn("'account_billing:fraud_account'", sql_text)
         self.assertIn("'backend_operation:quota'", sql_text)
+        self.assertIn("NULLIF(BTRIM", sql_text)
+        self.assertIn("ELSE 'human_review:uncategorized'", sql_text)
         self.assertNotIn("human_review:unregistered", sql_text)
         self.assertIn("split_part", sql_text)
 
