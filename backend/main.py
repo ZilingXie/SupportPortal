@@ -4381,6 +4381,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         "route_confidence": decision.confidence,
         "matched_signals": list(decision.matched_signals),
         "automation_status": response_status,
+        "execution_reason_code": execution_reason_code,
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,
         "customer_reply": None,

@@ -2383,6 +2383,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["route_classification"]["field_extraction"]["status"], "uncertain")
         self.assertEqual(payload["route_classification"]["backend_operation_subcategory"], "enablement")
+        stored = self.repository.get_account_case(payload["account_case_id"])
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["execution_reason_code"], "enablement_field_extraction_uncertain")
         self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
         send_email.assert_not_called()
 

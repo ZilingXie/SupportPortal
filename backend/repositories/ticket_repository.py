@@ -508,9 +508,7 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
                     WHEN 'account_billing:detailed_invoice' THEN 'automation:detailed_invoice'
                     WHEN 'backend_operation:enablement' THEN 'automation:enablement'
                     WHEN 'backend_operation:quota' THEN 'automation:quota'
-                END END,
-            CASE WHEN split_part({primary}, ':', 1) = 'human_review'
-                THEN 'human_review' END
+                END END
         ]::TEXT[], NULL::TEXT)
         """
         ).format(primary=primary, alias=sql.Identifier(alias))
