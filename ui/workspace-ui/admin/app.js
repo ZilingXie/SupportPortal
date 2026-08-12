@@ -733,6 +733,67 @@ function automationCaseSubcategoryLabel(item) {
   return value ? value.replaceAll("_", " ") : "-";
 }
 
+function adminNormalizedSource(source) {
+  if (source && typeof source === "object") return source;
+  if (typeof source !== "string") return source;
+  const text = source.trim();
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {}
+  return text;
+}
+
+function adminSafeSourceLink(source) {
+  const normalized = adminNormalizedSource(source);
+  let link = "";
+  if (normalized && typeof normalized === "object") {
+    link = String(normalized.Link || normalized.link || normalized.url || "");
+  } else if (typeof normalized === "string") {
+    link = normalized;
+  }
+  link = link.trim();
+  if (!link) return "";
+  try {
+    const parsed = new URL(link);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return link;
+  } catch {}
+  return "";
+}
+
+function adminZendeskTicketLabel(source) {
+  const link = adminSafeSourceLink(source);
+  if (!link) return "";
+  try {
+    const parsed = new URL(link);
+    const host = parsed.hostname.toLowerCase();
+    if (host !== "zendesk.com" && !host.endsWith(".zendesk.com")) return "";
+    const match = parsed.pathname.match(/^\/(?:agent|api\/v2)\/tickets\/(\d+)(?:\.json)?$/);
+    return match ? `zen#${match[1]}` : "";
+  } catch {
+    return "";
+  }
+}
+
+function adminSourceText(source) {
+  const normalized = adminNormalizedSource(source);
+  if (normalized && typeof normalized === "object") {
+    return String(normalized.Link || normalized.link || normalized.url || "").trim();
+  }
+  return String(normalized || "").trim();
+}
+
+function renderAdminSourceValue(item) {
+  const sourceText = adminSourceText(item?.source);
+  const label = adminZendeskTicketLabel(item?.source);
+  const link = adminSafeSourceLink(item?.source);
+  const primary = label
+    ? `<a class="admin-source-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+    : `<span class="admin-source-id">${escapeHtml(sourceText || "-")}</span>`;
+  return `<div class="admin-source-cell">${primary}</div>`;
+}
+
 function renderAutomatedCases() {
   const metric = automationData.metrics || {};
   const rate = Number(metric.automation_rate || 0) * 100;
@@ -762,7 +823,7 @@ function renderAutomatedCases() {
       <input name="created_to" type="date" aria-label="Created to" />
       <button class="btn btn-ghost" type="submit">Apply filters</button>
     </form>
-    <section class="admin-ops-surface"><table class="admin-work-table admin-automation-case-table"><thead><tr><th>Account Case</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Handler</th><th>Route status</th><th>Automation status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.account_case_id || item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(automationCaseCategoryLabel(item))}</td><td>${escapeHtml(automationCaseSubcategoryLabel(item))}</td><td>${escapeHtml(item.automation_handler || "Human Review")}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(statusLabel(item.automation_status || item.status || "not_automated"))}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="8">No /account cases.</td></tr>`}</tbody></table></section>`;
+    <section class="admin-ops-surface"><table class="admin-work-table admin-automation-case-table"><thead><tr><th>Source</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Handler</th><th>Route status</th><th>Automation status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${renderAdminSourceValue(item)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(automationCaseCategoryLabel(item))}</td><td>${escapeHtml(automationCaseSubcategoryLabel(item))}</td><td>${escapeHtml(item.automation_handler || "Human Review")}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(statusLabel(item.automation_status || item.status || "not_automated"))}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="8">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
 function agentStatusLabel(status) {

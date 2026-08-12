@@ -21,7 +21,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               }};
               const storage = new Map();
               const sandbox = {{
-                console, Headers, URLSearchParams,
+                console, Headers, URL, URLSearchParams,
                 window: {{ location: {{ pathname: "/workspace/admin/" }} }},
                 document: {{ getElementById() {{ return root; }} }},
                 localStorage: {{
@@ -103,7 +103,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
 
         self.run_admin_app_script(
             """
-            automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ account_case_id: 'AC-1', title: 'Invoice', category: 'account_billing', subcategory: 'detailed_invoice', category_label: 'Account & Billing', subcategory_label: 'Detailed Invoice', automation_handler: 'billing', route_status: 'automated', automation_status: 'internal_pending' }] };
+            automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ account_case_id: 'AC-12715', source: 'https://agoraio.zendesk.com/agent/tickets/12666', title: 'Invoice', category: 'account_billing', subcategory: 'detailed_invoice', category_label: 'Account & Billing', subcategory_label: 'Detailed Invoice', automation_handler: 'billing', route_status: 'automated', automation_status: 'internal_pending' }] };
             auditEvents = [{ created_at: '2026-08-11T00:00:00Z', event_type: 'account_route', actor_id: 'system', target_id: 'AC-1', payload: { classification_reason_code: 'detailed_invoice_requested', execution_reason_code: 'internal_email_sent' } }];
             agentConfigData = {
               agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', components: [], prompts: [{ key: 'automation-system', name: 'Automation Router', version: 'v1', component_key: 'automation-router', content: 'actual prompt', metadata: {} }], skills: [], mcp_servers: [] }],
@@ -128,6 +128,13 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!renderAutomatedCases().includes('25.0%')) throw new Error('automation ratio missing');
             const casesMarkup = renderAutomatedCases();
             if (!casesMarkup.includes('Account &amp; Billing') || !casesMarkup.includes('Detailed Invoice') || !casesMarkup.includes('billing') || !casesMarkup.includes('Automation status')) throw new Error('Automated Cases taxonomy columns missing');
+            if (!casesMarkup.includes('zen#12666') || !casesMarkup.includes('href="https://agoraio.zendesk.com/agent/tickets/12666"') || !casesMarkup.includes('target="_blank"') || !casesMarkup.includes('rel="noopener noreferrer"') || casesMarkup.includes('AC-12715')) throw new Error('Admin Source Zendesk link is missing or leaked the internal Case ID');
+            automationData.cases[0].source = '{"Link":"https://agoraio.zendesk.com/agent/tickets/12747"}';
+            const jsonSourceMarkup = renderAutomatedCases();
+            if (!jsonSourceMarkup.includes('zen#12747') || !jsonSourceMarkup.includes('href="https://agoraio.zendesk.com/agent/tickets/12747"') || jsonSourceMarkup.includes('{&quot;Link&quot;')) throw new Error('JSON Source Zendesk link is missing');
+            automationData.cases[0].source = 'manual';
+            const nonZendeskMarkup = renderAutomatedCases();
+            if (nonZendeskMarkup.includes('admin-source-link') || !nonZendeskMarkup.includes('manual') || nonZendeskMarkup.includes('AC-12715')) throw new Error('Non-Zendesk Source should remain static without an internal Case ID');
             if (!casesMarkup.includes('All categories')) throw new Error('Automated Cases category filter missing');
             const auditMarkup = renderAudit();
             if (!auditMarkup.includes('Classification reason code') || !auditMarkup.includes('Execution reason code') || !auditMarkup.includes('detailed_invoice_requested') || !auditMarkup.includes('internal_email_sent')) throw new Error('audit reason code columns missing');
@@ -427,7 +434,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!defaultMarkup.includes('<option value="" selected>All categories</option>')) {
               throw new Error('All categories is not selected by default');
             }
-            if (!defaultMarkup.includes('<th>Handler</th>') || !defaultMarkup.includes('<th>Automation status</th>')) {
+            if (!defaultMarkup.includes('<th>Source</th>') || !defaultMarkup.includes('<th>Handler</th>') || !defaultMarkup.includes('<th>Automation status</th>')) {
               throw new Error('Automated Cases handler/status columns are missing');
             }
             automationRouteStatus = '';

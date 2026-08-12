@@ -2124,6 +2124,34 @@ p {
   background: rgba(239, 244, 251, 0.42);
 }
 
+.admin-source-cell {
+  display: flex;
+  min-width: 96px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.admin-source-link {
+  color: var(--primary);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.admin-source-link:hover,
+.admin-source-link:focus-visible {
+  color: var(--primary);
+}
+
+.admin-source-id,
+.admin-source-internal {
+  color: var(--ink-soft);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .admin-case-header {
   margin-bottom: 20px;
 }
