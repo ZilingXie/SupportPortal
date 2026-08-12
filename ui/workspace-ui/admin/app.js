@@ -785,17 +785,13 @@ function adminSourceText(source) {
 }
 
 function renderAdminSourceValue(item) {
-  const internalId = String(item?.account_case_id || item?.billing_ticket_id || "").trim();
   const sourceText = adminSourceText(item?.source);
   const label = adminZendeskTicketLabel(item?.source);
   const link = adminSafeSourceLink(item?.source);
   const primary = label
     ? `<a class="admin-source-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
-    : `<span class="admin-source-id">${escapeHtml(sourceText || internalId || item?.client_ticket_id || item?.ticket_id || "-")}</span>`;
-  const secondary = (label || sourceText) && internalId
-    ? `<span class="admin-source-internal">${escapeHtml(internalId)}</span>`
-    : "";
-  return `<div class="admin-source-cell">${primary}${secondary}</div>`;
+    : `<span class="admin-source-id">${escapeHtml(sourceText || "-")}</span>`;
+  return `<div class="admin-source-cell">${primary}</div>`;
 }
 
 function renderAutomatedCases() {
