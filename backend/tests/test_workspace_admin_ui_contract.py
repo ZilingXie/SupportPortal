@@ -91,7 +91,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "agentConfigLoadError", "loadAgentConfig", "data-action=\"retry-agent-config\"",
             "data-action=\"retry-environment-config\"", "automation_personas", "route_navigation",
             "automation_workflows", "Automation Workflow", "All categories", "Account & Billing", "Handler",
-            "gpt-5.6-luna", "xhigh", "/account only", "/client and shared legacy router",
+            "/account only", "/client and shared legacy router",
             "Classification reason code", "Execution reason code", "Diagnostic fallback", "Four registered outcomes",
             "data-persona-draft-form", 'data-action="publish-persona"',
             'data-action="rollback-persona"', 'data-action="toggle-persona"',
@@ -118,7 +118,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
                 ] },
                 { key: 'intent-uncertain', kind: 'handoff', is_agent: false, name: 'Human Review', description: 'Reviews uncertain intent.', status: 'active', prompt_keys: [], capabilities: [], children: [] }
               ] },
-              route_runtime: { router_prompt_version: 'account-router-v1', stage_details: [{ name: 'intent_classifier', description: 'Classifies the request.' }] },
+              route_runtime: { router_prompt_version: 'account-router-v1', account_profile: { model: 'gpt-5.6-luna', reasoning_effort: 'xhigh', scope: '/account only', timeout_seconds: 120, temperature: null, boundary: '/client and shared legacy router keep their existing profiles' }, stage_details: [{ name: 'intent_classifier', description: 'Classifies the request.' }] },
               automation_personas: [{ persona_key: 'default-support', display_name: 'Default Support', enabled: true, published_version: 1, versions: [{ version: 1, status: 'published', content: { instruction: 'Warm', opener: '', signature: 'Best,\\nSid\\nSupport Engineer 2' }, change_note: 'Initial' }] }]
             };
             environmentData = { names: ['OPENAI_API_KEY', 'TICKET_DB_DSN'], items: [
@@ -137,6 +137,11 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             selectedAgentPath = ['route-agent'];
             const routeMarkup = renderAgentConfig();
             if (!routeMarkup.includes('account-router-v1') || !routeMarkup.includes('Classifies the request.')) throw new Error('route runtime missing from Route Agent');
+            if (!routeMarkup.includes('Account model profile') || !routeMarkup.includes('gpt-5.6-luna') || !routeMarkup.includes('xhigh')) throw new Error('Account model profile missing from Route Agent');
+            const savedAccountProfile = agentConfigData.route_runtime.account_profile;
+            delete agentConfigData.route_runtime.account_profile;
+            if (renderAgentConfig().includes('Account model profile')) throw new Error('Account model profile rendered without API data');
+            agentConfigData.route_runtime.account_profile = savedAccountProfile;
             if (!routeMarkup.includes('Conversation Action') || !routeMarkup.includes('Human Review') || !routeMarkup.includes('Agent')) throw new Error('Route Agent Overview outcomes missing');
             const treeMarkup = renderAgentTree(agentConfigData.agents);
             if (!treeMarkup.includes('Agora Router') || !treeMarkup.includes('Automation Router')) throw new Error('Agent-only tree is incomplete');
