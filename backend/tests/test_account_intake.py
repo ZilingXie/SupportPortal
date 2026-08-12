@@ -38,6 +38,38 @@ from backend.services.quota_field_extractor import QuotaFieldExtraction
 from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
 
 
+def _successful_account_rerun_preflight() -> SimpleNamespace:
+    return SimpleNamespace(
+        ok=True,
+        reason="",
+        as_dict=lambda: {
+            "ok": True,
+            "reason": "",
+            "checks": {
+                "postgresql": {"status": "passed"},
+                "prompt_runtime": {"status": "passed"},
+                "luna_json": {"status": "passed"},
+            },
+        },
+    )
+
+
+def _failed_account_rerun_preflight(reason: str = "preflight_luna_json_failed") -> SimpleNamespace:
+    return SimpleNamespace(
+        ok=False,
+        reason=reason,
+        as_dict=lambda: {
+            "ok": False,
+            "reason": reason,
+            "checks": {
+                "postgresql": {"status": "passed"},
+                "prompt_runtime": {"status": "passed"},
+                "luna_json": {"status": "failed", "reason": "model_unavailable"},
+            },
+        },
+    )
+
+
 def _fraud_account_route_result() -> AccountRouteResult:
     decision = SupportRouteDecision(
         scope_label="fraud_account",
@@ -331,6 +363,10 @@ class AccountIntakeApiTests(unittest.TestCase):
             "backend.main.extract_automation_resolution_facts",
             side_effect=_fake_automation_resolution_facts,
         )
+        self._rerun_preflight_patcher = patch(
+            "backend.main.run_account_rerun_preflight",
+            side_effect=_successful_account_rerun_preflight,
+        )
         self._llm_patcher.start()
         self._account_route_credentials_patcher.start()
         self._title_model_patcher.start()
@@ -342,6 +378,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._worker_persona_patcher.start()
         self._main_persona_patcher.start()
         self._resolution_extractor_patcher.start()
+        self._rerun_preflight_patcher.start()
 
     def test_account_case_view_exposes_route_failure_diagnostics(self) -> None:
         view = main._build_account_ticket_view_model(
@@ -450,6 +487,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._resolution_extractor_patcher.stop()
+        self._rerun_preflight_patcher.stop()
         self._main_persona_patcher.stop()
         self._worker_persona_patcher.stop()
         self._account_suspension_extractor_patcher.stop()
@@ -1014,6 +1052,60 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.repository.list_workspace_audit_events()[0]["event_type"],
             "account_case_full_rerun_failed",
         )
+
+    def test_rerun_preflight_failure_stops_before_case_side_effects(self) -> None:
+        ticket_id = "preflight-stop-ticket"
+        case_id = "AC-PREFLIGHT-STOP"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please process this Account Case.",
+                        "created_at": "2026-08-10T01:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": case_id,
+                "client_ticket_id": ticket_id,
+                "route_status": "automated",
+                "route_family": "automated",
+                "automation_handler": "enablement",
+            }
+        )
+        job = asyncio.run(
+            main._enqueue_account_rerun_job(
+                SimpleNamespace(add_task=lambda *args: None),
+                target_case_ids=[case_id],
+            )
+        )
+        with (
+            patch.object(main, "run_account_rerun_preflight", return_value=_failed_account_rerun_preflight()),
+            patch.object(self.repository, "reset_account_rerun_state") as reset_state,
+            patch.object(main, "reprocess_account_case") as reprocess,
+            patch.object(main, "_send_enablement_internal_email_attempt", AsyncMock()) as sender,
+        ):
+            asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
+
+        latest = main._account_full_reroute_job(job["job_id"])
+        assert latest is not None
+        self.assertEqual(latest["status"], "failed")
+        self.assertEqual(latest["phase"], "Preflight")
+        self.assertEqual(latest["error"], "preflight_luna_json_failed")
+        self.assertEqual(latest["processed"], 0)
+        self.assertEqual(latest["succeeded"], 0)
+        self.assertEqual(latest["failed"], 0)
+        self.assertEqual(latest["emails_sent"], 0)
+        self.assertEqual(latest["replies_scheduled"], 0)
+        reset_state.assert_not_called()
+        reprocess.assert_not_called()
+        sender.assert_not_awaited()
+        self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
 
     def test_account_full_reroute_returns_retryable_503_when_storage_is_unavailable(self) -> None:
         with patch.object(main, "_ACCOUNT_RERUN_STORAGE_RETRY_DELAYS", (0.0, 0.0, 0.0, 0.0)), patch.object(

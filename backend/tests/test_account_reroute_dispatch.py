@@ -21,13 +21,35 @@ from backend.repositories.ticket_repository import (
 )
 
 
+def _successful_account_rerun_preflight() -> SimpleNamespace:
+    return SimpleNamespace(
+        ok=True,
+        reason="",
+        as_dict=lambda: {
+            "ok": True,
+            "reason": "",
+            "checks": {
+                "postgresql": {"status": "passed"},
+                "prompt_runtime": {"status": "passed"},
+                "luna_json": {"status": "passed"},
+            },
+        },
+    )
+
+
 class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_repository = main.ticket_repository
         self.repository = InMemoryTicketRepository()
         main.ticket_repository = self.repository
+        self._rerun_preflight_patcher = patch(
+            "backend.main.run_account_rerun_preflight",
+            side_effect=_successful_account_rerun_preflight,
+        )
+        self._rerun_preflight_patcher.start()
 
     def tearDown(self) -> None:
+        self._rerun_preflight_patcher.stop()
         main.ticket_repository = self.original_repository
 
     async def _enqueue_single(
@@ -576,7 +598,15 @@ class AccountRerouteFencingTests(unittest.TestCase):
 
 
 class AccountRerouteDispatcherLifecycleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._rerun_preflight_patcher = patch(
+            "backend.main.run_account_rerun_preflight",
+            side_effect=_successful_account_rerun_preflight,
+        )
+        self._rerun_preflight_patcher.start()
+
     def tearDown(self) -> None:
+        self._rerun_preflight_patcher.stop()
         stop_dispatcher = getattr(main, "_stop_account_reroute_dispatcher", None)
         if callable(stop_dispatcher):
             stop_dispatcher()
@@ -988,6 +1018,24 @@ class AccountRerouteDaemonThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
 
             from backend import main
             from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+            main.run_account_rerun_preflight = lambda: type(
+                "Preflight",
+                (),
+                {
+                    "ok": True,
+                    "reason": "",
+                    "as_dict": lambda self: {
+                        "ok": True,
+                        "reason": "",
+                        "checks": {
+                            "postgresql": {"status": "passed"},
+                            "prompt_runtime": {"status": "passed"},
+                            "luna_json": {"status": "passed"},
+                        },
+                    },
+                },
+            )()
 
             os.environ["ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_SECONDS"] = "0.25"
             os.environ["ACCOUNT_REROUTE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS"] = "0.25"

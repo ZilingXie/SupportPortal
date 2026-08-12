@@ -162,7 +162,15 @@ def _safe_confidence(value: Any) -> float:
 
 
 def _invoke_json(*, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-    profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+    return _invoke_json_for_scenario(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        scenario=INTENT_ROUTER_SCENARIO,
+    )
+
+
+def _invoke_json_for_scenario(*, system_prompt: str, user_prompt: str, scenario: str) -> dict[str, Any]:
+    profile = resolve_model_profile(scenario)
     if not profile_has_invocation_credentials(profile):
         raise LlmInvocationError("account_verification_extractor_missing_credentials", fallback_eligible=False)
     response = invoke_responses_text(profile=profile, system_prompt=system_prompt, user_prompt=user_prompt)
@@ -178,6 +186,7 @@ def extract_account_verification_fields(
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_json,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> AccountVerificationFieldExtraction:
     trusted_fields = _clean_existing_fields(existing_fields)
     messages = _customer_messages(customer_messages)
@@ -228,7 +237,11 @@ def extract_account_verification_fields(
         }
     )
     try:
-        payload = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+        payload = (
+            _invoke_json_for_scenario(system_prompt=system_prompt, user_prompt=user_prompt, scenario=model_scenario)
+            if invoke is _invoke_json
+            else invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+        )
     except (LlmInvocationError, ValueError, TypeError, json.JSONDecodeError):
         LOGGER.warning("Account Verification field extraction failed", exc_info=True)
         return AccountVerificationFieldExtraction(
@@ -330,6 +343,7 @@ def compose_account_verification_follow_up(
     missing_fields: list[str],
     collected_fields: dict[str, str],
     invoke: Callable[..., dict[str, Any]] = _invoke_json,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> tuple[str, dict[str, str]]:
     missing = [field for field in ACCOUNT_VERIFICATION_REQUIRED_GROUPS if field in set(missing_fields)]
     if not missing:
@@ -341,7 +355,11 @@ def compose_account_verification_follow_up(
     user_prompt = build_account_verification_follow_up_user_prompt(
         {"missing_fields": missing, "collected_fields": _clean_existing_fields(collected_fields)}
     )
-    payload = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+    payload = (
+        _invoke_json_for_scenario(system_prompt=system_prompt, user_prompt=user_prompt, scenario=model_scenario)
+        if invoke is _invoke_json
+        else invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+    )
     reply = str(payload.get("reply") or "").strip()
     validate_account_verification_follow_up(reply)
     _validate_follow_up_coverage(reply, missing)

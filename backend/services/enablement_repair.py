@@ -11,6 +11,7 @@ from backend.services.enablement_field_extractor import (
     EnablementFieldExtraction,
     extract_enablement_fields,
 )
+from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 
 
 def _now_iso() -> str:
@@ -53,6 +54,7 @@ def repair_enablement_case(
         ticket_subject=str(ticket.get("subject") or case.get("title") or ""),
         customer_messages=list(ticket.get("messages") or []),
         existing_fields=existing_fields,
+        model_scenario=ACCOUNT_ROUTE_SCENARIO,
     )
     result = {
         "account_case_id": account_case_id,

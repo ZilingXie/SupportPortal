@@ -24,7 +24,7 @@ from backend.services.graph_mail import (
     send_graph_mail_with_token,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, INTENT_ROUTER_SCENARIO, resolve_model_profile
 from backend.services.detailed_invoice_field_extractor import (
     DetailedInvoiceFieldExtraction,
     extract_detailed_invoice_fields,
@@ -211,6 +211,7 @@ def build_billing_automation_result(
     already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
     use_llm_field_extractor: bool = False,
     generate_customer_reply: bool = True,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> BillingAutomationResult:
     normalized_action = canonical_automation_subcategory(action)
     if normalized_action not in _FIELD_ALIASES:
@@ -218,7 +219,7 @@ def build_billing_automation_result(
 
     field_extraction = None
     if normalized_action == BILLING_ACTION_DETAILED_INVOICE and use_llm_field_extractor:
-        field_extraction = extract_detailed_invoice_fields(message=message)
+        field_extraction = extract_detailed_invoice_fields(message=message, scenario=model_scenario)
         if field_extraction.requires_human_review:
             return BillingAutomationResult(
                 customer_reply="",

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
 from backend.services.account_billing_handlers import account_billing_handler
 from backend.services.account_case_reroute import AccountCaseReroute, reroute_account_case
@@ -152,6 +153,7 @@ def reprocess_account_case(
             ticket_subject=str(ticket.get("subject") or current.get("title") or ""),
             customer_messages=_customer_messages(ticket),
             existing_fields={},
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         classification = dict(updated.get("route_classification") or {})
         classification.update(
@@ -223,6 +225,7 @@ def reprocess_account_case(
             customer_email=customer_email,
             existing_fields={},
             follow_up_count=follow_up_count,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         extraction = result.extraction
         missing_fields = list(result.missing_fields)
@@ -247,6 +250,7 @@ def reprocess_account_case(
             already_requested_fields=sorted(asked_for_handler),
             use_llm_field_extractor=registration.subcategory == "detailed_invoice",
             generate_customer_reply=False,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         extraction = result.field_extraction
         missing_fields = list(result.missing_fields)
@@ -258,6 +262,7 @@ def reprocess_account_case(
             ticket_subject=subject,
             customer_messages=customer_messages,
             existing_fields={},
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         requires_human_review = extraction.requires_human_review
         if not requires_human_review:
@@ -285,6 +290,7 @@ def reprocess_account_case(
             ticket_subject=subject,
             customer_messages=customer_messages,
             existing_fields={},
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         follow_up_count = int(prior_context.get("follow_up_count") or 0) if same_original_binding else 0
         if asked_for_handler:

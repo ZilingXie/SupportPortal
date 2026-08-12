@@ -114,8 +114,8 @@ def _customer_messages(messages: Any) -> list[dict[str, str]]:
     return normalized
 
 
-def _invoke_extractor(*, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-    profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+def _invoke_extractor(*, system_prompt: str, user_prompt: str, scenario: str = INTENT_ROUTER_SCENARIO) -> dict[str, Any]:
+    profile = resolve_model_profile(scenario)
     if not profile_has_invocation_credentials(profile):
         raise LlmInvocationError("enablement_field_extractor_missing_credentials", fallback_eligible=False)
     response = invoke_responses_text(
@@ -130,6 +130,10 @@ def _invoke_extractor(*, system_prompt: str, user_prompt: str) -> dict[str, Any]
     if not isinstance(payload, dict):
         raise ValueError("enablement field extractor returned a non-object payload")
     return payload
+
+
+def _invoke_extractor_with_scenario(*, system_prompt: str, user_prompt: str, scenario: str) -> dict[str, Any]:
+    return _invoke_extractor(system_prompt=system_prompt, user_prompt=user_prompt, scenario=scenario)
 
 
 def _uncertain(
@@ -433,6 +437,7 @@ def extract_enablement_fields(
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_extractor,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> EnablementFieldExtraction:
     trusted_fields = _clean_existing_fields(existing_fields)
     if str(trusted_fields.get("requested_feature_label") or "").strip().lower() in _GENERIC_FEATURE_LABELS:
@@ -471,7 +476,15 @@ def extract_enablement_fields(
             failure_type="missing_customer_messages",
         )
     try:
-        payload = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+        payload = (
+            _invoke_extractor_with_scenario(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                scenario=model_scenario,
+            )
+            if invoke is _invoke_extractor
+            else invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+        )
     except (LlmInvocationError, ValueError, TypeError):
         LOGGER.warning("Enablement field extraction failed", exc_info=True)
         return _uncertain(
@@ -491,9 +504,14 @@ def extract_enablement_fields(
             payload,
         )
         try:
-            verified_payload = invoke(
-                system_prompt=system_prompt,
-                user_prompt=verification_user_prompt,
+            verified_payload = (
+                _invoke_extractor_with_scenario(
+                    system_prompt=system_prompt,
+                    user_prompt=verification_user_prompt,
+                    scenario=model_scenario,
+                )
+                if invoke is _invoke_extractor
+                else invoke(system_prompt=system_prompt, user_prompt=verification_user_prompt)
             )
         except (LlmInvocationError, ValueError, TypeError):
             LOGGER.warning("Enablement field verification failed", exc_info=True)

@@ -97,7 +97,15 @@ def _customer_messages(messages: Any) -> list[dict[str, str]]:
 
 
 def _invoke_extractor(*, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-    profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+    return _invoke_extractor_for_scenario(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        scenario=INTENT_ROUTER_SCENARIO,
+    )
+
+
+def _invoke_extractor_for_scenario(*, system_prompt: str, user_prompt: str, scenario: str) -> dict[str, Any]:
+    profile = resolve_model_profile(scenario)
     if not profile_has_invocation_credentials(profile):
         raise LlmInvocationError("quota_field_extractor_missing_credentials", fallback_eligible=False)
     response = invoke_responses_text(
@@ -150,6 +158,7 @@ def extract_quota_fields(
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_extractor,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> QuotaFieldExtraction:
     trusted_fields = dict(existing_fields) if isinstance(existing_fields, dict) else {}
     messages = _customer_messages(customer_messages)
@@ -176,7 +185,14 @@ def extract_quota_fields(
         }
     )
     try:
-        payload = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+        if invoke is _invoke_extractor:
+            payload = _invoke_extractor_for_scenario(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                scenario=model_scenario,
+            )
+        else:
+            payload = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
     except (LlmInvocationError, ValueError, TypeError):
         LOGGER.warning("Quota field extraction failed", exc_info=True)
         return _uncertain(

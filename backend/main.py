@@ -68,6 +68,7 @@ from backend.services.embedding_provider import (
 )
 from backend.services.agora_service_events import get_agora_service_events_payload
 from backend.services.billing_automation import build_billing_automation_result, send_billing_internal_email
+from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.account_billing_handlers import (
@@ -81,6 +82,7 @@ from backend.services.account_suspension_field_extractor import (
     extract_account_suspension_fields,
 )
 from backend.services.account_full_reroute import reprocess_account_case
+from backend.services.account_rerun_preflight import run_account_rerun_preflight
 from backend.services.account_automation_reconciliation import (
     reconcile_automation_execution_failure,
     reconciliation_reason_code,
@@ -361,6 +363,7 @@ def _build_billing_internal_email_attempt(
     requester: str | None,
     persona_instruction: str | None = None,
     already_requested_fields: list[str] | None = None,
+    model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
 ) -> dict[str, Any]:
     billing_result = build_billing_automation_result(
         action=action,
@@ -373,6 +376,7 @@ def _build_billing_internal_email_attempt(
         already_requested_fields=already_requested_fields,
         use_llm_field_extractor=True,
         generate_customer_reply=False,
+        model_scenario=model_scenario,
     )
     missing_fields = list(billing_result.missing_fields)
     collected_fields = dict(billing_result.collected_fields)
@@ -410,11 +414,13 @@ def _build_enablement_internal_email_attempt(
     customer_email: str | None,
     existing_fields: dict[str, Any] | None = None,
     already_requested_fields: list[str] | None = None,
+    model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
 ) -> dict[str, Any]:
     extraction = extract_enablement_fields(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
         existing_fields=existing_fields,
+        model_scenario=model_scenario,
     )
     if extraction.requires_human_review:
         return {
@@ -462,11 +468,13 @@ def _build_quota_internal_email_attempt(
     customer_email: str | None,
     existing_fields: dict[str, Any] | None = None,
     follow_up_count: int = 0,
+    model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
 ) -> dict[str, Any]:
     extraction = extract_quota_fields(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
         existing_fields=existing_fields,
+        model_scenario=model_scenario,
     )
     result = build_quota_automation_result(
         extraction=extraction,
@@ -508,6 +516,7 @@ def _build_account_verification_internal_email_attempt(
     customer_email: str | None,
     existing_fields: dict[str, Any] | None = None,
     follow_up_count: int = 0,
+    model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
 ) -> dict[str, Any]:
     result = build_account_verification_automation_result(
         ticket_subject=ticket_subject,
@@ -517,6 +526,7 @@ def _build_account_verification_internal_email_attempt(
         customer_email=customer_email,
         existing_fields=existing_fields,
         follow_up_count=follow_up_count,
+        model_scenario=model_scenario,
     )
     internal_email_to_send = dict(result.internal_email) if result.internal_email else None
     persisted_follow_up_count = result.follow_up_count
@@ -551,11 +561,13 @@ def _build_account_suspension_classification_attempt(
     ticket_subject: str,
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
+    model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
 ) -> dict[str, Any]:
     extraction = extract_account_suspension_fields(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
         existing_fields=existing_fields,
+        model_scenario=model_scenario,
     )
     return {
         "customer_reply": "",
@@ -5809,6 +5821,19 @@ async def _run_account_full_reroute_job(
         if resume_phase == "Waiting for replies":
             cases: list[dict[str, Any]] = []
         else:
+            preflight = await _account_reroute_sync_call(run_account_rerun_preflight)
+            if not preflight.ok:
+                failed_at = now_iso()
+                job.update(
+                    status="failed",
+                    phase="Preflight",
+                    error=preflight.reason,
+                    preflight=preflight.as_dict(),
+                    completed_at=failed_at,
+                    updated_at=failed_at,
+                )
+                await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
+                return
             target_case_ids = {
                 str(item or "").strip()
                 for item in list(job.get("target_case_ids") or [])

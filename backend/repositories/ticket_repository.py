@@ -652,6 +652,94 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
         normalized["execution_action"] = metadata["subcategory"]
         normalized["route"] = metadata["subcategory"]
     return normalized
+
+
+# Keep the Account Case write contract in one place.  Legacy billing names are
+# retained at the public method boundary, but all Account Case persistence uses
+# this canonical ordered field list.
+ACCOUNT_CASE_PERSISTED_COLUMNS = (
+    "account_case_id", "billing_ticket_id", "client_ticket_id", "source", "external_id",
+    "created_by", "customer_name", "title", "question", "route", "scope_label",
+    "route_family", "execution_action", "tooling_profile", "route_reason", "route_confidence",
+    "matched_signals", "automation_status", "execution_reason_code", "missing_fields",
+    "collected_fields", "customer_reply", "internal_email_payload", "internal_email_send_status",
+    "internal_email_send_reason", "semantic_intent", "automation_eligibility", "policy_decision",
+    "not_automated_reason", "risk_flags", "evidence_spans", "router_source", "category",
+    "subcategory", "route_status", "automation_handler", "route_classification", "automation_context",
+    "created_at", "updated_at",
+)
+
+
+def _account_case_persisted_values(account_case: dict[str, Any], *, created_at: Any, updated_at: Any) -> tuple[Any, ...]:
+    """Build parameters in exactly the same order as ACCOUNT_CASE_PERSISTED_COLUMNS."""
+    return (
+        str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip(),
+        str(account_case.get("billing_ticket_id") or "").strip(),
+        str(account_case.get("client_ticket_id") or "").strip(),
+        str(account_case.get("source") or "").strip(),
+        str(account_case.get("external_id") or "").strip() or None,
+        str(account_case.get("created_by") or "").strip() or None,
+        str(account_case.get("customer_name") or "").strip() or None,
+        str(account_case.get("title") or "").strip(),
+        str(account_case.get("question") or "").strip(),
+        str(account_case.get("route") or "").strip() or None,
+        str(account_case.get("scope_label") or "").strip() or None,
+        str(account_case.get("route_family") or "").strip() or None,
+        str(account_case.get("execution_action") or "").strip() or None,
+        str(account_case.get("tooling_profile") or "").strip() or None,
+        str(account_case.get("route_reason") or "").strip() or None,
+        float(account_case["route_confidence"]) if account_case.get("route_confidence") is not None else None,
+        Json(account_case.get("matched_signals")) if isinstance(account_case.get("matched_signals"), list) else None,
+        str(account_case.get("automation_status") or "").strip(),
+        str(account_case.get("execution_reason_code") or "").strip() or None,
+        Json(account_case.get("missing_fields")) if isinstance(account_case.get("missing_fields"), list) else Json([]),
+        Json(account_case.get("collected_fields")) if isinstance(account_case.get("collected_fields"), dict) else Json({}),
+        str(account_case.get("customer_reply") or "").strip() or None,
+        Json(account_case.get("internal_email_payload")) if isinstance(account_case.get("internal_email_payload"), dict) else None,
+        str(account_case.get("internal_email_send_status") or "").strip() or None,
+        str(account_case.get("internal_email_send_reason") or "").strip() or None,
+        str(account_case.get("semantic_intent") or "").strip() or None,
+        str(account_case.get("automation_eligibility") or "").strip() or None,
+        str(account_case.get("policy_decision") or "").strip() or None,
+        str(account_case.get("not_automated_reason") or "").strip() or None,
+        Json(account_case.get("risk_flags")) if isinstance(account_case.get("risk_flags"), list) else Json([]),
+        Json(account_case.get("evidence_spans")) if isinstance(account_case.get("evidence_spans"), list) else Json([]),
+        str(account_case.get("router_source") or "").strip() or None,
+        str(account_case.get("category") or "").strip() or None,
+        str(account_case.get("subcategory") or "").strip() or None,
+        str(account_case.get("route_status") or "not_automated").strip(),
+        str(account_case.get("automation_handler") or "").strip() or None,
+        Json(account_case.get("route_classification")) if isinstance(account_case.get("route_classification"), dict) else Json({}),
+        Json(account_case.get("automation_context")) if isinstance(account_case.get("automation_context"), dict) else Json({}),
+        created_at,
+        updated_at,
+    )
+
+
+def account_case_upsert_sql(table: sql.Composable) -> sql.Composed:
+    columns = sql.SQL(", ").join(sql.Identifier(item) for item in ACCOUNT_CASE_PERSISTED_COLUMNS)
+    placeholders = sql.SQL(",").join(sql.Placeholder() for _ in ACCOUNT_CASE_PERSISTED_COLUMNS)
+    updates = sql.SQL(", ").join(
+        sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(item), sql.Identifier(item))
+        for item in ACCOUNT_CASE_PERSISTED_COLUMNS
+        if item not in {"account_case_id", "billing_ticket_id", "created_at"}
+    )
+    return sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT (billing_ticket_id) DO UPDATE SET {}").format(
+        table, columns, placeholders, updates
+    )
+
+
+def account_case_upsert_contract() -> dict[str, int | bool]:
+    """Expose the write contract for read-only startup/rerun preflight checks."""
+    column_count = len(ACCOUNT_CASE_PERSISTED_COLUMNS)
+    parameter_count = len(_account_case_persisted_values({}, created_at=None, updated_at=None))
+    placeholder_count = column_count
+    return {
+        "column_count": column_count,
+        "placeholder_count": placeholder_count,
+        "parameter_count": parameter_count,
+        "consistent": column_count == placeholder_count == parameter_count,
+    }
 _TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v9-product-selection-state"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
@@ -11263,105 +11351,8 @@ class PostgresTicketRepository:
             with conn.transaction():
                 with conn.cursor() as cur:
                     cur.execute(
-                        sql.SQL(
-                            """
-                            INSERT INTO {} (
-                                account_case_id, billing_ticket_id, client_ticket_id, source, external_id,
-                                created_by, customer_name, title, question, route, scope_label,
-                                route_family, execution_action, tooling_profile,
-                                route_reason, route_confidence, matched_signals,
-                                automation_status, execution_reason_code, missing_fields, collected_fields,
-                                customer_reply, internal_email_payload,
-                                internal_email_send_status, internal_email_send_reason,
-                                semantic_intent, automation_eligibility, policy_decision,
-                                not_automated_reason, risk_flags, evidence_spans,
-                                router_source, category, subcategory, route_status,
-                                automation_handler, route_classification, automation_context, created_at, updated_at
-                            )
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                            ON CONFLICT (billing_ticket_id) DO UPDATE SET
-                                account_case_id = EXCLUDED.account_case_id,
-                                client_ticket_id = EXCLUDED.client_ticket_id,
-                                source = EXCLUDED.source,
-                                external_id = EXCLUDED.external_id,
-                                created_by = EXCLUDED.created_by,
-                                customer_name = EXCLUDED.customer_name,
-                                title = EXCLUDED.title,
-                                question = EXCLUDED.question,
-                                route = EXCLUDED.route,
-                                scope_label = EXCLUDED.scope_label,
-                                route_family = EXCLUDED.route_family,
-                                execution_action = EXCLUDED.execution_action,
-                                tooling_profile = EXCLUDED.tooling_profile,
-                                route_reason = EXCLUDED.route_reason,
-                                route_confidence = EXCLUDED.route_confidence,
-                                matched_signals = EXCLUDED.matched_signals,
-                                automation_status = EXCLUDED.automation_status,
-                                execution_reason_code = EXCLUDED.execution_reason_code,
-                                missing_fields = EXCLUDED.missing_fields,
-                                collected_fields = EXCLUDED.collected_fields,
-                                customer_reply = EXCLUDED.customer_reply,
-                                internal_email_payload = EXCLUDED.internal_email_payload,
-                                internal_email_send_status = EXCLUDED.internal_email_send_status,
-                                internal_email_send_reason = EXCLUDED.internal_email_send_reason,
-                                semantic_intent = EXCLUDED.semantic_intent,
-                                automation_eligibility = EXCLUDED.automation_eligibility,
-                                policy_decision = EXCLUDED.policy_decision,
-                                not_automated_reason = EXCLUDED.not_automated_reason,
-                                risk_flags = EXCLUDED.risk_flags,
-                                evidence_spans = EXCLUDED.evidence_spans,
-                                router_source = EXCLUDED.router_source,
-                                category = EXCLUDED.category,
-                                subcategory = EXCLUDED.subcategory,
-                                route_status = EXCLUDED.route_status,
-                                automation_handler = EXCLUDED.automation_handler,
-                                route_classification = EXCLUDED.route_classification,
-                                automation_context = EXCLUDED.automation_context,
-                                updated_at = EXCLUDED.updated_at
-                            """
-                        ).format(self._table("support_account_cases")),
-                        (
-                            str(billing_ticket.get("account_case_id") or billing_ticket_id).strip(),
-                            billing_ticket_id,
-                            client_ticket_id,
-                            str(billing_ticket.get("source") or "").strip(),
-                            str(billing_ticket.get("external_id") or "").strip() or None,
-                            str(billing_ticket.get("created_by") or "").strip() or None,
-                            str(billing_ticket.get("customer_name") or "").strip() or None,
-                            str(billing_ticket.get("title") or "").strip(),
-                            str(billing_ticket.get("question") or "").strip(),
-                            str(billing_ticket.get("route") or "").strip() or None,
-                            str(billing_ticket.get("scope_label") or "").strip() or None,
-                            str(billing_ticket.get("route_family") or "").strip() or None,
-                            str(billing_ticket.get("execution_action") or "").strip() or None,
-                            str(billing_ticket.get("tooling_profile") or "").strip() or None,
-                            str(billing_ticket.get("route_reason") or "").strip() or None,
-                            float(billing_ticket["route_confidence"]) if billing_ticket.get("route_confidence") is not None else None,
-                            Json(billing_ticket.get("matched_signals")) if isinstance(billing_ticket.get("matched_signals"), list) else None,
-                            str(billing_ticket.get("automation_status") or "").strip(),
-                            str(billing_ticket.get("execution_reason_code") or "").strip() or None,
-                            Json(billing_ticket.get("missing_fields")) if isinstance(billing_ticket.get("missing_fields"), list) else Json([]),
-                            Json(billing_ticket.get("collected_fields")) if isinstance(billing_ticket.get("collected_fields"), dict) else Json({}),
-                            str(billing_ticket.get("customer_reply") or "").strip() or None,
-                            Json(billing_ticket.get("internal_email_payload")) if isinstance(billing_ticket.get("internal_email_payload"), dict) else None,
-                            str(billing_ticket.get("internal_email_send_status") or "").strip() or None,
-                            str(billing_ticket.get("internal_email_send_reason") or "").strip() or None,
-                            str(billing_ticket.get("semantic_intent") or "").strip() or None,
-                            str(billing_ticket.get("automation_eligibility") or "").strip() or None,
-                            str(billing_ticket.get("policy_decision") or "").strip() or None,
-                            str(billing_ticket.get("not_automated_reason") or "").strip() or None,
-                            Json(billing_ticket.get("risk_flags")) if isinstance(billing_ticket.get("risk_flags"), list) else Json([]),
-                            Json(billing_ticket.get("evidence_spans")) if isinstance(billing_ticket.get("evidence_spans"), list) else Json([]),
-                            str(billing_ticket.get("router_source") or "").strip() or None,
-                            str(billing_ticket.get("category") or "").strip() or None,
-                            str(billing_ticket.get("subcategory") or "").strip() or None,
-                            str(billing_ticket.get("route_status") or "not_automated").strip(),
-                            str(billing_ticket.get("automation_handler") or "").strip() or None,
-                            Json(billing_ticket.get("route_classification")) if isinstance(billing_ticket.get("route_classification"), dict) else Json({}),
-                            Json(billing_ticket.get("automation_context")) if isinstance(billing_ticket.get("automation_context"), dict) else Json({}),
-                            created_at,
-                            updated_at,
-                        ),
+                        account_case_upsert_sql(self._table("support_account_cases")),
+                        _account_case_persisted_values(billing_ticket, created_at=created_at, updated_at=updated_at),
                     )
 
         self._run_with_connection_retry("save_billing_ticket", _operation)

@@ -30,6 +30,7 @@ from backend.services.enablement_automation import (
 from backend.services.quota_automation import QUOTA_SEMANTIC_INTENT, QUOTA_TOOLING_PROFILE
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
+    ACCOUNT_ROUTE_SCENARIO,
     INTENT_ROUTER_SCENARIO,
     profile_has_invocation_credentials,
     resolve_model_profile,
@@ -490,10 +491,11 @@ def _invoke_stage(
     fallback_system_prompt: str,
     payload: dict[str, Any],
     validate_payload: Callable[[dict[str, Any]], str | None] | None = None,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> AccountRouteStageAttempt:
     system_prompt = _resolve_account_prompt(prompt_key, fallback_system_prompt)
     user_prompt = build_account_stage_user_prompt(payload)
-    profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+    profile = resolve_model_profile(model_scenario)
     if not profile_has_invocation_credentials(profile):
         return AccountRouteStageAttempt(
             payload=None,
@@ -1301,6 +1303,7 @@ def decide_account_route(
         fallback_system_prompt=build_account_intent_system_prompt(),
         payload=base_payload,
         validate_payload=_validate_intent_payload,
+        model_scenario=ACCOUNT_ROUTE_SCENARIO,
     )
     attempts["intent_classifier"] = intent_attempt
     if intent_attempt.payload is None:
@@ -1438,6 +1441,7 @@ def decide_account_route(
         fallback_system_prompt=build_account_agora_system_prompt(),
         payload={**base_payload, "parent_classification": classification},
         validate_payload=_validate_agora_payload,
+        model_scenario=ACCOUNT_ROUTE_SCENARIO,
     )
     attempts["agora_router"] = agora_attempt
     agora_payload = agora_attempt.payload or {}
@@ -1546,6 +1550,7 @@ def decide_account_route(
             fallback_system_prompt=build_account_billing_system_prompt(),
             payload={**base_payload, "parent_classification": classification},
             validate_payload=_validate_account_billing_payload,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         attempts["account_billing_router"] = account_billing_attempt
         account_billing_payload = account_billing_attempt.payload or {}
@@ -1659,6 +1664,7 @@ def decide_account_route(
             fallback_system_prompt=build_account_backend_operation_system_prompt(),
             payload={**base_payload, "parent_classification": classification},
             validate_payload=_validate_backend_operation_payload,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         attempts["backend_operation_router"] = backend_operation_attempt
         backend_operation_payload = backend_operation_attempt.payload or {}
@@ -1759,6 +1765,7 @@ def decide_account_route(
         fallback_system_prompt=build_account_automation_system_prompt(),
         payload={**base_payload, "parent_classification": classification},
         validate_payload=_validate_automation_payload,
+        model_scenario=ACCOUNT_ROUTE_SCENARIO,
     )
     attempts["automation_router"] = automation_attempt
     automation_payload = automation_attempt.payload or {}

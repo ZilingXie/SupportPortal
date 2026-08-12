@@ -10,6 +10,7 @@ from backend.services.account_verification_field_extractor import (
     compose_account_verification_follow_up,
     extract_account_verification_fields,
 )
+from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
 from backend.services.llm_factory import LlmInvocationError
@@ -110,6 +111,7 @@ def build_account_verification_automation_result(
     follow_up_count: int = 0,
     extract: Callable[..., AccountVerificationFieldExtraction] | None = None,
     compose_follow_up: Callable[..., tuple[str, dict[str, str]]] | None = None,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> AccountVerificationAutomationResult:
     # Customer copy is intentionally deferred to Automation Persona. Keep the
     # legacy argument for callers that still pass it while migrating tests/data.
@@ -118,6 +120,7 @@ def build_account_verification_automation_result(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
         existing_fields=existing_fields,
+        model_scenario=model_scenario,
     )
     safe_count = max(0, int(follow_up_count or 0))
     if extraction.requires_human_review:

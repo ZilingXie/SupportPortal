@@ -13,6 +13,7 @@ if importlib.util.find_spec("psycopg") is None:
     raise unittest.SkipTest("psycopg is not installed in the local test environment")
 
 import psycopg
+from psycopg import sql
 
 from backend.repositories.event_repository import PostgresEventRepository, create_event_repository
 from backend.repositories.asset_repository import PostgresAssetRepository, create_asset_repository
@@ -31,6 +32,10 @@ from backend.repositories.ticket_repository import (
     _ACCOUNT_RERUN_CLAIM_ADVISORY_LOCK,
     create_ticket_repository,
     _account_case_filter_memberships_sql,
+    ACCOUNT_CASE_PERSISTED_COLUMNS,
+    _account_case_persisted_values,
+    account_case_upsert_contract,
+    account_case_upsert_sql,
 )
 from backend.services.account_case_filters import account_case_filter_memberships
 from backend.tests.account_case_filter_fixtures import ACCOUNT_CASE_FILTER_PARITY_FIXTURES
@@ -403,6 +408,27 @@ class _BorrowingPool(_FakePool):
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_account_case_upsert_contract_has_matching_columns_placeholders_and_parameters(self) -> None:
+        contract = account_case_upsert_contract()
+        self.assertEqual(contract, {
+            "column_count": 40,
+            "placeholder_count": 40,
+            "parameter_count": 40,
+            "consistent": True,
+        })
+        record = {
+            "account_case_id": "AC-CONTRACT",
+            "billing_ticket_id": "AC-CONTRACT",
+            "client_ticket_id": "T-CONTRACT",
+            "source": "test",
+            "title": "title",
+            "question": "question",
+            "automation_status": "not_automated",
+        }
+        values = _account_case_persisted_values(record, created_at="now", updated_at="now")
+        self.assertEqual(len(ACCOUNT_CASE_PERSISTED_COLUMNS), len(values))
+        rendered = account_case_upsert_sql(sql.Identifier("support_account_cases")).as_string()
+        self.assertEqual(rendered.count("%s"), 40)
     def test_account_filter_python_and_postgres_membership_fixture_parity(self) -> None:
         for _name, item, expected in ACCOUNT_CASE_FILTER_PARITY_FIXTURES:
             self.assertEqual(account_case_filter_memberships(item), expected)

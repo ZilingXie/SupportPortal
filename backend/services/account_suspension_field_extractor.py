@@ -85,7 +85,15 @@ def _customer_messages(messages: Any) -> list[dict[str, str]]:
 
 
 def _invoke_extractor(*, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-    profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+    return _invoke_extractor_for_scenario(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        scenario=INTENT_ROUTER_SCENARIO,
+    )
+
+
+def _invoke_extractor_for_scenario(*, system_prompt: str, user_prompt: str, scenario: str) -> dict[str, Any]:
+    profile = resolve_model_profile(scenario)
     if not profile_has_invocation_credentials(profile):
         raise LlmInvocationError("account_suspension_extractor_missing_credentials", fallback_eligible=False)
     response = invoke_responses_text(profile=profile, system_prompt=system_prompt, user_prompt=user_prompt)
@@ -101,6 +109,7 @@ def extract_account_suspension_fields(
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_extractor,
+    model_scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> AccountSuspensionFieldExtraction:
     trusted = {
         key: value
@@ -133,7 +142,11 @@ def extract_account_suspension_fields(
         }
     )
     try:
-        payload = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+        payload = (
+            _invoke_extractor_for_scenario(system_prompt=system_prompt, user_prompt=user_prompt, scenario=model_scenario)
+            if invoke is _invoke_extractor
+            else invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+        )
     except (LlmInvocationError, ValueError, TypeError, json.JSONDecodeError):
         LOGGER.warning("Account Suspension field extraction failed", exc_info=True)
         return AccountSuspensionFieldExtraction(
