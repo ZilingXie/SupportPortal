@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260811-account-filter-taxonomy-1", html)
+        self.assertIn("20260812-account-rerun-fail-fast-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -270,6 +270,38 @@ class AccountUiContractTests(unittest.TestCase):
             self.assertIn("Only if the rerun produces a new Automation customer reply", rendered)
             self.assertIn("enabled and have a published version", rendered)
             self.assertIn("same Persona may be selected again", rendered)
+
+    def test_account_rerun_status_is_fail_fast_and_resumeable(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        status_start = app_source.index("function renderRerouteStatus")
+        status_end = app_source.index("\nfunction", status_start + 1)
+        status_source = app_source[status_start:status_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? ''); }}
+        function isActiveRerouteJob(job) {{ return ['queued', 'running'].includes(String(job?.status || '')); }}
+        const state = {{ rerouteError: '', rerouteJob: null, isStartingReroute: false }};
+        {status_source}
+        function render(job) {{ state.rerouteJob = job; return renderRerouteStatus(); }}
+        console.log(JSON.stringify({{
+          running: render({{ status: 'running', phase: 'Preflight', processed: 0, total: 4 }}),
+          preflight: render({{ status: 'failed', stop_reason: 'preflight_failed', failed_stage: 'preflight', remaining: 4 }}),
+          stopped: render({{ status: 'completed_with_errors', failed: 1, failed_case_id: 'AC-4', failed_stage: 'prepare', succeeded: 3, remaining: 0 }}),
+          completed: render({{ status: 'completed', succeeded: 4, remaining: 0 }}),
+        }}));
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = json.loads(result.stdout)
+        self.assertIn("Running", rendered["running"])
+        self.assertIn("Preflight failed", rendered["preflight"])
+        self.assertIn("Stopped at Case", rendered["stopped"])
+        self.assertIn("AC-4", rendered["stopped"])
+        self.assertIn("Completed", rendered["completed"])
+        self.assertNotIn("Rerun complete", rendered["stopped"])
+        self.assertIn("Resume rerun", rendered["stopped"])
+        self.assertIn("/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume", app_source)
+        self.assertIn("read-only preflight", app_source)
+        self.assertIn("first Case error stops", app_source)
 
     def test_account_persona_detail_styles_cover_desktop_tablet_and_mobile_contract(self) -> None:
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")

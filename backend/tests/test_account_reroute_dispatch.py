@@ -21,13 +21,35 @@ from backend.repositories.ticket_repository import (
 )
 
 
+def _successful_account_rerun_preflight() -> SimpleNamespace:
+    return SimpleNamespace(
+        ok=True,
+        reason="",
+        as_dict=lambda: {
+            "ok": True,
+            "reason": "",
+            "checks": {
+                "postgresql": {"status": "passed"},
+                "prompt_runtime": {"status": "passed"},
+                "luna_json": {"status": "passed"},
+            },
+        },
+    )
+
+
 class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_repository = main.ticket_repository
         self.repository = InMemoryTicketRepository()
         main.ticket_repository = self.repository
+        self._rerun_preflight_patcher = patch(
+            "backend.main.run_account_rerun_preflight",
+            side_effect=_successful_account_rerun_preflight,
+        )
+        self._rerun_preflight_patcher.start()
 
     def tearDown(self) -> None:
+        self._rerun_preflight_patcher.stop()
         main.ticket_repository = self.original_repository
 
     async def _enqueue_single(
@@ -317,6 +339,7 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(main, "reprocess_account_case", return_value=result) as reprocess,
+            patch.object(main, "_wait_for_account_rerun_replies", AsyncMock(return_value=True)),
             patch.object(
                 main,
                 "_send_enablement_internal_email_attempt",
@@ -333,10 +356,9 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(checkpoint["dispatch_status"], "queued")
             self.assertEqual(checkpoint["completed_case_ids"], [case_id])
             self.assertEqual(checkpoint["processed"], 1)
-            first_reply_job = self.repository.get_latest_account_reply_job(ticket_id)
-            assert first_reply_job is not None
-            first_reply_job["status"] = "published"
-            self.repository.save_account_reply_job(first_reply_job)
+            reply_checkpoint = self.repository.get_latest_account_reply_job(ticket_id)
+            assert reply_checkpoint is not None
+            self.assertEqual(reply_checkpoint["payload"]["rerun_job_id"], queued["job_id"])
 
             stop_event.clear()
             await main._claim_and_run_account_reroute_job(
@@ -353,7 +375,7 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         sender.assert_awaited_once()
         self.assertEqual(
             self.repository.get_latest_account_reply_job(ticket_id)["job_id"],
-            first_reply_job["job_id"],
+            reply_checkpoint["job_id"],
         )
 
 
@@ -576,7 +598,15 @@ class AccountRerouteFencingTests(unittest.TestCase):
 
 
 class AccountRerouteDispatcherLifecycleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._rerun_preflight_patcher = patch(
+            "backend.main.run_account_rerun_preflight",
+            side_effect=_successful_account_rerun_preflight,
+        )
+        self._rerun_preflight_patcher.start()
+
     def tearDown(self) -> None:
+        self._rerun_preflight_patcher.stop()
         stop_dispatcher = getattr(main, "_stop_account_reroute_dispatcher", None)
         if callable(stop_dispatcher):
             stop_dispatcher()
@@ -988,6 +1018,24 @@ class AccountRerouteDaemonThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
 
             from backend import main
             from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+            main.run_account_rerun_preflight = lambda: type(
+                "Preflight",
+                (),
+                {
+                    "ok": True,
+                    "reason": "",
+                    "as_dict": lambda self: {
+                        "ok": True,
+                        "reason": "",
+                        "checks": {
+                            "postgresql": {"status": "passed"},
+                            "prompt_runtime": {"status": "passed"},
+                            "luna_json": {"status": "passed"},
+                        },
+                    },
+                },
+            )()
 
             os.environ["ACCOUNT_REROUTE_DISPATCH_POLL_INTERVAL_SECONDS"] = "0.25"
             os.environ["ACCOUNT_REROUTE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS"] = "0.25"

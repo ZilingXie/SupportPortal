@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from backend.services.llm_profiles import (
+    ACCOUNT_ROUTE_SCENARIO,
     AUTO_DEPLOY_REPORT_SCENARIO,
     BENCHMARK_JUDGE_SCENARIO,
     BILLING_REPLY_SCENARIO,
@@ -13,6 +14,7 @@ from backend.services.llm_profiles import (
     ENGINEER_HELPER_SCENARIO,
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
     INPUT_GUARDRAIL_SCENARIO,
+    INTENT_ROUTER_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
     PRODUCT_SELECTION_SCENARIO,
     QUERY_EXPANSION_SCENARIO,
@@ -31,6 +33,23 @@ from backend.services.llm_profiles import (
 
 
 class LlmProfileTests(unittest.TestCase):
+    def test_account_route_profile_uses_luna_defaults_without_changing_legacy_router(self) -> None:
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "ACCOUNT_ROUTE_MODEL": "",
+            "ACCOUNT_ROUTE_REASONING_EFFORT": "",
+            "ACCOUNT_ROUTE_TIMEOUT_SECONDS": "",
+            "INTENT_ROUTER_MODEL": "legacy-model",
+            "INTENT_ROUTER_REASONING_EFFORT": "low",
+        }, clear=False):
+            account = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
+            legacy = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+        self.assertEqual(account.model, "gpt-5.6-luna")
+        self.assertEqual(account.reasoning_effort, "xhigh")
+        self.assertEqual(account.timeout_seconds, 120.0)
+        self.assertIsNone(account.temperature)
+        self.assertEqual(legacy.model, "legacy-model")
+        self.assertEqual(legacy.reasoning_effort, "low")
     def tearDown(self) -> None:
         clear_config_warnings_for_testing()
 

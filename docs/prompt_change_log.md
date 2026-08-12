@@ -3523,3 +3523,43 @@ For each new entry, record:
   - Admin audit separates classification reason code from execution reason code with compatibility fallbacks for older events.
 - Verification:
   - Account UI and Admin UI/API contract tests, Agent Config/prompt catalog tests, Node syntax checks, `python3 scripts/verify_feature_list.py`, and `git diff --check`.
+
+## 2026-08-12 - Account Luna route profile and rerun preflight
+
+- Area or subsystem: `/account` layered routers, Account field extractors, and Account rerun startup gate
+- Prompt or model version: `account_route` profile (`gpt-5.6-luna`, `xhigh`, 120 seconds)
+- Summary: Added an Account-only model scenario for layered routing and Account field extraction. Legacy `INTENT_ROUTER_SCENARIO` remains the profile for `/client`, `decide_support_route()`, and shared legacy handlers. Added a side-effect-free rerun preflight for the Account Case SQL write contract, managed Prompt runtime, and a minimal JSON model probe.
+- Reason: The Account rerun failure exposed a 40-column/38-placeholder PostgreSQL write mismatch and did not fail before entering the Case loop. Account routing also needs a higher-reasoning, longer-timeout profile without changing client behavior.
+- Affected files or config:
+  - `backend/services/llm_profiles.py`
+  - `backend/services/account_route_pipeline.py`
+  - Account field extractor modules
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/account_rerun_preflight.py`
+  - `.env.example`, `deployment/docker-compose.single-host.yml`
+- Expected behavior change:
+  - Account layered route stages and Account extractors resolve `ACCOUNT_ROUTE_SCENARIO`; `/client` and shared router calls retain their existing model settings.
+  - Account Case upsert columns, placeholders, and parameters are generated from one 40-field contract.
+  - Rerun jobs run the read-only preflight before any Case reset, extraction, email, or reply work; failures persist a structured `preflight_*_failed` reason and process zero Cases.
+- Verification:
+  - Account/profile/preflight/repository/route/lifecycle targeted tests: `178 passed, 3 subtests passed`.
+  - Legacy router and extractor regressions: `124 passed, 8 subtests passed`.
+  - Python AST/compile and `git diff --check` passed. Opt-in PostgreSQL round-trip remains skipped unless `RUN_POSTGRES_INTEGRATION=1` and a test DSN are supplied.
+
+## 2026-08-12 - Account rerun fail-fast operator surface
+
+- Area or subsystem: `/account` rerun lifecycle UI, Account Agent Config, and runtime configuration
+- Prompt or model version: `account_route` profile (`gpt-5.6-luna`, `xhigh`, 120 seconds)
+- Summary: Exposed Account rerun preflight, fail-fast stop, checkpoint counts, and Resume rerun in the Account UI. Admin Agent Config now shows the Account-only Luna profile and explicitly states that `/client` and shared legacy routing keep their existing profiles.
+- Reason: A batch rerun must stop at the first system or Case error and make the failed stage and unprocessed scope actionable instead of reporting a misleading completed result.
+- Affected files or config:
+  - `ui/account-ui/app.js`, `ui/account-ui/index.html`
+  - `ui/workspace-ui/admin/app.js`, `ui/workspace-ui/admin/index.html`
+  - `backend/services/agent_config.py`
+  - `.env.example` and single-host compose overlays
+- Expected behavior change:
+  - Account displays Running, Preflight failed, Stopped at Case, or Completed.
+  - Stopped jobs show failed Case, failed stage, succeeded and unprocessed counts, and call the existing `/resume` API without restarting the original job.
+  - The confirmation dialog explains that preflight runs before the Case loop and the first error stops processing.
+- Verification:
+  - Account/Admin UI contracts, Node syntax, compose/config contracts, feature-list verification, and `git diff --check`.

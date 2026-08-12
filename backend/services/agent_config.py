@@ -4,6 +4,7 @@ from typing import Any
 
 from backend.services.account_admin import routing_config_payload
 from backend.services.account_route_pipeline import account_router_prompt_catalog
+from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO, resolve_model_profile
 from backend.services.engineer_plan_agent import ENGINEER_PLAN_SKILLS
 from backend.services.openai_input_guardrail import (
     INPUT_GUARDRAIL_PROMPT_VERSION,
@@ -617,6 +618,7 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
     ]
     route_navigation = _route_agent_navigation()
     route_runtime = routing_config_payload()
+    account_profile = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
     return {
         "agents": agents,
         "route_navigation": route_navigation,
@@ -624,6 +626,14 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
         "route_runtime": {
             "router_prompt_version": route_runtime["router_prompt_version"],
             "stage_details": route_runtime["stage_details"],
+            "account_profile": {
+                "scope": "/account only",
+                "model": account_profile.model,
+                "reasoning_effort": account_profile.reasoning_effort,
+                "timeout_seconds": account_profile.timeout_seconds,
+                "temperature": account_profile.temperature,
+                "boundary": "/client and shared legacy router use their existing profiles",
+            },
         },
         "automation_personas": list(personas),
     }

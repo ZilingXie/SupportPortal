@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
 from backend.services.account_billing_handlers import account_billing_handler
 from backend.services.account_case_reroute import AccountCaseReroute, reroute_account_case
@@ -36,6 +38,56 @@ class AccountFullRerouteResult:
     customer_reply: str = ""
     reply_kind: str | None = None
     asked_field_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AccountRerunPrepared:
+    """Read-only result passed from Account rerun Prepare to repository Commit."""
+
+    original_case: dict[str, Any]
+    customer_only_ticket: dict[str, Any]
+    prepared_case: dict[str, Any]
+    route_execution: dict[str, Any]
+    expected_updated_at: str | None
+    expected_detail_revision: str
+    changed: bool
+    handler_status: str
+    result: AccountFullRerouteResult
+
+
+def prepare_account_case_rerun(
+    account_case: dict[str, Any],
+    *,
+    ticket: dict[str, Any],
+    detail_revision: str,
+    fresh: bool = True,
+    processor: Callable[..., AccountFullRerouteResult] | None = None,
+    **kwargs: Any,
+) -> AccountRerunPrepared:
+    """Prepare a rerun without repository writes, mail, Persona, or reply jobs."""
+    customer_only_ticket = {
+        key: copy.deepcopy(ticket.get(key))
+        for key in ("ticket_id", "customer_id", "requester", "subject", "status")
+        if key in ticket
+    }
+    customer_only_ticket["messages"] = _customer_messages(ticket)
+    result = (processor or reprocess_account_case)(
+        account_case,
+        ticket=customer_only_ticket,
+        fresh=fresh,
+        **kwargs,
+    )
+    return AccountRerunPrepared(
+        original_case=copy.deepcopy(account_case),
+        customer_only_ticket=customer_only_ticket,
+        prepared_case=copy.deepcopy(result.account_case),
+        route_execution=copy.deepcopy(result.route_execution),
+        expected_updated_at=account_case.get("updated_at"),
+        expected_detail_revision=str(detail_revision or ""),
+        changed=bool(result.changed),
+        handler_status=str(result.handler_status or ""),
+        result=result,
+    )
 
 
 def _customer_messages(ticket: dict[str, Any]) -> list[dict[str, Any]]:
@@ -152,6 +204,7 @@ def reprocess_account_case(
             ticket_subject=str(ticket.get("subject") or current.get("title") or ""),
             customer_messages=_customer_messages(ticket),
             existing_fields={},
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         classification = dict(updated.get("route_classification") or {})
         classification.update(
@@ -223,6 +276,7 @@ def reprocess_account_case(
             customer_email=customer_email,
             existing_fields={},
             follow_up_count=follow_up_count,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         extraction = result.extraction
         missing_fields = list(result.missing_fields)
@@ -247,6 +301,7 @@ def reprocess_account_case(
             already_requested_fields=sorted(asked_for_handler),
             use_llm_field_extractor=registration.subcategory == "detailed_invoice",
             generate_customer_reply=False,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         extraction = result.field_extraction
         missing_fields = list(result.missing_fields)
@@ -258,6 +313,7 @@ def reprocess_account_case(
             ticket_subject=subject,
             customer_messages=customer_messages,
             existing_fields={},
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         requires_human_review = extraction.requires_human_review
         if not requires_human_review:
@@ -285,6 +341,7 @@ def reprocess_account_case(
             ticket_subject=subject,
             customer_messages=customer_messages,
             existing_fields={},
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         follow_up_count = int(prior_context.get("follow_up_count") or 0) if same_original_binding else 0
         if asked_for_handler:

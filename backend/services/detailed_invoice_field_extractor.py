@@ -46,6 +46,7 @@ def extract_detailed_invoice_fields(
     message: str,
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., Any] | None = None,
+    scenario: str = INTENT_ROUTER_SCENARIO,
 ) -> DetailedInvoiceFieldExtraction:
     system_prompt = resolve_system_prompt(
         ACCOUNT_DETAILED_INVOICE_FIELD_PROMPT_KEY,
@@ -55,7 +56,7 @@ def extract_detailed_invoice_fields(
         "system_prompt": system_prompt,
         "user_prompt": "[redacted detailed invoice extraction input]",
     }
-    profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+    profile = resolve_model_profile(scenario)
     if not profile.has_invocation_credentials() and invoke is None:
         return DetailedInvoiceFieldExtraction(
             status="uncertain",
@@ -120,4 +121,3 @@ def extract_detailed_invoice_fields(
         reason=str(payload.get("reason") or "").strip(),
         prompt_snapshot=snapshot,
     )
-

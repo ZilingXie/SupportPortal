@@ -11,6 +11,7 @@ SILICONFLOW_CHAT_API = "siliconflow_openai_compatible_chat"
 DEEPSEEK_CHAT_API = "deepseek_openai_compatible_chat"
 
 INTENT_ROUTER_SCENARIO = "intent_router"
+ACCOUNT_ROUTE_SCENARIO = "account_route"
 PRODUCT_SELECTION_SCENARIO = "product_selection"
 WEB_SEARCH_SCENARIO = "web_search_non_technical"
 CLIENT_ACK_SCENARIO = "client_ack"
@@ -296,6 +297,18 @@ def resolve_model_profile(
             reasoning_effort=_first_env_text("ROUTE_AGENT_ROUTER_REASONING_EFFORT", "INTENT_ROUTER_REASONING_EFFORT") or "low",
             temperature=_safe_float_env_any(("ROUTE_AGENT_ROUTER_TEMPERATURE", "INTENT_ROUTER_TEMPERATURE"), 0.3),
             timeout_seconds=_safe_positive_float_env_any(("ROUTE_AGENT_ROUTER_TIMEOUT_SECONDS", "INTENT_ROUTER_TIMEOUT_SECONDS"), 8.0),
+            max_retries=1,
+        ))
+    if scenario == ACCOUNT_ROUTE_SCENARIO:
+        return _with_provider_fallback(ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("ACCOUNT_ROUTE_MODEL")) or "gpt-5.6-luna",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("ACCOUNT_ROUTE_REASONING_EFFORT")) or "xhigh",
+            temperature=None,
+            timeout_seconds=_safe_positive_float_env("ACCOUNT_ROUTE_TIMEOUT_SECONDS", 120.0),
             max_retries=1,
         ))
     if scenario == PRODUCT_SELECTION_SCENARIO:

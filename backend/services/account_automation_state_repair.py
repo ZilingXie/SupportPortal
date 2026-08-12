@@ -12,6 +12,7 @@ from backend.services.account_verification_field_extractor import (
     AccountVerificationFieldExtraction,
     extract_account_verification_fields,
 )
+from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ def repair_account_automation_state(
             ticket_subject=title,
             customer_messages=customer_messages,
             existing_fields=previous_fields,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         classification.update(
             handler_binding_status="classification_only",
@@ -81,6 +83,7 @@ def repair_account_automation_state(
             ticket_subject=title,
             customer_messages=customer_messages,
             existing_fields=previous_fields,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
         )
         classification.update(
             field_extraction=extraction.audit_payload(),

@@ -1206,7 +1206,11 @@ function renderCapabilities(capabilities, kind) {
 function renderRouteRuntime() {
   const runtime = agentConfigData.route_runtime || {};
   const stages = Array.isArray(runtime.stage_details) ? runtime.stage_details : [];
-  return `<section class="admin-agent-runtime" aria-label="Route runtime"><div><span>Current route</span><strong>${escapeHtml(runtime.router_prompt_version || "unversioned")}</strong></div><ol>${stages.map(stage => `<li><strong>${escapeHtml(stage.name)}</strong><small>${escapeHtml(stage.description)}</small></li>`).join("")}</ol></section>`;
+  const accountProfile = runtime.account_profile || {};
+  const profileLine = accountProfile.model
+    ? `<div><span>Account model profile</span><strong>${escapeHtml(accountProfile.model)} · ${escapeHtml(accountProfile.reasoning_effort || "default")}</strong><small>${escapeHtml(accountProfile.scope || "/account only")} · timeout ${escapeHtml(accountProfile.timeout_seconds ?? "default")}s · temperature ${accountProfile.temperature == null ? "unset" : escapeHtml(accountProfile.temperature)}</small></div><p class="admin-agent-detail-note">${escapeHtml(accountProfile.boundary || "/client and shared legacy router keep their existing profiles")}</p>`
+    : "";
+  return `<section class="admin-agent-runtime" aria-label="Route runtime"><div><span>Current route</span><strong>${escapeHtml(runtime.router_prompt_version || "unversioned")}</strong></div>${profileLine}<ol>${stages.map(stage => `<li><strong>${escapeHtml(stage.name)}</strong><small>${escapeHtml(stage.description)}</small></li>`).join("")}</ol></section>`;
 }
 
 function renderNodeLinks(node, basePath) {
