@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260812-account-rerun-blocked-feedback-1", html)
+        self.assertIn("20260812-account-full-rerun-always-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -167,7 +167,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIsNone(retry_result["snapshotAfterSuccess"])
         self.assertEqual(retry_result["jobId"], "job-replayed")
 
-    def test_rerun_readiness_conflict_remains_visible_after_latest_job_refresh(self) -> None:
+    def test_rerun_conflict_remains_visible_after_latest_job_refresh(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
         helper_start = app_source.index("function responseErrorMessage")
         helper_end = app_source.index("\nfunction createSingleCaseRerunIdempotencyKey", helper_start)
@@ -196,9 +196,8 @@ class AccountUiContractTests(unittest.TestCase):
             status: 409,
             payload: {{
               detail: {{
-                code: 'account_rerun_readiness_blocked',
-                unknown_case_ids: Array.from({{ length: 29 }}, (_, index) => `AC-${{index + 1}}`),
-                message: 'Formal full rerun is blocked.',
+                code: 'account_rerun_already_active',
+                message: 'Another Account rerun is already running.',
               }},
             }},
           }};
@@ -217,10 +216,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         rendered = json.loads(result.stdout)
         self.assertEqual(rendered["jobId"], "old-job")
-        self.assertIn("Preflight blocked", rendered["error"])
-        self.assertIn("29 Automation Cases", rendered["error"])
-        self.assertIn("unknown internal-email delivery state", rendered["error"])
-        self.assertNotIn("AC-1", rendered["error"])
+        self.assertEqual(rendered["error"], "Another Account rerun is already running.")
 
     def test_account_detail_persona_assignment_is_visible_only_for_automated_cases(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
