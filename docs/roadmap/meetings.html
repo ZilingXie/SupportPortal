@@ -74,8 +74,8 @@
     .header {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(300px, 0.42fr);
-      gap: 28px;
-      padding: clamp(28px, 5vw, 58px);
+      gap: 20px;
+      padding: 22px 28px;
       border: 1px solid #102f28;
       border-radius: var(--radius);
       background: var(--forest);
@@ -96,27 +96,27 @@
     h1 {
       max-width: 760px;
       margin: 0;
-      font-size: clamp(42px, 6vw, 72px);
-      line-height: 0.96;
+      font-size: clamp(30px, 3.5vw, 42px);
+      line-height: 1;
       font-weight: 780;
     }
 
     .header-copy {
       max-width: 720px;
-      margin: 20px 0 0;
+      margin: 12px 0 0;
       color: #d6e5df;
-      font-size: 17px;
-      line-height: 1.65;
+      font-size: 14px;
+      line-height: 1.5;
     }
 
     .header-note {
       align-self: end;
       margin: 0;
-      padding-top: 20px;
+      padding-top: 12px;
       border-top: 1px solid rgba(255, 255, 255, 0.22);
       color: #bdd3ca;
-      font-size: 13px;
-      line-height: 1.65;
+      font-size: 12px;
+      line-height: 1.45;
     }
 
     .metrics {
@@ -130,8 +130,8 @@
     }
 
     .metric {
-      min-height: 116px;
-      padding: 18px;
+      min-height: 76px;
+      padding: 12px;
       background: #214b40;
     }
 
@@ -140,13 +140,13 @@
 
     .metric strong {
       display: block;
-      font-size: 34px;
+      font-size: 26px;
       line-height: 1;
     }
 
     .metric span {
       display: block;
-      margin-top: 10px;
+      margin-top: 6px;
       color: inherit;
       font-size: 12px;
       line-height: 1.45;
@@ -228,6 +228,10 @@
       color: var(--muted);
       text-decoration: none;
       transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+      width: 100%;
     }
 
     .index-link:hover, .index-link.active {
@@ -426,8 +430,13 @@
 
     .work-items tr:last-child td { border-bottom: 0; }
     .work-owner { width: 132px; font-weight: 780; }
+    .work-id { width: 86px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; white-space: nowrap; }
     .work-status { width: 112px; }
     .work-proof { color: var(--muted); }
+    .work-prs { min-width: 138px; }
+    .pr-links { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pr-link { color: var(--blue); font-weight: 800; white-space: nowrap; }
+    .pr-link:hover { color: var(--orange); }
 
     .status {
       display: inline-flex;
@@ -444,6 +453,7 @@
     .status.todo { border-color: #d7b29f; background: var(--orange-soft); color: #8a4229; }
     .status.confirm { border-color: #dbc98e; background: var(--yellow-soft); color: #6d5725; }
     .status.monitor { border-color: #a8c6b8; background: var(--forest-soft); color: var(--green); }
+    .status.done { border-color: #8bb9a2; background: #d9eee3; color: #205b43; }
 
     .empty {
       display: none;
@@ -478,8 +488,8 @@
       .page { width: min(100% - 20px, 1240px); padding-top: 10px; }
       .topbar { align-items: flex-start; }
       .topbar-links { justify-content: flex-start; }
-      .header { padding: 28px 22px; }
-      h1 { font-size: 44px; }
+      .header { padding: 18px 20px; }
+      h1 { font-size: 34px; }
       .metrics { grid-template-columns: 1fr; }
       .metric { min-height: auto; }
       .tools { position: static; grid-template-columns: 1fr; }
@@ -532,6 +542,7 @@
         <option value="todo">待完成</option>
         <option value="confirm">待确认</option>
         <option value="monitor">持续复盘</option>
+        <option value="done">已完成</option>
       </select>
       <div class="tool-summary" id="resultSummary" aria-live="polite"></div>
     </section>
@@ -606,17 +617,17 @@
           }
         ],
         workItems: [
-          { owner: "zac", action: "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。", status: "todo", proof: "逐类完成 route、内部通知、客户回复和关单链路验证。" },
-          { owner: "zac", action: "新增并完善 Compliance / Security 分类。", status: "todo", proof: "敏感 Case 不生成客户回复并能稳定进入 emma / derek 人工接管。" },
-          { owner: "zac", action: "完成 AI 回复真实写回 Zendesk 的生产链路。", status: "todo", proof: "真实 Zendesk Ticket 中可看到正确发送身份、客户回复和审计记录。" },
-          { owner: "zac", action: "确认生产 AI API 账号、数据留存和客户数据安全要求。", status: "confirm", proof: "确认账号类型、客户内容 / CID 的留存和训练策略，并记录结果。" },
-          { owner: "zac", action: "增加 AI 故障告警和人工接管机制。", status: "todo", proof: "模拟 AI 或 n8n 故障时产生告警，Zendesk Case 仍可人工处理。" },
-          { owner: "zac", action: "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。", status: "confirm", proof: "完成发送身份的端到端测试，不使用个人账号。" },
-          { owner: "zac", action: "在 Admin Dashboard 中增加 Zendesk Ticket 直达链接，并补齐重点客户过滤。", status: "todo", proof: "Dashboard 可直达 Ticket；Tag、CID、Requester Email 过滤路径可验证。" },
-          { owner: "jojo", action: "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。", status: "todo", proof: "Billing 路由、内部通知、客户回复和关单结果与预期一致。" },
-          { owner: "suhird / bdr", action: "承接 Account Suspension 和 Fraud 类工单，确认人工判断边界。", status: "todo", proof: "覆盖 Fraud、余额、套餐限制等停用原因，并能转 Support 介入。" },
-          { owner: "emma / derek", action: "人工接管 Compliance、Security、法务及其他敏感工单。", status: "todo", proof: "客户侧不泄露内部信息，Case 保持统一人工口径。" },
-          { owner: "zac / emma / derek", action: "受控试运行期间每天复盘前一天 AI 处理的全部 Case。", status: "monitor", proof: "连续两天记录分类、回复、内部转交、关单和异常结果。" }
+          { id: "TS-01", owner: "zac", action: "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。", status: "done", prs: [675, 676, 680, 683, 685, 686, 687, 702, 709, 719, 731], proof: "当前路由、分类、字段处理和 reroute 测试已覆盖四类路径。" },
+          { id: "TS-02", owner: "zac", action: "新增并完善 Compliance / Security 分类。", status: "done", prs: [729, 731], proof: "分类为 Security & Compliance，路由到 human_review，不自动生成客户回复。" },
+          { id: "TS-03", owner: "zac", action: "完成 AI 回复真实写回 Zendesk 的生产链路。", status: "todo", prs: [], proof: "真实 Zendesk Ticket 中可看到正确发送身份、客户回复和审计记录。" },
+          { id: "TS-04", owner: "zac", action: "确认生产 AI API 账号、数据留存和客户数据安全要求。", status: "confirm", prs: [], docs: ["https://developers.openai.com/api/docs/guides/your-data", "https://developers.openai.com/api/docs/guides/your-data#zero-data-retention"], proof: "已与 Brent Guo 确认使用 OpenAI 官方 API key；官方政策默认不用于训练，但默认 abuse monitoring logs 可能保留最长 30 天，当前项目组织/项目级 retention control 与 ZDR 资格仍需核实。" },
+          { id: "TS-05", owner: "zac", action: "增加 AI 故障告警和人工接管机制。", status: "todo", prs: [], proof: "模拟 AI 或 n8n 故障时产生告警，Zendesk Case 仍可人工处理。" },
+          { id: "TS-06", owner: "zac", action: "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。", status: "confirm", prs: [], proof: "完成发送身份的端到端测试，不使用个人账号。" },
+          { id: "TS-07", owner: "zac", action: "在 Admin Dashboard 中增加 Zendesk Ticket 直达链接，并补齐重点客户过滤。", status: "todo", prs: [], proof: "Dashboard 可直达 Ticket；Tag、CID、Requester Email 过滤路径可验证。" },
+          { id: "TS-08", owner: "jojo", action: "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。", status: "todo", prs: [], proof: "Billing 路由、内部通知、客户回复和关单结果与预期一致。" },
+          { id: "TS-09", owner: "suhird / bdr", action: "承接 Account Suspension 和 Fraud 类工单，确认人工判断边界。", status: "todo", prs: [], proof: "覆盖 Fraud、余额、套餐限制等停用原因，并能转 Support 介入。" },
+          { id: "TS-10", owner: "emma / derek", action: "人工接管 Compliance、Security、法务及其他敏感工单。", status: "todo", prs: [], proof: "客户侧不泄露内部信息，Case 保持统一人工口径。" },
+          { id: "TS-11", owner: "zac / emma / derek", action: "受控试运行期间每天复盘前一天 AI 处理的全部 Case。", status: "monitor", prs: [], proof: "连续两天记录分类、回复、内部转交、关单和异常结果。" }
         ]
       },
       {
@@ -711,12 +722,12 @@
           }
         ],
         workItems: [
-          { owner: "zac / 团队", action: "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。", status: "todo", proof: "用真实 Zendesk Case 验证 route、内部请求、回执、关单和指标。" },
-          { owner: "项目团队", action: "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。", status: "confirm", proof: "为三类 Case 建立统一处理和升级契约。" },
-          { owner: "项目团队", action: "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。", status: "todo", proof: "抽样检查客户回复、内部日志、权限和历史留存。" },
-          { owner: "项目团队", action: "验证邮件回执轮询、SLA 提醒和未回复 fallback。", status: "todo", proof: "覆盖已回复、超时和内部任务无法完成三条路径。" },
-          { owner: "项目团队", action: "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。", status: "todo", proof: "比较边界覆盖、效果、token 成本、权限和可审计性。" },
-          { owner: "项目团队", action: "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。", status: "monitor", proof: "Roadmap 和 Meeting 页面均不把通信基础误写成自主闭环。" }
+          { id: "AG-01", owner: "zac / 团队", action: "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。", status: "todo", prs: [], proof: "用真实 Zendesk Case 验证 route、内部请求、回执、关单和指标。" },
+          { id: "AG-02", owner: "项目团队", action: "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。", status: "confirm", prs: [], proof: "为三类 Case 建立统一处理和升级契约。" },
+          { id: "AG-03", owner: "项目团队", action: "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。", status: "todo", prs: [], proof: "抽样检查客户回复、内部日志、权限和历史留存。" },
+          { id: "AG-04", owner: "项目团队", action: "验证邮件回执轮询、SLA 提醒和未回复 fallback。", status: "todo", prs: [], proof: "覆盖已回复、超时和内部任务无法完成三条路径。" },
+          { id: "AG-05", owner: "项目团队", action: "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。", status: "todo", prs: [], proof: "比较边界覆盖、效果、token 成本、权限和可审计性。" },
+          { id: "AG-06", owner: "项目团队", action: "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。", status: "monitor", prs: [], proof: "Roadmap 和 Meeting 页面均不把通信基础误写成自主闭环。" }
         ]
       }
     ];
@@ -724,9 +735,11 @@
     const STATUS_LABELS = {
       todo: "待完成",
       confirm: "待确认",
-      monitor: "持续复盘"
+      monitor: "持续复盘",
+      done: "已完成"
     };
-    const state = { query: "", status: "all" };
+    const DEFAULT_MEETING_ID = "ticketing-system-2026-08-10";
+    const state = { query: "", status: "all", selectedMeetingId: DEFAULT_MEETING_ID };
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
@@ -745,16 +758,12 @@
         meeting.summary,
         ...(meeting.people || []),
         ...(meeting.topics || []).flatMap((topic) => [topic.label, topic.title, ...(topic.points || [])]),
-        ...(meeting.workItems || []).flatMap((item) => [item.owner, item.action, item.proof, STATUS_LABELS[item.status]])
+        ...(meeting.workItems || []).flatMap((item) => [item.id, `#${item.id}`, item.owner, item.action, item.proof, STATUS_LABELS[item.status], ...(item.prs || []).flatMap((pr) => [String(pr), `PR #${pr}`]), ...(item.docs || [])])
       ].join(" ").toLowerCase();
     }
 
     function visibleMeetings() {
-      return MEETINGS.filter((meeting) => {
-        const matchesQuery = !state.query || meetingSearchText(meeting).includes(state.query);
-        const matchesStatus = state.status === "all" || meeting.workItems.some((item) => item.status === state.status);
-        return matchesQuery && matchesStatus;
-      });
+      return MEETINGS;
     }
 
     function visibleWorkItems(meeting) {
@@ -762,8 +771,9 @@
     }
 
     function renderMetrics() {
-      const workItemCount = MEETINGS.reduce((sum, meeting) => sum + meeting.workItems.length, 0);
-      const openCount = MEETINGS.reduce((sum, meeting) => sum + meeting.workItems.filter((item) => item.status !== "monitor").length, 0);
+      const meeting = selectedMeeting();
+      const workItemCount = meeting.workItems.length;
+      const openCount = meeting.workItems.filter((item) => !["monitor", "done"].includes(item.status)).length;
       const metrics = [
         { value: MEETINGS.length, label: "已记录会议" },
         { value: workItemCount, label: "Work Items" },
@@ -774,13 +784,31 @@
       `).join("");
     }
 
+    function selectedMeeting() {
+      return MEETINGS.find((meeting) => meeting.id === state.selectedMeetingId) || MEETINGS[0];
+    }
+
+    function readMeetingFromHash() {
+      const candidate = window.location.hash.slice(1);
+      state.selectedMeetingId = MEETINGS.some((meeting) => meeting.id === candidate) ? candidate : DEFAULT_MEETING_ID;
+    }
+
+    function selectMeeting(id, { updateHash = true } = {}) {
+      if (!MEETINGS.some((meeting) => meeting.id === id)) return;
+      state.selectedMeetingId = id;
+      if (updateHash && window.location.hash.slice(1) !== id) {
+        window.history.pushState(null, "", `#${id}`);
+      }
+      render();
+    }
+
     function renderIndex(meetings) {
       const index = document.getElementById("meetingIndex");
       index.innerHTML = `<p class="index-title">按日期浏览</p>${meetings.map((meeting) => `
-        <a class="index-link" href="#${escapeHtml(meeting.id)}" data-index-link="${escapeHtml(meeting.id)}">
+        <button class="index-link${meeting.id === state.selectedMeetingId ? " active" : ""}" type="button" data-index-link="${escapeHtml(meeting.id)}" aria-pressed="${meeting.id === state.selectedMeetingId}">
           <span class="index-date">${escapeHtml(meeting.dateLabel)}</span>
           <span class="index-name">${escapeHtml(meeting.title)}</span>
-        </a>
+        </button>
       `).join("")}`;
     }
 
@@ -798,12 +826,14 @@
       return `
         <div class="work-items">
           <table>
-            <thead><tr><th scope="col">Owner</th><th scope="col">Work Item</th><th scope="col">状态</th><th scope="col">验收 / 证据</th></tr></thead>
+            <thead><tr><th scope="col">#</th><th scope="col">Owner</th><th scope="col">Work Item</th><th scope="col">状态</th><th scope="col">PR / Docs</th><th scope="col">验收 / 证据</th></tr></thead>
             <tbody>${items.map((item) => `
               <tr>
+                <td class="work-id">#${escapeHtml(item.id)}</td>
                 <td class="work-owner">${escapeHtml(item.owner)}</td>
                 <td>${escapeHtml(item.action)}</td>
                 <td class="work-status"><span class="status ${escapeHtml(item.status)}">${escapeHtml(STATUS_LABELS[item.status])}</span></td>
+                <td class="work-prs"><span class="pr-links">${(item.prs || []).map((pr) => `<a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/${encodeURIComponent(pr)}" target="_blank" rel="noopener noreferrer">PR #${escapeHtml(pr)}</a>`).join("") || "-"}</span>${(item.docs || []).map((url) => `<a class="pr-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">OpenAI docs</a>`).join(" ")}</td>
                 <td class="work-proof">${escapeHtml(item.proof)}</td>
               </tr>
             `).join("")}</tbody>
@@ -814,8 +844,15 @@
 
     function renderMeetings(meetings) {
       const list = document.getElementById("meetingList");
-      list.innerHTML = meetings.map((meeting) => {
-        const workItems = visibleWorkItems(meeting);
+      const meeting = meetings[0];
+      if (!meeting) {
+        list.innerHTML = "";
+        document.getElementById("emptyState").style.display = "block";
+        return;
+      }
+      const matchesQuery = !state.query || meetingSearchText(meeting).includes(state.query);
+      const filteredItems = visibleWorkItems(meeting).filter((item) => !state.query || [item.id, `#${item.id}`, item.owner, item.action, item.proof, ...(item.prs || []).flatMap((pr) => [String(pr), `PR #${pr}`]), ...(item.docs || [])].join(" ").toLowerCase().includes(state.query));
+      list.innerHTML = matchesQuery ? (() => {
         return `
           <article class="meeting-record" id="${escapeHtml(meeting.id)}">
             <header class="meeting-record-head">
@@ -836,22 +873,22 @@
             <section class="record-section" aria-labelledby="work-${escapeHtml(meeting.id)}">
               <div class="record-section-head">
                 <h3 id="work-${escapeHtml(meeting.id)}">Work Items</h3>
-                <p class="section-hint">${workItems.length} 项符合当前筛选</p>
+                <p class="section-hint">${filteredItems.length} 项符合当前筛选</p>
               </div>
-              ${workItems.length ? renderWorkItems(workItems) : `<p class="empty" style="display:block">当前会议没有符合筛选条件的 Work Item。</p>`}
+              ${filteredItems.length ? renderWorkItems(filteredItems) : `<p class="empty" style="display:block">当前会议没有符合筛选条件的 Work Item。</p>`}
             </section>
           </article>
         `;
-      }).join("");
-      document.getElementById("emptyState").style.display = meetings.length ? "none" : "block";
+      })() : "";
+      document.getElementById("emptyState").style.display = matchesQuery ? "none" : "block";
     }
 
     function render() {
-      const meetings = visibleMeetings();
+      const meetings = [selectedMeeting()];
       renderMetrics();
-      renderIndex(meetings);
+      renderIndex(visibleMeetings());
       renderMeetings(meetings);
-      document.getElementById("resultSummary").textContent = `显示 ${meetings.length} / ${MEETINGS.length} 场会议`;
+      document.getElementById("resultSummary").textContent = `当前会议：${selectedMeeting().dateLabel}`;
     }
 
     document.addEventListener("input", (event) => {
@@ -871,10 +908,19 @@
     document.addEventListener("click", (event) => {
       const link = event.target.closest("[data-index-link]");
       if (!link) return;
-      document.querySelectorAll("[data-index-link]").forEach((item) => item.classList.remove("active"));
-      link.classList.add("active");
+      selectMeeting(link.dataset.indexLink);
     });
 
+    window.addEventListener("hashchange", () => {
+      readMeetingFromHash();
+      render();
+    });
+    window.addEventListener("popstate", () => {
+      readMeetingFromHash();
+      render();
+    });
+
+    readMeetingFromHash();
     render();
   </script>
 </body>

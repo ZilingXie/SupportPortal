@@ -582,6 +582,21 @@ class RoadmapContractTests(unittest.TestCase):
             "AgentRelay communication foundation",
             "governed agent-to-agent 自主调查",
             "token 成本",
+            'id: "TS-01"',
+            'id: "TS-11"',
+            'id: "AG-01"',
+            'id: "AG-06"',
+            'prs: [675, 676, 680, 683, 685, 686, 687, 702, 709, 719, 731]',
+            'prs: [729, 731]',
+            "https://developers.openai.com/api/docs/guides/your-data",
+            "https://developers.openai.com/api/docs/guides/your-data#zero-data-retention",
+            "OpenAI docs",
+            'const DEFAULT_MEETING_ID = "ticketing-system-2026-08-10"',
+            "hashchange",
+            "popstate",
+            "window.history.pushState",
+            'class="work-prs"',
+            '<th scope="col">PR / Docs</th>',
         ]
         for term in required_terms:
             with self.subTest(term=term):
@@ -589,6 +604,14 @@ class RoadmapContractTests(unittest.TestCase):
 
         self.assertIn('href="./roadmap/meetings.html"', roadmap_source)
         self.assertNotIn('id: "meeting-minutes"', roadmap_source)
+        work_item_ids = re.findall(r'\{ id: "((?:TS|AG)-\d+)"', meetings_source)
+        self.assertEqual(len(work_item_ids), len(set(work_item_ids)))
+        self.assertEqual(work_item_ids[:11], [f"TS-{index:02d}" for index in range(1, 12)])
+        self.assertEqual(work_item_ids[11:], [f"AG-{index:02d}" for index in range(1, 7)])
+        completed_lines = [line for line in meetings_source.splitlines() if 'status: "done"' in line]
+        self.assertEqual(len(completed_lines), 2)
+        self.assertTrue(all(re.search(r'prs: \[[0-9, ]+\]', line) for line in completed_lines))
+        self.assertNotIn('status: "done", prs: []', meetings_source)
         for removed_term in [
             "meeting_minutes",
             "renderMeetingMinutes",
