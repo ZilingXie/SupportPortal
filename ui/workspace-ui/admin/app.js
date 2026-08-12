@@ -733,12 +733,25 @@ function automationCaseSubcategoryLabel(item) {
   return value ? value.replaceAll("_", " ") : "-";
 }
 
+function adminNormalizedSource(source) {
+  if (source && typeof source === "object") return source;
+  if (typeof source !== "string") return source;
+  const text = source.trim();
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {}
+  return text;
+}
+
 function adminSafeSourceLink(source) {
+  const normalized = adminNormalizedSource(source);
   let link = "";
-  if (source && typeof source === "object") {
-    link = String(source.Link || source.link || source.url || "");
-  } else if (typeof source === "string") {
-    link = source;
+  if (normalized && typeof normalized === "object") {
+    link = String(normalized.Link || normalized.link || normalized.url || "");
+  } else if (typeof normalized === "string") {
+    link = normalized;
   }
   link = link.trim();
   if (!link) return "";
@@ -764,10 +777,11 @@ function adminZendeskTicketLabel(source) {
 }
 
 function adminSourceText(source) {
-  if (source && typeof source === "object") {
-    return String(source.Link || source.link || source.url || "").trim();
+  const normalized = adminNormalizedSource(source);
+  if (normalized && typeof normalized === "object") {
+    return String(normalized.Link || normalized.link || normalized.url || "").trim();
   }
-  return String(source || "").trim();
+  return String(normalized || "").trim();
 }
 
 function renderAdminSourceValue(item) {
