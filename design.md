@@ -386,6 +386,8 @@
 13. Automated Case detail 必须显示服务端持久化的 Persona assignment：display name、精确 `vN` 与已知 seed style；尚未 assignment 时显示 `Not assigned yet`。历史 assignment 即使对应 Persona 后来 Disabled 或版本 Superseded 仍须展示；Human Review 与其他非 Automated Case 完全隐藏 Persona 行，列表不新增 Persona 列。
 14. Full/single rerun 完成摘要必须始终显示本次清除的 Persona assignment 数量，包括 `0`；该计数是 reset 结果，不得被表达成新 Persona 已成功选择。Persona detail 行与 badge 在 1440px、768px、390px 视口均须换行收敛，不得造成页面级横向溢出。
 
+15. Admin Automated Cases 复用 `/account` 的 Source 规则：有效 Zendesk Source 在列表中显示为 `zen#<ticket_id>` 的新窗口链接，并同时保留内部 Account Case ID；Ticket ID 始终以 Source URL 为准，不根据内部 Case ID 推断。非 Zendesk Source 保持静态文本展示。
+
 ### 6.9 Internal Automation Email Handoff
 1. Fraud Account、Account Verification、Detailed Invoice、Enablement、Quota 的内部 handoff 邮件必须复用统一的 `Internal Automation Email` 模板；Workspace Invitation 属于用户外发邮件，不使用该模板。
 2. 邮件使用 640–680px 的单栏、table-based layout，依次表达请求类型、Ticket ID、请求摘要、业务字段、缺失字段、客户原文和处理动作；不使用远程图片、外部字体、脚本或追踪资源。
