@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -37,6 +38,56 @@ class AccountFullRerouteResult:
     customer_reply: str = ""
     reply_kind: str | None = None
     asked_field_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AccountRerunPrepared:
+    """Read-only result passed from Account rerun Prepare to repository Commit."""
+
+    original_case: dict[str, Any]
+    customer_only_ticket: dict[str, Any]
+    prepared_case: dict[str, Any]
+    route_execution: dict[str, Any]
+    expected_updated_at: str | None
+    expected_detail_revision: str
+    changed: bool
+    handler_status: str
+    result: AccountFullRerouteResult
+
+
+def prepare_account_case_rerun(
+    account_case: dict[str, Any],
+    *,
+    ticket: dict[str, Any],
+    detail_revision: str,
+    fresh: bool = True,
+    processor: Callable[..., AccountFullRerouteResult] | None = None,
+    **kwargs: Any,
+) -> AccountRerunPrepared:
+    """Prepare a rerun without repository writes, mail, Persona, or reply jobs."""
+    customer_only_ticket = {
+        key: copy.deepcopy(ticket.get(key))
+        for key in ("ticket_id", "customer_id", "requester", "subject", "status")
+        if key in ticket
+    }
+    customer_only_ticket["messages"] = _customer_messages(ticket)
+    result = (processor or reprocess_account_case)(
+        account_case,
+        ticket=customer_only_ticket,
+        fresh=fresh,
+        **kwargs,
+    )
+    return AccountRerunPrepared(
+        original_case=copy.deepcopy(account_case),
+        customer_only_ticket=customer_only_ticket,
+        prepared_case=copy.deepcopy(result.account_case),
+        route_execution=copy.deepcopy(result.route_execution),
+        expected_updated_at=account_case.get("updated_at"),
+        expected_detail_revision=str(detail_revision or ""),
+        changed=bool(result.changed),
+        handler_status=str(result.handler_status or ""),
+        result=result,
+    )
 
 
 def _customer_messages(ticket: dict[str, Any]) -> list[dict[str, Any]]:

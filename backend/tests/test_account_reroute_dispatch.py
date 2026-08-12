@@ -351,14 +351,11 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             )
             checkpoint = self.repository.get_account_reroute_job(str(queued["job_id"]))
             assert checkpoint is not None
-            self.assertEqual(checkpoint["status"], "queued")
-            self.assertEqual(checkpoint["dispatch_status"], "queued")
+            self.assertEqual(checkpoint["status"], "completed")
+            self.assertEqual(checkpoint["dispatch_status"], "completed")
             self.assertEqual(checkpoint["completed_case_ids"], [case_id])
             self.assertEqual(checkpoint["processed"], 1)
-            first_reply_job = self.repository.get_latest_account_reply_job(ticket_id)
-            assert first_reply_job is not None
-            first_reply_job["status"] = "published"
-            self.repository.save_account_reply_job(first_reply_job)
+            self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
 
             stop_event.clear()
             await main._claim_and_run_account_reroute_job(
@@ -370,13 +367,9 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         assert completed is not None
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["processed"], 1)
-        self.assertEqual(completed["replies_scheduled"], 1)
+        self.assertEqual(completed["replies_scheduled"], 0)
         reprocess.assert_called_once()
-        sender.assert_awaited_once()
-        self.assertEqual(
-            self.repository.get_latest_account_reply_job(ticket_id)["job_id"],
-            first_reply_job["job_id"],
-        )
+        sender.assert_not_awaited()
 
 
 class AccountRerouteFencingTests(unittest.TestCase):

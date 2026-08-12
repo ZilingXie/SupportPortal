@@ -73,6 +73,72 @@ class AccountRerouteLeaseLostError(RuntimeError):
     """Raised when a stale reroute worker attempts to persist progress."""
 
 
+class AccountRerunRevisionConflictError(RuntimeError):
+    """Raised when a Case changes between rerun preparation and commit."""
+
+
+_ACCOUNT_RERUN_ACTIVE_REPLY_JOB_STATUSES = frozenset(
+    {
+        "queued",
+        "preparing",
+        "scheduled",
+        "publishing",
+        "persona_queued",
+        "persona_preparing",
+        "persona_scheduled",
+        "persona_publishing",
+    }
+)
+_ACCOUNT_RERUN_ACTIVE_REPLY_EXECUTION_STATUSES = frozenset(
+    {
+        "queued",
+        "preparing",
+        "scheduled",
+        "publishing",
+        "persona_queued",
+        "persona_preparing",
+        "persona_scheduled",
+        "persona_publishing",
+        "pending",
+        "in_progress",
+    }
+)
+
+
+def _account_rerun_execution_is_active(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    source = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+    status = str(source.get("status") or source.get("execution_status") or "").strip().lower()
+    if status:
+        if status in {"completed", "published", "succeeded", "failed", "cancelled"}:
+            return False
+        return status in _ACCOUNT_RERUN_ACTIVE_REPLY_EXECUTION_STATUSES
+    # Older published executions did not persist a status. Their durable
+    # completion markers are enough to retain them; an unmarked execution is
+    # treated as active so rerun cleanup fails closed.
+    return not any(
+        source.get(field)
+        for field in ("published_at", "completed_at", "finished_at", "content", "reply_kind")
+    )
+
+
+def _account_rerun_preserve_completed_email(
+    original: dict[str, Any],
+    prepared: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep an already delivered internal email linked to the Case."""
+    if str(original.get("internal_email_send_status") or "").strip().lower() != "sent":
+        return prepared
+    preserved = copy.deepcopy(prepared)
+    for field in (
+        "internal_email_payload",
+        "internal_email_send_status",
+        "internal_email_send_reason",
+    ):
+        if field in original:
+            preserved[field] = copy.deepcopy(original.get(field))
+    return preserved
 def _normalize_account_rerun_reset_mode(value: str) -> AccountRerunResetMode:
     normalized = str(value or ACCOUNT_RERUN_RESET_AI_ONLY).strip().lower()
     if normalized not in {
@@ -1625,6 +1691,19 @@ class TicketRepository(Protocol):
 
     def save_account_route_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
+    def commit_account_case_rerun(
+        self,
+        *,
+        account_case_id: str,
+        ticket_id: str,
+        prepared_case: dict[str, Any],
+        route_execution: dict[str, Any],
+        expected_updated_at: str | None,
+        expected_detail_revision: str,
+        rerun_job_id: str,
+        committed_at: str,
+        audit_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
     def list_account_reply_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]: ...
     def reset_account_rerun_state(
@@ -2441,6 +2520,163 @@ class InMemoryTicketRepository:
         saved["created_at"] = saved.get("created_at") or _utc_now()
         self._account_route_executions.setdefault(str(saved["ticket_id"]), []).append(saved)
         return copy.deepcopy(saved)
+
+    def commit_account_case_rerun(
+        self,
+        *,
+        account_case_id: str,
+        ticket_id: str,
+        prepared_case: dict[str, Any],
+        route_execution: dict[str, Any],
+        expected_updated_at: str | None,
+        expected_detail_revision: str,
+        rerun_job_id: str,
+        committed_at: str,
+        audit_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_case_id = str(account_case_id or "").strip()
+        with self._assignment_lock:
+            ticket = self._tickets.get(normalized_ticket_id)
+            case_key = next(
+                (
+                    key
+                    for key, value in self._billing_tickets.items()
+                    if str(value.get("account_case_id") or value.get("billing_ticket_id") or "").strip()
+                    == normalized_case_id
+                    and str(value.get("client_ticket_id") or "").strip() == normalized_ticket_id
+                ),
+                None,
+            )
+            current_case = self._billing_tickets.get(case_key) if case_key else None
+            if ticket is None or current_case is None:
+                raise KeyError(normalized_case_id or normalized_ticket_id)
+            latest_job = self.get_latest_account_reply_job(normalized_ticket_id)
+            correction = self._billing_route_corrections.get(
+                str(current_case.get("billing_ticket_id") or "")
+            )
+            assignment = self._account_persona_assignments.get(normalized_ticket_id)
+            revision_assignment = copy.deepcopy(assignment)
+            if isinstance(revision_assignment, dict):
+                persona = self._account_personas.get(str(revision_assignment.get("persona_key") or ""))
+                revision_assignment["display_name"] = str(
+                    (persona or {}).get("display_name") or revision_assignment.get("persona_key") or ""
+                )
+            current_revision = _account_case_detail_revision(
+                current_case,
+                ticket,
+                latest_job,
+                correction,
+                persona_assignment=revision_assignment,
+            )
+            if (
+                _to_iso(expected_updated_at) != _to_iso(current_case.get("updated_at"))
+                or str(expected_detail_revision or "") != current_revision
+            ):
+                raise AccountRerunRevisionConflictError(
+                    f"Account Case {normalized_case_id} changed during rerun preparation"
+                )
+
+            snapshots = {
+                "ticket": copy.deepcopy(ticket),
+                "case": copy.deepcopy(self._billing_tickets),
+                "route_executions": copy.deepcopy(self._account_route_executions),
+                "reply_jobs": copy.deepcopy(self._account_reply_jobs),
+                "reply_executions": copy.deepcopy(self._account_reply_executions),
+                "persona_assignments": copy.deepcopy(self._account_persona_assignments),
+                "claims": copy.deepcopy(self._automation_reply_claims),
+                "audits": copy.deepcopy(self._workspace_audit_events),
+            }
+            try:
+                ai_messages_deleted = 0
+                retained_messages: list[dict[str, Any]] = []
+                for message in ticket.get("messages", []):
+                    meta = message.get("meta") if isinstance(message, dict) and isinstance(message.get("meta"), dict) else {}
+                    is_account_ai = (
+                        isinstance(message, dict)
+                        and str(message.get("role") or "").strip().lower() == "assistant"
+                        and (
+                            str(meta.get("source") or message.get("source") or "").strip() == "account_ai"
+                            or bool(meta.get("account_reply_job_id") or message.get("account_reply_job_id"))
+                            or str(meta.get("visibility") or "").strip() == "account_only"
+                        )
+                    )
+                    if is_account_ai:
+                        ai_messages_deleted += 1
+                    else:
+                        retained_messages.append(message)
+                ticket["messages"] = retained_messages
+                ticket["updated_at"] = committed_at
+                for job_key, reply_job in list(self._account_reply_jobs.items()):
+                    if str(reply_job.get("ticket_id") or "").strip() == normalized_ticket_id and str(reply_job.get("status") or "") in _ACCOUNT_RERUN_ACTIVE_REPLY_JOB_STATUSES:
+                        self._account_reply_jobs.pop(job_key, None)
+                existing_executions = self._account_reply_executions.get(normalized_ticket_id, [])
+                self._account_reply_executions[normalized_ticket_id] = [
+                    item for item in existing_executions if not _account_rerun_execution_is_active(item)
+                ]
+                self._account_persona_assignments.pop(normalized_ticket_id, None)
+                self._automation_reply_claims = {
+                    key: value
+                    for key, value in self._automation_reply_claims.items()
+                    if str(value.get("client_ticket_id") or "").strip() != normalized_ticket_id
+                    or str(value.get("state") or "").strip().lower() == "completed"
+                }
+                prepared = _account_rerun_preserve_completed_email(current_case, copy.deepcopy(prepared_case))
+                prepared.setdefault(
+                    "automation_status",
+                    "automation" if str(prepared.get("route_status") or "") == "automated" else "not_automated",
+                )
+                prepared["updated_at"] = committed_at
+                prepared["created_at"] = current_case.get("created_at") or prepared.get("created_at") or committed_at
+                self._billing_tickets[case_key] = _normalize_account_case_record(prepared)
+                saved_execution = copy.deepcopy(route_execution)
+                saved_execution.setdefault("execution_id", f"route-rerun-{uuid4().hex}")
+                saved_execution.setdefault("ticket_id", normalized_ticket_id)
+                saved_execution["created_at"] = saved_execution.get("created_at") or committed_at
+                self._account_route_executions.setdefault(normalized_ticket_id, []).append(saved_execution)
+                counts = {
+                    "ai_messages_deleted": ai_messages_deleted,
+                    "reply_jobs_deleted": sum(
+                        1 for before in snapshots["reply_jobs"].values()
+                        if str(before.get("ticket_id") or "").strip() == normalized_ticket_id
+                        and str(before.get("status") or "") in _ACCOUNT_RERUN_ACTIVE_REPLY_JOB_STATUSES
+                    ),
+                    "reply_executions_deleted": len(existing_executions) - len(self._account_reply_executions[normalized_ticket_id]),
+                    "persona_assignments_deleted": int(assignment is not None),
+                }
+                audit_payload = {
+                    **dict(audit_context or {}),
+                    "job_id": str(rerun_job_id or ""),
+                    "account_case_id": normalized_case_id,
+                    "ticket_number": normalized_ticket_id,
+                    "commit_at": committed_at,
+                    "expected_updated_at": expected_updated_at,
+                    "expected_detail_revision": expected_detail_revision,
+                    "new_detail_revision": _account_case_detail_revision(
+                        self._billing_tickets[case_key], ticket, None, correction, persona_assignment=None,
+                    ),
+                    **counts,
+                    "emails_sent": 0,
+                    "replies_scheduled": 0,
+                }
+                self.record_workspace_audit_event(
+                    "account_case_rerun_committed",
+                    actor_id="account_ui",
+                    target_id=normalized_case_id,
+                    payload=audit_payload,
+                    created_at=committed_at,
+                )
+                return {"account_case": copy.deepcopy(self._billing_tickets[case_key]), "counts": counts}
+            except Exception:
+                self._tickets[normalized_ticket_id] = snapshots["ticket"]
+                self._billing_tickets = snapshots["case"]
+                self._account_route_executions = snapshots["route_executions"]
+                self._account_reply_jobs = snapshots["reply_jobs"]
+                self._account_reply_executions = snapshots["reply_executions"]
+                self._account_persona_assignments = snapshots["persona_assignments"]
+                self._automation_reply_claims = snapshots["claims"]
+                self._workspace_audit_events = snapshots["audits"]
+                raise
 
     def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]:
         if ticket_id is not None:
@@ -12067,6 +12303,234 @@ class PostgresTicketRepository:
                 cur.execute(sql.SQL("INSERT INTO {} (execution_id, ticket_id, payload, created_at) VALUES (%s,%s,%s,%s) ON CONFLICT (execution_id) DO UPDATE SET payload=EXCLUDED.payload").format(self._table("support_account_route_executions")), (saved["execution_id"], saved["ticket_id"], Json(saved), saved["created_at"]))
             return copy.deepcopy(saved)
         return self._run_with_connection_retry("save_account_route_execution", _operation)
+
+    def commit_account_case_rerun(
+        self,
+        *,
+        account_case_id: str,
+        ticket_id: str,
+        prepared_case: dict[str, Any],
+        route_execution: dict[str, Any],
+        expected_updated_at: str | None,
+        expected_detail_revision: str,
+        rerun_job_id: str,
+        committed_at: str,
+        audit_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_case_id = str(account_case_id or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT * FROM {} WHERE ticket_id=%s FOR UPDATE").format(
+                        self._table("support_tickets")
+                    ),
+                    (normalized_ticket_id,),
+                )
+                ticket_row = cur.fetchone()
+                if ticket_row is None:
+                    raise KeyError(normalized_ticket_id)
+                ticket_columns = [description[0] for description in cur.description]
+                ticket = dict(zip(ticket_columns, ticket_row))
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE account_case_id=%s AND client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_case_id, normalized_ticket_id),
+                )
+                case_row = cur.fetchone()
+                if case_row is None:
+                    raise KeyError(normalized_case_id or normalized_ticket_id)
+                case_columns = [description[0] for description in cur.description]
+                current_case = dict(zip(case_columns, case_row))
+                cur.execute(
+                    sql.SQL(
+                        "SELECT COUNT(*), MAX(created_at) FROM {} WHERE ticket_id=%s"
+                    ).format(self._table("support_ticket_messages")),
+                    (normalized_ticket_id,),
+                )
+                message_count, latest_message_at = cur.fetchone() or (0, None)
+                cur.execute(
+                    sql.SQL(
+                        "SELECT payload,updated_at FROM {} WHERE ticket_id=%s ORDER BY created_at DESC LIMIT 1"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (normalized_ticket_id,),
+                )
+                latest_job_row = cur.fetchone()
+                latest_job = (
+                    {**dict(latest_job_row[0]), "updated_at": latest_job_row[1]}
+                    if latest_job_row and isinstance(latest_job_row[0], dict)
+                    else None
+                )
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE billing_ticket_id=%s"
+                    ).format(self._table("support_billing_route_corrections")),
+                    (str(current_case.get("billing_ticket_id") or ""),),
+                )
+                correction_row = cur.fetchone()
+                correction = None
+                if correction_row is not None:
+                    correction = dict(zip([description[0] for description in cur.description], correction_row))
+                cur.execute(
+                    sql.SQL(
+                        "SELECT ticket_id,persona_key,version,assigned_at FROM {} WHERE ticket_id=%s"
+                    ).format(self._table("support_account_persona_assignments")),
+                    (normalized_ticket_id,),
+                )
+                assignment_row = cur.fetchone()
+                assignment = (
+                    {"ticket_id": assignment_row[0], "persona_key": assignment_row[1], "version": assignment_row[2], "assigned_at": assignment_row[3]}
+                    if assignment_row is not None
+                    else None
+                )
+                if isinstance(assignment, dict):
+                    cur.execute(
+                        sql.SQL("SELECT display_name FROM {} WHERE persona_key=%s").format(
+                            self._table("support_account_personas")
+                        ),
+                        (str(assignment.get("persona_key") or ""),),
+                    )
+                    persona_row = cur.fetchone()
+                    assignment["display_name"] = str(
+                        (persona_row[0] if persona_row else None)
+                        or assignment.get("persona_key")
+                        or ""
+                    )
+                revision_ticket = {
+                    "updated_at": ticket.get("updated_at"),
+                    "messages": [{"created_at": latest_message_at}] * int(message_count or 0),
+                }
+                current_revision = _account_case_detail_revision(
+                    current_case,
+                    revision_ticket,
+                    latest_job,
+                    correction,
+                    persona_assignment=assignment,
+                    message_count=int(message_count or 0),
+                    latest_message_at=latest_message_at,
+                )
+                if (
+                    _to_iso(expected_updated_at) != _to_iso(current_case.get("updated_at"))
+                    or str(expected_detail_revision or "") != current_revision
+                ):
+                    raise AccountRerunRevisionConflictError(
+                        f"Account Case {normalized_case_id} changed during rerun preparation"
+                    )
+
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE ticket_id=%s AND role='assistant' AND ("
+                        "COALESCE(meta->>'source','')='account_ai' OR meta ? 'account_reply_job_id' "
+                        "OR meta->>'visibility'='account_only') RETURNING id"
+                    ).format(self._table("support_ticket_messages")),
+                    (normalized_ticket_id,),
+                )
+                ai_messages_deleted = len(cur.fetchall())
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE ticket_id=%s AND status = ANY(%s) RETURNING job_id"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (normalized_ticket_id, list(_ACCOUNT_RERUN_ACTIVE_REPLY_JOB_STATUSES)),
+                )
+                reply_jobs_deleted = len(cur.fetchall())
+                cur.execute(
+                    sql.SQL(
+                        "SELECT execution_id,payload FROM {} WHERE ticket_id=%s"
+                    ).format(self._table("support_account_reply_executions")),
+                    (normalized_ticket_id,),
+                )
+                active_execution_ids = [
+                    str(row[0]) for row in cur.fetchall() if _account_rerun_execution_is_active(row[1])
+                ]
+                reply_executions_deleted = 0
+                if active_execution_ids:
+                    cur.execute(
+                        sql.SQL("DELETE FROM {} WHERE execution_id = ANY(%s)").format(
+                            self._table("support_account_reply_executions")
+                        ),
+                        (active_execution_ids,),
+                    )
+                    reply_executions_deleted = int(cur.rowcount or 0)
+                cur.execute(
+                    sql.SQL("UPDATE {} SET updated_at=%s WHERE ticket_id=%s").format(
+                        self._table("support_tickets")
+                    ),
+                    (committed_at, normalized_ticket_id),
+                )
+                if cur.rowcount != 1:
+                    raise KeyError(normalized_ticket_id)
+                cur.execute(
+                    sql.SQL("DELETE FROM {} WHERE ticket_id=%s RETURNING ticket_id").format(
+                        self._table("support_account_persona_assignments")
+                    ),
+                    (normalized_ticket_id,),
+                )
+                persona_assignments_deleted = len(cur.fetchall())
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE client_ticket_id=%s AND state<>'completed'"
+                    ).format(self._table("support_automation_reply_claims")),
+                    (normalized_ticket_id,),
+                )
+
+                prepared = _account_rerun_preserve_completed_email(current_case, copy.deepcopy(prepared_case))
+                prepared.setdefault(
+                    "automation_status",
+                    "automation" if str(prepared.get("route_status") or "") == "automated" else "not_automated",
+                )
+                prepared["updated_at"] = committed_at
+                prepared["created_at"] = current_case.get("created_at") or prepared.get("created_at") or committed_at
+                cur.execute(
+                    account_case_upsert_sql(self._table("support_account_cases")),
+                    _account_case_persisted_values(
+                        _normalize_account_case_record(prepared),
+                        created_at=prepared["created_at"],
+                        updated_at=committed_at,
+                    ),
+                )
+                saved_execution = copy.deepcopy(route_execution)
+                saved_execution.setdefault("execution_id", f"route-rerun-{uuid4().hex}")
+                saved_execution.setdefault("ticket_id", normalized_ticket_id)
+                saved_execution["created_at"] = saved_execution.get("created_at") or committed_at
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (execution_id,ticket_id,payload,created_at) VALUES (%s,%s,%s,%s) "
+                        "ON CONFLICT (execution_id) DO UPDATE SET payload=EXCLUDED.payload"
+                    ).format(self._table("support_account_route_executions")),
+                    (saved_execution["execution_id"], normalized_ticket_id, Json(saved_execution), saved_execution["created_at"]),
+                )
+                audit_payload = {
+                    **dict(audit_context or {}),
+                    "job_id": str(rerun_job_id or ""),
+                    "account_case_id": normalized_case_id,
+                    "ticket_number": normalized_ticket_id,
+                    "commit_at": committed_at,
+                    "expected_updated_at": expected_updated_at,
+                    "expected_detail_revision": expected_detail_revision,
+                    "ai_messages_deleted": ai_messages_deleted,
+                    "reply_jobs_deleted": reply_jobs_deleted,
+                    "reply_executions_deleted": reply_executions_deleted,
+                    "persona_assignments_deleted": persona_assignments_deleted,
+                    "emails_sent": 0,
+                    "replies_scheduled": 0,
+                }
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (event_type,actor_id,target_id,payload,created_at) VALUES (%s,%s,%s,%s,%s)"
+                    ).format(self._table("support_workspace_audit_events")),
+                    ("account_case_rerun_committed", "account_ui", normalized_case_id, Json(audit_payload), committed_at),
+                )
+                return {"account_case": _normalize_account_case_record(prepared), "counts": {
+                    "ai_messages_deleted": ai_messages_deleted,
+                    "messages_deleted": ai_messages_deleted,
+                    "reply_jobs_deleted": reply_jobs_deleted,
+                    "reply_executions_deleted": reply_executions_deleted,
+                    "persona_assignments_deleted": persona_assignments_deleted,
+                }}
+
+        return self._run_with_connection_retry("commit_account_case_rerun", _operation)
 
     def list_account_route_executions(self, ticket_id: str | None = None) -> list[dict[str, Any]]:
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:

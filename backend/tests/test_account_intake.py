@@ -877,9 +877,9 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         reprocess.assert_called_once()
         self.assertEqual(reprocess.call_args.args[0]["account_case_id"], "AC-12562")
-        self.assertIsNone(reprocess.call_args.args[0]["route"])
-        self.assertIsNone(reprocess.call_args.args[0]["scope_label"])
-        self.assertIsNone(reprocess.call_args.args[0]["execution_action"])
+        self.assertEqual(reprocess.call_args.args[0]["route"], "detailed_invoice")
+        self.assertEqual(reprocess.call_args.args[0]["scope_label"], "billing")
+        self.assertEqual(reprocess.call_args.args[0]["execution_action"], "detailed_invoice")
         latest = main._account_full_reroute_job(job["job_id"])
         assert latest is not None
         self.assertEqual(latest["scope"], "single_case")
@@ -896,17 +896,14 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(execution["trigger"], "single_case_rerun")
         self.assertEqual(
             [message["role"] for message in self.repository.get_ticket("12562")["messages"]],
-            ["customer"],
+            ["customer", "engineer"],
         )
         self.assertEqual(
             [message["role"] for message in self.repository.get_ticket("12563")["messages"]],
             ["customer", "engineer"],
         )
         audit_events = self.repository.list_workspace_audit_events()
-        self.assertEqual(
-            [event["event_type"] for event in audit_events],
-            ["account_case_full_rerun_completed", "account_case_full_rerun_reset"],
-        )
+        self.assertEqual([event["event_type"] for event in audit_events], ["account_case_full_rerun_completed", "account_case_rerun_committed"])
         self.assertEqual(audit_events[0]["payload"]["persona_assignments_deleted"], 1)
         self.assertEqual(audit_events[1]["payload"]["persona_assignments_deleted"], 1)
         self.assertNotIn("Private manual note", json.dumps(audit_events))
@@ -972,13 +969,63 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         latest = main._account_full_reroute_job(job["job_id"])
         assert latest is not None
-        self.assertEqual(latest["status"], "completed_with_errors")
+        self.assertEqual(latest["status"], "failed")
+        self.assertEqual(latest["stop_reason"], "case_failed")
+        self.assertEqual(latest["failed_case_id"], "AC-12574")
         audit_events = self.repository.list_workspace_audit_events()
         self.assertEqual(audit_events[0]["event_type"], "account_case_full_rerun_failed")
         audit_text = json.dumps(audit_events).lower()
         self.assertNotIn("private customer message", audit_text)
         self.assertNotIn("private manual message", audit_text)
         self.assertNotIn("private-customer@example.com", audit_text)
+
+    def test_full_rerun_stops_before_processing_next_case_after_prepare_failure(self) -> None:
+        for ticket_id in ("12576", "12577"):
+            self.repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "messages": [
+                        {
+                            "role": "customer",
+                            "content": f"Route Case {ticket_id}",
+                            "created_at": "2026-08-04T00:00:00+00:00",
+                        }
+                    ],
+                }
+            )
+            self.repository.save_account_case(
+                {
+                    "account_case_id": f"AC-{ticket_id}",
+                    "client_ticket_id": ticket_id,
+                    "route_status": "not_automated",
+                    "route_family": "human_review",
+                }
+            )
+        job = asyncio.run(
+            main._enqueue_account_rerun_job(
+                SimpleNamespace(add_task=lambda *args: None),
+            )
+        )
+        calls: list[str] = []
+
+        def fail_first(account_case: dict[str, object], **_kwargs: object):
+            calls.append(str(account_case.get("account_case_id") or ""))
+            raise RuntimeError("first case failed")
+
+        with patch.object(main, "reprocess_account_case", side_effect=fail_first):
+            asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
+
+        latest = main._account_full_reroute_job(job["job_id"])
+        assert latest is not None
+        self.assertEqual(latest["status"], "failed")
+        self.assertEqual(latest["stop_reason"], "case_failed")
+        self.assertEqual(latest["processed"], 1)
+        self.assertEqual(latest["failed"], 1)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls, [latest["failed_case_id"]])
+        self.assertIn(calls[0], {"AC-12576", "AC-12577"})
+        self.assertEqual(latest["emails_sent"], 0)
+        self.assertEqual(latest["replies_scheduled"], 0)
 
     def test_single_case_rerun_does_not_report_success_without_completion_audit(self) -> None:
         self.repository.save_ticket(
@@ -1279,35 +1326,27 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as chooser:
             asyncio.run(main._run_account_full_reroute_job("account-reroute-test"))
 
-        sender.assert_awaited_once()
-        self.assertEqual(chooser.call_count, 1)
+        sender.assert_not_awaited()
+        self.assertEqual(chooser.call_count, 0)
         stored = self.repository.get_account_case("AC-12513")
         assert stored is not None
         self.assertEqual(stored["internal_email_send_status"], "sent")
-        self.assertTrue(stored["internal_email_payload"]["customer_confirmation_queued"])
+        self.assertEqual(stored["internal_email_payload"], account_case["internal_email_payload"])
         reply_job = self.repository.get_latest_account_reply_job("12513")
         assert reply_job is not None
-        self.assertEqual(reply_job["trigger_message_created_at"], "2026-07-31T08:30:00+00:00")
-        self.assertIn(":rerun:account-reroute-test", reply_job["payload"]["automation_delivery_key"])
-        new_assignment = self.repository.get_account_persona_assignment("12513")
-        assert new_assignment is not None
-        self.assertEqual(new_assignment["persona_key"], old_assignment["persona_key"])
-        self.assertEqual(new_assignment["version"], old_assignment["version"])
-        self.assertNotEqual(new_assignment["assigned_at"], old_assignment["assigned_at"])
-        self.assertEqual(reply_job["payload"]["persona_key"], new_assignment["persona_key"])
-        self.assertEqual(reply_job["payload"]["persona_version"], new_assignment["version"])
+        self.assertEqual(reply_job["status"], "published")
+        self.assertIsNone(self.repository.get_account_persona_assignment("12513"))
+        self.assertEqual(self.repository.list_account_route_executions("12513")[-1]["rerun_mode"], "fresh_case_rerun")
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None
         self.assertEqual(latest_job["status"], "completed")
-        self.assertEqual(latest_job["emails_sent"], 1)
-        self.assertEqual(latest_job["replies_scheduled"], 1)
-        self.assertEqual(latest_job["replies_deleted"], 1)
-        self.assertEqual(latest_job["reply_jobs_deleted"], 1)
-        self.assertEqual(latest_job["reply_executions_deleted"], 1)
-        self.assertEqual(latest_job["customer_replies_cleared"], 1)
+        self.assertEqual(latest_job["emails_sent"], 0)
+        self.assertEqual(latest_job["replies_scheduled"], 0)
+        self.assertEqual(latest_job["reply_jobs_deleted"], 0)
+        self.assertEqual(latest_job["reply_executions_deleted"], 0)
         self.assertEqual(latest_job["persona_assignments_deleted"], 1)
-        self.assertIsNone(self.repository.get_account_reply_job("old-account-reply"))
-        self.assertEqual(self.repository.list_account_reply_executions("12513"), [])
+        self.assertIsNotNone(self.repository.get_account_reply_job("old-account-reply"))
+        self.assertEqual(len(self.repository.list_account_reply_executions("12513")), 1)
         stored_ticket = self.repository.get_ticket("12513")
         assert stored_ticket is not None
         self.assertEqual(
@@ -1391,7 +1430,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as resolve:
             asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
 
-        sender.assert_awaited_once()
+        sender.assert_not_awaited()
         resolve.assert_not_called()
         self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
         self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
@@ -1513,17 +1552,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as sender:
             asyncio.run(main._run_account_full_reroute_job("account-reroute-persona-unavailable"))
 
-        self.assertEqual(call_order, ["persona"])
+        self.assertEqual(call_order, [])
         sender.assert_not_awaited()
         stored = self.repository.get_account_case("AC-12514")
         assert stored is not None
         self.assertEqual(stored["route"], "enablement")
-        self.assertEqual(stored["automation_status"], "human_review_required")
+        self.assertEqual(stored["automation_status"], "automation")
         self.assertEqual(stored["route_family"], "automated")
         self.assertEqual(stored["route_status"], "automated")
         self.assertEqual(stored["automation_handler"], "enablement")
-        self.assertEqual(stored["execution_reason_code"], "enablement_persona_unavailable")
-        self.assertEqual(stored["route_classification"]["handler_binding_status"], "human_review")
+        self.assertNotEqual(stored.get("execution_reason_code"), "enablement_persona_unavailable")
         self.assertEqual(stored["route_classification"]["primary_label"], "Agora")
         self.assertEqual(
             stored["route_classification"]["secondary_label"],
@@ -1532,10 +1570,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNone(self.repository.get_latest_account_reply_job("12514"))
         executions = self.repository.list_account_route_executions("12514")
         self.assertEqual(len(executions), 1)
-        self.assertEqual(
-            executions[0]["classification"]["execution_reason_code"],
-            "enablement_persona_unavailable",
-        )
+        self.assertNotIn("execution_reason_code", executions[0]["classification"])
         rerun_job = main._account_full_reroute_job("account-reroute-persona-unavailable")
         assert rerun_job is not None
         self.assertEqual(rerun_job["status"], "completed")
