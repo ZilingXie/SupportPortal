@@ -128,6 +128,9 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             const casesMarkup = renderAutomatedCases();
             if (!casesMarkup.includes('Account &amp; Billing') || !casesMarkup.includes('Detailed Invoice') || !casesMarkup.includes('billing') || !casesMarkup.includes('Automation status')) throw new Error('Automated Cases taxonomy columns missing');
             if (!casesMarkup.includes('zen#12666') || !casesMarkup.includes('href="https://agoraio.zendesk.com/agent/tickets/12666"') || !casesMarkup.includes('target="_blank"') || !casesMarkup.includes('rel="noopener noreferrer"') || !casesMarkup.includes('AC-12715')) throw new Error('Admin Source Zendesk link is missing');
+            automationData.cases[0].source = '{"Link":"https://agoraio.zendesk.com/agent/tickets/12747"}';
+            const jsonSourceMarkup = renderAutomatedCases();
+            if (!jsonSourceMarkup.includes('zen#12747') || !jsonSourceMarkup.includes('href="https://agoraio.zendesk.com/agent/tickets/12747"') || jsonSourceMarkup.includes('{&quot;Link&quot;')) throw new Error('JSON Source Zendesk link is missing');
             automationData.cases[0].source = 'manual';
             const nonZendeskMarkup = renderAutomatedCases();
             if (nonZendeskMarkup.includes('admin-source-link') || !nonZendeskMarkup.includes('manual') || !nonZendeskMarkup.includes('AC-12715')) throw new Error('Non-Zendesk Source should remain static');
