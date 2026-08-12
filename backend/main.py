@@ -5071,6 +5071,123 @@ ACCOUNT_RERUN_STORAGE_ERROR_MESSAGE = (
 )
 
 
+class _AccountRerunSideEffectCompleted(Exception):
+    """Internal control flow marker for a resume-only side-effect retry."""
+
+
+def _sanitize_account_rerun_error(value: Any, *, max_length: int = 240) -> str:
+    """Keep job diagnostics useful without persisting customer content."""
+    message = " ".join(str(value or "").split())
+    message = re.sub(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", "<redacted-email>", message, flags=re.IGNORECASE)
+    message = re.sub(
+        r"\b(app[_ -]?id|token|secret|authorization)\s*[:=]\s*[^,; ]+",
+        lambda match: f"{match.group(1)}=<redacted>",
+        message,
+        flags=re.IGNORECASE,
+    )
+    return message[:max_length] or "account rerun failed"
+
+
+def _account_rerun_failure_retry_mode(stage: str, error: Any = "") -> str:
+    normalized = str(stage or "").strip().lower()
+    lowered = str(error or "").lower()
+    if normalized in {"email", "internal_email", "mail"} or "email" in lowered:
+        return "email"
+    if normalized in {"reply", "reply_job", "reply_persistence"} or "reply" in lowered:
+        return "reply"
+    return "prepare" if normalized in {"", "prepare", "preflight"} else "commit"
+
+
+def _account_rerun_refresh_remaining(job: dict[str, Any]) -> None:
+    frozen = [str(item or "").strip() for item in job.get("frozen_case_ids") or [] if str(item or "").strip()]
+    completed = {str(item or "").strip() for item in job.get("completed_case_ids") or [] if str(item or "").strip()}
+    failed = {str(item or "").strip() for item in job.get("failed_case_ids") or [] if str(item or "").strip()}
+    remaining = [case_id for case_id in frozen if case_id not in completed and case_id not in failed]
+    job["remaining_case_ids"] = remaining
+    job["remaining"] = len(remaining)
+
+
+async def _resume_account_rerun_side_effect(
+    account_case_id: str,
+    *,
+    retry_mode: str,
+    rerun_job_id: str | None = None,
+) -> dict[str, Any]:
+    """Retry only a failed post-commit email or reply side effect."""
+    account_case = await _account_rerun_storage_call(
+        ticket_repository.get_account_case,
+        account_case_id,
+    )
+    if not isinstance(account_case, dict):
+        raise ValueError("Account Case checkpoint not found")
+    ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    if not ticket_id:
+        raise ValueError("Account Case checkpoint has no ticket")
+    if retry_mode == "email":
+        payload = account_case.get("internal_email_payload")
+        if not isinstance(payload, dict) or not payload:
+            raise ValueError("internal email checkpoint is missing")
+        if str(account_case.get("internal_email_send_status") or "").strip().lower() == "sent":
+            return {"status": "already_sent", "account_case": account_case}
+        handler = str(account_case.get("automation_handler") or "").strip().lower()
+        sender = {
+            "billing": _send_billing_internal_email_attempt,
+            "enablement": _send_enablement_internal_email_attempt,
+            "quota": _send_quota_internal_email_attempt,
+        }.get(handler)
+        if sender is None:
+            raise ValueError(f"unsupported email handler: {handler or 'unknown'}")
+        attempt = {
+            "internal_email_to_send": dict(payload),
+            "internal_email_payload": dict(payload),
+            "internal_email_send_status": "pending",
+            "internal_email_send_reason": "resume_retry",
+        }
+        status, reason = await sender(attempt)
+        updated = dict(account_case)
+        updated.update(
+            internal_email_send_status=str(status or "failed"),
+            internal_email_send_reason=str(reason or ""),
+            internal_email_payload=dict(attempt.get("internal_email_to_send") or payload),
+            updated_at=now_iso(),
+        )
+        await _account_rerun_storage_call(ticket_repository.save_account_case, updated)
+        if str(status or "").strip().lower() != "sent":
+            raise RuntimeError(str(reason or "internal email retry failed"))
+        return {"status": "sent", "account_case": updated}
+    if retry_mode == "reply":
+        existing = await _account_rerun_storage_call(ticket_repository.get_latest_account_reply_job, ticket_id)
+        if isinstance(existing, dict) and str(existing.get("status") or "").strip().lower() in {
+            "published", "manual_attention", "scheduled", "pending", "processing",
+        }:
+            return {"status": "already_scheduled", "account_case": account_case, "reply_job": existing}
+        ticket = await _account_rerun_storage_call(ticket_repository.get_ticket, ticket_id)
+        if not isinstance(ticket, dict):
+            raise ValueError("reply checkpoint ticket not found")
+        handler = str(account_case.get("automation_handler") or "").strip() or "automation"
+        facts = _automation_reply_facts(
+            handler=handler,
+            action=str(account_case.get("execution_action") or account_case.get("route") or handler),
+            missing_fields=list(account_case.get("missing_fields") or []),
+            collected_fields=dict(account_case.get("collected_fields") or {}),
+            submitted=bool(account_case.get("internal_email_payload")),
+            customer_name=str(ticket.get("customer_name") or "").strip() or None,
+        )
+        reply_job = await _account_rerun_storage_call(
+            _create_account_reply_job,
+            ticket_id=ticket_id,
+            trigger_message_created_at=str(account_case.get("updated_at") or now_iso()),
+            draft_content="",
+            reply_facts=facts,
+            asked_field_keys=[],
+            persona_assignment=None,
+            automation_delivery_key=str((account_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
+            rerun_job_id=rerun_job_id,
+        )
+        return {"status": "scheduled", "account_case": account_case, "reply_job": reply_job}
+    raise ValueError(f"unsupported rerun retry mode: {retry_mode}")
+
+
 def _account_rerun_storage_http_exception(exc: Exception) -> HTTPException:
     LOGGER.warning("Account rerun could not access the ticket database: %s", exc)
     return HTTPException(
@@ -5113,9 +5230,24 @@ _ACCOUNT_REROUTE_INTERNAL_FIELDS = {
 
 
 def _public_account_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(job)
+    normalized.setdefault("failed_case_ids", [])
+    normalized.setdefault("failed_case_id", None)
+    normalized.setdefault("failed_stage", None)
+    normalized.setdefault("stop_reason", None)
+    normalized.setdefault("stop_error", None)
+    normalized.setdefault("checkpoint", None)
+    normalized.setdefault("retry_mode", None)
+    normalized.setdefault("frozen_case_ids", list(normalized.get("target_case_ids") or []))
+    if "remaining" not in normalized:
+        normalized["remaining"] = max(
+            0,
+            int(normalized.get("total") or 0)
+            - int(normalized.get("processed") or 0),
+        )
     return {
         key: copy.deepcopy(value)
-        for key, value in job.items()
+        for key, value in normalized.items()
         if key not in _ACCOUNT_REROUTE_INTERNAL_FIELDS
     }
 
@@ -5494,17 +5626,23 @@ async def _enqueue_account_rerun_job(
     target_case_ids: list[str] | None = None,
     idempotency_key: str | None = None,
     request_scope: str | None = None,
+    parent_job_id: str | None = None,
+    retry_mode: str | None = None,
+    scope_override: str | None = None,
+    reset_mode_override: str | None = None,
+    retry_case_modes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     normalized_targets = list(dict.fromkeys(
         str(item or "").strip() for item in (target_case_ids or []) if str(item or "").strip()
     ))
     created_at = now_iso()
-    single_case = bool(normalized_targets)
+    single_case = bool(normalized_targets) and scope_override != "all_cases"
     job = {
         "job_id": f"account-rerun-{uuid4().hex}",
         "mode": "fresh_case_rerun",
-        "scope": "single_case" if single_case else "all_cases",
+        "scope": str(scope_override or ("single_case" if single_case else "all_cases")),
         "target_case_ids": normalized_targets,
+        "frozen_case_ids": list(normalized_targets),
         "reset_mode": (
             ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY
             if single_case
@@ -5518,6 +5656,16 @@ async def _enqueue_account_rerun_job(
         "processed": 0,
         "succeeded": 0,
         "failed": 0,
+        "failed_case_ids": [],
+        "failed_case_id": None,
+        "failed_stage": None,
+        "stop_reason": None,
+        "stop_error": None,
+        "remaining_case_ids": list(normalized_targets),
+        "remaining": len(normalized_targets),
+        "checkpoint": None,
+        "retry_mode": None,
+        "retry_case_modes": dict(retry_case_modes or {}),
         "recovered": 0,
         "changed": 0,
         "route_counts": {},
@@ -5551,6 +5699,12 @@ async def _enqueue_account_rerun_job(
         "updated_at": created_at,
         "completed_at": None,
     }
+    if parent_job_id:
+        job["mode"] = "resume_case_rerun"
+        job["parent_job_id"] = str(parent_job_id).strip()
+        job["retry_mode"] = str(retry_mode or "prepare").strip() or "prepare"
+    if reset_mode_override:
+        job["reset_mode"] = str(reset_mode_override).strip()
     claim = await _account_rerun_storage_call(
         ticket_repository.claim_account_case_rerun,
         job,
@@ -5574,6 +5728,9 @@ async def _enqueue_account_rerun_job(
     canonical_job = claim.get("job")
     if not isinstance(canonical_job, dict):
         raise RuntimeError("Account rerun claim did not return a canonical job")
+    if not canonical_job.get("frozen_case_ids"):
+        canonical_job["frozen_case_ids"] = list(canonical_job.get("target_case_ids") or [])
+    _account_rerun_refresh_remaining(canonical_job)
     dispatch_state = (
         str(canonical_job.get("status") or ""),
         str(canonical_job.get("dispatch_status") or ""),
@@ -5584,6 +5741,68 @@ async def _enqueue_account_rerun_job(
             canonical_job["job_id"],
         )
     return _public_account_reroute_job(canonical_job)
+
+
+async def _resume_account_rerun_job(
+    background_tasks: BackgroundTasks,
+    parent_job_id: str,
+) -> dict[str, Any]:
+    parent = await _account_rerun_storage_call(ticket_repository.get_account_reroute_job, parent_job_id)
+    if parent is None:
+        parent = _account_full_reroute_job(parent_job_id)
+    if not isinstance(parent, dict):
+        raise HTTPException(status_code=404, detail="rerun job not found")
+    frozen = list(dict.fromkeys(
+        str(item or "").strip()
+        for item in (parent.get("frozen_case_ids") or parent.get("target_case_ids") or [])
+        if str(item or "").strip()
+    ))
+    historical_failures = [
+        item.get("account_case_id")
+        for item in parent.get("failures") or []
+        if isinstance(item, dict) and item.get("account_case_id")
+    ]
+    failed = list(dict.fromkeys(
+        str(item or "").strip()
+        for item in (
+            parent.get("failed_case_ids")
+            or ([parent.get("failed_case_id")] if parent.get("failed_case_id") else [])
+            or historical_failures
+        )
+        if str(item or "").strip()
+    ))
+    completed = {str(item or "").strip() for item in parent.get("completed_case_ids") or [] if str(item or "").strip()}
+    failed_set = set(failed)
+    remaining = [case_id for case_id in frozen if case_id not in completed and case_id not in failed_set]
+    retry_case_modes = {
+        case_id: str(
+            next(
+                (
+                    item.get("retry_mode")
+                    for item in parent.get("failures") or []
+                    if isinstance(item, dict)
+                    and str(item.get("account_case_id") or "").strip() == case_id
+                ),
+                parent.get("retry_mode") or "prepare",
+            )
+        ).strip() or "prepare"
+        for case_id in failed
+    }
+    retry_mode = str(parent.get("retry_mode") or "prepare").strip() or "prepare"
+    target_ids = failed + remaining
+    if not target_ids:
+        raise HTTPException(status_code=409, detail="rerun job has no failed or remaining cases")
+    return await _enqueue_account_rerun_job(
+        background_tasks,
+        target_case_ids=target_ids,
+        parent_job_id=str(parent.get("job_id") or parent_job_id),
+        retry_mode=retry_mode,
+        scope_override=str(parent.get("scope") or "all_cases"),
+        reset_mode_override=str(parent.get("reset_mode") or ACCOUNT_RERUN_RESET_AI_ONLY),
+        retry_case_modes=retry_case_modes,
+        idempotency_key=f"resume:{str(parent.get('job_id') or parent_job_id).strip()}",
+        request_scope=f"POST:/api/account/rerun-jobs/{parent_job_id}/resume",
+    )
 
 
 async def _record_account_rerun_terminal_audit(
@@ -5617,6 +5836,14 @@ async def _record_account_rerun_terminal_audit(
         "processed": int(job.get("processed") or 0),
         "succeeded": int(job.get("succeeded") or 0),
         "failed": int(job.get("failed") or 0),
+        "remaining": int(job.get("remaining") or 0),
+        "failed_case_id": str(job.get("failed_case_id") or "").strip() or None,
+        "failed_stage": str(job.get("failed_stage") or "").strip() or None,
+        "stop_reason": str(job.get("stop_reason") or "").strip() or None,
+        "stop_error": _sanitize_account_rerun_error(job.get("stop_error"), max_length=240)
+        if job.get("stop_error")
+        else None,
+        "checkpoint": copy.deepcopy(job.get("checkpoint")) if isinstance(job.get("checkpoint"), dict) else None,
         "messages_deleted": int(job.get("messages_deleted") or 0),
         "customer_messages_retained": int(job.get("customer_messages_retained") or 0),
         "reply_jobs_deleted": int(job.get("reply_jobs_deleted") or 0),
@@ -5828,21 +6055,27 @@ async def _run_account_full_reroute_job(
                 job.update(
                     status="failed",
                     phase="Preflight",
-                    error=preflight.reason,
+                    error=_sanitize_account_rerun_error(preflight.reason),
+                    failed_stage="preflight",
+                    stop_reason="preflight_failed",
+                    stop_error=_sanitize_account_rerun_error(preflight.reason),
                     preflight=preflight.as_dict(),
                     completed_at=failed_at,
                     updated_at=failed_at,
                 )
+                job["retry_mode"] = "prepare"
+                _account_rerun_refresh_remaining(job)
                 await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
                 return
-            target_case_ids = {
+            frozen_case_ids = list(dict.fromkeys(
                 str(item or "").strip()
-                for item in list(job.get("target_case_ids") or [])
+                for item in (job.get("frozen_case_ids") or job.get("target_case_ids") or [])
                 if str(item or "").strip()
-            }
+            ))
+            target_case_ids = set(frozen_case_ids)
             if target_case_ids:
                 cases = []
-                for target_case_id in target_case_ids:
+                for target_case_id in frozen_case_ids:
                     account_case = await _account_rerun_storage_call(
                         _account_case_for_identifier,
                         target_case_id,
@@ -5855,7 +6088,15 @@ async def _run_account_full_reroute_job(
                     limit=100_000,
                     offset=0,
                 )
+                frozen_case_ids = [
+                    str(item.get("account_case_id") or item.get("billing_ticket_id") or item.get("client_ticket_id") or "").strip()
+                    for item in cases
+                    if isinstance(item, dict)
+                ]
+                job["frozen_case_ids"] = [item for item in frozen_case_ids if item]
+                job["target_case_ids"] = list(job["frozen_case_ids"])
             job["total"] = max(int(job.get("total") or 0), len(cases))
+            _account_rerun_refresh_remaining(job)
             job["updated_at"] = now_iso()
             await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
         completed_case_ids = list(dict.fromkeys(
@@ -5865,6 +6106,7 @@ async def _run_account_full_reroute_job(
         ))
         completed_case_id_set = set(completed_case_ids)
         job["completed_case_ids"] = completed_case_ids
+        _account_rerun_refresh_remaining(job)
         for account_case in cases:
             case_id = str(
                 account_case.get("account_case_id")
@@ -5888,6 +6130,28 @@ async def _run_account_full_reroute_job(
             case_failed = False
             case_failure_error = ""
             try:
+                retry_case_mode = str(
+                    (job.get("retry_case_modes") or {}).get(case_id)
+                    or (job.get("retry_mode") if case_id == job.get("failed_case_id") else "")
+                ).strip().lower()
+                if retry_case_mode in {"email", "reply"}:
+                    side_effect_result = await _resume_account_rerun_side_effect(
+                        case_id,
+                        retry_mode=retry_case_mode,
+                        rerun_job_id=job_id,
+                    )
+                    if retry_case_mode == "email" and side_effect_result.get("status") == "sent":
+                        job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
+                    if retry_case_mode == "reply" and side_effect_result.get("status") == "scheduled":
+                        job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
+                    case_stage = retry_case_mode
+                    case_handler_status = "completed"
+                    primary_label, secondary_label = account_case_labels(
+                        side_effect_result.get("account_case") or account_case
+                    )
+                    case_route_key = _account_rerun_route_key(primary_label, secondary_label)
+                    case_changed = False
+                    raise _AccountRerunSideEffectCompleted()
                 detail_bundle = await _account_rerun_storage_call(
                     ticket_repository.get_account_case_details,
                     [case_id],
@@ -5969,12 +6233,16 @@ async def _run_account_full_reroute_job(
                 job["succeeded"] += 1
             except AccountRerouteLeaseLostError:
                 raise
+            except _AccountRerunSideEffectCompleted:
+                job["route_counts"][case_route_key] = int(job["route_counts"].get(case_route_key) or 0) + 1
+                job["handler_counts"][case_handler_status] = int(job["handler_counts"].get(case_handler_status) or 0) + 1
+                job["succeeded"] += 1
             except Exception as exc:
                 LOGGER.exception("Account full reroute failed for %s", case_id)
                 if isinstance(exc, AccountRerunRevisionConflictError):
                     case_stage = "revision_conflict"
                 case_failed = True
-                case_failure_error = str(exc)[:500]
+                case_failure_error = _sanitize_account_rerun_error(exc)
                 job["failed"] += 1
                 if len(job["failures"]) < 50:
                     job["failures"].append(
@@ -5991,14 +6259,37 @@ async def _run_account_full_reroute_job(
                             "changed": case_changed,
                             "route_key": case_route_key,
                             "handler_status": case_handler_status,
+                            "retry_mode": _account_rerun_failure_retry_mode(case_stage, case_failure_error),
                         }
                     )
             finally:
-                if case_id not in completed_case_id_set:
+                if not case_failed and case_id not in completed_case_id_set:
                     completed_case_id_set.add(case_id)
                     completed_case_ids.append(case_id)
                     job["completed_case_ids"] = completed_case_ids
                     job["processed"] += 1
+                if case_failed:
+                    failed_case_ids = list(dict.fromkeys(
+                        str(item or "").strip()
+                        for item in job.get("failed_case_ids") or []
+                        if str(item or "").strip()
+                    ))
+                    if case_id not in failed_case_ids:
+                        failed_case_ids.append(case_id)
+                    job["failed_case_ids"] = failed_case_ids
+                    job["failed_case_id"] = case_id
+                    job["failed_stage"] = case_stage
+                    job["stop_reason"] = "case_failed"
+                    job["stop_error"] = case_failure_error or "account case rerun failed"
+                    job["retry_mode"] = _account_rerun_failure_retry_mode(case_stage, case_failure_error)
+                    job["checkpoint"] = {
+                        "case_id": case_id,
+                        "stage": case_stage,
+                        "retry_mode": job["retry_mode"],
+                        "committed": case_stage not in {"prepare", "revision_conflict"},
+                    }
+                job["processed"] = int(job.get("succeeded") or 0) + int(job.get("failed") or 0)
+                _account_rerun_refresh_remaining(job)
                 job["updated_at"] = now_iso()
                 await _save_account_full_reroute_job_with_retry(
                     job,
@@ -6115,11 +6406,16 @@ async def _run_account_full_reroute_job(
                 LOGGER.exception("Could not persist Account single-case rerun failure audit")
         job.update(
             status="failed",
-            error=str(exc)[:1000],
+            error=_sanitize_account_rerun_error(exc, max_length=500),
+            failed_stage=str(job.get("phase") or "job").strip().lower() or "job",
+            stop_reason="system_error",
+            stop_error=_sanitize_account_rerun_error(exc),
+            retry_mode="prepare",
             audit_persistence_failed=audit_persistence_failed,
             completed_at=failed_at,
             updated_at=failed_at,
         )
+        _account_rerun_refresh_remaining(job)
         await _save_account_full_reroute_job_with_retry(
             job,
             lease_token=lease_token,
@@ -6186,6 +6482,17 @@ def get_account_rerun_job(job_id: str) -> dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail="rerun job not found")
     return job
+
+
+@app.post("/api/account/rerun-jobs/{job_id}/resume", status_code=202)
+@app.post("/api/account/reroute-jobs/{job_id}/resume", status_code=202, include_in_schema=False)
+async def resume_account_rerun_job(job_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    try:
+        return await _resume_account_rerun_job(background_tasks, str(job_id or "").strip())
+    except HTTPException:
+        raise
+    except (psycopg.Error, OSError, TimeoutError) as exc:
+        raise _account_rerun_storage_http_exception(exc) from exc
 
 
 @app.get("/api/account/cases/{billing_ticket_id}")

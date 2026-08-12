@@ -1021,6 +1021,13 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest["stop_reason"], "case_failed")
         self.assertEqual(latest["processed"], 1)
         self.assertEqual(latest["failed"], 1)
+        self.assertEqual(latest["succeeded"], 0)
+        self.assertEqual(latest["remaining"], 1)
+        self.assertEqual(latest["remaining_case_ids"], [
+            "AC-12576" if latest["failed_case_id"] == "AC-12577" else "AC-12577"
+        ])
+        self.assertEqual(latest["failed_stage"], "prepare")
+        self.assertEqual(latest["retry_mode"], "prepare")
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls, [latest["failed_case_id"]])
         self.assertIn(calls[0], {"AC-12576", "AC-12577"})
