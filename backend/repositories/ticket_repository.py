@@ -1864,6 +1864,8 @@ class TicketRepository(Protocol):
         owner_token: str, claimed_at: str, lease_expires_at: str,
     ) -> dict[str, Any]: ...
 
+    def get_automation_reply_claim(self, automation_reply_key: str) -> dict[str, Any] | None: ...
+
     def fail_automation_reply_claim(
         self, automation_reply_key: str, *, owner_token: str, error_code: str,
         failed_at: str,
@@ -2105,6 +2107,8 @@ class TicketRepository(Protocol):
 
     def get_billing_response_token(self, token_hash: str) -> dict[str, Any] | None:
         ...
+
+    def list_billing_response_tokens_for_ticket(self, billing_ticket_id: str) -> list[dict[str, Any]]: ...
 
     def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
         ...
@@ -4796,6 +4800,11 @@ class InMemoryTicketRepository:
             self._automation_reply_claims[key] = record
             return {"status": "acquired", **copy.deepcopy(record)}
 
+    def get_automation_reply_claim(self, automation_reply_key: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            claim = self._automation_reply_claims.get(str(automation_reply_key or "").strip())
+            return copy.deepcopy(claim) if claim is not None else None
+
     def fail_automation_reply_claim(
         self, automation_reply_key: str, *, owner_token: str, error_code: str,
         failed_at: str,
@@ -5224,6 +5233,16 @@ class InMemoryTicketRepository:
     def get_billing_response_token(self, token_hash: str) -> dict[str, Any] | None:
         token = self._billing_response_tokens.get(str(token_hash).strip())
         return copy.deepcopy(token) if token is not None else None
+
+    def list_billing_response_tokens_for_ticket(self, billing_ticket_id: str) -> list[dict[str, Any]]:
+        normalized = str(billing_ticket_id or "").strip()
+        if not normalized:
+            return []
+        return [
+            copy.deepcopy(token)
+            for token in self._billing_response_tokens.values()
+            if str(token.get("billing_ticket_id") or "").strip() == normalized
+        ]
 
     def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
         with self._assignment_lock:
@@ -10518,6 +10537,37 @@ class PostgresTicketRepository:
                             "attempt_count": int(existing[3])}
         return self._run_with_connection_retry("claim_automation_reply", _operation)
 
+    def get_automation_reply_claim(self, automation_reply_key: str) -> dict[str, Any] | None:
+        normalized_key = str(automation_reply_key or "").strip()
+        if not normalized_key:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT automation_reply_key,client_ticket_id,handler,state,attempt_count,error_code,"
+                        "created_at,updated_at,completed_at FROM {} WHERE automation_reply_key=%s"
+                    ).format(self._table("support_automation_reply_claims")),
+                    (normalized_key,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return {
+                    "automation_reply_key": str(row[0]),
+                    "client_ticket_id": str(row[1]),
+                    "handler": str(row[2]),
+                    "state": str(row[3]),
+                    "attempt_count": int(row[4] or 0),
+                    "error_code": str(row[5] or "") or None,
+                    "created_at": _to_iso(row[6]),
+                    "updated_at": _to_iso(row[7]),
+                    "completed_at": _to_iso(row[8]) if row[8] is not None else None,
+                }
+
+        return self._run_with_connection_retry("get_automation_reply_claim", _operation)
+
     def fail_automation_reply_claim(
         self, automation_reply_key: str, *, owner_token: str, error_code: str,
         failed_at: str,
@@ -11785,6 +11835,30 @@ class PostgresTicketRepository:
                 return dict(zip(col_names, rows[0]))
 
         return self._run_with_connection_retry("get_billing_response_token", _operation)
+
+    def list_billing_response_tokens_for_ticket(self, billing_ticket_id: str) -> list[dict[str, Any]]:
+        normalized = str(billing_ticket_id or "").strip()
+        if not normalized:
+            return []
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT billing_ticket_id,created_at,used_at FROM {} WHERE billing_ticket_id=%s ORDER BY created_at DESC").format(
+                        self._table("support_billing_response_tokens")
+                    ),
+                    (normalized,),
+                )
+                return [
+                    {
+                        "billing_ticket_id": str(row[0]),
+                        "created_at": _to_iso(row[1]),
+                        "used_at": _to_iso(row[2]) if row[2] is not None else None,
+                    }
+                    for row in cur.fetchall()
+                ]
+
+        return self._run_with_connection_retry("list_billing_response_tokens_for_ticket", _operation)
 
     def mark_billing_response_token_used(self, token_hash: str, used_at: str) -> bool:
         def _operation(conn: psycopg.Connection[Any]) -> bool:

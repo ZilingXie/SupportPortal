@@ -587,6 +587,37 @@ class AccountIntakeApiTests(unittest.TestCase):
             duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
 
+    def test_full_reroute_admission_blocks_unknown_automation_delivery(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12799",
+                "customer_id": "customer@example.com",
+                "subject": "Unknown delivery evidence",
+                "status": "open",
+                "messages": [],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12799",
+                "client_ticket_id": "12799",
+                # Legacy automated cases may only carry the old route family.
+                "route_family": "billing_automation",
+                "execution_action": "enablement",
+                "internal_email_send_status": "sending",
+                "internal_email_payload": {"delivery_key": "enablement:AC-12799:v1"},
+            }
+        )
+        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
+            response = self.client.post("/api/account/rerun-jobs")
+        self.assertEqual(response.status_code, 409, response.text)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["code"], "account_rerun_readiness_blocked")
+        self.assertTrue(detail["manual_confirmation_required"])
+        self.assertEqual(detail["unknown_case_ids"], ["AC-12799"])
+        runner.assert_not_awaited()
+        self.assertEqual(self.repository.list_account_reroute_jobs(), [])
+
     def test_account_rerun_admission_gate_blocks_full_and_single_jobs_in_both_directions(self) -> None:
         self.repository.save_ticket(
             {
@@ -604,6 +635,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "route_status": "automated",
                 "route_family": "automated",
                 "execution_action": "enablement",
+                "internal_email_send_status": "not_ready",
             }
         )
         headers = {"Idempotency-Key": "shared-gate-single-12568"}
@@ -1391,6 +1423,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             "route_status": "automated",
             "automation_handler": "enablement",
             "automation_status": "automation",
+            "internal_email_send_status": "not_ready",
         }
         self.repository.save_account_case(account_case)
         self.repository.resolve_account_persona(ticket_id)

@@ -19,7 +19,7 @@ class AccountRerunFailFastResumeTests(unittest.TestCase):
             "route": "enablement",
             "automation_handler": "enablement",
             "internal_email_payload": {"delivery_key": "enablement-delivery"},
-            "internal_email_send_status": "failed",
+            "internal_email_send_status": "not_ready",
         })
         original_repository = main.ticket_repository
         main.ticket_repository = repository
@@ -35,6 +35,26 @@ class AccountRerunFailFastResumeTests(unittest.TestCase):
             sender.assert_awaited_once()
             self.assertEqual(result["status"], "sent")
             self.assertEqual(repository.get_account_case("AC-EMAIL")["internal_email_send_status"], "sent")
+        finally:
+            main.ticket_repository = original_repository
+
+    def test_email_checkpoint_with_unknown_delivery_requires_manual_confirmation(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.save_ticket({"ticket_id": "TK-UNKNOWN", "customer_id": "customer@example.com", "messages": []})
+        repository.save_account_case({
+            "account_case_id": "AC-UNKNOWN",
+            "client_ticket_id": "TK-UNKNOWN",
+            "automation_handler": "enablement",
+            "internal_email_payload": {"delivery_key": "enablement:AC-UNKNOWN:v1"},
+            "internal_email_send_status": "sending",
+        })
+        original_repository = main.ticket_repository
+        main.ticket_repository = repository
+        try:
+            with patch.object(main, "_send_enablement_internal_email_attempt", new=AsyncMock()) as sender:
+                with self.assertRaisesRegex(RuntimeError, "manual_confirmation_required"):
+                    asyncio.run(main._resume_account_rerun_side_effect("AC-UNKNOWN", retry_mode="email"))
+            sender.assert_not_awaited()
         finally:
             main.ticket_repository = original_repository
 
