@@ -1857,6 +1857,14 @@ function renderRerouteStatus() {
   const stopDetails = failedCase
     ? `Stopped at Case ${failedCase}${failedStage ? ` during ${failedStage}` : ""}`
     : failedStage ? `Stopped during ${failedStage}` : "";
+  const stopError = String(job.stop_error || job.error || "").trim();
+  const preflightChecks = job.preflight?.checks && typeof job.preflight.checks === "object"
+    ? Object.entries(job.preflight.checks)
+    : [];
+  const failedPreflightCheck = preflightChecks.find(([, check]) => check?.status === "failed");
+  const failureReason = failedPreflightCheck
+    ? `${failedPreflightCheck[0]}: ${String(failedPreflightCheck[1]?.reason || "failed")}`
+    : stopError;
   const resumeButton = Boolean(
     !isActiveRerouteJob(job)
     && (String(job.status || "") === "failed" || String(job.status || "") === "completed_with_errors")
@@ -1868,6 +1876,7 @@ function renderRerouteStatus() {
       <div class="reroute-status ${failed || job.status === "failed" || job.status === "completed_with_errors" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
       <strong>${escapeHtml(statusLabel)}</strong>
       ${stopDetails ? `<span>${escapeHtml(stopDetails)}</span>` : ""}
+      ${failureReason ? `<span>${escapeHtml(failureReason)}</span>` : ""}
       <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${remaining} unprocessed${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
       ${resumeButton}
     </div>
@@ -1900,7 +1909,8 @@ function renderRerouteConfirmation() {
               <li>Independent audit records will be retained.</li>
             </ul>`
           : `<ul>
-              <li>A read-only preflight checks the database contract, managed Prompts, and Account Luna model before the Case loop begins.</li>
+              <li>A read-only preflight freezes the Case list and checks the database contract, managed Prompts, and Account Luna profile before processing begins.</li>
+              <li>The first Case Prepare performs the first live model request; a connection or model error stops the job before that Case is committed.</li>
               <li>The first Case error stops the rerun immediately; remaining Cases stay unprocessed and can be resumed later.</li>
               <li>Previously sent internal emails will be sent again as a new rerun execution.</li>
               <li>Existing Account-only AI replies and reply jobs will be deleted before each case starts again.</li>

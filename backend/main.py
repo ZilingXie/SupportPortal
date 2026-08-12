@@ -6173,24 +6173,6 @@ async def _run_account_full_reroute_job(
         if resume_phase == "Waiting for replies":
             cases: list[dict[str, Any]] = []
         else:
-            preflight = await _account_reroute_sync_call(run_account_rerun_preflight)
-            if not preflight.ok:
-                failed_at = now_iso()
-                job.update(
-                    status="failed",
-                    phase="Preflight",
-                    error=_sanitize_account_rerun_error(preflight.reason),
-                    failed_stage="preflight",
-                    stop_reason="preflight_failed",
-                    stop_error=_sanitize_account_rerun_error(preflight.reason),
-                    preflight=preflight.as_dict(),
-                    completed_at=failed_at,
-                    updated_at=failed_at,
-                )
-                job["retry_mode"] = "prepare"
-                _account_rerun_refresh_remaining(job)
-                await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
-                return
             frozen_case_ids = list(dict.fromkeys(
                 str(item or "").strip()
                 for item in (job.get("frozen_case_ids") or job.get("target_case_ids") or [])
@@ -6223,6 +6205,24 @@ async def _run_account_full_reroute_job(
             _account_rerun_refresh_remaining(job)
             job["updated_at"] = now_iso()
             await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
+            preflight = await _account_reroute_sync_call(run_account_rerun_preflight)
+            if not preflight.ok:
+                failed_at = now_iso()
+                job.update(
+                    status="failed",
+                    phase="Preflight",
+                    error=_sanitize_account_rerun_error(preflight.reason),
+                    failed_stage="preflight",
+                    stop_reason="preflight_failed",
+                    stop_error=_sanitize_account_rerun_error(preflight.reason),
+                    preflight=preflight.as_dict(),
+                    completed_at=failed_at,
+                    updated_at=failed_at,
+                )
+                job["retry_mode"] = "prepare"
+                _account_rerun_refresh_remaining(job)
+                await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
+                return
         completed_case_ids = list(dict.fromkeys(
             str(item or "").strip()
             for item in job.get("completed_case_ids") or []

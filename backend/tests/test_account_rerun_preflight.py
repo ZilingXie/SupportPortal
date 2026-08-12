@@ -4,13 +4,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from backend.services.llm_factory import LlmInvocationError
 from backend.services.account_rerun_preflight import run_account_rerun_preflight
 
 
 class AccountRerunPreflightTests(unittest.TestCase):
-    def test_success_checks_sql_prompt_and_luna_json(self) -> None:
-        response = SimpleNamespace(text='{"ok": true}', model_name="gpt-5.6-luna")
+    def test_success_checks_sql_prompt_and_account_model_without_network(self) -> None:
         with patch(
             "backend.services.account_rerun_preflight.resolve_model_profile"
         ) as profile, patch(
@@ -25,27 +23,27 @@ class AccountRerunPreflightTests(unittest.TestCase):
                 timeout_seconds=120.0,
                 has_invocation_credentials=lambda: True,
             )
-            result = run_account_rerun_preflight(invoke=lambda **_: response)
+            result = run_account_rerun_preflight()
         self.assertTrue(result.ok)
         self.assertEqual(result.checks["postgresql"]["column_count"], 40)
-        self.assertEqual(result.checks["luna_json"]["status"], "passed")
+        self.assertEqual(result.checks["account_model"]["status"], "passed")
 
-    def test_invalid_json_blocks_preflight(self) -> None:
+    def test_unexpected_model_blocks_preflight(self) -> None:
         with patch(
             "backend.services.account_rerun_preflight.resolve_model_profile"
         ) as profile:
             profile.return_value = SimpleNamespace(
                 scenario="account_route",
-                model="gpt-5.6-luna",
+                model="gpt-5.4-mini",
                 reasoning_effort="xhigh",
                 temperature=None,
                 timeout_seconds=120.0,
                 has_invocation_credentials=lambda: True,
             )
-            result = run_account_rerun_preflight(invoke=lambda **_: SimpleNamespace(text="not-json"))
+            result = run_account_rerun_preflight()
         self.assertFalse(result.ok)
-        self.assertEqual(result.reason, "preflight_luna_json_failed")
-        self.assertEqual(result.checks["luna_json"]["reason"], "invalid_json")
+        self.assertEqual(result.reason, "preflight_account_model_failed")
+        self.assertEqual(result.checks["account_model"]["reason"], "unexpected_model")
 
     def test_model_unavailable_blocks_preflight(self) -> None:
         with patch(
@@ -59,47 +57,38 @@ class AccountRerunPreflightTests(unittest.TestCase):
                 timeout_seconds=120.0,
                 has_invocation_credentials=lambda: False,
             )
-            result = run_account_rerun_preflight(invoke=lambda **_: None)
+            result = run_account_rerun_preflight()
         self.assertFalse(result.ok)
-        self.assertEqual(result.checks["luna_json"]["reason"], "model_unavailable")
+        self.assertEqual(result.checks["account_model"]["reason"], "model_unavailable")
 
-    def test_tls_failure_is_reported_without_calling_it_model_unavailable(self) -> None:
+    def test_unexpected_reasoning_effort_blocks_preflight(self) -> None:
         with patch(
             "backend.services.account_rerun_preflight.resolve_model_profile"
         ) as profile:
             profile.return_value = SimpleNamespace(
                 scenario="account_route",
                 model="gpt-5.6-luna",
-                reasoning_effort="xhigh",
+                reasoning_effort="high",
                 temperature=None,
                 timeout_seconds=120.0,
                 has_invocation_credentials=lambda: True,
             )
-            result = run_account_rerun_preflight(
-                invoke=lambda **_: (_ for _ in ()).throw(
-                    LlmInvocationError("account_route_request_failed: TLS certificate verify failed")
-                )
-            )
+            result = run_account_rerun_preflight()
         self.assertFalse(result.ok)
-        self.assertEqual(result.reason, "preflight_luna_json_failed")
-        self.assertEqual(result.checks["luna_json"]["reason"], "tls_failed")
+        self.assertEqual(result.reason, "preflight_account_model_failed")
+        self.assertEqual(result.checks["account_model"]["reason"], "unexpected_reasoning_effort")
 
-    def test_model_unavailable_error_is_classified_even_when_credentials_exist(self) -> None:
+    def test_profile_resolution_failure_is_reported_as_structured_preflight_failure(self) -> None:
         with patch(
-            "backend.services.account_rerun_preflight.resolve_model_profile"
-        ) as profile:
-            profile.return_value = SimpleNamespace(
-                scenario="account_route",
-                model="gpt-5.6-luna",
-                reasoning_effort="xhigh",
-                temperature=None,
-                timeout_seconds=120.0,
-                has_invocation_credentials=lambda: True,
-            )
-            result = run_account_rerun_preflight(
-                invoke=lambda **_: (_ for _ in ()).throw(
-                    LlmInvocationError("account_route_model_unavailable: gpt-5.6-luna")
-                )
-            )
+            "backend.services.account_rerun_preflight.resolve_model_profile",
+            side_effect=RuntimeError("invalid Account model configuration"),
+        ):
+            result = run_account_rerun_preflight()
+
         self.assertFalse(result.ok)
-        self.assertEqual(result.checks["luna_json"]["reason"], "model_unavailable")
+        self.assertEqual(result.reason, "preflight_account_model_failed")
+        self.assertEqual(result.checks["account_model"]["status"], "failed")
+        self.assertEqual(
+            result.checks["account_model"]["reason"],
+            "invalid Account model configuration",
+        )

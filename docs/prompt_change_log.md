@@ -3563,3 +3563,20 @@ For each new entry, record:
   - The confirmation dialog explains that preflight runs before the Case loop and the first error stops processing.
 - Verification:
   - Account/Admin UI contracts, Node syntax, compose/config contracts, feature-list verification, and `git diff --check`.
+
+## 2026-08-12 - Account rerun preflight network resilience
+
+- Area or subsystem: `/account` full-rerun startup and Account-only model profile validation
+- Prompt or model version: `account_route` profile (`gpt-5.6-luna`, `xhigh`, 120 seconds; Prompt content unchanged)
+- Summary: Replaced the extra live Luna JSON probe with a deterministic Account profile and credential check. Full reruns now freeze the Case inventory before preflight, and the first Case's read-only Prepare performs the first live model request.
+- Reason: A transient TLS EOF in the redundant probe stopped the entire rerun before loading its 147-Case inventory, even though the first Case Prepare already provides a side-effect-free model availability check.
+- Affected files or config:
+  - `backend/services/account_rerun_preflight.py`
+  - `backend/main.py`
+  - Account rerun and UI contract tests
+- Expected behavior change:
+  - Preflight still fails before Case processing for an invalid PostgreSQL write contract, missing Prompt runtime, missing credentials, wrong Account model, or wrong reasoning effort.
+  - Network and model invocation errors occur during the first Case Prepare and stop before Commit, email, or reply creation.
+  - Preflight failures report the frozen total and accurate unprocessed Case count instead of zero.
+- Verification:
+  - Account preflight, rerun lifecycle, fail-fast/Resume, UI contract, Node syntax, feature-list verification, and `git diff --check`.

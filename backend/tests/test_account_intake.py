@@ -48,13 +48,13 @@ def _successful_account_rerun_preflight() -> SimpleNamespace:
             "checks": {
                 "postgresql": {"status": "passed"},
                 "prompt_runtime": {"status": "passed"},
-                "luna_json": {"status": "passed"},
+                "account_model": {"status": "passed"},
             },
         },
     )
 
 
-def _failed_account_rerun_preflight(reason: str = "preflight_luna_json_failed") -> SimpleNamespace:
+def _failed_account_rerun_preflight(reason: str = "preflight_account_model_failed") -> SimpleNamespace:
     return SimpleNamespace(
         ok=False,
         reason=reason,
@@ -64,7 +64,7 @@ def _failed_account_rerun_preflight(reason: str = "preflight_luna_json_failed") 
             "checks": {
                 "postgresql": {"status": "passed"},
                 "prompt_runtime": {"status": "passed"},
-                "luna_json": {"status": "failed", "reason": "model_unavailable"},
+                "account_model": {"status": "failed", "reason": "model_unavailable"},
             },
         },
     )
@@ -1178,7 +1178,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert latest is not None
         self.assertEqual(latest["status"], "failed")
         self.assertEqual(latest["phase"], "Preflight")
-        self.assertEqual(latest["error"], "preflight_luna_json_failed")
+        self.assertEqual(latest["error"], "preflight_account_model_failed")
+        self.assertEqual(latest["total"], 1)
+        self.assertEqual(latest["remaining"], 1)
+        self.assertEqual(latest["remaining_case_ids"], ["AC-PREFLIGHT-STOP"])
         self.assertEqual(latest["processed"], 0)
         self.assertEqual(latest["succeeded"], 0)
         self.assertEqual(latest["failed"], 0)

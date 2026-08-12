@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-import ssl
-import urllib.error
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -14,7 +11,6 @@ from backend.services.account_route_pipeline import (
     ACCOUNT_BILLING_PROMPT_KEY,
     ACCOUNT_INTENT_PROMPT_KEY,
 )
-from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO, resolve_model_profile
 from backend.services.prompt_runtime import resolve_system_prompt, prompt_runtime_info
 from backend.services.prompts.account_routing import (
@@ -67,39 +63,25 @@ def _check_prompt_runtime() -> dict[str, Any]:
     }
 
 
-def _check_luna_json_request(
-    invoke: Callable[..., Any] = invoke_responses_text,
-) -> dict[str, Any]:
+def _check_account_model_profile() -> dict[str, Any]:
     profile = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
     if not profile.has_invocation_credentials():
         return {"status": "failed", "reason": "model_unavailable", "scenario": profile.scenario}
-    try:
-        response = invoke(
-            profile=profile,
-            system_prompt="Return exactly one JSON object with the key ok set to true.",
-            user_prompt='{"probe":"account_route_preflight"}',
-            extra_payload={"text": {"format": {"type": "json_object"}}},
-        )
-        payload = json.loads(str(getattr(response, "text", response) or ""))
-        if not isinstance(payload, dict) or payload.get("ok") is not True:
-            return {"status": "failed", "reason": "invalid_json", "scenario": profile.scenario}
-    except json.JSONDecodeError as exc:
-        return {"status": "failed", "reason": "invalid_json", "error": str(exc)[:200], "scenario": profile.scenario}
-    except LlmInvocationError as exc:
-        lowered = str(exc).lower()
-        if any(marker in lowered for marker in ("ssl", "tls", "certificate", "cert_verify_failed")):
-            reason = "tls_failed"
-        elif "model_unavailable" in lowered or "no_available_model" in lowered:
-            reason = "model_unavailable"
-        else:
-            reason = "request_failed"
-        return {"status": "failed", "reason": reason, "error": str(exc)[:200], "scenario": profile.scenario}
-    except ssl.SSLError as exc:
-        return {"status": "failed", "reason": "tls_failed", "error": str(exc)[:200], "scenario": profile.scenario}
-    except urllib.error.URLError as exc:
-        return {"status": "failed", "reason": "request_failed", "error": str(exc)[:200], "scenario": profile.scenario}
-    except (ValueError, TypeError) as exc:
-        return {"status": "failed", "reason": "request_failed", "error": str(exc)[:200], "scenario": profile.scenario}
+    if str(profile.model or "").strip() != "gpt-5.6-luna":
+        return {
+            "status": "failed",
+            "reason": "unexpected_model",
+            "scenario": profile.scenario,
+            "model": profile.model,
+        }
+    if str(profile.reasoning_effort or "").strip().lower() != "xhigh":
+        return {
+            "status": "failed",
+            "reason": "unexpected_reasoning_effort",
+            "scenario": profile.scenario,
+            "model": profile.model,
+            "reasoning_effort": profile.reasoning_effort,
+        }
     return {
         "status": "passed",
         "scenario": profile.scenario,
@@ -110,17 +92,17 @@ def _check_luna_json_request(
     }
 
 
-def run_account_rerun_preflight(
-    *,
-    invoke: Callable[..., Any] = invoke_responses_text,
-) -> AccountRerunPreflightResult:
+def run_account_rerun_preflight() -> AccountRerunPreflightResult:
     checks: dict[str, dict[str, Any]] = {}
-    for name, check in (("postgresql", _check_sql_contract), ("prompt_runtime", _check_prompt_runtime)):
+    for name, check in (
+        ("postgresql", _check_sql_contract),
+        ("prompt_runtime", _check_prompt_runtime),
+        ("account_model", _check_account_model_profile),
+    ):
         try:
             checks[name] = check()
         except Exception as exc:
             checks[name] = {"status": "failed", "reason": str(exc)[:200]}
-    checks["luna_json"] = _check_luna_json_request(invoke)
     failed = next((name for name, value in checks.items() if value.get("status") != "passed"), None)
     return AccountRerunPreflightResult(
         ok=failed is None,
