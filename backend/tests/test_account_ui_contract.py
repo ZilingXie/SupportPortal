@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260812-account-full-rerun-always-1", html)
+        self.assertIn("20260812-account-rerun-preflight-resilience-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -335,8 +335,8 @@ class AccountUiContractTests(unittest.TestCase):
         function render(job) {{ state.rerouteJob = job; return renderRerouteStatus(); }}
         console.log(JSON.stringify({{
           running: render({{ status: 'running', phase: 'Preflight', processed: 0, total: 4 }}),
-          preflight: render({{ status: 'failed', stop_reason: 'preflight_failed', failed_stage: 'preflight', remaining: 4 }}),
-          stopped: render({{ status: 'completed_with_errors', failed: 1, failed_case_id: 'AC-4', failed_stage: 'prepare', succeeded: 3, remaining: 0 }}),
+          preflight: render({{ status: 'failed', stop_reason: 'preflight_failed', failed_stage: 'preflight', remaining: 4, preflight: {{ checks: {{ account_model: {{ status: 'failed', reason: 'unexpected_model' }} }} }} }}),
+          stopped: render({{ status: 'completed_with_errors', failed: 1, failed_case_id: 'AC-4', failed_stage: 'prepare', stop_error: 'account route request failed', succeeded: 3, remaining: 0 }}),
           completed: render({{ status: 'completed', succeeded: 4, remaining: 0 }}),
         }}));
         """
@@ -345,13 +345,16 @@ class AccountUiContractTests(unittest.TestCase):
         rendered = json.loads(result.stdout)
         self.assertIn("Running", rendered["running"])
         self.assertIn("Preflight failed", rendered["preflight"])
+        self.assertIn("account_model: unexpected_model", rendered["preflight"])
         self.assertIn("Stopped at Case", rendered["stopped"])
         self.assertIn("AC-4", rendered["stopped"])
+        self.assertIn("account route request failed", rendered["stopped"])
         self.assertIn("Completed", rendered["completed"])
         self.assertNotIn("Rerun complete", rendered["stopped"])
         self.assertIn("Resume rerun", rendered["stopped"])
         self.assertIn("/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume", app_source)
         self.assertIn("read-only preflight", app_source)
+        self.assertIn("first live model request", app_source)
         self.assertIn("first Case error stops", app_source)
 
     def test_account_persona_detail_styles_cover_desktop_tablet_and_mobile_contract(self) -> None:

@@ -31,7 +31,7 @@ def _successful_account_rerun_preflight() -> SimpleNamespace:
             "checks": {
                 "postgresql": {"status": "passed"},
                 "prompt_runtime": {"status": "passed"},
-                "luna_json": {"status": "passed"},
+                "account_model": {"status": "passed"},
             },
         },
     )
@@ -1031,7 +1031,7 @@ class AccountRerouteDaemonThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
                         "checks": {
                             "postgresql": {"status": "passed"},
                             "prompt_runtime": {"status": "passed"},
-                            "luna_json": {"status": "passed"},
+                            "account_model": {"status": "passed"},
                         },
                     },
                 },
