@@ -670,20 +670,6 @@ function responseErrorMessage(payload, fallback) {
   return fallback;
 }
 
-function rerunConflictMessage(payload, fallback) {
-  const detail = payload?.detail;
-  if (detail?.code !== "account_rerun_readiness_blocked") {
-    return responseErrorMessage(payload, fallback);
-  }
-  const unknownCount = Array.isArray(detail.unknown_case_ids)
-    ? detail.unknown_case_ids.length
-    : 0;
-  const countSummary = unknownCount
-    ? ` ${unknownCount} Automation Case${unknownCount === 1 ? " has" : "s have"} an unknown internal-email delivery state.`
-    : "";
-  return `Preflight blocked.${countSummary} Confirm their delivery state before starting a full rerun.`;
-}
-
 function createSingleCaseRerunIdempotencyKey() {
   const cryptoApi = globalThis.crypto;
   if (typeof cryptoApi?.randomUUID === "function") {
@@ -793,7 +779,7 @@ async function startFullReroute() {
     if (!response.ok) {
       if (response.status === 409) {
         await fetchLatestRerouteJob();
-        state.rerouteError = rerunConflictMessage(
+        state.rerouteError = responseErrorMessage(
           payload,
           "Account Case reprocessing could not start because another rerun is active."
         );
@@ -862,7 +848,7 @@ async function startSingleCaseRerun() {
     if (!response.ok) {
       if (response.status === 409) {
         await fetchLatestRerouteJob();
-        state.rerouteError = rerunConflictMessage(
+        state.rerouteError = responseErrorMessage(
           payload,
           "This Account Case could not be rerun because another rerun is active."
         );

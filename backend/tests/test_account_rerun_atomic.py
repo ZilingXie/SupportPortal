@@ -238,6 +238,29 @@ class AccountRerunAtomicTests(unittest.TestCase):
         self.assertEqual(self.repository.list_account_route_executions(self.ticket_id)[-1]["trigger"], "single_case_rerun")
         self.assertEqual(self.repository.list_workspace_audit_events()[0]["event_type"], "account_case_rerun_committed")
 
+    def test_in_memory_full_rerun_replaces_completed_email_binding(self) -> None:
+        current_case = self.repository.get_account_case(self.case_id)
+        result = self.repository.commit_account_case_rerun(
+            account_case_id=self.case_id,
+            ticket_id=self.ticket_id,
+            prepared_case={
+                **current_case,
+                "internal_email_send_status": "pending",
+                "internal_email_payload": {"delivery_key": "fresh-email:rerun:rerun-full"},
+            },
+            route_execution={"ticket_id": self.ticket_id, "trigger": "account_full_rerun"},
+            expected_updated_at=current_case["updated_at"],
+            expected_detail_revision=self._revision(),
+            rerun_job_id="rerun-full",
+            committed_at="2026-08-12T01:00:00+00:00",
+            preserve_completed_email=False,
+        )
+        self.assertEqual(result["account_case"]["internal_email_send_status"], "pending")
+        self.assertEqual(
+            result["account_case"]["internal_email_payload"],
+            {"delivery_key": "fresh-email:rerun:rerun-full"},
+        )
+
     def test_commit_rolls_back_when_audit_write_fails(self) -> None:
         current_case = self.repository.get_account_case(self.case_id)
         before = {
@@ -356,6 +379,43 @@ class AccountRerunAtomicTests(unittest.TestCase):
         self.assertIn("state<>'completed'", executed_sql.replace(" ", ""))
         self.assertIn("support_account_route_executions", executed_sql)
         self.assertIn("support_workspace_audit_events", executed_sql)
+
+    def test_postgres_full_rerun_replaces_completed_email_binding(self) -> None:
+        repository, connection, _cursor, current_case = self._postgres_repository()
+        expected_revision = _account_case_detail_revision(
+            current_case,
+            {"updated_at": current_case["ticket_updated_at"]},
+            None,
+            None,
+            message_count=2,
+            latest_message_at=current_case["latest_message_at"],
+        )
+        with unittest.mock.patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.commit_account_case_rerun(
+                account_case_id="AC-PG-ATOMIC",
+                ticket_id="TK-PG-ATOMIC",
+                prepared_case={
+                    **current_case,
+                    "internal_email_send_status": "pending",
+                    "internal_email_payload": {"delivery_key": "fresh-pg:rerun:rerun-pg-full"},
+                },
+                route_execution={"ticket_id": "TK-PG-ATOMIC", "trigger": "account_full_rerun"},
+                expected_updated_at=current_case["updated_at"],
+                expected_detail_revision=expected_revision,
+                rerun_job_id="rerun-pg-full",
+                committed_at="2026-08-12T01:00:00+00:00",
+                preserve_completed_email=False,
+            )
+
+        self.assertEqual(result["account_case"]["internal_email_send_status"], "pending")
+        self.assertEqual(
+            result["account_case"]["internal_email_payload"],
+            {"delivery_key": "fresh-pg:rerun:rerun-pg-full"},
+        )
 
     def test_postgres_revision_conflict_rolls_back_before_any_write(self) -> None:
         repository, connection, cursor, current_case = self._postgres_repository()

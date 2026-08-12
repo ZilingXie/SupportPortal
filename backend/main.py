@@ -86,7 +86,6 @@ from backend.services.account_full_reroute import prepare_account_case_rerun, re
 from backend.services.account_rerun_preflight import run_account_rerun_preflight
 from backend.services.account_rerun_recovery import (
     classify_internal_email_delivery,
-    delivery_readiness_for_cases,
 )
 from backend.services.account_automation_reconciliation import (
     reconcile_automation_execution_failure,
@@ -5760,44 +5759,6 @@ async def _enqueue_account_rerun_job(
     normalized_targets = list(dict.fromkeys(
         str(item or "").strip() for item in (target_case_ids or []) if str(item or "").strip()
     ))
-    is_full_rerun = (
-        str(scope_override or "").strip() == "all_cases"
-        or (not normalized_targets and scope_override != "single_case")
-    )
-    if is_full_rerun:
-        cases_for_readiness = await _account_rerun_storage_call(
-            ticket_repository.list_account_cases,
-            limit=100_000,
-            offset=0,
-        )
-        target_set = set(normalized_targets)
-        if target_set:
-            cases_for_readiness = [
-                case for case in cases_for_readiness
-                if str(
-                    case.get("account_case_id")
-                    or case.get("billing_ticket_id")
-                    or case.get("client_ticket_id")
-                    or ""
-                ).strip() in target_set
-            ]
-        readiness = delivery_readiness_for_cases(
-            [
-                case for case in cases_for_readiness
-                if isinstance(case, dict)
-            ]
-        )
-        if not readiness["ready"]:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "account_rerun_readiness_blocked",
-                    "reason_code": readiness["reason_code"],
-                    "manual_confirmation_required": True,
-                    "unknown_case_ids": readiness["unknown_case_ids"],
-                    "message": "Formal full rerun is blocked until unknown Automation delivery states are manually confirmed.",
-                },
-            )
     created_at = now_iso()
     single_case = bool(normalized_targets) and scope_override != "all_cases"
     job = {
@@ -6364,6 +6325,17 @@ async def _run_account_full_reroute_job(
                     "rerun_mode": "fresh_case_rerun",
                     "rerun_reply_kind": result.reply_kind,
                 }
+                is_full_rerun = str(job.get("scope") or "").strip() == "all_cases"
+                if is_full_rerun and result.internal_email_to_send:
+                    rerun_email_payload = dict(result.internal_email_to_send)
+                    rerun_email_payload["delivery_key"] = _fresh_rerun_delivery_key(
+                        rerun_email_payload,
+                        job_id,
+                    )
+                    result.internal_email_to_send = rerun_email_payload
+                    updated_case["internal_email_payload"] = dict(rerun_email_payload)
+                    updated_case["internal_email_send_status"] = "pending"
+                    updated_case["internal_email_send_reason"] = "full_rerun_requested"
                 result.route_execution["rerun_job_id"] = job_id
                 result.route_execution["rerun_mode"] = "fresh_case_rerun"
                 case_changed = bool(result.changed)
@@ -6381,6 +6353,7 @@ async def _run_account_full_reroute_job(
                     expected_detail_revision=expected_detail_revision,
                     rerun_job_id=job_id,
                     committed_at=now_iso(),
+                    preserve_completed_email=not is_full_rerun,
                     audit_context={
                         "requested_at": job.get("requested_at") or job.get("created_at"),
                         "build_ref": job.get("build_ref"),

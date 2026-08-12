@@ -587,7 +587,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             duplicate = self.client.post("/api/account/rerun-jobs")
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
 
-    def test_full_reroute_admission_blocks_unknown_automation_delivery(self) -> None:
+    def test_full_reroute_admission_allows_unknown_automation_delivery(self) -> None:
         self.repository.save_ticket(
             {
                 "ticket_id": "12799",
@@ -610,13 +610,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as runner:
             response = self.client.post("/api/account/rerun-jobs")
-        self.assertEqual(response.status_code, 409, response.text)
-        detail = response.json()["detail"]
-        self.assertEqual(detail["code"], "account_rerun_readiness_blocked")
-        self.assertTrue(detail["manual_confirmation_required"])
-        self.assertEqual(detail["unknown_case_ids"], ["AC-12799"])
-        runner.assert_not_awaited()
-        self.assertEqual(self.repository.list_account_reroute_jobs(), [])
+        self.assertEqual(response.status_code, 202, response.text)
+        runner.assert_awaited_once()
+        self.assertEqual(len(self.repository.list_account_reroute_jobs()), 1)
 
     def test_account_rerun_admission_gate_blocks_full_and_single_jobs_in_both_directions(self) -> None:
         self.repository.save_ticket(
@@ -1292,6 +1288,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._admit_account_reroute_job(
             {
                 "job_id": "account-reroute-test",
+                "scope": "all_cases",
                 "status": "queued",
                 "total": 0,
                 "processed": 0,
@@ -1365,12 +1362,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as chooser:
             asyncio.run(main._run_account_full_reroute_job("account-reroute-test"))
 
-        sender.assert_not_awaited()
+        sender.assert_awaited_once()
         self.assertEqual(chooser.call_count, 0)
         stored = self.repository.get_account_case("AC-12513")
         assert stored is not None
         self.assertEqual(stored["internal_email_send_status"], "sent")
-        self.assertEqual(stored["internal_email_payload"], account_case["internal_email_payload"])
+        self.assertEqual(
+            stored["internal_email_payload"]["delivery_key"],
+            "delivery-12513:rerun:account-reroute-test",
+        )
         reply_job = self.repository.get_latest_account_reply_job("12513")
         assert reply_job is not None
         self.assertEqual(reply_job["status"], "persona_queued")
@@ -1380,7 +1380,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None
         self.assertEqual(latest_job["status"], "completed")
-        self.assertEqual(latest_job["emails_sent"], 0)
+        self.assertEqual(latest_job["emails_sent"], 1)
         self.assertEqual(latest_job["replies_scheduled"], 1)
         self.assertEqual(latest_job["reply_jobs_deleted"], 0)
         self.assertEqual(latest_job["reply_executions_deleted"], 0)

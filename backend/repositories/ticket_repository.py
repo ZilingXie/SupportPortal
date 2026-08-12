@@ -1702,6 +1702,7 @@ class TicketRepository(Protocol):
         expected_detail_revision: str,
         rerun_job_id: str,
         committed_at: str,
+        preserve_completed_email: bool = True,
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def save_account_reply_execution(self, execution: dict[str, Any]) -> dict[str, Any]: ...
@@ -2536,6 +2537,7 @@ class InMemoryTicketRepository:
         expected_detail_revision: str,
         rerun_job_id: str,
         committed_at: str,
+        preserve_completed_email: bool = True,
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id or "").strip()
@@ -2625,7 +2627,9 @@ class InMemoryTicketRepository:
                     if str(value.get("client_ticket_id") or "").strip() != normalized_ticket_id
                     or str(value.get("state") or "").strip().lower() == "completed"
                 }
-                prepared = _account_rerun_preserve_completed_email(current_case, copy.deepcopy(prepared_case))
+                prepared = copy.deepcopy(prepared_case)
+                if preserve_completed_email:
+                    prepared = _account_rerun_preserve_completed_email(current_case, prepared)
                 prepared.setdefault(
                     "automation_status",
                     "automation" if str(prepared.get("route_status") or "") == "automated" else "not_automated",
@@ -12389,6 +12393,7 @@ class PostgresTicketRepository:
         expected_detail_revision: str,
         rerun_job_id: str,
         committed_at: str,
+        preserve_completed_email: bool = True,
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_ticket_id = str(ticket_id or "").strip()
@@ -12549,7 +12554,9 @@ class PostgresTicketRepository:
                     (normalized_ticket_id,),
                 )
 
-                prepared = _account_rerun_preserve_completed_email(current_case, copy.deepcopy(prepared_case))
+                prepared = copy.deepcopy(prepared_case)
+                if preserve_completed_email:
+                    prepared = _account_rerun_preserve_completed_email(current_case, prepared)
                 prepared.setdefault(
                     "automation_status",
                     "automation" if str(prepared.get("route_status") or "") == "automated" else "not_automated",
