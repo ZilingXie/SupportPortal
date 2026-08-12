@@ -91,6 +91,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "agentConfigLoadError", "loadAgentConfig", "data-action=\"retry-agent-config\"",
             "data-action=\"retry-environment-config\"", "automation_personas", "route_navigation",
             "automation_workflows", "Automation Workflow", "All categories", "Account & Billing", "Handler",
+            "gpt-5.6-luna", "xhigh", "/account only", "/client and shared legacy router",
             "Classification reason code", "Execution reason code", "Diagnostic fallback", "Four registered outcomes",
             "data-persona-draft-form", 'data-action="publish-persona"',
             'data-action="rollback-persona"', 'data-action="toggle-persona"',
@@ -201,7 +202,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260811-admin-agent-config-taxonomy-1", index)
+        self.assertIn("20260812-account-rerun-fail-fast-1", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -562,7 +563,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260811-admin-agent-config-taxonomy-1", html)
+        self.assertIn("20260812-account-rerun-fail-fast-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)

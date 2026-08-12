@@ -796,6 +796,36 @@ async function startFullReroute() {
   }
 }
 
+async function resumeRerouteJob() {
+  const jobId = String(state.rerouteJob?.job_id || "").trim();
+  if (!jobId || state.isStartingReroute || isActiveRerouteJob()) return;
+  state.isStartingReroute = true;
+  state.rerouteError = "";
+  render();
+  try {
+    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      if (response.status === 409) {
+        await fetchRerouteJob(jobId);
+        throw new Error(responseErrorMessage(payload, "This rerun cannot be resumed."));
+      }
+      throw new Error(responseErrorMessage(payload, "Could not resume Account Case reprocessing."));
+    }
+    state.rerouteJob = payload;
+    state.rerouteActiveTargetCaseId = "";
+    showToast("Account Case rerun resumed");
+  } catch (err) {
+    state.rerouteError = err instanceof Error ? err.message : "Could not resume Account Case rerun.";
+  } finally {
+    state.isStartingReroute = false;
+    render();
+  }
+}
+
 async function startSingleCaseRerun() {
   const snapshot = state.rerouteTargetSnapshot;
   const caseId = String(snapshot?.caseId || "").trim();
@@ -1794,7 +1824,7 @@ function renderRerouteStatus() {
     return `
       <div class="reroute-status" role="status" aria-live="polite">
         <div class="reroute-status__line">
-          <span>${job.status === "queued" ? "Queued" : escapeHtml(job.phase || "Rerunning")}</span>
+          <span><strong>Running</strong>${job.status === "queued" ? " · Queued" : job.phase ? ` · ${escapeHtml(job.phase)}` : ""}</span>
           <strong>${processed}${total ? ` of ${total}` : ""}</strong>
         </div>
         <div class="reroute-progress" aria-label="Reroute progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}" role="progressbar">
@@ -1805,10 +1835,33 @@ function renderRerouteStatus() {
   }
   const failed = Number(job.failed || 0);
   const recovered = Number(job.recovered || 0);
+  const statusLabel = String(job.status || "") === "failed"
+    && String(job.stop_reason || "") === "preflight_failed"
+    ? "Preflight failed"
+    : String(job.status || "") === "failed" || String(job.status || "") === "completed_with_errors"
+      ? "Stopped at Case"
+      : String(job.status || "") === "completed"
+        ? "Completed"
+        : "Rerun status unavailable";
+  const failedCase = String(job.failed_case_id || "").trim();
+  const failedStage = String(job.failed_stage || "").trim();
+  const remaining = Number(job.remaining || 0);
+  const stopDetails = failedCase
+    ? `Stopped at Case ${failedCase}${failedStage ? ` during ${failedStage}` : ""}`
+    : failedStage ? `Stopped during ${failedStage}` : "";
+  const resumeButton = Boolean(
+    !isActiveRerouteJob(job)
+    && (String(job.status || "") === "failed" || String(job.status || "") === "completed_with_errors")
+    && (remaining > 0 || failedCase)
+  )
+    ? `<button class="primary-button primary-button--small" type="button" data-action="resume-reroute" ${state.isStartingReroute ? "disabled" : ""}>Resume rerun</button>`
+    : "";
   return `
-    <div class="reroute-status ${failed || job.status === "failed" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
-      <strong>${job.status === "failed" ? "Rerun failed" : "Rerun complete"}</strong>
-      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
+      <div class="reroute-status ${failed || job.status === "failed" || job.status === "completed_with_errors" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
+      <strong>${escapeHtml(statusLabel)}</strong>
+      ${stopDetails ? `<span>${escapeHtml(stopDetails)}</span>` : ""}
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${remaining} unprocessed${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
+      ${resumeButton}
     </div>
   `;
 }
@@ -1839,6 +1892,8 @@ function renderRerouteConfirmation() {
               <li>Independent audit records will be retained.</li>
             </ul>`
           : `<ul>
+              <li>A read-only preflight checks the database contract, managed Prompts, and Account Luna model before the Case loop begins.</li>
+              <li>The first Case error stops the rerun immediately; remaining Cases stay unprocessed and can be resumed later.</li>
               <li>Previously sent internal emails will be sent again as a new rerun execution.</li>
               <li>Existing Account-only AI replies and reply jobs will be deleted before each case starts again.</li>
               <li>Account & Billing classification extractors also run again; they never send email or customer replies.</li>
@@ -2049,6 +2104,9 @@ function bind() {
   });
   document.querySelectorAll("[data-action='confirm-reroute']").forEach((el) => {
     el.addEventListener("click", () => void startFullReroute());
+  });
+  document.querySelectorAll("[data-action='resume-reroute']").forEach((el) => {
+    el.addEventListener("click", () => void resumeRerouteJob());
   });
   document.querySelectorAll("[data-action='confirm-single-rerun']").forEach((el) => {
     el.addEventListener("click", () => void startSingleCaseRerun());
