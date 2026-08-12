@@ -1373,14 +1373,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(stored["internal_email_payload"], account_case["internal_email_payload"])
         reply_job = self.repository.get_latest_account_reply_job("12513")
         assert reply_job is not None
-        self.assertEqual(reply_job["status"], "published")
+        self.assertEqual(reply_job["status"], "persona_queued")
+        self.assertEqual(reply_job["payload"]["rerun_job_id"], "account-reroute-test")
         self.assertIsNone(self.repository.get_account_persona_assignment("12513"))
         self.assertEqual(self.repository.list_account_route_executions("12513")[-1]["rerun_mode"], "fresh_case_rerun")
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None
         self.assertEqual(latest_job["status"], "completed")
         self.assertEqual(latest_job["emails_sent"], 0)
-        self.assertEqual(latest_job["replies_scheduled"], 0)
+        self.assertEqual(latest_job["replies_scheduled"], 1)
         self.assertEqual(latest_job["reply_jobs_deleted"], 0)
         self.assertEqual(latest_job["reply_executions_deleted"], 0)
         self.assertEqual(latest_job["persona_assignments_deleted"], 1)
@@ -1470,7 +1471,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as resolve:
             asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
 
-        sender.assert_not_awaited()
+        sender.assert_awaited_once()
         resolve.assert_not_called()
         self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
         self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
@@ -1480,7 +1481,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(latest_job["persona_assignments_deleted"], 1)
         self.assertEqual(latest_job["replies_scheduled"], 0)
 
-    def test_full_reroute_persona_unavailable_moves_case_to_human_review_before_email(self) -> None:
+    def test_full_reroute_defers_persona_resolution_until_worker_after_email(self) -> None:
         ticket = {
             "ticket_id": "12514",
             "customer_id": "customer@example.com",
@@ -1592,8 +1593,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as sender:
             asyncio.run(main._run_account_full_reroute_job("account-reroute-persona-unavailable"))
 
-        self.assertEqual(call_order, [])
-        sender.assert_not_awaited()
+        self.assertEqual(call_order, ["email"])
+        sender.assert_awaited_once()
         stored = self.repository.get_account_case("AC-12514")
         assert stored is not None
         self.assertEqual(stored["route"], "enablement")
@@ -1607,7 +1608,10 @@ class AccountIntakeApiTests(unittest.TestCase):
             stored["route_classification"]["secondary_label"],
             "Backend Operation / Enablement",
         )
-        self.assertIsNone(self.repository.get_latest_account_reply_job("12514"))
+        reply_job = self.repository.get_latest_account_reply_job("12514")
+        assert reply_job is not None
+        self.assertEqual(reply_job["status"], "persona_queued")
+        self.assertEqual(reply_job["payload"]["rerun_job_id"], "account-reroute-persona-unavailable")
         executions = self.repository.list_account_route_executions("12514")
         self.assertEqual(len(executions), 1)
         self.assertNotIn("execution_reason_code", executions[0]["classification"])

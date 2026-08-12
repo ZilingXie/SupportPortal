@@ -166,6 +166,66 @@ class AccountRerunRecoveryTests(unittest.TestCase):
             "case_missing_from_storage",
         )
 
+    def test_legacy_all_cases_job_uses_current_inventory_when_count_matches(self) -> None:
+        repository = InMemoryTicketRepository()
+        job_id = "legacy-all-cases"
+        for number in (1, 2):
+            repository.save_account_case({
+                "account_case_id": f"AC-{number}",
+                "client_ticket_id": str(number),
+                "route_status": "not_automated",
+            })
+        repository.claim_account_case_rerun(
+            {
+                "job_id": job_id,
+                "status": "completed_with_errors",
+                "scope": "all_cases",
+                "processed": 2,
+                "failed": 2,
+                "reply_jobs_deleted": 1,
+            },
+            active_after="2026-08-11T00:00:00+00:00",
+            request_scope="test",
+        )
+
+        manifest = build_recovery_manifest(job_id, repository=repository)
+
+        self.assertEqual(manifest["case_count"], 2)
+        self.assertEqual(
+            manifest["impact_inventory"]["source"],
+            "legacy_all_cases_current_inventory",
+        )
+        self.assertTrue(manifest["impact_inventory"]["matches_expected_count"])
+        self.assertTrue(recovery_readiness(manifest)["ready"])
+
+    def test_legacy_all_cases_job_with_inventory_mismatch_fails_closed(self) -> None:
+        repository = InMemoryTicketRepository()
+        job_id = "legacy-all-cases-mismatch"
+        repository.save_account_case({
+            "account_case_id": "AC-ONLY",
+            "client_ticket_id": "ONLY",
+            "route_status": "not_automated",
+        })
+        repository.claim_account_case_rerun(
+            {
+                "job_id": job_id,
+                "status": "completed_with_errors",
+                "scope": "all_cases",
+                "processed": 2,
+                "failed": 2,
+                "reply_jobs_deleted": 1,
+            },
+            active_after="2026-08-11T00:00:00+00:00",
+            request_scope="test",
+        )
+
+        manifest = build_recovery_manifest(job_id, repository=repository)
+        readiness = recovery_readiness(manifest)
+
+        self.assertTrue(manifest["impact_inventory"]["unresolved"])
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["reason_code"], "impact_inventory_unresolved")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -339,6 +339,7 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(main, "reprocess_account_case", return_value=result) as reprocess,
+            patch.object(main, "_wait_for_account_rerun_replies", AsyncMock(return_value=True)),
             patch.object(
                 main,
                 "_send_enablement_internal_email_attempt",
@@ -351,11 +352,13 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             )
             checkpoint = self.repository.get_account_reroute_job(str(queued["job_id"]))
             assert checkpoint is not None
-            self.assertEqual(checkpoint["status"], "completed")
-            self.assertEqual(checkpoint["dispatch_status"], "completed")
+            self.assertEqual(checkpoint["status"], "queued")
+            self.assertEqual(checkpoint["dispatch_status"], "queued")
             self.assertEqual(checkpoint["completed_case_ids"], [case_id])
             self.assertEqual(checkpoint["processed"], 1)
-            self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
+            reply_checkpoint = self.repository.get_latest_account_reply_job(ticket_id)
+            assert reply_checkpoint is not None
+            self.assertEqual(reply_checkpoint["payload"]["rerun_job_id"], queued["job_id"])
 
             stop_event.clear()
             await main._claim_and_run_account_reroute_job(
@@ -367,9 +370,13 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         assert completed is not None
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["processed"], 1)
-        self.assertEqual(completed["replies_scheduled"], 0)
+        self.assertEqual(completed["replies_scheduled"], 1)
         reprocess.assert_called_once()
-        sender.assert_not_awaited()
+        sender.assert_awaited_once()
+        self.assertEqual(
+            self.repository.get_latest_account_reply_job(ticket_id)["job_id"],
+            reply_checkpoint["job_id"],
+        )
 
 
 class AccountRerouteFencingTests(unittest.TestCase):

@@ -16,6 +16,8 @@ DELIVERY_NOT_SENT = "not_sent"
 DELIVERY_UNKNOWN = "unknown"
 
 _NOT_SENT_STATUSES = frozenset({
+    "pending",
+    "retry",
     "not_ready",
     "skipped_config_missing",
 })
@@ -190,9 +192,16 @@ def build_recovery_manifest(job_id: str, *, repository: Any) -> dict[str, Any]:
         if _text(item)
     ]
     cases = repository.list_account_cases(limit=100_000, offset=0)
+    legacy_all_cases_inventory = (
+        not frozen
+        and _text(job.get("scope")).lower() == "all_cases"
+        and int(job.get("processed") or 0) > 0
+    )
     selected = [
         case for case in cases
-        if _case_rerun_id(case) == normalized_job_id or _case_id(case) in set(frozen)
+        if legacy_all_cases_inventory
+        or _case_rerun_id(case) == normalized_job_id
+        or _case_id(case) in set(frozen)
     ]
     selected_ids = {_case_id(case) for case in selected}
     totals = _audit_counts(normalized_job_id, repository=repository)
@@ -247,6 +256,18 @@ def build_recovery_manifest(job_id: str, *, repository: Any) -> dict[str, Any]:
             "claim_association": {"status": "unknown", "reason_code": "case_missing_from_storage"},
             "response_token_association": {"status": "unknown", "reason_code": "case_missing_from_storage"},
         })
+    expected_inventory_count = int(job.get("total") or job.get("processed") or 0)
+    inventory_matches = (
+        not legacy_all_cases_inventory
+        or (expected_inventory_count > 0 and len(selected) == expected_inventory_count)
+    )
+    unresolved_impact = bool(
+        legacy_all_cases_inventory and not inventory_matches
+    ) or bool(
+        not selected
+        and int(job.get("processed") or 0) > 0
+        and any(int(value or 0) > 0 for value in totals.values())
+    )
     return {
         "manifest_version": "account-rerun-recovery-v1",
         "read_only": True,
@@ -263,6 +284,17 @@ def build_recovery_manifest(job_id: str, *, repository: Any) -> dict[str, Any]:
         "cases": case_items,
         "unknown_case_ids": [item for item in unknown_case_ids if item],
         "case_count": len(case_items),
+        "impact_inventory": {
+            "source": (
+                "legacy_all_cases_current_inventory"
+                if legacy_all_cases_inventory
+                else "frozen_ids_and_case_rerun_context"
+            ),
+            "expected_count": expected_inventory_count or None,
+            "selected_count": len(selected),
+            "matches_expected_count": inventory_matches,
+            "unresolved": unresolved_impact,
+        },
         "redaction": {
             "customer_content": "excluded",
             "customer_email": "excluded",
@@ -274,15 +306,33 @@ def build_recovery_manifest(job_id: str, *, repository: Any) -> dict[str, Any]:
 
 def recovery_readiness(manifest: dict[str, Any]) -> dict[str, Any]:
     unknown = list(manifest.get("unknown_case_ids") or [])
-    ready = not unknown
+    inventory = manifest.get("impact_inventory")
+    inventory = inventory if isinstance(inventory, dict) else {}
+    unresolved_impact = bool(inventory.get("unresolved"))
+    ready = not unknown and not unresolved_impact
+    reason_code = (
+        "impact_inventory_unresolved"
+        if unresolved_impact
+        else ("unknown_automation_delivery" if unknown else "ready")
+    )
     return {
         "read_only": True,
         "ready": ready,
         "status": "ready" if ready else "blocked",
-        "reason_code": "ready" if ready else "unknown_automation_delivery",
+        "reason_code": reason_code,
         "manual_confirmation_required": not ready,
         "unknown_case_ids": unknown,
-        "message": "No unknown Automation delivery states found." if ready else "Unknown Automation delivery state requires manual confirmation before rerun.",
+        "unknown_case_count": len(unknown),
+        "impact_inventory": dict(inventory),
+        "message": (
+            "No unknown Automation delivery states found."
+            if ready
+            else (
+                "The affected Account Case inventory cannot be reconstructed reliably."
+                if unresolved_impact
+                else "Unknown Automation delivery state requires manual confirmation before rerun."
+            )
+        ),
     }
 
 

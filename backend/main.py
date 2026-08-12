@@ -5079,6 +5079,14 @@ class _AccountRerunSideEffectCompleted(Exception):
     """Internal control flow marker for a resume-only side-effect retry."""
 
 
+class _AccountRerunSideEffectError(RuntimeError):
+    """Preserve the exact post-Commit stage that must be resumed."""
+
+    def __init__(self, stage: str, error: Exception) -> None:
+        super().__init__(str(error))
+        self.stage = str(stage or "commit").strip() or "commit"
+
+
 def _sanitize_account_rerun_error(value: Any, *, max_length: int = 240) -> str:
     """Keep job diagnostics useful without persisting customer content."""
     message = " ".join(str(value or "").split())
@@ -5095,9 +5103,13 @@ def _sanitize_account_rerun_error(value: Any, *, max_length: int = 240) -> str:
 def _account_rerun_failure_retry_mode(stage: str, error: Any = "") -> str:
     normalized = str(stage or "").strip().lower()
     lowered = str(error or "").lower()
-    if normalized in {"email", "internal_email", "mail"} or "email" in lowered:
+    if normalized in {"email", "internal_email", "mail"}:
         return "email"
-    if normalized in {"reply", "reply_job", "reply_persistence"} or "reply" in lowered:
+    if normalized in {"reply", "reply_job", "reply_persistence"}:
+        return "reply"
+    if "email" in lowered:
+        return "email"
+    if "reply" in lowered:
         return "reply"
     return "prepare" if normalized in {"", "prepare", "preflight"} else "commit"
 
@@ -5144,29 +5156,78 @@ async def _resume_account_rerun_side_effect(
         }.get(handler)
         if sender is None:
             raise ValueError(f"unsupported email handler: {handler or 'unknown'}")
+        delivery_key = str(payload.get("delivery_key") or "").strip()
+        if not delivery_key:
+            raise ValueError("internal email checkpoint has no delivery key")
+        claim_token = f"account-rerun-email-{uuid4().hex}"
+        claimed_at = now_iso()
+        attempt_payload = dict(payload)
+        attempt_payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
+        attempt_payload["last_attempt_at"] = claimed_at
+        claimed = await _account_rerun_storage_call(
+            ticket_repository.claim_account_internal_email_delivery,
+            account_case_id,
+            delivery_key=delivery_key,
+            claim_token=claim_token,
+            claimed_at=claimed_at,
+            payload=attempt_payload,
+            allowed_statuses=(
+                "pending",
+                "retry",
+                "not_ready",
+                "skipped_config_missing",
+            ),
+        )
+        if not claimed:
+            current = await _account_rerun_storage_call(
+                ticket_repository.get_account_case,
+                account_case_id,
+            )
+            current_evidence = classify_internal_email_delivery(current or {})
+            if current_evidence["status"] == "sent":
+                return {"status": "already_sent", "account_case": current or account_case}
+            raise RuntimeError("manual_confirmation_required: automation delivery claim is unavailable")
         attempt = {
-            "internal_email_to_send": dict(payload),
-            "internal_email_payload": dict(payload),
+            "internal_email_to_send": attempt_payload,
+            "internal_email_payload": attempt_payload,
             "internal_email_send_status": "pending",
             "internal_email_send_reason": "resume_retry",
         }
         status, reason = await sender(attempt)
-        updated = dict(account_case)
-        updated.update(
-            internal_email_send_status=str(status or "failed"),
-            internal_email_send_reason=str(reason or ""),
-            internal_email_payload=dict(attempt.get("internal_email_to_send") or payload),
-            updated_at=now_iso(),
+        completed_payload = dict(attempt.get("internal_email_to_send") or attempt_payload)
+        completed = await _account_rerun_storage_call(
+            ticket_repository.complete_account_internal_email_delivery,
+            account_case_id,
+            delivery_key=delivery_key,
+            claim_token=claim_token,
+            payload=completed_payload,
+            send_status=str(status or "failed"),
+            send_reason=str(reason or ""),
+            completed_at=now_iso(),
         )
-        await _account_rerun_storage_call(ticket_repository.save_account_case, updated)
+        if not completed:
+            raise RuntimeError("manual_confirmation_required: automation delivery result was not persisted")
+        updated = await _account_rerun_storage_call(
+            ticket_repository.get_account_case,
+            account_case_id,
+        )
+        if not isinstance(updated, dict):
+            raise ValueError("Account Case disappeared after internal email delivery")
         if str(status or "").strip().lower() != "sent":
             raise RuntimeError(str(reason or "internal email retry failed"))
         return {"status": "sent", "account_case": updated}
     if retry_mode == "reply":
         existing = await _account_rerun_storage_call(ticket_repository.get_latest_account_reply_job, ticket_id)
-        if isinstance(existing, dict) and str(existing.get("status") or "").strip().lower() in {
+        existing_payload = existing.get("payload") if isinstance(existing, dict) else {}
+        existing_payload = existing_payload if isinstance(existing_payload, dict) else {}
+        if (
+            isinstance(existing, dict)
+            and str(existing_payload.get("rerun_job_id") or "").strip() == str(rerun_job_id or "").strip()
+            and str(existing.get("status") or "").strip().lower() in {
             "published", "manual_attention", "scheduled", "pending", "processing",
-        }:
+            "queued", "persona_queued", "persona_preparing", "persona_scheduled",
+            }
+        ):
             return {"status": "already_scheduled", "account_case": account_case, "reply_job": existing}
         ticket = await _account_rerun_storage_call(ticket_repository.get_ticket, ticket_id)
         if not isinstance(ticket, dict):
@@ -5186,13 +5247,70 @@ async def _resume_account_rerun_side_effect(
             trigger_message_created_at=str(account_case.get("updated_at") or now_iso()),
             draft_content="",
             reply_facts=facts,
-            asked_field_keys=[],
+            asked_field_keys=(
+                []
+                if account_case.get("internal_email_payload")
+                else list(account_case.get("missing_fields") or [])
+            ),
             persona_assignment=None,
             automation_delivery_key=str((account_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
             rerun_job_id=rerun_job_id,
         )
         return {"status": "scheduled", "account_case": account_case, "reply_job": reply_job}
     raise ValueError(f"unsupported rerun retry mode: {retry_mode}")
+
+
+async def _run_account_rerun_post_commit_side_effects(
+    account_case_id: str,
+    *,
+    rerun_job_id: str,
+    reply_kind: str | None,
+    send_internal_email: bool = False,
+    retry_mode: str | None = None,
+) -> dict[str, Any]:
+    """Run the durable post-Commit email/reply stages for one Account Case."""
+
+    normalized_retry = str(retry_mode or "").strip().lower()
+    account_case = await _account_rerun_storage_call(
+        ticket_repository.get_account_case,
+        account_case_id,
+    )
+    if not isinstance(account_case, dict):
+        raise _AccountRerunSideEffectError(
+            "commit",
+            ValueError("Account Case checkpoint not found"),
+        )
+    automation_context = account_case.get("automation_context")
+    automation_context = automation_context if isinstance(automation_context, dict) else {}
+    effective_reply_kind = str(
+        reply_kind or automation_context.get("rerun_reply_kind") or ""
+    ).strip() or None
+    email_result: dict[str, Any] | None = None
+    if normalized_retry == "email" or (not normalized_retry and send_internal_email):
+        try:
+            email_result = await _resume_account_rerun_side_effect(
+                account_case_id,
+                retry_mode="email",
+                rerun_job_id=rerun_job_id,
+            )
+        except Exception as exc:
+            raise _AccountRerunSideEffectError("email", exc) from exc
+
+    should_schedule_reply = normalized_retry == "reply" or effective_reply_kind == "field_follow_up"
+    if effective_reply_kind == "submission_confirmation" and email_result is not None:
+        should_schedule_reply = email_result.get("status") in {"sent", "already_sent"}
+
+    reply_result: dict[str, Any] | None = None
+    if should_schedule_reply:
+        try:
+            reply_result = await _resume_account_rerun_side_effect(
+                account_case_id,
+                retry_mode="reply",
+                rerun_job_id=rerun_job_id,
+            )
+        except Exception as exc:
+            raise _AccountRerunSideEffectError("reply", exc) from exc
+    return {"email": email_result, "reply": reply_result}
 
 
 def _account_rerun_storage_http_exception(exc: Exception) -> HTTPException:
@@ -6180,19 +6298,25 @@ async def _run_account_full_reroute_job(
                     or (job.get("retry_mode") if case_id == job.get("failed_case_id") else "")
                 ).strip().lower()
                 if retry_case_mode in {"email", "reply"}:
-                    side_effect_result = await _resume_account_rerun_side_effect(
-                        case_id,
-                        retry_mode=retry_case_mode,
-                        rerun_job_id=job_id,
-                    )
-                    if retry_case_mode == "email" and side_effect_result.get("status") == "sent":
-                        job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
-                    if retry_case_mode == "reply" and side_effect_result.get("status") == "scheduled":
-                        job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
                     case_stage = retry_case_mode
+                    side_effects = await _run_account_rerun_post_commit_side_effects(
+                        case_id,
+                        rerun_job_id=job_id,
+                        reply_kind=None,
+                        send_internal_email=retry_case_mode == "email",
+                        retry_mode=retry_case_mode,
+                    )
+                    email_result = side_effects.get("email") or {}
+                    reply_result = side_effects.get("reply") or {}
+                    if email_result.get("status") == "sent":
+                        job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
+                    if reply_result.get("status") == "scheduled":
+                        job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
                     case_handler_status = "completed"
                     primary_label, secondary_label = account_case_labels(
-                        side_effect_result.get("account_case") or account_case
+                        email_result.get("account_case")
+                        or reply_result.get("account_case")
+                        or account_case
                     )
                     case_route_key = _account_rerun_route_key(primary_label, secondary_label)
                     case_changed = False
@@ -6238,6 +6362,7 @@ async def _run_account_full_reroute_job(
                     **dict(updated_case.get("automation_context") or {}),
                     "rerun_job_id": job_id,
                     "rerun_mode": "fresh_case_rerun",
+                    "rerun_reply_kind": result.reply_kind,
                 }
                 result.route_execution["rerun_job_id"] = job_id
                 result.route_execution["rerun_mode"] = "fresh_case_rerun"
@@ -6270,6 +6395,23 @@ async def _run_account_full_reroute_job(
                     ("persona_assignments_deleted", "persona_assignments_deleted"),
                 ):
                     job[stat_name] = int(job.get(stat_name) or 0) + int(commit_counts.get(count_key) or 0)
+                if result.internal_email_to_send or result.reply_kind:
+                    case_stage = "email" if result.internal_email_to_send else "reply"
+                    side_effects = await _run_account_rerun_post_commit_side_effects(
+                        case_id,
+                        rerun_job_id=job_id,
+                        reply_kind=result.reply_kind,
+                        send_internal_email=bool(result.internal_email_to_send),
+                    )
+                    email_result = side_effects.get("email") or {}
+                    reply_result = side_effects.get("reply") or {}
+                    if email_result.get("status") == "sent":
+                        job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
+                    if reply_result.get("status") == "scheduled":
+                        job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
+                        reply_job_id = str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
+                        if reply_job_id:
+                            job.setdefault("reply_job_ids", []).append(reply_job_id)
                 job["route_counts"][case_route_key] = int(job["route_counts"].get(case_route_key) or 0) + 1
                 job["handler_counts"][case_handler_status] = (
                     int(job["handler_counts"].get(case_handler_status) or 0) + 1
@@ -6286,6 +6428,8 @@ async def _run_account_full_reroute_job(
                 LOGGER.exception("Account full reroute failed for %s", case_id)
                 if isinstance(exc, AccountRerunRevisionConflictError):
                     case_stage = "revision_conflict"
+                elif isinstance(exc, _AccountRerunSideEffectError):
+                    case_stage = exc.stage
                 case_failed = True
                 case_failure_error = _sanitize_account_rerun_error(exc)
                 job["failed"] += 1

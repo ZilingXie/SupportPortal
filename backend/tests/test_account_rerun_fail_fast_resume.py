@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
@@ -106,6 +106,199 @@ class AccountRerunFailFastResumeTests(unittest.TestCase):
         self.assertEqual(public["frozen_case_ids"], ["AC-1", "AC-2", "AC-3"])
         self.assertEqual(public["failed_case_ids"], [])
         self.assertEqual(public["remaining"], 0)
+
+
+class AccountRerunSyntheticBatchTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.original_repository = main.ticket_repository
+        self.repository = InMemoryTicketRepository()
+        self.repository.initialize()
+        main.ticket_repository = self.repository
+        self.preflight = patch(
+            "backend.main.run_account_rerun_preflight",
+            return_value=SimpleNamespace(
+                ok=True,
+                reason="",
+                as_dict=lambda: {"ok": True, "reason": "", "checks": {}},
+            ),
+        )
+        self.preflight.start()
+
+    def tearDown(self) -> None:
+        self.preflight.stop()
+        main.ticket_repository = self.original_repository
+
+    def _seed_cases(self, count: int = 147) -> list[str]:
+        case_ids: list[str] = []
+        for number in range(1, count + 1):
+            ticket_id = f"SYNTH-{number:03d}"
+            case_id = f"AC-{ticket_id}"
+            case_ids.append(case_id)
+            self.repository.save_ticket({
+                "ticket_id": ticket_id,
+                "customer_id": "synthetic@example.invalid",
+                "subject": "Synthetic Account route",
+                "status": "open",
+                "messages": [{
+                    "role": "customer",
+                    "content": f"Synthetic request {number}",
+                    "created_at": "2026-08-12T00:00:00+00:00",
+                }],
+            })
+            self.repository.save_account_case({
+                "account_case_id": case_id,
+                "billing_ticket_id": case_id,
+                "client_ticket_id": ticket_id,
+                "category": "agora_technical",
+                "subcategory": "technical",
+                "route_family": "rag",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "route_classification": {
+                    "primary_label": "Agora",
+                    "secondary_label": "Agora Technical",
+                },
+            })
+        return case_ids
+
+    @staticmethod
+    def _result_for(account_case: dict[str, object]) -> SimpleNamespace:
+        updated = dict(account_case)
+        updated["route_classification"] = {
+            "primary_label": "Agora",
+            "secondary_label": "Agora Technical",
+        }
+        return SimpleNamespace(
+            account_case=updated,
+            route_execution={
+                "ticket_id": str(updated["client_ticket_id"]),
+                "classification": dict(updated["route_classification"]),
+            },
+            changed=False,
+            handler_status="not_automated",
+            internal_email_to_send=None,
+            email_handler=None,
+            customer_reply="",
+            reply_kind=None,
+            asked_field_keys=(),
+        )
+
+    async def _run_with_failure_at(self, failure_number: int) -> tuple[dict[str, object], Mock]:
+        case_ids = self._seed_cases()
+        queued = await main._enqueue_account_rerun_job(
+            SimpleNamespace(add_task=lambda *args: None),
+            target_case_ids=case_ids,
+            scope_override="all_cases",
+            idempotency_key=f"synthetic-147-fail-{failure_number}",
+            request_scope=f"test:synthetic-147:{failure_number}",
+        )
+        calls = 0
+
+        def process(account_case, **_kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == failure_number:
+                raise RuntimeError("synthetic model unavailable")
+            return self._result_for(account_case)
+
+        processor = Mock(side_effect=process)
+        with patch.object(main, "reprocess_account_case", processor):
+            await main._run_account_full_reroute_job(str(queued["job_id"]))
+        stored = self.repository.get_account_reroute_job(str(queued["job_id"]))
+        assert stored is not None
+        return stored, processor
+
+    async def test_synthetic_147_first_case_failure_processes_only_one(self) -> None:
+        job, processor = await self._run_with_failure_at(1)
+        self.assertEqual(processor.call_count, 1)
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["processed"], 1)
+        self.assertEqual(job["succeeded"], 0)
+        self.assertEqual(job["failed"], 1)
+        self.assertEqual(job["remaining"], 146)
+        self.assertEqual(job["failed_case_id"], "AC-SYNTH-001")
+        self.assertEqual(job["failed_stage"], "prepare")
+
+    async def test_synthetic_147_middle_failure_stops_immediately(self) -> None:
+        job, processor = await self._run_with_failure_at(73)
+        self.assertEqual(processor.call_count, 73)
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["processed"], 73)
+        self.assertEqual(job["succeeded"], 72)
+        self.assertEqual(job["failed"], 1)
+        self.assertEqual(job["remaining"], 74)
+        self.assertEqual(job["failed_case_id"], "AC-SYNTH-073")
+
+    async def test_reply_resume_after_sent_email_has_no_duplicate_side_effects(self) -> None:
+        ticket_id = "SYNTH-RESUME"
+        case_id = "AC-SYNTH-RESUME"
+        self.repository.save_ticket({
+            "ticket_id": ticket_id,
+            "customer_id": "synthetic@example.invalid",
+            "subject": "Synthetic enablement",
+            "status": "open",
+            "messages": [{
+                "role": "customer",
+                "content": "Please enable a synthetic feature.",
+                "created_at": "2026-08-12T00:00:00+00:00",
+            }],
+        })
+        self.repository.save_account_case({
+            "account_case_id": case_id,
+            "billing_ticket_id": case_id,
+            "client_ticket_id": ticket_id,
+            "route": "enablement",
+            "execution_action": "enablement",
+            "route_family": "automated",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "missing_fields": [],
+            "collected_fields": {"requested_feature": "synthetic_feature"},
+            "internal_email_send_status": "pending",
+            "internal_email_payload": {"delivery_key": "synthetic:resume:v1"},
+            "automation_context": {"rerun_reply_kind": "submission_confirmation"},
+        })
+
+        sender = AsyncMock(return_value=("sent", ""))
+        with (
+            patch.object(main, "_send_enablement_internal_email_attempt", sender),
+            patch.object(main, "_create_account_reply_job", side_effect=RuntimeError("reply persistence failed")) as create_reply,
+        ):
+            with self.assertRaisesRegex(main._AccountRerunSideEffectError, "reply persistence failed") as failure:
+                await main._run_account_rerun_post_commit_side_effects(
+                    case_id,
+                    rerun_job_id="synthetic-resume-job",
+                    reply_kind="submission_confirmation",
+                    send_internal_email=True,
+                )
+        self.assertEqual(failure.exception.stage, "reply")
+        sender.assert_awaited_once()
+        create_reply.assert_called_once()
+        self.assertEqual(
+            self.repository.get_account_case(case_id)["internal_email_send_status"],
+            "sent",
+        )
+
+        with (
+            patch.object(main, "_send_enablement_internal_email_attempt", AsyncMock()) as resumed_sender,
+            patch.object(main, "_create_account_reply_job", wraps=main._create_account_reply_job) as resumed_reply,
+        ):
+            first = await main._run_account_rerun_post_commit_side_effects(
+                case_id,
+                rerun_job_id="synthetic-resume-job",
+                reply_kind=None,
+                retry_mode="reply",
+            )
+            second = await main._run_account_rerun_post_commit_side_effects(
+                case_id,
+                rerun_job_id="synthetic-resume-job",
+                reply_kind=None,
+                retry_mode="reply",
+            )
+        resumed_sender.assert_not_awaited()
+        resumed_reply.assert_called_once()
+        self.assertEqual(first["reply"]["status"], "scheduled")
+        self.assertEqual(second["reply"]["status"], "already_scheduled")
 
 
 if __name__ == "__main__":

@@ -468,6 +468,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(by_case_id["12585"]["reason_code"], "missing_invoice")
         self.assertEqual(by_case_id["12724"]["secondary_label"], "Security & Compliance")
         self.assertEqual(by_case_id["12708"]["secondary_label"], "Backend Operation / Enablement")
+        self.assertEqual(by_case_id["12708"]["reason_code"], "registered_enablement")
         self.assertEqual(by_case_id["10075"]["secondary_label"], "Account & Billing / Detailed Invoice")
         self.assertEqual(by_case_id["10075"]["route_status"], "automated")
         self.assertEqual(by_case_id["10075"]["automation_handler"], "billing")
