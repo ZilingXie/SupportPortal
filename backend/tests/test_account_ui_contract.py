@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260812-account-rerun-fail-fast-1", html)
+        self.assertIn("20260812-account-rerun-blocked-feedback-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -166,6 +166,61 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertTrue(retry_result["sameSnapshotAfterFailure"])
         self.assertIsNone(retry_result["snapshotAfterSuccess"])
         self.assertEqual(retry_result["jobId"], "job-replayed")
+
+    def test_rerun_readiness_conflict_remains_visible_after_latest_job_refresh(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        helper_start = app_source.index("function responseErrorMessage")
+        helper_end = app_source.index("\nfunction createSingleCaseRerunIdempotencyKey", helper_start)
+        helpers = app_source[helper_start:helper_end]
+        start = app_source.index("async function startFullReroute")
+        end = app_source.index("\nasync function", start + 1)
+        start_source = app_source[start:end]
+        script = f"""
+        const state = {{
+          isStartingReroute: false,
+          rerouteConfirmationOpen: true,
+          rerouteError: '',
+          rerouteJob: null,
+        }};
+        function isActiveRerouteJob() {{ return false; }}
+        function render() {{}}
+        function showToast() {{}}
+        async function readResponsePayload(response) {{ return response.payload; }}
+        async function fetchLatestRerouteJob() {{
+          state.rerouteJob = {{ job_id: 'old-job', status: 'completed_with_errors' }};
+          state.rerouteError = '';
+        }}
+        async function fetch() {{
+          return {{
+            ok: false,
+            status: 409,
+            payload: {{
+              detail: {{
+                code: 'account_rerun_readiness_blocked',
+                unknown_case_ids: Array.from({{ length: 29 }}, (_, index) => `AC-${{index + 1}}`),
+                message: 'Formal full rerun is blocked.',
+              }},
+            }},
+          }};
+        }}
+        {helpers}
+        {start_source}
+        (async () => {{
+          await startFullReroute();
+          console.log(JSON.stringify({{
+            error: state.rerouteError,
+            jobId: state.rerouteJob?.job_id,
+          }}));
+        }})().catch((error) => {{ console.error(error); process.exit(1); }});
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = json.loads(result.stdout)
+        self.assertEqual(rendered["jobId"], "old-job")
+        self.assertIn("Preflight blocked", rendered["error"])
+        self.assertIn("29 Automation Cases", rendered["error"])
+        self.assertIn("unknown internal-email delivery state", rendered["error"])
+        self.assertNotIn("AC-1", rendered["error"])
 
     def test_account_detail_persona_assignment_is_visible_only_for_automated_cases(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
