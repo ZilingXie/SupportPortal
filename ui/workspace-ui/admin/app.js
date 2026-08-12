@@ -733,6 +733,57 @@ function automationCaseSubcategoryLabel(item) {
   return value ? value.replaceAll("_", " ") : "-";
 }
 
+function adminSafeSourceLink(source) {
+  let link = "";
+  if (source && typeof source === "object") {
+    link = String(source.Link || source.link || source.url || "");
+  } else if (typeof source === "string") {
+    link = source;
+  }
+  link = link.trim();
+  if (!link) return "";
+  try {
+    const parsed = new URL(link);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return link;
+  } catch {}
+  return "";
+}
+
+function adminZendeskTicketLabel(source) {
+  const link = adminSafeSourceLink(source);
+  if (!link) return "";
+  try {
+    const parsed = new URL(link);
+    const host = parsed.hostname.toLowerCase();
+    if (host !== "zendesk.com" && !host.endsWith(".zendesk.com")) return "";
+    const match = parsed.pathname.match(/^\/(?:agent|api\/v2)\/tickets\/(\d+)(?:\.json)?$/);
+    return match ? `zen#${match[1]}` : "";
+  } catch {
+    return "";
+  }
+}
+
+function adminSourceText(source) {
+  if (source && typeof source === "object") {
+    return String(source.Link || source.link || source.url || "").trim();
+  }
+  return String(source || "").trim();
+}
+
+function renderAdminSourceValue(item) {
+  const internalId = String(item?.account_case_id || item?.billing_ticket_id || "").trim();
+  const sourceText = adminSourceText(item?.source);
+  const label = adminZendeskTicketLabel(item?.source);
+  const link = adminSafeSourceLink(item?.source);
+  const primary = label
+    ? `<a class="admin-source-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+    : `<span class="admin-source-id">${escapeHtml(sourceText || internalId || item?.client_ticket_id || item?.ticket_id || "-")}</span>`;
+  const secondary = (label || sourceText) && internalId
+    ? `<span class="admin-source-internal">${escapeHtml(internalId)}</span>`
+    : "";
+  return `<div class="admin-source-cell">${primary}${secondary}</div>`;
+}
+
 function renderAutomatedCases() {
   const metric = automationData.metrics || {};
   const rate = Number(metric.automation_rate || 0) * 100;
@@ -762,7 +813,7 @@ function renderAutomatedCases() {
       <input name="created_to" type="date" aria-label="Created to" />
       <button class="btn btn-ghost" type="submit">Apply filters</button>
     </form>
-    <section class="admin-ops-surface"><table class="admin-work-table admin-automation-case-table"><thead><tr><th>Account Case</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Handler</th><th>Route status</th><th>Automation status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${escapeHtml(item.account_case_id || item.client_ticket_id || item.ticket_id)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(automationCaseCategoryLabel(item))}</td><td>${escapeHtml(automationCaseSubcategoryLabel(item))}</td><td>${escapeHtml(item.automation_handler || "Human Review")}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(statusLabel(item.automation_status || item.status || "not_automated"))}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="8">No /account cases.</td></tr>`}</tbody></table></section>`;
+    <section class="admin-ops-surface"><table class="admin-work-table admin-automation-case-table"><thead><tr><th>Source</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Handler</th><th>Route status</th><th>Automation status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${renderAdminSourceValue(item)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(automationCaseCategoryLabel(item))}</td><td>${escapeHtml(automationCaseSubcategoryLabel(item))}</td><td>${escapeHtml(item.automation_handler || "Human Review")}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(statusLabel(item.automation_status || item.status || "not_automated"))}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="8">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
 function agentStatusLabel(status) {
