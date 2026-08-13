@@ -6407,7 +6407,10 @@ async def _run_account_full_reroute_job(
                         rerun_email_payload,
                         job_id,
                     )
-                    result.internal_email_to_send = rerun_email_payload
+                    result = replace(
+                        result,
+                        internal_email_to_send=rerun_email_payload,
+                    )
                     updated_case["internal_email_payload"] = dict(rerun_email_payload)
                     updated_case["internal_email_send_status"] = "pending"
                     updated_case["internal_email_send_reason"] = "full_rerun_requested"

@@ -32,6 +32,7 @@ from backend.services.account_verification_field_extractor import AccountVerific
 from backend.services.account_suspension_field_extractor import AccountSuspensionFieldExtraction
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.account_route_pipeline import AccountRouteResult, AccountRouteStageAttempt
+from backend.services.account_full_reroute import AccountFullRerouteResult
 from backend.services.account_ai_execution import AccountProcessingFailure
 from backend.services.automation_persona import AutomationPersonaError, AutomationPersonaResult
 from backend.services.llm_factory import LlmInvocationError
@@ -1503,7 +1504,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "secondary_label": "Backend Operation / Enablement",
             },
         }
-        result = SimpleNamespace(
+        result = AccountFullRerouteResult(
             account_case=updated_case,
             route_execution={"ticket_id": "12513", "classification": updated_case["route_classification"]},
             changed=True,
@@ -1617,7 +1618,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "secondary_label": "Backend Operation / Enablement",
             },
         }
-        result = SimpleNamespace(
+        result = AccountFullRerouteResult(
             account_case=updated_case,
             route_execution={"ticket_id": ticket_id, "classification": updated_case["route_classification"]},
             changed=True,
@@ -1731,7 +1732,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "route_target": "automation",
             },
         }
-        result = SimpleNamespace(
+        result = AccountFullRerouteResult(
             account_case=updated_case,
             route_execution={"ticket_id": "12514", "classification": updated_case["route_classification"]},
             changed=True,
