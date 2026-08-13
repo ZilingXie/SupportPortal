@@ -82,7 +82,11 @@ from backend.services.account_suspension_field_extractor import (
     AccountSuspensionFieldExtraction,
     extract_account_suspension_fields,
 )
-from backend.services.account_full_reroute import prepare_account_case_rerun, reprocess_account_case
+from backend.services.account_full_reroute import (
+    AccountFullRerouteResult,
+    prepare_account_case_rerun,
+    reprocess_account_case,
+)
 from backend.services.account_rerun_preflight import run_account_rerun_preflight
 from backend.services.account_rerun_recovery import (
     classify_internal_email_delivery,
@@ -6407,9 +6411,20 @@ async def _run_account_full_reroute_job(
                         rerun_email_payload,
                         job_id,
                     )
-                    result = replace(
-                        result,
+                    # AccountFullRerouteResult is frozen. Rebuild the concrete
+                    # result instead of relying on dataclasses.replace here;
+                    # this keeps the rerun boundary explicit and avoids an
+                    # immutable-field assignment from an older/custom result.
+                    result = AccountFullRerouteResult(
+                        account_case=result.account_case,
+                        route_execution=result.route_execution,
+                        changed=result.changed,
+                        handler_status=result.handler_status,
                         internal_email_to_send=rerun_email_payload,
+                        email_handler=result.email_handler,
+                        customer_reply=result.customer_reply,
+                        reply_kind=result.reply_kind,
+                        asked_field_keys=result.asked_field_keys,
                     )
                     updated_case["internal_email_payload"] = dict(rerun_email_payload)
                     updated_case["internal_email_send_status"] = "pending"
