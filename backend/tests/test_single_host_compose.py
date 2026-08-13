@@ -27,6 +27,9 @@ class SingleHostComposeTests(unittest.TestCase):
     def test_api_service_defaults_to_two_workers(self) -> None:
         api_block = self._service_block("api")
 
+        self.assertIn("HTTP_PROXY: ${SUPPORTPORTAL_HTTP_PROXY:-}", api_block)
+        self.assertIn("HTTPS_PROXY: ${SUPPORTPORTAL_HTTPS_PROXY:-}", api_block)
+        self.assertIn("NO_PROXY: ${SUPPORTPORTAL_NO_PROXY:-localhost,127.0.0.1,api,rag_api,redis}", api_block)
         self.assertIn(
             '- "${API_WORKERS:-2}"',
             api_block,
