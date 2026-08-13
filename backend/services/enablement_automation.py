@@ -9,11 +9,18 @@ from typing import Any
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import DEFAULT_USERNAME, send_graph_mail
 from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
-from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import (
+    AccountProcessingFailure,
+    account_profile_has_primary_credentials,
+    invoke_account_responses_text,
+)
+from backend.services.llm_factory import LlmInvocationError
 from backend.services.llm_profiles import (
     ENABLEMENT_REPLY_SCENARIO,
     resolve_model_profile,
 )
+
+invoke_responses_text = invoke_account_responses_text
 
 ENABLEMENT_SCOPE_LABEL = "enablement"
 ENABLEMENT_ACTION = "enablement"
@@ -310,8 +317,12 @@ def build_enablement_customer_followup(
         raise ValueError("enablement resolution note is required")
 
     profile = resolve_model_profile(ENABLEMENT_REPLY_SCENARIO)
-    if not profile.has_invocation_credentials():
-        raise ValueError("Enablement customer reply model is not configured")
+    if not account_profile_has_primary_credentials(profile):
+        raise AccountProcessingFailure(
+            "account_ai_missing_credentials",
+            "Enablement customer reply model is not configured",
+            stage="enablement_customer_reply",
+        )
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -330,9 +341,16 @@ def build_enablement_customer_followup(
                 "Internal Enablement email reply thread:\n"
                 f"<internal_reply>\n{note}\n</internal_reply>"
             ),
+            stage="enablement_customer_reply",
         )
-    except LlmInvocationError as exc:
-        raise ValueError("Enablement customer reply generation failed") from exc
+    except AccountProcessingFailure:
+        raise
+    except (LlmInvocationError, ValueError) as exc:
+        raise AccountProcessingFailure(
+            "account_ai_reply_generation_exhausted",
+            f"Enablement customer reply generation failed: {exc}",
+            stage="enablement_customer_reply",
+        ) from exc
 
     body = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     _validate_enablement_customer_reply(body, sensitive_values=sensitive_values)

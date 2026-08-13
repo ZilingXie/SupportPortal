@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import AccountProcessingFailure, invoke_account_json_payload
 from backend.services.llm_profiles import (
     INTENT_ROUTER_SCENARIO,
     profile_has_invocation_credentials,
@@ -106,20 +107,12 @@ def _invoke_extractor(*, system_prompt: str, user_prompt: str) -> dict[str, Any]
 
 def _invoke_extractor_for_scenario(*, system_prompt: str, user_prompt: str, scenario: str) -> dict[str, Any]:
     profile = resolve_model_profile(scenario)
-    if not profile_has_invocation_credentials(profile):
-        raise LlmInvocationError("quota_field_extractor_missing_credentials", fallback_eligible=False)
-    response = invoke_responses_text(
+    return invoke_account_json_payload(
         profile=profile,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        stage="quota_field_extractor",
     )
-    try:
-        payload = json.loads(response.text)
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise ValueError("quota field extractor returned invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("quota field extractor returned a non-object payload")
-    return payload
 
 
 def _uncertain(
@@ -193,6 +186,8 @@ def extract_quota_fields(
             )
         else:
             payload = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+    except AccountProcessingFailure:
+        raise
     except (LlmInvocationError, ValueError, TypeError):
         LOGGER.warning("Quota field extraction failed", exc_info=True)
         return _uncertain(

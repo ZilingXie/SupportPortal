@@ -5,6 +5,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import (
+    AccountProcessingFailure,
+    account_profile_has_primary_credentials,
+    invoke_account_json_payload,
+)
 from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO, resolve_model_profile
 from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.prompts.account_routing import (
@@ -57,12 +62,11 @@ def extract_detailed_invoice_fields(
         "user_prompt": "[redacted detailed invoice extraction input]",
     }
     profile = resolve_model_profile(scenario)
-    if not profile.has_invocation_credentials() and invoke is None:
-        return DetailedInvoiceFieldExtraction(
-            status="uncertain",
-            collected_fields=dict(existing_fields or {}),
-            reason="detailed invoice field extractor credentials are unavailable",
-            prompt_snapshot=snapshot,
+    if not account_profile_has_primary_credentials(profile) and invoke is None:
+        raise AccountProcessingFailure(
+            "account_ai_missing_credentials",
+            "the detailed invoice extractor has no primary OpenAI API key",
+            stage="detailed_invoice_field_extractor",
         )
     user_prompt = json.dumps(
         {
@@ -73,16 +77,18 @@ def extract_detailed_invoice_fields(
         sort_keys=True,
     )
     try:
-        response = (
-            invoke(system_prompt=system_prompt, user_prompt=user_prompt)
-            if invoke is not None
-            else invoke_responses_text(
+        if invoke is not None:
+            response = invoke(system_prompt=system_prompt, user_prompt=user_prompt)
+            payload = json.loads(str(getattr(response, "text", response) or ""))
+        else:
+            payload = invoke_account_json_payload(
                 profile=profile,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                stage="detailed_invoice_field_extractor",
             )
-        )
-        payload = json.loads(str(getattr(response, "text", response) or ""))
+    except AccountProcessingFailure:
+        raise
     except (LlmInvocationError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return DetailedInvoiceFieldExtraction(
             status="uncertain",

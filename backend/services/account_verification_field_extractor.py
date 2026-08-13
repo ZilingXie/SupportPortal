@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import (
+    AccountProcessingFailure,
+    account_profile,
+    invoke_account_json_payload,
+)
 from backend.services.llm_profiles import (
     INTENT_ROUTER_SCENARIO,
     profile_has_invocation_credentials,
@@ -170,14 +175,13 @@ def _invoke_json(*, system_prompt: str, user_prompt: str) -> dict[str, Any]:
 
 
 def _invoke_json_for_scenario(*, system_prompt: str, user_prompt: str, scenario: str) -> dict[str, Any]:
-    profile = resolve_model_profile(scenario)
-    if not profile_has_invocation_credentials(profile):
-        raise LlmInvocationError("account_verification_extractor_missing_credentials", fallback_eligible=False)
-    response = invoke_responses_text(profile=profile, system_prompt=system_prompt, user_prompt=user_prompt)
-    payload = json.loads(response.text)
-    if not isinstance(payload, dict):
-        raise ValueError("account verification extractor returned a non-object payload")
-    return payload
+    profile = account_profile(resolve_model_profile(scenario))
+    return invoke_account_json_payload(
+        profile=profile,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        stage="account_verification_field_extractor",
+    )
 
 
 def extract_account_verification_fields(
@@ -242,6 +246,8 @@ def extract_account_verification_fields(
             if invoke is _invoke_json
             else invoke(system_prompt=system_prompt, user_prompt=user_prompt)
         )
+    except AccountProcessingFailure:
+        raise
     except (LlmInvocationError, ValueError, TypeError, json.JSONDecodeError):
         LOGGER.warning("Account Verification field extraction failed", exc_info=True)
         return AccountVerificationFieldExtraction(

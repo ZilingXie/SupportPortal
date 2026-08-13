@@ -1829,10 +1829,21 @@ class TicketRepository(Protocol):
         idempotency_key: str,
         *,
         created_at: str,
+        retry_failed: bool = False,
     ) -> dict[str, Any]:
         ...
 
     def complete_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        response_payload: dict[str, Any],
+        updated_at: str,
+    ) -> None:
+        ...
+
+    def fail_idempotent_request(
         self,
         scope: str,
         idempotency_key: str,
@@ -4439,6 +4450,7 @@ class InMemoryTicketRepository:
         idempotency_key: str,
         *,
         created_at: str,
+        retry_failed: bool = False,
     ) -> dict[str, Any]:
         normalized_key = (str(scope or "").strip(), str(idempotency_key or "").strip())
         if not all(normalized_key):
@@ -4446,6 +4458,15 @@ class InMemoryTicketRepository:
         with self._assignment_lock:
             existing = self._idempotency_records.get(normalized_key)
             if isinstance(existing, dict):
+                if retry_failed and str(existing.get("state") or "").strip().lower() == "failed":
+                    existing.update(
+                        {
+                            "state": "processing",
+                            "response_payload": None,
+                            "updated_at": created_at,
+                        }
+                    )
+                    return {**copy.deepcopy(existing), "created": True}
                 return {**copy.deepcopy(existing), "created": False}
             record = {
                 "scope": normalized_key[0],
@@ -4474,6 +4495,27 @@ class InMemoryTicketRepository:
             record.update(
                 {
                     "state": "completed",
+                    "response_payload": copy.deepcopy(response_payload),
+                    "updated_at": updated_at,
+                }
+            )
+
+    def fail_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        response_payload: dict[str, Any],
+        updated_at: str,
+    ) -> None:
+        normalized_key = (str(scope or "").strip(), str(idempotency_key or "").strip())
+        with self._assignment_lock:
+            record = self._idempotency_records.get(normalized_key)
+            if not isinstance(record, dict):
+                raise ValueError("idempotency request was not started")
+            record.update(
+                {
+                    "state": "failed",
                     "response_payload": copy.deepcopy(response_payload),
                     "updated_at": updated_at,
                 }
@@ -9996,6 +10038,7 @@ class PostgresTicketRepository:
         idempotency_key: str,
         *,
         created_at: str,
+        retry_failed: bool = False,
     ) -> dict[str, Any]:
         normalized_scope = str(scope or "").strip()
         normalized_key = str(idempotency_key or "").strip()
@@ -10020,6 +10063,18 @@ class PostgresTicketRepository:
                         (normalized_scope, normalized_key, created_at, created_at),
                     )
                     created = cur.fetchone() is not None
+                    if not created and retry_failed:
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                UPDATE {}
+                                SET state = 'processing', response_payload = NULL, updated_at = %s
+                                WHERE scope = %s AND idempotency_key = %s AND state = 'failed'
+                                """
+                            ).format(self._table("support_idempotency_records")),
+                            (created_at, normalized_scope, normalized_key),
+                        )
+                        created = cur.rowcount == 1
                     cur.execute(
                         sql.SQL(
                             """
@@ -10073,6 +10128,35 @@ class PostgresTicketRepository:
                         raise ValueError("idempotency request was not started")
 
         self._run_with_connection_retry("complete_idempotent_request", _operation)
+
+    def fail_idempotent_request(
+        self,
+        scope: str,
+        idempotency_key: str,
+        *,
+        response_payload: dict[str, Any],
+        updated_at: str,
+    ) -> None:
+        normalized_scope = str(scope or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET state = 'failed', response_payload = %s, updated_at = %s
+                            WHERE scope = %s AND idempotency_key = %s
+                            """
+                        ).format(self._table("support_idempotency_records")),
+                        (Json(response_payload), updated_at, normalized_scope, normalized_key),
+                    )
+                    if cur.rowcount != 1:
+                        raise ValueError("idempotency request was not started")
+
+        self._run_with_connection_retry("fail_idempotent_request", _operation)
 
     def claim_account_case_rerun(
         self,

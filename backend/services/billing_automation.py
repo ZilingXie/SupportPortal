@@ -23,13 +23,20 @@ from backend.services.graph_mail import (
     load_graph_mail_config,
     send_graph_mail_with_token,
 )
-from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import (
+    AccountProcessingFailure,
+    account_profile_has_primary_credentials,
+    invoke_account_responses_text,
+)
+from backend.services.llm_factory import LlmInvocationError
 from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, INTENT_ROUTER_SCENARIO, resolve_model_profile
 from backend.services.detailed_invoice_field_extractor import (
     DetailedInvoiceFieldExtraction,
     extract_detailed_invoice_fields,
 )
 from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
+
+invoke_responses_text = invoke_account_responses_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -250,6 +257,7 @@ def build_billing_automation_result(
                     requester=requester,
                     customer_id=customer_email,
                     persona_instruction=persona_instruction,
+                    strict_account_failure=model_scenario != INTENT_ROUTER_SCENARIO,
                 )
                 if generate_customer_reply
                 else ""
@@ -944,9 +952,21 @@ def _account_verification_email_reply(
     return reply.removesuffix("Best Regards,\nSid").rstrip() + f"\n\n{ACCOUNT_VERIFICATION_SIGNOFF}"
 
 
-def _humanize_account_verification_reply(reply: str, missing_fields: list[str], persona_instruction: str | None = None) -> str:
+def _humanize_account_verification_reply(
+    reply: str,
+    missing_fields: list[str],
+    persona_instruction: str | None = None,
+    *,
+    strict_account_failure: bool = False,
+) -> str:
     profile = resolve_model_profile(BILLING_REPLY_SCENARIO)
-    if not profile.has_invocation_credentials():
+    if not account_profile_has_primary_credentials(profile):
+        if strict_account_failure:
+            raise AccountProcessingFailure(
+                "account_ai_missing_credentials",
+                "the Account verification reply profile has no primary OpenAI API key",
+                stage="account_verification_reply",
+            )
         return reply
 
     required_labels = [_missing_field_label(field_name, inline=True).lower() for field_name in missing_fields]
@@ -963,8 +983,19 @@ def _humanize_account_verification_reply(reply: str, missing_fields: list[str], 
                 "Polish this reply so it sounds warm, natural, and human while preserving every required "
                 f"detail. Reply only with the final email.\n\n{reply}"
             ),
+            stage="account_verification_reply",
         )
+    except AccountProcessingFailure:
+        if strict_account_failure:
+            raise
+        return reply
     except (LlmInvocationError, ValueError):
+        if strict_account_failure:
+            raise AccountProcessingFailure(
+                "account_ai_reply_generation_exhausted",
+                "Account verification reply polishing failed",
+                stage="account_verification_reply",
+            )
         return reply
 
     candidate = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -985,6 +1016,7 @@ def _build_missing_fields_reply(
     requester: str | None = None,
     customer_id: str | None = None,
     persona_instruction: str | None = None,
+    strict_account_failure: bool = False,
 ) -> str:
     if action == BILLING_ACTION_ACCOUNT_VERIFICATION:
         reply = _account_verification_email_reply(
@@ -992,7 +1024,12 @@ def _build_missing_fields_reply(
             requester=requester,
             customer_id=customer_id,
         )
-        return _humanize_account_verification_reply(reply, missing_fields, persona_instruction)
+        return _humanize_account_verification_reply(
+            reply,
+            missing_fields,
+            persona_instruction,
+            strict_account_failure=strict_account_failure,
+        )
 
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
         intro = (

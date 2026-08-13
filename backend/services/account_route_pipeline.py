@@ -29,10 +29,14 @@ from backend.services.enablement_automation import (
 )
 from backend.services.quota_automation import QUOTA_SEMANTIC_INTENT, QUOTA_TOOLING_PROFILE
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import (
+    AccountProcessingFailure,
+    account_profile,
+    account_profile_has_primary_credentials,
+)
 from backend.services.llm_profiles import (
     ACCOUNT_ROUTE_SCENARIO,
     INTENT_ROUTER_SCENARIO,
-    profile_has_invocation_credentials,
     resolve_model_profile,
 )
 from backend.services.prompt_runtime import resolve_system_prompt
@@ -61,6 +65,10 @@ from backend.services.prompts.account_routing import (
 )
 from backend.services.support_router import SupportRouteDecision, decide_support_route
 from backend.services.support_router_prompt import build_route_prompt_hints
+
+# Compatibility patch point for existing route tests; production semantics are
+# primary Account credentials only, never provider fallback credentials.
+profile_has_invocation_credentials = account_profile_has_primary_credentials
 
 
 LOGGER = logging.getLogger(__name__)
@@ -495,7 +503,7 @@ def _invoke_stage(
 ) -> AccountRouteStageAttempt:
     system_prompt = _resolve_account_prompt(prompt_key, fallback_system_prompt)
     user_prompt = build_account_stage_user_prompt(payload)
-    profile = resolve_model_profile(model_scenario)
+    profile = account_profile(resolve_model_profile(model_scenario))
     if not profile_has_invocation_credentials(profile):
         return AccountRouteStageAttempt(
             payload=None,
@@ -506,7 +514,7 @@ def _invoke_stage(
             user_prompt=user_prompt,
         )
     failures: list[dict[str, Any]] = []
-    for attempt_number in (1, 2):
+    for attempt_number in range(1, 5):
         current_user_prompt = user_prompt
         if attempt_number == 2:
             current_user_prompt = (
@@ -522,18 +530,21 @@ def _invoke_stage(
                 user_prompt=current_user_prompt,
                 extra_payload={"text": {"format": {"type": "json_object"}}},
             )
-        except LlmInvocationError:
+        except Exception as exc:
             LOGGER.warning("Account route stage %s failed", prompt_key, exc_info=True)
-            return AccountRouteStageAttempt(
-                payload=None,
-                attempted=True,
+            failures.append(_attempt_failure(
+                attempt=attempt_number,
                 failure_type="llm_invocation_failed",
-                failure_source=stage_name,
-                system_prompt=system_prompt,
-                user_prompt=current_user_prompt,
-                attempt_count=attempt_number,
-                attempt_failures=tuple(failures),
-            )
+                source=stage_name,
+                raw_text=str(exc),
+            ))
+            if attempt_number < 4:
+                continue
+            raise AccountProcessingFailure(
+                "account_route_invocation_exhausted",
+                f"{stage_name}: {exc}" if isinstance(exc, LlmInvocationError) else f"{stage_name}: {type(exc).__name__}",
+                stage=stage_name,
+            ) from exc
         raw_text = str(getattr(response, "text", "") or "")
         try:
             parsed = json.loads(raw_text)
@@ -566,23 +577,13 @@ def _invoke_stage(
                 raw_text=raw_text,
             )
         )
-        if attempt_number == 1:
+        if attempt_number < 4:
             continue
         digest = hashlib.sha256(raw_text.encode("utf-8")).hexdigest() if raw_text else None
-        return AccountRouteStageAttempt(
-            payload=None,
-            attempted=True,
-            failure_type=failure_type,
-            failure_source=stage_name,
-            system_prompt=system_prompt,
-            user_prompt=current_user_prompt,
-            attempt_count=attempt_number,
-            attempt_failures=tuple(failures),
-            model_name=model_name,
-            provider_name=provider_name,
-            raw_output_length=len(raw_text),
-            raw_output_sha256=digest,
-            sanitized_output_excerpt=_sanitize_output_excerpt(raw_text),
+        raise AccountProcessingFailure(
+            "account_route_structured_output_exhausted",
+            f"{stage_name}: {failure_type}; output_sha256={digest or 'none'}",
+            stage=stage_name,
         )
     raise AssertionError("unreachable account route stage attempt")
 
@@ -1308,16 +1309,10 @@ def decide_account_route(
     attempts["intent_classifier"] = intent_attempt
     if intent_attempt.payload is None:
         if intent_attempt.failure_type == "missing_credentials":
-            return _legacy_result(
-                normalized_message,
-                ticket_subject=ticket_subject,
-                ticket_context=ticket_context,
-                product=product,
-                latest_assistant_message=latest_assistant_message,
-                current_ticket_status=current_ticket_status,
-                has_active_engineer_case=has_active_engineer_case,
-                legacy_router=legacy_router,
-                attempts=attempts,
+            raise AccountProcessingFailure(
+                "account_ai_missing_credentials",
+                "the Account route profile has no primary OpenAI API key",
+                stage="intent_classifier",
             )
         return finish(_human_review_result(
             intent_class="uncertain",

@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.services.enablement_automation import customer_visible_enablement_information
-from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import (
+    AccountProcessingFailure,
+    account_profile_has_primary_credentials,
+    invoke_account_responses_text,
+)
+from backend.services.llm_factory import LlmInvocationError
+
+# Kept as a patch point for existing unit tests; production calls are pinned below.
+invoke_responses_text = invoke_account_responses_text
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
 
@@ -78,8 +86,15 @@ def customer_first_name(customer_name: Any) -> str:
     return first_name[:1].upper() + first_name[1:]
 
 
-class AutomationPersonaError(RuntimeError):
+class AutomationPersonaError(AccountProcessingFailure):
     """Raised when a customer-facing Automation reply cannot be generated."""
+
+    def __init__(self, code: str, detail: Any = "") -> None:
+        # Keep legacy callers' human-readable exception text while retaining a
+        # stable normalized failure code for persistence and alerting.
+        raw_code = " ".join(str(code or "").split()).strip()
+        message_detail = detail or (raw_code if raw_code and raw_code != "_".join(raw_code.lower().split()) else "")
+        super().__init__(code, message_detail, stage="automation_persona")
 
 
 @dataclass(frozen=True)
@@ -97,7 +112,7 @@ def extract_automation_resolution_facts(
 ) -> dict[str, Any]:
     """Extract customer-shareable facts from an internal resolution email."""
     profile = resolve_model_profile(AUTOMATION_PERSONA_SCENARIO)
-    if not profile.has_invocation_credentials():
+    if not account_profile_has_primary_credentials(profile):
         raise AutomationPersonaError("automation_resolution_extractor_missing_credentials")
     forbidden_values = _forbidden_values(known_information)
     sanitized_source = _sanitize_internal_resolution(source_text, forbidden_values)
@@ -122,6 +137,7 @@ def extract_automation_resolution_facts(
                 f"Known information: {json.dumps(safe_known_information, ensure_ascii=False, sort_keys=True)}\n"
                 f"Internal resolution note:\n<internal_resolution>\n{sanitized_source.strip()}\n</internal_resolution>"
             ),
+            stage="automation_persona_extractor",
         )
     except (LlmInvocationError, ValueError, TypeError) as exc:
         raise AutomationPersonaError("automation_resolution_extraction_failed") from exc
@@ -189,7 +205,7 @@ def render_automation_reply(
 ) -> AutomationPersonaResult:
     """Generate the complete customer message from facts and the pinned Persona."""
     profile = resolve_model_profile(AUTOMATION_PERSONA_SCENARIO)
-    if not profile.has_invocation_credentials():
+    if not account_profile_has_primary_credentials(profile):
         raise AutomationPersonaError("automation_persona_missing_credentials")
     assignment = persona_assignment if isinstance(persona_assignment, dict) else {}
     content = assignment.get("content") if isinstance(assignment.get("content"), dict) else {}
@@ -234,6 +250,7 @@ def render_automation_reply(
                 "Automation facts (JSON):\n"
                 f"{json.dumps(facts, ensure_ascii=False, sort_keys=True, indent=2)}"
             ),
+            stage="automation_persona",
         )
     except (LlmInvocationError, ValueError, TypeError) as exc:
         raise AutomationPersonaError("automation_persona_generation_failed") from exc
