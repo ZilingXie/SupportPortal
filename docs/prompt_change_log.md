@@ -12,6 +12,26 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-13 - TS-05 Account failure stop, alert, and human handoff
+
+- Area or subsystem: `/account` layered routing, Account field extraction, Automation Persona, reply worker, and rerun failure handling
+- Prompt or model version: Account-only `account_route` profile; no fallback provider/model is permitted; maximum three retries after the initial call
+- Summary: Account processing now treats exhausted AI/API calls, invalid structured output, extractor/Persona failures, and unexpected internal execution failures as system failures. The Case is persisted as `human_review_required`, pending customer reply jobs are cancelled, and one redacted incident alert is sent to `xieziling@agora.io` through the existing Graph mail path.
+- Reason: Unexpected failures must not be silently converted to a legacy fallback or an invented customer response. Human operators need a durable Case state and a direct owner-visible signal.
+- Affected files or config:
+  - `backend/services/account_ai_execution.py`
+  - `backend/services/account_failure_alerts.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/repositories/ticket_repository.py`
+  - Account field extractor and Persona modules
+- Expected behavior change:
+  - Account AI makes at most four actual attempts (initial call plus three retries) and never selects DeepSeek, a backup model, or another provider.
+  - Exhaustion stops automation without customer reply generation; failure metadata remains on the Account Case and failed intake idempotency records can replay without duplicating the Case or incident alert.
+  - Alert content excludes customer bodies, email addresses, tokens, and prompts; failed mail delivery releases the alert claim for a later retry.
+- Verification:
+  - Account intake, AI execution, alert, route, worker, repository, and rerun targeted tests; `python3 -m py_compile`; `git diff --check`.
+
 ## 2026-08-10 - Account Admin taxonomy, managed Prompts, and Automation Workflow catalog
 
 - Area or subsystem: `/workspace/admin/#agent-config` and Automated Cases Admin surfaces

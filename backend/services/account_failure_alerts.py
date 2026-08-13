@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any, Callable
+
+from backend.services.graph_mail import send_graph_mail
+
+
+LOGGER = logging.getLogger(__name__)
+ACCOUNT_FAILURE_ALERT_RECIPIENT = "xieziling@agora.io"
+ACCOUNT_FAILURE_ALERT_SENDER = "ai-support-agent@agora.io"
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+
+
+def _safe_detail(value: Any, *, limit: int = 500) -> str:
+    detail = " ".join(str(value or "").split())
+    detail = _EMAIL_RE.sub("<redacted-email>", detail)
+    detail = re.sub(r"\b(?:bearer\s+)?[A-Za-z0-9_-]{28,}\b", "<redacted-token>", detail, flags=re.I)
+    return detail[:limit]
+
+
+def build_account_failure_alert(
+    *,
+    incident_id: str,
+    stage: str,
+    code: str,
+    ticket_id: str | None = None,
+    account_case_id: str | None = None,
+    job_id: str | None = None,
+    attempts: int | None = None,
+    detail: Any = "",
+) -> tuple[str, str]:
+    subject = f"[SupportPortal][Account failure] {_safe_detail(stage, limit=120)}"
+    lines = [
+        "SupportPortal Account automation stopped and requires human attention.",
+        f"Incident: {_safe_detail(incident_id, limit=120)}",
+        f"Stage: {_safe_detail(stage, limit=120)}",
+        f"Code: {_safe_detail(code, limit=160)}",
+        f"Ticket: {_safe_detail(ticket_id, limit=120) or '<unknown>'}",
+        f"Account Case: {_safe_detail(account_case_id, limit=120) or '<unknown>'}",
+        f"Job: {_safe_detail(job_id, limit=120) or '<none>'}",
+        f"Attempts: {int(attempts or 0)}",
+        f"Detail: {_safe_detail(detail) or '<none>'}",
+        "Action: review the Account Case and continue manually. No customer reply was generated after the failure.",
+    ]
+    return subject, "\n".join(lines)
+
+
+def notify_account_failure(
+    *,
+    repository: Any,
+    incident_id: str,
+    stage: str,
+    code: str,
+    ticket_id: str | None = None,
+    account_case_id: str | None = None,
+    job_id: str | None = None,
+    attempts: int | None = None,
+    detail: Any = "",
+    mail_sender: Callable[..., None] = send_graph_mail,
+    now: str,
+) -> dict[str, Any]:
+    """Send one redacted alert per incident and preserve delivery evidence."""
+    key = f"account-failure:{incident_id}"
+    try:
+        claim = repository.begin_idempotent_request(
+            "account_failure_alert",
+            key,
+            created_at=now,
+            retry_failed=True,
+        )
+    except Exception as exc:
+        LOGGER.exception("Could not claim Account failure alert %s", incident_id)
+        return {"status": "claim_failed", "incident_id": incident_id, "error": _safe_detail(exc)}
+    if not claim.get("created"):
+        return {"status": "already_claimed", "incident_id": incident_id}
+    subject, body = build_account_failure_alert(
+        incident_id=incident_id,
+        stage=stage,
+        code=code,
+        ticket_id=ticket_id,
+        account_case_id=account_case_id,
+        job_id=job_id,
+        attempts=attempts,
+        detail=detail,
+    )
+    try:
+        mail_sender(
+            to_address=ACCOUNT_FAILURE_ALERT_RECIPIENT,
+            subject=subject,
+            body=body,
+            content_type="Text",
+        )
+    except Exception as exc:
+        error = _safe_detail(exc)
+        LOGGER.exception("Account failure alert delivery failed for %s", incident_id)
+        try:
+            repository.record_workspace_audit_event(
+                "account_failure_alert_delivery_failed",
+                actor_id="account-system",
+                target_id=incident_id,
+                payload={"incident_id": incident_id, "error": error, "recipient": ACCOUNT_FAILURE_ALERT_RECIPIENT},
+                created_at=now,
+            )
+        except Exception:
+            LOGGER.exception("Could not record Account failure alert delivery failure for %s", incident_id)
+        try:
+            repository.fail_idempotent_request(
+                "account_failure_alert",
+                key,
+                response_payload={"status": "delivery_failed", "incident_id": incident_id, "error": error},
+                updated_at=now,
+            )
+        except Exception:
+            LOGGER.exception("Could not release Account failure alert claim for %s", incident_id)
+        return {"status": "delivery_failed", "incident_id": incident_id, "error": error}
+    try:
+        repository.complete_idempotent_request(
+            "account_failure_alert",
+            key,
+            response_payload={"status": "sent", "incident_id": incident_id},
+            updated_at=now,
+        )
+    except Exception as exc:
+        LOGGER.exception("Account failure alert sent but completion was not persisted for %s", incident_id)
+        return {"status": "sent_unpersisted", "incident_id": incident_id, "error": _safe_detail(exc)}
+    return {"status": "sent", "incident_id": incident_id}

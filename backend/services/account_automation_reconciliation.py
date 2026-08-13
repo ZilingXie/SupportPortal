@@ -66,6 +66,13 @@ def reconcile_automation_execution_failure(
             "route_classification": classification,
         }
     )
+    execution_context = dict(updated.get("automation_context") or {}) if isinstance(updated.get("automation_context"), dict) else {}
+    if context:
+        for key in ("policy_decision", "failure_stage", "failure_code", "failure_attempt_count", "failure_incident_id"):
+            if key in context:
+                updated[key] = context[key]
+    if context and context.get("policy_decision"):
+        updated["policy_decision"] = context["policy_decision"]
     if extraction is not None:
         collected_fields = getattr(extraction, "collected_fields", None)
         if isinstance(collected_fields, dict):
@@ -74,7 +81,7 @@ def reconcile_automation_execution_failure(
         updated["customer_reply"] = None
         updated["missing_fields"] = []
     prior_context = updated.get("automation_context")
-    automation_context = dict(prior_context) if isinstance(prior_context, dict) else {}
+    automation_context = execution_context or (dict(prior_context) if isinstance(prior_context, dict) else {})
     automation_context.update(
         {
             "execution_status": AUTOMATION_EXECUTION_HUMAN_REVIEW,

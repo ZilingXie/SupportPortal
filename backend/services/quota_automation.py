@@ -9,9 +9,16 @@ from typing import Any
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import DEFAULT_USERNAME, send_graph_mail
 from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
-from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.account_ai_execution import (
+    AccountProcessingFailure,
+    account_profile_has_primary_credentials,
+    invoke_account_responses_text,
+)
+from backend.services.llm_factory import LlmInvocationError
 from backend.services.llm_profiles import ENABLEMENT_REPLY_SCENARIO, resolve_model_profile
 from backend.services.quota_field_extractor import QuotaFieldExtraction
+
+invoke_responses_text = invoke_account_responses_text
 
 QUOTA_SCOPE_LABEL = "quota"
 QUOTA_ACTION = "quota"
@@ -125,8 +132,12 @@ def build_quota_customer_followup(
     if not note:
         raise ValueError("quota resolution note is required")
     profile = resolve_model_profile(ENABLEMENT_REPLY_SCENARIO)
-    if not profile.has_invocation_credentials():
-        raise ValueError("Quota customer reply model is not configured")
+    if not account_profile_has_primary_credentials(profile):
+        raise AccountProcessingFailure(
+            "account_ai_missing_credentials",
+            "quota customer reply model is not configured",
+            stage="quota_customer_reply",
+        )
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -140,9 +151,16 @@ def build_quota_customer_followup(
                 "only one to three polished sentences without greeting or sign-off."
             ),
             user_prompt=f"Internal quota reply thread:\n<internal_reply>\n{note}\n</internal_reply>",
+            stage="quota_customer_reply",
         )
-    except LlmInvocationError as exc:
-        raise ValueError("Quota customer reply generation failed") from exc
+    except AccountProcessingFailure:
+        raise
+    except (LlmInvocationError, ValueError) as exc:
+        raise AccountProcessingFailure(
+            "account_ai_reply_generation_exhausted",
+            f"quota customer reply generation failed: {exc}",
+            stage="quota_customer_reply",
+        ) from exc
     body = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     _validate_customer_reply(body, sensitive_values=sensitive_values)
     return compose_customer_reply_email(body=body, language="en", reply_kind="engineer_follow_up")

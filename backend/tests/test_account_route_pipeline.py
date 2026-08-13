@@ -16,6 +16,7 @@ from backend.services.account_route_pipeline import (
     classification_for_corrected_route,
     decide_account_route,
 )
+from backend.services.account_ai_execution import AccountProcessingFailure
 from backend.services.llm_factory import LlmTextResult
 from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
@@ -243,6 +244,28 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertFalse(result.recovered)
         self.assertIsNone(result.failure_type)
         invoke.assert_called_once()
+
+    def test_stage_retries_unexpected_invocation_errors(self) -> None:
+        with patch(
+            "backend.services.account_route_pipeline.resolve_model_profile",
+            return_value=unittest.mock.Mock(provider="openai"),
+        ), patch(
+            "backend.services.account_route_pipeline.profile_has_invocation_credentials",
+            return_value=True,
+        ), patch(
+            "backend.services.account_route_pipeline.invoke_responses_text",
+            side_effect=RuntimeError("transport adapter crashed"),
+        ) as invoke:
+            with self.assertRaisesRegex(AccountProcessingFailure, "invocation_exhausted"):
+                _invoke_stage(
+                    stage_name="intent_classifier",
+                    prompt_key="account-intent-classifier-system",
+                    fallback_system_prompt="Return JSON.",
+                    payload={"message": "Something failed."},
+                    validate_payload=lambda payload: None,
+                )
+
+        self.assertEqual(invoke.call_count, 4)
 
     def test_route_execution_exposes_terminal_stage_failure_metadata(self) -> None:
         attempts = [
@@ -544,7 +567,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.classification["pipeline_version"], ACCOUNT_ROUTE_PIPELINE_VERSION)
         legacy_router.assert_not_called()
 
-    def test_latest_account_route_normalizes_missing_credentials_fallback(self) -> None:
+    def test_latest_account_route_missing_credentials_fails_closed(self) -> None:
         legacy_router = unittest.mock.Mock(
             return_value=SupportRouteDecision(
                 scope_label="agora_technical",
@@ -566,19 +589,15 @@ class AccountRoutePipelineTests(unittest.TestCase):
             "backend.services.account_route_pipeline._invoke_stage",
             return_value=missing_credentials,
         ):
-            result = decide_account_route(
-                "Please help with my Agora account.",
-                legacy_router=legacy_router,
-                require_latest=True,
-            )
+            with self.assertRaises(AccountProcessingFailure):
+                decide_account_route(
+                    "Please help with my Agora account.",
+                    legacy_router=legacy_router,
+                    require_latest=True,
+                )
+        legacy_router.assert_not_called()
 
-        self.assertEqual(result.primary_label, "Agora")
-        self.assertEqual(result.secondary_label, "Agora Technical")
-        self.assertEqual(result.classification["pipeline_version"], ACCOUNT_ROUTE_PIPELINE_VERSION)
-        self.assertEqual(result.decision.router_source, "account_legacy_fallback")
-        legacy_router.assert_called_once()
-
-    def test_missing_credentials_suspension_fallback_uses_account_billing_contract(self) -> None:
+    def test_missing_credentials_suspension_does_not_use_legacy_fallback(self) -> None:
         legacy_router = unittest.mock.Mock(
             return_value=SupportRouteDecision(
                 scope_label="billing",
@@ -601,16 +620,13 @@ class AccountRoutePipelineTests(unittest.TestCase):
             "backend.services.account_route_pipeline._invoke_stage",
             return_value=missing_credentials,
         ):
-            result = decide_account_route(
-                "Our balance ran out and the account was suspended.",
-                legacy_router=legacy_router,
-                require_latest=True,
-            )
-
-        self.assertEqual(result.secondary_label, "Account & Billing / Account Suspension")
-        self.assertEqual(result.decision.execution_action, "human_review_required")
-        self.assertEqual(result.decision.route_family, "human_review")
-        self.assertEqual(result.decision.semantic_intent, "account_billing.account_suspension")
+            with self.assertRaises(AccountProcessingFailure):
+                decide_account_route(
+                    "Our balance ran out and the account was suspended.",
+                    legacy_router=legacy_router,
+                    require_latest=True,
+                )
+        legacy_router.assert_not_called()
 
     def test_legacy_support_request_automation_uses_canonical_automation_labels(self) -> None:
         labels = account_case_labels(

@@ -26,6 +26,8 @@ from backend.main import (
     asset_storage,
     ticket_repository,
 )
+from backend.services.account_ai_execution import AccountProcessingFailure
+from backend.services.account_failure_alerts import notify_account_failure
 from backend.services.account_admin import (
     AccountPersonaUnavailableError,
     apply_persona_to_customer_reply,
@@ -112,6 +114,67 @@ TICKET_LOOKUP_RETRY_MAX = 6
 TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
+
+
+def _record_account_worker_failure(
+    *,
+    job: dict[str, Any],
+    ticket: dict[str, Any] | None,
+    failure: BaseException,
+) -> None:
+    ticket_id = str(job.get("ticket_id") or (ticket or {}).get("ticket_id") or "").strip()
+    case = ticket_repository.get_account_case_by_ticket_id(ticket_id) if ticket_id else None
+    case_id = str((case or {}).get("account_case_id") or (case or {}).get("billing_ticket_id") or "").strip()
+    stage = str(getattr(failure, "stage", "account_reply_worker") or "account_reply_worker").strip()
+    code = str(getattr(failure, "code", "account_reply_worker_failed") or "account_reply_worker_failed").strip()
+    detail = str(getattr(failure, "detail", "") or "").strip()
+    if not isinstance(failure, AccountProcessingFailure):
+        detail = type(failure).__name__
+    incident_id = f"account-processing:{case_id or ticket_id or 'unknown'}:{stage}:{code}"
+    now = now_iso()
+    if isinstance(case, dict):
+        updated = dict(case)
+        updated.update(
+            {
+                "automation_status": "human_review_required",
+                "execution_reason_code": f"account_processing_{code}"[:160],
+                "internal_email_send_status": "not_applicable",
+                "internal_email_send_reason": f"account_processing_{code}"[:160],
+                "customer_reply": None,
+                "failure_stage": stage,
+                "failure_code": code,
+                "failure_attempt_count": 4,
+                "failure_incident_id": incident_id,
+                "policy_decision": "account_processing_failure_human_review",
+                "updated_at": now,
+            }
+        )
+        classification = dict(updated.get("route_classification") or {})
+        classification["handler_binding_status"] = "human_review"
+        classification["account_processing_failure"] = {
+            "incident_id": incident_id,
+            "stage": stage,
+            "code": code,
+            "attempt_count": 4,
+        }
+        updated["route_classification"] = classification
+        execution_context = dict(updated.get("automation_context") or {})
+        execution_context["account_processing_failure"] = dict(classification["account_processing_failure"])
+        updated["automation_context"] = execution_context
+        ticket_repository.save_account_case(updated)
+        ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=now)
+    notify_account_failure(
+        repository=ticket_repository,
+        incident_id=incident_id,
+        stage=stage,
+        code=code,
+        ticket_id=ticket_id or None,
+        account_case_id=case_id or None,
+        job_id=str(job.get("job_id") or "") or None,
+        attempts=4,
+        detail=detail,
+        now=now,
+    )
 BILLING_REPLY_POLL_ENABLED_ENV = "BILLING_AUTOMATION_REPLY_POLL_ENABLED"
 BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
@@ -460,7 +523,13 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                     persona_assignment=persona_assignment,
                 )
             except AutomationPersonaError as exc:
-                _move_automation_reply_to_human_review(job, ticket, str(exc))
+                _record_account_worker_failure(job=job, ticket=ticket, failure=exc)
+                _move_automation_reply_to_human_review(
+                    job,
+                    ticket,
+                    str(exc),
+                    policy_decision="automation_persona_human_review",
+                )
                 return
             payload.update(
                 {
@@ -640,10 +709,12 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
                 persona_assignment=persona_assignment,
             )
         except AutomationPersonaError as exc:
+            _record_account_worker_failure(job=current_job, ticket=ticket, failure=exc)
             _move_automation_reply_to_human_review(
                 current_job,
                 ticket,
                 str(exc),
+                policy_decision="automation_persona_human_review",
             )
             return
         payload["generated_content"] = rendered.content
@@ -880,7 +951,7 @@ def _process_claimed_account_reply_jobs(
             ):
                 continue
             failed_job = current
-            failed_job["status"] = retry_status if int(failed_job.get("attempt_count") or 0) < (3 if operation == "preparation" else 4) else "failed"
+            failed_job["status"] = retry_status if int(failed_job.get("attempt_count") or 0) < 4 else "failed"
             failed_job["payload"] = {
                 **dict(failed_job.get("payload") or {}),
                 "error": str(exc),
@@ -890,6 +961,12 @@ def _process_claimed_account_reply_jobs(
                 failed_job,
                 expected_status=to_status,
             )
+            if failed_job.get("status") == "failed":
+                _record_account_worker_failure(
+                    job=failed_job,
+                    ticket=ticket_repository.get_ticket(str(failed_job.get("ticket_id") or "")),
+                    failure=exc,
+                )
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:

@@ -31,7 +31,8 @@ from backend.services.enablement_field_extractor import EnablementFieldExtractio
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
 from backend.services.account_suspension_field_extractor import AccountSuspensionFieldExtraction
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
-from backend.services.account_route_pipeline import AccountRouteResult
+from backend.services.account_route_pipeline import AccountRouteResult, AccountRouteStageAttempt
+from backend.services.account_ai_execution import AccountProcessingFailure
 from backend.services.automation_persona import AutomationPersonaError, AutomationPersonaResult
 from backend.services.llm_factory import LlmInvocationError
 from backend.services.quota_field_extractor import QuotaFieldExtraction
@@ -304,6 +305,105 @@ def _fake_render_automation_reply(**kwargs: object) -> AutomationPersonaResult:
     )
 
 
+def _fake_account_route_stage(
+    *,
+    stage_name: str,
+    payload: dict[str, object],
+    **_: object,
+) -> AccountRouteStageAttempt:
+    """Deterministic layered-router substitute for Account API tests."""
+    text = str(payload.get("message") or payload.get("ticket_subject") or "").lower()
+    if stage_name == "intent_classifier":
+        is_conversation = any(marker in text for marker in ("thank you", "thanks", "it works now"))
+        intent = "conversation" if is_conversation else "agora"
+        conversation_action = (
+            "resolve" if "it works now" in text else "follow_up"
+        ) if is_conversation else None
+        result = {
+            "intent_class": intent,
+            "conversation_action": conversation_action,
+            "intent_confidence": 0.99,
+            "action_confidence": 0.99 if is_conversation else None,
+            "reason_code": "conversation_resolution" if conversation_action == "resolve" else (
+                "conversation_follow_up" if is_conversation else "agora_case"
+            ),
+            "evidence_spans": [],
+        }
+    elif stage_name == "agora_router":
+        is_backend = (
+            "from your end" in text
+            or "concurrency" in text
+            or "quota" in text
+            or "capacity" in text
+        ) and not any(marker in text for marker in ("how do i", "how is", "why does", "fails"))
+        is_billing = any(
+            marker in text
+            for marker in (
+                "detailed invoice", "invoice", "billing", "payment", "charge", "suspended",
+                "suspicious", "fraud", "verify our account", "account verification",
+            )
+        )
+        route = "backend_operation" if is_backend else "account_billing" if is_billing else (
+            "uncategorized" if any(marker in text for marker in ("agora products", "agora's ceo", "general support question"))
+            else "technical"
+        )
+        backend_operation = None
+        if route == "backend_operation":
+            target = "quota" if any(marker in text for marker in ("concurrency", "quota", "capacity")) else "media_relay"
+            backend_operation = {
+                "action": "review_and_increase" if target == "quota" else "enable",
+                "target": target,
+                "evidence": "customer requested an Account-side operation",
+            }
+        result = {
+            "agora_route": route,
+            "confidence": 0.99,
+            "reason_code": {
+                "backend_operation": "explicit_backend_operation",
+                "account_billing": "account_billing_request",
+                "technical": "technical_request",
+                "uncategorized": "no_matching_category",
+            }[route],
+            "additional_intents": [],
+            "selection_reason": "deterministic test route",
+            "backend_operation": backend_operation,
+            "evidence_spans": [],
+        }
+    elif stage_name == "account_billing_router":
+        if any(marker in text for marker in ("suspicious", "fraud", "verify our account", "account verification")):
+            subcategory, reason = "fraud_account", "registered_fraud_account"
+        elif "suspend" in text or "stopped" in text:
+            subcategory, reason = "account_suspension", "registered_account_suspension"
+        elif "detailed invoice" in text or "invoice" in text:
+            subcategory, reason = "detailed_invoice", "detailed_invoice_requested"
+        else:
+            subcategory, reason = "other", "account_billing_other"
+        result = {
+            "account_billing_subcategory": subcategory,
+            "confidence": 0.99,
+            "reason_code": reason,
+        }
+    elif stage_name == "backend_operation_router":
+        result = {
+            "backend_operation_subcategory": "quota"
+            if any(marker in text for marker in ("concurrency", "quota", "capacity"))
+            else "enablement",
+            "confidence": 0.99,
+        }
+    else:
+        result = {
+            "automation_subcategory": "unregistered",
+            "confidence": 0.99,
+        }
+    return AccountRouteStageAttempt(
+        payload=result,
+        attempted=True,
+        system_prompt=f"test:{stage_name}",
+        user_prompt=str(payload.get("message") or ""),
+        attempt_count=1,
+    )
+
+
 class AccountIntakeApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = InMemoryTicketRepository()
@@ -318,9 +418,9 @@ class AccountIntakeApiTests(unittest.TestCase):
             "backend.services.support_router._llm_route_decision",
             return_value=_LlmRouteAttempt(decision=None, attempted=True),
         )
-        self._account_route_credentials_patcher = patch(
-            "backend.services.account_route_pipeline.profile_has_invocation_credentials",
-            return_value=False,
+        self._account_stage_patcher = patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=_fake_account_route_stage,
         )
         self._title_model_patcher = patch(
             "backend.services.ticket_title._invoke_title_model",
@@ -368,7 +468,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             side_effect=_successful_account_rerun_preflight,
         )
         self._llm_patcher.start()
-        self._account_route_credentials_patcher.start()
+        self._account_stage_patcher.start()
         self._title_model_patcher.start()
         self._enablement_extractor_patcher.start()
         self._account_verification_extractor_patcher.start()
@@ -404,6 +504,78 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(view["stage_failure_types"], {"intent_classifier": "invalid_json"})
         self.assertEqual(view["stage_attempt_counts"], {"intent_classifier": 2})
         self.assertEqual(view["stage_recovered"], {"intent_classifier": False})
+
+    def test_account_intake_processing_failure_is_human_review_and_idempotent(self) -> None:
+        failure = AccountProcessingFailure(
+            "account_route_invocation_exhausted",
+            "OpenAI Responses API unavailable after retries",
+            stage="intent_classifier",
+        )
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", side_effect=failure
+        ), patch.object(
+            main,
+            "notify_account_failure",
+            return_value={"status": "sent", "incident_id": "account-processing:AC-TK-FAIL-001:intent_classifier:account_route_invocation_exhausted"},
+        ) as alert:
+            request = {
+                "external_id": "TK-FAIL-001",
+                "title": "Account request",
+                "question": "Please investigate this account issue.",
+                "customer_email": "customer@example.com",
+            }
+            first = self.client.post("/account", json=request)
+            second = self.client.post("/account", json=request)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["status"], "human_review_required")
+        self.assertEqual(first.json()["automation_status"], "human_review_required")
+        self.assertEqual(first.json()["failure_attempt_count"], 4)
+        self.assertEqual(first.json()["failure_stage"], "intent_classifier")
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertTrue(second.json()["idempotent_replay"])
+        self.assertEqual(second.json()["failure_incident_id"], first.json()["failure_incident_id"])
+        alert.assert_called_once()
+        case = self.repository.get_account_case(first.json()["account_case_id"])
+        assert case is not None
+        self.assertEqual(case["automation_status"], "human_review_required")
+        self.assertIsNone(case["customer_reply"])
+        self.assertIsNone(self.repository.get_latest_account_reply_job(first.json()["ticket_id"]))
+
+    def test_account_reply_processing_failure_cancels_pending_reply_and_alerts_once(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+        job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert job is not None
+        failure = AccountProcessingFailure(
+            "account_ai_structured_output_exhausted",
+            "invalid JSON after retries",
+            stage="detailed_invoice_field_extractor",
+        )
+        with patch.object(main, "_build_billing_internal_email_attempt", side_effect=failure), patch.object(
+            main, "notify_account_failure", return_value={"status": "sent"}
+        ) as alert:
+            response = self.client.post(
+                f"/api/account/cases/{created['account_case_id']}/reply",
+                json={"message": "The invoice details are still unavailable."},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "human_review_required")
+        self.assertEqual(payload["automation_status"], "human_review_required")
+        self.assertEqual(payload["failure_stage"], "detailed_invoice_field_extractor")
+        stored_job = self.repository.get_account_reply_job(job["job_id"])
+        assert stored_job is not None
+        self.assertEqual(stored_job["status"], "cancelled")
+        alert.assert_called_once()
 
     def test_account_case_view_preserves_account_billing_automation_category(self) -> None:
         view = main._build_account_ticket_view_model(
@@ -496,7 +668,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._account_verification_extractor_patcher.stop()
         self._enablement_extractor_patcher.stop()
         self._title_model_patcher.stop()
-        self._account_route_credentials_patcher.stop()
+        self._account_stage_patcher.stop()
         self._llm_patcher.stop()
         self.client.close()
         main.ticket_repository = self.original_repository
@@ -1923,7 +2095,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_status"], "automated")
         self.assertEqual(payload["automation_handler"], "enablement")
         self.assertEqual(payload["customer_name"], "Jack Gold")
-        self.assertEqual(payload["semantic_intent"], "enablement.feature_activation")
+        self.assertEqual(payload["semantic_intent"], "backend_operation.enablement")
         self.assertEqual(payload["collected_fields"]["app_id"], "7da36383d624411698e5c0bc1fda6324")
         self.assertEqual(payload["collected_fields"]["requested_feature"], "media_relay")
         self.assertEqual(payload["internal_email_send_status"], "sent")
@@ -2065,7 +2237,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(rendered.answer, "")
         self.assertEqual(rendered.route_family, "human_review")
-        self.assertEqual(rendered.route_reason, "persona render failed")
+        self.assertEqual(rendered.route_reason, "persona_render_failed")
         self.assertNotIn("account_persona_unavailable", rendered.evidence_summary)
 
     def test_billing_resolution_persona_unavailable_stops_customer_copy(self) -> None:
@@ -2414,7 +2586,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(reply, "")
         stored = self.repository.get_billing_ticket("AC-12517")
         assert stored is not None
-        self.assertEqual(stored["policy_decision"], "automation_persona_human_review")
+        self.assertEqual(stored["policy_decision"], "account_processing_failure_human_review")
         self.assertEqual(stored["route"], "detailed_invoice")
         self.assertEqual(stored["automation_status"], "human_review_required")
         self.assertEqual(stored["route_family"], "automated")
@@ -2422,7 +2594,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(stored["subcategory"], "detailed_invoice")
         self.assertEqual(stored["route_status"], "automated")
         self.assertEqual(stored["automation_handler"], "billing")
-        self.assertEqual(stored["execution_reason_code"], "billing_persona_render_failed")
+        self.assertEqual(stored["execution_reason_code"], "account_processing_persona_render_failed")
         self.assertEqual(stored["route_classification"]["handler_binding_status"], "human_review")
 
     def test_quota_intake_asks_once_then_sends_available_details(self) -> None:
@@ -2674,7 +2846,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "not_automated")
-        self.assertEqual(payload["route"], "web_search")
+        self.assertEqual(payload["route"], "human_review_required")
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["customer_reply"], "")
         self.assertEqual(payload["missing_fields"], [])
@@ -3542,9 +3714,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(billing_ticket["automation_handler"], "billing")
         self.assertEqual(
             billing_ticket["policy_decision"],
-            "automation_persona_human_review",
+            "account_processing_failure_human_review",
         )
-        self.assertEqual(billing_ticket["execution_reason_code"], "billing_persona_render_failed")
+        self.assertEqual(billing_ticket["execution_reason_code"], "account_processing_automation_persona_failed")
         classification = billing_ticket["route_classification"]
         self.assertEqual(classification["account_billing_subcategory"], "detailed_invoice")
         self.assertEqual(classification["handler_binding_status"], "human_review")
@@ -3694,7 +3866,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["automation_status"], "not_automated")
-        self.assertEqual(bt["route"], "web_search")
+        self.assertEqual(bt["route"], "human_review_required")
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["customer_reply"], None)
 
@@ -3767,8 +3939,8 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
             main,
-            "decide_support_route",
-            return_value=decision,
+            "decide_account_route",
+            return_value=_account_suspension_route_result(),
         ):
             response = self.client.post(
                 "/account",
@@ -3785,18 +3957,18 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route"], "human_review_required")
         self.assertEqual(payload["route_family"], "human_review")
         self.assertEqual(payload["primary_label"], "Agora")
-        self.assertEqual(payload["secondary_label"], "Account & Billing / Other")
+        self.assertEqual(payload["secondary_label"], "Account & Billing / Account Suspension")
         self.assertEqual(payload["automation_eligibility"], "not_eligible")
-        self.assertEqual(payload["policy_decision"], "policy_gate")
-        self.assertEqual(payload["not_automated_reason"], "human_review_required")
+        self.assertIsNone(payload["policy_decision"])
+        self.assertIsNone(payload["not_automated_reason"])
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["automation_status"], "not_automated")
         self.assertEqual(bt["route"], "human_review_required")
-        self.assertEqual(bt["semantic_intent"], "billing.account_suspension")
-        self.assertEqual(bt["policy_decision"], "policy_gate")
+        self.assertEqual(bt["semantic_intent"], "account_billing.account_suspension")
+        self.assertIsNone(bt["policy_decision"])
 
         events = self.repository.list_ticket_events(payload["ticket_id"])
         self.assertEqual(events[0]["payload"]["account_intake_status"], "not_automated")
@@ -3871,16 +4043,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "not_automated")
-        self.assertEqual(payload["route"], "web_search")
+        self.assertEqual(payload["route"], "human_review_required")
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
-        self.assertEqual(bt["route"], "web_search")
+        self.assertEqual(bt["route"], "human_review_required")
         # scope_label/route_family are persisted even for non-automated routes.
         self.assertTrue(bt["scope_label"])
         self.assertTrue(bt["route_family"])
-        self.assertEqual(bt["execution_action"], "web_search")
+        self.assertEqual(bt["execution_action"], "human_review_required")
 
     def test_billing_ticket_detail_returns_route_for_legacy_ticket_without_route_result_fields(self) -> None:
         # Historical ticket persisted before scope_label/route_family/execution_action existed.
@@ -4768,7 +4940,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["tooling_profile"], "deterministic_billing_intake")
         self.assertEqual(payload["primary_label"], "Agora")
         self.assertEqual(payload["secondary_label"], "Account & Billing / Other")
-        self.assertEqual(payload["automation_status"], "automation")
+        self.assertEqual(payload["automation_status"], "not_automated")
         self.assertIn(
             payload["route_correction"]["original_execution_action"],
             {"detailed_invoice", "human_review_required"},
@@ -4838,7 +5010,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["route_family"], "automated")
         self.assertEqual(payload["route_status"], "automated")
         self.assertEqual(payload["automation_handler"], "billing")
-        self.assertEqual(payload["automation_status"], "not_automated")
+        self.assertEqual(payload["automation_status"], "automation")
         self.assertEqual(payload["primary_label"], "Agora")
         self.assertEqual(payload["secondary_label"], "Account & Billing / Fraud Account")
         stored = self.repository.get_account_case(account_case_id)
@@ -5668,8 +5840,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
             main,
-            "decide_support_route",
-            return_value=decision,
+            "decide_account_route",
+            return_value=_fraud_account_route_result(),
         ), patch(
             "backend.main.send_billing_internal_email",
             return_value={"status": "sent", "reason": ""},
@@ -6617,10 +6789,9 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        # The credential-free legacy fallback is conservative with conflicting
-        # case history, but it must still leave the prior Automation binding.
-        self.assertEqual(payload["primary_label"], "Human Review")
-        self.assertEqual(payload["secondary_label"], "Uncertain")
+        # A fresh technical request supersedes the prior billing handler.
+        self.assertEqual(payload["primary_label"], "Agora")
+        self.assertEqual(payload["secondary_label"], "Agora Technical")
         self.assertEqual(payload["automation_status"], "not_automated")
         self.assertIsNone(payload["ai_reply_status"])
         classification = payload["route_classification"]
@@ -6639,8 +6810,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             ).json()
         job = self.repository.get_latest_account_reply_job(created["ticket_id"])
         self.assertIsNone(job)
-        self.assertEqual(created["primary_label"], "Agora")
-        self.assertEqual(created["secondary_label"], "Agora Non-technical")
+        self.assertEqual(created["primary_label"], "Human Review")
+        self.assertEqual(created["secondary_label"], "Uncategorized")
         self.assertIsNone(created["ai_reply_status"])
 
     def test_account_reply_publication_is_idempotent_after_partial_worker_recovery(self) -> None:

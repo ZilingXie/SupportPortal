@@ -178,6 +178,8 @@ from backend.services.account_route_pipeline import (
     classification_for_corrected_route,
     decide_account_route,
 )
+from backend.services.account_ai_execution import AccountProcessingFailure
+from backend.services.account_failure_alerts import notify_account_failure
 from backend.services.account_case_filters import (
     account_case_filter_definitions,
     normalize_account_case_filter,
@@ -2349,7 +2351,7 @@ def resolve_support_message(
     try:
         rendered = render_automation_reply(reply_facts=facts, persona_assignment=persona)
     except AutomationPersonaError as exc:
-        reason = str(exc)
+        reason = exc.code
         evidence.update(
             {
                 "automation_persona_render_status": "human_review",
@@ -4097,8 +4099,7 @@ def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
     return {**account_case, **view_model}
 
 
-@app.post("/account")
-async def create_account_intake(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
+async def _create_account_intake_impl(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
     title = " ".join(str(request.title or "").split()).strip()
     question = str(request.question or "").strip()
     if not question:
@@ -4121,6 +4122,8 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         if not idempotency_record.get("created"):
             replay_payload = idempotency_record.get("response_payload")
             if idempotency_record.get("state") == "completed" and isinstance(replay_payload, dict):
+                return {**replay_payload, "idempotent_replay": True}
+            if idempotency_record.get("state") == "failed" and isinstance(replay_payload, dict):
                 return {**replay_payload, "idempotent_replay": True}
             raise HTTPException(status_code=409, detail="account intake request is already processing")
 
@@ -4773,7 +4776,7 @@ def _render_billing_resolution_customer_reply(
             reply_facts=facts,
             persona_assignment=persona,
         ).content
-    except (AccountPersonaUnavailableError, AutomationPersonaError) as exc:
+    except AccountPersonaUnavailableError as exc:
         reason = str(exc)
         timestamp = now_iso()
         persona_unavailable = isinstance(exc, AccountPersonaUnavailableError)
@@ -4810,6 +4813,40 @@ def _render_billing_resolution_customer_reply(
                 ticket_id,
                 updated_at=timestamp,
             )
+        return ""
+    except AutomationPersonaError as exc:
+        failure = exc
+        timestamp = now_iso()
+        incident_id = f"account-processing:{billing_ticket.get('account_case_id') or billing_ticket.get('billing_ticket_id') or ticket_id}:automation_persona:{failure.code}"
+        failure_reason_code = f"account_processing_{failure.code}"[:160]
+        billing_ticket.update(
+            reconcile_automation_execution_failure(
+                billing_ticket,
+                reason_code=failure_reason_code,
+                context={
+                    "failure_stage": failure.stage,
+                    "failure_code": failure.code,
+                    "failure_attempt_count": 4,
+                    "failure_incident_id": incident_id,
+                    "policy_decision": "account_processing_failure_human_review",
+                },
+            )
+        )
+        billing_ticket["updated_at"] = timestamp
+        notify_account_failure(
+            repository=ticket_repository,
+            incident_id=incident_id,
+            stage=failure.stage,
+            code=failure.code,
+            ticket_id=ticket_id,
+            account_case_id=str(billing_ticket.get("account_case_id") or "") or None,
+            attempts=4,
+            detail=failure.detail,
+            now=timestamp,
+        )
+        if persist_failure:
+            ticket_repository.save_account_case(billing_ticket)
+            ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=timestamp)
         return ""
 
 
@@ -6403,6 +6440,16 @@ async def _run_account_full_reroute_job(
                     case_stage = "revision_conflict"
                 elif isinstance(exc, _AccountRerunSideEffectError):
                     case_stage = exc.stage
+                if isinstance(exc, AccountProcessingFailure):
+                    case_stage = exc.stage
+                    try:
+                        await _persist_account_processing_failure(
+                            account_case=account_case,
+                            ticket=canonical_ticket if isinstance(locals().get("canonical_ticket"), dict) else None,
+                            failure=exc,
+                        )
+                    except Exception:
+                        LOGGER.exception("Could not persist Account rerun processing failure for %s", case_id)
                 case_failed = True
                 case_failure_error = _sanitize_account_rerun_error(exc)
                 job["failed"] += 1
@@ -6816,6 +6863,7 @@ async def correct_billing_ticket_route(
         "subcategory": corrected["subcategory"],
         "route_status": corrected["route_status"],
         "automation_handler": corrected["automation_handler"],
+        "automation_status": "automation" if corrected["route_status"] == "automated" else "not_automated",
         "route_classification": classification_for_corrected_route(
             scope_label=corrected["scope_label"],
             route_family=corrected["route_family"],
@@ -6968,9 +7016,209 @@ class BillingReplyRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
 
 
-@app.post("/api/account/cases/{billing_ticket_id}/reply")
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply", deprecated=True)
-async def reply_to_billing_ticket(
+async def _persist_account_processing_failure(
+    *,
+    account_case: dict[str, Any] | None,
+    ticket: dict[str, Any] | None,
+    failure: AccountProcessingFailure,
+    idempotency_key: str | None = None,
+    idempotency_scope: str = "account_intake",
+) -> dict[str, Any]:
+    case = dict(account_case or {})
+    case_id = str(
+        case.get("account_case_id")
+        or case.get("billing_ticket_id")
+        or (f"AC-{ticket.get('ticket_id')}" if isinstance(ticket, dict) else "")
+    ).strip()
+    ticket_id = str(
+        case.get("client_ticket_id")
+        or (ticket.get("ticket_id") if isinstance(ticket, dict) else "")
+    ).strip()
+    now = now_iso()
+    incident_id = f"account-processing:{case_id or ticket_id or 'unknown'}:{failure.stage}:{failure.code}"
+    reason_code = f"account_processing_{failure.code}"[:160]
+    case.update(
+        {
+            "account_case_id": case_id or None,
+            "billing_ticket_id": case.get("billing_ticket_id") or case_id or None,
+            "client_ticket_id": ticket_id or None,
+            "automation_status": "human_review_required",
+            "execution_reason_code": reason_code,
+            "internal_email_send_status": "not_applicable",
+            "internal_email_send_reason": reason_code,
+            "customer_reply": None,
+            "missing_fields": [],
+            "failure_stage": failure.stage,
+            "failure_code": failure.code,
+            "failure_attempt_count": 4,
+            "failure_incident_id": incident_id,
+            "updated_at": now,
+            "policy_decision": "account_processing_failure_human_review",
+        }
+    )
+    classification = dict(case.get("route_classification") or {})
+    classification.update(
+        {
+            "handler_binding_status": "human_review",
+            "execution_reason_code": reason_code,
+            "account_processing_failure": {
+                "incident_id": incident_id,
+                "stage": failure.stage,
+                "code": failure.code,
+                "attempt_count": 4,
+            },
+        }
+    )
+    case["route_classification"] = classification
+    execution_context = dict(case.get("automation_context") or {})
+    execution_context["account_processing_failure"] = {
+        "incident_id": incident_id,
+        "stage": failure.stage,
+        "code": failure.code,
+        "attempt_count": 4,
+    }
+    case["automation_context"] = execution_context
+    case.setdefault("customer_name", None)
+    case.setdefault("customer_email", None)
+    case.setdefault("route", "human_review_required")
+    case.setdefault("scope_label", "uncertain")
+    case.setdefault("route_family", "human_review")
+    case.setdefault("execution_action", "human_review_required")
+    case.setdefault("route_status", "not_automated")
+    case.setdefault("source", "api")
+    case.setdefault("title", "Account request")
+    case.setdefault("question", "")
+    case.setdefault("created_at", now)
+    if isinstance(ticket, dict) and ticket_id:
+        ticket_copy = dict(ticket)
+        ticket_copy["updated_at"] = now
+        await async_to_thread(ticket_repository.save_ticket, ticket_copy)
+    if case_id:
+        await async_to_thread(ticket_repository.save_account_case, case)
+        await async_to_thread(
+            ticket_repository.cancel_pending_account_reply_jobs,
+            ticket_id,
+            updated_at=now,
+        )
+    alert = await async_to_thread(
+        notify_account_failure,
+        repository=ticket_repository,
+        incident_id=incident_id,
+        stage=failure.stage,
+        code=failure.code,
+        ticket_id=ticket_id or None,
+        account_case_id=case_id or None,
+        attempts=4,
+        detail=failure.detail,
+        now=now,
+    )
+    result = {
+        "status": "human_review_required",
+        "automation_status": "human_review_required",
+        "ticket_id": ticket_id or None,
+        "account_case_id": case_id or None,
+        "billing_ticket_id": case.get("billing_ticket_id") or case_id or None,
+        "customer_reply": "",
+        "execution_reason_code": reason_code,
+        "failure_stage": failure.stage,
+        "failure_code": failure.code,
+        "failure_attempt_count": 4,
+        "failure_incident_id": incident_id,
+        "alert_status": alert.get("status"),
+    }
+    if idempotency_key:
+        try:
+            await async_to_thread(
+                ticket_repository.fail_idempotent_request,
+                idempotency_scope,
+                idempotency_key,
+                response_payload=result,
+                updated_at=now,
+            )
+        except Exception:
+            LOGGER.exception("Could not mark Account idempotency request failed: %s", idempotency_key)
+    return result
+
+
+@app.post("/account")
+async def create_account_intake(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
+    try:
+        return await _create_account_intake_impl(request, http_request)
+    except AccountProcessingFailure as exc:
+        ticket_id = _resolve_account_ticket_id(request)
+        ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
+        account_case = await async_to_thread(ticket_repository.get_account_case_by_ticket_id, ticket_id)
+        if ticket is None:
+            timestamp = now_iso()
+            ticket = {
+                "ticket_id": ticket_id,
+                "customer_id": str(request.customer_email or "").strip() or "C-UNKNOWN",
+                "requester": str(request.customer_email or "").strip() or "C-UNKNOWN",
+                "subject": str(request.title or "Account request").strip() or "Account request",
+                "status": OPEN_STATUS,
+                "source": _normalize_account_source(request.source),
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "messages": [{
+                    "role": "customer",
+                    "content": str(request.question or "").strip(),
+                    "created_at": timestamp,
+                    "content_format": "plaintext",
+                    "source": _normalize_account_source(request.source),
+                }],
+            }
+            ensure_ticket_defaults(ticket)
+        if account_case is None:
+            account_case = {
+                "account_case_id": f"AC-{ticket_id}",
+                "billing_ticket_id": f"AC-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "source": _serialize_billing_ticket_source(request.source, _normalize_account_source(request.source)),
+                "title": ticket.get("subject") or "Account request",
+                "question": str(request.question or "").strip(),
+                "route": "human_review_required",
+                "scope_label": "uncertain",
+                "route_family": "human_review",
+                "execution_action": "human_review_required",
+                "route_status": "not_automated",
+                "automation_status": "human_review_required",
+                "created_at": ticket.get("created_at") or now_iso(),
+            }
+        elif isinstance(account_case, dict) and account_case.get("failure_incident_id"):
+            return {
+                **account_case,
+                "status": "human_review_required",
+                "automation_status": "human_review_required",
+                "customer_reply": "",
+                "idempotent_replay": True,
+            }
+        return await _persist_account_processing_failure(
+            account_case=account_case,
+            ticket=ticket,
+            failure=exc,
+            idempotency_key=_account_intake_idempotency_key(request),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        LOGGER.exception("Unexpected Account intake failure")
+        failure = AccountProcessingFailure(
+            "account_unexpected_processing_failure",
+            type(exc).__name__,
+            stage="account_intake",
+        )
+        ticket_id = _resolve_account_ticket_id(request)
+        ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
+        account_case = await async_to_thread(ticket_repository.get_account_case_by_ticket_id, ticket_id)
+        return await _persist_account_processing_failure(
+            account_case=account_case,
+            ticket=ticket,
+            failure=failure,
+            idempotency_key=_account_intake_idempotency_key(request),
+        )
+
+
+async def _reply_to_billing_ticket_impl(
     billing_ticket_id: str,
     request: BillingReplyRequest,
 ) -> dict[str, Any]:
@@ -7490,6 +7738,42 @@ async def reply_to_billing_ticket(
         **billing_ticket,
         **view_model,
     }
+
+
+@app.post("/api/account/cases/{billing_ticket_id}/reply")
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply", deprecated=True)
+async def reply_to_billing_ticket(
+    billing_ticket_id: str,
+    request: BillingReplyRequest,
+) -> dict[str, Any]:
+    try:
+        return await _reply_to_billing_ticket_impl(billing_ticket_id, request)
+    except AccountProcessingFailure as exc:
+        account_case = await _load_account_billing_ticket(billing_ticket_id)
+        ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+        ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id) if ticket_id else None
+        return await _persist_account_processing_failure(
+            account_case=account_case,
+            ticket=ticket,
+            failure=exc,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        LOGGER.exception("Unexpected Account reply processing failure for %s", billing_ticket_id)
+        account_case = await _load_account_billing_ticket(billing_ticket_id)
+        ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+        ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id) if ticket_id else None
+        failure = AccountProcessingFailure(
+            "account_unexpected_processing_failure",
+            type(exc).__name__,
+            stage="account_reply",
+        )
+        return await _persist_account_processing_failure(
+            account_case=account_case,
+            ticket=ticket,
+            failure=failure,
+        )
 
 
 def _public_asset_payload(asset: dict[str, Any]) -> dict[str, Any]:
