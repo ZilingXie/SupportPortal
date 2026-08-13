@@ -16,6 +16,11 @@ _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECA
 def _safe_detail(value: Any, *, limit: int = 500) -> str:
     detail = " ".join(str(value or "").split())
     detail = _EMAIL_RE.sub("<redacted-email>", detail)
+    detail = re.sub(
+        r"(?i)\b(app[_ -]?id|token|secret|password|authorization)\s*[:=]\s*[^,;\s]+",
+        r"\1=<redacted>",
+        detail,
+    )
     detail = re.sub(r"\b(?:bearer\s+)?[A-Za-z0-9_-]{28,}\b", "<redacted-token>", detail, flags=re.I)
     return detail[:limit]
 
@@ -30,6 +35,7 @@ def build_account_failure_alert(
     job_id: str | None = None,
     attempts: int | None = None,
     detail: Any = "",
+    summary: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     subject = f"[SupportPortal][Account failure] {_safe_detail(stage, limit=120)}"
     lines = [
@@ -42,8 +48,23 @@ def build_account_failure_alert(
         f"Job: {_safe_detail(job_id, limit=120) or '<none>'}",
         f"Attempts: {int(attempts or 0)}",
         f"Detail: {_safe_detail(detail) or '<none>'}",
-        "Action: review the Account Case and continue manually. No customer reply was generated after the failure.",
     ]
+    if isinstance(summary, dict):
+        lines.extend([
+            "Rerun summary:",
+            f"- Build: {_safe_detail(summary.get('build_ref'), limit=120) or '<unknown>'}",
+            f"- Status: {_safe_detail(summary.get('status'), limit=80) or '<unknown>'}",
+            f"- Degraded: {bool(summary.get('degraded'))}",
+            f"- Processed: {int(summary.get('processed') or 0)}",
+            f"- Succeeded: {int(summary.get('succeeded') or 0)}",
+            f"- Failed: {int(summary.get('failed') or 0)}",
+            f"- Remaining: {int(summary.get('remaining') or 0)}",
+            f"- Failed case: {_safe_detail(summary.get('failed_case_id'), limit=120) or '<none>'}",
+            f"- Failed stage: {_safe_detail(summary.get('failed_stage'), limit=120) or '<none>'}",
+        ])
+    lines.extend([
+        "Action: review the Account Case and continue manually. No customer reply was generated after the failure.",
+    ])
     return subject, "\n".join(lines)
 
 
@@ -58,6 +79,7 @@ def notify_account_failure(
     job_id: str | None = None,
     attempts: int | None = None,
     detail: Any = "",
+    summary: dict[str, Any] | None = None,
     mail_sender: Callable[..., None] = send_graph_mail,
     now: str,
 ) -> dict[str, Any]:
@@ -84,6 +106,7 @@ def notify_account_failure(
         job_id=job_id,
         attempts=attempts,
         detail=detail,
+        summary=summary,
     )
     try:
         mail_sender(

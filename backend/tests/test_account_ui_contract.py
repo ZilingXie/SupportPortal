@@ -336,7 +336,7 @@ class AccountUiContractTests(unittest.TestCase):
         console.log(JSON.stringify({{
           running: render({{ status: 'running', phase: 'Preflight', processed: 0, total: 4 }}),
           preflight: render({{ status: 'failed', stop_reason: 'preflight_failed', failed_stage: 'preflight', remaining: 4, preflight: {{ checks: {{ account_model: {{ status: 'failed', reason: 'unexpected_model' }} }} }} }}),
-          stopped: render({{ status: 'completed_with_errors', failed: 1, failed_case_id: 'AC-4', failed_stage: 'prepare', stop_error: 'account route request failed', succeeded: 3, remaining: 0 }}),
+          stopped: render({{ status: 'failed', stop_reason: 'case_degraded', failed: 1, failed_case_id: 'AC-4', failed_stage: 'prepare', failed_reason_code: 'account_rerun_prepare_failed', alert_status: 'sent', stop_error: 'account route request failed', succeeded: 3, remaining: 0 }}),
           completed: render({{ status: 'completed', succeeded: 4, remaining: 0 }}),
         }}));
         """
@@ -349,6 +349,8 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("Stopped at Case", rendered["stopped"])
         self.assertIn("AC-4", rendered["stopped"])
         self.assertIn("account route request failed", rendered["stopped"])
+        self.assertIn("account_rerun_prepare_failed", rendered["stopped"])
+        self.assertIn("Alert: sent", rendered["stopped"])
         self.assertIn("Completed", rendered["completed"])
         self.assertNotIn("Rerun complete", rendered["stopped"])
         self.assertIn("Resume rerun", rendered["stopped"])

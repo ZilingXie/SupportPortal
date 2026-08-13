@@ -286,6 +286,9 @@ class AccountRoutePipelineTests(unittest.TestCase):
 
         self.assertEqual(result.classification["route_reason_code"], "intent_classifier_invalid_json")
         self.assertEqual(result.classification["stage_failure_types"]["intent_classifier"], "invalid_json")
+        self.assertTrue(result.classification["degraded"])
+        self.assertEqual(result.classification["degradation_stage"], "intent_classifier")
+        self.assertEqual(result.classification["degradation_reason_code"], "invalid_intent_output")
         self.assertEqual(result.classification["stage_attempt_counts"]["intent_classifier"], 2)
 
     def test_agora_prompt_prioritizes_legal_compliance_complaints_over_evidence_commands(self) -> None:

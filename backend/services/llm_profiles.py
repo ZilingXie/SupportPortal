@@ -308,6 +308,7 @@ def resolve_model_profile(
             model=_clean_text(os.getenv("ACCOUNT_ROUTE_MODEL")) or "gpt-5.6-luna",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
+            base_url=_clean_text(os.getenv("ACCOUNT_ROUTE_BASE_URL")) or None,
             reasoning_effort=_clean_text(os.getenv("ACCOUNT_ROUTE_REASONING_EFFORT")) or "xhigh",
             temperature=None,
             timeout_seconds=_safe_positive_float_env("ACCOUNT_ROUTE_TIMEOUT_SECONDS", 120.0),

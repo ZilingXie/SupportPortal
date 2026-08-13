@@ -1558,6 +1558,9 @@ class TicketRepository(Protocol):
     def storage_mode(self) -> str:
         ...
 
+    def account_rerun_preflight(self) -> dict[str, Any]:
+        ...
+
     def exists(self, ticket_id: str) -> bool:
         ...
 
@@ -3742,6 +3745,9 @@ class InMemoryTicketRepository:
 
     def storage_mode(self) -> str:
         return "memory"
+
+    def account_rerun_preflight(self) -> dict[str, Any]:
+        return {"status": "passed", "mode": "memory"}
 
     def exists(self, ticket_id: str) -> bool:
         return ticket_id in self._tickets
@@ -6255,6 +6261,17 @@ class PostgresTicketRepository:
 
     def storage_mode(self) -> str:
         return "postgres"
+
+    def account_rerun_preflight(self) -> dict[str, Any]:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                row = cur.fetchone()
+            if not row or int(row[0]) != 1:
+                raise RuntimeError("ticket db SELECT 1 returned an invalid result")
+            return {"status": "passed", "mode": "postgres", "query": "SELECT 1"}
+
+        return self._run_with_connection_retry("account_rerun_preflight", _operation)
 
     def _table(self, table_name: str) -> sql.Identifier:
         return sql.Identifier(self._schema, table_name)

@@ -235,8 +235,9 @@ def _responses_request(
         payload["temperature"] = temperature
     if extra_payload:
         payload.update(extra_payload)
+    base_url = (profile.base_url or "https://api.openai.com/v1").rstrip("/")
     return urllib.request.Request(
-        "https://api.openai.com/v1/responses",
+        f"{base_url}/responses",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         method="POST",
         headers={

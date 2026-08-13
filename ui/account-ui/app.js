@@ -1844,7 +1844,7 @@ function renderRerouteStatus() {
   const failed = Number(job.failed || 0);
   const recovered = Number(job.recovered || 0);
   const statusLabel = String(job.status || "") === "failed"
-    && String(job.stop_reason || "") === "preflight_failed"
+    && ["preflight_failed", "preflight_degraded"].includes(String(job.stop_reason || ""))
     ? "Preflight failed"
     : String(job.status || "") === "failed" || String(job.status || "") === "completed_with_errors"
       ? "Stopped at Case"
@@ -1865,6 +1865,8 @@ function renderRerouteStatus() {
   const failureReason = failedPreflightCheck
     ? `${failedPreflightCheck[0]}: ${String(failedPreflightCheck[1]?.reason || "failed")}`
     : stopError;
+  const alertStatus = String(job.alert_status || "").trim();
+  const failedReasonCode = String(job.failed_reason_code || "").trim();
   const resumeButton = Boolean(
     !isActiveRerouteJob(job)
     && (String(job.status || "") === "failed" || String(job.status || "") === "completed_with_errors")
@@ -1877,6 +1879,8 @@ function renderRerouteStatus() {
       <strong>${escapeHtml(statusLabel)}</strong>
       ${stopDetails ? `<span>${escapeHtml(stopDetails)}</span>` : ""}
       ${failureReason ? `<span>${escapeHtml(failureReason)}</span>` : ""}
+      ${failedReasonCode ? `<span>Reason: ${escapeHtml(failedReasonCode)}</span>` : ""}
+      ${alertStatus ? `<span>Alert: ${escapeHtml(alertStatus)}</span>` : ""}
       <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${remaining} unprocessed${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
       ${resumeButton}
     </div>

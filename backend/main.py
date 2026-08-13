@@ -178,7 +178,7 @@ from backend.services.account_route_pipeline import (
     classification_for_corrected_route,
     decide_account_route,
 )
-from backend.services.account_ai_execution import AccountProcessingFailure
+from backend.services.account_ai_execution import AccountProcessingFailure, AccountRerunDegradedError
 from backend.services.account_failure_alerts import notify_account_failure
 from backend.services.account_case_filters import (
     account_case_filter_definitions,
@@ -3868,6 +3868,9 @@ def _route_error_fields(
 
 def _route_diagnostic_fields(classification: dict[str, Any]) -> dict[str, Any]:
     return {
+        "degraded": bool(classification.get("degraded")),
+        "degradation_stage": classification.get("degradation_stage"),
+        "degradation_reason_code": classification.get("degradation_reason_code"),
         "execution_reason_code": classification.get("execution_reason_code"),
         "route_failure_family": classification.get("route_failure_family"),
         "stage_failure_types": dict(classification.get("stage_failure_types") or {}),
@@ -4013,7 +4016,10 @@ _ACCOUNT_CASE_SUMMARY_FIELDS = (
     "primary_label",
     "secondary_label",
         "route_reason_code",
-        "execution_reason_code",
+    "execution_reason_code",
+    "degraded",
+    "degradation_stage",
+    "degradation_reason_code",
     "route_failure_family",
     "stage_failure_types",
     "stage_failure_sources",
@@ -5397,6 +5403,9 @@ def _public_account_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("failed_stage", None)
     normalized.setdefault("stop_reason", None)
     normalized.setdefault("stop_error", None)
+    normalized.setdefault("failed_reason_code", None)
+    normalized.setdefault("degraded", False)
+    normalized.setdefault("alert_status", None)
     normalized.setdefault("checkpoint", None)
     normalized.setdefault("retry_mode", None)
     normalized.setdefault("frozen_case_ids", list(normalized.get("target_case_ids") or []))
@@ -5822,6 +5831,9 @@ async def _enqueue_account_rerun_job(
         "failed_stage": None,
         "stop_reason": None,
         "stop_error": None,
+        "failed_reason_code": None,
+        "degraded": False,
+        "alert_status": None,
         "remaining_case_ids": list(normalized_targets),
         "remaining": len(normalized_targets),
         "checkpoint": None,
@@ -6242,16 +6254,41 @@ async def _run_account_full_reroute_job(
             _account_rerun_refresh_remaining(job)
             job["updated_at"] = now_iso()
             await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
-            preflight = await _account_reroute_sync_call(run_account_rerun_preflight)
+            try:
+                preflight = await _account_reroute_sync_call(
+                    run_account_rerun_preflight,
+                    storage=ticket_repository,
+                )
+            except TypeError as exc:
+                # Keep compatibility with test adapters and older worker wrappers;
+                # the production preflight receives the live repository.
+                if "unexpected keyword argument 'storage'" not in str(exc):
+                    raise
+                preflight = await _account_reroute_sync_call(run_account_rerun_preflight)
             if not preflight.ok:
                 failed_at = now_iso()
+                preflight_reason = _sanitize_account_rerun_error(preflight.reason)
+                failed_check = next(
+                    ((name, value) for name, value in (getattr(preflight, "checks", {}) or {}).items()
+                     if isinstance(value, dict) and value.get("status") != "passed"),
+                    ("preflight", {"reason": preflight_reason}),
+                )
+                alert_status = await _notify_account_rerun_failure(
+                    job=job,
+                    stage="preflight",
+                    code=str(failed_check[1].get("reason") or preflight_reason),
+                    detail=str(failed_check[1].get("error") or preflight_reason),
+                )
                 job.update(
                     status="failed",
                     phase="Preflight",
-                    error=_sanitize_account_rerun_error(preflight.reason),
+                    error=preflight_reason,
                     failed_stage="preflight",
-                    stop_reason="preflight_failed",
-                    stop_error=_sanitize_account_rerun_error(preflight.reason),
+                    failed_reason_code=str(failed_check[1].get("reason") or preflight_reason),
+                    stop_reason="preflight_degraded",
+                    stop_error=preflight_reason,
+                    degraded=True,
+                    alert_status=alert_status,
                     preflight=preflight.as_dict(),
                     completed_at=failed_at,
                     updated_at=failed_at,
@@ -6290,6 +6327,7 @@ async def _run_account_full_reroute_job(
             case_handler_status = ""
             case_failed = False
             case_failure_error = ""
+            caught_exception: Exception | None = None
             try:
                 retry_case_mode = str(
                     (job.get("retry_case_modes") or {}).get(case_id)
@@ -6369,7 +6407,10 @@ async def _run_account_full_reroute_job(
                         rerun_email_payload,
                         job_id,
                     )
-                    result.internal_email_to_send = rerun_email_payload
+                    result = replace(
+                        result,
+                        internal_email_to_send=rerun_email_payload,
+                    )
                     updated_case["internal_email_payload"] = dict(rerun_email_payload)
                     updated_case["internal_email_send_status"] = "pending"
                     updated_case["internal_email_send_reason"] = "full_rerun_requested"
@@ -6435,12 +6476,16 @@ async def _run_account_full_reroute_job(
                 job["handler_counts"][case_handler_status] = int(job["handler_counts"].get(case_handler_status) or 0) + 1
                 job["succeeded"] += 1
             except Exception as exc:
+                caught_exception = exc
                 LOGGER.exception("Account full reroute failed for %s", case_id)
                 if isinstance(exc, AccountRerunRevisionConflictError):
                     case_stage = "revision_conflict"
                 elif isinstance(exc, _AccountRerunSideEffectError):
                     case_stage = exc.stage
-                if isinstance(exc, AccountProcessingFailure):
+                if isinstance(exc, AccountRerunDegradedError):
+                    case_stage = exc.degradation_stage
+                    case_failure_error = _sanitize_account_rerun_error(exc.degradation_reason_code)
+                elif isinstance(exc, AccountProcessingFailure):
                     case_stage = exc.stage
                     try:
                         await _persist_account_processing_failure(
@@ -6490,12 +6535,28 @@ async def _run_account_full_reroute_job(
                     job["failed_stage"] = case_stage
                     job["stop_reason"] = "case_failed"
                     job["stop_error"] = case_failure_error or "account case rerun failed"
+                    if isinstance(caught_exception, AccountRerunDegradedError):
+                        job["degraded"] = True
+                        job["stop_reason"] = "case_degraded"
+                        job["failed_reason_code"] = caught_exception.degradation_reason_code
+                        job["alert_status"] = await _notify_account_rerun_failure(
+                            job=job,
+                            stage=caught_exception.degradation_stage,
+                            code=caught_exception.degradation_reason_code,
+                            account_case_id=case_id,
+                            ticket_id=client_ticket_id,
+                            detail=caught_exception.detail,
+                        )
+                    checkpoint_committed = not (
+                        isinstance(caught_exception, AccountRerunDegradedError)
+                        or case_stage in {"prepare", "preflight", "revision_conflict"}
+                    )
                     job["retry_mode"] = _account_rerun_failure_retry_mode(case_stage, case_failure_error)
                     job["checkpoint"] = {
                         "case_id": case_id,
                         "stage": case_stage,
                         "retry_mode": job["retry_mode"],
-                        "committed": case_stage not in {"prepare", "revision_conflict"},
+                        "committed": checkpoint_committed,
                     }
                 job["processed"] = int(job.get("succeeded") or 0) + int(job.get("failed") or 0)
                 _account_rerun_refresh_remaining(job)
@@ -6522,10 +6583,10 @@ async def _run_account_full_reroute_job(
                         )
                     job.update(
                         status="failed",
-                        phase="Failed",
+                        phase="Stopped at Case",
                         error=case_failure_error or "account case rerun failed",
                         failed_case_id=case_id,
-                        stop_reason="case_failed",
+                        stop_reason=job.get("stop_reason") or "case_failed",
                         audit_persistence_failed=audit_persistence_failed,
                         completed_at=failed_at,
                         updated_at=failed_at,
@@ -7138,6 +7199,55 @@ async def _persist_account_processing_failure(
         except Exception:
             LOGGER.exception("Could not mark Account idempotency request failed: %s", idempotency_key)
     return result
+
+
+def _account_rerun_alert_status(result: dict[str, Any] | None) -> str:
+    status = str((result or {}).get("status") or "unknown").strip().lower()
+    return status or "unknown"
+
+
+async def _notify_account_rerun_failure(
+    *,
+    job: dict[str, Any],
+    stage: str,
+    code: str,
+    account_case_id: str | None = None,
+    ticket_id: str | None = None,
+    detail: Any = "",
+) -> str:
+    incident_id = (
+        f"account-rerun:{str(job.get('job_id') or 'unknown').strip()}:"
+        f"{str(account_case_id or 'job').strip()}:{str(stage or 'unknown').strip()}"
+    )
+    succeeded = int(job.get("succeeded") or 0)
+    failed = int(job.get("failed") or 0)
+    processed = max(int(job.get("processed") or 0), succeeded + failed)
+    total = int(job.get("total") or 0)
+    alert = await _account_rerun_storage_call(
+        notify_account_failure,
+        repository=ticket_repository,
+        incident_id=incident_id,
+        stage=stage,
+        code=code,
+        ticket_id=ticket_id,
+        account_case_id=account_case_id,
+        job_id=str(job.get("job_id") or "").strip() or None,
+        attempts=1,
+        detail=detail,
+        summary={
+            "build_ref": str(job.get("build_ref") or "unknown").strip() or "unknown",
+            "status": "failed",
+            "degraded": True,
+            "processed": processed,
+            "succeeded": succeeded,
+            "failed": failed,
+            "remaining": max(0, total - processed),
+            "failed_case_id": account_case_id or job.get("failed_case_id"),
+            "failed_stage": stage,
+        },
+        now=now_iso(),
+    )
+    return _account_rerun_alert_status(alert)
 
 
 @app.post("/account")

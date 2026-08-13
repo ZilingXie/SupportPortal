@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import re
 from typing import Any, Callable
 
 from backend.repositories.ticket_repository import account_case_upsert_contract
@@ -12,6 +14,8 @@ from backend.services.account_route_pipeline import (
     ACCOUNT_INTENT_PROMPT_KEY,
 )
 from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO, resolve_model_profile
+from backend.services.account_ai_execution import account_profile, account_profile_has_primary_credentials
+from backend.services.llm_factory import invoke_responses_text
 from backend.services.prompt_runtime import resolve_system_prompt, prompt_runtime_info
 from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
@@ -41,6 +45,18 @@ _PROMPTS: tuple[tuple[str, str, Callable[[], str]], ...] = (
 )
 
 
+def _safe_preflight_error(value: Any, *, limit: int = 240) -> str:
+    message = " ".join(str(value or "").split())
+    message = re.sub(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", "<redacted-email>", message, flags=re.I)
+    message = re.sub(
+        r"(?i)\b(app[_ -]?id|token|secret|password|authorization)\s*[:=]\s*[^,;\s]+",
+        r"\1=<redacted>",
+        message,
+    )
+    message = re.sub(r"\b(?:bearer\s+)?[A-Za-z0-9_-]{28,}\b", "<redacted-token>", message, flags=re.I)
+    return message[:limit] or "preflight failed"
+
+
 def _check_sql_contract() -> dict[str, Any]:
     contract = account_case_upsert_contract()
     return {"status": "passed" if contract["consistent"] else "failed", **contract}
@@ -63,9 +79,9 @@ def _check_prompt_runtime() -> dict[str, Any]:
     }
 
 
-def _check_account_model_profile() -> dict[str, Any]:
+def _check_account_model_profile(*, require_credentials: bool = True) -> dict[str, Any]:
     profile = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
-    if not profile.has_invocation_credentials():
+    if require_credentials and not profile.has_invocation_credentials():
         return {"status": "failed", "reason": "model_unavailable", "scenario": profile.scenario}
     if str(profile.model or "").strip() != "gpt-5.6-luna":
         return {
@@ -92,17 +108,58 @@ def _check_account_model_profile() -> dict[str, Any]:
     }
 
 
-def run_account_rerun_preflight() -> AccountRerunPreflightResult:
+def _check_storage_connectivity(storage: Any | None) -> dict[str, Any]:
+    """Run a read-only storage canary when the live Account repository is available."""
+    if storage is None:
+        return {"status": "passed", "mode": "not_requested"}
+    check = getattr(storage, "account_rerun_preflight", None)
+    if not callable(check):
+        return {"status": "failed", "reason": "storage_preflight_unsupported"}
+    try:
+        result = check()
+    except Exception as exc:
+        return {"status": "failed", "reason": "storage_unavailable", "error": _safe_preflight_error(exc)}
+    if isinstance(result, dict):
+        return result
+    return {"status": "passed" if result is True else "failed", "reason": None if result is True else "storage_preflight_failed"}
+
+
+def _check_llm_canary() -> dict[str, Any]:
+    profile = account_profile(resolve_model_profile(ACCOUNT_ROUTE_SCENARIO))
+    if not account_profile_has_primary_credentials(profile):
+        return {"status": "failed", "reason": "model_unavailable"}
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt="Account rerun preflight. Return JSON only.",
+            user_prompt='Return exactly {"ok":true}.',
+            extra_payload={"text": {"format": {"type": "json_object"}}},
+        )
+        payload = json.loads(str(response.text or ""))
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            return {"status": "failed", "reason": "invalid_json_response"}
+    except Exception as exc:
+        return {"status": "failed", "reason": "llm_canary_failed", "error": _safe_preflight_error(exc)}
+    return {"status": "passed", "scenario": profile.scenario, "model": profile.model, "reasoning_effort": profile.reasoning_effort, "temperature": profile.temperature}
+
+
+def run_account_rerun_preflight(
+    *,
+    canary: Callable[[], dict[str, Any]] | None = None,
+    storage: Any | None = None,
+) -> AccountRerunPreflightResult:
     checks: dict[str, dict[str, Any]] = {}
     for name, check in (
+        ("storage", lambda: _check_storage_connectivity(storage)),
         ("postgresql", _check_sql_contract),
         ("prompt_runtime", _check_prompt_runtime),
-        ("account_model", _check_account_model_profile),
+        ("account_model", lambda: _check_account_model_profile(require_credentials=canary is None)),
+        ("llm_canary", canary or _check_llm_canary),
     ):
         try:
             checks[name] = check()
         except Exception as exc:
-            checks[name] = {"status": "failed", "reason": str(exc)[:200]}
+            checks[name] = {"status": "failed", "reason": _safe_preflight_error(exc, limit=200)}
     failed = next((name for name, value in checks.items() if value.get("status") != "passed"), None)
     return AccountRerunPreflightResult(
         ok=failed is None,

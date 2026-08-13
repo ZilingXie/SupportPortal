@@ -965,6 +965,7 @@ def _result(
         for name, attempt in attempts.items()
         if attempt.failure_source
     }
+    failure_types = dict(classification.get("stage_failure_types") or {})
     failure_families = {
         "intent_classifier": "invalid_intent_output",
         "agora_router": "invalid_agora_output",
@@ -988,6 +989,17 @@ def _result(
                     f"{stage_name}_{attempt.failure_type}",
                 )
             break
+    classification["degraded"] = bool(failure_types)
+    if failure_types:
+        first_stage, first_failure = next(iter(failure_types.items()))
+        classification["degradation_stage"] = str(first_stage)
+        classification["degradation_reason_code"] = str(
+            classification.get("route_failure_family")
+            or f"{first_stage}_{first_failure}"
+        )
+    else:
+        classification["degradation_stage"] = None
+        classification["degradation_reason_code"] = None
     classification.setdefault(
         "route_reason_code",
         next(reversed(stage_reason_codes.values()), "legacy_reason_unavailable"),
