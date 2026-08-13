@@ -66,3 +66,37 @@ def test_failed_alert_claim_can_be_retried():
     )
     assert first["status"] == "delivery_failed"
     assert second["status"] == "sent"
+
+
+def test_account_rerun_alert_includes_redacted_summary():
+    repository = InMemoryTicketRepository()
+    sent = []
+
+    notify_account_failure(
+        repository=repository,
+        incident_id="rerun-incident",
+        stage="preflight",
+        code="llm_canary_failed",
+        job_id="account-rerun-job",
+        detail="model request failed for customer@example.com token=secret-token-value",
+        summary={
+            "build_ref": "build-123",
+            "status": "failed",
+            "degraded": True,
+            "processed": 1,
+            "succeeded": 0,
+            "failed": 1,
+            "remaining": 146,
+            "failed_case_id": "AC-SYNTH-001",
+            "failed_stage": "preflight",
+        },
+        mail_sender=lambda **kwargs: sent.append(kwargs),
+        now="2026-08-13T00:00:00Z",
+    )
+
+    body = sent[0]["body"]
+    assert "Rerun summary:" in body
+    assert "Processed: 1" in body
+    assert "Remaining: 146" in body
+    assert "customer@example.com" not in body
+    assert "secret-token-value" not in body

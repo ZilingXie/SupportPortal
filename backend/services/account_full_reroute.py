@@ -7,6 +7,7 @@ from typing import Any, Callable
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
+from backend.services.account_ai_execution import AccountProcessingFailure, AccountRerunDegradedError
 from backend.services.account_billing_handlers import account_billing_handler
 from backend.services.account_case_reroute import AccountCaseReroute, reroute_account_case
 from backend.services.account_suspension_field_extractor import (
@@ -71,12 +72,53 @@ def prepare_account_case_rerun(
         if key in ticket
     }
     customer_only_ticket["messages"] = _customer_messages(ticket)
-    result = (processor or reprocess_account_case)(
-        account_case,
-        ticket=customer_only_ticket,
-        fresh=fresh,
-        **kwargs,
-    )
+    try:
+        result = (processor or reprocess_account_case)(
+            account_case,
+            ticket=customer_only_ticket,
+            fresh=fresh,
+            **kwargs,
+        )
+    except AccountRerunDegradedError:
+        raise
+    except AccountProcessingFailure as exc:
+        raise AccountRerunDegradedError(
+            f"account_rerun_{exc.code}",
+            exc.detail,
+            stage=exc.stage,
+            source="account_route_or_extractor",
+        ) from exc
+    except Exception as exc:
+        # Prepare is the read-only model/extractor boundary. Any unexpected
+        # failure here must fail closed before Commit and be visible to the
+        # rerun operator instead of becoming a normal Human Review result.
+        raise AccountRerunDegradedError(
+            "account_rerun_prepare_failed",
+            type(exc).__name__,
+            stage="prepare",
+            source="account_route_or_extractor",
+        ) from exc
+
+    classification = result.account_case.get("route_classification")
+    if isinstance(classification, dict):
+        failure_types = classification.get("stage_failure_types")
+        degraded = bool(classification.get("degraded"))
+        failure_family = str(classification.get("route_failure_family") or "").strip()
+        if isinstance(failure_types, dict) and failure_types:
+            stage, failure_type = next(iter(failure_types.items()))
+            raise AccountRerunDegradedError(
+                f"account_rerun_{stage}_{failure_type}",
+                f"{stage}: {failure_type}",
+                stage=str(stage),
+                source=str(classification.get("stage_failure_sources", {}).get(stage) or stage),
+            )
+        if degraded and failure_family:
+            raise AccountRerunDegradedError(
+                f"account_rerun_{failure_family}",
+                failure_family,
+                stage=str(classification.get("degradation_stage") or "account_route"),
+                source="account_route",
+            )
     return AccountRerunPrepared(
         original_case=copy.deepcopy(account_case),
         customer_only_ticket=customer_only_ticket,

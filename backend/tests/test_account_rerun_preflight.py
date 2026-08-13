@@ -14,6 +14,9 @@ class AccountRerunPreflightTests(unittest.TestCase):
         ) as profile, patch(
             "backend.services.account_rerun_preflight.prompt_runtime_info",
             return_value={"release_id": "code-test", "source": "code", "prompt_count": 5},
+        ), patch(
+            "backend.services.account_rerun_preflight._check_llm_canary",
+            return_value={"status": "passed", "model": "gpt-5.6-luna"},
         ):
             profile.return_value = SimpleNamespace(
                 scenario="account_route",
@@ -27,6 +30,14 @@ class AccountRerunPreflightTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.checks["postgresql"]["column_count"], 40)
         self.assertEqual(result.checks["account_model"]["status"], "passed")
+
+    def test_llm_canary_failure_blocks_preflight(self) -> None:
+        result = run_account_rerun_preflight(
+            canary=lambda: {"status": "failed", "reason": "llm_canary_failed"}
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "preflight_llm_canary_failed")
+        self.assertEqual(result.checks["llm_canary"]["reason"], "llm_canary_failed")
 
     def test_unexpected_model_blocks_preflight(self) -> None:
         with patch(

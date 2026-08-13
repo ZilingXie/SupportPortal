@@ -26,6 +26,23 @@ class AccountProcessingFailure(RuntimeError, ValueError):
         super().__init__(message)
 
 
+class AccountRerunDegradedError(AccountProcessingFailure):
+    """Terminal Account rerun degradation that must not commit a Case."""
+
+    def __init__(
+        self,
+        code: str,
+        detail: Any = "",
+        *,
+        stage: str = "account",
+        source: str | None = None,
+    ) -> None:
+        super().__init__(code, detail, stage=stage)
+        self.degradation_reason_code = self.code
+        self.degradation_stage = self.stage
+        self.degradation_source = " ".join(str(source or stage).split())[:120] or self.stage
+
+
 def account_profile(profile: ModelProfile) -> ModelProfile:
     """Pin Account calls to their configured provider and a single model profile."""
     if not isinstance(profile, ModelProfile):

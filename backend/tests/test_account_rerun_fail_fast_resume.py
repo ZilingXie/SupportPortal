@@ -7,9 +7,24 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.account_full_reroute import prepare_account_case_rerun
+from backend.services.account_ai_execution import AccountRerunDegradedError
 
 
 class AccountRerunFailFastResumeTests(unittest.TestCase):
+    def test_prepare_unexpected_failure_is_degraded_before_commit(self) -> None:
+        account_case = {"account_case_id": "AC-PREPARE", "client_ticket_id": "TK-PREPARE"}
+        ticket = {"ticket_id": "TK-PREPARE", "messages": [{"role": "customer", "content": "hello"}]}
+        with self.assertRaises(AccountRerunDegradedError) as context:
+            prepare_account_case_rerun(
+                account_case,
+                ticket=ticket,
+                detail_revision="rev-1",
+                processor=Mock(side_effect=RuntimeError("model unavailable")),
+            )
+        self.assertEqual(context.exception.degradation_reason_code, "account_rerun_prepare_failed")
+        self.assertEqual(context.exception.degradation_stage, "prepare")
+
     def test_email_checkpoint_resume_does_not_route_or_send_twice(self) -> None:
         repository = InMemoryTicketRepository()
         repository.save_ticket({"ticket_id": "TK-EMAIL", "customer_id": "customer@example.com", "messages": []})
