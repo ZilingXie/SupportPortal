@@ -39,6 +39,19 @@ class AccountRerunPreflightTests(unittest.TestCase):
         self.assertEqual(result.reason, "preflight_llm_canary_failed")
         self.assertEqual(result.checks["llm_canary"]["reason"], "llm_canary_failed")
 
+    def test_storage_failure_blocks_preflight_before_case_loop(self) -> None:
+        storage = SimpleNamespace(account_rerun_preflight=lambda: {
+            "status": "failed",
+            "reason": "storage_unavailable",
+        })
+        result = run_account_rerun_preflight(
+            storage=storage,
+            canary=lambda: {"status": "passed"},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "preflight_storage_failed")
+        self.assertEqual(result.checks["storage"]["reason"], "storage_unavailable")
+
     def test_unexpected_model_blocks_preflight(self) -> None:
         with patch(
             "backend.services.account_rerun_preflight.resolve_model_profile"

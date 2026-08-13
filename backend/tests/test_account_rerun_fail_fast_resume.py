@@ -25,6 +25,25 @@ class AccountRerunFailFastResumeTests(unittest.TestCase):
         self.assertEqual(context.exception.degradation_reason_code, "account_rerun_prepare_failed")
         self.assertEqual(context.exception.degradation_stage, "prepare")
 
+    def test_prepare_any_degraded_classification_is_terminal(self) -> None:
+        result = SimpleNamespace(
+            account_case={
+                "account_case_id": "AC-DEGRADED",
+                "route_classification": {"degraded": True},
+            },
+            route_execution={},
+            changed=False,
+            handler_status="human_review",
+        )
+        with self.assertRaises(AccountRerunDegradedError) as context:
+            prepare_account_case_rerun(
+                {"account_case_id": "AC-DEGRADED", "client_ticket_id": "TK-DEGRADED"},
+                ticket={"ticket_id": "TK-DEGRADED", "messages": []},
+                detail_revision="rev-1",
+                processor=Mock(return_value=result),
+            )
+        self.assertEqual(context.exception.degradation_reason_code, "account_route_degraded")
+
     def test_email_checkpoint_resume_does_not_route_or_send_twice(self) -> None:
         repository = InMemoryTicketRepository()
         repository.save_ticket({"ticket_id": "TK-EMAIL", "customer_id": "customer@example.com", "messages": []})
@@ -233,6 +252,8 @@ class AccountRerunSyntheticBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["remaining"], 146)
         self.assertEqual(job["failed_case_id"], "AC-SYNTH-001")
         self.assertEqual(job["failed_stage"], "prepare")
+        self.assertEqual(job["retry_mode"], "prepare")
+        self.assertEqual(job["checkpoint"]["committed"], False)
 
     async def test_synthetic_147_middle_failure_stops_immediately(self) -> None:
         job, processor = await self._run_with_failure_at(73)
@@ -243,6 +264,7 @@ class AccountRerunSyntheticBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["failed"], 1)
         self.assertEqual(job["remaining"], 74)
         self.assertEqual(job["failed_case_id"], "AC-SYNTH-073")
+        self.assertEqual(job["checkpoint"]["committed"], False)
 
     async def test_reply_resume_after_sent_email_has_no_duplicate_side_effects(self) -> None:
         ticket_id = "SYNTH-RESUME"

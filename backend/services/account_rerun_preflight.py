@@ -79,9 +79,9 @@ def _check_prompt_runtime() -> dict[str, Any]:
     }
 
 
-def _check_account_model_profile() -> dict[str, Any]:
+def _check_account_model_profile(*, require_credentials: bool = True) -> dict[str, Any]:
     profile = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
-    if not profile.has_invocation_credentials():
+    if require_credentials and not profile.has_invocation_credentials():
         return {"status": "failed", "reason": "model_unavailable", "scenario": profile.scenario}
     if str(profile.model or "").strip() != "gpt-5.6-luna":
         return {
@@ -108,6 +108,22 @@ def _check_account_model_profile() -> dict[str, Any]:
     }
 
 
+def _check_storage_connectivity(storage: Any | None) -> dict[str, Any]:
+    """Run a read-only storage canary when the live Account repository is available."""
+    if storage is None:
+        return {"status": "passed", "mode": "not_requested"}
+    check = getattr(storage, "account_rerun_preflight", None)
+    if not callable(check):
+        return {"status": "failed", "reason": "storage_preflight_unsupported"}
+    try:
+        result = check()
+    except Exception as exc:
+        return {"status": "failed", "reason": "storage_unavailable", "error": _safe_preflight_error(exc)}
+    if isinstance(result, dict):
+        return result
+    return {"status": "passed" if result is True else "failed", "reason": None if result is True else "storage_preflight_failed"}
+
+
 def _check_llm_canary() -> dict[str, Any]:
     profile = account_profile(resolve_model_profile(ACCOUNT_ROUTE_SCENARIO))
     if not account_profile_has_primary_credentials(profile):
@@ -130,12 +146,14 @@ def _check_llm_canary() -> dict[str, Any]:
 def run_account_rerun_preflight(
     *,
     canary: Callable[[], dict[str, Any]] | None = None,
+    storage: Any | None = None,
 ) -> AccountRerunPreflightResult:
     checks: dict[str, dict[str, Any]] = {}
     for name, check in (
+        ("storage", lambda: _check_storage_connectivity(storage)),
         ("postgresql", _check_sql_contract),
         ("prompt_runtime", _check_prompt_runtime),
-        ("account_model", _check_account_model_profile),
+        ("account_model", lambda: _check_account_model_profile(require_credentials=canary is None)),
         ("llm_canary", canary or _check_llm_canary),
     ):
         try:

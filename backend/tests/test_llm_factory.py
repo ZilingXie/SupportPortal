@@ -6,7 +6,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from backend.services.llm_factory import LlmInvocationError, invoke_chat_text, invoke_responses_text
+from backend.services.llm_factory import LlmInvocationError, _responses_request, invoke_chat_text, invoke_responses_text
 from backend.services.llm_profiles import ModelProfile, OPENAI_CHAT_API, OPENAI_RESPONSES_API
 
 
@@ -25,6 +25,27 @@ class _FakeResponse:
 
 
 class LlmFactoryTests(unittest.TestCase):
+    def test_account_endpoint_override_is_used_only_by_account_profile_request(self) -> None:
+        profile = ModelProfile(
+            scenario="account_route",
+            provider="openai",
+            model="gpt-5.6-luna",
+            api_mode="openai_responses",
+            api_key="test-key",
+            base_url="https://account-gateway.example/v1",
+            reasoning_effort="xhigh",
+            temperature=None,
+        )
+        request = _responses_request(
+            profile=profile,
+            model_name=profile.model,
+            system_prompt="test",
+            user_prompt="test",
+            extra_payload=None,
+            temperature=None,
+        )
+        self.assertEqual(request.full_url, "https://account-gateway.example/v1/responses")
+
     def _profile(self, *, api_mode: str, max_retries: int = 1) -> ModelProfile:
         return ModelProfile(
             scenario="test_scenario",

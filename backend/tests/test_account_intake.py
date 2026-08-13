@@ -1170,7 +1170,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         latest = main._account_full_reroute_job(job["job_id"])
         assert latest is not None
         self.assertEqual(latest["status"], "failed")
-        self.assertEqual(latest["stop_reason"], "case_failed")
+        self.assertEqual(latest["stop_reason"], "case_degraded")
         self.assertEqual(latest["failed_case_id"], "AC-12574")
         audit_events = self.repository.list_workspace_audit_events()
         self.assertEqual(audit_events[0]["event_type"], "account_case_full_rerun_failed")
@@ -1218,7 +1218,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         latest = main._account_full_reroute_job(job["job_id"])
         assert latest is not None
         self.assertEqual(latest["status"], "failed")
-        self.assertEqual(latest["stop_reason"], "case_failed")
+        self.assertEqual(latest["stop_reason"], "case_degraded")
         self.assertEqual(latest["processed"], 1)
         self.assertEqual(latest["failed"], 1)
         self.assertEqual(latest["succeeded"], 0)

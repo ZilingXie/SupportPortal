@@ -50,6 +50,17 @@ class LlmProfileTests(unittest.TestCase):
         self.assertIsNone(account.temperature)
         self.assertEqual(legacy.model, "legacy-model")
         self.assertEqual(legacy.reasoning_effort, "low")
+
+    def test_account_route_profile_accepts_explicit_endpoint_without_affecting_legacy_router(self) -> None:
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "ACCOUNT_ROUTE_BASE_URL": "https://account-gateway.example/v1",
+            "INTENT_ROUTER_MODEL": "legacy-model",
+        }, clear=False):
+            account = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
+            legacy = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+        self.assertEqual(account.base_url, "https://account-gateway.example/v1")
+        self.assertIsNone(legacy.base_url)
     def tearDown(self) -> None:
         clear_config_warnings_for_testing()
 

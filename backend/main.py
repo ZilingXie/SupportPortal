@@ -6254,12 +6254,22 @@ async def _run_account_full_reroute_job(
             _account_rerun_refresh_remaining(job)
             job["updated_at"] = now_iso()
             await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
-            preflight = await _account_reroute_sync_call(run_account_rerun_preflight)
+            try:
+                preflight = await _account_reroute_sync_call(
+                    run_account_rerun_preflight,
+                    storage=ticket_repository,
+                )
+            except TypeError as exc:
+                # Keep compatibility with test adapters and older worker wrappers;
+                # the production preflight receives the live repository.
+                if "unexpected keyword argument 'storage'" not in str(exc):
+                    raise
+                preflight = await _account_reroute_sync_call(run_account_rerun_preflight)
             if not preflight.ok:
                 failed_at = now_iso()
                 preflight_reason = _sanitize_account_rerun_error(preflight.reason)
                 failed_check = next(
-                    ((name, value) for name, value in (preflight.checks or {}).items()
+                    ((name, value) for name, value in (getattr(preflight, "checks", {}) or {}).items()
                      if isinstance(value, dict) and value.get("status") != "passed"),
                     ("preflight", {"reason": preflight_reason}),
                 )
@@ -6317,6 +6327,7 @@ async def _run_account_full_reroute_job(
             case_handler_status = ""
             case_failed = False
             case_failure_error = ""
+            caught_exception: Exception | None = None
             try:
                 retry_case_mode = str(
                     (job.get("retry_case_modes") or {}).get(case_id)
@@ -6462,6 +6473,7 @@ async def _run_account_full_reroute_job(
                 job["handler_counts"][case_handler_status] = int(job["handler_counts"].get(case_handler_status) or 0) + 1
                 job["succeeded"] += 1
             except Exception as exc:
+                caught_exception = exc
                 LOGGER.exception("Account full reroute failed for %s", case_id)
                 if isinstance(exc, AccountRerunRevisionConflictError):
                     case_stage = "revision_conflict"
@@ -6520,24 +6532,28 @@ async def _run_account_full_reroute_job(
                     job["failed_stage"] = case_stage
                     job["stop_reason"] = "case_failed"
                     job["stop_error"] = case_failure_error or "account case rerun failed"
-                    if isinstance(exc, AccountRerunDegradedError):
+                    if isinstance(caught_exception, AccountRerunDegradedError):
                         job["degraded"] = True
                         job["stop_reason"] = "case_degraded"
-                        job["failed_reason_code"] = exc.degradation_reason_code
+                        job["failed_reason_code"] = caught_exception.degradation_reason_code
                         job["alert_status"] = await _notify_account_rerun_failure(
                             job=job,
-                            stage=exc.degradation_stage,
-                            code=exc.degradation_reason_code,
+                            stage=caught_exception.degradation_stage,
+                            code=caught_exception.degradation_reason_code,
                             account_case_id=case_id,
                             ticket_id=client_ticket_id,
-                            detail=exc.detail,
+                            detail=caught_exception.detail,
                         )
+                    checkpoint_committed = not (
+                        isinstance(caught_exception, AccountRerunDegradedError)
+                        or case_stage in {"prepare", "preflight", "revision_conflict"}
+                    )
                     job["retry_mode"] = _account_rerun_failure_retry_mode(case_stage, case_failure_error)
                     job["checkpoint"] = {
                         "case_id": case_id,
                         "stage": case_stage,
                         "retry_mode": job["retry_mode"],
-                        "committed": case_stage not in {"prepare", "revision_conflict"},
+                        "committed": checkpoint_committed,
                     }
                 job["processed"] = int(job.get("succeeded") or 0) + int(job.get("failed") or 0)
                 _account_rerun_refresh_remaining(job)

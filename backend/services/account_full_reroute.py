@@ -112,10 +112,15 @@ def prepare_account_case_rerun(
                 stage=str(stage),
                 source=str(classification.get("stage_failure_sources", {}).get(stage) or stage),
             )
-        if degraded and failure_family:
+        if degraded:
+            reason_code = str(
+                classification.get("degradation_reason_code")
+                or failure_family
+                or "account_route_degraded"
+            ).strip()
             raise AccountRerunDegradedError(
-                f"account_rerun_{failure_family}",
-                failure_family,
+                reason_code,
+                reason_code,
                 stage=str(classification.get("degradation_stage") or "account_route"),
                 source="account_route",
             )
