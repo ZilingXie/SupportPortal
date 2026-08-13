@@ -609,6 +609,26 @@ def _account_case_list_record(item: dict[str, Any]) -> dict[str, Any]:
     return {field: copy.deepcopy(item.get(field)) for field in _ACCOUNT_CASE_LIST_FIELDS}
 
 
+def _canonical_account_revision_timestamp(value: Any) -> str:
+    """Normalize timestamp representations used by the Account rerun token."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        candidate = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return ""
+        candidate = None
+        try:
+            candidate = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+    if candidate.tzinfo is None:
+        candidate = candidate.replace(tzinfo=timezone.utc)
+    return candidate.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
 def _account_case_detail_revision(
     account_case: dict[str, Any],
     ticket: dict[str, Any] | None,
@@ -628,23 +648,33 @@ def _account_case_detail_revision(
             default="",
         )
     parts = (
-        account_case.get("updated_at"),
-        ticket.get("updated_at") if isinstance(ticket, dict) else None,
-        message_count,
-        latest_message_at,
-        latest_reply_job.get("updated_at") if isinstance(latest_reply_job, dict) else None,
-        route_correction.get("updated_at") if isinstance(route_correction, dict) else None,
+        _canonical_account_revision_timestamp(account_case.get("updated_at")),
+        _canonical_account_revision_timestamp(
+            ticket.get("updated_at") if isinstance(ticket, dict) else None
+        ),
+        str(message_count),
+        _canonical_account_revision_timestamp(latest_message_at),
+        _canonical_account_revision_timestamp(
+            latest_reply_job.get("updated_at") if isinstance(latest_reply_job, dict) else None
+        ),
+        _canonical_account_revision_timestamp(
+            route_correction.get("updated_at") if isinstance(route_correction, dict) else None
+        ),
     )
     assignment_identity = {
         field: (
-            _to_iso(persona_assignment.get(field))
+            _canonical_account_revision_timestamp(persona_assignment.get(field))
+            if field == "assigned_at"
+            and isinstance(persona_assignment, dict)
+            and persona_assignment.get(field) is not None
+            else _to_iso(persona_assignment.get(field))
             if isinstance(persona_assignment, dict)
             and persona_assignment.get(field) is not None
             else None
         )
         for field in ("persona_key", "version", "assigned_at", "display_name")
     }
-    material = "|".join(_to_iso(value) if value is not None else "" for value in parts)
+    material = "|".join(parts)
     material += "|" + json.dumps(
         assignment_identity,
         ensure_ascii=False,
@@ -2576,7 +2606,8 @@ class InMemoryTicketRepository:
                 persona_assignment=revision_assignment,
             )
             if (
-                _to_iso(expected_updated_at) != _to_iso(current_case.get("updated_at"))
+                _canonical_account_revision_timestamp(expected_updated_at)
+                != _canonical_account_revision_timestamp(current_case.get("updated_at"))
                 or str(expected_detail_revision or "") != current_revision
             ):
                 raise AccountRerunRevisionConflictError(
@@ -12491,7 +12522,8 @@ class PostgresTicketRepository:
                     latest_message_at=latest_message_at,
                 )
                 if (
-                    _to_iso(expected_updated_at) != _to_iso(current_case.get("updated_at"))
+                    _canonical_account_revision_timestamp(expected_updated_at)
+                    != _canonical_account_revision_timestamp(current_case.get("updated_at"))
                     or str(expected_detail_revision or "") != current_revision
                 ):
                     raise AccountRerunRevisionConflictError(

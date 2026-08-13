@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -10,6 +11,7 @@ from backend.repositories.ticket_repository import (
     PostgresTicketRepository,
     ACCOUNT_CASE_PERSISTED_COLUMNS,
     _account_case_detail_revision,
+    _canonical_account_revision_timestamp,
 )
 from backend.services.account_full_reroute import prepare_account_case_rerun
 
@@ -169,6 +171,58 @@ class AccountRerunAtomicTests(unittest.TestCase):
     def _revision(self) -> str:
         details = self.repository.get_account_case_details([self.case_id])[self.case_id]
         return str(details["detail_revision"])
+
+    def test_revision_timestamp_canonicalization_treats_equivalent_values_as_equal(self) -> None:
+        self.assertEqual(
+            _canonical_account_revision_timestamp("2026-08-12T00:00:00.30088+00:00"),
+            "2026-08-12T00:00:00.300880+00:00",
+        )
+        self.assertEqual(
+            _canonical_account_revision_timestamp("2026-08-12T00:00:00.300880Z"),
+            _canonical_account_revision_timestamp(
+                datetime(2026, 8, 12, 0, 0, 0, 300880, tzinfo=timezone.utc)
+            ),
+        )
+        self.assertNotEqual(
+            _canonical_account_revision_timestamp("2026-08-12T00:00:00.300880+00:00"),
+            _canonical_account_revision_timestamp("2026-08-12T00:00:00.300881+00:00"),
+        )
+
+    def test_revision_hash_uses_canonical_timestamp_values(self) -> None:
+        account_case = {"updated_at": "2026-08-12T00:00:00.30088+00:00"}
+        ticket = {
+            "updated_at": "2026-08-12T00:00:00.30088+00:00",
+            "messages": [{"created_at": "2026-08-12T00:00:00.30088+00:00"}],
+        }
+        equivalent_ticket = {
+            "updated_at": datetime(2026, 8, 12, 0, 0, 0, 300880, tzinfo=timezone.utc),
+            "messages": [{"created_at": datetime(2026, 8, 12, 0, 0, 0, 300880, tzinfo=timezone.utc)}],
+        }
+        self.assertEqual(
+            _account_case_detail_revision(account_case, ticket, None, None),
+            _account_case_detail_revision(account_case, equivalent_ticket, None, None),
+        )
+
+    def test_in_memory_commit_accepts_equivalent_updated_at_format(self) -> None:
+        case = self.repository.get_account_case(self.case_id)
+        case["updated_at"] = "2026-08-12T00:00:00.300880+00:00"
+        self.repository.save_account_case(case)
+        details = self.repository.get_account_case_details([self.case_id])[self.case_id]
+        result = self.repository.commit_account_case_rerun(
+            account_case_id=self.case_id,
+            ticket_id=self.ticket_id,
+            prepared_case={**case, "route": "quota"},
+            route_execution={"ticket_id": self.ticket_id, "trigger": "single_case_rerun"},
+            expected_updated_at="2026-08-12T00:00:00.30088+00:00",
+            expected_detail_revision=details["detail_revision"],
+            rerun_job_id="rerun-equivalent-time",
+            committed_at="2026-08-12T01:00:00+00:00",
+        )
+        self.assertEqual(result["account_case"]["updated_at"], "2026-08-12T01:00:00+00:00")
+        self.assertEqual(
+            self.repository.list_account_route_executions(self.ticket_id)[-1]["trigger"],
+            "single_case_rerun",
+        )
 
     def test_prepare_is_customer_only_and_has_zero_repository_side_effects(self) -> None:
         original_case = self.repository.get_account_case(self.case_id)

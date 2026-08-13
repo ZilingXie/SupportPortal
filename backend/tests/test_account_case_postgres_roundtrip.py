@@ -10,7 +10,10 @@ if importlib.util.find_spec("psycopg") is None:
 
 import psycopg
 
-from backend.repositories.ticket_repository import PostgresTicketRepository
+from backend.repositories.ticket_repository import (
+    AccountRerunRevisionConflictError,
+    PostgresTicketRepository,
+)
 
 
 @unittest.skipUnless(
@@ -48,6 +51,7 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                     "question": "Please verify the write contract.",
                     "automation_status": "not_automated",
                     "route_status": "not_automated",
+                    "updated_at": "2026-08-12T00:00:00.300880+00:00",
                 }
             )
             repository.save_account_case(
@@ -62,6 +66,7 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                     "route_status": "automated",
                     "route_family": "automated",
                     "execution_action": "enablement",
+                    "updated_at": "2026-08-12T00:00:00.300880+00:00",
                 }
             )
             saved = repository.get_account_case("AC-CONTRACT-ROUNDTRIP")
@@ -69,6 +74,39 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             self.assertEqual(saved["title"], "Account Case contract updated")
             self.assertEqual(saved["route_status"], "automated")
             self.assertEqual(saved["execution_action"], "enablement")
+
+            details = repository.get_account_case_details(["AC-CONTRACT-ROUNDTRIP"])["AC-CONTRACT-ROUNDTRIP"]
+            committed = repository.commit_account_case_rerun(
+                account_case_id="AC-CONTRACT-ROUNDTRIP",
+                ticket_id="T-CONTRACT-ROUNDTRIP",
+                prepared_case={**saved, "title": "Account Case rerun committed"},
+                route_execution={"ticket_id": "T-CONTRACT-ROUNDTRIP", "trigger": "single_case_rerun"},
+                expected_updated_at="2026-08-12T00:00:00.30088+00:00",
+                expected_detail_revision=details["detail_revision"],
+                rerun_job_id="rerun-contract-roundtrip",
+                committed_at="2026-08-12T01:00:00+00:00",
+            )
+            self.assertEqual(committed["account_case"]["title"], "Account Case rerun committed")
+            self.assertEqual(
+                repository.list_account_route_executions("T-CONTRACT-ROUNDTRIP")[-1]["trigger"],
+                "single_case_rerun",
+            )
+
+            current = repository.get_account_case("AC-CONTRACT-ROUNDTRIP")
+            self.assertIsNotNone(current)
+            conflict_details = repository.get_account_case_details(["AC-CONTRACT-ROUNDTRIP"])["AC-CONTRACT-ROUNDTRIP"]
+            repository.save_account_case({**current, "updated_at": "2026-08-12T01:00:00.300881+00:00"})
+            with self.assertRaises(AccountRerunRevisionConflictError):
+                repository.commit_account_case_rerun(
+                    account_case_id="AC-CONTRACT-ROUNDTRIP",
+                    ticket_id="T-CONTRACT-ROUNDTRIP",
+                    prepared_case=current,
+                    route_execution={"ticket_id": "T-CONTRACT-ROUNDTRIP", "trigger": "single_case_rerun"},
+                    expected_updated_at=conflict_details["account_case"]["updated_at"],
+                    expected_detail_revision=conflict_details["detail_revision"],
+                    rerun_job_id="rerun-contract-conflict",
+                    committed_at="2026-08-12T02:00:00+00:00",
+                )
         finally:
             repository.close()
             with psycopg.connect(dsn, autocommit=True) as connection:
