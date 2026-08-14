@@ -171,6 +171,7 @@ from backend.services.account_reply_jobs import (
 )
 from backend.services.automation_persona import (
     AutomationPersonaError,
+    build_account_automation_reply_facts,
     build_automation_reply_facts,
     extract_automation_resolution_facts,
     render_automation_reply,
@@ -638,8 +639,19 @@ def _automation_reply_facts(
     submitted: bool = False,
     resolution_facts: list[str] | None = None,
     customer_name: str | None = None,
+    account_scope: bool = False,
 ) -> dict[str, Any]:
     """Build Persona input without making the Behavior layer write customer copy."""
+    if account_scope:
+        return build_account_automation_reply_facts(
+            handler=handler,
+            action=action,
+            missing_fields=missing_fields,
+            collected_fields=collected_fields,
+            submitted=submitted,
+            resolution_facts=resolution_facts,
+            customer_name=customer_name,
+        )
     if submitted:
         return build_automation_reply_facts(
             behavior=action or handler,
@@ -4350,6 +4362,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 collected_fields=collected_fields,
                 submitted=bool(automation_attempt.get("internal_email_to_send")),
                 customer_name=customer_name,
+                account_scope=True,
             )
             internal_email_payload = automation_attempt["internal_email_payload"]
             internal_email_send_status = str(automation_attempt["internal_email_send_status"])
@@ -4495,6 +4508,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 collected_fields=collected_fields,
                 submitted=True,
                 customer_name=customer_name,
+                account_scope=True,
             )
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -4539,6 +4553,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 collected_fields=collected_fields,
                 submitted=True,
                 customer_name=customer_name,
+                account_scope=True,
             )
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -4586,6 +4601,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 collected_fields=collected_fields,
                 submitted=True,
                 customer_name=customer_name,
+                account_scope=True,
             )
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -5343,6 +5359,7 @@ async def _resume_account_rerun_side_effect(
             collected_fields=dict(account_case.get("collected_fields") or {}),
             submitted=bool(account_case.get("internal_email_payload")),
             customer_name=str(ticket.get("customer_name") or "").strip() or None,
+            account_scope=True,
         )
         reply_job = await _account_rerun_storage_call(
             _create_account_reply_job,
@@ -7868,6 +7885,7 @@ async def _reply_to_billing_ticket_impl(
             collected_fields=collected_fields,
             submitted=bool(automation_attempt.get("internal_email_to_send")),
             customer_name=str(billing_ticket.get("customer_name") or ""),
+            account_scope=True,
         )
         current_classification = (
             dict(billing_ticket.get("route_classification"))
@@ -7927,6 +7945,7 @@ async def _reply_to_billing_ticket_impl(
                 collected_fields=collected_fields,
                 submitted=True,
                 customer_name=str(billing_ticket.get("customer_name") or ""),
+                account_scope=True,
             )
             reply_ready = True
         billing_ticket["updated_at"] = now_iso()

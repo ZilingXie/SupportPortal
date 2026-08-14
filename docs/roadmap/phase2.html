@@ -525,6 +525,13 @@
       line-height: 1.55;
     }
 
+    .reply-contract-flow {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-top: 18px;
+    }
+
+    .reply-contract-flow .flow-step { min-height: 132px; }
+
     .scope-note {
       display: grid;
       grid-template-columns: 180px 1fr;
@@ -701,7 +708,7 @@
         </details>
 
         <details class="delivery-group" data-status-group="complete">
-          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>21 项</span></summary>
+          <summary><span class="group-heading">已完成功能<small>默认折叠 · 展开查看交付记录与 PR</small></span><span>22 项</span></summary>
           <div class="delivery-group-body">
         <article class="delivery-row" data-category="automation" data-status="done">
           <div class="delivery-category">Automation Scope</div>
@@ -815,6 +822,20 @@
           <div class="delivery-category">Reliability</div>
           <div class="delivery-main"><h3>Bootstrap Admin upsert 修复</h3><p>修复独立 PostgreSQL migration 环境中的冲突列歧义，确保首次 Admin 建立、后续 upsert 与 audit 可执行。</p></div>
           <div class="pr-links"><a class="pr-link" href="https://github.com/ZilingXie/SupportPortal/pull/612">PR #612</a></div>
+        </article>
+        <article class="delivery-row" data-category="automation" data-status="done">
+          <div class="delivery-category">Automation Scope</div>
+          <div class="delivery-main">
+            <h3>Automation 回复状态契约与 Ownership</h3>
+            <p>所有注册的 <code>/account</code> Automation 共用同一套客户回复状态契约。Support Engineer 始终是客户联系人，内部团队只作为协作方；Prompt 由 LLM 根据上下文生成，禁止把客户交给内部团队直接跟进。</p>
+            <div class="flow reply-contract-flow" aria-label="Automation customer reply state contract">
+              <div class="flow-step"><span>01</span><strong>request_missing_information</strong><p>说明缺少信息；收到后由 Support Engineer 继续推进，不虚构内部审核已开始。</p></div>
+              <div class="flow-step"><span>02</span><strong>submission_confirmation</strong><p>说明 Support Engineer 正在与内部团队协调，并承诺有进展时主动更新客户。</p></div>
+              <div class="flow-step"><span>03</span><strong>resolution_update</strong><p>内部结果已返回时直接说明结果；仍在处理中时由 Support Engineer 继续跟进。</p></div>
+            </div>
+          </div>
+          <div class="status-meta"><span class="status-chip done">已完成</span></div>
+          <div class="pr-links"><span class="pr-link">Current implementation</span></div>
         </article>
           </div>
         </details>
