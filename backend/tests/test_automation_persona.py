@@ -135,7 +135,7 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text="We have submitted your Media Relay request for internal review.",
+            text="I have started coordinating your Media Relay request with our internal team, and I will keep you updated.",
             model_name="persona-model",
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -144,6 +144,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result = render_automation_reply(
                 reply_facts=facts,
                 persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                account_scope=True,
             )
 
         user_prompt = invoke.call_args.kwargs["user_prompt"]
@@ -164,7 +165,10 @@ class AutomationPersonaTests(unittest.TestCase):
             customer_name="jack Gold",
         )
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        response = SimpleNamespace(text="Could you share the Transaction ID?", model_name="persona-model")
+        response = SimpleNamespace(
+            text="Could you share the Transaction ID? Once I have it, I will continue coordinating the request.",
+            model_name="persona-model",
+        )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ) as invoke:
@@ -177,6 +181,7 @@ class AutomationPersonaTests(unittest.TestCase):
                         "signature": "Best,\nSid\nSupport Engineer 2",
                     },
                 },
+                account_scope=True,
             )
 
         self.assertEqual(result.content, f"Hi Jack,\n\n{response.text}\n\nBest,\nSid\nSupport Engineer 2")
@@ -200,7 +205,10 @@ class AutomationPersonaTests(unittest.TestCase):
 
     def test_render_removes_model_generated_greeting_before_adding_configured_greeting(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        response = SimpleNamespace(text="Hi Jack, Thanks for reaching out.", model_name="persona-model")
+        response = SimpleNamespace(
+            text="Hi Jack, I am coordinating the request with our internal team and will keep you updated.",
+            model_name="persona-model",
+        )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ):
@@ -211,9 +219,13 @@ class AutomationPersonaTests(unittest.TestCase):
                     "customer_first_name": "Jack",
                 },
                 persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                account_scope=True,
             )
 
-        self.assertEqual(result.content, "Hi Jack,\n\nThanks for reaching out.\n\nBest,\nSid")
+        self.assertEqual(
+            result.content,
+            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated.\n\nBest,\nSid",
+        )
 
     def test_legacy_signoff_name_is_rendered_as_a_signature(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -227,6 +239,68 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.endswith("Best Regards,\nMaya"))
+
+    def test_submission_reply_rejects_internal_team_ownership(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="We submitted the request. The internal team will follow up after review.",
+            model_name="persona-model",
+        )
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="submission_confirmation",
+            known_information={"requested_feature": "media_relay"},
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            with self.assertRaisesRegex(AutomationPersonaError, "ownership_contract_failed"):
+                render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                    account_scope=True,
+                )
+
+    def test_legacy_scope_does_not_apply_account_ownership_validator(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="The internal team will follow up after review.",
+            model_name="persona-model",
+        )
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="submission_confirmation",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+            )
+        self.assertIn("The internal team will follow up", result.content)
+        self.assertNotIn("Support Engineer is the customer's point of contact", invoke.call_args.kwargs["system_prompt"])
+
+    def test_submission_reply_accepts_chinese_first_person_follow_up(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="我正在与内部团队协调这个请求，如果有进展我会第一时间同步给你。",
+            model_name="persona-model",
+        )
+        facts = build_automation_reply_facts(
+            behavior="quota",
+            reply_intent="submission_confirmation",
+            customer_language="zh",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm", "signature": "此致\nSid"}},
+                account_scope=True,
+            )
+        self.assertIn("我正在与内部团队协调", result.content)
 
     def test_persona_failure_is_explicit(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: False, model="persona-model")

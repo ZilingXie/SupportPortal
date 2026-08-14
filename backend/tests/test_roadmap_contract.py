@@ -55,7 +55,7 @@ class RoadmapContractTests(unittest.TestCase):
             "Zendesk source URL 中的 ticket number",
             "列表与详情统一展示来源 ticket #",
             "Agent Config 与 Automation Workflow 管理面",
-            "21 项",
+            "22 项",
             'class="delivery-group" data-status-group="incomplete" open',
             'class="delivery-group" data-status-group="complete"',
             "Active UI",

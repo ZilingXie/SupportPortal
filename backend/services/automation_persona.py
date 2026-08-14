@@ -18,7 +18,7 @@ invoke_responses_text = invoke_account_responses_text
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v6"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v7"
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 _APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
@@ -198,10 +198,109 @@ def build_automation_reply_facts(
     }
 
 
+def build_account_automation_reply_facts(
+    *,
+    handler: str,
+    action: str,
+    missing_fields: list[str],
+    collected_fields: dict[str, Any],
+    submitted: bool = False,
+    resolution_facts: list[str] | None = None,
+    customer_name: str | None = None,
+) -> dict[str, Any]:
+    """Build the shared customer-facing facts for Account Automation intake."""
+    behavior = str(action or handler or "automation").strip()
+    if submitted:
+        return build_automation_reply_facts(
+            behavior=behavior,
+            reply_intent="submission_confirmation",
+            known_information=collected_fields,
+            performed_actions=[
+                "The assigned Support Engineer has started coordinating the request with the internal team."
+            ],
+            next_step=(
+                "The assigned Support Engineer will continue monitoring the request and proactively update the customer "
+                "when there is progress."
+            ),
+            resolution_status="in_progress_with_internal_team",
+            source_facts=resolution_facts,
+            customer_name=customer_name,
+        )
+    return build_automation_reply_facts(
+        behavior=behavior,
+        reply_intent="request_missing_information",
+        known_information=collected_fields,
+        missing_information=missing_fields,
+        next_step=(
+            "After receiving the missing information, the assigned Support Engineer will continue coordinating the request "
+            "with the internal team."
+            if missing_fields
+            else None
+        ),
+        resolution_status="awaiting_customer",
+        source_facts=resolution_facts,
+        customer_name=customer_name,
+    )
+
+
+def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
+    """Apply the ownership contract to persisted facts from older reply jobs."""
+    facts = dict(reply_facts or {})
+    reply_intent = str(facts.get("reply_intent") or "").strip().lower()
+    if reply_intent == "submission_confirmation":
+        facts["performed_actions"] = [
+            "The assigned Support Engineer has started coordinating the request with the internal team."
+        ]
+        facts["next_step"] = (
+            "The assigned Support Engineer will continue monitoring the request and proactively update the customer "
+            "when there is progress."
+        )
+        facts["resolution_status"] = "in_progress_with_internal_team"
+    elif reply_intent == "request_missing_information" and facts.get("missing_information"):
+        facts["next_step"] = (
+            "After receiving the missing information, the assigned Support Engineer will continue coordinating the request "
+            "with the internal team."
+        )
+        facts["resolution_status"] = "awaiting_customer"
+    return facts
+
+
+def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
+    """Reject replies that delegate the customer relationship to an internal team."""
+    intent = str(reply_facts.get("reply_intent") or "").strip().lower()
+    if intent not in {"submission_confirmation", "request_missing_information"}:
+        return
+    normalized = str(reply or "").replace("’", "'").replace("\u2019", "'")
+    lowered = normalized.casefold()
+    delegated = re.search(
+        r"\b(?:the|our)\s+(?:internal|billing|enablement|quota|relevant)\s+team\b"
+        r"[^.!?\n]{0,100}\b(?:will|shall|is going to|'ll)\b"
+        r"[^.!?\n]{0,100}\b(?:follow up|contact|reach out|update|notify)\b",
+        lowered,
+    ) or re.search(
+        r"内部团队[^。！？.!?\n]{0,40}(?:会|将)[^。！？.!?\n]{0,40}(?:联系|通知|跟进|更新)",
+        normalized,
+    )
+    if delegated:
+        raise AutomationPersonaError("automation_persona_ownership_contract_failed")
+
+    language = str(reply_facts.get("customer_language") or "en").strip().lower()
+    if language.startswith("zh"):
+        owned = re.search(r"(?:我|我们)[^。！？.!?\n]{0,80}(?:跟进|协调|更新|同步|推进|联系|告知)", normalized)
+    else:
+        owned = re.search(
+            r"\b(?:i|we)\b[^.!?\n]{0,120}\b(?:work|coordinat|follow|updat|keep|monitor|continu|proceed|let you know)\w*",
+            lowered,
+        )
+    if not owned:
+        raise AutomationPersonaError("automation_persona_ownership_contract_failed")
+
+
 def render_automation_reply(
     *,
     reply_facts: dict[str, Any],
     persona_assignment: dict[str, Any] | None,
+    account_scope: bool = False,
 ) -> AutomationPersonaResult:
     """Generate the complete customer message from facts and the pinned Persona."""
     profile = resolve_model_profile(AUTOMATION_PERSONA_SCENARIO)
@@ -216,12 +315,22 @@ def render_automation_reply(
     if not signature:
         signoff_name = str(content.get("signoff_name") or "Sid").strip() or "Sid"
         signature = f"Best Regards,\n{signoff_name}"
-    facts = dict(reply_facts or {})
+    facts = _normalize_ownership_facts(reply_facts) if account_scope else dict(reply_facts or {})
     forbidden_values = [str(value) for value in facts.pop("_forbidden_values", []) if str(value)]
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
 
     greeting = f"Hi {customer_first_name(facts.get('customer_first_name'))},"
+    ownership_policy = (
+        "For submission_confirmation, the Support Engineer is the customer's point of contact: write in first "
+        "person that you are coordinating with the internal team and will proactively update the customer. "
+        "The internal team is a collaborator, never the party responsible for contacting the customer. Do not "
+        "write that the internal team or they will follow up, contact, notify, or update the customer. For "
+        "request_missing_information, do not imply that internal review has started; explain that you will "
+        "continue the coordination after the missing information is received. Do not promise a time or outcome. "
+        if account_scope
+        else ""
+    )
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -234,6 +343,7 @@ def render_automation_reply(
                 "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
                 "engineer replying personally, with warm, natural sentences rather than labels, fragments, canned "
                 "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
+                f"{ownership_policy}"
                 "Do not repeat identifier values that the customer has already supplied, including App IDs, "
                 "unless the supplied facts explicitly say the identifier is needed to distinguish multiple objects. "
                 "When a canonical product or feature display name is supplied, use it exactly and do not repeat "
@@ -265,6 +375,8 @@ def render_automation_reply(
         raise AutomationPersonaError("automation_persona_empty_response")
     content = f"{greeting}\n\n{reply}\n\n{signature}"
     _assert_no_forbidden_values(content, forbidden_values, error_code="automation_persona_forbidden_value")
+    if account_scope:
+        _assert_ownership_contract(reply, facts)
     return AutomationPersonaResult(
         content=content,
         model=str(response.model_name or profile.model).strip() or profile.model,

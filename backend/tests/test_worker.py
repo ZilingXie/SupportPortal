@@ -3855,6 +3855,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "payload": {
                 "reply_facts": {"behavior": "quota", "reply_intent": "submission_confirmation"},
                 "generated_content": "The request has been submitted.",
+                "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
                 "persona_key": "default-support",
                 "persona_version": 1,
                 "effective_prompt": {"instruction": "Warm"},
@@ -3903,6 +3904,56 @@ class WorkerResilienceTests(unittest.TestCase):
         render.assert_not_called()
         self.assertEqual(job["status"], "published")
         self.assertEqual(ticket["messages"][-1]["content"], "The request has been submitted.")
+        repository.publish_account_reply.assert_called_once()
+
+    def test_unpublished_old_persona_content_is_regenerated_with_current_policy(self) -> None:
+        job = {
+            "job_id": "account-reply-persona-v6",
+            "ticket_id": "TK-PERSONA-V6",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "payload": {
+                "reply_facts": {"behavior": "quota", "reply_intent": "submission_confirmation"},
+                "generated_content": "The request has been submitted.",
+                "persona_prompt_version": "automation-persona-v6",
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-PERSONA-V6",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please increase quota",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_billing_ticket_by_client_ticket_id.return_value = None
+        repository.update_claimed_account_reply_job.return_value = job
+        repository.publish_account_reply.return_value = {"status": "published"}
+        rendered = types.SimpleNamespace(
+            content="I am coordinating this request and will keep you updated.",
+            model="persona-model",
+            prompt_version=worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply", return_value=rendered
+        ) as render:
+            worker._publish_account_reply_job(job)
+
+        render.assert_called_once()
+        self.assertEqual(job["payload"]["generated_content"], rendered.content)
+        self.assertEqual(
+            job["payload"]["persona_prompt_version"],
+            worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+        )
         repository.publish_account_reply.assert_called_once()
 
     def test_persona_reply_facts_are_rendered_before_scheduling(self) -> None:

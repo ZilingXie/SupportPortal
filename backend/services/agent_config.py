@@ -250,7 +250,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                     "route_family": "automated",
                     "automation_handler": "enablement",
                     "status": "registered",
-                    "steps": ["grounded field extraction", "internal handoff", "Persona customer update"],
+                    "steps": ["grounded field extraction", "internal handoff", "Persona ownership update"],
                 },
             ),
             _route_node(
@@ -269,7 +269,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                     "route_family": "automated",
                     "automation_handler": "quota",
                     "status": "registered",
-                    "steps": ["grounded capacity extraction", "internal handoff", "Persona customer update"],
+                    "steps": ["grounded capacity extraction", "internal handoff", "Persona ownership update"],
                 },
             ),
             _route_node(
@@ -336,13 +336,13 @@ def _route_agent_navigation() -> dict[str, Any]:
                     "route_family": "automated",
                     "automation_handler": "billing",
                     "status": "registered",
-                    "steps": ["grounded field extraction", "one follow-up maximum", "internal handoff", "Persona customer update"],
+                    "steps": ["grounded field extraction", "one follow-up maximum", "internal handoff", "Persona ownership update"],
                 },
             ),
             _route_node(
                 "detailed-invoice",
                 "Detailed Invoice",
-                "Extracts detailed invoice fields and lets the Automation Persona generate the customer reply.",
+                "Extracts detailed invoice fields and lets the ownership-aware Automation Persona generate the customer reply.",
                 kind="automation",
                 is_agent=False,
                 prompt_keys=["account-detailed-invoice-field-extractor-system"],
@@ -355,7 +355,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                     "route_family": "automated",
                     "automation_handler": "billing",
                     "status": "registered",
-                    "steps": ["grounded field extraction", "internal handoff", "Persona customer update"],
+                    "steps": ["grounded field extraction", "internal handoff", "Persona ownership update"],
                 },
             ),
             _route_node(

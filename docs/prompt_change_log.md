@@ -12,6 +12,28 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-14 - Account Automation ownership-first customer replies
+
+- Area or subsystem: `/account` Automation Persona, shared Automation reply facts, delayed reply worker, and Phase 2 Automation Scope
+- Prompt or model version: `automation-persona-v7`; model configuration unchanged
+- Summary: Registered Account Automation outcomes now use a shared reply-state contract. Submission confirmations describe the Support Engineer actively coordinating with the internal team and proactively updating the customer; missing-field replies promise continued ownership after the customer responds; resolution updates preserve the newest internal result.
+- Reason: The previous facts told the Persona that the internal team would follow up, which made the customer-facing reply appear to transfer ownership away from Support. The internal team is a collaborator, not the customer's contact owner.
+- Affected files or config:
+  - `backend/services/automation_persona.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/tests/test_automation_persona.py`
+  - `backend/tests/test_account_intake.py`
+  - `backend/tests/test_worker.py`
+  - `docs/roadmap/phase2.html`
+- Expected behavior change:
+  - `submission_confirmation` uses first-person ownership and never tells the customer that an internal team will contact them.
+  - Explicit delegation wording fails closed to the existing Human Review path; the system does not replace it with a fixed template.
+  - Unpublished reply jobs generated under the previous Persona version are rendered once with v7 before publication, without resending internal email or creating another reply job.
+  - `/client`, the shared legacy router, published historical replies, routing labels, and Automation lifecycle state remain unchanged.
+- Verification:
+  - Targeted Automation Persona, Account intake, worker, rerun, and legacy router regression tests; `python3 -m py_compile`; `git diff --check`.
+
 ## 2026-08-13 - TS-05 Account failure stop, alert, and human handoff
 
 - Area or subsystem: `/account` layered routing, Account field extraction, Automation Persona, reply worker, and rerun failure handling

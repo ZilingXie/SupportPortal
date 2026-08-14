@@ -40,7 +40,9 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_SCHEDULED,
 )
 from backend.services.automation_persona import (
+    AUTOMATION_PERSONA_PROMPT_VERSION,
     AutomationPersonaError,
+    build_account_automation_reply_facts,
     build_automation_reply_facts,
     extract_automation_resolution_facts,
     render_automation_reply,
@@ -114,6 +116,17 @@ TICKET_LOOKUP_RETRY_MAX = 6
 TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
+
+
+def _account_reply_needs_persona_render(payload: dict[str, Any]) -> bool:
+    """Return whether an unpublished Persona payload needs the current policy."""
+    if not isinstance(payload.get("reply_facts"), dict) or not payload.get("reply_facts"):
+        return False
+    return (
+        not str(payload.get("generated_content") or "").strip()
+        or str(payload.get("persona_prompt_version") or "").strip()
+        != AUTOMATION_PERSONA_PROMPT_VERSION
+    )
 
 
 def _record_account_worker_failure(
@@ -524,7 +537,11 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                     "effective_prompt": dict(persona.get("content") or {}),
                 }
             )
-        if not str(payload.get("generated_content") or "").strip():
+        if _account_reply_needs_persona_render(payload):
+            payload.pop("generated_content", None)
+            payload.pop("persona_render_status", None)
+            payload.pop("persona_model", None)
+            payload.pop("persona_prompt_version", None)
             persona_assignment = {
                 "persona_key": payload.get("persona_key"),
                 "version": payload.get("persona_version"),
@@ -534,6 +551,7 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                 rendered = render_automation_reply(
                     reply_facts=dict(payload["reply_facts"]),
                     persona_assignment=persona_assignment,
+                    account_scope=True,
                 )
             except AutomationPersonaError as exc:
                 _record_account_worker_failure(job=job, ticket=ticket, failure=exc)
@@ -702,8 +720,12 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         existing_message is None
         and isinstance(payload.get("reply_facts"), dict)
         and payload.get("reply_facts")
-        and not str(payload.get("generated_content") or "").strip()
+        and _account_reply_needs_persona_render(payload)
     ):
+        payload.pop("generated_content", None)
+        payload.pop("persona_render_status", None)
+        payload.pop("persona_model", None)
+        payload.pop("persona_prompt_version", None)
         persona_assignment = {
             "persona_key": payload.get("persona_key"),
             "version": payload.get("persona_version"),
@@ -713,6 +735,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
             rendered = render_automation_reply(
                 reply_facts=dict(payload["reply_facts"]),
                 persona_assignment=persona_assignment,
+                account_scope=True,
             )
         except AutomationPersonaError as exc:
             _record_account_worker_failure(job=current_job, ticket=ticket, failure=exc)
@@ -888,22 +911,37 @@ def _render_case_persona_reply(
         }
         source_facts = [str(item) for item in resolution_facts if str(item).strip()]
         next_step = str(extracted_resolution.get("next_step") or next_step or "").strip() or None
-    facts = build_automation_reply_facts(
-        behavior=behavior,
-        reply_intent=reply_intent,
-        known_information=known_information,
-        source_facts=source_facts,
-        performed_actions=performed_actions,
-        next_step=next_step,
-        resolution_status=(
-            str(extracted_resolution.get("status") or "").strip()
-            if extracted_resolution
-            else resolution_status
-        ),
-        customer_name=str(case.get("customer_name") or ""),
-    )
+    if reply_intent in {"submission_confirmation", "request_missing_information"}:
+        facts = build_account_automation_reply_facts(
+            handler=behavior,
+            action=behavior,
+            missing_fields=list(known_information.get("missing_fields") or []),
+            collected_fields=known_information,
+            submitted=reply_intent == "submission_confirmation",
+            resolution_facts=source_facts,
+            customer_name=str(case.get("customer_name") or ""),
+        )
+    else:
+        facts = build_automation_reply_facts(
+            behavior=behavior,
+            reply_intent=reply_intent,
+            known_information=known_information,
+            source_facts=source_facts,
+            performed_actions=performed_actions,
+            next_step=next_step,
+            resolution_status=(
+                str(extracted_resolution.get("status") or "").strip()
+                if extracted_resolution
+                else resolution_status
+            ),
+            customer_name=str(case.get("customer_name") or ""),
+        )
     try:
-        return render_automation_reply(reply_facts=facts, persona_assignment=persona).content
+        return render_automation_reply(
+            reply_facts=facts,
+            persona_assignment=persona,
+            account_scope=reply_intent in {"submission_confirmation", "request_missing_information"},
+        ).content
     except AutomationPersonaError as exc:
         timestamp = now_iso()
         reason = str(exc)
@@ -1069,13 +1107,12 @@ def _queue_enablement_submission_confirmation(
         return False
     fields = account_case.get("collected_fields")
     fields = fields if isinstance(fields, dict) else {}
-    reply_facts = build_automation_reply_facts(
-        behavior="enablement",
-        reply_intent="submission_confirmation",
-        known_information=fields,
-        performed_actions=["Submitted the enablement request to the internal team for review."],
-        next_step="The internal team will follow up after reviewing the request.",
-        resolution_status="submitted_for_review",
+    reply_facts = build_account_automation_reply_facts(
+        handler="enablement",
+        action="enablement",
+        missing_fields=[],
+        collected_fields=fields,
+        submitted=True,
         customer_name=str(account_case.get("customer_name") or ""),
     )
     try:
