@@ -1843,6 +1843,8 @@ function renderRerouteStatus() {
   }
   const failed = Number(job.failed || 0);
   const recovered = Number(job.recovered || 0);
+  const replyJobsPublished = Number(job.reply_jobs_published || 0);
+  const replyJobsCancelled = Number(job.reply_jobs_cancelled || 0);
   const statusLabel = String(job.status || "") === "failed"
     && ["preflight_failed", "preflight_degraded"].includes(String(job.stop_reason || ""))
     ? "Preflight failed"
@@ -1881,7 +1883,7 @@ function renderRerouteStatus() {
       ${failureReason ? `<span>${escapeHtml(failureReason)}</span>` : ""}
       ${failedReasonCode ? `<span>Reason: ${escapeHtml(failedReasonCode)}</span>` : ""}
       ${alertStatus ? `<span>Alert: ${escapeHtml(alertStatus)}</span>` : ""}
-      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${remaining} unprocessed${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} replies scheduled; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
+      <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${remaining} unprocessed${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} customer replies scheduled; ${replyJobsPublished} published${replyJobsCancelled ? `, ${replyJobsCancelled} cancelled` : ""}; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
       ${resumeButton}
     </div>
   `;
