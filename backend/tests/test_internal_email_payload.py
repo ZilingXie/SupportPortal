@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
+import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.internal_email_payload import (
     InternalEmailPayloadUpgradeError,
@@ -282,6 +285,124 @@ class InternalEmailDeliveryClaimTests(unittest.TestCase):
         self.assertIsNotNone(saved)
         self.assertEqual(saved["internal_email_send_status"], "sent")
         self.assertNotIn("delivery_claim_token", saved["internal_email_payload"])
+
+    def test_same_claim_token_replay_is_idempotent_but_other_owner_is_rejected(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-REPLAY",
+                "billing_ticket_id": "AC-REPLAY",
+                "client_ticket_id": "REPLAY",
+                "internal_email_payload": {"delivery_key": "enablement:AC-REPLAY:v1"},
+                "internal_email_send_status": "retry",
+            }
+        )
+        payload = {"delivery_key": "enablement:AC-REPLAY:v1", "body_html": "<p>Current</p>"}
+        self.assertTrue(
+            repository.claim_account_internal_email_delivery(
+                "AC-REPLAY",
+                delivery_key="enablement:AC-REPLAY:v1",
+                claim_token="owner-1",
+                claimed_at="2026-08-06T00:00:00+00:00",
+                payload=payload,
+            )
+        )
+        self.assertTrue(
+            repository.claim_account_internal_email_delivery(
+                "AC-REPLAY",
+                delivery_key="enablement:AC-REPLAY:v1",
+                claim_token="owner-1",
+                claimed_at="2026-08-06T00:00:01+00:00",
+                payload=payload,
+            )
+        )
+        self.assertFalse(
+            repository.claim_account_internal_email_delivery(
+                "AC-REPLAY",
+                delivery_key="enablement:AC-REPLAY:v1",
+                claim_token="owner-2",
+                claimed_at="2026-08-06T00:00:02+00:00",
+                payload=payload,
+            )
+        )
+
+    def test_resume_reuses_matching_rerun_claim_checkpoint(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.save_ticket({"ticket_id": "TK-REPLAY", "customer_id": "customer@example.com", "messages": []})
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-REPLAY",
+                "client_ticket_id": "TK-REPLAY",
+                "route": "enablement",
+                "automation_handler": "enablement",
+                "automation_context": {"rerun_job_id": "account-rerun-parent"},
+                "internal_email_payload": {
+                    "delivery_key": "enablement:AC-REPLAY:v1:rerun:account-rerun-parent",
+                    "delivery_claim_token": "owner-1",
+                    "delivery_attempt_count": 1,
+                    "last_attempt_at": "2026-08-06T00:00:00+00:00",
+                },
+                "internal_email_send_status": "sending",
+            }
+        )
+        original_repository = main.ticket_repository
+        main.ticket_repository = repository
+        try:
+            with patch.object(
+                main,
+                "_send_enablement_internal_email_attempt",
+                new=AsyncMock(return_value=("sent", "")),
+            ) as sender:
+                result = asyncio.run(
+                    main._resume_account_rerun_side_effect(
+                        "AC-REPLAY",
+                        retry_mode="email",
+                        rerun_job_id="account-rerun-resume",
+                        delivery_job_id="account-rerun-parent",
+                    )
+                )
+            sender.assert_awaited_once()
+            self.assertEqual(result["status"], "sent")
+            self.assertEqual(repository.get_account_case("AC-REPLAY")["internal_email_send_status"], "sent")
+        finally:
+            main.ticket_repository = original_repository
+
+    def test_resume_accepts_completion_that_was_persisted_before_connection_loss(self) -> None:
+        class _AmbiguousCompletionRepository(InMemoryTicketRepository):
+            def complete_account_internal_email_delivery(self, *args, **kwargs):
+                persisted = super().complete_account_internal_email_delivery(*args, **kwargs)
+                return False if persisted else persisted
+
+        repository = _AmbiguousCompletionRepository()
+        repository.save_ticket({"ticket_id": "TK-COMPLETE", "customer_id": "customer@example.com", "messages": []})
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-COMPLETE",
+                "client_ticket_id": "TK-COMPLETE",
+                "automation_handler": "enablement",
+                "internal_email_payload": {"delivery_key": "enablement:AC-COMPLETE:v1"},
+                "internal_email_send_status": "not_ready",
+            }
+        )
+        original_repository = main.ticket_repository
+        main.ticket_repository = repository
+        try:
+            with patch.object(
+                main,
+                "_send_enablement_internal_email_attempt",
+                new=AsyncMock(return_value=("sent", "")),
+            ):
+                result = asyncio.run(
+                    main._resume_account_rerun_side_effect(
+                        "AC-COMPLETE",
+                        retry_mode="email",
+                        rerun_job_id="account-rerun-complete",
+                    )
+                )
+            self.assertEqual(result["status"], "sent")
+            self.assertEqual(repository.get_account_case("AC-COMPLETE")["internal_email_send_status"], "sent")
+        finally:
+            main.ticket_repository = original_repository
 
 
 if __name__ == "__main__":

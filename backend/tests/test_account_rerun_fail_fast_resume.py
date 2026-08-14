@@ -79,7 +79,10 @@ class AccountRerunFailFastResumeTests(unittest.TestCase):
             "account_case_id": "AC-UNKNOWN",
             "client_ticket_id": "TK-UNKNOWN",
             "automation_handler": "enablement",
-            "internal_email_payload": {"delivery_key": "enablement:AC-UNKNOWN:v1"},
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-UNKNOWN:v1",
+                "delivery_claim_token": "owner-1",
+            },
             "internal_email_send_status": "sending",
         })
         original_repository = main.ticket_repository
