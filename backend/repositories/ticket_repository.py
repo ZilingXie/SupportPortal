@@ -87,6 +87,10 @@ _ACCOUNT_RERUN_ACTIVE_REPLY_JOB_STATUSES = frozenset(
         "persona_preparing",
         "persona_scheduled",
         "persona_publishing",
+        "persona_v8_queued",
+        "persona_v8_preparing",
+        "persona_v8_scheduled",
+        "persona_v8_publishing",
     }
 )
 _ACCOUNT_RERUN_ACTIVE_REPLY_EXECUTION_STATUSES = frozenset(
@@ -99,6 +103,10 @@ _ACCOUNT_RERUN_ACTIVE_REPLY_EXECUTION_STATUSES = frozenset(
         "persona_preparing",
         "persona_scheduled",
         "persona_publishing",
+        "persona_v8_queued",
+        "persona_v8_preparing",
+        "persona_v8_scheduled",
+        "persona_v8_publishing",
         "pending",
         "in_progress",
     }
@@ -3096,7 +3104,11 @@ class InMemoryTicketRepository:
             expected_status = str(job.get("status") or "")
             if (
                 current_job is None
-                or expected_status not in {"publishing", "persona_publishing"}
+                or expected_status not in {
+                    "publishing",
+                    "persona_publishing",
+                    "persona_v8_publishing",
+                }
                 or not _account_reply_job_matches_claim(
                     current_job,
                     job,
@@ -3275,6 +3287,7 @@ class InMemoryTicketRepository:
                 if str(job.get("status") or "") not in {
                     "queued", "preparing", "scheduled",
                     "persona_queued", "persona_preparing", "persona_scheduled",
+                    "persona_v8_queued", "persona_v8_preparing", "persona_v8_scheduled",
                 }:
                     continue
                 job["status"] = "cancelled"
@@ -7198,7 +7211,7 @@ class PostgresTicketRepository:
                             job_id TEXT PRIMARY KEY,
                             ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
                             trigger_message_created_at TIMESTAMPTZ NOT NULL,
-                            status TEXT NOT NULL CHECK (status IN ('queued','preparing','scheduled','publishing','persona_queued','persona_preparing','persona_scheduled','persona_publishing','published','manual_attention','cancelled','failed')),
+                            status TEXT NOT NULL CHECK (status IN ('queued','preparing','scheduled','publishing','persona_queued','persona_preparing','persona_scheduled','persona_publishing','persona_v8_queued','persona_v8_preparing','persona_v8_scheduled','persona_v8_publishing','published','manual_attention','cancelled','failed')),
                             scheduled_for TIMESTAMPTZ NOT NULL,
                             payload JSONB NOT NULL,
                             attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -7217,7 +7230,7 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "ALTER TABLE {} ADD CONSTRAINT support_account_reply_jobs_status_check "
-                        "CHECK (status IN ('queued','preparing','scheduled','publishing','persona_queued','persona_preparing','persona_scheduled','persona_publishing','published','manual_attention','cancelled','failed'))"
+                        "CHECK (status IN ('queued','preparing','scheduled','publishing','persona_queued','persona_preparing','persona_scheduled','persona_publishing','persona_v8_queued','persona_v8_preparing','persona_v8_scheduled','persona_v8_publishing','published','manual_attention','cancelled','failed'))"
                     ).format(reply_jobs_table)
                 )
                 cur.execute(
@@ -12157,7 +12170,9 @@ class PostgresTicketRepository:
                             "UPDATE {} SET status='cancelled',updated_at=%s "
                             "WHERE ticket_id=%s AND status IN "
                             "('queued','preparing','scheduled','publishing','persona_queued',"
-                            "'persona_preparing','persona_scheduled','persona_publishing')"
+                            "'persona_preparing','persona_scheduled','persona_publishing',"
+                            "'persona_v8_queued','persona_v8_preparing','persona_v8_scheduled',"
+                            "'persona_v8_publishing')"
                         ).format(self._table("support_account_reply_jobs")),
                         (completed_at, normalized_ticket_id),
                     )
@@ -13381,7 +13396,11 @@ class PostgresTicketRepository:
                 expected_status = str(job.get("status") or "")
                 if (
                     canonical_job is None
-                    or expected_status not in {"publishing", "persona_publishing"}
+                    or expected_status not in {
+                        "publishing",
+                        "persona_publishing",
+                        "persona_v8_publishing",
+                    }
                     or not _account_reply_job_matches_claim(
                         canonical_job,
                         job,
@@ -13562,7 +13581,8 @@ class PostgresTicketRepository:
                         "UPDATE {} SET status='cancelled', updated_at=%s "
                         "WHERE ticket_id=%s AND status IN ("
                         "'queued','preparing','scheduled',"
-                        "'persona_queued','persona_preparing','persona_scheduled'"
+                        "'persona_queued','persona_preparing','persona_scheduled',"
+                        "'persona_v8_queued','persona_v8_preparing','persona_v8_scheduled'"
                         ") AND (%s = '' OR COALESCE(payload->>'rerun_job_id','')=%s)"
                     ).format(self._table("support_account_reply_jobs")),
                     (updated_at, str(ticket_id), normalized_rerun_job_id, normalized_rerun_job_id),

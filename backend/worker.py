@@ -33,11 +33,20 @@ from backend.services.account_admin import (
     apply_persona_to_customer_reply,
 )
 from backend.services.account_reply_jobs import (
+    ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PREPARING,
     ACCOUNT_REPLY_PERSONA_PUBLISHING,
     ACCOUNT_REPLY_PERSONA_QUEUED,
     ACCOUNT_REPLY_PERSONA_SCHEDULED,
+    ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+    ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
+    ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+    ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+    account_reply_persona_pipeline_for_job,
+    account_reply_persona_status_for_stage,
+    is_account_reply_persona_preparing_status,
+    is_account_reply_persona_publishing_status,
 )
 from backend.services.automation_persona import (
     AUTOMATION_PERSONA_PROMPT_VERSION,
@@ -504,9 +513,13 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         raise RuntimeError("account reply job is missing its linked ticket")
     payload = dict(job.get("payload") or {})
     if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
-        if payload.get("reply_pipeline") not in {None, ACCOUNT_REPLY_PERSONA_PIPELINE}:
+        if payload.get("reply_pipeline") not in {
+            None,
+            ACCOUNT_REPLY_PERSONA_PIPELINE,
+            ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE,
+        }:
             raise RuntimeError("unsupported Account reply pipeline")
-        payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
+        payload["reply_pipeline"] = account_reply_persona_pipeline_for_job(job, payload)
         if not payload.get("persona_key") or not payload.get("effective_prompt"):
             try:
                 persona = _resolve_account_persona_for_claimed_reply(
@@ -572,8 +585,8 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
             )
         job["payload"] = payload
         job["status"] = (
-            ACCOUNT_REPLY_PERSONA_SCHEDULED
-            if payload.get("reply_pipeline") == ACCOUNT_REPLY_PERSONA_PIPELINE
+            account_reply_persona_status_for_stage(job, "scheduled")
+            if payload.get("reply_pipeline")
             else "scheduled"
         )
         job["updated_at"] = now_iso()
@@ -691,10 +704,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     ticket = ticket_repository.get_ticket(ticket_id)
     if current_job is None or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
-    if claimed_status not in {
-        "publishing",
-        ACCOUNT_REPLY_PERSONA_PUBLISHING,
-    } or not _account_reply_claim_is_current(
+    if not is_account_reply_persona_publishing_status(claimed_status) or not _account_reply_claim_is_current(
         job,
         current_job,
         expected_status=claimed_status,
@@ -964,8 +974,12 @@ def _process_claimed_account_reply_jobs(
     limit: int,
 ) -> None:
     retry_status = from_status
-    if from_status == ACCOUNT_REPLY_PERSONA_QUEUED:
+    if from_status == ACCOUNT_REPLY_PERSONA_V8_QUEUED:
+        retry_status = ACCOUNT_REPLY_PERSONA_V8_QUEUED
+    elif from_status == ACCOUNT_REPLY_PERSONA_QUEUED:
         retry_status = ACCOUNT_REPLY_PERSONA_QUEUED
+    elif from_status == ACCOUNT_REPLY_PERSONA_V8_SCHEDULED:
+        retry_status = ACCOUNT_REPLY_PERSONA_V8_SCHEDULED
     elif from_status == ACCOUNT_REPLY_PERSONA_SCHEDULED:
         retry_status = ACCOUNT_REPLY_PERSONA_SCHEDULED
     elif from_status == "queued":
@@ -980,12 +994,12 @@ def _process_claimed_account_reply_jobs(
         due_only=due_only,
     ):
         try:
-            if to_status in {ACCOUNT_REPLY_PERSONA_PREPARING, "preparing"}:
+            if is_account_reply_persona_preparing_status(to_status):
                 _prepare_account_reply_job(job)
             else:
                 _publish_account_reply_job(job)
         except Exception as exc:
-            operation = "preparation" if to_status in {ACCOUNT_REPLY_PERSONA_PREPARING, "preparing"} else "publication"
+            operation = "preparation" if is_account_reply_persona_preparing_status(to_status) else "publication"
             LOGGER.exception("Account reply %s failed for %s", operation, job.get("job_id"))
             current = ticket_repository.get_account_reply_job(str(job.get("job_id") or ""))
             if not _account_reply_claim_is_current(
@@ -1018,18 +1032,30 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
     while not SHUTTING_DOWN:
         try:
             _process_claimed_account_reply_jobs(
-                from_status=ACCOUNT_REPLY_PERSONA_QUEUED,
-                to_status=ACCOUNT_REPLY_PERSONA_PREPARING,
+                from_status=ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+                to_status=ACCOUNT_REPLY_PERSONA_V8_PREPARING,
                 due_only=False,
                 limit=5,
             )
             _process_claimed_account_reply_jobs(
-                from_status=ACCOUNT_REPLY_PERSONA_SCHEDULED,
-                to_status=ACCOUNT_REPLY_PERSONA_PUBLISHING,
+                from_status=ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+                to_status=ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
                 due_only=True,
                 limit=10,
             )
             if _account_reply_legacy_poller_enabled_from_env():
+                _process_claimed_account_reply_jobs(
+                    from_status=ACCOUNT_REPLY_PERSONA_QUEUED,
+                    to_status=ACCOUNT_REPLY_PERSONA_PREPARING,
+                    due_only=False,
+                    limit=5,
+                )
+                _process_claimed_account_reply_jobs(
+                    from_status=ACCOUNT_REPLY_PERSONA_SCHEDULED,
+                    to_status=ACCOUNT_REPLY_PERSONA_PUBLISHING,
+                    due_only=True,
+                    limit=10,
+                )
                 _process_claimed_account_reply_jobs(
                     from_status="queued",
                     to_status="preparing",
@@ -1151,7 +1177,7 @@ def _queue_enablement_submission_confirmation(
             "job_id": f"account-reply-{uuid4().hex}",
             "ticket_id": ticket_id,
             "trigger_message_created_at": trigger_message_created_at,
-            "status": ACCOUNT_REPLY_PERSONA_QUEUED,
+            "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
             "scheduled_for": (
                 datetime.now(timezone.utc) + timedelta(minutes=6)
             ).isoformat(),

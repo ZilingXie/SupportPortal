@@ -123,7 +123,7 @@ class RepairAccountCustomerNameTests(unittest.TestCase):
         self.assertEqual(self.repository.get_account_reply_job("pending-job")["status"], "cancelled")
 
         replacement = self.repository.get_account_reply_job(result["replacement_reply_job_id"])
-        self.assertEqual(replacement["status"], "persona_queued")
+        self.assertEqual(replacement["status"], "persona_v8_queued")
         self.assertEqual(replacement["scheduled_for"], "2026-08-05T01:06:00+00:00")
         self.assertEqual(replacement["payload"]["reply_facts"]["customer_first_name"], "Alice")
         self.assertEqual(replacement["payload"]["asked_field_keys"], ["app_id", "requested_feature"])

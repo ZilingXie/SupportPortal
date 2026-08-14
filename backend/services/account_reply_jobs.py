@@ -7,11 +7,83 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
-ACCOUNT_REPLY_PERSONA_PIPELINE = "automation_persona_v1"
+# The v8 pipeline is deliberately fenced by status as well as payload.  Older
+# workers only claim the legacy persona_* statuses, so they cannot publish a
+# newly-created v8 job from the shared database.
+ACCOUNT_REPLY_PERSONA_PIPELINE = "automation_persona_v8"
+ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE = "automation_persona_v1"
 ACCOUNT_REPLY_PERSONA_QUEUED = "persona_queued"
 ACCOUNT_REPLY_PERSONA_PREPARING = "persona_preparing"
 ACCOUNT_REPLY_PERSONA_SCHEDULED = "persona_scheduled"
 ACCOUNT_REPLY_PERSONA_PUBLISHING = "persona_publishing"
+ACCOUNT_REPLY_PERSONA_V8_QUEUED = "persona_v8_queued"
+ACCOUNT_REPLY_PERSONA_V8_PREPARING = "persona_v8_preparing"
+ACCOUNT_REPLY_PERSONA_V8_SCHEDULED = "persona_v8_scheduled"
+ACCOUNT_REPLY_PERSONA_V8_PUBLISHING = "persona_v8_publishing"
+
+
+def account_reply_persona_pipeline_for_job(
+    job: dict[str, Any],
+    payload: dict[str, Any] | None = None,
+) -> str:
+    """Resolve the status-fenced Persona pipeline for a reply job."""
+    job_payload = payload if isinstance(payload, dict) else job.get("payload")
+    job_payload = job_payload if isinstance(job_payload, dict) else {}
+    pipeline = str(job_payload.get("reply_pipeline") or "").strip()
+    status = str(job.get("status") or "").strip()
+    if pipeline == ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE:
+        return ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE
+    if pipeline == ACCOUNT_REPLY_PERSONA_PIPELINE or status.startswith("persona_v8_"):
+        return ACCOUNT_REPLY_PERSONA_PIPELINE
+    # Jobs created before the pipeline field was introduced remain legacy.
+    return ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE
+
+
+def account_reply_persona_status_for_stage(
+    job: dict[str, Any],
+    stage: str,
+) -> str:
+    """Return the status for a Persona job without crossing the version fence."""
+    pipeline = account_reply_persona_pipeline_for_job(job)
+    stage_statuses = {
+        "queued": (
+            ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+            ACCOUNT_REPLY_PERSONA_QUEUED,
+        ),
+        "preparing": (
+            ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+            ACCOUNT_REPLY_PERSONA_PREPARING,
+        ),
+        "scheduled": (
+            ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+            ACCOUNT_REPLY_PERSONA_SCHEDULED,
+        ),
+        "publishing": (
+            ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
+            ACCOUNT_REPLY_PERSONA_PUBLISHING,
+        ),
+    }
+    try:
+        v8_status, legacy_status = stage_statuses[stage]
+    except KeyError as exc:
+        raise ValueError(f"unsupported Account reply Persona stage: {stage}") from exc
+    return v8_status if pipeline == ACCOUNT_REPLY_PERSONA_PIPELINE else legacy_status
+
+
+def is_account_reply_persona_preparing_status(status: str) -> bool:
+    return str(status or "") in {
+        ACCOUNT_REPLY_PERSONA_PREPARING,
+        ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+        "preparing",
+    }
+
+
+def is_account_reply_persona_publishing_status(status: str) -> bool:
+    return str(status or "") in {
+        ACCOUNT_REPLY_PERSONA_PUBLISHING,
+        ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
+        "publishing",
+    }
 
 
 def create_account_reply_job(
@@ -68,7 +140,7 @@ def create_account_reply_job(
         "ticket_id": ticket_id,
         "trigger_message_created_at": trigger_message_created_at,
         "status": (
-            ACCOUNT_REPLY_PERSONA_QUEUED
+            ACCOUNT_REPLY_PERSONA_V8_QUEUED
             if payload.get("reply_pipeline") == ACCOUNT_REPLY_PERSONA_PIPELINE
             else ("scheduled" if payload["draft_content"] else "queued")
         ),

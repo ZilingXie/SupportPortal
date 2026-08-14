@@ -167,6 +167,10 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_PUBLISHING,
     ACCOUNT_REPLY_PERSONA_QUEUED,
     ACCOUNT_REPLY_PERSONA_SCHEDULED,
+    ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+    ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
+    ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+    ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
     create_account_reply_job,
 )
 from backend.services.automation_persona import (
@@ -716,6 +720,10 @@ def _account_reply_job_public(job: dict[str, Any] | None) -> dict[str, Any]:
         ACCOUNT_REPLY_PERSONA_PREPARING: "preparing",
         ACCOUNT_REPLY_PERSONA_SCHEDULED: "scheduled",
         ACCOUNT_REPLY_PERSONA_PUBLISHING: "publishing",
+        ACCOUNT_REPLY_PERSONA_V8_QUEUED: "queued",
+        ACCOUNT_REPLY_PERSONA_V8_PREPARING: "preparing",
+        ACCOUNT_REPLY_PERSONA_V8_SCHEDULED: "scheduled",
+        ACCOUNT_REPLY_PERSONA_V8_PUBLISHING: "publishing",
     }.get(status, status)
     return {
         "ai_reply_status": status or None,
@@ -5336,6 +5344,7 @@ async def _resume_account_rerun_side_effect(
             and str(existing.get("status") or "").strip().lower() in {
             "published", "manual_attention", "scheduled", "pending", "processing",
             "queued", "persona_queued", "persona_preparing", "persona_scheduled",
+            "persona_v8_queued", "persona_v8_preparing", "persona_v8_scheduled",
             }
         ):
             return {"status": "already_scheduled", "account_case": account_case, "reply_job": existing}

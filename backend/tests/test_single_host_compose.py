@@ -435,8 +435,8 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("INSTALL_ML_DEPS: \"0\"", content)
         self.assertIn("SENTIMENT_PROVIDER: legacy", content)
         self.assertIn("RUNTIME_PROFILE: local_lightweight", content)
-        self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "false"', content)
-        self.assertIn('ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "false"', content)
+        self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "true"', content)
+        self.assertIn('ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "true"', content)
 
     def test_local_db_override_restores_account_reply_poller(self) -> None:
         content = LOCAL_DB_COMPOSE_PATH.read_text(encoding="utf-8")

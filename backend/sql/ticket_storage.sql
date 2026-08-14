@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS support_account_reply_jobs (
     job_id TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
     trigger_message_created_at TIMESTAMPTZ NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'scheduled', 'publishing', 'persona_queued', 'persona_preparing', 'persona_scheduled', 'persona_publishing', 'published', 'manual_attention', 'cancelled', 'failed')),
+    status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'scheduled', 'publishing', 'persona_queued', 'persona_preparing', 'persona_scheduled', 'persona_publishing', 'persona_v8_queued', 'persona_v8_preparing', 'persona_v8_scheduled', 'persona_v8_publishing', 'published', 'manual_attention', 'cancelled', 'failed')),
     scheduled_for TIMESTAMPTZ NOT NULL,
     payload JSONB NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,

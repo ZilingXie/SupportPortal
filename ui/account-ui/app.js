@@ -150,6 +150,7 @@ const detailRequestControllers = new Set();
 const ACTIVE_AI_REPLY_STATUSES = new Set([
   "queued", "preparing", "scheduled", "publishing",
   "persona_queued", "persona_preparing", "persona_scheduled", "persona_publishing",
+  "persona_v8_queued", "persona_v8_preparing", "persona_v8_scheduled", "persona_v8_publishing",
 ]);
 const ROUTE_TUPLE_OPTIONS = [
   { scope: "ticket_resolution", action: "resolve_ticket", label: "Conversation / Resolve" },

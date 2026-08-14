@@ -1549,7 +1549,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         reply_job = self.repository.get_latest_account_reply_job("12513")
         assert reply_job is not None
-        self.assertEqual(reply_job["status"], "persona_queued")
+        self.assertEqual(reply_job["status"], "persona_v8_queued")
         self.assertEqual(reply_job["payload"]["rerun_job_id"], "account-reroute-test")
         self.assertEqual(
             reply_job["trigger_message_created_at"],
@@ -1852,7 +1852,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         reply_job = self.repository.get_latest_account_reply_job("12514")
         assert reply_job is not None
-        self.assertEqual(reply_job["status"], "persona_queued")
+        self.assertEqual(reply_job["status"], "persona_v8_queued")
         self.assertEqual(reply_job["payload"]["rerun_job_id"], "account-reroute-persona-unavailable")
         executions = self.repository.list_account_route_executions("12514")
         self.assertEqual(len(executions), 1)
@@ -2170,7 +2170,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(reply_job)
         assert reply_job is not None
-        self.assertEqual(reply_job["status"], worker.ACCOUNT_REPLY_PERSONA_QUEUED)
+        self.assertEqual(reply_job["status"], worker.ACCOUNT_REPLY_PERSONA_V8_QUEUED)
         self.assertEqual(reply_job["payload"]["reply_pipeline"], worker.ACCOUNT_REPLY_PERSONA_PIPELINE)
         self.assertEqual(reply_job["payload"]["reply_facts"]["customer_first_name"], "Jack")
         self.assertEqual(reply_job["payload"]["reply_facts"]["performed_actions"], [])
@@ -6928,8 +6928,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert job is not None
 
         persona_pipeline = (job.get("payload") or {}).get("reply_pipeline") == worker.ACCOUNT_REPLY_PERSONA_PIPELINE
-        from_status = worker.ACCOUNT_REPLY_PERSONA_QUEUED if persona_pipeline else "scheduled"
-        to_status = worker.ACCOUNT_REPLY_PERSONA_PREPARING if persona_pipeline else "publishing"
+        from_status = worker.ACCOUNT_REPLY_PERSONA_V8_QUEUED if persona_pipeline else "scheduled"
+        to_status = worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING if persona_pipeline else "publishing"
         not_due = self.repository.claim_account_reply_jobs(
             from_status=from_status,
             to_status=to_status,
