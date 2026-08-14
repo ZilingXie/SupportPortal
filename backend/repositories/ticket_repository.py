@@ -2236,7 +2236,18 @@ class InMemoryTicketRepository:
             )
             if current_id != normalized_id or current_key != normalized_key:
                 continue
-            if str(current.get("internal_email_send_status") or "").strip() not in set(allowed_statuses):
+            current_status = str(current.get("internal_email_send_status") or "").strip()
+            current_claim = (
+                str(current_payload.get("delivery_claim_token") or "").strip()
+                if isinstance(current_payload, dict)
+                else ""
+            )
+            same_claim_replay = (
+                current_status == "sending"
+                and current_claim == str(claim_token or "").strip()
+                and bool(current_claim)
+            )
+            if current_status not in set(allowed_statuses) and not same_claim_replay:
                 return False
             claimed_payload = copy.deepcopy(payload)
             claimed_payload["delivery_claim_token"] = str(claim_token or "").strip()
@@ -5661,7 +5672,13 @@ class PostgresTicketRepository:
                             internal_email_send_reason = 'delivery_claimed',
                             updated_at = %s
                         WHERE (billing_ticket_id = %s OR account_case_id = %s)
-                          AND internal_email_send_status = ANY(%s)
+                          AND (
+                              internal_email_send_status = ANY(%s)
+                              OR (
+                                  internal_email_send_status = 'sending'
+                                  AND COALESCE(internal_email_payload->>'delivery_claim_token', '') = %s
+                              )
+                          )
                           AND COALESCE(internal_email_payload->>'delivery_key', '') = %s
                         """
                     ).format(self._table("support_account_cases")),
@@ -5671,6 +5688,7 @@ class PostgresTicketRepository:
                         normalized_id,
                         normalized_id,
                         list(allowed_statuses),
+                        str(claim_token).strip(),
                         normalized_key,
                     ),
                 )

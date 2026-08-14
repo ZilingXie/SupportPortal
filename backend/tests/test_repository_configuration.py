@@ -843,6 +843,32 @@ class RepositoryConfigurationTests(unittest.TestCase):
         query = cursor.executed[0][0][0]
         self.assertIn("COALESCE(meta, '{}'::jsonb)", query.as_string())
 
+    def test_postgres_email_claim_allows_same_token_replay(self) -> None:
+        cursor = _RowcountCursor(rowcount=1)
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            claimed = repository.claim_account_internal_email_delivery(
+                "AC-REPLAY",
+                delivery_key="enablement:AC-REPLAY:v1:rerun:account-rerun-parent",
+                claim_token="owner-1",
+                claimed_at="2026-08-06T00:00:00+00:00",
+                payload={"delivery_key": "enablement:AC-REPLAY:v1:rerun:account-rerun-parent"},
+                allowed_statuses=("pending", "retry"),
+            )
+
+        self.assertTrue(claimed)
+        query, params = cursor.executed[0][0]
+        query_text = query.as_string()
+        self.assertIn("internal_email_send_status = 'sending'", query_text)
+        self.assertIn("delivery_claim_token", query_text)
+        self.assertIn("owner-1", params)
+
     def test_account_reply_job_uniqueness_is_scoped_to_rerun_payload(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")

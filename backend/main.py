@@ -5176,6 +5176,7 @@ async def _resume_account_rerun_side_effect(
     *,
     retry_mode: str,
     rerun_job_id: str | None = None,
+    delivery_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Retry only a failed post-commit email or reply side effect."""
     account_case = await _account_rerun_storage_call(
@@ -5191,10 +5192,32 @@ async def _resume_account_rerun_side_effect(
         payload = account_case.get("internal_email_payload")
         if not isinstance(payload, dict) or not payload:
             raise ValueError("internal email checkpoint is missing")
+        delivery_key = str(payload.get("delivery_key") or "").strip()
+        if not delivery_key:
+            raise ValueError("internal email checkpoint has no delivery key")
+        account_automation_context = account_case.get("automation_context")
+        account_automation_context = (
+            account_automation_context
+            if isinstance(account_automation_context, dict)
+            else {}
+        )
+        delivery_owner_job_id = str(
+            delivery_job_id
+            or account_automation_context.get("rerun_job_id")
+            or rerun_job_id
+            or ""
+        ).strip()
+        existing_claim_token = str(payload.get("delivery_claim_token") or "").strip()
+        existing_status = str(account_case.get("internal_email_send_status") or "").strip().lower()
+        reuse_existing_claim = bool(
+            existing_status == "sending"
+            and existing_claim_token
+            and _account_rerun_delivery_key_matches_job(delivery_key, delivery_owner_job_id)
+        )
         delivery_evidence = classify_internal_email_delivery(account_case)
         if delivery_evidence["status"] == "sent":
             return {"status": "already_sent", "account_case": account_case}
-        if delivery_evidence["status"] == "unknown":
+        if delivery_evidence["status"] == "unknown" and not reuse_existing_claim:
             raise RuntimeError("manual_confirmation_required: automation delivery state is unknown")
         handler = str(account_case.get("automation_handler") or "").strip().lower()
         sender = {
@@ -5204,14 +5227,12 @@ async def _resume_account_rerun_side_effect(
         }.get(handler)
         if sender is None:
             raise ValueError(f"unsupported email handler: {handler or 'unknown'}")
-        delivery_key = str(payload.get("delivery_key") or "").strip()
-        if not delivery_key:
-            raise ValueError("internal email checkpoint has no delivery key")
-        claim_token = f"account-rerun-email-{uuid4().hex}"
+        claim_token = existing_claim_token if reuse_existing_claim else f"account-rerun-email-{uuid4().hex}"
         claimed_at = now_iso()
         attempt_payload = dict(payload)
-        attempt_payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
-        attempt_payload["last_attempt_at"] = claimed_at
+        if not reuse_existing_claim:
+            attempt_payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
+            attempt_payload["last_attempt_at"] = claimed_at
         claimed = await _account_rerun_storage_call(
             ticket_repository.claim_account_internal_email_delivery,
             account_case_id,
@@ -5234,7 +5255,15 @@ async def _resume_account_rerun_side_effect(
             current_evidence = classify_internal_email_delivery(current or {})
             if current_evidence["status"] == "sent":
                 return {"status": "already_sent", "account_case": current or account_case}
-            raise RuntimeError("manual_confirmation_required: automation delivery claim is unavailable")
+            current_payload = current.get("internal_email_payload") if isinstance(current, dict) else None
+            if not (
+                reuse_existing_claim
+                and isinstance(current_payload, dict)
+                and str(current.get("internal_email_send_status") or "").strip().lower() == "sending"
+                and str(current_payload.get("delivery_key") or "").strip() == delivery_key
+                and str(current_payload.get("delivery_claim_token") or "").strip() == claim_token
+            ):
+                raise RuntimeError("manual_confirmation_required: automation delivery claim is unavailable")
         attempt = {
             "internal_email_to_send": attempt_payload,
             "internal_email_payload": attempt_payload,
@@ -5254,7 +5283,24 @@ async def _resume_account_rerun_side_effect(
             completed_at=now_iso(),
         )
         if not completed:
-            raise RuntimeError("manual_confirmation_required: automation delivery result was not persisted")
+            current = await _account_rerun_storage_call(
+                ticket_repository.get_account_case,
+                account_case_id,
+            )
+            current_payload = current.get("internal_email_payload") if isinstance(current, dict) else None
+            completed = bool(
+                isinstance(current, dict)
+                and isinstance(current_payload, dict)
+                and str(current.get("internal_email_send_status") or "").strip().lower()
+                == str(status or "failed").strip().lower()
+                and str(current_payload.get("delivery_key") or "").strip() == delivery_key
+                and str(current_payload.get("last_attempt_at") or "").strip()
+                == str(attempt_payload.get("last_attempt_at") or "").strip()
+                and int(current_payload.get("delivery_attempt_count") or 0)
+                == int(attempt_payload.get("delivery_attempt_count") or 0)
+            )
+            if not completed:
+                raise RuntimeError("manual_confirmation_required: automation delivery result was not persisted")
         updated = await _account_rerun_storage_call(
             ticket_repository.get_account_case,
             account_case_id,
@@ -5324,6 +5370,7 @@ async def _run_account_rerun_post_commit_side_effects(
     reply_kind: str | None,
     send_internal_email: bool = False,
     retry_mode: str | None = None,
+    delivery_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the durable post-Commit email/reply stages for one Account Case."""
 
@@ -5349,6 +5396,7 @@ async def _run_account_rerun_post_commit_side_effects(
                 account_case_id,
                 retry_mode="email",
                 rerun_job_id=rerun_job_id,
+                delivery_job_id=delivery_job_id,
             )
         except Exception as exc:
             raise _AccountRerunSideEffectError("email", exc) from exc
@@ -5518,6 +5566,14 @@ def _save_account_full_reroute_job(
 def _fresh_rerun_delivery_key(payload: dict[str, Any], rerun_job_id: str) -> str:
     base_key = str(payload.get("delivery_key") or "automation").strip() or "automation"
     return f"{base_key}:rerun:{rerun_job_id}"
+
+
+def _account_rerun_delivery_key_matches_job(delivery_key: str, rerun_job_id: str | None) -> bool:
+    normalized_key = str(delivery_key or "").strip()
+    normalized_job_id = str(rerun_job_id or "").strip()
+    if not normalized_key or not normalized_job_id or ":rerun:" not in normalized_key:
+        return False
+    return normalized_key.rsplit(":rerun:", 1)[-1] == normalized_job_id
 
 
 def _account_rerun_route_key(primary_label: str, secondary_label: str) -> str:
@@ -6391,6 +6447,7 @@ async def _run_account_full_reroute_job(
                         reply_kind=None,
                         send_internal_email=retry_case_mode == "email",
                         retry_mode=retry_case_mode,
+                        delivery_job_id=str(job.get("parent_job_id") or job_id).strip(),
                     )
                     email_result = side_effects.get("email") or {}
                     reply_result = side_effects.get("reply") or {}
@@ -6514,6 +6571,7 @@ async def _run_account_full_reroute_job(
                         rerun_job_id=job_id,
                         reply_kind=result.reply_kind,
                         send_internal_email=bool(result.internal_email_to_send),
+                        delivery_job_id=job_id,
                     )
                     email_result = side_effects.get("email") or {}
                     reply_result = side_effects.get("reply") or {}
