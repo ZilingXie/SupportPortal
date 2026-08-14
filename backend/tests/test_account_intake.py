@@ -1551,6 +1551,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert reply_job is not None
         self.assertEqual(reply_job["status"], "persona_queued")
         self.assertEqual(reply_job["payload"]["rerun_job_id"], "account-reroute-test")
+        self.assertEqual(
+            reply_job["trigger_message_created_at"],
+            "2026-07-31T08:30:00+00:00",
+        )
         self.assertIsNone(self.repository.get_account_persona_assignment("12513"))
         self.assertEqual(self.repository.list_account_route_executions("12513")[-1]["rerun_mode"], "fresh_case_rerun")
         latest_job = main._account_full_reroute_job("account-reroute-test")
@@ -1569,6 +1573,68 @@ class AccountIntakeApiTests(unittest.TestCase):
             [message["role"] for message in stored_ticket["messages"]],
             ["customer"],
         )
+
+    def test_rerun_wait_marks_cancelled_reply_as_publish_failure(self) -> None:
+        self.repository.save_ticket(
+            {
+                "ticket_id": "12513-CANCELLED",
+                "customer_id": "customer@example.com",
+                "subject": "Stale confirmation",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please handle this request.",
+                        "created_at": "2026-08-01T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-12513-CANCELLED",
+                "billing_ticket_id": "AC-12513-CANCELLED",
+                "client_ticket_id": "12513-CANCELLED",
+                "route_status": "automated",
+                "route_family": "automated",
+                "automation_handler": "enablement",
+            }
+        )
+        self.repository.save_account_reply_job(
+            {
+                "job_id": "account-reply-cancelled",
+                "ticket_id": "12513-CANCELLED",
+                "trigger_message_created_at": "2026-07-31T00:00:00+00:00",
+                "status": "cancelled",
+                "scheduled_for": "2026-08-01T00:06:00+00:00",
+                "payload": {
+                    "rerun_job_id": "account-rerun-cancelled",
+                    "cancel_reason": "stale_customer_revision",
+                },
+            }
+        )
+        job = {
+            "job_id": "account-rerun-cancelled",
+            "reply_job_ids": ["account-reply-cancelled"],
+            "wait_for_replies": True,
+            "failures": [],
+            "failed_stage": None,
+            "failed_case_id": None,
+            "stop_reason": None,
+            "stop_error": None,
+        }
+        with patch.object(main, "_save_account_full_reroute_job_with_retry", AsyncMock()):
+            finished = asyncio.run(
+                main._wait_for_account_rerun_replies(job, lease_token="lease")
+            )
+
+        self.assertTrue(finished)
+        self.assertEqual(job["reply_jobs_cancelled"], 1)
+        self.assertEqual(job["reply_cancelled_case_ids"], ["AC-12513-CANCELLED"])
+        self.assertEqual(job["failed_case_id"], "AC-12513-CANCELLED")
+        self.assertEqual(job["failed_stage"], "reply_publish")
+        self.assertEqual(job["stop_reason"], "reply_publish_failed")
+        self.assertEqual(job["stop_error"], "stale_customer_revision")
 
     def test_full_reroute_automated_internal_email_without_customer_reply_does_not_pin_persona(self) -> None:
         ticket_id = "12513-NO-REPLY"

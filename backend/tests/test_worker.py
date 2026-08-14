@@ -3957,6 +3957,48 @@ class WorkerResilienceTests(unittest.TestCase):
         )
         repository.save_account_reply_job.assert_not_called()
 
+    def test_publishing_persona_reply_cancels_stale_customer_revision_with_reason(self) -> None:
+        job = {
+            "job_id": "account-reply-stale-customer",
+            "ticket_id": "TK-STALE-CUSTOMER",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "scheduled_for": "2026-03-22T00:07:00+00:00",
+            "payload": {
+                "reply_facts": {"behavior": "quota", "reply_intent": "submission_confirmation"},
+                "generated_content": "The request has been submitted.",
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-STALE-CUSTOMER",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please increase quota",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                },
+                {
+                    "role": "customer",
+                    "content": "I have one more detail.",
+                    "created_at": "2026-03-22T00:01:00+00:00",
+                },
+            ],
+        }
+        repository.update_claimed_account_reply_job.return_value = job
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker._publish_account_reply_job(job)
+
+        self.assertEqual(job["status"], "cancelled")
+        self.assertEqual(job["payload"]["cancel_reason"], "stale_customer_revision")
+        repository.publish_account_reply.assert_not_called()
+        repository.update_claimed_account_reply_job.assert_called_once()
+
     def test_deleted_account_reply_job_is_not_recreated_by_stale_worker(self) -> None:
         job = {
             "job_id": "account-reply-deleted",

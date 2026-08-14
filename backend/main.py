@@ -709,7 +709,9 @@ def _account_reply_job_public(job: dict[str, Any] | None) -> dict[str, Any]:
         "ai_reply_status": status or None,
         "ai_reply_scheduled_for": job.get("scheduled_for"),
         "ai_reply_published_at": job.get("published_at"),
-        "ai_reply_error": str(payload.get("error") or "") or None,
+        "ai_reply_error": str(
+            payload.get("error") or payload.get("cancel_reason") or ""
+        ) or None,
     }
 
 
@@ -5278,6 +5280,15 @@ async def _resume_account_rerun_side_effect(
         ticket = await _account_rerun_storage_call(ticket_repository.get_ticket, ticket_id)
         if not isinstance(ticket, dict):
             raise ValueError("reply checkpoint ticket not found")
+        customer_timestamps = [
+            str(message.get("created_at") or "")
+            for message in ticket.get("messages", [])
+            if isinstance(message, dict)
+            and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+            and str(message.get("created_at") or "").strip()
+        ]
+        if not customer_timestamps:
+            raise ValueError("reply checkpoint ticket has no customer message")
         handler = str(account_case.get("automation_handler") or "").strip() or "automation"
         facts = _automation_reply_facts(
             handler=handler,
@@ -5290,7 +5301,7 @@ async def _resume_account_rerun_side_effect(
         reply_job = await _account_rerun_storage_call(
             _create_account_reply_job,
             ticket_id=ticket_id,
-            trigger_message_created_at=str(account_case.get("updated_at") or now_iso()),
+            trigger_message_created_at=max(customer_timestamps),
             draft_content="",
             reply_facts=facts,
             asked_field_keys=(
@@ -5866,6 +5877,8 @@ async def _enqueue_account_rerun_job(
         "reply_jobs_published": 0,
         "reply_jobs_manual_attention": 0,
         "reply_jobs_failed": 0,
+        "reply_jobs_cancelled": 0,
+        "reply_cancelled_case_ids": [],
         "reply_wait_timed_out": False,
         "wait_for_replies": True,
         "completed_case_ids": [],
@@ -6076,6 +6089,39 @@ async def _wait_for_account_rerun_replies(
         job["new_replies_published"] = job["reply_jobs_published"]
         job["reply_jobs_manual_attention"] = sum(1 for item in jobs if item and item.get("status") == "manual_attention")
         job["reply_jobs_failed"] = sum(1 for item in jobs if item and item.get("status") == "failed")
+        cancelled_jobs = [item for item in jobs if item and item.get("status") == "cancelled"]
+        cancelled_case_ids: list[str] = []
+        for cancelled_job in cancelled_jobs:
+            ticket_id = str(cancelled_job.get("ticket_id") or "").strip()
+            if not ticket_id:
+                continue
+            account_case = await _account_rerun_storage_call(
+                ticket_repository.get_billing_ticket_by_client_ticket_id,
+                ticket_id,
+            )
+            if isinstance(account_case, dict):
+                case_id = str(
+                    account_case.get("account_case_id")
+                    or account_case.get("billing_ticket_id")
+                    or ""
+                ).strip()
+                if case_id:
+                    cancelled_case_ids.append(case_id)
+        cancelled_case_ids = list(dict.fromkeys(cancelled_case_ids))
+        job["reply_jobs_cancelled"] = len(cancelled_jobs)
+        job["reply_cancelled_case_ids"] = cancelled_case_ids
+        if cancelled_jobs:
+            first_cancelled = cancelled_jobs[0]
+            cancel_reason = str(
+                (first_cancelled.get("payload") or {}).get("cancel_reason")
+                if isinstance(first_cancelled.get("payload"), dict)
+                else ""
+            ).strip() or "reply_job_cancelled"
+            job["failed_stage"] = job.get("failed_stage") or "reply_publish"
+            job["stop_reason"] = job.get("stop_reason") or "reply_publish_failed"
+            job["stop_error"] = job.get("stop_error") or cancel_reason
+            if cancelled_case_ids:
+                job["failed_case_id"] = job.get("failed_case_id") or cancelled_case_ids[0]
         job["updated_at"] = now_iso()
         await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
         if not pending and not missing:
@@ -6649,6 +6695,7 @@ async def _run_account_full_reroute_job(
                 or job.get("reply_wait_timed_out")
                 or job.get("reply_jobs_manual_attention")
                 or job.get("reply_jobs_failed")
+                or job.get("reply_jobs_cancelled")
             )
             else "completed"
         )

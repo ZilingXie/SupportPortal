@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260812-account-rerun-preflight-resilience-1", html)
+        self.assertIn("20260814-account-rerun-reply-fix-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -274,7 +274,7 @@ class AccountUiContractTests(unittest.TestCase):
         const state = {{ rerouteError: '', rerouteJob: null }};
         {status_source}
         function renderWithResetCount(count) {{
-          state.rerouteJob = {{ status: 'completed', succeeded: 1, changed: 1, persona_assignments_deleted: count }};
+          state.rerouteJob = {{ status: 'completed', succeeded: 1, changed: 1, persona_assignments_deleted: count, reply_jobs_published: 2, reply_jobs_cancelled: 0 }};
           return renderRerouteStatus();
         }}
         console.log(JSON.stringify([renderWithResetCount(0), renderWithResetCount(3)]));
@@ -289,6 +289,24 @@ class AccountUiContractTests(unittest.TestCase):
         zero, nonzero = json.loads(result.stdout)
         self.assertIn("0 Persona assignments reset", zero)
         self.assertIn("3 Persona assignments reset", nonzero)
+
+    def test_account_rerun_summary_reports_cancelled_customer_replies(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        status_start = app_source.index("function renderRerouteStatus")
+        status_end = app_source.index("\nfunction", status_start + 1)
+        status_source = app_source[status_start:status_end]
+        script = f"""
+        function escapeHtml(value) {{ return String(value ?? ''); }}
+        function isActiveRerouteJob() {{ return false; }}
+        const state = {{ rerouteError: '', rerouteJob: null, isStartingReroute: false }};
+        {status_source}
+        state.rerouteJob = {{ status: 'completed_with_errors', succeeded: 3, changed: 3, reply_jobs_published: 0, reply_jobs_cancelled: 1, failed_case_id: 'AC-3', failed_stage: 'reply_publish', stop_error: 'stale_customer_revision', remaining: 0 }};
+        console.log(renderRerouteStatus());
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("0 published, 1 cancelled", result.stdout)
+        self.assertIn("reply_publish", result.stdout)
 
     def test_account_rerun_confirmation_explains_persona_reselection_for_single_and_all(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")

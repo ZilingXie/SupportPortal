@@ -450,6 +450,19 @@ def _update_claimed_account_reply_job(
     ) is not None
 
 
+def _cancel_stale_account_reply_job(
+    job: dict[str, Any],
+    *,
+    expected_status: str,
+) -> None:
+    payload = dict(job.get("payload") or {})
+    payload["cancel_reason"] = "stale_customer_revision"
+    job["payload"] = payload
+    job["status"] = "cancelled"
+    job["updated_at"] = now_iso()
+    _update_claimed_account_reply_job(job, expected_status=expected_status)
+
+
 def _resolve_account_persona_for_claimed_reply(
     job: dict[str, Any],
     *,
@@ -549,9 +562,7 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         _update_claimed_account_reply_job(job, expected_status=claimed_status)
         return
     if not _account_reply_trigger_is_latest(ticket, str(job.get("trigger_message_created_at") or "")):
-        job["status"] = "cancelled"
-        job["updated_at"] = now_iso()
-        _update_claimed_account_reply_job(job, expected_status=claimed_status)
+        _cancel_stale_account_reply_job(job, expected_status=claimed_status)
         return
 
     trigger_message = next(
@@ -684,12 +695,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     if existing_message is None and not _account_reply_trigger_is_latest(
         ticket, str(job.get("trigger_message_created_at") or "")
     ):
-        current_job["status"] = "cancelled"
-        current_job["updated_at"] = now_iso()
-        _update_claimed_account_reply_job(
-            current_job,
-            expected_status=claimed_status,
-        )
+        _cancel_stale_account_reply_job(current_job, expected_status=claimed_status)
         return
 
     if (
