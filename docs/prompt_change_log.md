@@ -12,6 +12,30 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-14 - Account Automation concise ownership replies
+
+- Area or subsystem: `/account` Automation Persona, Account reply facts, and Account reply poller deployment boundary
+- Prompt or model version: `automation-persona-v8`; model configuration unchanged
+- Summary: Account submission confirmations now provide semantic ownership state instead of third-person customer-copy sentences. The Persona generates a concise first-person acknowledgement that says Support is reviewing the request with the internal team and will update the customer when there is progress.
+- Reason: Persona v7 received `The assigned Support Engineer...` as a fact and reproduced it as a mechanical status report. A production v6 worker also consumed a shared-PostgreSQL job created by the local stack, so the two environments did not enforce the same reply contract.
+- Affected files or config:
+  - `backend/services/automation_persona.py`
+  - `backend/tests/test_automation_persona.py`
+  - `backend/tests/test_account_intake.py`
+  - `backend/tests/test_worker.py`
+  - `deployment/docker-compose.single-host.local-lightweight.yml`
+  - `deployment/docker-compose.single-host.local-db.yml`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/roadmap/phase2.html`
+- Expected behavior change:
+  - `submission_confirmation` uses first-person ownership, concise acknowledgement, update commitment, and patience wording without exposing semantic field names.
+  - Third-person Support Engineer narration and internal-team delegation fail closed to Human Review.
+  - Unpublished v6/v7 Account Persona jobs are rendered once with v8; published historical replies are unchanged.
+  - Remote PostgreSQL local-lightweight workers do not claim Account reply jobs; the deployed full stack is the single poller owner. Local-DB lightweight tests keep the poller enabled.
+  - `/client` and shared legacy routing/reply behavior remain unchanged.
+- Verification:
+  - Targeted Persona, Account intake, worker rerender, compose contract, Python syntax, and `git diff --check` tests.
+
 ## 2026-08-14 - Account Automation ownership-first customer replies
 
 - Area or subsystem: `/account` Automation Persona, shared Automation reply facts, delayed reply worker, and Phase 2 Automation Scope

@@ -63,6 +63,10 @@ services:
   worker_aux:
     environment:
       RUNTIME_PROFILE: local_lightweight
+      # The remote PostgreSQL deployment has the authoritative Account reply poller.
+      # Keeping this local lightweight worker read/write-only avoids cross-version claims.
+      ACCOUNT_REPLY_POLLER_ENABLED: "false"
+      ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "false"
       ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-5.6-luna}
       ACCOUNT_ROUTE_BASE_URL: ${ACCOUNT_ROUTE_BASE_URL:-}
       ACCOUNT_ROUTE_REASONING_EFFORT: ${ACCOUNT_ROUTE_REASONING_EFFORT:-xhigh}

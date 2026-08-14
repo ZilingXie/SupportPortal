@@ -8,6 +8,7 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.yml"
 LIGHTWEIGHT_COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.local-lightweight.yml"
+LOCAL_DB_COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.local-db.yml"
 DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
@@ -434,6 +435,15 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("INSTALL_ML_DEPS: \"0\"", content)
         self.assertIn("SENTIMENT_PROVIDER: legacy", content)
         self.assertIn("RUNTIME_PROFILE: local_lightweight", content)
+        self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "false"', content)
+        self.assertIn('ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "false"', content)
+
+    def test_local_db_override_restores_account_reply_poller(self) -> None:
+        content = LOCAL_DB_COMPOSE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("<<: *local_app_db_environment", content)
+        self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "true"', content)
+        self.assertIn('ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "true"', content)
 
     def test_base_compose_defaults_runtime_profile_to_full(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")

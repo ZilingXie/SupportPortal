@@ -64,7 +64,10 @@ services:
         condition: service_healthy
 
   worker_aux:
-    environment: *local_app_db_environment
+    environment:
+      <<: *local_app_db_environment
+      ACCOUNT_REPLY_POLLER_ENABLED: "true"
+      ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "true"
     depends_on:
       local_postgres:
         condition: service_healthy
