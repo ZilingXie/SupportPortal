@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from backend.services.automation_persona import (
     AutomationPersonaError,
+    build_account_automation_reply_facts,
     build_automation_reply_facts,
     customer_first_name,
     extract_automation_resolution_facts,
@@ -135,7 +136,10 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text="I have started coordinating your Media Relay request with our internal team, and I will keep you updated.",
+            text=(
+                "Thank you for reaching out. We are reviewing it with our internal team and will keep you posted "
+                "as soon as we have an update.\n\nWe appreciate your patience."
+            ),
             model_name="persona-model",
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -154,7 +158,80 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertNotIn("channel media rele", user_prompt)
         self.assertIn("Do not repeat identifier values", system_prompt)
         self.assertIn("canonical product or feature display name", system_prompt)
-        self.assertIn("Media Relay", result.content)
+        self.assertIn("Thank the customer", system_prompt)
+        self.assertIn("Semantic fields such as ownership_state", system_prompt)
+        self.assertNotIn("The assigned Support Engineer has started", user_prompt)
+        self.assertIn("Thank you for reaching out", result.content)
+        self.assertNotIn("channel media rele", result.content)
+
+    def test_account_submission_facts_are_semantic_not_customer_copy(self) -> None:
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={"requested_feature": "media_relay"},
+            submitted=True,
+        )
+
+        self.assertEqual(facts["resolution_status"], "internal_review_in_progress")
+        self.assertEqual(facts["ownership_state"], "support_owned_internal_review")
+        self.assertEqual(facts["customer_update_commitment"], "update_when_available")
+        self.assertEqual(facts["performed_actions"], [])
+        self.assertIsNone(facts["next_step"])
+
+    def test_account_submission_rejects_third_person_support_owner_copy(self) -> None:
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="submission_confirmation",
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "The assigned Support Engineer has started coordinating the request with the internal team, and the "
+                "case is currently in progress with them. The assigned Support Engineer will continue monitoring the "
+                "request and proactively update you when there is progress."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            with self.assertRaisesRegex(AutomationPersonaError, "ownership_contract_failed"):
+                render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                    account_scope=True,
+                )
+
+    def test_old_submission_facts_are_normalized_before_v8_prompt(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="We are reviewing the request with our internal team and will keep you posted.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            render_automation_reply(
+                reply_facts={
+                    "behavior": "enablement",
+                    "reply_intent": "submission_confirmation",
+                    "performed_actions": [
+                        "The assigned Support Engineer has started coordinating the request with the internal team."
+                    ],
+                    "next_step": (
+                        "The assigned Support Engineer will continue monitoring the request and proactively update the "
+                        "customer when there is progress."
+                    ),
+                    "resolution_status": "in_progress_with_internal_team",
+                },
+                persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                account_scope=True,
+            )
+
+        user_prompt = invoke.call_args.kwargs["user_prompt"]
+        self.assertNotIn("The assigned Support Engineer", user_prompt)
+        self.assertIn("support_owned_internal_review", user_prompt)
 
     def test_render_uses_facts_and_pinned_persona(self) -> None:
         facts = build_automation_reply_facts(

@@ -18,7 +18,7 @@ invoke_responses_text = invoke_account_responses_text
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v7"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v8"
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 _APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
@@ -211,36 +211,37 @@ def build_account_automation_reply_facts(
     """Build the shared customer-facing facts for Account Automation intake."""
     behavior = str(action or handler or "automation").strip()
     if submitted:
-        return build_automation_reply_facts(
+        facts = build_automation_reply_facts(
             behavior=behavior,
             reply_intent="submission_confirmation",
             known_information=collected_fields,
-            performed_actions=[
-                "The assigned Support Engineer has started coordinating the request with the internal team."
-            ],
-            next_step=(
-                "The assigned Support Engineer will continue monitoring the request and proactively update the customer "
-                "when there is progress."
-            ),
-            resolution_status="in_progress_with_internal_team",
+            resolution_status="internal_review_in_progress",
             source_facts=resolution_facts,
             customer_name=customer_name,
         )
-    return build_automation_reply_facts(
+        facts.update(
+            {
+                "ownership_state": "support_owned_internal_review",
+                "customer_update_commitment": "update_when_available",
+            }
+        )
+        return facts
+    facts = build_automation_reply_facts(
         behavior=behavior,
         reply_intent="request_missing_information",
         known_information=collected_fields,
         missing_information=missing_fields,
-        next_step=(
-            "After receiving the missing information, the assigned Support Engineer will continue coordinating the request "
-            "with the internal team."
-            if missing_fields
-            else None
-        ),
         resolution_status="awaiting_customer",
         source_facts=resolution_facts,
         customer_name=customer_name,
     )
+    facts.update(
+        {
+            "ownership_state": "support_owned_after_customer_reply",
+            "customer_update_commitment": "continue_after_missing_information",
+        }
+    )
+    return facts
 
 
 def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
@@ -248,20 +249,16 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     facts = dict(reply_facts or {})
     reply_intent = str(facts.get("reply_intent") or "").strip().lower()
     if reply_intent == "submission_confirmation":
-        facts["performed_actions"] = [
-            "The assigned Support Engineer has started coordinating the request with the internal team."
-        ]
-        facts["next_step"] = (
-            "The assigned Support Engineer will continue monitoring the request and proactively update the customer "
-            "when there is progress."
-        )
-        facts["resolution_status"] = "in_progress_with_internal_team"
+        facts["performed_actions"] = []
+        facts["next_step"] = None
+        facts["resolution_status"] = "internal_review_in_progress"
+        facts["ownership_state"] = "support_owned_internal_review"
+        facts["customer_update_commitment"] = "update_when_available"
     elif reply_intent == "request_missing_information" and facts.get("missing_information"):
-        facts["next_step"] = (
-            "After receiving the missing information, the assigned Support Engineer will continue coordinating the request "
-            "with the internal team."
-        )
+        facts["next_step"] = None
         facts["resolution_status"] = "awaiting_customer"
+        facts["ownership_state"] = "support_owned_after_customer_reply"
+        facts["customer_update_commitment"] = "continue_after_missing_information"
     return facts
 
 
@@ -272,8 +269,13 @@ def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
         return
     normalized = str(reply or "").replace("’", "'").replace("\u2019", "'")
     lowered = normalized.casefold()
+    delegated_support_owner = re.search(
+        r"(?:^|[.!?\n])\s*the\s+(?:assigned\s+)?support\s+engineer\b"
+        r"[^.!?\n]{0,140}\b(?:will|has|is|continues?|started)\b",
+        lowered,
+    )
     delegated = re.search(
-        r"\b(?:the|our)\s+(?:internal|billing|enablement|quota|relevant)\s+team\b"
+        r"(?:^|[.!?\n])\s*(?:the|our)\s+(?:internal|billing|enablement|quota|relevant)\s+team\b"
         r"[^.!?\n]{0,100}\b(?:will|shall|is going to|'ll)\b"
         r"[^.!?\n]{0,100}\b(?:follow up|contact|reach out|update|notify)\b",
         lowered,
@@ -281,18 +283,23 @@ def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
         r"内部团队[^。！？.!?\n]{0,40}(?:会|将)[^。！？.!?\n]{0,40}(?:联系|通知|跟进|更新)",
         normalized,
     )
-    if delegated:
+    if delegated or delegated_support_owner:
         raise AutomationPersonaError("automation_persona_ownership_contract_failed")
 
     language = str(reply_facts.get("customer_language") or "en").strip().lower()
     if language.startswith("zh"):
-        owned = re.search(r"(?:我|我们)[^。！？.!?\n]{0,80}(?:跟进|协调|更新|同步|推进|联系|告知)", normalized)
+        owned = re.search(r"(?:我|我们)[^。！？.!?\n]{0,100}(?:审核|处理|跟进|协调|更新|同步|推进|联系|告知)", normalized)
+        update_commitment = re.search(r"(?:我|我们)[^。！？.!?\n]{0,120}(?:更新|同步|告知|第一时间)", normalized)
     else:
         owned = re.search(
-            r"\b(?:i|we)\b[^.!?\n]{0,120}\b(?:work|coordinat|follow|updat|keep|monitor|continu|proceed|let you know)\w*",
+            r"\b(?:i|we)\b[^.!?\n]{0,120}\b(?:review|work|coordinat|handle|check|investigat|follow|monitor|continu|proceed)\w*",
             lowered,
         )
-    if not owned:
+        update_commitment = re.search(
+            r"\b(?:i|we)\b[^.!?\n]{0,160}\b(?:keep you posted|keep you updated|update you|let you know|follow up with you)\b",
+            lowered,
+        )
+    if not owned or (intent == "submission_confirmation" and not update_commitment):
         raise AutomationPersonaError("automation_persona_ownership_contract_failed")
 
 
@@ -322,12 +329,15 @@ def render_automation_reply(
 
     greeting = f"Hi {customer_first_name(facts.get('customer_first_name'))},"
     ownership_policy = (
-        "For submission_confirmation, the Support Engineer is the customer's point of contact: write in first "
-        "person that you are coordinating with the internal team and will proactively update the customer. "
-        "The internal team is a collaborator, never the party responsible for contacting the customer. Do not "
-        "write that the internal team or they will follow up, contact, notify, or update the customer. For "
-        "request_missing_information, do not imply that internal review has started; explain that you will "
-        "continue the coordination after the missing information is received. Do not promise a time or outcome. "
+        "For submission_confirmation, write a concise, natural customer message in first person. Thank the customer, "
+        "say that we are reviewing the request with our internal team, and promise to keep the customer posted when "
+        "there is an update. A short patience sentence is appropriate. The internal team is a collaborator, never "
+        "the party responsible for contacting the customer. Do not use job-title narration such as 'The assigned "
+        "Support Engineer', 'the case is in progress with them', or any wording that makes the customer wait for an "
+        "internal team to follow up. For request_missing_information, do not imply that internal review has started; "
+        "explain that you will continue the coordination after the missing information is received. Do not promise a "
+        "time or outcome. Semantic fields such as ownership_state and customer_update_commitment are instructions, "
+        "not customer-facing phrases; never repeat their raw values. "
         if account_scope
         else ""
     )

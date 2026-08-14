@@ -2173,10 +2173,14 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(reply_job["status"], worker.ACCOUNT_REPLY_PERSONA_QUEUED)
         self.assertEqual(reply_job["payload"]["reply_pipeline"], worker.ACCOUNT_REPLY_PERSONA_PIPELINE)
         self.assertEqual(reply_job["payload"]["reply_facts"]["customer_first_name"], "Jack")
-        self.assertIn("started coordinating", reply_job["payload"]["reply_facts"]["performed_actions"][0])
+        self.assertEqual(reply_job["payload"]["reply_facts"]["performed_actions"], [])
         self.assertEqual(
             reply_job["payload"]["reply_facts"]["resolution_status"],
-            "in_progress_with_internal_team",
+            "internal_review_in_progress",
+        )
+        self.assertEqual(
+            reply_job["payload"]["reply_facts"]["ownership_state"],
+            "support_owned_internal_review",
         )
         send_email.assert_called_once()
         email_payload = send_email.call_args.args[0]
