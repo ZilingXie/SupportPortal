@@ -113,6 +113,12 @@ The completed-implementation review and finalization process lives in the projec
 2. Prompt-related or model-related changes include system prompts, user prompt builders, few-shot examples, fallback instructions, refusal templates, model names, model providers, reasoning effort, temperature, tooling mode, domain filters, and any other configuration that can change model behavior.
 3. Each entry must include the date, area or subsystem, prompt or model version, summary, reason, affected files or config, expected behavior change, and verification evidence.
 
+## Project Progress Registry Maintenance
+1. `docs/project/tasks/*.json` is the canonical state for project Tasks. Board, Topic, Meeting, activity, and report sections in Project Overview are generated views; `docs/projectoverview-data.js` must not be edited by hand.
+2. Any `功能类/修复类` change that changes runtime behavior, a user-visible flow, an API contract, a data model, configuration, or a business result must use one Task. Find the existing `task_id` first; create a Task when none exists, then update its `status`, `next_action`, and `evidence` throughout the work.
+3. After changing a Task or another Project Overview source record, run `python3 scripts/generate_project_overview.py --write` and then `python3 scripts/generate_project_overview.py --check` before committing. If the change is ambiguous, stop and ask before implementation.
+4. Pure documentation, tests, instructions/rules, comments, refactors, developer-only scripts, and operations-only changes are exempt unless they also change tracked progress or runtime/user-visible behavior.
+
 ## Feature List Maintenance
 1. `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` is the canonical feature list for major product capabilities in this repository.
 2. Any task that adds, completes, or materially changes a major feature must update `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` and the corresponding `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/project/tasks/<task-id>.json` in the same task before the task is considered complete.
