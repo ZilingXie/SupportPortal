@@ -1,0 +1,523 @@
+{
+  "schema_version": 1,
+  "generated_from": [
+    "docs/roadmap.html",
+    "docs/roadmap/meetings.html",
+    "docs/roadmap/phase2.html",
+    "docs/roadmap/phase3.html",
+    "docs/feature_list.md"
+  ],
+  "records": [
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-real-evidence-tools",
+      "target_type": "task",
+      "target_id": "ma-real-evidence-tools",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-replay-runner",
+      "target_type": "task",
+      "target_id": "ma-replay-runner",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-controlled-replan",
+      "target_type": "task",
+      "target_id": "ma-controlled-replan",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-guardrail-claim-evidence",
+      "target_type": "task",
+      "target_id": "ma-guardrail-claim-evidence",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-workspace-action-console",
+      "target_type": "task",
+      "target_id": "ma-workspace-action-console",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-rollout-taxonomy-contract",
+      "target_type": "task",
+      "target_id": "ma-rollout-taxonomy-contract",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-agentrelay-support-integration",
+      "target_type": "task",
+      "target_id": "ma-agentrelay-support-integration",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "ma-agent-to-agent-governed-autonomy",
+      "target_type": "task",
+      "target_id": "ma-agent-to-agent-governed-autonomy",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-phase3-eligibility",
+      "target_type": "task",
+      "target_id": "assign-phase3-eligibility",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-phase3-first-reply",
+      "target_type": "task",
+      "target_id": "assign-phase3-first-reply",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-phase3-slack",
+      "target_type": "task",
+      "target_id": "assign-phase3-slack",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-phase3-admin-sync",
+      "target_type": "task",
+      "target_id": "assign-phase3-admin-sync",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-live-postgres",
+      "target_type": "task",
+      "target_id": "assign-live-postgres",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-auth-hardening",
+      "target_type": "task",
+      "target_id": "assign-auth-hardening",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-rollout",
+      "target_type": "task",
+      "target_id": "assign-rollout",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-metrics",
+      "target_type": "task",
+      "target_id": "assign-metrics",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "assign-legacy-cleanup",
+      "target_type": "task",
+      "target_id": "assign-legacy-cleanup",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-monitor-replay-quality",
+      "target_type": "task",
+      "target_id": "billing-monitor-replay-quality",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-monitor-automation-outcomes",
+      "target_type": "task",
+      "target_id": "billing-monitor-automation-outcomes",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-human-review-handoff",
+      "target_type": "task",
+      "target_id": "billing-human-review-handoff",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-human-review",
+      "target_type": "task",
+      "target_id": "billing-human-review",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-dashboard-metrics",
+      "target_type": "task",
+      "target_id": "billing-dashboard-metrics",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-idempotency",
+      "target_type": "task",
+      "target_id": "billing-idempotency",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-recipient-env",
+      "target_type": "task",
+      "target_id": "billing-recipient-env",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-expand",
+      "target_type": "task",
+      "target_id": "billing-expand",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-real-zendesk-replay",
+      "target_type": "task",
+      "target_id": "routing-real-zendesk-replay",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-fallback-billing-risk-sniff",
+      "target_type": "task",
+      "target_id": "routing-fallback-billing-risk-sniff",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-billing-review-customer-experience",
+      "target_type": "task",
+      "target_id": "routing-billing-review-customer-experience",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-rollout-taxonomy",
+      "target_type": "task",
+      "target_id": "routing-rollout-taxonomy",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-billing-risky-negatives",
+      "target_type": "task",
+      "target_id": "routing-billing-risky-negatives",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-dashboard-metrics",
+      "target_type": "task",
+      "target_id": "routing-dashboard-metrics",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-semantic-golden-expand",
+      "target_type": "task",
+      "target_id": "routing-semantic-golden-expand",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-automation-rollout",
+      "target_type": "task",
+      "target_id": "routing-automation-rollout",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-ingest-model-bakeoff",
+      "target_type": "task",
+      "target_id": "kg-ingest-model-bakeoff",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-offline-graph-build",
+      "target_type": "task",
+      "target_id": "kg-offline-graph-build",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-benchmark-ab",
+      "target_type": "task",
+      "target_id": "kg-benchmark-ab",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-grey-gate",
+      "target_type": "task",
+      "target_id": "kg-grey-gate",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-engineer-vs-client",
+      "target_type": "task",
+      "target_id": "kg-engineer-vs-client",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-graph-db",
+      "target_type": "task",
+      "target_id": "kg-graph-db",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-model-config",
+      "target_type": "task",
+      "target_id": "kg-model-config",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-async-ingest",
+      "target_type": "task",
+      "target_id": "kg-async-ingest",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "rag-dedupe",
+      "target_type": "task",
+      "target_id": "rag-dedupe",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "kg-citations",
+      "target_type": "task",
+      "target_id": "kg-citations",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-01",
+      "target_type": "task",
+      "target_id": "TS-01",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-02",
+      "target_type": "task",
+      "target_id": "TS-02",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-03",
+      "target_type": "task",
+      "target_id": "TS-03",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-04",
+      "target_type": "task",
+      "target_id": "TS-04",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-05",
+      "target_type": "task",
+      "target_id": "TS-05",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-06",
+      "target_type": "task",
+      "target_id": "TS-06",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-07",
+      "target_type": "task",
+      "target_id": "TS-07",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-12",
+      "target_type": "task",
+      "target_id": "TS-12",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-08",
+      "target_type": "task",
+      "target_id": "TS-08",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-09",
+      "target_type": "task",
+      "target_id": "TS-09",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-10",
+      "target_type": "task",
+      "target_id": "TS-10",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "TS-11",
+      "target_type": "task",
+      "target_id": "TS-11",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "AG-01",
+      "target_type": "task",
+      "target_id": "AG-01",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "AG-02",
+      "target_type": "task",
+      "target_id": "AG-02",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "AG-03",
+      "target_type": "task",
+      "target_id": "AG-03",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "AG-04",
+      "target_type": "task",
+      "target_id": "AG-04",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "AG-05",
+      "target_type": "task",
+      "target_id": "AG-05",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap/meetings.html",
+      "legacy_id": "AG-06",
+      "target_type": "task",
+      "target_id": "AG-06",
+      "disposition": "migrated"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "project-overview",
+      "target_type": "task",
+      "target_id": "project-overview",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-persona-registry",
+      "target_type": "task",
+      "target_id": "billing-persona-registry",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "account-rerun-recovery",
+      "target_type": "task",
+      "target_id": "account-rerun-recovery",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "account-failure-alerts",
+      "target_type": "task",
+      "target_id": "account-failure-alerts",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-taxonomy",
+      "target_type": "task",
+      "target_id": "routing-taxonomy",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "routing-security-compliance",
+      "target_type": "task",
+      "target_id": "routing-security-compliance",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "billing-idempotency",
+      "target_type": "task",
+      "target_id": "billing-idempotency",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "agent-rules",
+      "target_type": "task",
+      "target_id": "agent-rules",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "phase2-fraud-field-contract",
+      "target_type": "task",
+      "target_id": "phase2-fraud-field-contract",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "admin-environment-config-inventory",
+      "target_type": "task",
+      "target_id": "admin-environment-config-inventory",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "client-rich-attachments",
+      "target_type": "task",
+      "target_id": "client-rich-attachments",
+      "disposition": "seeded"
+    },
+    {
+      "source_ref": "docs/roadmap.html",
+      "legacy_id": "client-streaming-output",
+      "target_type": "task",
+      "target_id": "client-streaming-output",
+      "disposition": "seeded"
+    }
+  ]
+}

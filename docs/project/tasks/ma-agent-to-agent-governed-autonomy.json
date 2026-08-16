@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "ma-agent-to-agent-governed-autonomy",
+  "title": "长期方向",
+  "topic_id": "agent-collaboration",
+  "related_topic_ids": [],
+  "milestone_id": "long-term-agent-collaboration",
+  "status": "planned",
+  "priority": "unclassified",
+  "owner": "unassigned",
+  "summary": "长期方向：在真实证据工具、replay gate、权限审计和成本门禁达标后，扩大 governed agent-to-agent 自主调查；接入前固定 endpoint/forum/hub 协作和审计协议。",
+  "next_action": "长期方向：在真实证据工具、replay gate、权限审计和成本门禁达标后，扩大 governed agent-to-agent 自主调查；接入前固定 endpoint/forum/hub 协作和审计协议。",
+  "acceptance_criteria": [
+    "完成 Long Term 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "engineer-multi-agent",
+      "item_id": "ma-agent-to-agent-governed-autonomy"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "sections": [
+    {
+      "id": "client",
+      "title": "Client 端",
+      "audience": "Support 用户和客户入口维护者",
+      "entrypoint": "/client",
+      "steps": ["从 Zendesk/Client 入口打开 Ticket", "确认路由、澄清和引用证据", "证据不足时等待 Engineer handoff"],
+      "source_refs": ["docs/feature_list.md", "docs/roadmap.html"]
+    },
+    {
+      "id": "account",
+      "title": "Account Automation",
+      "audience": "Automation owner 和 Admin",
+      "entrypoint": "/account",
+      "steps": ["确认 canonical Ticket ID 和 route tuple", "查看 Automation 或 Human Review 状态", "发生失败时沿 audit 和故障告警进入人工处理"],
+      "source_refs": ["docs/feature_list.md", "docs/roadmap/phase2.html"]
+    },
+    {
+      "id": "engineer",
+      "title": "Engineer Workspace",
+      "audience": "Engineer",
+      "entrypoint": "/workspace",
+      "steps": ["查看系统派发的 Engineer Case", "按 Plan、Evidence、Review 和 Guardrail 处理", "完成 final approve 后关闭 Case 并保留验证证据"],
+      "source_refs": ["docs/feature_list.md", "docs/roadmap/phase3.html"]
+    },
+    {
+      "id": "admin",
+      "title": "Admin Operations",
+      "audience": "Admin 和项目负责人",
+      "entrypoint": "/workspace/admin",
+      "steps": ["管理账号、排班、Agent Config 和 Prompt 版本", "查看派单、SLA、Automation 和 Guardrail 指标", "需要改派时记录原因并保留审计"],
+      "source_refs": ["docs/feature_list.md", "docs/roadmap/phase2.html"]
+    },
+    {
+      "id": "rag",
+      "title": "RAG Dashboard",
+      "audience": "RAG/Knowledge owner",
+      "entrypoint": "/dashboard/rag",
+      "steps": ["同步或选择 benchmark 数据集", "运行并比较检索和生成结果", "从 citation、候选漏斗和 judge 分歧定位问题"],
+      "source_refs": ["docs/feature_list.md", "docs/rag_change_log.md"]
+    },
+    {
+      "id": "ai-maintenance",
+      "title": "AI 维护入口",
+      "audience": "Codex、Claude 和项目维护者",
+      "entrypoint": "docs/project/README.md",
+      "steps": ["开工前找到或创建唯一 Task", "实现中更新同一个 Task 的 status、next_action 和 evidence", "运行 generate_project_overview.py --check 后再提交"],
+      "source_refs": ["AGENTS.md", "docs/agent_workflow_details.md"]
+    }
+  ]
+}

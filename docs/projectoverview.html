@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SupportPortal | Project Overview</title>
+  <meta name="description" content="SupportPortal 项目进度、Task、PR、Meeting 和架构汇总" />
+  <style>
+    :root {
+      --bg: #fbf4e4;
+      --surface: #fff9ee;
+      --surface-soft: #f3ead8;
+      --surface-tint: #fff2d8;
+      --ink: #17130d;
+      --muted: #6f675b;
+      --line: rgba(23, 19, 13, 0.14);
+      --line-strong: rgba(23, 19, 13, 0.24);
+      --green: #2f8b57;
+      --orange: #d56f2b;
+      --blue: #2368a2;
+      --violet: #7560b5;
+      --red: #b94b38;
+      --radius: 9px;
+      --shadow: 0 18px 48px rgba(33, 24, 10, 0.1);
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background: linear-gradient(135deg, #f4d7aa 0%, #fbf4e4 38%, #e9f0d4 100%);
+      font-family: var(--sans);
+    }
+    button, input, select { font: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    a { color: inherit; text-decoration: none; }
+    .page { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+    .project-head { background: rgba(255, 249, 238, .9); border-bottom: 1px solid var(--line); padding: 22px 28px 0; }
+    .head-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: start; max-width: 1380px; margin: 0 auto; }
+    .title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    h1, h2, h3, h4, p { margin-top: 0; }
+    h1 { margin-bottom: 0; font: 750 32px/1.2 ui-serif, "Songti SC", "Noto Serif CJK SC", Georgia, serif; letter-spacing: -.02em; }
+    h2 { margin-bottom: 8px; font: 720 25px/1.25 ui-serif, "Songti SC", Georgia, serif; }
+    h3 { margin-bottom: 7px; font-size: 17px; line-height: 1.35; }
+    h4 { margin-bottom: 6px; font-size: 14px; }
+    .eyebrow, .section-kicker { color: var(--orange); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .eyebrow { margin-bottom: 10px; }
+    .status-pill, .chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; white-space: nowrap; }
+    .status-pill { min-height: 26px; padding: 0 9px; color: #1f6f42; background: rgba(47, 139, 87, .12); border: 1px solid rgba(47, 139, 87, .24); font-size: 12px; font-weight: 700; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .goal-card { margin-top: 18px; max-width: 820px; border: 1px solid rgba(213, 111, 43, .18); border-radius: var(--radius); overflow: hidden; background: var(--surface-tint); }
+    .goal-label { min-height: 36px; padding: 9px 14px 0; color: #9f4d16; font-size: 14px; font-weight: 750; }
+    .goal-body { padding: 4px 14px 14px; color: #33281c; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+    .head-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 17px 0 19px; color: var(--muted); font-size: 13px; }
+    .head-meta span { min-width: 0; overflow-wrap: anywhere; }
+    .head-meta strong { color: var(--ink); font-weight: 650; }
+    .head-actions { display: flex; flex-direction: column; align-items: stretch; gap: 10px; min-width: 260px; }
+    .summary-card { min-width: 260px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 255, 255, .38); }
+    .summary-card-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .summary-counts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+    .summary-count { padding: 8px 4px; border-radius: 6px; background: var(--surface-soft); text-align: center; }
+    .summary-count strong { display: block; font-size: 18px; line-height: 1.1; }
+    .summary-count span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+    .summary-count.done strong { color: var(--green); }
+    .summary-count.blocked strong { color: var(--red); }
+    .report-button, .ghost-button, .filter-button { display: inline-flex; align-items: center; justify-content: center; min-height: 35px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); background: rgba(255, 249, 238, .75); cursor: pointer; font-size: 13px; font-weight: 700; }
+    .report-button { color: #fff9ee; background: var(--ink); border-color: var(--ink); }
+    .report-button:hover, .ghost-button:hover, .filter-button:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(23, 19, 13, .12); }
+    .freshness { color: var(--muted); font: 11px/1.5 var(--mono); }
+    .freshness.stale { color: var(--red); font-weight: 700; }
+    .workspace-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 22px; width: min(1380px, calc(100% - 40px)); margin: 0 auto; padding: 24px 0 46px; }
+    .sidebar { align-self: start; position: sticky; top: 18px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .72); box-shadow: var(--shadow); }
+    .sidebar-title { margin-bottom: 12px; font: 750 17px/1.2 ui-serif, Georgia, serif; }
+    .sidebar-link { display: block; padding: 9px 10px; border-radius: 6px; color: var(--muted); font-size: 13px; line-height: 1.35; }
+    .sidebar-link:hover, .sidebar-link.active { color: var(--ink); background: var(--surface-soft); }
+    .sidebar-rule { height: 1px; margin: 13px 0; background: var(--line); }
+    .sidebar-note { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .content { min-width: 0; }
+    .tabs { display: flex; gap: 5px; overflow-x: auto; padding: 0 0 10px; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+    .tab { flex: 0 0 auto; min-height: 37px; padding: 0 13px; border: 0; border-radius: 6px 6px 0 0; color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; font-weight: 750; }
+    .tab:hover, .tab.active { color: var(--ink); background: var(--surface); box-shadow: inset 0 -2px 0 var(--ink); }
+    .tab-panel { display: none; padding-top: 23px; }
+    .tab-panel.active { display: block; animation: rise .25s ease both; }
+    @keyframes rise { from { opacity: .2; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    .panel-intro { display: flex; justify-content: space-between; align-items: end; gap: 18px; margin-bottom: 17px; }
+    .panel-intro p { max-width: 760px; margin-bottom: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .panel-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px; }
+    .search, .select { min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); background: rgba(255, 249, 238, .82); font-size: 13px; }
+    .search { min-width: min(360px, 100%); flex: 1 1 250px; }
+    .select { min-width: 150px; }
+    .notice { margin-bottom: 15px; padding: 11px 13px; border-left: 3px solid var(--orange); background: var(--surface-tint); color: #5c3b22; font-size: 13px; line-height: 1.5; }
+    .notice.error { border-left-color: var(--red); background: rgba(185, 75, 56, .09); color: #7f2d24; }
+    .timeline, .aggregate-list, .topic-grid, .map-grid, .manual-grid, .report-grid { display: grid; gap: 12px; }
+    .timeline-card, .aggregate-card, .topic-card, .map-card, .manual-card, .report-card { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .8); box-shadow: 0 8px 26px rgba(33, 24, 10, .04); }
+    .timeline-card { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 16px; padding: 16px; }
+    .timeline-date { color: var(--muted); font: 11px/1.5 var(--mono); }
+    .timeline-main { min-width: 0; }
+    .timeline-head, .card-head, .topic-head, .report-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+    .timeline-head h3, .card-head h3 { margin-bottom: 4px; }
+    .timeline-summary, .card-copy, .topic-copy, .report-copy { margin-bottom: 10px; color: #50483d; font-size: 13px; line-height: 1.55; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { min-height: 23px; padding: 0 8px; color: var(--muted); background: var(--surface-soft); font-size: 11px; }
+    .chip a { text-decoration: underline; text-underline-offset: 2px; }
+    .chip.status-done { color: #1f6f42; background: rgba(47, 139, 87, .12); }
+    .chip.status-active, .chip.status-review { color: #925014; background: rgba(213, 111, 43, .13); }
+    .chip.status-blocked { color: #8d2d22; background: rgba(185, 75, 56, .12); }
+    .chip.status-planned { color: #225d8e; background: rgba(35, 104, 162, .11); }
+    .board { display: grid; grid-template-columns: repeat(5, minmax(170px, 1fr)); gap: 10px; align-items: start; overflow-x: auto; padding-bottom: 8px; }
+    .board-column { min-height: 250px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(243, 234, 216, .67); }
+    .board-column-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .board-column-head strong { color: var(--ink); font-size: 17px; }
+    .task-card { margin-bottom: 8px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); cursor: pointer; }
+    .task-card:last-child { margin-bottom: 0; }
+    .task-card:hover { border-color: var(--line-strong); transform: translateY(-1px); box-shadow: 0 7px 18px rgba(33, 24, 10, .09); }
+    .task-card h4 { margin-bottom: 6px; line-height: 1.35; }
+    .task-id { color: var(--muted); font: 10px var(--mono); }
+    .task-summary { margin: 6px 0 8px; color: #5d554a; font-size: 11px; line-height: 1.45; }
+    .aggregate-card { padding: 15px 17px; }
+    .aggregate-card summary { cursor: pointer; list-style: none; }
+    .aggregate-card summary::-webkit-details-marker { display: none; }
+    .aggregate-card summary::after { float: right; content: "+"; color: var(--muted); font-weight: 700; }
+    .aggregate-card[open] summary::after { content: "−"; }
+    .aggregate-body { padding-top: 14px; border-top: 1px solid var(--line); }
+    .aggregate-body p, .aggregate-body li { color: #50483d; font-size: 13px; line-height: 1.6; }
+    .aggregate-body ul { margin: 8px 0 0; padding-left: 20px; }
+    .topic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .topic-card, .map-card, .manual-card, .report-card { padding: 16px; }
+    .topic-card { scroll-margin-top: 14px; }
+    .topic-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+    .topic-task-list { display: grid; gap: 6px; margin-top: 12px; }
+    .topic-task { display: flex; justify-content: space-between; gap: 10px; padding-top: 7px; border-top: 1px solid var(--line); font-size: 12px; }
+    .topic-task span:first-child { min-width: 0; }
+    .topic-task span:last-child { flex: 0 0 auto; }
+    .map-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .map-card h3 { margin-bottom: 12px; }
+    .map-node { margin-bottom: 8px; padding: 9px; border-left: 3px solid var(--blue); background: rgba(35, 104, 162, .07); }
+    .map-node strong { display: block; font-size: 13px; }
+    .map-node code { display: block; margin-top: 4px; color: var(--muted); font: 10px var(--mono); word-break: break-word; }
+    .edge-list { margin: 0; padding-left: 20px; }
+    .edge-list li { margin-bottom: 7px; color: #50483d; font-size: 12px; line-height: 1.45; }
+    .manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .manual-card p, .manual-card li { color: #50483d; font-size: 13px; line-height: 1.55; }
+    .manual-card ul { margin: 8px 0 0; padding-left: 19px; }
+    .report-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .report-card strong.report-number { display: block; margin-bottom: 5px; font: 750 28px/1 ui-serif, Georgia, serif; }
+    .report-card.risk { border-color: rgba(185, 75, 56, .35); }
+    .report-card.risk strong.report-number { color: var(--red); }
+    .empty { padding: 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); text-align: center; font-size: 13px; }
+    .footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
+    dialog { width: min(700px, calc(100% - 28px)); max-height: 88vh; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+    dialog::backdrop { background: rgba(23, 19, 13, .35); backdrop-filter: blur(2px); }
+    .dialog-inner { padding: 22px; }
+    .dialog-close { float: right; min-width: 32px; min-height: 32px; border: 1px solid var(--line); border-radius: 50%; background: transparent; cursor: pointer; }
+    .detail-grid { display: grid; grid-template-columns: 120px 1fr; gap: 8px 13px; margin: 16px 0; font-size: 13px; }
+    .detail-grid dt { color: var(--muted); }
+    .detail-grid dd { margin: 0; line-height: 1.5; }
+    code { font-family: var(--mono); font-size: .9em; }
+    @media (max-width: 1050px) {
+      .workspace-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 8px; }
+      .sidebar-title, .sidebar-rule, .sidebar-note { display: none; }
+      .sidebar-link { flex: 0 0 auto; }
+      .map-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .project-head { padding: 18px 15px 0; }
+      .head-grid { display: block; }
+      .head-actions { margin-bottom: 18px; }
+      .summary-card { min-width: 0; }
+      .workspace-shell { width: min(100% - 20px, 1380px); padding-top: 14px; }
+      h1 { font-size: 28px; }
+      .panel-intro { display: block; }
+      .panel-intro p { margin-top: 8px; }
+      .timeline-card { grid-template-columns: 1fr; gap: 7px; }
+      .topic-grid, .manual-grid, .report-grid, .map-grid { grid-template-columns: 1fr; }
+      .board { grid-template-columns: repeat(5, minmax(205px, 1fr)); }
+      .footer { display: block; }
+      .footer span { display: block; margin-bottom: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="project-head">
+      <div class="head-grid">
+        <div>
+          <div class="eyebrow"><span class="status-dot"></span> SupportPortal / Project Workspace</div>
+          <div class="title-row">
+            <h1 id="projectTitle">SupportPortal</h1>
+            <span class="status-pill"><span class="status-dot"></span><span id="projectStatus">加载中</span></span>
+          </div>
+          <section class="goal-card" aria-labelledby="goalTitle">
+            <div class="goal-label" id="goalTitle">🎯 当前项目目标</div>
+            <div class="goal-body" id="projectGoal">正在加载项目 registry...</div>
+          </section>
+          <div class="head-meta">
+            <span>当前阶段 <strong id="currentMilestone">--</strong></span>
+            <span>负责人 <strong id="projectOwner">--</strong></span>
+            <span>Topic <strong id="topicCount">--</strong></span>
+            <span>Task <strong id="taskCount">--</strong></span>
+          </div>
+        </div>
+        <aside class="head-actions" aria-label="项目状态概览">
+          <div class="summary-card">
+            <div class="summary-card-head"><span>Task 状态概览</span><span id="registryDigest">--</span></div>
+            <div class="summary-counts" id="summaryCounts"></div>
+          </div>
+          <button class="report-button" id="reportButton" type="button">打开汇报模式 →</button>
+          <div class="freshness" id="freshness">生成时间：--</div>
+        </aside>
+      </div>
+    </header>
+
+    <div class="workspace-shell">
+      <aside class="sidebar" aria-label="项目入口">
+        <div class="sidebar-title">项目资料</div>
+        <a class="sidebar-link active" href="#dynamic">当前项目动态</a>
+        <a class="sidebar-link" href="./roadmap.html">历史 Roadmap</a>
+        <a class="sidebar-link" href="./roadmap/meetings.html#ticketing-system-2026-08-10">历史 Meeting Archive</a>
+        <a class="sidebar-link" href="#manual">AI 维护入口</a>
+        <div class="sidebar-rule"></div>
+        <div class="sidebar-note">正式进度只来自 `docs/project/tasks/`。本页没有在线编辑能力，修改状态请通过 Git 记录。</div>
+      </aside>
+
+      <main class="content">
+        <nav class="tabs" id="tabs" aria-label="项目内容切换" role="tablist"></nav>
+        <section class="tab-panel active" id="panel-dynamic" role="tabpanel" aria-labelledby="tab-dynamic"></section>
+        <section class="tab-panel" id="panel-plan" role="tabpanel" aria-labelledby="tab-plan"></section>
+        <section class="tab-panel" id="panel-human-events" role="tabpanel" aria-labelledby="tab-human-events"></section>
+        <section class="tab-panel" id="panel-topics" role="tabpanel" aria-labelledby="tab-topics"></section>
+        <section class="tab-panel" id="panel-system-map" role="tabpanel" aria-labelledby="tab-system-map"></section>
+        <section class="tab-panel" id="panel-manual" role="tabpanel" aria-labelledby="tab-manual"></section>
+        <section class="tab-panel" id="panel-report" role="tabpanel" aria-labelledby="tab-report"></section>
+        <footer class="footer">
+          <span>文件：docs/projectoverview.html</span>
+          <span>状态来源：docs/project/tasks/*.json · 生成物：docs/projectoverview-data.js</span>
+        </footer>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="taskDialog" aria-labelledby="taskDialogTitle">
+    <div class="dialog-inner" id="taskDialogContent"></div>
+  </dialog>
+
+  <script src="./projectoverview-data.js"></script>
+  <script>
+    (() => {
+      const DATA = window.SUPPORTPORTAL_PROJECT_DATA;
+      const statusMeta = {
+        planned: { label: "Planned", className: "planned" },
+        active: { label: "Active", className: "active" },
+        review: { label: "Review", className: "review" },
+        blocked: { label: "Blocked", className: "blocked" },
+        done: { label: "Done", className: "done" }
+      };
+      const tabs = [
+        { id: "dynamic", label: "项目动态" },
+        { id: "plan", label: "任务看板" },
+        { id: "human-events", label: "交流记录" },
+        { id: "topics", label: "项目议题" },
+        { id: "system-map", label: "系统地图" },
+        { id: "manual", label: "用户手册" },
+        { id: "report", label: "汇报模式" }
+      ];
+      const state = { query: "", topic: "all", milestone: "all", reportDays: 7 };
+
+      const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+      }[char]));
+      const formatDate = (value) => value ? String(value).slice(0, 10) : "未记录";
+      const formatStatus = (status) => statusMeta[status]?.label || status;
+      const tasks = Array.isArray(DATA?.tasks) ? DATA.tasks : [];
+      const topics = Array.isArray(DATA?.topics) ? DATA.topics : [];
+      const milestones = Array.isArray(DATA?.milestones) ? DATA.milestones : [];
+      const meetings = Array.isArray(DATA?.meetings) ? DATA.meetings : [];
+      const taskMap = new Map(tasks.map((task) => [task.task_id, task]));
+      const topicMap = new Map(topics.map((topic) => [topic.topic_id, topic]));
+      const milestoneMap = new Map(milestones.map((milestone) => [milestone.milestone_id, milestone]));
+      const taskTopic = (task) => topicMap.get(task.topic_id);
+      const taskMilestone = (task) => milestoneMap.get(task.milestone_id);
+      const repoLink = (path) => {
+        if (!path || String(path).startsWith("/")) return "";
+        const base = DATA?.project?.repository_url;
+        return base ? `${base}/blob/main/${String(path).replace(/^\.\//, "")}` : "";
+      };
+      const sourceMarkup = (path) => {
+        const url = repoLink(path);
+        return url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><code>${escapeHtml(path)}</code></a>` : `<code>${escapeHtml(path)}</code>`;
+      };
+      const statusChip = (status) => `<span class="chip status-${escapeHtml(status)}">${escapeHtml(formatStatus(status))}</span>`;
+      const taskChip = (task) => `<span class="chip">${escapeHtml(task.task_id)}</span>`;
+      const taskEvidence = (task) => Array.isArray(task.evidence) ? task.evidence : [];
+      const taskPrNumbers = (task) => taskEvidence(task).filter((item) => item.type === "pr" && item.number).map((item) => String(item.number));
+
+      function renderHeader() {
+        const project = DATA.project;
+        const currentMilestone = milestoneMap.get(project.current_milestone_id);
+        document.getElementById("projectTitle").textContent = project.title;
+        document.getElementById("projectStatus").textContent = project.status === "active" ? "Active" : project.status;
+        document.getElementById("projectGoal").textContent = project.goal;
+        document.getElementById("currentMilestone").textContent = currentMilestone?.title || project.current_milestone_id;
+        document.getElementById("projectOwner").textContent = project.owner || "未指定";
+        document.getElementById("topicCount").textContent = String(topics.length);
+        document.getElementById("taskCount").textContent = String(tasks.length);
+        const counts = Object.fromEntries(Object.keys(statusMeta).map((status) => [status, tasks.filter((task) => task.status === status).length]));
+        document.getElementById("summaryCounts").innerHTML = Object.entries(statusMeta).map(([status, meta]) => `<div class="summary-count ${meta.className}"><strong>${counts[status]}</strong><span>${meta.label}</span></div>`).join("");
+        document.getElementById("registryDigest").textContent = `${String(DATA.registry_digest || "").slice(0, 8)}…`;
+        const generated = DATA.generated_at ? new Date(DATA.generated_at) : null;
+        const stale = generated && (Date.now() - generated.getTime()) > 7 * 86400000;
+        const freshness = document.getElementById("freshness");
+        freshness.textContent = `生成：${generated ? generated.toLocaleString("zh-CN") : "未记录"} · 基线 ${String(DATA.source_base_commit || "").slice(0, 8)}`;
+        freshness.classList.toggle("stale", Boolean(stale));
+        if (stale) freshness.textContent += " · 数据可能过期";
+      }
+
+      function renderTabs() {
+        document.getElementById("tabs").innerHTML = tabs.map((tab) => `<button class="tab" id="tab-${tab.id}" type="button" role="tab" aria-controls="panel-${tab.id}" aria-selected="false" data-tab="${tab.id}">${tab.label}</button>`).join("");
+        document.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => setTab(button.dataset.tab)));
+      }
+
+      function renderDynamic() {
+        const prs = Array.isArray(DATA.pr_index?.prs) ? DATA.pr_index.prs : [];
+        const summaries = DATA.pr_summaries?.summaries || {};
+        const cards = prs.map((pr) => {
+          const summary = summaries[String(pr.number)] || {};
+          const linkedIds = new Set(summary.task_ids || []);
+          tasks.forEach((task) => { if (taskPrNumbers(task).includes(String(pr.number))) linkedIds.add(task.task_id); });
+          const linkedTasks = [...linkedIds].map((id) => taskMap.get(id)).filter(Boolean);
+          const stateLabel = pr.mergedAt ? "Merged" : pr.state === "OPEN" ? (pr.isDraft ? "Draft" : "Open") : "Closed";
+          return `<article class="timeline-card" id="pr-${escapeHtml(pr.number)}">
+            <div class="timeline-date">${escapeHtml(formatDate(pr.mergedAt || pr.updatedAt || pr.createdAt))}<br><span>PR #${escapeHtml(pr.number)}</span></div>
+            <div class="timeline-main">
+              <div class="timeline-head"><div><h3>${escapeHtml(pr.title || `PR #${pr.number}`)}</h3><div class="chips"><span class="chip status-${pr.mergedAt ? "done" : pr.state === "OPEN" ? "active" : "planned"}">${escapeHtml(stateLabel)}</span>${pr.headRefName ? `<span class="chip">${escapeHtml(pr.headRefName)}</span>` : ""}</div></div><a class="ghost-button" href="${escapeHtml(pr.url || "#")}" target="_blank" rel="noopener noreferrer">打开 PR ↗</a></div>
+              <p class="timeline-summary">${escapeHtml(summary.summary || "待补充解决说明；当前仅展示公开 PR 标题和元数据。")} ${summary.summary ? "" : ""}</p>
+              <div class="chips">${linkedTasks.length ? linkedTasks.map((task) => `<button class="chip" type="button" data-task-id="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)} · ${escapeHtml(task.title)}</button>`).join("") : `<span class="chip status-review">待归档：尚未关联 Task</span>`}</div>
+            </div>
+          </article>`;
+        }).join("");
+        document.getElementById("panel-dynamic").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">01 / Activity</div><h2>项目动态</h2><p>PR 是主要动态来源；Task 状态变化和 Meeting 只作为同一 registry 的辅助证据。未关联 Task 的 PR 会明确显示，避免把交付遗漏在时间线之外。</p></div></div><div class="notice">PR 快照：${escapeHtml(DATA.pr_index?.fetched_at || "尚未同步")} · 页面不读取 PR body，只使用公开元数据和脱敏摘要。</div><div class="timeline">${cards || `<div class="empty">暂无 PR 动态。</div>`}</div>`;
+        document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", () => showTask(button.dataset.taskId)));
+      }
+
+      function renderBoard() {
+        const visible = tasks.filter((task) => {
+          const haystack = [task.task_id, task.title, task.summary, task.owner, task.next_action, taskTopic(task)?.title || "", taskMilestone(task)?.title || ""].join(" ").toLowerCase();
+          return (!state.query || haystack.includes(state.query.toLowerCase())) && (state.topic === "all" || task.topic_id === state.topic) && (state.milestone === "all" || task.milestone_id === state.milestone);
+        });
+        const columns = Object.entries(statusMeta).map(([status, meta]) => {
+          const columnTasks = visible.filter((task) => task.status === status);
+          return `<section class="board-column" aria-label="${meta.label}"><div class="board-column-head"><span>${meta.label}</span><strong>${columnTasks.length}</strong></div>${columnTasks.map((task) => `<article class="task-card" tabindex="0" role="button" data-task-id="${escapeHtml(task.task_id)}"><span class="task-id">${escapeHtml(task.task_id)} · ${escapeHtml(task.priority || "unclassified")}</span><h4>${escapeHtml(task.title)}</h4><p class="task-summary">${escapeHtml(task.summary)}</p><div class="chips"><span class="chip">${escapeHtml(taskTopic(task)?.title || "未关联 Topic")}</span>${task.owner && task.owner !== "unassigned" ? `<span class="chip">${escapeHtml(task.owner)}</span>` : ""}</div></article>`).join("") || `<div class="empty">暂无 Task</div>`}</section>`;
+        }).join("");
+        document.getElementById("panel-plan").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">02 / Tasks</div><h2>任务看板</h2><p>每张卡片对应一个唯一 Task；状态只从 registry 读取。Topic、Milestone、owner 和 priority 是筛选维度，不会产生第二份状态。</p></div></div><div class="panel-tools"><input class="search" id="taskSearch" type="search" placeholder="搜索 Task、负责人、Topic 或下一步" value="${escapeHtml(state.query)}" aria-label="搜索 Task"><select class="select" id="topicFilter" aria-label="按 Topic 筛选"><option value="all">全部 Topic</option>${topics.map((topic) => `<option value="${escapeHtml(topic.topic_id)}" ${state.topic === topic.topic_id ? "selected" : ""}>${escapeHtml(topic.title)}</option>`).join("")}</select><select class="select" id="milestoneFilter" aria-label="按 Milestone 筛选"><option value="all">全部 Milestone</option>${milestones.map((milestone) => `<option value="${escapeHtml(milestone.milestone_id)}" ${state.milestone === milestone.milestone_id ? "selected" : ""}>${escapeHtml(milestone.title)}</option>`).join("")}</select></div><div class="board">${columns}</div>`;
+        document.getElementById("taskSearch").addEventListener("input", (event) => { state.query = event.target.value; renderBoard(); });
+        document.getElementById("topicFilter").addEventListener("change", (event) => { state.topic = event.target.value; renderBoard(); });
+        document.getElementById("milestoneFilter").addEventListener("change", (event) => { state.milestone = event.target.value; renderBoard(); });
+        document.querySelectorAll("[data-task-id]").forEach((card) => { card.addEventListener("click", () => showTask(card.dataset.taskId)); card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") showTask(card.dataset.taskId); }); });
+      }
+
+      function renderMeetings() {
+        const content = meetings.map((meeting) => {
+          const meetingTasks = (meeting.task_ids || []).map((id) => taskMap.get(id)).filter(Boolean);
+          return `<details class="aggregate-card" id="meeting-${escapeHtml(meeting.meeting_id)}"><summary><div class="card-head"><div><h3>${escapeHtml(meeting.title)}</h3><div class="chips"><span class="chip">${escapeHtml(formatDate(meeting.date))}</span><span class="chip">${meetingTasks.length} 个关联 Task</span></div></div></div></summary><div class="aggregate-body"><p>${escapeHtml(meeting.summary || "暂无摘要")}</p><p><strong>参与人：</strong>${escapeHtml((meeting.participants || []).join("、") || "未记录")}</p><p><strong>原始记录：</strong>${(meeting.source_refs || []).map(sourceMarkup).join(" · ")}</p><div class="chips">${meetingTasks.map((task) => `<button class="chip" type="button" data-task-id="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)} · ${escapeHtml(formatStatus(task.status))}</button>`).join("")}</div></div></details>`;
+        }).join("");
+        document.getElementById("panel-human-events").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">03 / Meetings</div><h2>交流记录</h2><p>Meeting 是不可变的讨论记录。它只负责保留背景、决定和未决问题，并通过 Task ID 连接当前进度。</p></div></div><div class="aggregate-list">${content || `<div class="empty">暂无 Meeting 记录。</div>`}</div>`;
+        document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", () => showTask(button.dataset.taskId)));
+      }
+
+      function renderTopics() {
+        const content = topics.map((topic) => {
+          const topicTasks = tasks.filter((task) => task.topic_id === topic.topic_id);
+          const counts = Object.fromEntries(Object.keys(statusMeta).map((status) => [status, topicTasks.filter((task) => task.status === status).length]));
+          return `<article class="topic-card" id="topic-${escapeHtml(topic.topic_id)}"><div class="topic-head"><div><div class="section-kicker">Topic</div><h3>${escapeHtml(topic.title)}</h3></div><span class="chip">${topicTasks.length} Tasks</span></div><p class="topic-copy">${escapeHtml(topic.goal)}</p><div class="topic-meta">${Object.entries(statusMeta).map(([status, meta]) => counts[status] ? `<span class="chip status-${meta.className}">${meta.label} ${counts[status]}</span>` : "").join("")}</div><p class="topic-copy"><strong>入口：</strong>${escapeHtml((topic.surfaces || []).join("、") || "跨页面")}</p><p class="topic-copy"><strong>代码区域：</strong>${Object.values(topic.components || {}).flat().map((path) => sourceMarkup(path)).join(" · ")}</p><div class="topic-task-list">${topicTasks.slice(0, 8).map((task) => `<div class="topic-task"><span><button class="chip" type="button" data-task-id="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)}</button> ${escapeHtml(task.title)}</span><span>${statusChip(task.status)}</span></div>`).join("") || `<div class="empty">该 Topic 暂无 Task。</div>`}</div>${topicTasks.length > 8 ? `<p class="freshness">还有 ${topicTasks.length - 8} 个 Task，请使用任务看板筛选。</p>` : ""}</article>`;
+        }).join("");
+        document.getElementById("panel-topics").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">04 / Topics</div><h2>项目议题</h2><p>Topic 是稳定的业务域，URL 只是它的 surface。这里展示目标、代码边界和同一 registry 下的 Task 汇总。</p></div></div><div class="topic-grid">${content}</div>`;
+        document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", () => showTask(button.dataset.taskId)));
+      }
+
+      function renderSystemMap() {
+        const map = DATA.system_map || { layers: [], nodes: [], edges: [] };
+        const layerCards = (map.layers || []).map((layer) => `<article class="map-card"><div class="section-kicker">${escapeHtml(layer)}</div><h3>${escapeHtml(layer === "surface" ? "UI / URL" : layer === "api" ? "API" : layer === "service" ? "Service" : layer === "data" ? "Repository / Storage" : layer === "external" ? "External" : "Tests")}</h3>${(map.nodes || []).filter((node) => node.layer === layer).map((node) => `<div class="map-node"><strong>${escapeHtml(node.label)}</strong>${node.path ? `<code>${escapeHtml(node.path)}</code>` : ""}</div>`).join("") || `<p class="freshness">暂无节点</p>`}</article>`).join("");
+        const edges = (map.edges || []).map((edge) => { const from = (map.nodes || []).find((node) => node.id === edge.from); const to = (map.nodes || []).find((node) => node.id === edge.to); return `<li><strong>${escapeHtml(from?.label || edge.from)}</strong> → <strong>${escapeHtml(to?.label || edge.to)}</strong>：${escapeHtml(edge.label)}</li>`; }).join("");
+        document.getElementById("panel-system-map").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">05 / Architecture</div><h2>系统地图</h2><p>首版展示 Topic 到 UI、API、Service、Storage、External 和 Tests 的可读架构关系。完整函数级 CodeGraph 保留为点击后的工程视图，不占用领导默认视图。</p></div></div><div class="notice">架构快照基于 commit ${escapeHtml(String(DATA.source_base_commit || "").slice(0, 8))}；代码关系变化后重新生成 Overview。</div><div class="map-grid">${layerCards}</div><article class="map-card" style="margin-top:12px"><h3>连接关系</h3><ol class="edge-list">${edges || "<li>暂无关系。</li>"}</ol></article>`;
+      }
+
+      function renderManual() {
+        const sections = (DATA.manual?.sections || []).map((section) => `<article class="manual-card"><div class="section-kicker">${escapeHtml(section.audience || "项目使用")}</div><h3>${escapeHtml(section.title)}</h3><p><strong>入口：</strong><code>${escapeHtml(section.entrypoint || "")}</code></p><ul>${(section.steps || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul><p style="margin-top:10px"><strong>依据：</strong>${(section.source_refs || []).map(sourceMarkup).join(" · ")}</p></article>`).join("");
+        const features = (DATA.features || []).map((section) => `<details class="aggregate-card"><summary><strong>${escapeHtml(section.title)}</strong><span class="chip">已完成 ${(section.completed || []).length} · 未完成 ${(section.planned || []).length}</span></summary><div class="aggregate-body"><h4>已完成能力</h4><ul>${(section.completed || []).slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h4 style="margin-top:12px">未完成能力</h4><ul>${(section.planned || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul></div></details>`).join("");
+        document.getElementById("panel-manual").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">06 / Handbook</div><h2>用户手册</h2><p>这里回答“怎么使用项目”和“AI 下一步怎么开工”。产品能力继续从 feature list 读取，维护规则从 registry README 和项目规则读取。</p></div></div><div class="manual-grid">${sections}</div><h3 style="margin-top:25px">产品能力目录</h3><div class="aggregate-list">${features}</div>`;
+      }
+
+      function renderReport() {
+        const days = state.reportDays;
+        const cutoff = Date.now() - days * 86400000;
+        const prs = (DATA.pr_index?.prs || []).filter((pr) => { const date = new Date(pr.mergedAt || pr.updatedAt || pr.createdAt || 0).getTime(); return date >= cutoff; });
+        const recentTasks = tasks.filter((task) => new Date(task.updated_at || 0).getTime() >= cutoff);
+        const blocked = tasks.filter((task) => task.status === "blocked");
+        const active = tasks.filter((task) => ["active", "review"].includes(task.status));
+        const currentMilestone = milestoneMap.get(DATA.project.current_milestone_id);
+        document.getElementById("panel-report").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">07 / Briefing</div><h2>汇报模式</h2><p>这是从 PR、Task、Milestone 和 Meeting 派生的汇报视图，不会创建另一套进度状态。</p></div><div class="panel-tools"><button class="filter-button ${days === 7 ? "active" : ""}" data-report-days="7" type="button">最近 7 天</button><button class="filter-button ${days === 30 ? "active" : ""}" data-report-days="30" type="button">最近 30 天</button></div></div><div class="report-grid"><article class="report-card"><strong class="report-number">${prs.length}</strong><p class="report-copy">窗口内 PR</p><p class="freshness">${prs.slice(0, 3).map((pr) => `#${escapeHtml(pr.number)} ${escapeHtml(pr.title)}`).join("<br>") || "暂无"}</p></article><article class="report-card"><strong class="report-number">${recentTasks.length}</strong><p class="report-copy">窗口内更新 Task</p><p class="freshness">${recentTasks.filter((task) => task.status === "done").length} 个 Done · ${recentTasks.filter((task) => task.status !== "done").length} 个未完成</p></article><article class="report-card ${blocked.length ? "risk" : ""}"><strong class="report-number">${blocked.length}</strong><p class="report-copy">当前 Blocked</p><p class="freshness">${blocked.slice(0, 3).map((task) => `${escapeHtml(task.task_id)} ${escapeHtml(task.title)}`).join("<br>") || "当前没有 Blocked Task"}</p></article></div><article class="report-card" style="margin-top:12px"><div class="report-head"><div><h3>Milestone 健康度</h3><p class="report-copy">当前阶段：${escapeHtml(currentMilestone?.title || DATA.project.current_milestone_id)}</p></div><span class="chip status-${escapeHtml(currentMilestone?.status || "active")}">${escapeHtml(currentMilestone?.status || "active")}</span></div><ul class="edge-list">${(currentMilestone?.exit_criteria || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><p class="freshness">汇报窗口：${days} 天 · 数据生成：${escapeHtml(DATA.generated_at || "未记录")}</p></article><article class="report-card" style="margin-top:12px"><h3>下一步</h3><ul class="edge-list">${active.slice(0, 8).map((task) => `<li><strong>${escapeHtml(task.task_id)}</strong> ${escapeHtml(task.next_action || task.title)}</li>`).join("") || "<li>暂无 active/review Task。</li>"}</ul></article>`;
+        document.querySelectorAll("[data-report-days]").forEach((button) => button.addEventListener("click", () => { state.reportDays = Number(button.dataset.reportDays); renderReport(); }));
+      }
+
+      function showTask(taskId) {
+        const task = taskMap.get(taskId);
+        if (!task) return;
+        location.hash = `task-${encodeURIComponent(taskId)}`;
+        const dialog = document.getElementById("taskDialog");
+        const evidence = taskEvidence(task).map((item) => item.url ? `<li><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.label || item.url)}</a></li>` : `<li>${escapeHtml(item.label || item.type)}</li>`).join("");
+        document.getElementById("taskDialogContent").innerHTML = `<button class="dialog-close" type="button" aria-label="关闭">×</button><div class="section-kicker">Task detail</div><h2 id="taskDialogTitle">${escapeHtml(task.task_id)} · ${escapeHtml(task.title)}</h2><div class="chips">${statusChip(task.status)}<span class="chip">${escapeHtml(taskTopic(task)?.title || "未关联 Topic")}</span><span class="chip">${escapeHtml(taskMilestone(task)?.title || "未关联 Milestone")}</span></div><dl class="detail-grid"><dt>负责人</dt><dd>${escapeHtml(task.owner || "unassigned")}</dd><dt>摘要</dt><dd>${escapeHtml(task.summary || "暂无")}</dd><dt>下一步</dt><dd>${escapeHtml(task.next_action || "—")}</dd><dt>验收条件</dt><dd>${(task.acceptance_criteria || []).map(escapeHtml).join("<br>") || "—"}</dd><dt>Blocker</dt><dd>${(task.blockers || []).map(escapeHtml).join("<br>") || "—"}</dd></dl><h3>Evidence</h3><ul class="edge-list">${evidence || "<li>暂无证据。</li>"}</ul><p class="freshness">来源：${(task.source_refs || []).map(sourceMarkup).join(" · ")}</p>`;
+        document.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
+        if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+      }
+
+      function setTab(tabId) {
+        const valid = tabs.some((tab) => tab.id === tabId) ? tabId : "dynamic";
+        document.querySelectorAll(".tab").forEach((tab) => { const active = tab.dataset.tab === valid; tab.classList.toggle("active", active); tab.setAttribute("aria-selected", String(active)); });
+        document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${valid}`));
+        if (location.hash !== `#${valid}` && !location.hash.startsWith("#task-")) history.replaceState(null, "", `#${valid}`);
+      }
+
+      function routeHash() {
+        const raw = location.hash.slice(1);
+        if (raw.startsWith("task-")) { setTab("plan"); if (!document.getElementById("taskDialog").open) showTask(decodeURIComponent(raw.slice(5))); return; }
+        if (raw.startsWith("topic-")) { setTab("topics"); setTimeout(() => document.getElementById(raw)?.scrollIntoView(), 0); return; }
+        if (raw.startsWith("meeting-")) { setTab("human-events"); setTimeout(() => { const element = document.getElementById(raw); if (element) { element.open = true; element.scrollIntoView(); } }, 0); return; }
+        setTab(raw || "dynamic");
+      }
+
+      function boot() {
+        if (!DATA || !DATA.project) {
+          document.body.innerHTML = `<div class="notice error" style="margin:30px">Project Overview 数据缺失。请先运行 <code>python3 scripts/generate_project_overview.py --write</code>。</div>`;
+          return;
+        }
+        renderHeader(); renderTabs(); renderDynamic(); renderBoard(); renderMeetings(); renderTopics(); renderSystemMap(); renderManual(); renderReport();
+        document.getElementById("reportButton").addEventListener("click", () => { location.hash = "#report"; routeHash(); });
+        window.addEventListener("hashchange", routeHash);
+        routeHash();
+      }
+      boot();
+    })();
+  </script>
+</body>
+</html>

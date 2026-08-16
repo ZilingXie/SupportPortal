@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "topic_id": "agent-collaboration",
+  "title": "Agent Collaboration",
+  "goal": "在证据、权限、成本和审计边界成熟后，扩展 Engineer multi-agent 与 AgentRelay 协作。",
+  "surfaces": [],
+  "components": {
+    "ui": ["ui/workspace-ui"],
+    "api": ["backend/services/agent_*", "AgentRelay integration"],
+    "services": ["backend/services/agent_*", "backend/services/evidence_*"],
+    "tests": ["backend/tests/test_agent_*", "backend/tests/test_evidence_*"]
+  },
+  "source_refs": ["docs/roadmap.html", "docs/roadmap/meetings.html", "docs/feature_list.md"]
+}

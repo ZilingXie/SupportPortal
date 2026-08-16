@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "layers": ["surface", "api", "service", "data", "external", "test"],
+  "nodes": [
+    {"id": "client-surface", "label": "/client", "layer": "surface", "topic_ids": ["client-experience"], "path": "ui/client-ui"},
+    {"id": "account-surface", "label": "/account", "layer": "surface", "topic_ids": ["account-automation"], "path": "ui/account-ui"},
+    {"id": "workspace-surface", "label": "/workspace", "layer": "surface", "topic_ids": ["engineer-workspace"], "path": "ui/workspace-ui"},
+    {"id": "admin-surface", "label": "/workspace/admin", "layer": "surface", "topic_ids": ["admin-operations"], "path": "ui/workspace-ui/admin"},
+    {"id": "rag-surface", "label": "/dashboard/rag", "layer": "surface", "topic_ids": ["rag-knowledge"], "path": "ui/dashboard-ui/rag"},
+    {"id": "support-api", "label": "FastAPI routes", "layer": "api", "topic_ids": ["client-experience", "account-automation", "engineer-workspace", "admin-operations"], "path": "backend/main.py"},
+    {"id": "router-services", "label": "Routing / intake", "layer": "service", "topic_ids": ["client-experience", "account-automation"], "path": "backend/services/support_router.py"},
+    {"id": "engineer-services", "label": "Engineer / Guardrail", "layer": "service", "topic_ids": ["engineer-workspace", "agent-collaboration"], "path": "backend/services"},
+    {"id": "rag-services", "label": "RAG / KG runtime", "layer": "service", "topic_ids": ["rag-knowledge"], "path": "backend/services/kg_runtime.py"},
+    {"id": "postgres", "label": "PostgreSQL repositories", "layer": "data", "topic_ids": ["platform-delivery", "account-automation", "engineer-workspace"], "path": "backend/repositories"},
+    {"id": "zendesk", "label": "Zendesk", "layer": "external", "topic_ids": ["client-experience", "account-automation"], "path": null},
+    {"id": "tests", "label": "Contract and unit tests", "layer": "test", "topic_ids": ["platform-delivery"], "path": "backend/tests"}
+  ],
+  "edges": [
+    {"from": "client-surface", "to": "support-api", "label": "HTTP"},
+    {"from": "account-surface", "to": "support-api", "label": "HTTP"},
+    {"from": "workspace-surface", "to": "support-api", "label": "HTTP/WebSocket"},
+    {"from": "admin-surface", "to": "support-api", "label": "authenticated HTTP"},
+    {"from": "rag-surface", "to": "support-api", "label": "HTTP"},
+    {"from": "support-api", "to": "router-services", "label": "dispatch"},
+    {"from": "support-api", "to": "engineer-services", "label": "case lifecycle"},
+    {"from": "support-api", "to": "rag-services", "label": "retrieval"},
+    {"from": "router-services", "to": "postgres", "label": "persist route/audit"},
+    {"from": "engineer-services", "to": "postgres", "label": "persist case/audit"},
+    {"from": "support-api", "to": "zendesk", "label": "intake/write-back"},
+    {"from": "tests", "to": "support-api", "label": "contract coverage"}
+  ]
+}

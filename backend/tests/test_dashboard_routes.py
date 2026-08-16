@@ -9,6 +9,8 @@ class DashboardRouteSmokeTests(unittest.TestCase):
         self.assertIn('app.mount("/dashboard", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard-ui")', main_source)
         self.assertIn('app.mount("/roadmap", StaticFiles(directory=ROADMAP_DIR, html=True), name="roadmap-ui")', main_source)
         self.assertIn('@app.get("/roadmap.html", include_in_schema=False)', main_source)
+        self.assertIn('@app.get("/projectoverview.html", include_in_schema=False)', main_source)
+        self.assertIn('@app.get("/projectoverview-data.js", include_in_schema=False)', main_source)
 
         expected_files = [
             Path("ui/dashboard-ui/index.html"),
@@ -18,6 +20,8 @@ class DashboardRouteSmokeTests(unittest.TestCase):
             Path("ui/dashboard-ui/vendor/chart.umd.min.js"),
             Path("docs/roadmap.html"),
             Path("docs/roadmap/phase1.html"),
+            Path("docs/projectoverview.html"),
+            Path("docs/projectoverview-data.js"),
         ]
         for file_path in expected_files:
             self.assertTrue(file_path.exists(), str(file_path))

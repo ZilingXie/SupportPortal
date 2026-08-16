@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "kg-grey-gate",
+  "title": "P0",
+  "topic_id": "rag-knowledge",
+  "related_topic_ids": [],
+  "milestone_id": "phase-2-controlled-validation",
+  "status": "planned",
+  "priority": "P0",
+  "owner": "unassigned",
+  "summary": "P0：生产 flag 暂不开；本地试用效果可先人工观察，进入 shadow/小流量前仍需 telemetry 审计、回滚开关和基准数据。",
+  "next_action": "P0：生产 flag 暂不开；本地试用效果可先人工观察，进入 shadow/小流量前仍需 telemetry 审计、回滚开关和基准数据。",
+  "acceptance_criteria": [
+    "完成 Rollout 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "rag-vs-kg",
+      "item_id": "kg-grey-gate"
+    }
+  ]
+}

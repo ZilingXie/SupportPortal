@@ -191,6 +191,27 @@ class WorkflowScriptTests(unittest.TestCase):
             """
         )
 
+    def _valid_project_overview_generator(self) -> str:
+        return textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import argparse
+            import json
+            from pathlib import Path
+
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--check", action="store_true")
+            args = parser.parse_args()
+            if not args.check:
+                raise SystemExit("check required")
+            marker = json.loads(Path("docs/project/project.json").read_text())["marker"]
+            generated = Path("docs/projectoverview-data.js").read_text()
+            if marker not in generated:
+                raise SystemExit("generated data is stale")
+            print("Project Overview validation passed")
+            """
+        )
+
     def _commit_all(self, repo: Path, message: str) -> None:
         _git(["add", "."], cwd=repo)
         _git(["commit", "-m", message], cwd=repo)
@@ -2159,6 +2180,9 @@ class WorkflowScriptTests(unittest.TestCase):
     def test_finalize_task_to_main_auto_verifies_valid_feature_list_changes(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()
         self._write(repo, "docs/feature_list.md", self._valid_feature_list())
+        self._write(repo, "docs/project/project.json", '{"marker": "v1"}\n')
+        self._write(repo, "docs/projectoverview-data.js", "window.SUPPORTPORTAL_PROJECT_DATA = {\"marker\": \"v1\"};\n")
+        self._write(repo, "scripts/generate_project_overview.py", self._valid_project_overview_generator())
         self._commit_all(repo, "Add feature list")
         _git(["push", "origin", "main"], cwd=repo)
 
@@ -2189,6 +2213,9 @@ class WorkflowScriptTests(unittest.TestCase):
     def test_finalize_task_to_main_fails_on_invalid_feature_list_changes(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()
         self._write(repo, "docs/feature_list.md", self._valid_feature_list())
+        self._write(repo, "docs/project/project.json", '{"marker": "v1"}\n')
+        self._write(repo, "docs/projectoverview-data.js", "window.SUPPORTPORTAL_PROJECT_DATA = {\"marker\": \"v1\"};\n")
+        self._write(repo, "scripts/generate_project_overview.py", self._valid_project_overview_generator())
         self._commit_all(repo, "Add feature list")
         _git(["push", "origin", "main"], cwd=repo)
 
@@ -2208,6 +2235,58 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Automatic feature list verification failed.", result.stderr)
+
+    def test_finalize_task_to_main_auto_verifies_valid_project_overview_changes(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        self._write(repo, "docs/project/project.json", '{"marker": "v1"}\n')
+        self._write(repo, "docs/projectoverview-data.js", "window.SUPPORTPORTAL_PROJECT_DATA = {\"marker\": \"v1\"};\n")
+        self._write(repo, "docs/projectoverview.html", "<title>Initial Overview</title>\n")
+        self._write(repo, "scripts/generate_project_overview.py", self._valid_project_overview_generator())
+        self._commit_all(repo, "Add project overview registry")
+        _git(["push", "origin", "main"], cwd=repo)
+
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "docs/projectoverview.html", "<title>Project Overview</title>\n")
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Running automatic Project Overview validation.", result.stdout)
+        self.assertIn("Project Overview validation passed", result.stdout)
+
+    def test_finalize_task_to_main_rejects_stale_project_overview_data(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        self._write(repo, "docs/project/project.json", '{"marker": "v1"}\n')
+        self._write(repo, "docs/projectoverview-data.js", "window.SUPPORTPORTAL_PROJECT_DATA = {\"marker\": \"v1\"};\n")
+        self._write(repo, "docs/projectoverview.html", "<title>Initial Overview</title>\n")
+        self._write(repo, "scripts/generate_project_overview.py", self._valid_project_overview_generator())
+        self._commit_all(repo, "Add project overview registry")
+        _git(["push", "origin", "main"], cwd=repo)
+
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "docs/project/project.json", '{"marker": "v2"}\n')
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Automatic Project Overview validation failed.", result.stderr)
+        self.assertIn("generated data is stale", result.stderr)
 
     def test_finalize_task_to_main_times_out_when_lock_is_held(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()

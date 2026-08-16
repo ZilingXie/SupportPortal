@@ -115,10 +115,10 @@ The completed-implementation review and finalization process lives in the projec
 
 ## Feature List Maintenance
 1. `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` is the canonical feature list for major product capabilities in this repository.
-2. Any task that adds, completes, or materially changes a major feature must update `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` in the same task before the task is considered complete.
+2. Any task that adds, completes, or materially changes a major feature must update `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` and the corresponding `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/project/tasks/<task-id>.json` in the same task before the task is considered complete.
 3. Record only major features. Do not record UI tweaks, style changes, copy changes, ticket-state tweaks, other small logic adjustments, pure bug fixes, tests, refactors, scripts, or operations-only changes.
 4. Keep each feature entry to one short sentence. Do not include reasons, implementation details, file paths, verification notes, or `same as above`.
 5. Keep the fixed category order `Client 端`, `Engineer 端`, `Ticket Dashboard`, `RAG Dashboard`, `RAG`, and keep both `已完成` and `未完成` under every category.
 6. When one major feature spans multiple categories, record it in every relevant category using the same wording.
 7. When a feature is completed, move it from the relevant `未完成` lists to the matching `已完成` lists in the same task. Do not leave the same feature in both states within one category.
-8. Any task that changes `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` must pass `python3 scripts/verify_feature_list.py`; direct-to-main finalization should run this verification automatically when that file changes.
+8. Any task that changes `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/feature_list.md` must pass `python3 scripts/verify_feature_list.py` and `python3 scripts/generate_project_overview.py --check`; direct-to-main finalization runs both validations automatically when the feature list or Project Overview registry paths change. `docs/roadmap.html` remains a historical snapshot and is not a progress-state source.

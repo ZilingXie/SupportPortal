@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "ma-guardrail-claim-evidence",
+  "title": "低优先级保留",
+  "topic_id": "agent-collaboration",
+  "related_topic_ids": [],
+  "milestone_id": "long-term-agent-collaboration",
+  "status": "planned",
+  "priority": "unclassified",
+  "owner": "unassigned",
+  "summary": "低优先级保留：强化 Guardrail final 为 claim-to-evidence check：客户回复中的关键结论、步骤、限制和版本条件必须映射到 evidence ref；内部来源只能参与推理，不能直接进入 customer-facing reply。",
+  "next_action": "低优先级保留：强化 Guardrail final 为 claim-to-evidence check：客户回复中的关键结论、步骤、限制和版本条件必须映射到 evidence ref；内部来源只能参与推理，不能直接进入 customer-facing reply。",
+  "acceptance_criteria": [
+    "完成 Low Priority 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "engineer-multi-agent",
+      "item_id": "ma-guardrail-claim-evidence"
+    }
+  ]
+}
