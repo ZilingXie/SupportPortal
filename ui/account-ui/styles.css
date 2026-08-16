@@ -42,6 +42,275 @@ body {
   background: var(--surface);
 }
 
+/* Account Admin sign-in reuses the Workspace Admin composition without sharing auth storage. */
+.account-login-page {
+  display: grid;
+  grid-template-rows: 80px minmax(0, 1fr) auto;
+  min-height: 100svh;
+  background: var(--surface);
+  animation: account-login-enter 360ms ease-out both;
+}
+
+.account-login-header,
+.account-login-footer {
+  background: var(--surface-lowest);
+}
+
+.account-login-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 30px;
+}
+
+.account-login-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--primary);
+}
+
+.account-login-brand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: var(--secondary);
+  color: var(--surface-lowest);
+  font-size: 24px;
+  box-shadow: 0 8px 24px rgba(52, 61, 150, 0.14);
+}
+
+.account-login-brand strong {
+  font-family: Manrope, Inter, sans-serif;
+  font-size: 25px;
+  font-weight: 800;
+}
+
+.account-login-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 52px 20px;
+  background: rgba(214, 218, 225, 0.34);
+}
+
+.account-login-content {
+  width: min(560px, 100%);
+}
+
+.account-login-heading {
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.account-login-heading h1 {
+  max-width: none;
+  margin: 0 0 12px;
+  font-family: Manrope, Inter, sans-serif;
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.account-login-heading p {
+  max-width: 500px;
+  margin: 0 auto;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.account-login-card {
+  padding: 34px;
+  border: 1px solid rgba(110, 120, 130, 0.12);
+  border-radius: 8px;
+  background: var(--surface-lowest);
+  box-shadow: 0 8px 24px rgba(0, 7, 103, 0.05);
+}
+
+.account-login-form {
+  display: grid;
+  gap: 24px;
+}
+
+.account-login-field {
+  display: grid;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.account-login-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.account-login-input-wrap > .material-symbols-outlined {
+  position: absolute;
+  left: 14px;
+  z-index: 1;
+  color: var(--ink-muted);
+  font-size: 19px;
+  pointer-events: none;
+}
+
+.account-login-input-wrap input {
+  width: 100%;
+  height: 52px;
+  padding: 0 16px 0 44px;
+  border: 1px solid rgba(110, 120, 130, 0.2);
+  border-radius: 6px;
+  background: var(--surface-container-low);
+  color: var(--ink);
+  font-size: 14px;
+  box-shadow: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.account-login-input-wrap input:focus {
+  outline: none;
+  border-color: rgba(0, 176, 255, 0.72);
+  background: var(--surface-lowest);
+  box-shadow: 0 0 0 3px rgba(0, 176, 255, 0.14);
+}
+
+.account-login-error {
+  min-height: 20px;
+  margin: -8px 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.account-login-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 56px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--surface-lowest);
+  font-size: 15px;
+  font-weight: 700;
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.account-login-submit:hover:not(:disabled) {
+  box-shadow: 0 16px 32px rgba(0, 100, 147, 0.22);
+  transform: translateY(-1px);
+}
+
+.account-login-orbit {
+  display: flex;
+  justify-content: center;
+  margin-top: 32px;
+  color: var(--secondary);
+  opacity: 0.42;
+}
+
+.account-login-orbit .material-symbols-outlined {
+  font-size: 34px;
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24;
+}
+
+.account-login-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 84px;
+  padding: 20px 40px;
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+
+.account-login-footer > strong {
+  color: var(--secondary);
+  font-family: Manrope, Inter, sans-serif;
+  font-weight: 700;
+}
+
+.account-login-footer nav {
+  display: flex;
+  gap: 28px;
+}
+
+.account-login-footer a {
+  color: inherit;
+  transition: color 160ms ease;
+}
+
+.account-login-footer a:hover,
+.account-login-footer a:focus-visible {
+  color: var(--primary);
+}
+
+@keyframes account-login-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 640px) {
+  .account-login-page {
+    grid-template-rows: 68px minmax(0, 1fr) auto;
+  }
+
+  .account-login-header {
+    padding: 12px 18px;
+  }
+
+  .account-login-brand-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 21px;
+  }
+
+  .account-login-brand strong {
+    font-size: 21px;
+  }
+
+  .account-login-main {
+    align-items: flex-start;
+    padding: 44px 16px;
+  }
+
+  .account-login-heading h1 {
+    font-size: 30px;
+  }
+
+  .account-login-heading p {
+    font-size: 15px;
+  }
+
+  .account-login-card {
+    padding: 24px;
+  }
+
+  .account-login-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 22px 20px;
+    font-size: 13px;
+  }
+
+  .account-login-footer nav {
+    flex-wrap: wrap;
+    gap: 12px 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-login-page {
+    animation: none;
+  }
+}
+
 button,
 input,
 select,
@@ -1003,6 +1272,10 @@ select.input,
   background: var(--surface-container);
 }
 
+.account-signout-button {
+  margin-left: auto;
+}
+
 .error-banner {
   display: flex;
   align-items: center;
@@ -1390,6 +1663,50 @@ select.input,
 
 .msg-content p:last-child {
   margin-bottom: 0;
+}
+
+.zendesk-comment-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.zendesk-comment-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(0, 100, 147, 0.16);
+  background: rgba(239, 244, 251, 0.86);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.zendesk-comment-button:hover:not(:disabled) {
+  background: var(--surface-lowest);
+  box-shadow: 0 8px 16px rgba(0, 100, 147, 0.12);
+}
+
+.zendesk-comment-button .material-symbols-outlined,
+.zendesk-comment-action > .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.zendesk-comment-action--added {
+  color: var(--success);
+}
+
+.zendesk-comment-action--unknown,
+.zendesk-comment-error {
+  color: var(--danger);
+}
+
+.zendesk-comment-id {
+  color: var(--ink-muted);
 }
 
 .ai-reply-state {

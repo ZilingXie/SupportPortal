@@ -25,6 +25,9 @@ const renderSharedComposerFormattingToolbarButtons =
 const applySharedComposerToolbarStateToButtons =
   SharedComposer.applyComposerToolbarStateToButtons || (() => {});
 
+const ACCOUNT_ACCESS_TOKEN_KEY = "supportportal_account_workspace_access_token";
+const ACCOUNT_ACCOUNT_KEY = "supportportal_account_workspace_account";
+
 const PAGE_SIZE = 10;
 const SUMMARY_FRESH_MS = 30_000;
 const DETAIL_FRESH_MS = 60_000;
@@ -87,6 +90,10 @@ const DEFAULT_FILTER_DEFINITIONS = [
 ];
 
 const state = {
+  authenticated: false,
+  authChecking: true,
+  authError: "",
+  currentAccount: null,
   view: "create",
   title: "",
   question: "",
@@ -131,7 +138,13 @@ const state = {
   rerouteActiveTargetCaseId: "",
   isStartingReroute: false,
   rerouteError: "",
+  zendeskCommentPendingMessageId: "",
+  zendeskCommentError: "",
+  zendeskCommentErrorMessageId: "",
 };
+
+let accessToken = readStorage(ACCOUNT_ACCESS_TOKEN_KEY, "");
+let currentAccount = readStorage(ACCOUNT_ACCOUNT_KEY, null);
 
 let composerRuntime = null;
 let isFetchingRouteErrorSummary = false;
@@ -180,6 +193,105 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function readStorage(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStorage(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function removeStorage(key) {
+  localStorage.removeItem(key);
+}
+
+function authRequestInit(options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  return { ...options, headers };
+}
+
+function clearAccountAuth() {
+  accessToken = "";
+  currentAccount = null;
+  state.authenticated = false;
+  state.currentAccount = null;
+  removeStorage(ACCOUNT_ACCESS_TOKEN_KEY);
+  removeStorage(ACCOUNT_ACCOUNT_KEY);
+}
+
+function handleAccountAuthFailure(response) {
+  if (![401, 403].includes(Number(response?.status))) return false;
+  clearAccountAuth();
+  state.authChecking = false;
+  state.authError = "Your admin session has expired. Sign in again.";
+  if (state.view !== "create") {
+    state.activeItem = null;
+    state.view = "create";
+  }
+  render();
+  return true;
+}
+
+function renderLogin() {
+  return `
+    <section class="account-login-page">
+      <header class="account-login-header">
+        <div class="account-login-brand" aria-label="Account Admin">
+          <span class="account-login-brand-icon material-symbols-outlined" aria-hidden="true">ac_unit</span>
+          <strong>Account Admin</strong>
+        </div>
+      </header>
+      <main class="account-login-main">
+        <div class="account-login-content">
+          <header class="account-login-heading">
+            <h1>Welcome Back</h1>
+            <p>Sign in to review Account Cases and write selected AI messages to Zendesk as internal notes.</p>
+          </header>
+          <section class="account-login-card" aria-label="Account Admin sign in">
+            <form class="account-login-form" data-account-login-form>
+              <label class="account-login-field">
+                <span>Email</span>
+                <span class="account-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">person</span>
+                  <input name="email" autocomplete="username" placeholder="name@company.com" required maxlength="320" />
+                </span>
+              </label>
+              <label class="account-login-field">
+                <span>Password</span>
+                <span class="account-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">lock</span>
+                  <input name="password" type="password" autocomplete="current-password" placeholder="Password" required maxlength="512" />
+                </span>
+              </label>
+              <p class="account-login-error" data-account-login-error role="alert">${escapeHtml(state.authError)}</p>
+              <button class="account-login-submit" type="submit" ${state.authChecking ? "disabled" : ""}>
+                <span>${state.authChecking ? "Checking session..." : "Sign In"}</span>
+                <span class="material-symbols-outlined" aria-hidden="true">login</span>
+              </button>
+            </form>
+          </section>
+          <div class="account-login-orbit" aria-hidden="true">
+            <span class="material-symbols-outlined">data_usage</span>
+          </div>
+        </div>
+      </main>
+      <footer class="account-login-footer">
+        <strong>&copy; 2026 SupportPortal. Secure Account Workspace.</strong>
+        <nav aria-label="Account resources">
+          <a href="/workspace/admin">Workspace Admin</a>
+          <a href="https://status.agora.io/" target="_blank" rel="noopener noreferrer">System Status</a>
+        </nav>
+      </footer>
+    </section>
+  `;
 }
 
 function statusLabel(status) {
@@ -325,6 +437,93 @@ function showToast(message) {
   }, 3200);
 }
 
+async function accountWorkspaceMe(token) {
+  const response = await fetch("/api/workspace/me", {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = await readResponsePayload(response);
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(payload, "Workspace authentication failed."));
+  }
+  if (String(payload?.account?.role || "").toLowerCase() !== "admin") {
+    throw new Error("Admin role required");
+  }
+  return payload.account;
+}
+
+async function loadAuthenticatedAccount() {
+  state.authChecking = true;
+  state.authError = "";
+  if (!accessToken) {
+    state.authChecking = false;
+    state.authenticated = false;
+    render();
+    return;
+  }
+  try {
+    currentAccount = await accountWorkspaceMe(accessToken);
+    state.currentAccount = currentAccount;
+    state.authenticated = true;
+    state.authChecking = false;
+    await Promise.all([fetchTickets(), fetchLatestRerouteJob()]);
+  } catch (error) {
+    clearAccountAuth();
+    state.authChecking = false;
+    state.authError = error instanceof Error ? error.message : "Workspace authentication failed.";
+  }
+  render();
+}
+
+async function handleAccountLogin(form) {
+  if (state.authChecking) return;
+  const data = new FormData(form);
+  state.authChecking = true;
+  state.authError = "";
+  render();
+  try {
+    const response = await fetch("/api/workspace/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: String(data.get("email") || "").trim(),
+        password: String(data.get("password") || ""),
+      }),
+    });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Invalid email or password."));
+    }
+    if (String(payload?.account?.role || "").toLowerCase() !== "admin") {
+      throw new Error("Admin role required");
+    }
+    accessToken = String(payload.access_token || "").trim();
+    currentAccount = payload.account;
+    if (!accessToken) throw new Error("Workspace login did not return an access token.");
+    writeStorage(ACCOUNT_ACCESS_TOKEN_KEY, accessToken);
+    writeStorage(ACCOUNT_ACCOUNT_KEY, currentAccount);
+    state.currentAccount = currentAccount;
+    state.authenticated = true;
+    state.authChecking = false;
+    await Promise.all([fetchTickets({ force: true }), fetchLatestRerouteJob()]);
+  } catch (error) {
+    clearAccountAuth();
+    state.authChecking = false;
+    state.authError = error instanceof Error ? error.message : "Account login failed.";
+  }
+  render();
+}
+
+function accountSignOut() {
+  clearAccountAuth();
+  state.authChecking = false;
+  state.authError = "";
+  state.activeItem = null;
+  state.history = [];
+  state.view = "create";
+  render();
+}
+
 function formatMessageTimestamp(value) {
   const date = new Date(String(value || ""));
   if (Number.isNaN(date.getTime())) return "Time unavailable";
@@ -354,6 +553,36 @@ function renderAiReplyState(item) {
     ? "AI could not prepare a reliable reply. Manual attention is required."
     : item.ai_reply_error || "AI reply preparation failed.";
   return `<div class="ai-reply-state ai-reply-state--attention" role="status" aria-live="polite">${escapeHtml(message)}</div>`;
+}
+
+function zendeskInternalCommentState(message) {
+  const raw = message?.zendesk_internal_comment
+    || (message?.meta && typeof message.meta === "object" ? message.meta.zendesk_internal_comment : null);
+  return raw && typeof raw === "object" ? raw : null;
+}
+
+function renderZendeskInternalCommentAction(message, messageId) {
+  const record = zendeskInternalCommentState(message);
+  const status = String(record?.status || "").trim().toLowerCase();
+  const isPending = state.zendeskCommentPendingMessageId === messageId;
+  if (status === "added") {
+    return `<div class="zendesk-comment-action zendesk-comment-action--added" role="status"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Added as internal comment${record.comment_id ? ` <span class="zendesk-comment-id">#${escapeHtml(record.comment_id)}</span>` : ""}</div>`;
+  }
+  if (status === "outcome_unknown") {
+    return `<div class="zendesk-comment-action zendesk-comment-action--unknown" role="alert"><span class="material-symbols-outlined" aria-hidden="true">warning</span>Result unknown. Verify Zendesk before retrying.</div>`;
+  }
+  const error = state.zendeskCommentError && state.zendeskCommentErrorMessageId === messageId
+    ? state.zendeskCommentError
+    : "";
+  return `
+    <div class="zendesk-comment-action">
+      <button class="ghost-button zendesk-comment-button" type="button" data-action="add-zendesk-internal-comment" data-message-id="${escapeHtml(messageId)}" ${isPending ? "disabled" : ""}>
+        <span class="material-symbols-outlined" aria-hidden="true">${isPending ? "progress_activity" : "note_add"}</span>
+        ${isPending ? "Adding..." : status === "failed" ? "Retry internal comment" : "Add as internal comment"}
+      </button>
+      ${error ? `<span class="zendesk-comment-error" role="alert">${escapeHtml(error)}</span>` : ""}
+    </div>
+  `;
 }
 
 function updateReplyPolling() {
@@ -551,14 +780,15 @@ function prefetchTicketDetails(items) {
 
   const controller = new AbortController();
   detailRequestControllers.add(controller);
-  const batchPromise = fetch("/api/account/cases/batch-details", {
+  const batchPromise = fetch("/api/account/cases/batch-details", authRequestInit({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ case_ids: caseIds }),
     cache: "no-store",
     signal: controller.signal,
-  })
+  }))
     .then(async (response) => {
+      if (handleAccountAuthFailure(response)) return [];
       if (!response.ok) throw new Error("Could not preload Account Case details.");
       const payload = await response.json();
       const details = Array.isArray(payload.details) ? payload.details : [];
@@ -618,7 +848,8 @@ async function fetchTickets({ force = false, renderOnUpdate = false } = {}) {
   }
 
   try {
-    const response = await fetch(buildTicketListUrl(), { cache: "no-store", signal: controller.signal });
+    const response = await fetch(buildTicketListUrl(), authRequestInit({ cache: "no-store", signal: controller.signal }));
+    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
     if (!response.ok) throw new Error("Could not load Account Cases.");
     const data = await response.json();
     if (generation !== summaryRequestGeneration || cacheKey !== currentSummaryKey()) return;
@@ -705,9 +936,10 @@ async function fetchRerouteJob(jobId, { refreshCasesOnCompletion = false } = {})
   if (!normalizedJobId) return fetchLatestRerouteJob({ refreshCasesOnCompletion });
   const wasActive = isActiveRerouteJob();
   try {
-    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`, {
+    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`, authRequestInit({
       cache: "no-store",
-    });
+    }));
+    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       throw new Error(responseErrorMessage(payload, "Could not load rerun status."));
@@ -733,7 +965,8 @@ async function fetchRerouteJob(jobId, { refreshCasesOnCompletion = false } = {})
 async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) {
   const wasActive = isActiveRerouteJob();
   try {
-    const response = await fetch("/api/account/rerun-jobs/latest");
+    const response = await fetch("/api/account/rerun-jobs/latest", authRequestInit());
+    if (handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       throw new Error(responseErrorMessage(payload, "Could not load rerun status."));
@@ -775,7 +1008,12 @@ async function startFullReroute() {
   state.rerouteError = "";
   render();
   try {
-    const response = await fetch("/api/account/rerun-jobs", { method: "POST" });
+    const requestHeaders = {};
+    if (typeof accessToken === "string" && accessToken) {
+      requestHeaders.Authorization = `Bearer ${accessToken}`;
+    }
+    const response = await fetch("/api/account/rerun-jobs", { method: "POST", headers: requestHeaders });
+    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
@@ -808,10 +1046,11 @@ async function resumeRerouteJob() {
   state.rerouteError = "";
   render();
   try {
-    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume`, {
+    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume`, authRequestInit({
       method: "POST",
       cache: "no-store",
-    });
+    }));
+    if (handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
@@ -840,11 +1079,16 @@ async function startSingleCaseRerun() {
   state.rerouteError = "";
   render();
   try {
+    const requestHeaders = { "Idempotency-Key": snapshot.idempotencyKey };
+    if (typeof accessToken === "string" && accessToken) {
+      requestHeaders.Authorization = `Bearer ${accessToken}`;
+    }
     const response = await fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
       method: "POST",
       cache: "no-store",
-      headers: { "Idempotency-Key": snapshot.idempotencyKey },
+      headers: requestHeaders,
     });
+    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
@@ -883,10 +1127,11 @@ async function fetchTicketDetail(ticketId, { force = false } = {}) {
   detailRequestControllers.add(controller);
   const request = (async () => {
   try {
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketId)}`, {
+    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketId)}`, authRequestInit({
       cache: "no-store",
       signal: controller.signal,
-    });
+    }));
+    if (handleAccountAuthFailure(response)) return null;
     if (!response.ok) return null;
     const detail = await response.json();
     cacheDetail(detail);
@@ -920,10 +1165,11 @@ async function searchCaseByNumber(event) {
   state.caseSearchError = "";
   render();
   try {
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketNumber)}`, {
+    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketNumber)}`, authRequestInit({
       cache: "no-store",
       signal: controller.signal,
-    });
+    }));
+    if (handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (generation !== caseSearchGeneration) return;
     if (response.status === 404) {
@@ -956,7 +1202,8 @@ async function fetchRouteErrorSummary() {
   if (isFetchingRouteErrorSummary) return;
   isFetchingRouteErrorSummary = true;
   try {
-    const response = await fetch("/api/account/route-errors/summary?limit=100");
+    const response = await fetch("/api/account/route-errors/summary?limit=100", authRequestInit());
+    if (handleAccountAuthFailure(response)) return;
     if (!response.ok) return;
     state.routeErrorSummary = await response.json();
   } catch {
@@ -1346,18 +1593,20 @@ function renderMessageThread() {
     <div class="message-thread">
       <div class="detail-section-title">Conversation</div>
       ${messages
-        .map((msg) => {
+        .map((msg, index) => {
           const role = String(msg.role || "").toLowerCase();
           const content = String(msg.content || "");
           const isCustomer = role === "customer" || role === "user";
           const bubbleClass = isCustomer ? "msg-bubble--customer" : "msg-bubble--assistant";
           const label = isCustomer ? "Customer" : "AI";
           const timestamp = formatMessageTimestamp(msg.created_at);
+          const messageId = String(msg.message_id || msg.id || `${accountCaseIdentifier(item)}:${index}`);
           return `
         <div class="msg-row ${isCustomer ? "msg-row--customer" : "msg-row--assistant"}">
           <div class="msg-bubble ${bubbleClass}">
             <div class="msg-header"><span class="msg-label">${escapeHtml(label)}</span><time datetime="${escapeHtml(msg.created_at || "")}">${escapeHtml(timestamp)}</time></div>
             <div class="msg-content">${renderMarkdownMessage(content)}</div>
+            ${!isCustomer && (role === "assistant" || role === "ai") ? renderZendeskInternalCommentAction(msg, messageId) : ""}
           </div>
         </div>
       `;
@@ -1718,11 +1967,12 @@ async function submitRouteCorrection() {
           execution_action: state.correctionAction,
           corrector: "operator",
         };
-    const response = await fetch(`/api/account/cases/${billingTicketId}/route-correction`, {
+    const response = await fetch(`/api/account/cases/${billingTicketId}/route-correction`, authRequestInit({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(correctionPayload),
-    });
+    }));
+    if (handleAccountAuthFailure(response)) return;
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.detail || "Route correction failed.");
@@ -1754,14 +2004,15 @@ async function submitRouteReview(reviewStatus) {
 
   try {
     const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/cases/${billingTicketId}/route-review`, {
+    const response = await fetch(`/api/account/cases/${billingTicketId}/route-review`, authRequestInit({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         review_status: reviewStatus,
         reviewer: "operator",
       }),
-    });
+    }));
+    if (handleAccountAuthFailure(response)) return;
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.detail || "Route review failed.");
@@ -1796,11 +2047,12 @@ async function submitReply() {
 
   try {
     const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/cases/${billingTicketId}/reply`, {
+    const response = await fetch(`/api/account/cases/${billingTicketId}/reply`, authRequestInit({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
-    });
+    }));
+    if (handleAccountAuthFailure(response)) return;
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.detail || "Message failed.");
@@ -1816,6 +2068,58 @@ async function submitReply() {
     state.replyError = err instanceof Error ? err.message : "Reply failed.";
   } finally {
     state.isSubmittingReply = false;
+    render();
+  }
+}
+
+async function addMessageAsZendeskInternalComment(messageId) {
+  const item = state.activeItem;
+  const normalizedMessageId = String(messageId || "").trim();
+  const caseId = accountCaseIdentifier(item);
+  if (!item || !caseId || !normalizedMessageId || state.zendeskCommentPendingMessageId) return;
+  state.zendeskCommentPendingMessageId = normalizedMessageId;
+  state.zendeskCommentError = "";
+  state.zendeskCommentErrorMessageId = "";
+  render();
+  try {
+    const response = await fetch(
+      `/api/account/cases/${encodeURIComponent(caseId)}/messages/${encodeURIComponent(normalizedMessageId)}/zendesk-internal-comment`,
+      authRequestInit({ method: "POST", cache: "no-store" }),
+    );
+    if (handleAccountAuthFailure(response)) return;
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Could not add the AI message as an internal comment."));
+    }
+    const refreshed = await fetchTicketDetail(caseId, { force: true });
+    if (refreshed) {
+      state.activeItem = refreshed;
+    } else if (state.activeItem && Array.isArray(state.activeItem.messages)) {
+      // Keep the confirmed write visible if the follow-up detail refresh is unavailable.
+      state.activeItem = {
+        ...state.activeItem,
+        messages: state.activeItem.messages.map((message) => {
+          const candidateId = String(message?.message_id || message?.id || "").trim();
+          if (candidateId !== normalizedMessageId) return message;
+          return {
+            ...message,
+            meta: {
+              ...(message.meta && typeof message.meta === "object" ? message.meta : {}),
+              zendesk_internal_comment: payload,
+            },
+          };
+        }),
+      };
+      cacheDetail(state.activeItem);
+    }
+    showToast("Added as Zendesk internal comment");
+  } catch (error) {
+    state.zendeskCommentError = error instanceof Error
+      ? error.message
+      : "Could not add the AI message as an internal comment.";
+    state.zendeskCommentErrorMessageId = normalizedMessageId;
+  } finally {
+    state.zendeskCommentPendingMessageId = "";
     render();
   }
 }
@@ -1936,6 +2240,11 @@ function renderRerouteConfirmation() {
 }
 
 function render() {
+  if (!state.authenticated) {
+    appRoot.innerHTML = renderLogin();
+    bind();
+    return;
+  }
   appRoot.innerHTML = `
     <main class="account-shell">
       <aside class="side-panel">
@@ -1959,6 +2268,10 @@ function render() {
           >
             <span class="material-symbols-outlined">sync</span>
             Rerun
+          </button>
+          <button class="ghost-button account-signout-button" type="button" data-action="account-signout">
+            <span class="material-symbols-outlined" aria-hidden="true">logout</span>
+            Sign out
           </button>
         </div>
         ${renderRerouteStatus()}
@@ -1990,6 +2303,7 @@ function render() {
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
+    if (!state.authenticated) return;
     updateReplyPolling();
     void fetchTickets({ force: true, renderOnUpdate: true });
     if (state.view === "detail" && state.activeItem) {
@@ -2037,6 +2351,17 @@ document.addEventListener("keydown", (event) => {
 });
 
 function bind() {
+  const loginForm = document.querySelector("[data-account-login-form]");
+  if (loginForm) {
+    loginForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void handleAccountLogin(loginForm);
+    });
+    return;
+  }
+  document.querySelectorAll("[data-action='account-signout']").forEach((el) => {
+    el.addEventListener("click", accountSignOut);
+  });
   const caseSearchForm = document.querySelector("[data-case-search-form]");
   if (caseSearchForm) caseSearchForm.addEventListener("submit", searchCaseByNumber);
   const caseSearchInput = document.querySelector("[data-case-search-input]");
@@ -2139,6 +2464,11 @@ function bind() {
   document.querySelectorAll("[data-action='submit-reply']").forEach((el) => {
     el.addEventListener("click", submitReply);
   });
+  document.querySelectorAll("[data-action='add-zendesk-internal-comment']").forEach((el) => {
+    el.addEventListener("click", () => {
+      void addMessageAsZendeskInternalComment(el.dataset.messageId || "");
+    });
+  });
   document.querySelectorAll("[data-action='submit-route-correction']").forEach((el) => {
     el.addEventListener("click", submitRouteCorrection);
   });
@@ -2175,7 +2505,5 @@ function bind() {
 renderSharedComposerFormattingToolbarButtons(state.composerToolbarState);
 serializeRichComposerHtmlToMarkdown("");
 void composerRuntime;
-(async () => {
-  await Promise.all([fetchTickets(), fetchLatestRerouteJob()]);
-  render();
-})();
+render();
+void loadAuthenticatedAccount();
