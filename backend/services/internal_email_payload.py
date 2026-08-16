@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import os
 from typing import Any
 
 from backend.services.account_verification_automation import (
@@ -19,8 +20,72 @@ class InternalEmailPayloadUpgradeError(ValueError):
     """The stored Case does not contain enough trusted data to rebuild its email."""
 
 
+class InternalEmailRecipientResolutionError(ValueError):
+    """The Account rerun cannot persist a trusted internal-mail recipient."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = str(reason_code or "account_internal_email_recipient_missing").strip()
+
+
+# Only these handlers may resolve an Account internal-mail destination.  The
+# config key is persisted alongside the resolved recipient so later workers do
+# not need to make a different environment lookup.
+ACCOUNT_INTERNAL_EMAIL_RECIPIENT_KEYS = {
+    "account_verification": "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL",
+    "fraud_account": "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL",
+    "enablement": "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL",
+    "quota": "QUOTA_AUTOMATION_INTERNAL_EMAIL",
+    # Billing-family payloads already contain their fixed/default recipient;
+    # they still pass through this allowlist but never read a new env key.
+    "billing": None,
+}
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def resolve_account_internal_email_recipient(
+    payload: dict[str, Any],
+    *,
+    handler: str,
+) -> dict[str, Any]:
+    """Resolve and persist the destination before an Account rerun commits.
+
+    The allowlist prevents a route from selecting an arbitrary environment
+    variable.  A non-empty payload ``to`` is trusted only when it came from the
+    registered key; otherwise the registered key is resolved once and copied
+    into the durable payload.
+    """
+
+    resolved = deepcopy(payload) if isinstance(payload, dict) else {}
+    normalized_handler = " ".join(str(handler or "").split()).strip().lower()
+    config_key = ACCOUNT_INTERNAL_EMAIL_RECIPIENT_KEYS.get(normalized_handler)
+    payload_key = " ".join(str(resolved.get("recipient_config_key") or "").split()).strip()
+    if normalized_handler not in ACCOUNT_INTERNAL_EMAIL_RECIPIENT_KEYS or (
+        config_key and payload_key and payload_key != config_key
+    ):
+        raise InternalEmailRecipientResolutionError(
+            "account_internal_email_recipient_unregistered",
+            "internal email recipient config is not registered for this handler",
+        )
+    if config_key:
+        resolved["recipient_config_key"] = config_key
+    current_to = " ".join(str(resolved.get("to") or "").split()).strip()
+    if current_to:
+        resolved["recipient_resolution_source"] = "persisted_payload"
+    else:
+        current_to = " ".join(str(os.getenv(config_key) or "").split()).strip() if config_key else ""
+        if not current_to:
+            raise InternalEmailRecipientResolutionError(
+                "account_internal_email_recipient_missing",
+                f"{config_key} is not configured",
+            )
+        resolved["to"] = current_to
+        resolved["recipient_resolution_source"] = "environment"
+    resolved["resolved_to"] = current_to
+    return resolved
 
 
 def _customer_message(account_case: dict[str, Any], ticket: dict[str, Any]) -> str:
@@ -45,6 +110,9 @@ def _customer_email(account_case: dict[str, Any], ticket: dict[str, Any]) -> str
 
 def _preserve_delivery_metadata(payload: dict[str, Any], rendered: dict[str, Any]) -> dict[str, Any]:
     preserved_keys = {
+        "to",
+        "recipient_config_key",
+        "recipient_resolution_source",
         "delivery_key",
         "customer_confirmation_queued",
         "delivery_attempt_count",

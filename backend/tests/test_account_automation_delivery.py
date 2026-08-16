@@ -9,6 +9,7 @@ from backend.services.account_automation_delivery import (
     deliver_account_internal_email,
     deliver_account_internal_email_async,
     ensure_account_delivery_key,
+    is_rerun_owned_delivery,
 )
 
 
@@ -49,6 +50,15 @@ class AccountAutomationDeliveryTests(unittest.TestCase):
         )
 
         self.assertEqual(upgraded["delivery_key"], "custom:AC-DELIVERY:v2")
+
+    def test_rerun_delivery_is_fenced_from_legacy_workers(self) -> None:
+        self.assertTrue(
+            is_rerun_owned_delivery(
+                {"delivery_key": "enablement:AC-DELIVERY:v1:rerun:account-rerun-1"}
+            )
+        )
+        self.assertFalse(is_rerun_owned_delivery({"delivery_key": "enablement:AC-DELIVERY:v1"}))
+        self.assertFalse(is_rerun_owned_delivery({"delivery_key": "enablement:AC-DELIVERY:v1:rerun:"}))
 
     def test_sent_delivery_is_persisted_and_replay_is_idempotent(self) -> None:
         sender = Mock(return_value={"status": "sent", "reason": ""})

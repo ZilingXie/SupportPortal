@@ -258,6 +258,62 @@ class AccountRerunSyntheticBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["retry_mode"], "prepare")
         self.assertEqual(job["checkpoint"]["committed"], False)
 
+    async def test_missing_rerun_recipient_fails_before_case_commit(self) -> None:
+        case_ids = self._seed_cases(1)
+        case_before = self.repository.get_account_case(case_ids[0])
+        assert case_before is not None
+        updated = {
+            **case_before,
+            "route": "enablement",
+            "execution_action": "enablement",
+            "route_family": "automated",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "internal_email_payload": {
+                "recipient_config_key": "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL",
+                "delivery_key": "enablement:missing-recipient:v1",
+            },
+            "internal_email_send_status": "pending",
+        }
+        prepared = SimpleNamespace(
+            prepared_case=updated,
+            result=SimpleNamespace(
+                account_case=updated,
+                route_execution={"ticket_id": case_before["client_ticket_id"]},
+                changed=True,
+                handler_status="completed",
+                internal_email_to_send=dict(updated["internal_email_payload"]),
+                email_handler="enablement",
+                customer_reply="",
+                reply_kind="submission_confirmation",
+                asked_field_keys=(),
+            ),
+        )
+        queued = await main._enqueue_account_rerun_job(
+            SimpleNamespace(add_task=lambda *args: None),
+            target_case_ids=case_ids,
+            scope_override="all_cases",
+            idempotency_key="synthetic-missing-rerun-recipient",
+            request_scope="test:missing-rerun-recipient",
+        )
+
+        with patch.object(main, "prepare_account_case_rerun", return_value=prepared), patch.object(
+            main,
+            "_notify_account_rerun_failure",
+            new=AsyncMock(return_value="sent"),
+        ), patch.dict("os.environ", {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": ""}, clear=False):
+            await main._run_account_full_reroute_job(str(queued["job_id"]))
+
+        stored = self.repository.get_account_reroute_job(str(queued["job_id"]))
+        case_after = self.repository.get_account_case(case_ids[0])
+        assert stored is not None
+        assert case_after is not None
+        self.assertEqual(stored["status"], "failed")
+        self.assertEqual(stored["failed_stage"], "email_config")
+        self.assertEqual(stored["failed_reason_code"], "account_internal_email_recipient_missing")
+        self.assertFalse(stored["checkpoint"]["committed"])
+        self.assertEqual(case_after, case_before)
+
     async def test_synthetic_147_middle_failure_stops_immediately(self) -> None:
         job, processor = await self._run_with_failure_at(73)
         self.assertEqual(processor.call_count, 73)

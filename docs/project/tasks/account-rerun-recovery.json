@@ -8,10 +8,13 @@
   "status": "done",
   "priority": "unclassified",
   "owner": "Zac",
-  "summary": "Rerun 具备冻结、preflight、恢复和结果边界。",
+  "summary": "Rerun 具备冻结、preflight、恢复和结果边界；本轮修复失败后 legacy delivery 继续投递和重复告警。",
   "next_action": "",
   "acceptance_criteria": [
-    "Rerun 具备冻结、preflight、恢复和结果边界。"
+    "Rerun 具备冻结、preflight、恢复和结果边界。",
+    "Rerun Commit 前固定内部邮件收件人，缺失时零写入并只发送 job-level owner alert。",
+    "terminal failed rerun 的 delivery key 被 legacy worker 跳过，不发送内部邮件或客户回复。",
+    "Resume 继续使用持久化收件人和已有 delivery/reply checkpoint，不重复投递。"
   ],
   "blockers": [],
   "evidence": [
@@ -87,6 +90,16 @@
       "at": "2026-08-16",
       "event": "seeded",
       "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+    },
+    {
+      "at": "2026-08-16",
+      "event": "side_effect_fence_started",
+      "summary": "修复 AC-12806 类 rerun 失败后 legacy Enablement poller 继续发送邮件和客户回复的问题。"
+    },
+    {
+      "at": "2026-08-16",
+      "event": "side_effect_fence_completed",
+      "summary": "Rerun 在 Commit 前固定收件人，legacy poller 跳过 rerun-owned delivery，恢复保留已发送投递证据；定向回归测试通过。"
     }
   ],
   "legacy_refs": []

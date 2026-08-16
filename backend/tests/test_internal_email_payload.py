@@ -8,6 +8,8 @@ import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.internal_email_payload import (
     InternalEmailPayloadUpgradeError,
+    InternalEmailRecipientResolutionError,
+    resolve_account_internal_email_recipient,
     upgrade_internal_email_payload,
 )
 from backend.services.internal_email_template import INTERNAL_EMAIL_TEMPLATE_VERSION
@@ -226,6 +228,45 @@ class InternalEmailPayloadUpgradeTests(unittest.TestCase):
         account_case["internal_email_payload"] = {"body": "legacy plain text body"}
         with self.assertRaises(InternalEmailPayloadUpgradeError):
             upgrade_internal_email_payload(account_case, self._ticket())
+
+    def test_rerun_recipient_is_resolved_once_and_persisted(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "enablement@example.com"},
+            clear=False,
+        ):
+            payload = resolve_account_internal_email_recipient(
+                {
+                    "recipient_config_key": "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL",
+                    "to": "",
+                    "delivery_key": "enablement:AC-1:v1:rerun:job-1",
+                },
+                handler="enablement",
+            )
+
+        self.assertEqual(payload["to"], "enablement@example.com")
+        self.assertEqual(payload["resolved_to"], "enablement@example.com")
+        self.assertEqual(payload["recipient_resolution_source"], "environment")
+
+    def test_rerun_recipient_missing_fails_before_commit_contract(self) -> None:
+        with patch.dict("os.environ", {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": ""}, clear=False):
+            with self.assertRaises(InternalEmailRecipientResolutionError) as context:
+                resolve_account_internal_email_recipient(
+                    {
+                        "recipient_config_key": "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL",
+                        "delivery_key": "enablement:AC-1:v1:rerun:job-1",
+                    },
+                    handler="enablement",
+                )
+        self.assertEqual(context.exception.reason_code, "account_internal_email_recipient_missing")
+
+    def test_rerun_recipient_rejects_unregistered_config_key(self) -> None:
+        with self.assertRaises(InternalEmailRecipientResolutionError) as context:
+            resolve_account_internal_email_recipient(
+                {"recipient_config_key": "CUSTOM_RECIPIENT", "to": "team@example.com"},
+                handler="enablement",
+            )
+        self.assertEqual(context.exception.reason_code, "account_internal_email_recipient_unregistered")
 
 
 class InternalEmailDeliveryClaimTests(unittest.TestCase):

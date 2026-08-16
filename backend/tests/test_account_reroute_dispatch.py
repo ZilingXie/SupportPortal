@@ -359,6 +359,12 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             reply_checkpoint = self.repository.get_latest_account_reply_job(ticket_id)
             assert reply_checkpoint is not None
             self.assertEqual(reply_checkpoint["payload"]["rerun_job_id"], queued["job_id"])
+            stored_case = self.repository.get_account_case(case_id)
+            assert stored_case is not None
+            self.assertIn(
+                f":rerun:{queued['job_id']}",
+                str((stored_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
+            )
 
             stop_event.clear()
             await main._claim_and_run_account_reroute_job(

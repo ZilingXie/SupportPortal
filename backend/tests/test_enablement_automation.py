@@ -141,6 +141,23 @@ class EnablementAutomationTests(unittest.TestCase):
         self.assertEqual(result["resolved_to"], "current@example.com")
         self.assertEqual(send_mail.call_args.kwargs["to_address"], "current@example.com")
 
+    def test_rerun_payload_uses_persisted_destination_over_environment(self) -> None:
+        payload = {
+            "to": "persisted@example.com",
+            "recipient_resolution_source": "environment",
+            "subject": "Request",
+            "body": "Body",
+        }
+        with patch.dict(
+            "os.environ",
+            {"ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "different@example.com"},
+            clear=False,
+        ), patch("backend.services.enablement_automation.send_graph_mail") as send_mail:
+            result = send_enablement_internal_email(payload)
+
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(send_mail.call_args.kwargs["to_address"], "persisted@example.com")
+
     def test_internal_email_prefers_html_body(self) -> None:
         payload = {"subject": "Request", "body": "Plain fallback", "body_html": "<p>Pretty</p>"}
         with patch.dict(

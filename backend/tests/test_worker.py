@@ -2340,6 +2340,35 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertFalse(created)
         repository.save_account_reply_job.assert_not_called()
 
+    def test_enablement_delivery_retry_skips_rerun_owned_pending_delivery(self) -> None:
+        account_case = {
+            "account_case_id": "AC-RERUN-FENCE",
+            "client_ticket_id": "12570",
+            "automation_handler": "enablement",
+            "missing_fields": [],
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-RERUN-FENCE:v1:rerun:account-rerun-failed",
+                "to": "enablement@example.com",
+            },
+            "internal_email_send_status": "retry",
+            "updated_at": "2026-07-24T00:00:00+00:00",
+        }
+        repository = Mock()
+        repository.list_billing_tickets.return_value = [account_case]
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "send_enablement_internal_email",
+        ) as send_mail:
+            result = worker.retry_enablement_internal_deliveries_once()
+
+        self.assertEqual(result["rerun_owned_skipped"], 1)
+        self.assertEqual(result["examined"], 0)
+        self.assertEqual(result["confirmations"], 0)
+        send_mail.assert_not_called()
+        repository.save_account_case.assert_not_called()
+        repository.save_account_reply_job.assert_not_called()
+
     def test_enablement_delivery_retry_does_not_revive_confirmation_after_customer_reply(self) -> None:
         account_case = {
             "account_case_id": "AC-12513",

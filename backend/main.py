@@ -101,6 +101,10 @@ from backend.services.account_automation_delivery import (
     deliver_account_internal_email_async,
     ensure_account_delivery_key,
 )
+from backend.services.internal_email_payload import (
+    InternalEmailRecipientResolutionError,
+    resolve_account_internal_email_recipient,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     automation_metadata,
@@ -6068,6 +6072,8 @@ def _sanitize_account_rerun_error(value: Any, *, max_length: int = 240) -> str:
 def _account_rerun_failure_retry_mode(stage: str, error: Any = "") -> str:
     normalized = str(stage or "").strip().lower()
     lowered = str(error or "").lower()
+    if normalized in {"email_config", "preflight", "prepare"}:
+        return "prepare"
     if normalized in {"email", "internal_email", "mail"}:
         return "email"
     if normalized in {
@@ -7624,16 +7630,29 @@ async def _run_account_full_reroute_job(
                     "rerun_reply_kind": result.reply_kind,
                 }
                 is_full_rerun = str(job.get("scope") or "").strip() == "all_cases"
-                if is_full_rerun and result.internal_email_to_send:
-                    rerun_email_payload = dict(result.internal_email_to_send)
+                if result.internal_email_to_send:
+                    # Resolve the recipient while Prepare is still in memory.
+                    # A missing destination fails before Commit, so no Case,
+                    # delivery claim, or reply job can be left behind.
+                    case_stage = "email_config"
+                    email_handler = str(
+                        result.email_handler
+                        or updated_case.get("automation_handler")
+                        or updated_case.get("execution_action")
+                        or updated_case.get("route")
+                        or ""
+                    ).strip().lower()
+                    resolved_email_payload = resolve_account_internal_email_recipient(
+                        dict(result.internal_email_to_send),
+                        handler=email_handler,
+                    )
+                    rerun_email_payload = dict(resolved_email_payload)
                     rerun_email_payload["delivery_key"] = _fresh_rerun_delivery_key(
                         rerun_email_payload,
                         job_id,
                     )
                     # AccountFullRerouteResult is frozen. Rebuild the concrete
-                    # result instead of relying on dataclasses.replace here;
-                    # this keeps the rerun boundary explicit and avoids an
-                    # immutable-field assignment from an older/custom result.
+                    # result after recipient resolution and delivery-key binding.
                     result = AccountFullRerouteResult(
                         account_case=result.account_case,
                         route_execution=result.route_execution,
@@ -7645,9 +7664,26 @@ async def _run_account_full_reroute_job(
                         reply_kind=result.reply_kind,
                         asked_field_keys=result.asked_field_keys,
                     )
+                    recipient_audit = {
+                        "handler": email_handler,
+                        "recipient_config_key": str(
+                            rerun_email_payload.get("recipient_config_key") or ""
+                        ).strip() or None,
+                        "recipient_resolution_source": str(
+                            rerun_email_payload.get("recipient_resolution_source") or ""
+                        ).strip() or None,
+                        "runtime_service": "account-rerun-coordinator",
+                    }
+                    result.route_execution["internal_email_recipient"] = recipient_audit
                     updated_case["internal_email_payload"] = dict(rerun_email_payload)
                     updated_case["internal_email_send_status"] = "pending"
-                    updated_case["internal_email_send_reason"] = "full_rerun_requested"
+                    updated_case["internal_email_send_reason"] = (
+                        "full_rerun_requested" if is_full_rerun else "rerun_requested"
+                    )
+                    updated_case["automation_context"] = {
+                        **dict(updated_case.get("automation_context") or {}),
+                        "internal_email_recipient": recipient_audit,
+                    }
                 result.route_execution["rerun_job_id"] = job_id
                 result.route_execution["rerun_mode"] = "fresh_case_rerun"
                 case_changed = bool(result.changed)
@@ -7727,11 +7763,37 @@ async def _run_account_full_reroute_job(
                 job["changed"] += int(case_changed)
                 job["succeeded"] += 1
             except _AccountRerunShutdownRequested:
-                retry_case_modes = dict(job.get("retry_case_modes") or {})
-                retry_case_modes[case_id] = "reply"
-                job["retry_case_modes"] = retry_case_modes
+                # A sent handoff email plus its durable confirmation job is a
+                # completed Case even if shutdown interrupts Persona polling;
+                # a field-follow-up has not completed until its reply is ready
+                # and therefore keeps the older reply checkpoint semantics.
+                handoff_committed = bool(
+                    result.internal_email_to_send
+                    or result.reply_kind == "submission_confirmation"
+                )
+                if handoff_committed:
+                    if case_id not in completed_case_id_set:
+                        completed_case_id_set.add(case_id)
+                        completed_case_ids.append(case_id)
+                        job["completed_case_ids"] = completed_case_ids
+                        job["succeeded"] = int(job.get("succeeded") or 0) + 1
+                        job["processed"] = int(job.get("succeeded") or 0) + int(job.get("failed") or 0)
+                        job["changed"] = int(job.get("changed") or 0) + int(case_changed)
+                        if case_route_key:
+                            job["route_counts"][case_route_key] = int(
+                                job["route_counts"].get(case_route_key) or 0
+                            ) + 1
+                        if case_handler_status:
+                            job["handler_counts"][case_handler_status] = int(
+                                job["handler_counts"].get(case_handler_status) or 0
+                            ) + 1
+                    job["phase"] = "Waiting for replies"
+                else:
+                    retry_case_modes = dict(job.get("retry_case_modes") or {})
+                    retry_case_modes[case_id] = "reply"
+                    job["retry_case_modes"] = retry_case_modes
+                    job["phase"] = "Waiting for reply preparation"
                 job["retry_mode"] = "reply"
-                job["phase"] = "Waiting for reply preparation"
                 job["checkpoint"] = {
                     "case_id": case_id,
                     "stage": "reply_prepare",
@@ -7757,6 +7819,9 @@ async def _run_account_full_reroute_job(
                     case_stage = "revision_conflict"
                 elif isinstance(exc, _AccountRerunSideEffectError):
                     case_stage = exc.stage
+                elif isinstance(exc, InternalEmailRecipientResolutionError):
+                    case_stage = "email_config"
+                    case_failure_error = exc.reason_code
                 if isinstance(exc, AccountRerunDegradedError):
                     case_stage = exc.degradation_stage
                     case_failure_error = _sanitize_account_rerun_error(exc.degradation_reason_code)
@@ -7830,9 +7895,13 @@ async def _run_account_full_reroute_job(
                             if isinstance(caught_exception, _AccountRerunSideEffectError)
                             and caught_exception.code
                             else (
-                                "account_rerun_revision_conflict"
-                                if isinstance(caught_exception, AccountRerunRevisionConflictError)
-                                else f"account_rerun_{case_stage}_failed"
+                                caught_exception.reason_code
+                                if isinstance(caught_exception, InternalEmailRecipientResolutionError)
+                                else (
+                                    "account_rerun_revision_conflict"
+                                    if isinstance(caught_exception, AccountRerunRevisionConflictError)
+                                    else f"account_rerun_{case_stage}_failed"
+                                )
                             )
                         )[:160]
                         job["alert_status"] = await _notify_account_rerun_failure(
@@ -7845,7 +7914,7 @@ async def _run_account_full_reroute_job(
                         )
                     checkpoint_committed = not (
                         isinstance(caught_exception, AccountRerunDegradedError)
-                        or case_stage in {"prepare", "preflight", "revision_conflict"}
+                        or case_stage in {"prepare", "preflight", "email_config", "revision_conflict"}
                     )
                     job["retry_mode"] = _account_rerun_failure_retry_mode(case_stage, case_failure_error)
                     job["checkpoint"] = {

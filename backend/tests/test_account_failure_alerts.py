@@ -100,3 +100,19 @@ def test_account_rerun_alert_includes_redacted_summary():
     assert "Remaining: 146" in body
     assert "customer@example.com" not in body
     assert "secret-token-value" not in body
+
+
+def test_account_rerun_stable_reason_code_is_not_redacted_as_token():
+    repository = InMemoryTicketRepository()
+    sent = []
+
+    notify_account_failure(
+        repository=repository,
+        incident_id="rerun-code-incident",
+        stage="email_config",
+        code="account_internal_email_recipient_missing",
+        mail_sender=lambda **kwargs: sent.append(kwargs),
+        now="2026-08-16T00:00:00Z",
+    )
+
+    assert "Code: account_internal_email_recipient_missing" in sent[0]["body"]

@@ -11,6 +11,7 @@ LOGGER = logging.getLogger(__name__)
 ACCOUNT_FAILURE_ALERT_RECIPIENT = "xieziling@agora.io"
 ACCOUNT_FAILURE_ALERT_SENDER = "ai-support-agent@agora.io"
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_STABLE_CODE_RE = re.compile(r"^[a-z][a-z0-9]*(?:[_.:-][a-z0-9]+)+$")
 
 
 def _safe_detail(value: Any, *, limit: int = 500) -> str:
@@ -23,6 +24,15 @@ def _safe_detail(value: Any, *, limit: int = 500) -> str:
     )
     detail = re.sub(r"\b(?:bearer\s+)?[A-Za-z0-9_-]{28,}\b", "<redacted-token>", detail, flags=re.I)
     return detail[:limit]
+
+
+def _safe_code(value: Any, *, limit: int = 160) -> str:
+    """Keep stable diagnostic codes readable without allowing secrets."""
+
+    code = " ".join(str(value or "").split()).strip().lower()
+    if _STABLE_CODE_RE.fullmatch(code):
+        return code[:limit]
+    return _safe_detail(code, limit=limit)
 
 
 def build_account_failure_alert(
@@ -42,7 +52,7 @@ def build_account_failure_alert(
         "SupportPortal Account automation stopped and requires human attention.",
         f"Incident: {_safe_detail(incident_id, limit=120)}",
         f"Stage: {_safe_detail(stage, limit=120)}",
-        f"Code: {_safe_detail(code, limit=160)}",
+        f"Code: {_safe_code(code)}",
         f"Ticket: {_safe_detail(ticket_id, limit=120) or '<unknown>'}",
         f"Account Case: {_safe_detail(account_case_id, limit=120) or '<unknown>'}",
         f"Job: {_safe_detail(job_id, limit=120) or '<none>'}",

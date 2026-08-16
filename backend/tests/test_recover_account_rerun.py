@@ -145,8 +145,17 @@ class RecoverAccountRerunTests(unittest.TestCase):
         self.assertEqual(account_case["execution_reason_code"], "enablement_persona_unavailable")
         self.assertEqual(account_case["route_classification"]["route_target"], "automation")
         self.assertEqual(account_case["route_classification"]["handler_binding_status"], "human_review")
-        self.assertIsNone(account_case["internal_email_payload"])
-        self.assertEqual(account_case["internal_email_send_status"], "not_applicable")
+        # Recovery must preserve reliable sent-delivery evidence.  Clearing the
+        # payload would make a later rerun guess that the handoff was never sent.
+        self.assertEqual(
+            account_case["internal_email_payload"]["delivery_key"],
+            delivery_key,
+        )
+        self.assertEqual(account_case["internal_email_send_status"], "sent")
+        self.assertEqual(
+            account_case["internal_email_send_reason"],
+            "sent",
+        )
         self.assertIsNone(account_case["customer_reply"])
 
     def test_apply_recovery_continues_after_unavailable_and_reuses_existing_persona(self) -> None:

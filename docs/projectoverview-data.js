@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 1,
-  "generated_at": "2026-08-16T12:21:46Z",
-  "source_base_commit": "924e3dec99a8493fb1f006d561268bffc57fbf21",
-  "registry_digest": "cbebc82f432761d9f894d0df66454910cca37642cc03b4052cb7977bc00996a0",
+  "generated_at": "2026-08-16T14:02:26Z",
+  "source_base_commit": "80dfc8dce50de98fa249b829a0917f78f75a4e2e",
+  "registry_digest": "3256622ac3d20d78aeebbbe67a540485d0f0f3adc500fbb3b40a4d9b9a376afc",
   "project": {
     "schema_version": 1,
     "project_id": "supportportal",
@@ -1140,10 +1140,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "done",
       "priority": "unclassified",
       "owner": "Zac",
-      "summary": "Rerun 具备冻结、preflight、恢复和结果边界。",
+      "summary": "Rerun 具备冻结、preflight、恢复和结果边界；本轮修复失败后 legacy delivery 继续投递和重复告警。",
       "next_action": "",
       "acceptance_criteria": [
-        "Rerun 具备冻结、preflight、恢复和结果边界。"
+        "Rerun 具备冻结、preflight、恢复和结果边界。",
+        "Rerun Commit 前固定内部邮件收件人，缺失时零写入并只发送 job-level owner alert。",
+        "terminal failed rerun 的 delivery key 被 legacy worker 跳过，不发送内部邮件或客户回复。",
+        "Resume 继续使用持久化收件人和已有 delivery/reply checkpoint，不重复投递。"
       ],
       "blockers": [],
       "evidence": [
@@ -1219,6 +1222,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-16",
+          "event": "side_effect_fence_started",
+          "summary": "修复 AC-12806 类 rerun 失败后 legacy Enablement poller 继续发送邮件和客户回复的问题。"
+        },
+        {
+          "at": "2026-08-16",
+          "event": "side_effect_fence_completed",
+          "summary": "Rerun 在 Commit 前固定收件人，legacy poller 跳过 rerun-owned delivery，恢复保留已发送投递证据；定向回归测试通过。"
         }
       ],
       "legacy_refs": []
