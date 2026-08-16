@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "TS-11",
+  "title": "受控试运行期间每天复盘前一天 AI 处理的全部 Case。",
+  "topic_id": "account-automation",
+  "related_topic_ids": [],
+  "milestone_id": "phase-2-controlled-validation",
+  "status": "active",
+  "priority": "unclassified",
+  "owner": "zac / emma / derek",
+  "summary": "受控试运行期间每天复盘前一天 AI 处理的全部 Case。",
+  "next_action": "补齐验收证据并更新状态。",
+  "acceptance_criteria": [
+    "连续两天记录分类、回复、内部转交、关单和异常结果。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-11"
+    }
+  ]
+}

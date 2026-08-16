@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "project_id": "supportportal",
+  "title": "SupportPortal",
+  "status": "active",
+  "goal": "建设一个可追踪、可审计、以 AI 辅助为核心的客户支持工单系统；让客户入口、自动化、工程师处理和验证证据形成同一条闭环。",
+  "current_milestone_id": "phase-2-controlled-validation",
+  "owner": "Zac",
+  "maintainers": ["Zac", "Codex"],
+  "repository_url": "https://github.com/ZilingXie/SupportPortal",
+  "source_policy": {
+    "progress": "docs/project/tasks/*.json",
+    "meetings": "docs/project/meetings/*.json",
+    "capabilities": "docs/feature_list.md",
+    "pr_facts": "docs/project/generated/pr-index.json",
+    "pr_summaries": "docs/project/pr_summaries.json"
+  },
+  "legacy_pages": [
+    "docs/roadmap.html",
+    "docs/roadmap/meetings.html",
+    "docs/roadmap/phase1.html",
+    "docs/roadmap/phase2.html",
+    "docs/roadmap/phase3.html"
+  ],
+  "report_windows_days": [7, 30]
+}

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "AG-01",
+  "title": "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。",
+  "topic_id": "agent-collaboration",
+  "related_topic_ids": [],
+  "milestone_id": "phase-1",
+  "status": "planned",
+  "priority": "unclassified",
+  "owner": "zac / 团队",
+  "summary": "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。",
+  "next_action": "补齐验收证据并更新状态。",
+  "acceptance_criteria": [
+    "用真实 Zendesk Case 验证 route、内部请求、回执、关单和指标。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#agent-system-2026-06-18"
+  ],
+  "created_at": "2026-06-18",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "agent-system-2026-06-18",
+      "item_id": "AG-01"
+    }
+  ]
+}

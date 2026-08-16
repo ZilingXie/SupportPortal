@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "summaries": {
+    "752": {"summary": "将 Account AI 消息以幂等 internal comment 写回关联 Zendesk ticket。", "task_ids": ["TS-03", "TS-07"]},
+    "751": {"summary": "为 Account Persona reply job 增加版本 fence，避免旧 job 覆盖新状态。", "task_ids": ["billing-idempotency"]},
+    "750": {"summary": "改善 Account Automation 对客户的 ownership 回复，统一由 Persona 生成安全的状态说明。", "task_ids": ["billing-persona-registry"]},
+    "749": {"summary": "补齐 Account Automation 客户 ownership 回复和处理中的反馈节奏。", "task_ids": ["billing-persona-registry"]},
+    "748": {"summary": "修复 Account rerun 邮件 claim 恢复路径，避免重复或丢失内部处理。", "task_ids": ["account-rerun-recovery"]},
+    "747": {"summary": "修复 Account rerun 客户回复的 scheduled reply 调度。", "task_ids": ["account-rerun-recovery"]},
+    "746": {"summary": "修复 Account rerun immutable result 的处理和状态边界。", "task_ids": ["account-rerun-recovery"]},
+    "745": {"summary": "修复 Account rerun 失败降级和容器 OpenAI proxy 配置。", "task_ids": ["account-rerun-recovery"]},
+    "744": {"summary": "Account 失败在重试耗尽后停止客户回复、进入 Human Review 并告警负责人。", "task_ids": ["TS-05", "account-failure-alerts"]},
+    "743": {"summary": "在 Admin Automated Cases 中增加可直接打开的 Zendesk Source 链接。", "task_ids": ["TS-07"]},
+    "742": {"summary": "统一 Account rerun revision 时间戳，避免恢复和排序出现不一致。", "task_ids": ["account-rerun-recovery"]},
+    "741": {"summary": "让 Account rerun preflight 在网络条件变化时保持可验证的失败边界。", "task_ids": ["account-rerun-recovery"]},
+    "740": {"summary": "允许操作员对每个 Account Case 执行完整 rerun，并保留独立审计。", "task_ids": ["account-rerun-recovery"]},
+    "739": {"summary": "修复被阻塞 Account rerun 的反馈和可恢复提示。", "task_ids": ["account-rerun-recovery"]},
+    "738": {"summary": "加固 Account rerun fail-fast recovery 和 Luna routing 选择。", "task_ids": ["account-rerun-recovery"]},
+    "737": {"summary": "Admin Source 不再重复展示内部 Account Case ID。", "task_ids": ["TS-07"]},
+    "736": {"summary": "支持把序列化 JSON 形式的 Account Source 解析成 Zendesk 链接。", "task_ids": ["TS-07"]},
+    "735": {"summary": "为 Account Case Source 增加 Zendesk 直达链接。", "task_ids": ["TS-07"]},
+    "734": {"summary": "简化 Agent 热路径规则，并把详细流程转移到可按需读取的文档。", "task_ids": ["agent-rules"]},
+    "733": {"summary": "更新 Meeting 进度页面、导航和 Work Item 展示。", "task_ids": ["project-overview"]},
+    "732": {"summary": "隔离 Account route validation 的副作用，避免校验行为改变真实状态。", "task_ids": ["billing-idempotency"]},
+    "731": {"summary": "加固 Account route taxonomy 和 filter membership，区分 Automation、Human Review 和 fallback。", "task_ids": ["routing-taxonomy"]},
+    "730": {"summary": "新增 SupportPortal Meeting archive，集中呈现 Topic、结论和 Work Item。", "task_ids": ["project-overview"]},
+    "729": {"summary": "增加 Security & Compliance route，并将敏感请求保持在 classification-only / Human Review 边界。", "task_ids": ["routing-security-compliance"]},
+    "728": {"summary": "增加 Backend Operation filter 和 Automated labels，统一显示 Enablement、Quota 等路径。", "task_ids": ["routing-taxonomy"]}
+  }
+}

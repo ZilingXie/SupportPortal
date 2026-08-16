@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "meeting_id": "ticketing-system-2026-08-10",
+  "date": "2026-08-10",
+  "title": "Ticketing System 第一阶段对齐会",
+  "participants": [
+    "zac",
+    "jojo",
+    "suhird",
+    "bdr",
+    "emma",
+    "derek"
+  ],
+  "summary": "第一阶段目标是直接减少进入人工队列的 Zendesk 工单量，而不是让所有 Support 工程师使用 AI 辅助处理。当前系统已部署在 AWS VM，Zendesk 工单通过自部署 n8n 导入，AI 回复仍保存在内部系统中，尚未真实写回 Zendesk 或发送给客户。",
+  "decisions": [],
+  "open_questions": [],
+  "task_ids": [
+    "TS-01",
+    "TS-02",
+    "TS-03",
+    "TS-04",
+    "TS-05",
+    "TS-06",
+    "TS-07",
+    "TS-12",
+    "TS-08",
+    "TS-09",
+    "TS-10",
+    "TS-11"
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "legacy_anchor": "./roadmap/meetings.html#ticketing-system-2026-08-10"
+}

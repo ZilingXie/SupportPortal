@@ -293,6 +293,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DOCS_DIR = BASE_DIR / "docs"
 ROADMAP_DIR = DOCS_DIR / "roadmap"
 ROADMAP_HTML = DOCS_DIR / "roadmap.html"
+PROJECT_OVERVIEW_HTML = DOCS_DIR / "projectoverview.html"
+PROJECT_OVERVIEW_DATA_JS = DOCS_DIR / "projectoverview-data.js"
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ACCOUNT_DIR = UI_DIR / "account-ui"
@@ -1301,6 +1303,27 @@ async def roadmap_html() -> FileResponse:
     if not ROADMAP_HTML.exists():
         raise HTTPException(status_code=404, detail="Roadmap page not found")
     return FileResponse(ROADMAP_HTML)
+
+
+@app.get("/projectoverview.html", include_in_schema=False)
+async def projectoverview_html() -> FileResponse:
+    if not PROJECT_OVERVIEW_HTML.exists():
+        raise HTTPException(status_code=404, detail="Project Overview page not found")
+    return FileResponse(
+        PROJECT_OVERVIEW_HTML,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"},
+    )
+
+
+@app.get("/projectoverview-data.js", include_in_schema=False)
+async def projectoverview_data_js() -> FileResponse:
+    if not PROJECT_OVERVIEW_DATA_JS.exists():
+        raise HTTPException(status_code=404, detail="Project Overview data not found")
+    return FileResponse(
+        PROJECT_OVERVIEW_DATA_JS,
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"},
+    )
 
 
 ticket_repository: TicketRepository = create_ticket_repository()

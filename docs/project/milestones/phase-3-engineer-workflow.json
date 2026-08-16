@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "milestone_id": "phase-3-engineer-workflow",
+  "title": "Phase 3：AI First Response + Slack Engineer Workflow",
+  "status": "planned",
+  "summary": "AI 完成首次有效回复和必要信息收集后，把 Case 交给工程师，由 Guardrail、Round Robin、Admin 和 Slack 组成受控处理链路。",
+  "target_date": null,
+  "exit_criteria": [
+    "AI eligibility gate、首次回复和 Engineer Case 交接边界明确",
+    "Slack 投递、Admin reassign 和 Round Robin 经过真实权限验证",
+    "后续客户回复仍经过 Guardrail 并保留审计"
+  ],
+  "source_refs": ["docs/roadmap/phase3.html", "docs/roadmap/meetings.html"]
+}

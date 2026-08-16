@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "kg-async-ingest",
+  "title": "P1",
+  "topic_id": "rag-knowledge",
+  "related_topic_ids": [],
+  "milestone_id": "phase-2-controlled-validation",
+  "status": "active",
+  "priority": "P1",
+  "owner": "unassigned",
+  "summary": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
+  "next_action": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
+  "acceptance_criteria": [
+    "完成 Reliability 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "rag-vs-kg",
+      "item_id": "kg-async-ingest"
+    }
+  ]
+}

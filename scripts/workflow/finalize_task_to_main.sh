@@ -115,6 +115,18 @@ if ! git diff --quiet origin/main...HEAD -- "docs/feature_list.md"; then
   fi
 fi
 
+if ! git diff --quiet origin/main...HEAD -- \
+  "docs/project" \
+  "docs/projectoverview.html" \
+  "docs/projectoverview-data.js" \
+  "docs/feature_list.md" \
+  "scripts/generate_project_overview.py"; then
+  info "Running automatic Project Overview validation."
+  if ! python3 scripts/generate_project_overview.py --check; then
+    die "Automatic Project Overview validation failed."
+  fi
+fi
+
 ahead_count="$(git rev-list --count origin/main..HEAD)"
 if (( ahead_count == 0 )); then
   die "Branch $expected_branch has no commits ahead of origin/main to finalize."

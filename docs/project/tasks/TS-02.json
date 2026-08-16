@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "task_id": "TS-02",
+  "title": "新增并完善 Compliance / Security 分类。",
+  "topic_id": "account-automation",
+  "related_topic_ids": [],
+  "milestone_id": "phase-2-controlled-validation",
+  "status": "done",
+  "priority": "unclassified",
+  "owner": "zac",
+  "summary": "新增并完善 Compliance / Security 分类。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "分类为 Security & Compliance，路由到 human_review，不自动生成客户回复。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "pr",
+      "number": 729,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/729",
+      "label": "PR #729"
+    },
+    {
+      "type": "pr",
+      "number": 731,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
+      "label": "PR #731"
+    }
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-02"
+    }
+  ]
+}

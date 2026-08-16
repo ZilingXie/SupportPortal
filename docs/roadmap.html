@@ -54,6 +54,23 @@
       padding: 28px 0 56px;
     }
 
+    .overview-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+      padding: 11px 14px;
+      border: 1px solid rgba(35, 104, 162, .22);
+      border-radius: 10px;
+      background: rgba(231, 242, 250, .78);
+      color: #225d8e;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .overview-banner a { color: #17496f; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+
     .hero {
       position: relative;
       min-height: 320px;
@@ -1367,6 +1384,10 @@
 </head>
 <body>
   <div class="page">
+    <div class="overview-banner" role="note">
+      <span>此页面保留为历史 Roadmap 快照；当前项目进度、Task 状态和汇报请使用 Project Overview。</span>
+      <a href="./projectoverview.html">打开 Project Overview →</a>
+    </div>
     <header class="hero">
       <div class="eyebrow"><span class="pulse"></span>SupportPortal Roadmap</div>
       <h1>整体落地优化计划</h1>
@@ -1713,7 +1734,6 @@ flowchart TD
   </div>
 
   <script>
-    const STORAGE_KEY = "supportportal_roadmap_v1";
     const STATUS_LABELS = {
       done: "已完成",
       doing: "进行中",
@@ -2297,26 +2317,14 @@ flowchart TD
       }
     ];
 
-    const state = loadState();
+    const state = {};
     let activeLane = "all";
     let query = "";
     let mermaidInitialized = false;
     let mermaidLoadFailed = false;
 
-    function loadState() {
-      try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-      } catch {
-        return {};
-      }
-    }
-
-    function saveState() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    }
-
     function taskStatus(task) {
-      return state[`task:${task.id}:status`] || task.status;
+      return task.status;
     }
 
     function taskDone(task) {
@@ -2489,7 +2497,6 @@ flowchart TD
 
     function renderLane(lane, index) {
       const progress = laneProgress(lane);
-      const note = state[`lane:${lane.id}:note`] || "";
       return `
         <article class="lane" style="animation-delay:${index * 70}ms" data-lane="${lane.id}">
           <header class="lane-head">
@@ -2529,10 +2536,7 @@ flowchart TD
           </div>
           <div class="lane-followup">
             ${renderLaneArchitecture(lane.architecture)}
-            <div class="notes">
-              <label for="note-${lane.id}">Roadmap 备注</label>
-              <textarea id="note-${lane.id}" data-note="${lane.id}" placeholder="记录会议结论、owner 或风险...">${escapeHtml(note)}</textarea>
-            </div>
+            <div class="notes"><p>历史快照只读。请在 <a href="./projectoverview.html#plan">Project Overview 任务看板</a> 更新正式 Task。</p></div>
           </div>
         </article>
       `;
@@ -2542,7 +2546,6 @@ flowchart TD
       const status = taskStatus(task);
       return `
         <div class="task" data-task="${task.id}">
-          <input type="checkbox" ${status === "done" ? "checked" : ""} aria-label="mark ${escapeHtml(task.label)} done" data-task-check="${task.id}">
           <div>
             <p class="task-title">${escapeHtml(task.label)}</p>
             <div class="task-meta">
@@ -2550,9 +2553,6 @@ flowchart TD
               <span class="tag">${escapeHtml(task.horizon)}</span>
             </div>
           </div>
-          <select data-task-status="${task.id}" aria-label="status for ${escapeHtml(task.label)}">
-            ${Object.entries(STATUS_LABELS).map(([key, label]) => `<option value="${key}" ${key === status ? "selected" : ""}>${label}</option>`).join("")}
-          </select>
         </div>
       `;
     }
@@ -2644,35 +2644,10 @@ flowchart TD
       render();
     });
 
-    document.addEventListener("change", (event) => {
-      const check = event.target.closest("[data-task-check]");
-      if (check) {
-        const taskId = check.getAttribute("data-task-check");
-        state[`task:${taskId}:status`] = check.checked ? "done" : "todo";
-        saveState();
-        render();
-        return;
-      }
-      const select = event.target.closest("[data-task-status]");
-      if (select) {
-        const taskId = select.getAttribute("data-task-status");
-        state[`task:${taskId}:status`] = select.value;
-        saveState();
-        render();
-      }
-    });
-
     document.addEventListener("input", (event) => {
       if (event.target.id === "searchInput") {
         query = event.target.value.trim();
         render();
-        return;
-      }
-      const note = event.target.closest("[data-note]");
-      if (note) {
-        const laneId = note.getAttribute("data-note");
-        state[`lane:${laneId}:note`] = note.value;
-        saveState();
       }
     });
 

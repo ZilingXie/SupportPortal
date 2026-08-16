@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "meeting_id": "agent-system-2026-06-18",
+  "date": "2026-06-18",
+  "title": "AI Agent 工单系统落地对齐会",
+  "participants": [
+    "derek",
+    "zac",
+    "alex",
+    "emma"
+  ],
+  "summary": "会议确定以 agent 工单系统为长期方向，先用可追踪、可审计的保守 workflow 提升效率和回复质量，再逐步扩大 AI 调查与 AgentRelay 协作边界。",
+  "decisions": [],
+  "open_questions": [],
+  "task_ids": [
+    "AG-01",
+    "AG-02",
+    "AG-03",
+    "AG-04",
+    "AG-05",
+    "AG-06"
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#agent-system-2026-06-18"
+  ],
+  "legacy_anchor": "./roadmap/meetings.html#agent-system-2026-06-18"
+}

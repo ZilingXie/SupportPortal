@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "TS-08",
+  "title": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
+  "topic_id": "account-automation",
+  "related_topic_ids": [],
+  "milestone_id": "phase-2-controlled-validation",
+  "status": "planned",
+  "priority": "unclassified",
+  "owner": "jojo",
+  "summary": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
+  "next_action": "补齐验收证据并更新状态。",
+  "acceptance_criteria": [
+    "Billing 路由、内部通知、客户回复和关单结果与预期一致。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-08"
+    }
+  ]
+}

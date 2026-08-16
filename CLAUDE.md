@@ -24,7 +24,7 @@ Claude Code follows the repository authority and workflow in `AGENTS.md`. `REASO
 1. Classify the task as `文档类`, `修复类`, or `功能类/重大行为变更`; use the narrowest targeted verification. Documentation changes do not require container restart.
 2. Stack-relevant changes require post-merge live verification from root `main`; follow the official restart and health/build-marker checks in `docs/agent_workflow_details.md`.
 3. RAG changes update `docs/rag_change_log.md`; prompt/model/tooling behavior changes update `docs/prompt_change_log.md`.
-4. Major product capabilities update `docs/feature_list.md` and `docs/roadmap.html`; run `python3 scripts/verify_feature_list.py` when the feature list changes.
+4. Major product capabilities update `docs/feature_list.md` and the corresponding `docs/project/tasks/<task-id>.json`; run `python3 scripts/generate_project_overview.py --check` and `python3 scripts/verify_feature_list.py` when applicable. `docs/roadmap.html` is a historical snapshot.
 5. For completed implementations, finished plans, worker handoffs, or local diff reviews, use the project-local `review-implemented-plan` skill. Do not duplicate its process here.
 
 ## Diagnostic Scope

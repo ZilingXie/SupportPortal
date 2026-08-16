@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "TS-04",
+  "title": "确认生产 AI API 账号、数据留存和客户数据安全要求。",
+  "topic_id": "account-automation",
+  "related_topic_ids": [],
+  "milestone_id": "phase-2-controlled-validation",
+  "status": "planned",
+  "priority": "unclassified",
+  "owner": "zac",
+  "summary": "确认生产 AI API 账号、数据留存和客户数据安全要求。",
+  "next_action": "补齐验收证据并更新状态。",
+  "acceptance_criteria": [
+    "已与 Brent Guo 确认使用 OpenAI 官方 API key；官方政策默认不用于训练，但默认 abuse monitoring logs 可能保留最长 30 天，当前项目组织/项目级 retention control 与 ZDR 资格仍需核实。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-04"
+    }
+  ]
+}
