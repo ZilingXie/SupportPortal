@@ -189,6 +189,10 @@ from backend.services.account_route_pipeline import (
 )
 from backend.services.account_ai_execution import AccountProcessingFailure, AccountRerunDegradedError
 from backend.services.account_failure_alerts import notify_account_failure
+from backend.services.zendesk_comments import (
+    ZendeskCommentError,
+    add_internal_comment,
+)
 from backend.services.account_case_filters import (
     account_case_filter_definitions,
     normalize_account_case_filter,
@@ -4131,6 +4135,236 @@ def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
     return {**account_case, **view_model}
 
 
+ACCOUNT_ZENDESK_COMMENT_IDEMPOTENCY_SCOPE = "account_zendesk_internal_comment"
+
+
+def _account_zendesk_comment_key(account_case_id: str, message_id: str) -> str:
+    return f"{str(account_case_id or '').strip()}:{str(message_id or '').strip()}"
+
+
+def _account_zendesk_comment_payload(
+    *,
+    status: str,
+    account_case_id: str,
+    message_id: str,
+    actor_id: str | None = None,
+    comment_id: str | None = None,
+    retryable: bool = False,
+    error_code: str | None = None,
+    audit_persisted: bool | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": str(status or "failed").strip() or "failed",
+        "account_case_id": str(account_case_id or "").strip(),
+        "message_id": str(message_id or "").strip(),
+    }
+    if actor_id:
+        payload["actor_id"] = str(actor_id).strip()
+    if comment_id:
+        payload["comment_id"] = str(comment_id).strip()
+    if retryable:
+        payload["retryable"] = True
+    if error_code:
+        payload["error_code"] = str(error_code).strip()
+    if audit_persisted is not None:
+        payload["audit_persisted"] = bool(audit_persisted)
+    return payload
+
+
+def _account_zendesk_comment_http_error(payload: dict[str, Any]) -> HTTPException:
+    status = str(payload.get("status") or "failed").strip().lower()
+    if status == "outcome_unknown":
+        return HTTPException(
+            status_code=409,
+            detail="Zendesk comment result is unknown; verify the ticket before retrying.",
+        )
+    if bool(payload.get("retryable")):
+        return HTTPException(
+            status_code=503,
+            detail="Zendesk is temporarily unavailable; retry the internal comment.",
+        )
+    return HTTPException(
+        status_code=502,
+        detail="Zendesk rejected the internal comment; check the integration configuration.",
+    )
+
+
+def _account_message_from_detail_bundle(
+    bundle: dict[str, Any],
+    *,
+    requested_message_id: str,
+) -> tuple[dict[str, Any], dict[str, Any], str] | None:
+    account_case = bundle.get("account_case")
+    ticket = bundle.get("ticket")
+    if not isinstance(account_case, dict) or not isinstance(ticket, dict):
+        return None
+    ticket_id = str(ticket.get("ticket_id") or account_case.get("client_ticket_id") or "").strip()
+    messages = ticket.get("messages") if isinstance(ticket.get("messages"), list) else []
+    normalized_requested_id = str(requested_message_id or "").strip()
+    for index, raw_message in enumerate(messages):
+        if not isinstance(raw_message, dict):
+            continue
+        message = copy.deepcopy(raw_message)
+        message_id = str(
+            message.get("message_id") or message.get("id") or f"{ticket_id}:{index}"
+        ).strip()
+        if message_id != normalized_requested_id:
+            continue
+        message["message_id"] = message_id
+        return account_case, message, ticket_id
+    return None
+
+
+@app.post(
+    "/api/account/cases/{account_case_id}/messages/{message_id}/zendesk-internal-comment",
+)
+async def add_account_message_as_zendesk_internal_comment(
+    account_case_id: str,
+    message_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    normalized_case_id = str(account_case_id or "").strip()
+    normalized_message_id = str(message_id or "").strip()
+    if not normalized_case_id or not normalized_message_id:
+        raise HTTPException(status_code=422, detail="account case and message are required")
+
+    bundles = await async_to_thread(ticket_repository.get_account_case_details, [normalized_case_id])
+    bundle = bundles.get(normalized_case_id)
+    if not isinstance(bundle, dict):
+        raise HTTPException(status_code=404, detail="account case not found")
+    target = _account_message_from_detail_bundle(
+        bundle,
+        requested_message_id=normalized_message_id,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="AI message not found")
+    account_case, message, ticket_id = target
+    if str(message.get("role") or "").strip().lower() not in {"assistant", "ai"}:
+        raise HTTPException(status_code=400, detail="Only AI messages can be added as internal comments")
+    body = str(message.get("content") or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="AI message is empty")
+
+    zendesk_ticket_id = _zendesk_ticket_id_from_source(account_case.get("source"))
+    if not zendesk_ticket_id and str(ticket_id).strip().isdigit():
+        zendesk_ticket_id = str(ticket_id).strip()
+    if not zendesk_ticket_id:
+        raise HTTPException(status_code=400, detail="Account Case is not linked to a Zendesk ticket")
+
+    idempotency_key = _account_zendesk_comment_key(normalized_case_id, normalized_message_id)
+    created_at = now_iso()
+    record = await async_to_thread(
+        ticket_repository.begin_idempotent_request,
+        ACCOUNT_ZENDESK_COMMENT_IDEMPOTENCY_SCOPE,
+        idempotency_key,
+        created_at=created_at,
+        retry_failed=False,
+    )
+    if not record.get("created"):
+        existing_payload = record.get("response_payload") if isinstance(record, dict) else None
+        existing_payload = existing_payload if isinstance(existing_payload, dict) else {}
+        if str(record.get("state") or "").strip().lower() == "completed":
+            return {**existing_payload, "idempotent_replay": True}
+        if str(record.get("state") or "").strip().lower() == "failed":
+            if str(existing_payload.get("status") or "").strip().lower() == "outcome_unknown":
+                raise _account_zendesk_comment_http_error(existing_payload)
+            if bool(existing_payload.get("retryable")):
+                record = await async_to_thread(
+                    ticket_repository.begin_idempotent_request,
+                    ACCOUNT_ZENDESK_COMMENT_IDEMPOTENCY_SCOPE,
+                    idempotency_key,
+                    created_at=created_at,
+                    retry_failed=True,
+                )
+                if not record.get("created"):
+                    raise HTTPException(status_code=409, detail="This internal comment request is already in progress")
+            else:
+                raise _account_zendesk_comment_http_error(existing_payload)
+        else:
+            raise HTTPException(status_code=409, detail="This internal comment request is already in progress")
+
+    try:
+        result = await async_to_thread(
+            add_internal_comment,
+            ticket_id=zendesk_ticket_id,
+            body=body,
+        )
+    except ZendeskCommentError as exc:
+        failure_payload = _account_zendesk_comment_payload(
+            status="outcome_unknown" if exc.category == "outcome_unknown" else "failed",
+            account_case_id=normalized_case_id,
+            message_id=normalized_message_id,
+            retryable=exc.category == "retryable",
+            error_code=exc.error_code,
+        )
+        try:
+            await async_to_thread(
+                ticket_repository.update_ticket_message_meta,
+                ticket_id=ticket_id,
+                message_id=normalized_message_id,
+                meta_updates={
+                    "zendesk_internal_comment": {
+                        **failure_payload,
+                        "actor_id": principal.account_id,
+                        "updated_at": now_iso(),
+                    }
+                },
+            )
+            await async_to_thread(
+                ticket_repository.fail_idempotent_request,
+                ACCOUNT_ZENDESK_COMMENT_IDEMPOTENCY_SCOPE,
+                idempotency_key,
+                response_payload=failure_payload,
+                updated_at=now_iso(),
+            )
+        except Exception:
+            LOGGER.exception("Could not persist Zendesk internal comment failure state")
+        raise _account_zendesk_comment_http_error(failure_payload) from None
+
+    success_payload = _account_zendesk_comment_payload(
+        status="added",
+        account_case_id=normalized_case_id,
+        message_id=normalized_message_id,
+        actor_id=principal.account_id,
+        comment_id=result.comment_id,
+    )
+    audit_persisted = False
+    try:
+        audit_persisted = await async_to_thread(
+            ticket_repository.update_ticket_message_meta,
+            ticket_id=ticket_id,
+            message_id=normalized_message_id,
+            meta_updates={
+                "zendesk_internal_comment": {
+                    **success_payload,
+                    "added_at": now_iso(),
+                }
+            },
+        )
+        success_payload["audit_persisted"] = bool(audit_persisted)
+        await async_to_thread(
+            ticket_repository.complete_idempotent_request,
+            ACCOUNT_ZENDESK_COMMENT_IDEMPOTENCY_SCOPE,
+            idempotency_key,
+            response_payload=success_payload,
+            updated_at=now_iso(),
+        )
+    except Exception:
+        LOGGER.exception("Could not persist Zendesk internal comment success state")
+        success_payload["audit_persisted"] = bool(audit_persisted)
+        try:
+            await async_to_thread(
+                ticket_repository.complete_idempotent_request,
+                ACCOUNT_ZENDESK_COMMENT_IDEMPOTENCY_SCOPE,
+                idempotency_key,
+                response_payload=success_payload,
+                updated_at=now_iso(),
+            )
+        except Exception:
+            LOGGER.exception("Could not persist Zendesk internal comment idempotency state")
+    return success_payload
+
+
 async def _create_account_intake_impl(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
     title = " ".join(str(request.title or "").split()).strip()
     question = str(request.question or "").strip()
@@ -5066,8 +5300,8 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
     }
 
 
-@app.get("/api/account/cases")
-@app.get("/api/account/billing-tickets", deprecated=True)
+@app.get("/api/account/cases", dependencies=[Depends(require_workspace_admin)])
+@app.get("/api/account/billing-tickets", deprecated=True, dependencies=[Depends(require_workspace_admin)])
 def list_billing_tickets(
     limit: int = 30,
     page: int = 1,
@@ -6838,8 +7072,8 @@ async def _run_account_full_reroute_job(
         )
 
 
-@app.post("/api/account/rerun-jobs", status_code=202)
-@app.post("/api/account/reroute-jobs", status_code=202, include_in_schema=False)
+@app.post("/api/account/rerun-jobs", status_code=202, dependencies=[Depends(require_workspace_admin)])
+@app.post("/api/account/reroute-jobs", status_code=202, include_in_schema=False, dependencies=[Depends(require_workspace_admin)])
 async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> dict[str, Any]:
     try:
         return await _enqueue_account_rerun_job(background_tasks)
@@ -6847,12 +7081,13 @@ async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> di
         raise _account_rerun_storage_http_exception(exc) from exc
 
 
-@app.post("/api/account/cases/{account_case_id}/rerun", status_code=202)
+@app.post("/api/account/cases/{account_case_id}/rerun", status_code=202, dependencies=[Depends(require_workspace_admin)])
 @app.post(
     "/api/account/billing-tickets/{account_case_id}/rerun",
     status_code=202,
     deprecated=True,
     include_in_schema=False,
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def create_account_case_rerun_job(
     account_case_id: str,
@@ -6885,14 +7120,14 @@ async def create_account_case_rerun_job(
         raise _account_rerun_storage_http_exception(exc) from exc
 
 
-@app.get("/api/account/rerun-jobs/latest")
-@app.get("/api/account/reroute-jobs/latest", include_in_schema=False)
+@app.get("/api/account/rerun-jobs/latest", dependencies=[Depends(require_workspace_admin)])
+@app.get("/api/account/reroute-jobs/latest", include_in_schema=False, dependencies=[Depends(require_workspace_admin)])
 def get_latest_account_rerun_job() -> dict[str, Any]:
     return next(iter(_account_full_reroute_jobs(limit=1)), {"status": "not_started"})
 
 
-@app.get("/api/account/rerun-jobs/{job_id}")
-@app.get("/api/account/reroute-jobs/{job_id}", include_in_schema=False)
+@app.get("/api/account/rerun-jobs/{job_id}", dependencies=[Depends(require_workspace_admin)])
+@app.get("/api/account/reroute-jobs/{job_id}", include_in_schema=False, dependencies=[Depends(require_workspace_admin)])
 def get_account_rerun_job(job_id: str) -> dict[str, Any]:
     job = _account_full_reroute_job(job_id)
     if job is None:
@@ -6900,8 +7135,8 @@ def get_account_rerun_job(job_id: str) -> dict[str, Any]:
     return job
 
 
-@app.post("/api/account/rerun-jobs/{job_id}/resume", status_code=202)
-@app.post("/api/account/reroute-jobs/{job_id}/resume", status_code=202, include_in_schema=False)
+@app.post("/api/account/rerun-jobs/{job_id}/resume", status_code=202, dependencies=[Depends(require_workspace_admin)])
+@app.post("/api/account/reroute-jobs/{job_id}/resume", status_code=202, include_in_schema=False, dependencies=[Depends(require_workspace_admin)])
 async def resume_account_rerun_job(job_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
     try:
         return await _resume_account_rerun_job(background_tasks, str(job_id or "").strip())
@@ -6911,8 +7146,8 @@ async def resume_account_rerun_job(job_id: str, background_tasks: BackgroundTask
         raise _account_rerun_storage_http_exception(exc) from exc
 
 
-@app.get("/api/account/cases/{billing_ticket_id}")
-@app.get("/api/account/billing-tickets/{billing_ticket_id}", deprecated=True)
+@app.get("/api/account/cases/{billing_ticket_id}", dependencies=[Depends(require_workspace_admin)])
+@app.get("/api/account/billing-tickets/{billing_ticket_id}", deprecated=True, dependencies=[Depends(require_workspace_admin)])
 def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     details = ticket_repository.get_account_case_details([billing_ticket_id])
     bundle = details.get(str(billing_ticket_id).strip())
@@ -6921,7 +7156,7 @@ def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     return _build_account_case_detail(bundle)
 
 
-@app.post("/api/account/cases/batch-details")
+@app.post("/api/account/cases/batch-details", dependencies=[Depends(require_workspace_admin)])
 def get_account_case_batch_details(request: AccountCaseBatchDetailRequest) -> dict[str, Any]:
     if any(len(str(case_id or "").strip()) > 128 for case_id in request.case_ids):
         raise HTTPException(status_code=422, detail="account case ids must not exceed 128 characters")
@@ -6966,8 +7201,8 @@ def _original_route_tuple_from_ticket(ticket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@app.post("/api/account/cases/{billing_ticket_id}/route-correction")
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-correction", deprecated=True)
+@app.post("/api/account/cases/{billing_ticket_id}/route-correction", dependencies=[Depends(require_workspace_admin)])
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-correction", deprecated=True, dependencies=[Depends(require_workspace_admin)])
 async def correct_billing_ticket_route(
     billing_ticket_id: str,
     request: BillingRouteCorrectionRequest,
@@ -7121,8 +7356,8 @@ async def correct_billing_ticket_route(
     }
 
 
-@app.post("/api/account/cases/{billing_ticket_id}/route-review")
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-review", deprecated=True)
+@app.post("/api/account/cases/{billing_ticket_id}/route-review", dependencies=[Depends(require_workspace_admin)])
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-review", deprecated=True, dependencies=[Depends(require_workspace_admin)])
 async def review_billing_ticket_route(
     billing_ticket_id: str,
     request: BillingRouteReviewRequest,
@@ -7174,7 +7409,7 @@ async def review_billing_ticket_route(
     }
 
 
-@app.get("/api/account/route-errors/summary")
+@app.get("/api/account/route-errors/summary", dependencies=[Depends(require_workspace_admin)])
 def get_account_route_error_summary(limit: int = 100) -> dict[str, Any]:
     safe_limit = max(1, min(limit, 500))
     tickets = ticket_repository.list_account_cases(limit=safe_limit)
@@ -7998,8 +8233,8 @@ async def _reply_to_billing_ticket_impl(
     }
 
 
-@app.post("/api/account/cases/{billing_ticket_id}/reply")
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply", deprecated=True)
+@app.post("/api/account/cases/{billing_ticket_id}/reply", dependencies=[Depends(require_workspace_admin)])
+@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply", deprecated=True, dependencies=[Depends(require_workspace_admin)])
 async def reply_to_billing_ticket(
     billing_ticket_id: str,
     request: BillingReplyRequest,

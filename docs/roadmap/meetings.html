@@ -619,7 +619,7 @@
         workItems: [
           { id: "TS-01", owner: "zac", action: "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。", status: "done", prs: [675, 676, 680, 683, 685, 686, 687, 702, 709, 719, 731], proof: "当前路由、分类、字段处理和 reroute 测试已覆盖四类路径。" },
           { id: "TS-02", owner: "zac", action: "新增并完善 Compliance / Security 分类。", status: "done", prs: [729, 731], proof: "分类为 Security & Compliance，路由到 human_review，不自动生成客户回复。" },
-          { id: "TS-03", owner: "zac", action: "完成 AI 回复真实写回 Zendesk 的生产链路。", status: "todo", prs: [], proof: "真实 Zendesk Ticket 中可看到正确发送身份、客户回复和审计记录。" },
+          { id: "TS-03", owner: "zac", action: "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。", status: "todo", prs: [], proof: "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。" },
           { id: "TS-04", owner: "zac", action: "确认生产 AI API 账号、数据留存和客户数据安全要求。", status: "confirm", prs: [], docs: ["https://developers.openai.com/api/docs/guides/your-data", "https://developers.openai.com/api/docs/guides/your-data#zero-data-retention"], proof: "已与 Brent Guo 确认使用 OpenAI 官方 API key；官方政策默认不用于训练，但默认 abuse monitoring logs 可能保留最长 30 天，当前项目组织/项目级 retention control 与 ZDR 资格仍需核实。" },
           { id: "TS-05", owner: "zac", action: "增加 AI 故障告警和人工接管机制。", status: "done", prs: [], proof: "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向 xieziling@agora.io 发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。" },
           { id: "TS-06", owner: "zac", action: "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。", status: "confirm", prs: [], proof: "完成发送身份的端到端测试，不使用个人账号。" },
