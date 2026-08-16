@@ -50,10 +50,30 @@ class ProjectOverviewContractTests(unittest.TestCase):
         self.assertIn("/blob/main/", html)
         self.assertNotIn("fetch(", html)
         self.assertNotIn("localStorage", html)
-        for marker in ("项目动态", "任务看板", "交流记录", "项目议题", "系统地图", "用户手册", "汇报模式"):
+        for marker in ("项目动态", "任务看板", "会议记录", "功能模块", "系统地图", "用户手册", "汇报模式"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, html)
-        self.assertRegex(html, r"#dynamic|#plan|#topics|#system-map|#manual")
+        self.assertNotIn("项目资料", html)
+        self.assertNotIn("交流记录", html)
+        self.assertNotIn("项目议题", html)
+        for panel_id in ("dynamic", "plan", "human-events", "topics", "system-map", "manual"):
+            with self.subTest(panel_id=panel_id):
+                self.assertIn(f'id="panel-{panel_id}"', html)
+        for detail_prefix in ('raw.startsWith("task-")', 'raw.startsWith("meeting-")', 'raw.startsWith("topic-")'):
+            with self.subTest(detail_prefix=detail_prefix):
+                self.assertIn(detail_prefix, html)
+
+    def test_compact_board_meeting_dialog_and_full_feature_list_contract(self) -> None:
+        html = (ROOT / "docs/projectoverview.html").read_text(encoding="utf-8")
+        self.assertIn('<dialog id="meetingDialog"', html)
+        self.assertIn("function showMeeting(meetingId)", html)
+        self.assertIn('<span class="meeting-task-title">${escapeHtml(task.title)}</span>', html)
+        self.assertIn('<span class="task-id">${escapeHtml(task.task_id)}</span><h4>', html)
+        self.assertNotIn('task.priority || "unclassified"', html)
+        self.assertNotIn('class="task-summary"', html)
+        self.assertIn("grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr", html)
+        self.assertIn('(section.completed || []).map((item)', html)
+        self.assertNotIn('(section.completed || []).slice(0, 8)', html)
 
     def test_public_pr_snapshot_does_not_include_bodies(self) -> None:
         payload = json.loads((PROJECT_DIR / "generated/pr-index.json").read_text(encoding="utf-8"))
