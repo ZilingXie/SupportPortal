@@ -55,14 +55,26 @@ def reconcile_automation_execution_failure(
         execution_context.update(context)
         classification["automation_execution"] = execution_context
 
+    existing_payload = updated.get("internal_email_payload")
+    existing_payload = deepcopy(existing_payload) if isinstance(existing_payload, dict) else None
+    existing_status = str(updated.get("internal_email_send_status") or "").strip().lower()
+    preserve_delivery = bool(
+        existing_payload
+        and existing_status
+        and existing_status != "not_applicable"
+    )
     updated.update(
         {
             "automation_status": AUTOMATION_EXECUTION_HUMAN_REVIEW,
             "execution_reason_code": normalized_reason,
             "not_automated_reason": None,
-            "internal_email_payload": None,
-            "internal_email_send_status": "not_applicable",
-            "internal_email_send_reason": normalized_reason,
+            "internal_email_payload": existing_payload if preserve_delivery else None,
+            "internal_email_send_status": existing_status if preserve_delivery else "not_applicable",
+            "internal_email_send_reason": (
+                str(updated.get("internal_email_send_reason") or normalized_reason).strip()
+                if preserve_delivery
+                else normalized_reason
+            ),
             "route_classification": classification,
         }
     )

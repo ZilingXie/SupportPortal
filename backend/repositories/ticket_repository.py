@@ -13382,7 +13382,9 @@ class PostgresTicketRepository:
                             transitioned_case.get("not_automated_reason"),
                             Json(transitioned_case.get("missing_fields") or []),
                             Json(transitioned_case.get("collected_fields") or {}),
-                            None,
+                            Json(transitioned_case.get("internal_email_payload"))
+                            if isinstance(transitioned_case.get("internal_email_payload"), dict)
+                            else None,
                             Json(transitioned_case.get("automation_context") or {}),
                             Json(transitioned_case.get("route_classification") or {}),
                             transitioned_case.get("internal_email_send_status"),
