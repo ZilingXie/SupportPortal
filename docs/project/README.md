@@ -10,6 +10,7 @@
 - `docs/feature_list.md` 继续维护产品能力清单，不承担 Task 进度。
 - `generated/` 和 `docs/projectoverview-data.js` 是生成物，不直接手工修改。
 - PR 的公开摘要写入 `pr_summaries.json`，不要把 PR body、客户数据、邮箱、日志或 secret 写入公开页面。
+- 运行时行为、用户流程、API、数据模型、配置或业务结果发生变化的功能/修复类工作必须关联唯一 Task；纯文档、测试、规则、开发者脚本和运维变更只有在改变进度记录时才需要重生成 Overview。
 
 ## 维护命令
 
