@@ -586,6 +586,80 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(stored_job["status"], "cancelled")
         alert.assert_called_once()
 
+    def test_account_intake_reply_job_creation_failure_is_case_failure_and_alerted(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main,
+            "_create_account_reply_job",
+            side_effect=RuntimeError("reply job persistence failed"),
+        ), patch.object(
+            main,
+            "notify_account_failure",
+            return_value={"status": "sent", "incident_id": "test-incident"},
+        ) as alert:
+            response = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "human_review_required")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["failure_stage"], "reply_job")
+        self.assertEqual(payload["failure_code"], "account_reply_job_creation_failed")
+        self.assertEqual(payload["execution_reason_code"], "account_reply_job_creation_failed")
+        self.assertIsNone(payload["ai_reply_status"])
+        alert.assert_called_once()
+        stored = self.repository.get_account_case(payload["account_case_id"])
+        assert stored is not None
+        self.assertEqual(stored["route"], "detailed_invoice")
+        self.assertEqual(stored["route_family"], "automated")
+        self.assertEqual(stored["automation_status"], "human_review_required")
+        self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
+
+    def test_account_reply_job_creation_failure_keeps_automation_route_and_alerts(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Detailed invoice request",
+                    "question": "Please send the detailed invoice.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+
+        with patch.object(
+            main,
+            "_create_account_reply_job",
+            side_effect=RuntimeError("reply job persistence failed"),
+        ), patch.object(
+            main,
+            "notify_account_failure",
+            return_value={"status": "sent", "incident_id": "test-incident"},
+        ) as alert:
+            response = self.client.post(
+                f"/api/account/cases/{created['account_case_id']}/reply",
+                json={"message": "The invoice details are still unavailable."},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["automation_status"], "human_review_required")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["failure_stage"], "reply_job")
+        self.assertEqual(payload["failure_code"], "account_reply_job_creation_failed")
+        self.assertIsNone(payload["ai_reply_status"])
+        alert.assert_called_once()
+        stored = self.repository.get_account_case(created["account_case_id"])
+        assert stored is not None
+        self.assertEqual(stored["route"], "detailed_invoice")
+        self.assertEqual(stored["route_status"], "automated")
+        self.assertEqual(stored["automation_status"], "human_review_required")
+
     def test_account_case_view_preserves_account_billing_automation_category(self) -> None:
         view = main._build_account_ticket_view_model(
             {
@@ -1535,7 +1609,11 @@ class AccountIntakeApiTests(unittest.TestCase):
             main,
             "_send_enablement_internal_email_attempt",
             AsyncMock(return_value=("sent", "")),
-        ) as sender, patch(
+        ) as sender, patch.object(
+            main,
+            "_wait_for_account_rerun_reply_preparation",
+            AsyncMock(),
+        ), patch(
             "backend.repositories.ticket_repository._utc_now",
             return_value="2026-08-01T00:00:00+00:00",
         ), patch(
@@ -1842,7 +1920,11 @@ class AccountIntakeApiTests(unittest.TestCase):
             main,
             "_send_enablement_internal_email_attempt",
             AsyncMock(side_effect=unexpected_email),
-        ) as sender:
+        ) as sender, patch.object(
+            main,
+            "_wait_for_account_rerun_reply_preparation",
+            AsyncMock(),
+        ):
             asyncio.run(main._run_account_full_reroute_job("account-reroute-persona-unavailable"))
 
         self.assertEqual(call_order, ["email"])
@@ -2773,7 +2855,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertEqual(payload["internal_email_send_status"], "retry")
         self.assertEqual(payload["execution_reason_code"], "enablement_internal_email_retry")
         self.assertIsNone(payload["ai_reply_status"])
         self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
@@ -3226,8 +3308,8 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
-        self.assertEqual(payload["internal_email_send_reason"], "billing_internal_email_failed")
+        self.assertEqual(payload["internal_email_send_status"], "failed")
+        self.assertEqual(payload["internal_email_send_reason"], "boom")
         self.assertTrue(captured_payloads)
         body = captured_payloads[0]["body"]
         self.assertIn("reply directly to this email in Outlook", body)
@@ -3236,7 +3318,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
-        self.assertIsNone(bt["internal_email_payload"])
+        self.assertIsInstance(bt["internal_email_payload"], dict)
+        self.assertEqual(bt["route_status"], "automated")
+        self.assertEqual(bt["automation_status"], "human_review_required")
 
     def test_billing_response_lookup_returns_context_for_valid_token(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
@@ -3932,7 +4016,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt["route_reason"])
         self.assertIsNotNone(bt["route_confidence"])
         self.assertIsNone(bt["customer_reply"])
-        self.assertEqual(bt["internal_email_send_status"], "not_applicable")
+        self.assertEqual(bt["internal_email_send_status"], "skipped_config_missing")
         self.assertEqual(bt["execution_reason_code"], "billing_internal_email_skipped_config_missing")
 
     def test_account_intake_saves_non_automated_billing_ticket(self) -> None:
@@ -6033,7 +6117,9 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(reply_response.status_code, 200, reply_response.text)
         reply_payload = reply_response.json()
-        self.assertEqual(reply_payload["status"], "automation")
+        self.assertEqual(reply_payload["status"], "human_review_required")
+        self.assertEqual(reply_payload["automation_status"], "human_review_required")
+        self.assertEqual(reply_payload["route_status"], "automated")
         self.assertEqual(reply_payload["missing_fields"], [])
         self.assertEqual(reply_payload["customer_reply"], None)
         self.assertIsNone(reply_payload["ai_reply_status"])

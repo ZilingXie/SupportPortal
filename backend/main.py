@@ -96,6 +96,11 @@ from backend.services.account_automation_reconciliation import (
     reconcile_automation_execution_failure,
     reconciliation_reason_code,
 )
+from backend.services.account_automation_delivery import (
+    AccountAutomationDeliveryResult,
+    deliver_account_internal_email_async,
+    ensure_account_delivery_key,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     automation_metadata,
@@ -838,6 +843,325 @@ async def _send_quota_internal_email_attempt(attempt: dict[str, Any]) -> tuple[s
         )
     except Exception as exc:
         return "failed", str(exc)
+
+
+async def _deliver_account_internal_email_attempt(
+    *,
+    account_case_id: str,
+    payload: dict[str, Any],
+    sender: Any,
+    claim_token: str | None = None,
+    reuse_claim: bool = False,
+) -> AccountAutomationDeliveryResult:
+    """Use the shared claim/send/complete protocol while keeping sender hooks injectable."""
+
+    async def _sender(attempt_payload: dict[str, Any]) -> Any:
+        result = sender(
+            {
+                "internal_email_to_send": attempt_payload,
+                "internal_email_payload": attempt_payload,
+                "internal_email_send_status": "pending",
+                "internal_email_send_reason": "delivery_attempt",
+            }
+        )
+        if hasattr(result, "__await__"):
+            result = await result
+        if isinstance(result, tuple):
+            return result
+        if isinstance(result, dict):
+            return result
+        return "failed", "sender returned an unsupported result"
+
+    return await deliver_account_internal_email_async(
+        ticket_repository,
+        account_case_id=account_case_id,
+        payload=payload,
+        sender=_sender,
+        claim_token=claim_token,
+        reuse_claim=reuse_claim,
+    )
+
+
+async def _record_account_internal_email_failure(
+    *,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    handler: str,
+    result: AccountAutomationDeliveryResult,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist an owner-visible execution failure without changing routing."""
+
+    account_case_id = str(
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    ).strip()
+    delivery_key = str((result.payload or {}).get("delivery_key") or "").strip()
+    operation_identity = ":".join(
+        value
+        for value in (str(job_id or "").strip(), delivery_key)
+        if value
+    ) or str(account_case.get("updated_at") or "current").strip()
+    incident_id = (
+        f"account-automation:{account_case_id or ticket_id}:"
+        f"internal_email:{operation_identity}"
+    )
+    delivery_case = dict(account_case)
+    delivery_case["internal_email_payload"] = dict(result.payload or {}) or None
+    delivery_case["internal_email_send_status"] = result.status
+    delivery_case["internal_email_send_reason"] = result.reason
+    failure_code = reconciliation_reason_code(
+        handler=handler or "automation",
+        phase="internal_email",
+        detail=result.status or "failed",
+    )
+    updated = reconcile_automation_execution_failure(
+        delivery_case,
+        reason_code=failure_code,
+        context={
+            "failure_stage": "internal_email",
+            "failure_code": failure_code,
+            "delivery_state": result.delivery_state,
+            "delivery_status": result.status,
+        },
+    )
+    failure_classification = dict(updated.get("route_classification") or {})
+    failure_classification.update(
+        {
+            "failure_stage": "internal_email",
+            "failure_code": failure_code,
+            "failure_incident_id": incident_id,
+        }
+    )
+    updated["route_classification"] = failure_classification
+    updated.update(
+        {
+            "failure_stage": "internal_email",
+            "failure_code": failure_code,
+            "failure_incident_id": incident_id,
+            "alert_status": None,
+            "updated_at": now_iso(),
+        }
+    )
+    await async_to_thread(ticket_repository.save_account_case, updated)
+    alert = await async_to_thread(
+        notify_account_failure,
+        repository=ticket_repository,
+        incident_id=str(updated["failure_incident_id"]),
+        stage="internal_email",
+        code=failure_code,
+        ticket_id=ticket_id or None,
+        account_case_id=account_case_id or None,
+        job_id=job_id,
+        attempts=int((result.payload or {}).get("delivery_attempt_count") or 0),
+        detail=result.reason or result.status,
+        now=now_iso(),
+    )
+    updated["alert_status"] = str(alert.get("status") or "unknown")
+    await async_to_thread(ticket_repository.save_account_case, updated)
+    try:
+        await async_to_thread(
+            ticket_repository.record_workspace_audit_event,
+            "account_automation_internal_email_failed",
+            actor_id="account-system",
+            target_id=account_case_id or ticket_id,
+            payload={
+                "account_case_id": account_case_id or None,
+                "ticket_id": ticket_id or None,
+                "handler": handler or "automation",
+                "failure_stage": "internal_email",
+                "failure_code": failure_code,
+                "delivery_status": result.status,
+                "delivery_state": result.delivery_state,
+                "alert_status": updated["alert_status"],
+                "job_id": job_id,
+            },
+            created_at=now_iso(),
+        )
+    except Exception:
+        LOGGER.exception("Could not record Account internal email failure audit for %s", account_case_id or ticket_id)
+    return updated
+
+
+async def _record_account_execution_failure(
+    *,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    handler: str,
+    stage: str,
+    reason_code: str,
+    detail: Any = "",
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist a non-mail execution failure without changing the route."""
+
+    account_case_id = str(
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    ).strip()
+    normalized_stage = str(stage or "execution").strip() or "execution"
+    normalized_code = str(reason_code or "automation_execution_failed").strip()[:160]
+    automation_context = (
+        account_case.get("automation_context")
+        if isinstance(account_case.get("automation_context"), dict)
+        else {}
+    )
+    operation_identity = str(
+        job_id
+        or automation_context.get("rerun_job_id")
+        or account_case.get("updated_at")
+        or "current"
+    ).strip()
+    incident_id = (
+        f"account-automation:{account_case_id or ticket_id}:"
+        f"{normalized_stage}:{operation_identity}"
+    )
+    updated = reconcile_automation_execution_failure(
+        dict(account_case),
+        reason_code=normalized_code,
+        context={
+            "failure_stage": normalized_stage,
+            "failure_code": normalized_code,
+        },
+    )
+    updated.update(
+        {
+            "failure_stage": normalized_stage,
+            "failure_code": normalized_code,
+            "failure_incident_id": incident_id,
+            "alert_status": None,
+            "updated_at": now_iso(),
+        }
+    )
+    classification = dict(updated.get("route_classification") or {})
+    classification["failure_stage"] = normalized_stage
+    classification["failure_code"] = normalized_code
+    classification["failure_incident_id"] = incident_id
+    updated["route_classification"] = classification
+    await async_to_thread(ticket_repository.save_account_case, updated)
+    if ticket_id:
+        await async_to_thread(
+            ticket_repository.cancel_pending_account_reply_jobs,
+            ticket_id,
+            updated_at=updated["updated_at"],
+        )
+    alert = await async_to_thread(
+        notify_account_failure,
+        repository=ticket_repository,
+        incident_id=incident_id,
+        stage=normalized_stage,
+        code=normalized_code,
+        ticket_id=ticket_id or None,
+        account_case_id=account_case_id or None,
+        job_id=job_id,
+        attempts=1,
+        detail=detail or normalized_code,
+        now=now_iso(),
+    )
+    updated["alert_status"] = str(alert.get("status") or "unknown")
+    classification["alert_status"] = updated["alert_status"]
+    await async_to_thread(ticket_repository.save_account_case, updated)
+    try:
+        await async_to_thread(
+            ticket_repository.record_workspace_audit_event,
+            "account_automation_execution_failed",
+            actor_id="account-system",
+            target_id=account_case_id or ticket_id,
+            payload={
+                "account_case_id": account_case_id or None,
+                "ticket_id": ticket_id or None,
+                "handler": handler or "automation",
+                "failure_stage": normalized_stage,
+                "failure_code": normalized_code,
+                "alert_status": updated["alert_status"],
+                "job_id": job_id,
+            },
+            created_at=now_iso(),
+        )
+    except Exception:
+        LOGGER.exception(
+            "Could not record Account execution failure audit for %s",
+            account_case_id or ticket_id,
+        )
+    return updated
+
+
+async def _record_account_reply_job_failure(
+    *,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    handler: str,
+    stage: str = "reply_job",
+    detail: Any = "",
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    return await _record_account_execution_failure(
+        account_case=account_case,
+        ticket_id=ticket_id,
+        handler=handler,
+        stage=stage,
+        reason_code=(
+            "account_reply_job_creation_failed"
+            if stage == "reply_job"
+            else f"account_reply_{stage}_failed"
+        ),
+        detail=detail,
+        job_id=job_id,
+    )
+
+
+async def _run_account_internal_email_delivery(
+    *,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    handler: str,
+    payload: dict[str, Any],
+    sender: Any,
+    job_id: str | None = None,
+    claim_token: str | None = None,
+    reuse_claim: bool = False,
+) -> tuple[AccountAutomationDeliveryResult, dict[str, Any]]:
+    account_case_id = str(
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    ).strip()
+    original_payload = payload
+    payload = ensure_account_delivery_key(
+        payload,
+        handler=handler,
+        account_case_id=account_case_id,
+    )
+    if payload != original_payload:
+        account_case = dict(account_case)
+        account_case["internal_email_payload"] = dict(payload)
+        account_case["updated_at"] = now_iso()
+        await async_to_thread(ticket_repository.save_account_case, account_case)
+    result = await _deliver_account_internal_email_attempt(
+        account_case_id=account_case_id,
+        payload=payload,
+        sender=sender,
+        claim_token=claim_token,
+        reuse_claim=reuse_claim,
+    )
+    account_case = dict(account_case)
+    account_case["internal_email_payload"] = dict(result.payload or {}) or None
+    account_case["internal_email_send_status"] = result.status
+    account_case["internal_email_send_reason"] = result.reason
+    if result.succeeded:
+        account_case["updated_at"] = now_iso()
+        await async_to_thread(ticket_repository.save_account_case, account_case)
+        return result, account_case
+    account_case = await _record_account_internal_email_failure(
+        account_case=account_case,
+        ticket_id=ticket_id,
+        handler=handler,
+        result=result,
+        job_id=job_id,
+    )
+    return result, account_case
 
 
 def _ticket_db_startup_init_retries() -> int:
@@ -3993,6 +4317,29 @@ def _build_account_ticket_view_model(
         normalized_route = metadata["subcategory"]
         normalized_execution_action = metadata["subcategory"]
     primary_label, secondary_label = account_case_labels(ticket)
+    execution_failure = (
+        route_classification.get("automation_execution")
+        if isinstance(route_classification.get("automation_execution"), dict)
+        else {}
+    )
+    failure_stage = str(
+        ticket.get("failure_stage")
+        or route_classification.get("failure_stage")
+        or execution_failure.get("failure_stage")
+        or ""
+    ).strip() or None
+    failure_code = str(
+        ticket.get("failure_code")
+        or route_classification.get("failure_code")
+        or execution_failure.get("failure_code")
+        or ticket.get("execution_reason_code")
+        or ""
+    ).strip() or None
+    alert_status = str(
+        ticket.get("alert_status")
+        or route_classification.get("alert_status")
+        or ""
+    ).strip() or None
     route_reason_code = str(
         route_classification.get("route_reason_code") or "legacy_reason_unavailable"
     ).strip()
@@ -4042,6 +4389,13 @@ def _build_account_ticket_view_model(
         "secondary_label": secondary_label,
         "route_reason_code": route_reason_code,
         "stage_reason_codes": stage_reason_codes,
+        "failure_stage": failure_stage,
+        "failure_code": failure_code,
+        "failure_incident_id": ticket.get("failure_incident_id")
+        or route_classification.get("failure_incident_id"),
+        "alert_status": alert_status,
+        "internal_email_send_status": ticket.get("internal_email_send_status"),
+        "internal_email_send_reason": ticket.get("internal_email_send_reason"),
         **_route_diagnostic_fields(route_classification),
         "source": source_display,
         "status": status,
@@ -4071,8 +4425,14 @@ _ACCOUNT_CASE_SUMMARY_FIELDS = (
     "automation_mode",
     "primary_label",
     "secondary_label",
-        "route_reason_code",
+    "route_reason_code",
     "execution_reason_code",
+    "failure_stage",
+    "failure_code",
+    "failure_incident_id",
+    "alert_status",
+    "internal_email_send_status",
+    "internal_email_send_reason",
     "degraded",
     "degradation_stage",
     "degradation_reason_code",
@@ -4771,46 +5131,59 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
     asked_field_keys = list(missing_fields) if missing_fields and not internal_email_payload else []
     reply_job = None
     if is_automation_route and asked_field_keys and assistant_reply_facts:
-        reply_job = await async_to_thread(
-            _create_account_reply_job,
-            ticket_id=ticket_id,
-            trigger_message_created_at=timestamp,
-            reply_facts=assistant_reply_facts,
-            draft_content="",
-            asked_field_keys=asked_field_keys,
-            persona_assignment=persona_assignment,
-        )
+        try:
+            reply_job = await async_to_thread(
+                _create_account_reply_job,
+                ticket_id=ticket_id,
+                trigger_message_created_at=timestamp,
+                reply_facts=assistant_reply_facts,
+                draft_content="",
+                asked_field_keys=asked_field_keys,
+                persona_assignment=persona_assignment,
+            )
+        except Exception as exc:
+            billing_ticket = await _record_account_reply_job_failure(
+                account_case=billing_ticket,
+                ticket_id=ticket_id,
+                handler=automation_handler or route,
+                detail=exc,
+            )
+            response_status = str(
+                billing_ticket.get("automation_status") or "human_review_required"
+            )
+            execution_reason_code = str(
+                billing_ticket.get("execution_reason_code")
+                or "account_reply_job_creation_failed"
+            )
+            assistant_reply_facts = None
 
     rollout_position: int | None = None
     rollout_selected = False
     engineer_case_id: str | None = None
 
     if billing_email_attempt and billing_email_attempt.get("internal_email_to_send"):
-        internal_email_send_status, internal_email_send_reason = await _send_billing_internal_email_attempt(
-            billing_email_attempt
+        delivery_result, billing_ticket = await _run_account_internal_email_delivery(
+            account_case=billing_ticket,
+            ticket_id=ticket_id,
+            handler=automation_handler or "billing",
+            payload=dict(billing_email_attempt["internal_email_to_send"]),
+            sender=_send_billing_internal_email_attempt,
         )
-        billing_ticket["internal_email_send_status"] = internal_email_send_status
-        billing_ticket["internal_email_send_reason"] = internal_email_send_reason
-        billing_ticket["updated_at"] = now_iso()
-        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
-        if internal_email_send_status != "sent":
-            response_status = "human_review_required"
-            execution_reason_code = reconciliation_reason_code(
-                handler=automation_handler or "billing",
-                phase="internal_email",
-                detail=internal_email_send_status or "failed",
+        internal_email_send_status = delivery_result.status
+        internal_email_send_reason = delivery_result.reason
+        if not delivery_result.succeeded:
+            response_status = str(
+                billing_ticket.get("automation_status") or "human_review_required"
             )
-            billing_ticket.update(
-                reconcile_automation_execution_failure(
-                    billing_ticket,
-                    reason_code=execution_reason_code,
+            execution_reason_code = str(
+                billing_ticket.get("execution_reason_code")
+                or reconciliation_reason_code(
+                    handler=automation_handler or "billing",
+                    phase="internal_email",
+                    detail=delivery_result.status or "failed",
                 )
             )
-            route_classification = dict(billing_ticket.get("route_classification") or {})
-            internal_email_send_status = "not_applicable"
-            internal_email_send_reason = execution_reason_code
-            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
-        if internal_email_send_status == "sent" and billing_email_attempt:
+        if delivery_result.succeeded:
             confirmation_facts = _automation_reply_facts(
                 handler=automation_handler or "billing",
                 action=route,
@@ -4820,42 +5193,56 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 customer_name=customer_name,
                 account_scope=True,
             )
-            reply_job = await async_to_thread(
-                _create_account_reply_job,
-                ticket_id=ticket_id,
-                trigger_message_created_at=timestamp,
-                draft_content="",
-                reply_facts=confirmation_facts,
-                asked_field_keys=[],
-                persona_assignment=persona_assignment,
-                automation_delivery_key=str(
-                    (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
-                ),
-            )
+            try:
+                reply_job = await async_to_thread(
+                    _create_account_reply_job,
+                    ticket_id=ticket_id,
+                    trigger_message_created_at=timestamp,
+                    draft_content="",
+                    reply_facts=confirmation_facts,
+                    asked_field_keys=[],
+                    persona_assignment=persona_assignment,
+                    automation_delivery_key=str(
+                        (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
+                    ),
+                )
+            except Exception as exc:
+                billing_ticket = await _record_account_reply_job_failure(
+                    account_case=billing_ticket,
+                    ticket_id=ticket_id,
+                    handler=automation_handler or "billing",
+                    detail=exc,
+                )
+                response_status = str(
+                    billing_ticket.get("automation_status") or "human_review_required"
+                )
+                execution_reason_code = str(
+                    billing_ticket.get("execution_reason_code")
+                    or "account_reply_job_creation_failed"
+                )
     if enablement_email_attempt and enablement_email_attempt.get("internal_email_to_send"):
-        internal_email_send_status, internal_email_send_reason = await _send_enablement_internal_email_attempt(
-            enablement_email_attempt
+        delivery_result, billing_ticket = await _run_account_internal_email_delivery(
+            account_case=billing_ticket,
+            ticket_id=ticket_id,
+            handler="enablement",
+            payload=dict(enablement_email_attempt["internal_email_to_send"]),
+            sender=_send_enablement_internal_email_attempt,
         )
-        billing_ticket["internal_email_send_status"] = internal_email_send_status
-        billing_ticket["internal_email_send_reason"] = internal_email_send_reason
-        billing_ticket["internal_email_payload"] = dict(enablement_email_attempt["internal_email_to_send"])
-        if internal_email_send_status != "sent":
-            response_status = "human_review_required"
-            execution_reason_code = reconciliation_reason_code(
-                handler="enablement",
-                phase="internal_email",
-                detail=internal_email_send_status or "failed",
+        internal_email_send_status = delivery_result.status
+        internal_email_send_reason = delivery_result.reason
+        if not delivery_result.succeeded:
+            response_status = str(
+                billing_ticket.get("automation_status") or "human_review_required"
             )
-            billing_ticket.update(
-                reconcile_automation_execution_failure(
-                    billing_ticket,
-                    reason_code=execution_reason_code,
+            execution_reason_code = str(
+                billing_ticket.get("execution_reason_code")
+                or reconciliation_reason_code(
+                    handler="enablement",
+                    phase="internal_email",
+                    detail=delivery_result.status or "failed",
                 )
             )
-            route_classification = dict(billing_ticket.get("route_classification") or {})
-            internal_email_send_status = "not_applicable"
-            internal_email_send_reason = execution_reason_code
-        if internal_email_send_status == "sent":
+        if delivery_result.succeeded:
             confirmation_facts = _automation_reply_facts(
                 handler="enablement",
                 action="enablement",
@@ -4865,45 +5252,62 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 customer_name=customer_name,
                 account_scope=True,
             )
-            reply_job = await async_to_thread(
-                _create_account_reply_job,
-                ticket_id=ticket_id,
-                trigger_message_created_at=timestamp,
-                draft_content="",
-                reply_facts=confirmation_facts,
-                asked_field_keys=[],
-                persona_assignment=persona_assignment,
-                automation_delivery_key=str(
-                    billing_ticket["internal_email_payload"].get("delivery_key") or ""
-                ),
-            )
-            billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
+            try:
+                reply_job = await async_to_thread(
+                    _create_account_reply_job,
+                    ticket_id=ticket_id,
+                    trigger_message_created_at=timestamp,
+                    draft_content="",
+                    reply_facts=confirmation_facts,
+                    asked_field_keys=[],
+                    persona_assignment=persona_assignment,
+                    automation_delivery_key=str(
+                        (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
+                    ),
+                )
+            except Exception as exc:
+                billing_ticket = await _record_account_reply_job_failure(
+                    account_case=billing_ticket,
+                    ticket_id=ticket_id,
+                    handler="enablement",
+                    detail=exc,
+                )
+                response_status = str(
+                    billing_ticket.get("automation_status") or "human_review_required"
+                )
+                execution_reason_code = str(
+                    billing_ticket.get("execution_reason_code")
+                    or "account_reply_job_creation_failed"
+                )
+            else:
+                billing_ticket.setdefault("internal_email_payload", {})[
+                    "customer_confirmation_queued"
+                ] = True
         billing_ticket["updated_at"] = now_iso()
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
     if quota_email_attempt and quota_email_attempt.get("internal_email_to_send"):
-        internal_email_send_status, internal_email_send_reason = await _send_quota_internal_email_attempt(
-            quota_email_attempt
+        delivery_result, billing_ticket = await _run_account_internal_email_delivery(
+            account_case=billing_ticket,
+            ticket_id=ticket_id,
+            handler="quota",
+            payload=dict(quota_email_attempt["internal_email_to_send"]),
+            sender=_send_quota_internal_email_attempt,
         )
-        billing_ticket["internal_email_send_status"] = internal_email_send_status
-        billing_ticket["internal_email_send_reason"] = internal_email_send_reason
-        billing_ticket["internal_email_payload"] = dict(quota_email_attempt["internal_email_to_send"])
-        if internal_email_send_status != "sent":
-            response_status = "human_review_required"
-            execution_reason_code = reconciliation_reason_code(
-                handler="quota",
-                phase="internal_email",
-                detail=internal_email_send_status or "failed",
+        internal_email_send_status = delivery_result.status
+        internal_email_send_reason = delivery_result.reason
+        if not delivery_result.succeeded:
+            response_status = str(
+                billing_ticket.get("automation_status") or "human_review_required"
             )
-            billing_ticket.update(
-                reconcile_automation_execution_failure(
-                    billing_ticket,
-                    reason_code=execution_reason_code,
+            execution_reason_code = str(
+                billing_ticket.get("execution_reason_code")
+                or reconciliation_reason_code(
+                    handler="quota",
+                    phase="internal_email",
+                    detail=delivery_result.status or "failed",
                 )
             )
-            route_classification = dict(billing_ticket.get("route_classification") or {})
-            internal_email_send_status = "not_applicable"
-            internal_email_send_reason = execution_reason_code
-        if internal_email_send_status == "sent":
+        if delivery_result.succeeded:
             confirmation_facts = _automation_reply_facts(
                 handler="quota",
                 action="quota",
@@ -4913,21 +5317,52 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 customer_name=customer_name,
                 account_scope=True,
             )
-            reply_job = await async_to_thread(
-                _create_account_reply_job,
-                ticket_id=ticket_id,
-                trigger_message_created_at=timestamp,
-                draft_content="",
-                reply_facts=confirmation_facts,
-                asked_field_keys=[],
-                persona_assignment=persona_assignment,
-                automation_delivery_key=str(
-                    billing_ticket["internal_email_payload"].get("delivery_key") or ""
-                ),
-            )
-            billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
+            try:
+                reply_job = await async_to_thread(
+                    _create_account_reply_job,
+                    ticket_id=ticket_id,
+                    trigger_message_created_at=timestamp,
+                    draft_content="",
+                    reply_facts=confirmation_facts,
+                    asked_field_keys=[],
+                    persona_assignment=persona_assignment,
+                    automation_delivery_key=str(
+                        (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
+                    ),
+                )
+            except Exception as exc:
+                billing_ticket = await _record_account_reply_job_failure(
+                    account_case=billing_ticket,
+                    ticket_id=ticket_id,
+                    handler="quota",
+                    detail=exc,
+                )
+                response_status = str(
+                    billing_ticket.get("automation_status") or "human_review_required"
+                )
+                execution_reason_code = str(
+                    billing_ticket.get("execution_reason_code")
+                    or "account_reply_job_creation_failed"
+                )
+            else:
+                billing_ticket.setdefault("internal_email_payload", {})[
+                    "customer_confirmation_queued"
+                ] = True
         billing_ticket["updated_at"] = now_iso()
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+
+    # Delivery/reply persistence helpers return the reconciled Case record.
+    # Copy its execution diagnostic into the response as well; otherwise the
+    # durable failure can be visible in the Case while the intake response
+    # incorrectly reports a null reason code.
+    persisted_execution_reason = str(
+        billing_ticket.get("execution_reason_code") or ""
+    ).strip()
+    if persisted_execution_reason:
+        execution_reason_code = persisted_execution_reason
+    persisted_classification = billing_ticket.get("route_classification")
+    if isinstance(persisted_classification, dict):
+        route_classification = dict(persisted_classification)
 
     primary_label, secondary_label = classification_labels(route_classification)
     route_reason_code = str(
@@ -4938,6 +5373,26 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
         or route_classification.get("stage_reasons")
         or {}
     )
+    failure_stage = str(
+        billing_ticket.get("failure_stage")
+        or route_classification.get("failure_stage")
+        or ""
+    ).strip() or None
+    failure_code = str(
+        billing_ticket.get("failure_code")
+        or route_classification.get("failure_code")
+        or execution_reason_code
+        or ""
+    ).strip() or None
+    failure_incident_id = (
+        billing_ticket.get("failure_incident_id")
+        or route_classification.get("failure_incident_id")
+    )
+    alert_status = str(
+        billing_ticket.get("alert_status")
+        or route_classification.get("alert_status")
+        or ""
+    ).strip() or None
     event = {
         "event": "ticket_created",
         "ticket_id": ticket_id,
@@ -4960,6 +5415,11 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
         "matched_signals": list(decision.matched_signals),
         "account_intake_status": response_status,
         "internal_email_send_status": internal_email_send_status,
+        "execution_reason_code": execution_reason_code or persisted_execution_reason or None,
+        "failure_stage": failure_stage,
+        "failure_code": failure_code,
+        "failure_incident_id": failure_incident_id,
+        "alert_status": alert_status,
         # Semantic routing fields.
         "semantic_intent": decision.semantic_intent or None,
         "policy_decision": decision.policy_decision or None,
@@ -5002,7 +5462,11 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
         "collected_fields": collected_fields,
         "internal_email_send_status": internal_email_send_status,
         "internal_email_send_reason": internal_email_send_reason,
-        "execution_reason_code": execution_reason_code,
+        "execution_reason_code": execution_reason_code or persisted_execution_reason or None,
+        "failure_stage": failure_stage,
+        "failure_code": failure_code,
+        "failure_incident_id": failure_incident_id,
+        "alert_status": alert_status,
         "semantic_intent": decision.semantic_intent or None,
         "route_family": decision.route_family,
         **route_metadata,
@@ -5552,12 +6016,17 @@ class _AccountRerunSideEffectCompleted(Exception):
     """Internal control flow marker for a resume-only side-effect retry."""
 
 
+class _AccountRerunShutdownRequested(Exception):
+    """Release the current durable checkpoint without recording a Case failure."""
+
+
 class _AccountRerunSideEffectError(RuntimeError):
     """Preserve the exact post-Commit stage that must be resumed."""
 
-    def __init__(self, stage: str, error: Exception) -> None:
+    def __init__(self, stage: str, error: Exception, *, code: str | None = None) -> None:
         super().__init__(str(error))
         self.stage = str(stage or "commit").strip() or "commit"
+        self.code = str(code or "").strip() or None
 
 
 def _sanitize_account_rerun_error(value: Any, *, max_length: int = 240) -> str:
@@ -5578,7 +6047,15 @@ def _account_rerun_failure_retry_mode(stage: str, error: Any = "") -> str:
     lowered = str(error or "").lower()
     if normalized in {"email", "internal_email", "mail"}:
         return "email"
-    if normalized in {"reply", "reply_job", "reply_persistence"}:
+    if normalized in {
+        "reply",
+        "reply_job",
+        "reply_persistence",
+        "reply_prepare",
+        "reply_publish",
+        "automation_persona",
+        "persona",
+    }:
         return "reply"
     if "email" in lowered:
         return "email"
@@ -5617,6 +6094,20 @@ async def _resume_account_rerun_side_effect(
         payload = account_case.get("internal_email_payload")
         if not isinstance(payload, dict) or not payload:
             raise ValueError("internal email checkpoint is missing")
+        handler = str(account_case.get("automation_handler") or "").strip().lower()
+        upgraded_payload = ensure_account_delivery_key(
+            payload,
+            handler=handler,
+            account_case_id=account_case_id,
+        )
+        if upgraded_payload != payload:
+            account_case = dict(account_case)
+            account_case["internal_email_payload"] = upgraded_payload
+            await _account_rerun_storage_call(
+                ticket_repository.save_account_case,
+                account_case,
+            )
+            payload = upgraded_payload
         delivery_key = str(payload.get("delivery_key") or "").strip()
         if not delivery_key:
             raise ValueError("internal email checkpoint has no delivery key")
@@ -5644,7 +6135,6 @@ async def _resume_account_rerun_side_effect(
             return {"status": "already_sent", "account_case": account_case}
         if delivery_evidence["status"] == "unknown" and not reuse_existing_claim:
             raise RuntimeError("manual_confirmation_required: automation delivery state is unknown")
-        handler = str(account_case.get("automation_handler") or "").strip().lower()
         sender = {
             "billing": _send_billing_internal_email_attempt,
             "enablement": _send_enablement_internal_email_attempt,
@@ -5652,98 +6142,76 @@ async def _resume_account_rerun_side_effect(
         }.get(handler)
         if sender is None:
             raise ValueError(f"unsupported email handler: {handler or 'unknown'}")
-        claim_token = existing_claim_token if reuse_existing_claim else f"account-rerun-email-{uuid4().hex}"
-        claimed_at = now_iso()
-        attempt_payload = dict(payload)
-        if not reuse_existing_claim:
-            attempt_payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
-            attempt_payload["last_attempt_at"] = claimed_at
-        claimed = await _account_rerun_storage_call(
-            ticket_repository.claim_account_internal_email_delivery,
-            account_case_id,
-            delivery_key=delivery_key,
-            claim_token=claim_token,
-            claimed_at=claimed_at,
-            payload=attempt_payload,
-            allowed_statuses=(
-                "pending",
-                "retry",
-                "not_ready",
-                "skipped_config_missing",
-            ),
+        result = await _deliver_account_internal_email_attempt(
+            account_case_id=account_case_id,
+            payload=dict(payload),
+            sender=sender,
+            claim_token=existing_claim_token if reuse_existing_claim else None,
+            reuse_claim=reuse_existing_claim,
         )
-        if not claimed:
-            current = await _account_rerun_storage_call(
-                ticket_repository.get_account_case,
-                account_case_id,
+        if not result.succeeded:
+            failure_code = reconciliation_reason_code(
+                handler=handler or "automation",
+                phase="internal_email",
+                detail=result.status or "failed",
             )
-            current_evidence = classify_internal_email_delivery(current or {})
-            if current_evidence["status"] == "sent":
-                return {"status": "already_sent", "account_case": current or account_case}
-            current_payload = current.get("internal_email_payload") if isinstance(current, dict) else None
-            if not (
-                reuse_existing_claim
-                and isinstance(current_payload, dict)
-                and str(current.get("internal_email_send_status") or "").strip().lower() == "sending"
-                and str(current_payload.get("delivery_key") or "").strip() == delivery_key
-                and str(current_payload.get("delivery_claim_token") or "").strip() == claim_token
-            ):
-                raise RuntimeError("manual_confirmation_required: automation delivery claim is unavailable")
-        attempt = {
-            "internal_email_to_send": attempt_payload,
-            "internal_email_payload": attempt_payload,
-            "internal_email_send_status": "pending",
-            "internal_email_send_reason": "resume_retry",
-        }
-        status, reason = await sender(attempt)
-        completed_payload = dict(attempt.get("internal_email_to_send") or attempt_payload)
-        completed = await _account_rerun_storage_call(
-            ticket_repository.complete_account_internal_email_delivery,
-            account_case_id,
-            delivery_key=delivery_key,
-            claim_token=claim_token,
-            payload=completed_payload,
-            send_status=str(status or "failed"),
-            send_reason=str(reason or ""),
-            completed_at=now_iso(),
-        )
-        if not completed:
-            current = await _account_rerun_storage_call(
-                ticket_repository.get_account_case,
-                account_case_id,
+            failed_case = reconcile_automation_execution_failure(
+                {
+                    **account_case,
+                    "internal_email_payload": dict(result.payload or {}) or None,
+                    "internal_email_send_status": result.status,
+                    "internal_email_send_reason": result.reason,
+                },
+                reason_code=failure_code,
+                context={
+                    "failure_stage": "internal_email",
+                    "failure_code": failure_code,
+                    "delivery_state": result.delivery_state,
+                    "delivery_status": result.status,
+                },
             )
-            current_payload = current.get("internal_email_payload") if isinstance(current, dict) else None
-            completed = bool(
-                isinstance(current, dict)
-                and isinstance(current_payload, dict)
-                and str(current.get("internal_email_send_status") or "").strip().lower()
-                == str(status or "failed").strip().lower()
-                and str(current_payload.get("delivery_key") or "").strip() == delivery_key
-                and str(current_payload.get("last_attempt_at") or "").strip()
-                == str(attempt_payload.get("last_attempt_at") or "").strip()
-                and int(current_payload.get("delivery_attempt_count") or 0)
-                == int(attempt_payload.get("delivery_attempt_count") or 0)
+            failed_classification = dict(failed_case.get("route_classification") or {})
+            failed_classification.update(
+                failure_stage="internal_email",
+                failure_code=failure_code,
             )
-            if not completed:
-                raise RuntimeError("manual_confirmation_required: automation delivery result was not persisted")
+            failed_case["route_classification"] = failed_classification
+            await _account_rerun_storage_call(
+                ticket_repository.save_account_case,
+                failed_case,
+            )
+            if result.delivery_state == "unknown":
+                raise RuntimeError(
+                    str(result.reason or "manual_confirmation_required: delivery result is unknown")
+                )
+            raise RuntimeError(str(result.reason or "internal email retry failed"))
         updated = await _account_rerun_storage_call(
             ticket_repository.get_account_case,
             account_case_id,
         )
         if not isinstance(updated, dict):
             raise ValueError("Account Case disappeared after internal email delivery")
-        if str(status or "").strip().lower() != "sent":
-            raise RuntimeError(str(reason or "internal email retry failed"))
         return {"status": "sent", "account_case": updated}
     if retry_mode == "reply":
         existing = await _account_rerun_storage_call(ticket_repository.get_latest_account_reply_job, ticket_id)
         existing_payload = existing.get("payload") if isinstance(existing, dict) else {}
         existing_payload = existing_payload if isinstance(existing_payload, dict) else {}
+        automation_context = account_case.get("automation_context")
+        automation_context = automation_context if isinstance(automation_context, dict) else {}
+        accepted_rerun_job_ids = {
+            value
+            for value in (
+                str(rerun_job_id or "").strip(),
+                str(delivery_job_id or "").strip(),
+                str(automation_context.get("rerun_job_id") or "").strip(),
+            )
+            if value
+        }
         if (
             isinstance(existing, dict)
-            and str(existing_payload.get("rerun_job_id") or "").strip() == str(rerun_job_id or "").strip()
+            and str(existing_payload.get("rerun_job_id") or "").strip() in accepted_rerun_job_ids
             and str(existing.get("status") or "").strip().lower() in {
-            "published", "manual_attention", "scheduled", "pending", "processing",
+            "published", "scheduled", "pending", "processing",
             "queued", "persona_queued", "persona_preparing", "persona_scheduled",
             "persona_v8_queued", "persona_v8_preparing", "persona_v8_scheduled",
             }
@@ -5771,21 +6239,41 @@ async def _resume_account_rerun_side_effect(
             customer_name=str(ticket.get("customer_name") or "").strip() or None,
             account_scope=True,
         )
-        reply_job = await _account_rerun_storage_call(
-            _create_account_reply_job,
-            ticket_id=ticket_id,
-            trigger_message_created_at=max(customer_timestamps),
-            draft_content="",
-            reply_facts=facts,
-            asked_field_keys=(
-                []
-                if account_case.get("internal_email_payload")
-                else list(account_case.get("missing_fields") or [])
-            ),
-            persona_assignment=None,
-            automation_delivery_key=str((account_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
-            rerun_job_id=rerun_job_id,
-        )
+        try:
+            reply_job = await _account_rerun_storage_call(
+                _create_account_reply_job,
+                ticket_id=ticket_id,
+                trigger_message_created_at=max(customer_timestamps),
+                draft_content="",
+                reply_facts=facts,
+                asked_field_keys=(
+                    []
+                    if account_case.get("internal_email_payload")
+                    else list(account_case.get("missing_fields") or [])
+                ),
+                persona_assignment=None,
+                automation_delivery_key=str((account_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
+                rerun_job_id=rerun_job_id,
+            )
+        except Exception as exc:
+            failure_code = "account_reply_job_creation_failed"
+            failed_case = reconcile_automation_execution_failure(
+                account_case,
+                reason_code=failure_code,
+                context={
+                    "failure_stage": "reply_job",
+                    "failure_code": failure_code,
+                    "failure_detail": str(exc),
+                },
+            )
+            failed_classification = dict(failed_case.get("route_classification") or {})
+            failed_classification.update(
+                failure_stage="reply_job",
+                failure_code=failure_code,
+            )
+            failed_case["route_classification"] = failed_classification
+            await _account_rerun_storage_call(ticket_repository.save_account_case, failed_case)
+            raise
         return {"status": "scheduled", "account_case": account_case, "reply_job": reply_job}
     raise ValueError(f"unsupported rerun retry mode: {retry_mode}")
 
@@ -6362,6 +6850,7 @@ async def _enqueue_account_rerun_job(
         "reply_jobs_failed": 0,
         "reply_jobs_cancelled": 0,
         "reply_cancelled_case_ids": [],
+        "reply_failure_case_ids": [],
         "reply_wait_timed_out": False,
         "wait_for_replies": True,
         "completed_case_ids": [],
@@ -6546,6 +7035,152 @@ def _account_rerun_reply_wait_timeout_seconds() -> float:
     return max(30.0, _safe_float_env("ACCOUNT_RERUN_REPLY_WAIT_TIMEOUT_SECONDS", 900.0))
 
 
+def _account_rerun_reply_failure_details(reply_job: dict[str, Any]) -> dict[str, str] | None:
+    status = str(reply_job.get("status") or "").strip().lower()
+    if status not in {"manual_attention", "failed", "cancelled"}:
+        return None
+    payload = reply_job.get("payload") if isinstance(reply_job.get("payload"), dict) else {}
+    failure_stage = str(payload.get("failure_stage") or "").strip()
+    failure_code = str(payload.get("failure_code") or "").strip()
+    cancel_reason = str(payload.get("cancel_reason") or "").strip()
+    reason = str(payload.get("error") or cancel_reason or "").strip()
+    if status == "manual_attention" and not failure_stage:
+        failure_stage = (
+            "automation_persona"
+            if str(payload.get("persona_render_status") or "").strip() == "human_review"
+            else "reply_prepare"
+        )
+    if status in {"failed", "cancelled"} and not failure_stage:
+        failure_stage = "reply_publish"
+    if status == "cancelled" and cancel_reason and not failure_code:
+        failure_code = cancel_reason
+    if not failure_code:
+        failure_code = {
+            "manual_attention": "account_reply_manual_attention",
+            "failed": "account_reply_failed",
+            "cancelled": "reply_job_cancelled_without_reason",
+        }[status]
+    if not reason:
+        reason = failure_code
+    return {
+        "stage": failure_stage or "reply_publish",
+        "code": failure_code,
+        "detail": f"{failure_code}: {reason}" if reason != failure_code else reason,
+    }
+
+
+async def _wait_for_account_rerun_reply_preparation(
+    reply_job_id: str,
+    *,
+    stop_event: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Wait for Persona preparation, without waiting for scheduled publication."""
+    deadline = time.monotonic() + _account_rerun_reply_wait_timeout_seconds()
+    successful_statuses = {"scheduled", "persona_scheduled", "persona_v8_scheduled", "published"}
+    while True:
+        reply_job = await _account_rerun_storage_call(
+            ticket_repository.get_account_reply_job,
+            reply_job_id,
+        )
+        if not isinstance(reply_job, dict):
+            raise _AccountRerunSideEffectError(
+                "reply_prepare",
+                ValueError("account reply job disappeared during Persona preparation"),
+                code="account_reply_job_missing",
+            )
+        status = str(reply_job.get("status") or "").strip().lower()
+        if status in successful_statuses:
+            return reply_job
+        failure = _account_rerun_reply_failure_details(reply_job)
+        if failure is not None:
+            raise _AccountRerunSideEffectError(
+                failure["stage"],
+                RuntimeError(failure["detail"]),
+                code=failure["code"],
+            )
+        if time.monotonic() >= deadline:
+            raise _AccountRerunSideEffectError(
+                "reply_prepare",
+                TimeoutError("account reply Persona preparation timed out"),
+                code="account_reply_preparation_timed_out",
+            )
+        if stop_event is None:
+            await asyncio.sleep(ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS)
+        elif await _account_reroute_sync_call(
+            stop_event.wait,
+            ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS,
+        ):
+            raise _AccountRerunShutdownRequested()
+
+
+async def _account_case_id_for_reply_job(reply_job: dict[str, Any]) -> str | None:
+    ticket_id = str(reply_job.get("ticket_id") or "").strip()
+    if not ticket_id:
+        return None
+    account_case = await _account_rerun_storage_call(
+        ticket_repository.get_billing_ticket_by_client_ticket_id,
+        ticket_id,
+    )
+    if not isinstance(account_case, dict):
+        return None
+    case_id = str(
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    ).strip()
+    return case_id or None
+
+
+def _record_account_rerun_reply_failure(
+    job: dict[str, Any],
+    *,
+    case_id: str,
+    reply_job: dict[str, Any],
+    failure: dict[str, str],
+) -> None:
+    failed_case_ids = list(dict.fromkeys(
+        str(item or "").strip()
+        for item in job.get("failed_case_ids") or []
+        if str(item or "").strip()
+    ))
+    completed_case_ids = list(dict.fromkeys(
+        str(item or "").strip()
+        for item in job.get("completed_case_ids") or []
+        if str(item or "").strip()
+    ))
+    if case_id in completed_case_ids:
+        completed_case_ids.remove(case_id)
+        job["completed_case_ids"] = completed_case_ids
+        job["succeeded"] = max(0, int(job.get("succeeded") or 0) - 1)
+    if case_id not in failed_case_ids:
+        failed_case_ids.append(case_id)
+        job["failed"] = int(job.get("failed") or 0) + 1
+    job["failed_case_ids"] = failed_case_ids
+    job["failed_case_id"] = case_id
+    job["failed_stage"] = failure["stage"]
+    job["failed_reason_code"] = failure["code"]
+    job["stop_reason"] = (
+        "reply_publish_failed"
+        if str(reply_job.get("status") or "").strip().lower() == "cancelled"
+        and failure["code"] == "stale_customer_revision"
+        else "reply_job_failed"
+    )
+    job["stop_error"] = failure["detail"]
+    job["retry_mode"] = "reply"
+    job["checkpoint"] = {
+        "case_id": case_id,
+        "stage": failure["stage"],
+        "retry_mode": "reply",
+        "committed": True,
+        "reply_job_id": str(reply_job.get("job_id") or "").strip(),
+    }
+    job["reply_failure_case_ids"] = list(dict.fromkeys(
+        [*(job.get("reply_failure_case_ids") or []), case_id]
+    ))
+    job["processed"] = int(job.get("succeeded") or 0) + int(job.get("failed") or 0)
+    _account_rerun_refresh_remaining(job)
+
+
 async def _wait_for_account_rerun_replies(
     job: dict[str, Any],
     *,
@@ -6593,18 +7228,22 @@ async def _wait_for_account_rerun_replies(
         cancelled_case_ids = list(dict.fromkeys(cancelled_case_ids))
         job["reply_jobs_cancelled"] = len(cancelled_jobs)
         job["reply_cancelled_case_ids"] = cancelled_case_ids
-        if cancelled_jobs:
-            first_cancelled = cancelled_jobs[0]
-            cancel_reason = str(
-                (first_cancelled.get("payload") or {}).get("cancel_reason")
-                if isinstance(first_cancelled.get("payload"), dict)
-                else ""
-            ).strip() or "reply_job_cancelled"
-            job["failed_stage"] = job.get("failed_stage") or "reply_publish"
-            job["stop_reason"] = job.get("stop_reason") or "reply_publish_failed"
-            job["stop_error"] = job.get("stop_error") or cancel_reason
-            if cancelled_case_ids:
-                job["failed_case_id"] = job.get("failed_case_id") or cancelled_case_ids[0]
+        failed_reply_jobs = [
+            item
+            for item in jobs
+            if item and _account_rerun_reply_failure_details(item) is not None
+        ]
+        if failed_reply_jobs:
+            first_failed = failed_reply_jobs[0]
+            failure = _account_rerun_reply_failure_details(first_failed)
+            case_id = await _account_case_id_for_reply_job(first_failed)
+            if failure is not None and case_id:
+                _record_account_rerun_reply_failure(
+                    job,
+                    case_id=case_id,
+                    reply_job=first_failed,
+                    failure=failure,
+                )
         job["updated_at"] = now_iso()
         await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
         if not pending and not missing:
@@ -6859,7 +7498,9 @@ async def _run_account_full_reroute_job(
             case_route_key = ""
             case_handler_status = ""
             case_failed = False
+            case_shutdown_requested = False
             case_failure_error = ""
+            reply_job_id = ""
             caught_exception: Exception | None = None
             try:
                 retry_case_mode = str(
@@ -6882,6 +7523,31 @@ async def _run_account_full_reroute_job(
                         job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
                     if reply_result.get("status") == "scheduled":
                         job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
+                    reply_job_id = str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
+                    if reply_job_id:
+                        if reply_job_id not in job.setdefault("reply_job_ids", []):
+                            job["reply_job_ids"].append(reply_job_id)
+                        case_stage = "reply_prepare"
+                        await _wait_for_account_rerun_reply_preparation(
+                            reply_job_id,
+                            stop_event=stop_event,
+                        )
+                    if (
+                        retry_case_mode == "email"
+                        and email_result.get("status") not in {"sent", "already_sent"}
+                    ):
+                        raise _AccountRerunSideEffectError(
+                            "internal_email",
+                            RuntimeError("internal email retry did not complete"),
+                        )
+                    if (
+                        retry_case_mode == "reply"
+                        and reply_result.get("status") not in {"scheduled", "already_scheduled"}
+                    ):
+                        raise _AccountRerunSideEffectError(
+                            "reply_job",
+                            RuntimeError("reply job retry did not schedule"),
+                        )
                     case_handler_status = "completed"
                     primary_label, secondary_label = account_case_labels(
                         email_result.get("account_case")
@@ -7002,19 +7668,59 @@ async def _run_account_full_reroute_job(
                     )
                     email_result = side_effects.get("email") or {}
                     reply_result = side_effects.get("reply") or {}
+                    if (
+                        result.internal_email_to_send
+                        and email_result.get("status") not in {"sent", "already_sent"}
+                    ):
+                        raise _AccountRerunSideEffectError(
+                            "internal_email",
+                            RuntimeError("internal email delivery did not complete"),
+                        )
+                    if (
+                        result.reply_kind
+                        and reply_result.get("status") not in {"scheduled", "already_scheduled"}
+                    ):
+                        raise _AccountRerunSideEffectError(
+                            "reply_job",
+                            RuntimeError("reply job was not scheduled"),
+                        )
                     if email_result.get("status") == "sent":
                         job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
                     if reply_result.get("status") == "scheduled":
                         job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
-                        reply_job_id = str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
-                        if reply_job_id:
-                            job.setdefault("reply_job_ids", []).append(reply_job_id)
+                    reply_job_id = str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
+                    if reply_job_id:
+                        if reply_job_id not in job.setdefault("reply_job_ids", []):
+                            job["reply_job_ids"].append(reply_job_id)
+                        case_stage = "reply_prepare"
+                        await _wait_for_account_rerun_reply_preparation(
+                            reply_job_id,
+                            stop_event=stop_event,
+                        )
                 job["route_counts"][case_route_key] = int(job["route_counts"].get(case_route_key) or 0) + 1
                 job["handler_counts"][case_handler_status] = (
                     int(job["handler_counts"].get(case_handler_status) or 0) + 1
                 )
                 job["changed"] += int(case_changed)
                 job["succeeded"] += 1
+            except _AccountRerunShutdownRequested:
+                retry_case_modes = dict(job.get("retry_case_modes") or {})
+                retry_case_modes[case_id] = "reply"
+                job["retry_case_modes"] = retry_case_modes
+                job["retry_mode"] = "reply"
+                job["phase"] = "Waiting for reply preparation"
+                job["checkpoint"] = {
+                    "case_id": case_id,
+                    "stage": "reply_prepare",
+                    "retry_mode": "reply",
+                    "committed": True,
+                }
+                await _release_account_reroute_job_for_shutdown(
+                    job,
+                    lease_token=lease_token,
+                )
+                case_shutdown_requested = True
+                return
             except AccountRerouteLeaseLostError:
                 raise
             except _AccountRerunSideEffectCompleted:
@@ -7052,10 +7758,10 @@ async def _run_account_full_reroute_job(
                             "error": case_failure_error,
                             "retryable": _is_retryable_account_rerun_storage_error(exc),
                             "stage": case_stage,
-                            "reply_expected": False,
+                            "reply_expected": bool(reply_job_id),
                             "email_expected": False,
                             "delivery_key": "",
-                            "reply_job_id": "",
+                            "reply_job_id": reply_job_id,
                             "changed": case_changed,
                             "route_key": case_route_key,
                             "handler_status": case_handler_status,
@@ -7063,6 +7769,8 @@ async def _run_account_full_reroute_job(
                         }
                     )
             finally:
+                if case_shutdown_requested:
+                    return
                 if not case_failed and case_id not in completed_case_id_set:
                     completed_case_id_set.add(case_id)
                     completed_case_ids.append(case_id)
@@ -7092,6 +7800,25 @@ async def _run_account_full_reroute_job(
                             account_case_id=case_id,
                             ticket_id=client_ticket_id,
                             detail=caught_exception.detail,
+                        )
+                    else:
+                        job["failed_reason_code"] = (
+                            str(caught_exception.code)
+                            if isinstance(caught_exception, _AccountRerunSideEffectError)
+                            and caught_exception.code
+                            else (
+                                "account_rerun_revision_conflict"
+                                if isinstance(caught_exception, AccountRerunRevisionConflictError)
+                                else f"account_rerun_{case_stage}_failed"
+                            )
+                        )[:160]
+                        job["alert_status"] = await _notify_account_rerun_failure(
+                            job=job,
+                            stage=case_stage,
+                            code=str(job["failed_reason_code"]),
+                            account_case_id=case_id,
+                            ticket_id=client_ticket_id,
+                            detail=case_failure_error,
                         )
                     checkpoint_committed = not (
                         isinstance(caught_exception, AccountRerunDegradedError)
@@ -7172,18 +7899,48 @@ async def _run_account_full_reroute_job(
             )
             return
         await _reconcile_account_rerun_failures(job)
+        if job.get("reply_failure_case_ids"):
+            failed_case_id = str(job.get("failed_case_id") or "").strip()
+            failed_case = (
+                await _account_rerun_storage_call(
+                    ticket_repository.get_account_case,
+                    failed_case_id,
+                )
+                if failed_case_id
+                else None
+            )
+            failed_ticket_id = str((failed_case or {}).get("client_ticket_id") or "").strip()
+            job["alert_status"] = await _notify_account_rerun_failure(
+                job=job,
+                stage=str(job.get("failed_stage") or "reply_publish"),
+                code=str(job.get("failed_reason_code") or "reply_job_failed"),
+                account_case_id=failed_case_id or None,
+                ticket_id=failed_ticket_id or None,
+                detail=str(job.get("stop_error") or "reply job failed"),
+            )
+        elif job.get("reply_wait_timed_out"):
+            job["failed_stage"] = "reply_publish"
+            job["failed_reason_code"] = "account_reply_publication_timed_out"
+            job["stop_reason"] = "reply_wait_timed_out"
+            job["stop_error"] = "reply jobs did not reach a terminal state before timeout"
+            job["alert_status"] = await _notify_account_rerun_failure(
+                job=job,
+                stage="reply_publish",
+                code="account_reply_publication_timed_out",
+                detail=job["stop_error"],
+            )
         completed_at = now_iso()
         terminal_status = (
-            "completed_with_errors"
+            "failed"
             if (
                 job["failed"]
                 or job.get("reply_wait_timed_out")
-                or job.get("reply_jobs_manual_attention")
-                or job.get("reply_jobs_failed")
-                or job.get("reply_jobs_cancelled")
+                or job.get("reply_failure_case_ids")
             )
             else "completed"
         )
+        if terminal_status == "failed":
+            job["phase"] = "Stopped at Case"
         await _record_account_rerun_terminal_audit(
             job,
             event_type=(
@@ -7695,17 +8452,31 @@ async def _persist_account_processing_failure(
     now = now_iso()
     incident_id = f"account-processing:{case_id or ticket_id or 'unknown'}:{failure.stage}:{failure.code}"
     reason_code = f"account_processing_{failure.code}"[:160]
+    registered_automation = is_registered_automation(
+        route_family=str(case.get("route_family") or ""),
+        execution_action=str(
+            case.get("execution_action") or case.get("route") or ""
+        ),
+    )
+    if registered_automation:
+        case.update(
+            reconcile_automation_execution_failure(
+                case,
+                reason_code=reason_code,
+                context={
+                    "policy_decision": "account_processing_failure_human_review",
+                    "failure_stage": failure.stage,
+                    "failure_code": failure.code,
+                    "failure_attempt_count": 4,
+                    "failure_incident_id": incident_id,
+                },
+            )
+        )
     case.update(
         {
             "account_case_id": case_id or None,
             "billing_ticket_id": case.get("billing_ticket_id") or case_id or None,
             "client_ticket_id": ticket_id or None,
-            "automation_status": "human_review_required",
-            "execution_reason_code": reason_code,
-            "internal_email_send_status": "not_applicable",
-            "internal_email_send_reason": reason_code,
-            "customer_reply": None,
-            "missing_fields": [],
             "failure_stage": failure.stage,
             "failure_code": failure.code,
             "failure_attempt_count": 4,
@@ -7714,10 +8485,24 @@ async def _persist_account_processing_failure(
             "policy_decision": "account_processing_failure_human_review",
         }
     )
+    if not registered_automation:
+        case.update(
+            {
+                "automation_status": "human_review_required",
+                "execution_reason_code": reason_code,
+                "internal_email_send_status": "not_applicable",
+                "internal_email_send_reason": reason_code,
+                "customer_reply": None,
+                "missing_fields": [],
+            }
+        )
     classification = dict(case.get("route_classification") or {})
     classification.update(
         {
             "handler_binding_status": "human_review",
+            "failure_stage": failure.stage,
+            "failure_code": failure.code,
+            "failure_incident_id": incident_id,
             "execution_reason_code": reason_code,
             "account_processing_failure": {
                 "incident_id": incident_id,
@@ -8393,11 +9178,16 @@ async def _reply_to_billing_ticket_impl(
         }.get(active_handler)
         if send_attempt is None:
             raise HTTPException(status_code=409, detail="account case has no registered automation sender")
-        internal_email_send_status, internal_email_send_reason = await send_attempt(automation_attempt)
-        billing_ticket["internal_email_send_status"] = internal_email_send_status
-        billing_ticket["internal_email_send_reason"] = internal_email_send_reason
-        billing_ticket["internal_email_payload"] = dict(automation_attempt["internal_email_to_send"])
-        if internal_email_send_status == "sent":
+        delivery_result, billing_ticket = await _run_account_internal_email_delivery(
+            account_case=billing_ticket,
+            ticket_id=client_ticket_id,
+            handler=active_handler,
+            payload=dict(automation_attempt["internal_email_to_send"]),
+            sender=send_attempt,
+        )
+        internal_email_send_status = delivery_result.status
+        internal_email_send_reason = delivery_result.reason
+        if delivery_result.succeeded:
             assistant_reply_facts = _automation_reply_facts(
                 handler=active_handler or "billing",
                 action=str(billing_ticket.get("execution_action") or billing_ticket.get("route") or active_handler),
@@ -8408,33 +9198,45 @@ async def _reply_to_billing_ticket_impl(
                 account_scope=True,
             )
             reply_ready = True
+        else:
+            reply_ready = False
         billing_ticket["updated_at"] = now_iso()
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
     reply_job = None
     if automation_attempt is not None and (requested_field_keys or reply_ready):
-        reply_job = await async_to_thread(
-            _create_account_reply_job,
-            ticket_id=client_ticket_id,
-            trigger_message_created_at=timestamp,
-            draft_content="",
-            reply_facts=assistant_reply_facts,
-            asked_field_keys=requested_field_keys,
-            persona_assignment=persona_assignment,
-            automation_delivery_key=(
-                str((billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or "")
-                if not requested_field_keys
-                else None
-            ),
-        )
-        if (
-            str(billing_ticket.get("automation_handler") or "").strip() in {"enablement", "quota"}
-            and str(billing_ticket.get("internal_email_send_status") or "").strip() == "sent"
-            and isinstance(billing_ticket.get("internal_email_payload"), dict)
-        ):
-            billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
-            billing_ticket["updated_at"] = now_iso()
-            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        try:
+            reply_job = await async_to_thread(
+                _create_account_reply_job,
+                ticket_id=client_ticket_id,
+                trigger_message_created_at=timestamp,
+                draft_content="",
+                reply_facts=assistant_reply_facts,
+                asked_field_keys=requested_field_keys,
+                persona_assignment=persona_assignment,
+                automation_delivery_key=(
+                    str((billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or "")
+                    if not requested_field_keys
+                    else None
+                ),
+            )
+        except Exception as exc:
+            billing_ticket = await _record_account_reply_job_failure(
+                account_case=billing_ticket,
+                ticket_id=client_ticket_id,
+                handler=str(billing_ticket.get("automation_handler") or "automation"),
+                detail=exc,
+            )
+            reply_job = None
+        else:
+            if (
+                str(billing_ticket.get("automation_handler") or "").strip() in {"enablement", "quota"}
+                and str(billing_ticket.get("internal_email_send_status") or "").strip() == "sent"
+                and isinstance(billing_ticket.get("internal_email_payload"), dict)
+            ):
+                billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
+                billing_ticket["updated_at"] = now_iso()
+                await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
     # Return refreshed detail view.
     view_model = _build_account_ticket_view_model(billing_ticket)
