@@ -340,6 +340,220 @@ class AccountRerunSyntheticBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["reply"]["status"], "scheduled")
         self.assertEqual(second["reply"]["status"], "already_scheduled")
 
+    async def test_reply_resume_recognizes_reply_created_by_parent_rerun(self) -> None:
+        ticket_id = "SYNTH-PARENT-RESUME"
+        case_id = "AC-SYNTH-PARENT-RESUME"
+        self.repository.save_ticket({
+            "ticket_id": ticket_id,
+            "customer_id": "synthetic@example.invalid",
+            "subject": "Synthetic quota",
+            "status": "open",
+            "messages": [{
+                "role": "customer",
+                "content": "Please increase quota.",
+                "created_at": "2026-08-12T00:00:00+00:00",
+            }],
+        })
+        self.repository.save_account_case({
+            "account_case_id": case_id,
+            "billing_ticket_id": case_id,
+            "client_ticket_id": ticket_id,
+            "route": "quota",
+            "execution_action": "quota",
+            "route_family": "automated",
+            "route_status": "automated",
+            "automation_handler": "quota",
+            "automation_context": {"rerun_job_id": "parent-rerun"},
+        })
+        self.repository.save_account_reply_job({
+            "job_id": "reply-from-parent",
+            "ticket_id": ticket_id,
+            "trigger_message_created_at": "2026-08-12T00:00:00+00:00",
+            "status": "scheduled",
+            "payload": {"rerun_job_id": "parent-rerun"},
+        })
+
+        with patch.object(main, "_create_account_reply_job", wraps=main._create_account_reply_job) as create_reply:
+            result = await main._run_account_rerun_post_commit_side_effects(
+                case_id,
+                rerun_job_id="resume-rerun",
+                reply_kind=None,
+                retry_mode="reply",
+                delivery_job_id="parent-rerun",
+            )
+
+        self.assertEqual(result["reply"]["status"], "already_scheduled")
+        self.assertEqual(result["reply"]["reply_job"]["job_id"], "reply-from-parent")
+        create_reply.assert_not_called()
+
+    async def test_persona_preparation_failure_stops_before_next_case(self) -> None:
+        case_ids = self._seed_cases(2)
+
+        def process(account_case, **_kwargs):
+            updated = dict(account_case)
+            updated.update(
+                route="quota",
+                execution_action="quota",
+                route_family="automated",
+                route_status="automated",
+                automation_handler="quota",
+                missing_fields=["requested_quota"],
+                collected_fields={},
+                route_classification={
+                    "primary_label": "Agora",
+                    "secondary_label": "Account / Quota",
+                },
+            )
+            return SimpleNamespace(
+                account_case=updated,
+                route_execution={
+                    "ticket_id": str(updated["client_ticket_id"]),
+                    "classification": dict(updated["route_classification"]),
+                },
+                changed=True,
+                handler_status="completed",
+                internal_email_to_send=None,
+                email_handler=None,
+                customer_reply="",
+                reply_kind="field_follow_up",
+                asked_field_keys=("requested_quota",),
+            )
+
+        queued = await main._enqueue_account_rerun_job(
+            SimpleNamespace(add_task=lambda *args: None),
+            target_case_ids=case_ids,
+            scope_override="all_cases",
+            idempotency_key="synthetic-persona-fail-fast",
+            request_scope="test:synthetic-persona-fail-fast",
+        )
+        processor = Mock(side_effect=process)
+        preparation_failure = main._AccountRerunSideEffectError(
+            "automation_persona",
+            RuntimeError("automation_persona_generation_failed"),
+            code="automation_persona_generation_failed",
+        )
+        with patch.object(main, "reprocess_account_case", processor), patch.object(
+            main,
+            "_wait_for_account_rerun_reply_preparation",
+            side_effect=preparation_failure,
+        ) as wait_for_preparation, patch.object(
+            main,
+            "_notify_account_rerun_failure",
+            new=AsyncMock(return_value="sent"),
+        ):
+            await main._run_account_full_reroute_job(str(queued["job_id"]))
+
+        stored = self.repository.get_account_reroute_job(str(queued["job_id"]))
+        assert stored is not None
+        self.assertEqual(processor.call_count, 1)
+        wait_for_preparation.assert_awaited_once()
+        self.assertEqual(stored["status"], "failed")
+        self.assertEqual(stored["failed_case_id"], case_ids[0])
+        self.assertEqual(stored["failed_stage"], "automation_persona")
+        self.assertEqual(
+            stored["failed_reason_code"],
+            "automation_persona_generation_failed",
+        )
+        self.assertEqual(stored["remaining"], 1)
+
+    async def test_shutdown_during_persona_preparation_releases_reply_checkpoint(self) -> None:
+        case_ids = self._seed_cases(1)
+
+        def process(account_case, **_kwargs):
+            updated = dict(account_case)
+            updated.update(
+                route="quota",
+                execution_action="quota",
+                route_family="automated",
+                route_status="automated",
+                automation_handler="quota",
+                missing_fields=["requested_quota"],
+                collected_fields={},
+                route_classification={
+                    "primary_label": "Agora",
+                    "secondary_label": "Account / Quota",
+                },
+            )
+            return SimpleNamespace(
+                account_case=updated,
+                route_execution={"ticket_id": str(updated["client_ticket_id"]), "classification": {}},
+                changed=True,
+                handler_status="completed",
+                internal_email_to_send=None,
+                email_handler=None,
+                customer_reply="",
+                reply_kind="field_follow_up",
+                asked_field_keys=("requested_quota",),
+            )
+
+        queued = await main._enqueue_account_rerun_job(
+            SimpleNamespace(add_task=lambda *args: None),
+            target_case_ids=case_ids,
+            scope_override="all_cases",
+            idempotency_key="synthetic-persona-shutdown",
+            request_scope="test:synthetic-persona-shutdown",
+        )
+        with patch.object(main, "reprocess_account_case", side_effect=process), patch.object(
+            main,
+            "_wait_for_account_rerun_reply_preparation",
+            side_effect=main._AccountRerunShutdownRequested(),
+        ):
+            await main._run_account_full_reroute_job(str(queued["job_id"]))
+
+        stored = self.repository.get_account_reroute_job(str(queued["job_id"]))
+        assert stored is not None
+        self.assertEqual(stored["status"], "queued")
+        self.assertEqual(stored["failed"], 0)
+        self.assertEqual(stored["succeeded"], 0)
+        self.assertEqual(stored["completed_case_ids"], [])
+        self.assertEqual(stored["retry_case_modes"], {case_ids[0]: "reply"})
+        self.assertTrue(stored["reply_job_ids"])
+
+    async def test_execution_failure_incident_identity_is_per_job(self) -> None:
+        account_case = {
+            "account_case_id": "AC-INCIDENT",
+            "billing_ticket_id": "AC-INCIDENT",
+            "client_ticket_id": "TK-INCIDENT",
+            "updated_at": "2026-08-12T00:00:00+00:00",
+            "route_family": "automated",
+            "route_status": "automated",
+            "automation_handler": "quota",
+        }
+        self.repository.save_ticket({"ticket_id": "TK-INCIDENT", "messages": []})
+        self.repository.save_account_case(account_case)
+        with patch.object(
+            main,
+            "notify_account_failure",
+            return_value={"status": "sent"},
+        ):
+            first = await main._record_account_execution_failure(
+                account_case=account_case,
+                ticket_id="TK-INCIDENT",
+                handler="quota",
+                stage="reply_job",
+                reason_code="account_reply_job_creation_failed",
+                job_id="reply-job-1",
+            )
+            second = await main._record_account_execution_failure(
+                account_case=account_case,
+                ticket_id="TK-INCIDENT",
+                handler="quota",
+                stage="reply_job",
+                reason_code="account_reply_job_creation_failed",
+                job_id="reply-job-2",
+            )
+            repeated = await main._record_account_execution_failure(
+                account_case=account_case,
+                ticket_id="TK-INCIDENT",
+                handler="quota",
+                stage="reply_job",
+                reason_code="account_reply_job_creation_failed",
+                job_id="reply-job-2",
+            )
+
+        self.assertNotEqual(first["failure_incident_id"], second["failure_incident_id"])
+        self.assertEqual(second["failure_incident_id"], repeated["failure_incident_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

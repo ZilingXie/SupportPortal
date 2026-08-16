@@ -709,6 +709,35 @@ CREATE INDEX IF NOT EXISTS idx_support_ticket_agent_events_ticket_created
 CREATE INDEX IF NOT EXISTS idx_support_account_cases_created
     ON support_account_cases (created_at DESC);
 
+CREATE TABLE IF NOT EXISTS support_account_case_comments (
+    account_case_id TEXT NOT NULL REFERENCES support_account_cases(account_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    zendesk_comment_id TEXT NOT NULL,
+    is_public BOOLEAN NOT NULL,
+    is_initial BOOLEAN NOT NULL DEFAULT FALSE,
+    author_id TEXT,
+    author_name TEXT,
+    author_kind TEXT NOT NULL DEFAULT 'unknown',
+    body TEXT NOT NULL,
+    via_channel TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    synced_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (client_ticket_id, zendesk_comment_id)
+);
+
+CREATE TABLE IF NOT EXISTS support_account_case_comment_sync_state (
+    client_ticket_id TEXT PRIMARY KEY REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    account_case_id TEXT NOT NULL UNIQUE REFERENCES support_account_cases(account_case_id) ON DELETE CASCADE,
+    source_updated_at TIMESTAMPTZ NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    comments_revision TEXT NOT NULL,
+    comment_count INTEGER NOT NULL DEFAULT 0,
+    synced_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_account_case_comments_created
+    ON support_account_case_comments (account_case_id, created_at ASC, zendesk_comment_id ASC);
+
 CREATE INDEX IF NOT EXISTS idx_support_billing_response_tokens_ticket
     ON support_billing_response_tokens (billing_ticket_id, created_at DESC);
 

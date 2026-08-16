@@ -387,6 +387,9 @@
 14. Full/single rerun 完成摘要必须始终显示本次清除的 Persona assignment 数量，包括 `0`；该计数是 reset 结果，不得被表达成新 Persona 已成功选择。Persona detail 行与 badge 在 1440px、768px、390px 视口均须换行收敛，不得造成页面级横向溢出。
 
 15. Admin Automated Cases 复用 `/account` 的 Source 规则：有效 Zendesk Source 在列表中只显示为 `zen#<ticket_id>` 的新窗口链接；Ticket ID 始终以 Source URL 为准，不根据内部 Case ID 推断。非 Zendesk Source 保持静态文本展示，不在 Source 列重复显示内部 Account Case ID。
+16. `/account` 的 Account Case 读取、详情、回复、route correction、review 和 rerun API 只允许 Workspace Admin；n8n 的 intake 入口继续保持现有调用契约，Zendesk comment sync 使用独立的 `X-Zendesk-Account-Sync-Token`。
+17. Zendesk comment sync 先做 Account Case membership check，再 PUT 完整 comments snapshot；snapshot 不完整、缺少已存 comment 或时间戳过旧时不得覆盖现有 projection。同步事件只记录状态、计数和来源时间，不记录正文、姓名、邮箱或 token。
+18. Conversation 时间线固定按 `CUSTOMER REQUEST`、`AI REPLY`、Zendesk comments 展示。Zendesk public comment 使用 `CUSTOMER · PUBLIC` 或 `AGENT · PUBLIC` 标签，internal comment 使用带锁图标的 `INTERNAL NOTE` 标签；public/internal 必须同时使用不同气泡颜色和文字语义，不能只依赖颜色。Zendesk comment projection 独立于 AI messages，rerun 清除 AI 回复状态时不得删除 Zendesk comments。
 
 ### 6.9 Internal Automation Email Handoff
 1. Fraud Account、Account Verification、Detailed Invoice、Enablement、Quota 的内部 handoff 邮件必须复用统一的 `Internal Automation Email` 模板；Workspace Invitation 属于用户外发邮件，不使用该模板。

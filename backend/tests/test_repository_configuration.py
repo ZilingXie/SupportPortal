@@ -584,7 +584,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
         ):
             bundles = repository.get_account_case_details(["unassigned", "assigned"])
 
-        self.assertEqual(len(cursor.executed), 1)
+        # Detail loading uses one message query plus separate comments and
+        # sync-state projections so comments never multiply AI messages.
+        self.assertEqual(len(cursor.executed), 3)
         self.assertNotEqual(
             bundles["unassigned"]["detail_revision"],
             bundles["assigned"]["detail_revision"],
@@ -595,6 +597,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("support_account_personas", query)
         self.assertNotIn("support_account_prompt_versions", query)
         self.assertNotIn("persona_row.enabled", query)
+        self.assertIn("support_account_case_comments", cursor.executed[1][0][0].as_string())
+        self.assertIn("support_account_case_comment_sync_state", cursor.executed[2][0][0].as_string())
 
     def test_postgres_account_list_revisions_use_assignment_in_single_page_queries(self) -> None:
         assignment = {
