@@ -13,6 +13,7 @@ import backend.main as main
 from backend.repositories.ticket_repository import ACCOUNT_RERUN_RESET_AI_ONLY, InMemoryTicketRepository
 from backend.services.account_zendesk_comments import (
     ZendeskCommentSnapshotError,
+    author_is_agent,
     normalize_snapshot,
 )
 
@@ -94,7 +95,45 @@ class AccountZendeskCommentSyncTests(unittest.TestCase):
         self.assertFalse(snapshot.comments[1].is_public)
         self.assertEqual(snapshot.comments[0].author_kind, "customer")
         self.assertEqual(snapshot.comments[1].author_kind, "agent")
+        self.assertIs(author_is_agent(snapshot.comments[0].author_kind), False)
+        self.assertIs(author_is_agent(snapshot.comments[1].author_kind), True)
         self.assertEqual(snapshot.comments[0].via_channel, "email")
+
+    def test_author_is_agent_can_supply_identity_when_role_is_missing(self) -> None:
+        snapshot = normalize_snapshot(
+            snapshot_payload(
+                {
+                    "id": "agent-flag",
+                    "public": True,
+                    "author": {"id": "7", "name": "Support", "is_agent": True},
+                    "body": "Agent reply",
+                    "created_at": "2026-08-16T01:20:00Z",
+                },
+                {
+                    "id": "customer-flag",
+                    "public": True,
+                    "author": {"id": "8", "name": "Customer", "is_staff": False},
+                    "body": "Customer reply",
+                    "created_at": "2026-08-16T01:21:00Z",
+                },
+            )
+        )
+
+        self.assertEqual([comment.author_kind for comment in snapshot.comments], ["agent", "customer"])
+
+    def test_conflicting_author_role_and_is_agent_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ZendeskCommentSnapshotError, "author role conflicts"):
+            normalize_snapshot(
+                snapshot_payload(
+                    {
+                        "id": "conflict",
+                        "public": True,
+                        "author": {"role": "end-user", "is_agent": True},
+                        "body": "Conflicting identity",
+                        "created_at": "2026-08-16T01:20:00Z",
+                    }
+                )
+            )
 
     def test_duplicate_comment_id_is_rejected(self) -> None:
         with self.assertRaisesRegex(ZendeskCommentSnapshotError, "duplicate Zendesk comment id"):
@@ -140,6 +179,8 @@ class AccountZendeskCommentSyncTests(unittest.TestCase):
         self.assertEqual(first["status"], "synced")
         self.assertEqual(second["status"], "unchanged")
         self.assertEqual(len(self.repository.get_account_case_comments(self.ticket_id)), 2)
+        comments = self.repository.get_account_case_comments(self.ticket_id)
+        self.assertEqual([comment["is_agent"] for comment in comments], [False, True])
 
         self.repository.reset_account_rerun_state(
             self.ticket_id,
@@ -271,6 +312,7 @@ class AccountZendeskCommentIntegrationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["status"], "synced")
         self.assertEqual(response.json()["comment_count"], 1)
+        self.assertEqual(response.json()["unresolved_author_count"], 1)
 
     def test_non_account_ticket_returns_false_without_querying_comments(self) -> None:
         self.repository.save_ticket({"ticket_id": "12621", "messages": []})

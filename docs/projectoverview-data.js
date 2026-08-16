@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 1,
-  "generated_at": "2026-08-16T12:21:46Z",
-  "source_base_commit": "924e3dec99a8493fb1f006d561268bffc57fbf21",
-  "registry_digest": "cbebc82f432761d9f894d0df66454910cca37642cc03b4052cb7977bc00996a0",
+  "generated_at": "2026-08-16T13:32:46Z",
+  "source_base_commit": "f007a0a20eb48b0e7e46014d4ac705e49483f891",
+  "registry_digest": "2820c7d61340993b65ebb47da68703607a4839ab1b257eb78b9c322a1f1613db",
   "project": {
     "schema_version": 1,
     "project_id": "supportportal",
@@ -3157,6 +3157,50 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        }
+      ],
+      "legacy_refs": []
+    },
+    {
+      "schema_version": 1,
+      "task_id": "zendesk-account-comment-identity",
+      "title": "补齐 Zendesk Account 评论作者身份与 Support Engineer/Customer 展示。",
+      "topic_id": "account-automation",
+      "related_topic_ids": [],
+      "milestone_id": "phase-2-controlled-validation",
+      "status": "active",
+      "priority": "unclassified",
+      "owner": "zac",
+      "summary": "通过 Zendesk users side-load 补齐评论作者姓名和身份，并在 Account 中派生 is_agent。",
+      "next_action": "将 include=users 的 comment-sync workflow 部署到 n8n，并完成公网 Case 验收。",
+      "acceptance_criteria": [
+        "Account Zendesk comments 保存作者姓名和 author_kind，并派生 is_agent；public customer、public Support Engineer、internal note 和未知作者均有明确展示。",
+        "N8n 完整评论快照按 author_id 合并 Zendesk users，重放保持幂等，无法确认身份时不得静默标记为 Agent。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
+          "command": "uv run --with-requirements requirements.base.txt python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_ui_contract"
+        },
+        {
+          "type": "test",
+          "label": "Python, frontend and N8n Code syntax checks",
+          "command": "python3 -m py_compile backend/main.py backend/services/account_zendesk_comments.py backend/repositories/ticket_repository.py; node --check ui/account-ui/app.js"
+        }
+      ],
+      "source_refs": [
+        "docs/integrations/n8n/zendesk_account_comment_sync.md",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "created",
+          "summary": "为 Zendesk Account comment sync 作者身份增强建立 Project Task。"
         }
       ],
       "legacy_refs": []
