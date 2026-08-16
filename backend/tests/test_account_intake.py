@@ -4839,7 +4839,14 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(single.status_code, 200, single.text)
         self.assertEqual(batch.status_code, 200, batch.text)
-        self.assertEqual(batch.json()["details"], [single.json()])
+        single_payload = single.json()
+        batch_payload = batch.json()["details"][0]
+        self.assertEqual(
+            {key: value for key, value in batch_payload.items() if key not in {"zendesk_comments", "zendesk_comments_included"}},
+            {key: value for key, value in single_payload.items() if key not in {"zendesk_comments", "zendesk_comments_included"}},
+        )
+        self.assertFalse(batch_payload["zendesk_comments_included"])
+        self.assertTrue(single_payload["zendesk_comments_included"])
 
     def test_account_case_revision_tracks_persona_assignment_identity(self) -> None:
         ticket_id = "TK-PERSONA-REVISION"

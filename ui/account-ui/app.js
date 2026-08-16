@@ -149,6 +149,7 @@ let currentAccount = readStorage(ACCOUNT_ACCOUNT_KEY, null);
 let composerRuntime = null;
 let isFetchingRouteErrorSummary = false;
 let replyPollTimer = null;
+let commentPollTimer = null;
 let reroutePollTimer = null;
 let summaryRequestController = null;
 let caseSearchRequestController = null;
@@ -216,6 +217,12 @@ function authRequestInit(options = {}) {
   const headers = { ...(options.headers || {}) };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   return { ...options, headers };
+}
+
+async function accountFetch(url, options = {}) {
+  const response = await fetch(url, authRequestInit(options));
+  handleAccountAuthFailure(response);
+  return response;
 }
 
 function clearAccountAuth() {
@@ -608,6 +615,37 @@ function updateReplyPolling() {
   }, 12000);
 }
 
+function updateCommentPolling() {
+  if (commentPollTimer) {
+    window.clearTimeout(commentPollTimer);
+    commentPollTimer = null;
+  }
+  const item = state.activeItem;
+  if (!state.authenticated || state.view !== "detail" || !item) return;
+  commentPollTimer = window.setTimeout(async () => {
+    if (document.hidden || state.view !== "detail" || !state.activeItem) {
+      updateCommentPolling();
+      return;
+    }
+    const ticketId = accountCaseIdentifier(state.activeItem);
+    const previousRevision = String(state.activeItem.conversation_revision || "");
+    const detail = ticketId
+      ? await fetchTicketDetail(ticketId, { force: true, requireZendeskComments: true })
+      : null;
+    if (
+      detail
+      && state.view === "detail"
+      && accountCaseIdentifier(state.activeItem) === ticketId
+      && String(detail.conversation_revision || "") !== previousRevision
+    ) {
+      state.activeItem = detail;
+      render();
+      return;
+    }
+    updateCommentPolling();
+  }, 20000);
+}
+
 function accountCaseIdentifier(item) {
   return String(item?.account_case_id || item?.billing_ticket_id || item?.ticket_id || item?.client_ticket_id || "").trim();
 }
@@ -780,13 +818,13 @@ function prefetchTicketDetails(items) {
 
   const controller = new AbortController();
   detailRequestControllers.add(controller);
-  const batchPromise = fetch("/api/account/cases/batch-details", authRequestInit({
+  const batchPromise = accountFetch("/api/account/cases/batch-details", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ case_ids: caseIds }),
     cache: "no-store",
     signal: controller.signal,
-  }))
+  })
     .then(async (response) => {
       if (handleAccountAuthFailure(response)) return [];
       if (!response.ok) throw new Error("Could not preload Account Case details.");
@@ -848,8 +886,7 @@ async function fetchTickets({ force = false, renderOnUpdate = false } = {}) {
   }
 
   try {
-    const response = await fetch(buildTicketListUrl(), authRequestInit({ cache: "no-store", signal: controller.signal }));
-    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
+    const response = await accountFetch(buildTicketListUrl(), { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error("Could not load Account Cases.");
     const data = await response.json();
     if (generation !== summaryRequestGeneration || cacheKey !== currentSummaryKey()) return;
@@ -936,10 +973,9 @@ async function fetchRerouteJob(jobId, { refreshCasesOnCompletion = false } = {})
   if (!normalizedJobId) return fetchLatestRerouteJob({ refreshCasesOnCompletion });
   const wasActive = isActiveRerouteJob();
   try {
-    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`, authRequestInit({
+    const response = await accountFetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`, {
       cache: "no-store",
-    }));
-    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
+    });
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       throw new Error(responseErrorMessage(payload, "Could not load rerun status."));
@@ -965,8 +1001,7 @@ async function fetchRerouteJob(jobId, { refreshCasesOnCompletion = false } = {})
 async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) {
   const wasActive = isActiveRerouteJob();
   try {
-    const response = await fetch("/api/account/rerun-jobs/latest", authRequestInit());
-    if (handleAccountAuthFailure(response)) return;
+    const response = await accountFetch("/api/account/rerun-jobs/latest");
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       throw new Error(responseErrorMessage(payload, "Could not load rerun status."));
@@ -1008,12 +1043,7 @@ async function startFullReroute() {
   state.rerouteError = "";
   render();
   try {
-    const requestHeaders = {};
-    if (typeof accessToken === "string" && accessToken) {
-      requestHeaders.Authorization = `Bearer ${accessToken}`;
-    }
-    const response = await fetch("/api/account/rerun-jobs", { method: "POST", headers: requestHeaders });
-    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
+    const response = await accountFetch("/api/account/rerun-jobs", { method: "POST" });
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
@@ -1046,11 +1076,10 @@ async function resumeRerouteJob() {
   state.rerouteError = "";
   render();
   try {
-    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume`, authRequestInit({
+    const response = await accountFetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume`, {
       method: "POST",
       cache: "no-store",
-    }));
-    if (handleAccountAuthFailure(response)) return;
+    });
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
@@ -1079,16 +1108,11 @@ async function startSingleCaseRerun() {
   state.rerouteError = "";
   render();
   try {
-    const requestHeaders = { "Idempotency-Key": snapshot.idempotencyKey };
-    if (typeof accessToken === "string" && accessToken) {
-      requestHeaders.Authorization = `Bearer ${accessToken}`;
-    }
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
+    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
       method: "POST",
       cache: "no-store",
-      headers: requestHeaders,
+      headers: { "Idempotency-Key": snapshot.idempotencyKey },
     });
-    if (typeof handleAccountAuthFailure === "function" && handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
@@ -1116,22 +1140,26 @@ async function startSingleCaseRerun() {
   }
 }
 
-async function fetchTicketDetail(ticketId, { force = false } = {}) {
+async function fetchTicketDetail(ticketId, { force = false, requireZendeskComments = false } = {}) {
   const summary = state.history.find((item) => accountCaseAliases(item).has(String(ticketId))) || null;
   const expectedRevision = String(summary?.detail_revision || "");
   const cached = !force ? findDetailCacheEntry(ticketId, expectedRevision) : null;
-  if (cached && Date.now() - cached.cachedAt < DETAIL_FRESH_MS) return cached.data;
+  const cacheHasComments = cached?.data?.zendesk_comments_included !== false;
+  if (
+    cached
+    && Date.now() - cached.cachedAt < DETAIL_FRESH_MS
+    && (!requireZendeskComments || cacheHasComments)
+  ) return cached.data;
   if (!force && detailInflight.has(ticketId)) return detailInflight.get(ticketId);
 
   const controller = new AbortController();
   detailRequestControllers.add(controller);
   const request = (async () => {
   try {
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketId)}`, authRequestInit({
+    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(ticketId)}`, {
       cache: "no-store",
       signal: controller.signal,
-    }));
-    if (handleAccountAuthFailure(response)) return null;
+    });
     if (!response.ok) return null;
     const detail = await response.json();
     cacheDetail(detail);
@@ -1165,11 +1193,10 @@ async function searchCaseByNumber(event) {
   state.caseSearchError = "";
   render();
   try {
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketNumber)}`, authRequestInit({
+    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(ticketNumber)}`, {
       cache: "no-store",
       signal: controller.signal,
-    }));
-    if (handleAccountAuthFailure(response)) return;
+    });
     const payload = await readResponsePayload(response);
     if (generation !== caseSearchGeneration) return;
     if (response.status === 404) {
@@ -1202,8 +1229,7 @@ async function fetchRouteErrorSummary() {
   if (isFetchingRouteErrorSummary) return;
   isFetchingRouteErrorSummary = true;
   try {
-    const response = await fetch("/api/account/route-errors/summary?limit=100", authRequestInit());
-    if (handleAccountAuthFailure(response)) return;
+    const response = await accountFetch("/api/account/route-errors/summary?limit=100");
     if (!response.ok) return;
     state.routeErrorSummary = await response.json();
   } catch {
@@ -1245,7 +1271,10 @@ async function openTicket(ticketId) {
   render();
 
   if (cached && Date.now() - cached.cachedAt < DETAIL_FRESH_MS) return;
-  const detail = await fetchTicketDetail(ticketId, { force: Boolean(cached) });
+  const detail = await fetchTicketDetail(ticketId, {
+    force: Boolean(cached),
+    requireZendeskComments: true,
+  });
   if (generation !== detailOpenGeneration) return;
   if (!detail) {
     state.detailLoading = false;
@@ -1290,7 +1319,7 @@ async function submitAccountIntake(event) {
   render();
 
   try {
-    const response = await fetch("/account", {
+    const response = await accountFetch("/account", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1587,31 +1616,76 @@ function renderMessageThread() {
   const item = state.activeItem;
   if (!item) return "";
   const messages = Array.isArray(item.messages) ? item.messages : [];
-  if (!messages.length) return "";
+  const zendeskComments = item.zendesk_comments_included === false
+    ? []
+    : (Array.isArray(item.zendesk_comments) ? item.zendesk_comments : []);
+  if (!messages.length && !zendeskComments.length) {
+    if (!item.zendesk_comment_sync) return "";
+    return `
+      <div class="message-thread">
+        <div class="detail-section-title">Conversation</div>
+        <p class="conversation-empty">No conversation messages have been stored yet.</p>
+      </div>
+    `;
+  }
+
+  const renderMessage = (msg) => {
+    const role = String(msg.role || "").toLowerCase();
+    const content = String(msg.content || "");
+    const isCustomer = role === "customer" || role === "user";
+    const isAi = role === "assistant" || role === "ai";
+    const bubbleClass = isCustomer ? "msg-bubble--customer" : "msg-bubble--assistant";
+    const rowClass = isCustomer ? "msg-row--customer" : "msg-row--assistant";
+    const label = isCustomer ? "CUSTOMER REQUEST" : isAi ? "AI REPLY" : "SUPPORT NOTE";
+    const timestamp = formatMessageTimestamp(msg.created_at);
+    const messageId = String(msg.message_id || msg.id || `${accountCaseIdentifier(item)}:${messages.indexOf(msg)}`);
+    return `
+      <div class="msg-row ${rowClass}">
+        <div class="msg-bubble ${bubbleClass}">
+          <div class="msg-header"><span class="msg-label">${escapeHtml(label)}</span><time datetime="${escapeHtml(msg.created_at || "")}">${escapeHtml(timestamp)}</time></div>
+          <div class="msg-content">${renderMarkdownMessage(content)}</div>
+          ${isAi ? renderZendeskInternalCommentAction(msg, messageId) : ""}
+        </div>
+      </div>
+    `;
+  };
+
+  const renderZendeskComment = (comment) => {
+    const isPublic = comment?.is_public !== false;
+    const authorKind = String(comment?.author_kind || "unknown").toLowerCase();
+    const isCustomer = authorKind === "customer";
+    const kindLabel = isPublic
+      ? (isCustomer ? "CUSTOMER · PUBLIC" : "AGENT · PUBLIC")
+      : "INTERNAL NOTE";
+    const bubbleClass = !isPublic
+      ? "msg-bubble--internal"
+      : isCustomer
+        ? "msg-bubble--zendesk-customer"
+        : "msg-bubble--zendesk-agent";
+    const rowClass = !isPublic || !isCustomer ? "msg-row--assistant" : "msg-row--customer";
+    const authorName = String(comment?.author_name || "").trim();
+    const authorMeta = authorName ? ` · ${escapeHtml(authorName)}` : "";
+    const timestamp = formatMessageTimestamp(comment?.created_at);
+    return `
+      <div class="msg-row ${rowClass} msg-row--zendesk ${!isPublic ? "msg-row--internal" : ""}">
+        <div class="msg-bubble ${bubbleClass}">
+          <div class="msg-header">
+            <span class="msg-label">${!isPublic ? '<span class="material-symbols-outlined msg-lock" aria-hidden="true">lock</span>' : ""}${escapeHtml(kindLabel)}${authorMeta}</span>
+            <time datetime="${escapeHtml(comment?.created_at || "")}">${escapeHtml(timestamp)}</time>
+          </div>
+          <div class="msg-content">${renderMarkdownMessage(comment?.body || "")}</div>
+        </div>
+      </div>
+    `;
+  };
 
   return `
     <div class="message-thread">
       <div class="detail-section-title">Conversation</div>
-      ${messages
-        .map((msg, index) => {
-          const role = String(msg.role || "").toLowerCase();
-          const content = String(msg.content || "");
-          const isCustomer = role === "customer" || role === "user";
-          const bubbleClass = isCustomer ? "msg-bubble--customer" : "msg-bubble--assistant";
-          const label = isCustomer ? "Customer" : "AI";
-          const timestamp = formatMessageTimestamp(msg.created_at);
-          const messageId = String(msg.message_id || msg.id || `${accountCaseIdentifier(item)}:${index}`);
-          return `
-        <div class="msg-row ${isCustomer ? "msg-row--customer" : "msg-row--assistant"}">
-          <div class="msg-bubble ${bubbleClass}">
-            <div class="msg-header"><span class="msg-label">${escapeHtml(label)}</span><time datetime="${escapeHtml(msg.created_at || "")}">${escapeHtml(timestamp)}</time></div>
-            <div class="msg-content">${renderMarkdownMessage(content)}</div>
-            ${!isCustomer && (role === "assistant" || role === "ai") ? renderZendeskInternalCommentAction(msg, messageId) : ""}
-          </div>
-        </div>
-      `;
-        })
-        .join("")}
+      ${messages.map(renderMessage).join("")}
+      ${zendeskComments.length
+        ? `<div class="zendesk-comments-divider"><span class="material-symbols-outlined" aria-hidden="true">forum</span><span>Zendesk comments</span><span class="zendesk-comments-count">${zendeskComments.length}</span></div>${zendeskComments.map(renderZendeskComment).join("")}`
+        : ""}
       ${renderAiReplyState(item)}
     </div>
   `;
@@ -1936,6 +2010,9 @@ function renderDetailView() {
               .join("")}</ul></div>`
           : ""
       }
+      ${item.zendesk_comment_sync
+        ? `<div class="zendesk-sync-meta" role="status"><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>Zendesk snapshot synced: ${escapeHtml(item.zendesk_comment_sync.comment_count ?? 0)} comments</span><time datetime="${escapeHtml(item.zendesk_comment_sync.synced_at || "")}">${escapeHtml(formatMessageTimestamp(item.zendesk_comment_sync.synced_at))}</time></div>`
+        : ""}
       ${renderMessageThread()}
       ${renderReplyComposer()}
     </div>
@@ -1967,12 +2044,11 @@ async function submitRouteCorrection() {
           execution_action: state.correctionAction,
           corrector: "operator",
         };
-    const response = await fetch(`/api/account/cases/${billingTicketId}/route-correction`, authRequestInit({
+    const response = await accountFetch(`/api/account/cases/${billingTicketId}/route-correction`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(correctionPayload),
-    }));
-    if (handleAccountAuthFailure(response)) return;
+    });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.detail || "Route correction failed.");
@@ -2004,15 +2080,14 @@ async function submitRouteReview(reviewStatus) {
 
   try {
     const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/cases/${billingTicketId}/route-review`, authRequestInit({
+    const response = await accountFetch(`/api/account/cases/${billingTicketId}/route-review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         review_status: reviewStatus,
         reviewer: "operator",
       }),
-    }));
-    if (handleAccountAuthFailure(response)) return;
+    });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.detail || "Route review failed.");
@@ -2047,12 +2122,11 @@ async function submitReply() {
 
   try {
     const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/cases/${billingTicketId}/reply`, authRequestInit({
+    const response = await accountFetch(`/api/account/cases/${billingTicketId}/reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
-    }));
-    if (handleAccountAuthFailure(response)) return;
+    });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.detail || "Message failed.");
@@ -2274,6 +2348,11 @@ function render() {
             Sign out
           </button>
         </div>
+        <div class="account-session">
+          <span class="material-symbols-outlined" aria-hidden="true">verified_user</span>
+          <span><strong>${escapeHtml(state.currentAccount?.display_name || state.currentAccount?.email || "Admin")}</strong><small>Admin workspace</small></span>
+          <button class="icon-button" type="button" data-action="account-sign-out" aria-label="Sign out"><span class="material-symbols-outlined">logout</span></button>
+        </div>
         ${renderRerouteStatus()}
         <div class="history-stack" id="history-list">
           ${renderHistorySidebar()}
@@ -2298,13 +2377,14 @@ function render() {
   `;
   bind();
   updateReplyPolling();
+  updateCommentPolling();
   updateReroutePolling();
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) {
-    if (!state.authenticated) return;
+  if (!document.hidden && state.authenticated) {
     updateReplyPolling();
+    updateCommentPolling();
     void fetchTickets({ force: true, renderOnUpdate: true });
     if (state.view === "detail" && state.activeItem) {
       const ticketId = accountCaseIdentifier(state.activeItem);
@@ -2337,6 +2417,7 @@ window.addEventListener("pagehide", () => {
   summaryRequestController?.abort();
   caseSearchRequestController?.abort();
   detailRequestControllers.forEach((controller) => controller.abort());
+  if (commentPollTimer) window.clearTimeout(commentPollTimer);
   summaryCache.clear();
   detailCache.clear();
   detailInflight.clear();
@@ -2359,7 +2440,7 @@ function bind() {
     });
     return;
   }
-  document.querySelectorAll("[data-action='account-signout']").forEach((el) => {
+  document.querySelectorAll("[data-action='account-signout'], [data-action='account-sign-out']").forEach((el) => {
     el.addEventListener("click", accountSignOut);
   });
   const caseSearchForm = document.querySelector("[data-case-search-form]");
