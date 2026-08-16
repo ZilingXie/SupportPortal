@@ -4170,6 +4170,127 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.record_event.assert_not_called()
         repository.publish_account_reply.assert_not_called()
 
+    def test_persona_failure_transitions_job_before_case_failure_cancels_pending_jobs(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket_id = "TK-PERSONA-ORDER"
+        case_id = "AC-TK-PERSONA-ORDER"
+        repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.invalid",
+                "subject": "Enable media relay",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable media relay.",
+                        "created_at": "2026-03-22T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        email_payload = {
+            "delivery_key": f"enablement:{case_id}:v1",
+            "subject": "[Enablement Request] Media Relay",
+        }
+        repository.save_account_case(
+            {
+                "account_case_id": case_id,
+                "billing_ticket_id": case_id,
+                "client_ticket_id": ticket_id,
+                "route": "enablement",
+                "category": "automation",
+                "subcategory": "enablement",
+                "route_family": "automated",
+                "route_status": "automated",
+                "automation_handler": "enablement",
+                "automation_status": "in_progress",
+                "internal_email_send_status": "sent",
+                "internal_email_send_reason": "sent",
+                "internal_email_payload": email_payload,
+                "route_classification": {
+                    "primary_label": "Agora",
+                    "secondary_label": "Backend Operation / Enablement",
+                    "handler_binding_status": "active",
+                },
+            }
+        )
+        job = {
+            "job_id": "account-reply-persona-order",
+            "ticket_id": ticket_id,
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "persona_publishing",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "submission_confirmation",
+                },
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        repository.save_account_reply_job(job)
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "render_automation_reply",
+            side_effect=worker.AutomationPersonaError("persona TLS failure"),
+        ), patch.object(worker, "notify_account_failure") as notify:
+            worker._publish_account_reply_job(job)
+
+        saved_job = repository.get_account_reply_job(job["job_id"])
+        saved_case = repository.get_account_case(case_id)
+        assert saved_job is not None
+        assert saved_case is not None
+        self.assertEqual(saved_job["status"], "manual_attention")
+        self.assertEqual(saved_job["payload"]["failure_stage"], "automation_persona")
+        self.assertEqual(
+            saved_job["payload"]["failure_code"],
+            "automation_persona_generation_failed",
+        )
+        self.assertEqual(saved_case["automation_status"], "human_review_required")
+        self.assertEqual(saved_case["internal_email_send_status"], "sent")
+        self.assertEqual(saved_case["internal_email_payload"], email_payload)
+        incident_id = notify.call_args.kwargs["incident_id"]
+        self.assertIn(job["job_id"], incident_id)
+
+    def test_reply_worker_exhaustion_persists_stable_operation_stage_and_code(self) -> None:
+        job = {
+            "job_id": "account-reply-exhausted",
+            "ticket_id": "TK-REPLY-EXHAUSTED",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "persona_preparing",
+            "attempt_count": 4,
+            "payload": {},
+        }
+        repository = Mock()
+        repository.claim_account_reply_jobs.return_value = [job]
+        repository.get_account_reply_job.return_value = copy.deepcopy(job)
+        repository.update_claimed_account_reply_job.side_effect = lambda saved, **_kwargs: saved
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_prepare_account_reply_job",
+            side_effect=RuntimeError("preparation exploded"),
+        ), patch.object(worker, "_record_account_worker_failure") as record_failure:
+            worker._process_claimed_account_reply_jobs(
+                from_status="persona_queued",
+                to_status="persona_preparing",
+                due_only=False,
+                limit=1,
+            )
+
+        saved_job = repository.update_claimed_account_reply_job.call_args.args[0]
+        self.assertEqual(saved_job["status"], "failed")
+        self.assertEqual(saved_job["payload"]["failure_stage"], "reply_prepare")
+        self.assertEqual(
+            saved_job["payload"]["failure_code"],
+            "account_reply_preparation_failed",
+        )
+        record_failure.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -891,6 +891,16 @@ async def _record_account_internal_email_failure(
         or account_case.get("billing_ticket_id")
         or ""
     ).strip()
+    delivery_key = str((result.payload or {}).get("delivery_key") or "").strip()
+    operation_identity = ":".join(
+        value
+        for value in (str(job_id or "").strip(), delivery_key)
+        if value
+    ) or str(account_case.get("updated_at") or "current").strip()
+    incident_id = (
+        f"account-automation:{account_case_id or ticket_id}:"
+        f"internal_email:{operation_identity}"
+    )
     delivery_case = dict(account_case)
     delivery_case["internal_email_payload"] = dict(result.payload or {}) or None
     delivery_case["internal_email_send_status"] = result.status
@@ -915,9 +925,7 @@ async def _record_account_internal_email_failure(
         {
             "failure_stage": "internal_email",
             "failure_code": failure_code,
-            "failure_incident_id": (
-                f"account-automation:{account_case_id or ticket_id}:internal_email"
-            ),
+            "failure_incident_id": incident_id,
         }
     )
     updated["route_classification"] = failure_classification
@@ -925,9 +933,7 @@ async def _record_account_internal_email_failure(
         {
             "failure_stage": "internal_email",
             "failure_code": failure_code,
-            "failure_incident_id": (
-                f"account-automation:{account_case_id or ticket_id}:internal_email"
-            ),
+            "failure_incident_id": incident_id,
             "alert_status": None,
             "updated_at": now_iso(),
         }
@@ -991,8 +997,20 @@ async def _record_account_execution_failure(
     ).strip()
     normalized_stage = str(stage or "execution").strip() or "execution"
     normalized_code = str(reason_code or "automation_execution_failed").strip()[:160]
+    automation_context = (
+        account_case.get("automation_context")
+        if isinstance(account_case.get("automation_context"), dict)
+        else {}
+    )
+    operation_identity = str(
+        job_id
+        or automation_context.get("rerun_job_id")
+        or account_case.get("updated_at")
+        or "current"
+    ).strip()
     incident_id = (
-        f"account-automation:{account_case_id or ticket_id}:{normalized_stage}"
+        f"account-automation:{account_case_id or ticket_id}:"
+        f"{normalized_stage}:{operation_identity}"
     )
     updated = reconcile_automation_execution_failure(
         dict(account_case),
@@ -5831,12 +5849,17 @@ class _AccountRerunSideEffectCompleted(Exception):
     """Internal control flow marker for a resume-only side-effect retry."""
 
 
+class _AccountRerunShutdownRequested(Exception):
+    """Release the current durable checkpoint without recording a Case failure."""
+
+
 class _AccountRerunSideEffectError(RuntimeError):
     """Preserve the exact post-Commit stage that must be resumed."""
 
-    def __init__(self, stage: str, error: Exception) -> None:
+    def __init__(self, stage: str, error: Exception, *, code: str | None = None) -> None:
         super().__init__(str(error))
         self.stage = str(stage or "commit").strip() or "commit"
+        self.code = str(code or "").strip() or None
 
 
 def _sanitize_account_rerun_error(value: Any, *, max_length: int = 240) -> str:
@@ -5857,7 +5880,15 @@ def _account_rerun_failure_retry_mode(stage: str, error: Any = "") -> str:
     lowered = str(error or "").lower()
     if normalized in {"email", "internal_email", "mail"}:
         return "email"
-    if normalized in {"reply", "reply_job", "reply_persistence"}:
+    if normalized in {
+        "reply",
+        "reply_job",
+        "reply_persistence",
+        "reply_prepare",
+        "reply_publish",
+        "automation_persona",
+        "persona",
+    }:
         return "reply"
     if "email" in lowered:
         return "email"
@@ -5998,11 +6029,22 @@ async def _resume_account_rerun_side_effect(
         existing = await _account_rerun_storage_call(ticket_repository.get_latest_account_reply_job, ticket_id)
         existing_payload = existing.get("payload") if isinstance(existing, dict) else {}
         existing_payload = existing_payload if isinstance(existing_payload, dict) else {}
+        automation_context = account_case.get("automation_context")
+        automation_context = automation_context if isinstance(automation_context, dict) else {}
+        accepted_rerun_job_ids = {
+            value
+            for value in (
+                str(rerun_job_id or "").strip(),
+                str(delivery_job_id or "").strip(),
+                str(automation_context.get("rerun_job_id") or "").strip(),
+            )
+            if value
+        }
         if (
             isinstance(existing, dict)
-            and str(existing_payload.get("rerun_job_id") or "").strip() == str(rerun_job_id or "").strip()
+            and str(existing_payload.get("rerun_job_id") or "").strip() in accepted_rerun_job_ids
             and str(existing.get("status") or "").strip().lower() in {
-            "published", "manual_attention", "scheduled", "pending", "processing",
+            "published", "scheduled", "pending", "processing",
             "queued", "persona_queued", "persona_preparing", "persona_scheduled",
             "persona_v8_queued", "persona_v8_preparing", "persona_v8_scheduled",
             }
@@ -6641,6 +6683,7 @@ async def _enqueue_account_rerun_job(
         "reply_jobs_failed": 0,
         "reply_jobs_cancelled": 0,
         "reply_cancelled_case_ids": [],
+        "reply_failure_case_ids": [],
         "reply_wait_timed_out": False,
         "wait_for_replies": True,
         "completed_case_ids": [],
@@ -6825,6 +6868,152 @@ def _account_rerun_reply_wait_timeout_seconds() -> float:
     return max(30.0, _safe_float_env("ACCOUNT_RERUN_REPLY_WAIT_TIMEOUT_SECONDS", 900.0))
 
 
+def _account_rerun_reply_failure_details(reply_job: dict[str, Any]) -> dict[str, str] | None:
+    status = str(reply_job.get("status") or "").strip().lower()
+    if status not in {"manual_attention", "failed", "cancelled"}:
+        return None
+    payload = reply_job.get("payload") if isinstance(reply_job.get("payload"), dict) else {}
+    failure_stage = str(payload.get("failure_stage") or "").strip()
+    failure_code = str(payload.get("failure_code") or "").strip()
+    cancel_reason = str(payload.get("cancel_reason") or "").strip()
+    reason = str(payload.get("error") or cancel_reason or "").strip()
+    if status == "manual_attention" and not failure_stage:
+        failure_stage = (
+            "automation_persona"
+            if str(payload.get("persona_render_status") or "").strip() == "human_review"
+            else "reply_prepare"
+        )
+    if status in {"failed", "cancelled"} and not failure_stage:
+        failure_stage = "reply_publish"
+    if status == "cancelled" and cancel_reason and not failure_code:
+        failure_code = cancel_reason
+    if not failure_code:
+        failure_code = {
+            "manual_attention": "account_reply_manual_attention",
+            "failed": "account_reply_failed",
+            "cancelled": "reply_job_cancelled_without_reason",
+        }[status]
+    if not reason:
+        reason = failure_code
+    return {
+        "stage": failure_stage or "reply_publish",
+        "code": failure_code,
+        "detail": f"{failure_code}: {reason}" if reason != failure_code else reason,
+    }
+
+
+async def _wait_for_account_rerun_reply_preparation(
+    reply_job_id: str,
+    *,
+    stop_event: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Wait for Persona preparation, without waiting for scheduled publication."""
+    deadline = time.monotonic() + _account_rerun_reply_wait_timeout_seconds()
+    successful_statuses = {"scheduled", "persona_scheduled", "persona_v8_scheduled", "published"}
+    while True:
+        reply_job = await _account_rerun_storage_call(
+            ticket_repository.get_account_reply_job,
+            reply_job_id,
+        )
+        if not isinstance(reply_job, dict):
+            raise _AccountRerunSideEffectError(
+                "reply_prepare",
+                ValueError("account reply job disappeared during Persona preparation"),
+                code="account_reply_job_missing",
+            )
+        status = str(reply_job.get("status") or "").strip().lower()
+        if status in successful_statuses:
+            return reply_job
+        failure = _account_rerun_reply_failure_details(reply_job)
+        if failure is not None:
+            raise _AccountRerunSideEffectError(
+                failure["stage"],
+                RuntimeError(failure["detail"]),
+                code=failure["code"],
+            )
+        if time.monotonic() >= deadline:
+            raise _AccountRerunSideEffectError(
+                "reply_prepare",
+                TimeoutError("account reply Persona preparation timed out"),
+                code="account_reply_preparation_timed_out",
+            )
+        if stop_event is None:
+            await asyncio.sleep(ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS)
+        elif await _account_reroute_sync_call(
+            stop_event.wait,
+            ACCOUNT_REROUTE_REPLY_POLL_INTERVAL_SECONDS,
+        ):
+            raise _AccountRerunShutdownRequested()
+
+
+async def _account_case_id_for_reply_job(reply_job: dict[str, Any]) -> str | None:
+    ticket_id = str(reply_job.get("ticket_id") or "").strip()
+    if not ticket_id:
+        return None
+    account_case = await _account_rerun_storage_call(
+        ticket_repository.get_billing_ticket_by_client_ticket_id,
+        ticket_id,
+    )
+    if not isinstance(account_case, dict):
+        return None
+    case_id = str(
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    ).strip()
+    return case_id or None
+
+
+def _record_account_rerun_reply_failure(
+    job: dict[str, Any],
+    *,
+    case_id: str,
+    reply_job: dict[str, Any],
+    failure: dict[str, str],
+) -> None:
+    failed_case_ids = list(dict.fromkeys(
+        str(item or "").strip()
+        for item in job.get("failed_case_ids") or []
+        if str(item or "").strip()
+    ))
+    completed_case_ids = list(dict.fromkeys(
+        str(item or "").strip()
+        for item in job.get("completed_case_ids") or []
+        if str(item or "").strip()
+    ))
+    if case_id in completed_case_ids:
+        completed_case_ids.remove(case_id)
+        job["completed_case_ids"] = completed_case_ids
+        job["succeeded"] = max(0, int(job.get("succeeded") or 0) - 1)
+    if case_id not in failed_case_ids:
+        failed_case_ids.append(case_id)
+        job["failed"] = int(job.get("failed") or 0) + 1
+    job["failed_case_ids"] = failed_case_ids
+    job["failed_case_id"] = case_id
+    job["failed_stage"] = failure["stage"]
+    job["failed_reason_code"] = failure["code"]
+    job["stop_reason"] = (
+        "reply_publish_failed"
+        if str(reply_job.get("status") or "").strip().lower() == "cancelled"
+        and failure["code"] == "stale_customer_revision"
+        else "reply_job_failed"
+    )
+    job["stop_error"] = failure["detail"]
+    job["retry_mode"] = "reply"
+    job["checkpoint"] = {
+        "case_id": case_id,
+        "stage": failure["stage"],
+        "retry_mode": "reply",
+        "committed": True,
+        "reply_job_id": str(reply_job.get("job_id") or "").strip(),
+    }
+    job["reply_failure_case_ids"] = list(dict.fromkeys(
+        [*(job.get("reply_failure_case_ids") or []), case_id]
+    ))
+    job["processed"] = int(job.get("succeeded") or 0) + int(job.get("failed") or 0)
+    _account_rerun_refresh_remaining(job)
+
+
 async def _wait_for_account_rerun_replies(
     job: dict[str, Any],
     *,
@@ -6872,18 +7061,22 @@ async def _wait_for_account_rerun_replies(
         cancelled_case_ids = list(dict.fromkeys(cancelled_case_ids))
         job["reply_jobs_cancelled"] = len(cancelled_jobs)
         job["reply_cancelled_case_ids"] = cancelled_case_ids
-        if cancelled_jobs:
-            first_cancelled = cancelled_jobs[0]
-            cancel_reason = str(
-                (first_cancelled.get("payload") or {}).get("cancel_reason")
-                if isinstance(first_cancelled.get("payload"), dict)
-                else ""
-            ).strip() or "reply_job_cancelled"
-            job["failed_stage"] = job.get("failed_stage") or "reply_publish"
-            job["stop_reason"] = job.get("stop_reason") or "reply_publish_failed"
-            job["stop_error"] = job.get("stop_error") or cancel_reason
-            if cancelled_case_ids:
-                job["failed_case_id"] = job.get("failed_case_id") or cancelled_case_ids[0]
+        failed_reply_jobs = [
+            item
+            for item in jobs
+            if item and _account_rerun_reply_failure_details(item) is not None
+        ]
+        if failed_reply_jobs:
+            first_failed = failed_reply_jobs[0]
+            failure = _account_rerun_reply_failure_details(first_failed)
+            case_id = await _account_case_id_for_reply_job(first_failed)
+            if failure is not None and case_id:
+                _record_account_rerun_reply_failure(
+                    job,
+                    case_id=case_id,
+                    reply_job=first_failed,
+                    failure=failure,
+                )
         job["updated_at"] = now_iso()
         await _save_account_full_reroute_job_with_retry(job, lease_token=lease_token)
         if not pending and not missing:
@@ -7138,7 +7331,9 @@ async def _run_account_full_reroute_job(
             case_route_key = ""
             case_handler_status = ""
             case_failed = False
+            case_shutdown_requested = False
             case_failure_error = ""
+            reply_job_id = ""
             caught_exception: Exception | None = None
             try:
                 retry_case_mode = str(
@@ -7161,6 +7356,15 @@ async def _run_account_full_reroute_job(
                         job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
                     if reply_result.get("status") == "scheduled":
                         job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
+                    reply_job_id = str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
+                    if reply_job_id:
+                        if reply_job_id not in job.setdefault("reply_job_ids", []):
+                            job["reply_job_ids"].append(reply_job_id)
+                        case_stage = "reply_prepare"
+                        await _wait_for_account_rerun_reply_preparation(
+                            reply_job_id,
+                            stop_event=stop_event,
+                        )
                     if (
                         retry_case_mode == "email"
                         and email_result.get("status") not in {"sent", "already_sent"}
@@ -7317,15 +7521,39 @@ async def _run_account_full_reroute_job(
                         job["emails_sent"] = int(job.get("emails_sent") or 0) + 1
                     if reply_result.get("status") == "scheduled":
                         job["replies_scheduled"] = int(job.get("replies_scheduled") or 0) + 1
-                        reply_job_id = str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
-                        if reply_job_id:
-                            job.setdefault("reply_job_ids", []).append(reply_job_id)
+                    reply_job_id = str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
+                    if reply_job_id:
+                        if reply_job_id not in job.setdefault("reply_job_ids", []):
+                            job["reply_job_ids"].append(reply_job_id)
+                        case_stage = "reply_prepare"
+                        await _wait_for_account_rerun_reply_preparation(
+                            reply_job_id,
+                            stop_event=stop_event,
+                        )
                 job["route_counts"][case_route_key] = int(job["route_counts"].get(case_route_key) or 0) + 1
                 job["handler_counts"][case_handler_status] = (
                     int(job["handler_counts"].get(case_handler_status) or 0) + 1
                 )
                 job["changed"] += int(case_changed)
                 job["succeeded"] += 1
+            except _AccountRerunShutdownRequested:
+                retry_case_modes = dict(job.get("retry_case_modes") or {})
+                retry_case_modes[case_id] = "reply"
+                job["retry_case_modes"] = retry_case_modes
+                job["retry_mode"] = "reply"
+                job["phase"] = "Waiting for reply preparation"
+                job["checkpoint"] = {
+                    "case_id": case_id,
+                    "stage": "reply_prepare",
+                    "retry_mode": "reply",
+                    "committed": True,
+                }
+                await _release_account_reroute_job_for_shutdown(
+                    job,
+                    lease_token=lease_token,
+                )
+                case_shutdown_requested = True
+                return
             except AccountRerouteLeaseLostError:
                 raise
             except _AccountRerunSideEffectCompleted:
@@ -7363,10 +7591,10 @@ async def _run_account_full_reroute_job(
                             "error": case_failure_error,
                             "retryable": _is_retryable_account_rerun_storage_error(exc),
                             "stage": case_stage,
-                            "reply_expected": False,
+                            "reply_expected": bool(reply_job_id),
                             "email_expected": False,
                             "delivery_key": "",
-                            "reply_job_id": "",
+                            "reply_job_id": reply_job_id,
                             "changed": case_changed,
                             "route_key": case_route_key,
                             "handler_status": case_handler_status,
@@ -7374,6 +7602,8 @@ async def _run_account_full_reroute_job(
                         }
                     )
             finally:
+                if case_shutdown_requested:
+                    return
                 if not case_failed and case_id not in completed_case_id_set:
                     completed_case_id_set.add(case_id)
                     completed_case_ids.append(case_id)
@@ -7406,9 +7636,14 @@ async def _run_account_full_reroute_job(
                         )
                     else:
                         job["failed_reason_code"] = (
-                            "account_rerun_revision_conflict"
-                            if isinstance(caught_exception, AccountRerunRevisionConflictError)
-                            else f"account_rerun_{case_stage}_failed"
+                            str(caught_exception.code)
+                            if isinstance(caught_exception, _AccountRerunSideEffectError)
+                            and caught_exception.code
+                            else (
+                                "account_rerun_revision_conflict"
+                                if isinstance(caught_exception, AccountRerunRevisionConflictError)
+                                else f"account_rerun_{case_stage}_failed"
+                            )
                         )[:160]
                         job["alert_status"] = await _notify_account_rerun_failure(
                             job=job,
@@ -7497,18 +7732,48 @@ async def _run_account_full_reroute_job(
             )
             return
         await _reconcile_account_rerun_failures(job)
+        if job.get("reply_failure_case_ids"):
+            failed_case_id = str(job.get("failed_case_id") or "").strip()
+            failed_case = (
+                await _account_rerun_storage_call(
+                    ticket_repository.get_account_case,
+                    failed_case_id,
+                )
+                if failed_case_id
+                else None
+            )
+            failed_ticket_id = str((failed_case or {}).get("client_ticket_id") or "").strip()
+            job["alert_status"] = await _notify_account_rerun_failure(
+                job=job,
+                stage=str(job.get("failed_stage") or "reply_publish"),
+                code=str(job.get("failed_reason_code") or "reply_job_failed"),
+                account_case_id=failed_case_id or None,
+                ticket_id=failed_ticket_id or None,
+                detail=str(job.get("stop_error") or "reply job failed"),
+            )
+        elif job.get("reply_wait_timed_out"):
+            job["failed_stage"] = "reply_publish"
+            job["failed_reason_code"] = "account_reply_publication_timed_out"
+            job["stop_reason"] = "reply_wait_timed_out"
+            job["stop_error"] = "reply jobs did not reach a terminal state before timeout"
+            job["alert_status"] = await _notify_account_rerun_failure(
+                job=job,
+                stage="reply_publish",
+                code="account_reply_publication_timed_out",
+                detail=job["stop_error"],
+            )
         completed_at = now_iso()
         terminal_status = (
-            "completed_with_errors"
+            "failed"
             if (
                 job["failed"]
                 or job.get("reply_wait_timed_out")
-                or job.get("reply_jobs_manual_attention")
-                or job.get("reply_jobs_failed")
-                or job.get("reply_jobs_cancelled")
+                or job.get("reply_failure_case_ids")
             )
             else "completed"
         )
+        if terminal_status == "failed":
+            job["phase"] = "Stopped at Case"
         await _record_account_rerun_terminal_audit(
             job,
             event_type=(

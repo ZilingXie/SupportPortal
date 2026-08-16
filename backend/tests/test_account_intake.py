@@ -1609,7 +1609,11 @@ class AccountIntakeApiTests(unittest.TestCase):
             main,
             "_send_enablement_internal_email_attempt",
             AsyncMock(return_value=("sent", "")),
-        ) as sender, patch(
+        ) as sender, patch.object(
+            main,
+            "_wait_for_account_rerun_reply_preparation",
+            AsyncMock(),
+        ), patch(
             "backend.repositories.ticket_repository._utc_now",
             return_value="2026-08-01T00:00:00+00:00",
         ), patch(
@@ -1916,7 +1920,11 @@ class AccountIntakeApiTests(unittest.TestCase):
             main,
             "_send_enablement_internal_email_attempt",
             AsyncMock(side_effect=unexpected_email),
-        ) as sender:
+        ) as sender, patch.object(
+            main,
+            "_wait_for_account_rerun_reply_preparation",
+            AsyncMock(),
+        ):
             asyncio.run(main._run_account_full_reroute_job("account-reroute-persona-unavailable"))
 
         self.assertEqual(call_order, ["email"])
