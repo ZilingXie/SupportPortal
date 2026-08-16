@@ -1727,6 +1727,14 @@ select.input,
   box-shadow: 0 1px 4px rgba(23, 63, 70, 0.08);
 }
 
+.msg-bubble--zendesk-unknown {
+  background: #eef1f2;
+  color: #43545a;
+  border: 1px solid #c9d3d6;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 4px rgba(67, 84, 90, 0.08);
+}
+
 .msg-bubble--internal {
   background: #fff1d5;
   color: #5c3b12;
@@ -1740,6 +1748,7 @@ select.input,
 }
 
 .msg-bubble--zendesk-agent .msg-label,
+.msg-bubble--zendesk-unknown .msg-label,
 .msg-bubble--internal .msg-label {
   color: currentColor;
   opacity: 0.72;

@@ -514,6 +514,21 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("AI reply scheduled", app_source)
         self.assertNotIn("Customer reply", app_source)
 
+    def test_account_app_distinguishes_zendesk_author_identity(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+
+        for marker in (
+            '"CUSTOMER · PUBLIC"',
+            '"SUPPORT ENGINEER · PUBLIC"',
+            '"UNKNOWN AUTHOR · PUBLIC"',
+            '"msg-bubble--zendesk-unknown"',
+            "authorKind",
+        ):
+            self.assertIn(marker, app_source)
+        self.assertIn(".msg-bubble--zendesk-unknown", styles)
+        self.assertNotIn('"AGENT · PUBLIC"', app_source)
+
     def test_account_filter_uses_primary_buttons_and_one_conditional_select(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")

@@ -30,6 +30,7 @@ from backend.services.account_case_filters import (
 )
 from backend.services.account_zendesk_comments import (
     NormalizedZendeskSnapshot,
+    author_is_agent,
     build_conversation_revision,
 )
 try:
@@ -714,13 +715,15 @@ def _account_comment_sync_payload(
 
 
 def _account_comment_payload_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    author_kind = str(row[5] or "unknown").strip() or "unknown"
     return {
         "zendesk_comment_id": str(row[0]),
         "is_public": bool(row[1]),
         "is_initial": bool(row[2]),
         "author_id": str(row[3] or "").strip() or None,
         "author_name": str(row[4] or "").strip() or None,
-        "author_kind": str(row[5] or "unknown").strip() or "unknown",
+        "author_kind": author_kind,
+        "is_agent": author_is_agent(author_kind),
         "body": str(row[6] or ""),
         "via_channel": str(row[7] or "").strip() or None,
         "created_at": _to_iso(row[8]),
@@ -2598,7 +2601,10 @@ class InMemoryTicketRepository:
         normalized_ticket_id = str(ticket_id or "").strip()
         with self._assignment_lock:
             comments = [
-                copy.deepcopy(item)
+                {
+                    **copy.deepcopy(item),
+                    "is_agent": author_is_agent(item.get("author_kind")),
+                }
                 for item in self._account_case_comments.get(normalized_ticket_id, {}).values()
                 if isinstance(item, dict)
             ]

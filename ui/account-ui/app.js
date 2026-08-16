@@ -1654,14 +1654,21 @@ function renderMessageThread() {
     const isPublic = comment?.is_public !== false;
     const authorKind = String(comment?.author_kind || "unknown").toLowerCase();
     const isCustomer = authorKind === "customer";
+    const isAgent = authorKind === "agent";
     const kindLabel = isPublic
-      ? (isCustomer ? "CUSTOMER · PUBLIC" : "AGENT · PUBLIC")
+      ? (isCustomer
+        ? "CUSTOMER · PUBLIC"
+        : isAgent
+          ? "SUPPORT ENGINEER · PUBLIC"
+          : "UNKNOWN AUTHOR · PUBLIC")
       : "INTERNAL NOTE";
     const bubbleClass = !isPublic
       ? "msg-bubble--internal"
       : isCustomer
         ? "msg-bubble--zendesk-customer"
-        : "msg-bubble--zendesk-agent";
+        : isAgent
+          ? "msg-bubble--zendesk-agent"
+          : "msg-bubble--zendesk-unknown";
     const rowClass = !isPublic || !isCustomer ? "msg-row--assistant" : "msg-row--customer";
     const authorName = String(comment?.author_name || "").trim();
     const authorMeta = authorName ? ` · ${escapeHtml(authorName)}` : "";
