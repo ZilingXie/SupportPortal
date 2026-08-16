@@ -1631,6 +1631,15 @@ class TicketRepository(Protocol):
     ) -> bool:
         ...
 
+    def update_ticket_message_meta(
+        self,
+        *,
+        ticket_id: str,
+        message_id: str,
+        meta_updates: dict[str, Any],
+    ) -> bool:
+        ...
+
     def get_engineer_case(
         self,
         engineer_case_id: str,
@@ -2527,6 +2536,14 @@ class InMemoryTicketRepository:
             ticket_id = str(account_case.get("client_ticket_id") or "").strip()
             billing_ticket_id = str(account_case.get("billing_ticket_id") or "").strip()
             ticket = self.get_ticket(ticket_id)
+            if isinstance(ticket, dict) and isinstance(ticket.get("messages"), list):
+                for index, message in enumerate(ticket["messages"]):
+                    if not isinstance(message, dict):
+                        continue
+                    message.setdefault(
+                        "message_id",
+                        str(message.get("id") or f"{ticket_id}:{index}").strip(),
+                    )
             latest_reply_job = self.get_latest_account_reply_job(ticket_id)
             correction = self.get_billing_route_correction(billing_ticket_id)
             with self._assignment_lock:
@@ -4041,6 +4058,38 @@ class InMemoryTicketRepository:
                 return False
             message["sentiment_label"] = normalized_label
             ticket["updated_at"] = ticket.get("updated_at") or _utc_now()
+            return True
+        return False
+
+    def update_ticket_message_meta(
+        self,
+        *,
+        ticket_id: str,
+        message_id: str,
+        meta_updates: dict[str, Any],
+    ) -> bool:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_ticket_id or not normalized_message_id or not isinstance(meta_updates, dict):
+            return False
+        ticket = self._tickets.get(normalized_ticket_id)
+        if not isinstance(ticket, dict) or not isinstance(ticket.get("messages"), list):
+            return False
+        for index, message in enumerate(ticket["messages"]):
+            if not isinstance(message, dict):
+                continue
+            candidate_ids = {
+                str(message.get("message_id") or "").strip(),
+                str(message.get("id") or "").strip(),
+                f"{normalized_ticket_id}:{index}",
+            }
+            if normalized_message_id not in candidate_ids:
+                continue
+            current_meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+            current_meta.update(copy.deepcopy(meta_updates))
+            message["meta"] = current_meta
+            message["message_id"] = normalized_message_id
+            ticket["updated_at"] = _utc_now()
             return True
         return False
 
@@ -5748,12 +5797,18 @@ def _find_trace_final_assistant_message(
     return final_assistant
 
 
-def _ticket_message_row_to_payload(row: tuple[Any, ...]) -> dict[str, Any]:
+def _ticket_message_row_to_payload(
+    row: tuple[Any, ...],
+    *,
+    message_id: Any = None,
+) -> dict[str, Any]:
     message: dict[str, Any] = {
         "role": str(row[1]),
         "content": str(row[2]),
         "created_at": _to_iso(row[3]),
     }
+    if message_id is not None and str(message_id).strip():
+        message["message_id"] = str(message_id).strip()
     if row[4]:
         message["sentiment_label"] = str(row[4])
     if row[5]:
@@ -6067,7 +6122,8 @@ class PostgresTicketRepository:
                                     row[8],
                                     row[9],
                                     row[10],
-                                )
+                                ),
+                                message_id=row[3],
                             )
                         )
                 for bundle in result.values():
@@ -8811,7 +8867,7 @@ class PostgresTicketRepository:
             cur.execute(
                 sql.SQL(
                     """
-                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta
+                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta, id
                     FROM {}
                     WHERE ticket_id = ANY(%s)
                     ORDER BY created_at ASC, id ASC
@@ -8820,7 +8876,12 @@ class PostgresTicketRepository:
                 (ticket_ids,),
             )
             for row in cur.fetchall():
-                grouped[str(row[0])].append(_ticket_message_row_to_payload(row))
+                grouped[str(row[0])].append(
+                    _ticket_message_row_to_payload(
+                        row,
+                        message_id=row[8] if len(row) > 8 else None,
+                    )
+                )
         return grouped
 
     def _fetch_recent_messages_for_trace(
@@ -8835,7 +8896,7 @@ class PostgresTicketRepository:
             cur.execute(
                 sql.SQL(
                     """
-                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta
+                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta, id
                     FROM (
                         SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta, id
                         FROM {}
@@ -8848,7 +8909,13 @@ class PostgresTicketRepository:
                 ).format(self._table("support_ticket_messages")),
                 (ticket_id, safe_limit),
             )
-            return [_ticket_message_row_to_payload(row) for row in cur.fetchall()]
+            return [
+                _ticket_message_row_to_payload(
+                    row,
+                    message_id=row[8] if len(row) > 8 else None,
+                )
+                for row in cur.fetchall()
+            ]
 
     def _fetch_latest_customer_message_created_at_for_trace(
         self,
@@ -8895,7 +8962,7 @@ class PostgresTicketRepository:
             cur.execute(
                 sql.SQL(
                     """
-                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta
+                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta, id
                     FROM {}
                     WHERE ticket_id = %s
                       AND role = 'assistant'
@@ -8908,7 +8975,14 @@ class PostgresTicketRepository:
                 (ticket_id, lower_bound),
             )
             row = cur.fetchone()
-        return _ticket_message_row_to_payload(row) if row is not None else None
+        return (
+            _ticket_message_row_to_payload(
+                row,
+                message_id=row[8] if len(row) > 8 else None,
+            )
+            if row is not None
+            else None
+        )
 
     def _fetch_investigations(
         self,
@@ -9627,6 +9701,41 @@ class PostgresTicketRepository:
                     return cur.rowcount > 0
 
         return self._run_with_connection_retry("update_message_sentiment_label", _operation)
+
+    def update_ticket_message_meta(
+        self,
+        *,
+        ticket_id: str,
+        message_id: str,
+        meta_updates: dict[str, Any],
+    ) -> bool:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_ticket_id or not normalized_message_id or not isinstance(meta_updates, dict):
+            return False
+        try:
+            numeric_message_id = int(normalized_message_id)
+        except (TypeError, ValueError):
+            return False
+        if numeric_message_id <= 0:
+            return False
+        patch = Json(copy.deepcopy(meta_updates))
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET meta = COALESCE(meta, '{{}}'::jsonb) || %s::jsonb
+                        WHERE id = %s AND ticket_id = %s
+                        """
+                    ).format(self._table("support_ticket_messages")),
+                    (patch, numeric_message_id, normalized_ticket_id),
+                )
+                return cur.rowcount == 1
+
+        return self._run_with_connection_retry("update_ticket_message_meta", _operation)
 
     def get_engineer_case(
         self,

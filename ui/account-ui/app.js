@@ -25,14 +25,15 @@ const renderSharedComposerFormattingToolbarButtons =
 const applySharedComposerToolbarStateToButtons =
   SharedComposer.applyComposerToolbarStateToButtons || (() => {});
 
+const ACCOUNT_ACCESS_TOKEN_KEY = "supportportal_account_workspace_access_token";
+const ACCOUNT_ACCOUNT_KEY = "supportportal_account_workspace_account";
+
 const PAGE_SIZE = 10;
 const SUMMARY_FRESH_MS = 30_000;
 const DETAIL_FRESH_MS = 60_000;
 const CACHE_HARD_EXPIRY_MS = 5 * 60_000;
 const SUMMARY_CACHE_LIMIT = 20;
 const DETAIL_CACHE_LIMIT = 20;
-const ACCOUNT_ACCESS_TOKEN_KEY = "supportportal_account_workspace_access_token";
-const ACCOUNT_ACCOUNT_KEY = "supportportal_account_workspace_account";
 
 const DEFAULT_FILTER_DEFINITIONS = [
   { id: "all", label: "All", children: [] },
@@ -89,13 +90,10 @@ const DEFAULT_FILTER_DEFINITIONS = [
 ];
 
 const state = {
-  authStatus: "checking",
+  authenticated: false,
+  authChecking: true,
   authError: "",
-  loginEmail: "",
-  loginPassword: "",
-  account: null,
-  accessToken: "",
-  isLoggingIn: false,
+  currentAccount: null,
   view: "create",
   title: "",
   question: "",
@@ -140,7 +138,13 @@ const state = {
   rerouteActiveTargetCaseId: "",
   isStartingReroute: false,
   rerouteError: "",
+  zendeskCommentPendingMessageId: "",
+  zendeskCommentError: "",
+  zendeskCommentErrorMessageId: "",
 };
+
+let accessToken = readStorage(ACCOUNT_ACCESS_TOKEN_KEY, "");
+let currentAccount = readStorage(ACCOUNT_ACCOUNT_KEY, null);
 
 let composerRuntime = null;
 let isFetchingRouteErrorSummary = false;
@@ -192,162 +196,109 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function readAccountStorage(key, fallback = null) {
+function readStorage(key, fallback) {
   try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    try {
-      return JSON.parse(raw);
-    } catch (_error) {
-      return raw;
-    }
-  } catch (_error) {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
     return fallback;
   }
 }
 
-function writeAccountStorage(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (_error) {
-    // Account data remains server-backed when browser storage is unavailable.
-  }
+function writeStorage(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
-function removeAccountStorage(key) {
-  try {
-    localStorage.removeItem(key);
-  } catch (_error) {
-    // Ignore private-browsing storage failures.
-  }
+function removeStorage(key) {
+  localStorage.removeItem(key);
 }
 
-function isAccountAdmin(account = state.account) {
-  return String(account?.role || "").trim().toLowerCase() === "admin";
-}
-
-function clearAccountSession() {
-  state.account = null;
-  state.accessToken = "";
-  state.authStatus = "login";
-  state.authError = "";
-  removeAccountStorage(ACCOUNT_ACCESS_TOKEN_KEY);
-  removeAccountStorage(ACCOUNT_ACCOUNT_KEY);
-}
-
-function accountRequestHeaders(options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (state.accessToken && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${state.accessToken}`);
-  }
-  return headers;
+function authRequestInit(options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  return { ...options, headers };
 }
 
 async function accountFetch(url, options = {}) {
-  const response = await fetch(url, { ...options, headers: accountRequestHeaders(options) });
-  if (response.status === 401 && state.authStatus === "ready") {
-    clearAccountSession();
-    render();
-  }
+  const response = await fetch(url, authRequestInit(options));
+  handleAccountAuthFailure(response);
   return response;
 }
 
-async function handleAccountLogin(event) {
-  event?.preventDefault?.();
-  const form = event?.currentTarget;
-  const formData = new FormData(form);
-  const email = String(formData.get("email") || "").trim();
-  const password = String(formData.get("password") || "");
-  if (!email || !password) {
-    state.authError = "Email and password are required.";
-    render();
-    return;
-  }
-  state.isLoggingIn = true;
-  state.authError = "";
-  render();
-  try {
-    const response = await fetch("/api/workspace/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    const payload = await readResponsePayload(response);
-    if (!response.ok) {
-      throw new Error(responseErrorMessage(payload, "Invalid email or password."));
-    }
-    const account = payload?.account;
-    const accessToken = String(payload?.access_token || "").trim();
-    if (!account || !accessToken) throw new Error("Workspace login returned an invalid session.");
-    state.account = account;
-    state.accessToken = accessToken;
-    state.loginEmail = email;
-    state.loginPassword = "";
-    writeAccountStorage(ACCOUNT_ACCESS_TOKEN_KEY, accessToken);
-    writeAccountStorage(ACCOUNT_ACCOUNT_KEY, account);
-    if (!isAccountAdmin(account)) {
-      state.authStatus = "forbidden";
-      render();
-      return;
-    }
-    state.authStatus = "ready";
-    await loadAccountWorkspace();
-  } catch (error) {
-    state.authError = error instanceof Error ? error.message : "Account login failed.";
-  } finally {
-    state.isLoggingIn = false;
-    render();
-  }
+function clearAccountAuth() {
+  accessToken = "";
+  currentAccount = null;
+  state.authenticated = false;
+  state.currentAccount = null;
+  removeStorage(ACCOUNT_ACCESS_TOKEN_KEY);
+  removeStorage(ACCOUNT_ACCOUNT_KEY);
 }
 
-function signOutAccount() {
-  summaryRequestController?.abort();
-  caseSearchRequestController?.abort();
-  detailRequestControllers.forEach((controller) => controller.abort());
-  clearAccountSession();
-  state.history = [];
-  state.activeItem = null;
-  state.view = "create";
+function handleAccountAuthFailure(response) {
+  if (![401, 403].includes(Number(response?.status))) return false;
+  clearAccountAuth();
+  state.authChecking = false;
+  state.authError = "Your admin session has expired. Sign in again.";
+  if (state.view !== "create") {
+    state.activeItem = null;
+    state.view = "create";
+  }
   render();
+  return true;
 }
 
-async function loadAccountWorkspace() {
-  state.authStatus = "ready";
-  await Promise.all([fetchTickets(), fetchLatestRerouteJob()]);
-  render();
-}
-
-async function initializeAccountAuth() {
-  const storedToken = String(readAccountStorage(ACCOUNT_ACCESS_TOKEN_KEY, "") || "").trim();
-  const storedAccount = readAccountStorage(ACCOUNT_ACCOUNT_KEY, null);
-  if (!storedToken) {
-    state.authStatus = "login";
-    render();
-    return;
-  }
-  state.accessToken = storedToken;
-  state.account = storedAccount;
-  try {
-    const response = await fetch("/api/workspace/me", {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${storedToken}` },
-    });
-    const payload = await readResponsePayload(response);
-    if (!response.ok) throw new Error(responseErrorMessage(payload, "Workspace session expired."));
-    state.account = payload?.account || storedAccount;
-    writeAccountStorage(ACCOUNT_ACCOUNT_KEY, state.account);
-    if (!isAccountAdmin(state.account)) {
-      state.authStatus = "forbidden";
-      render();
-      return;
-    }
-    state.authStatus = "ready";
-    await loadAccountWorkspace();
-  } catch (error) {
-    clearAccountSession();
-    state.authError = error instanceof Error ? error.message : "Workspace session expired.";
-    render();
-  }
+function renderLogin() {
+  return `
+    <section class="account-login-page">
+      <header class="account-login-header">
+        <div class="account-login-brand" aria-label="Account Admin">
+          <span class="account-login-brand-icon material-symbols-outlined" aria-hidden="true">ac_unit</span>
+          <strong>Account Admin</strong>
+        </div>
+      </header>
+      <main class="account-login-main">
+        <div class="account-login-content">
+          <header class="account-login-heading">
+            <h1>Welcome Back</h1>
+            <p>Sign in to review Account Cases and write selected AI messages to Zendesk as internal notes.</p>
+          </header>
+          <section class="account-login-card" aria-label="Account Admin sign in">
+            <form class="account-login-form" data-account-login-form>
+              <label class="account-login-field">
+                <span>Email</span>
+                <span class="account-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">person</span>
+                  <input name="email" autocomplete="username" placeholder="name@company.com" required maxlength="320" />
+                </span>
+              </label>
+              <label class="account-login-field">
+                <span>Password</span>
+                <span class="account-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">lock</span>
+                  <input name="password" type="password" autocomplete="current-password" placeholder="Password" required maxlength="512" />
+                </span>
+              </label>
+              <p class="account-login-error" data-account-login-error role="alert">${escapeHtml(state.authError)}</p>
+              <button class="account-login-submit" type="submit" ${state.authChecking ? "disabled" : ""}>
+                <span>${state.authChecking ? "Checking session..." : "Sign In"}</span>
+                <span class="material-symbols-outlined" aria-hidden="true">login</span>
+              </button>
+            </form>
+          </section>
+          <div class="account-login-orbit" aria-hidden="true">
+            <span class="material-symbols-outlined">data_usage</span>
+          </div>
+        </div>
+      </main>
+      <footer class="account-login-footer">
+        <strong>&copy; 2026 SupportPortal. Secure Account Workspace.</strong>
+        <nav aria-label="Account resources">
+          <a href="/workspace/admin">Workspace Admin</a>
+          <a href="https://status.agora.io/" target="_blank" rel="noopener noreferrer">System Status</a>
+        </nav>
+      </footer>
+    </section>
+  `;
 }
 
 function statusLabel(status) {
@@ -493,6 +444,93 @@ function showToast(message) {
   }, 3200);
 }
 
+async function accountWorkspaceMe(token) {
+  const response = await fetch("/api/workspace/me", {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = await readResponsePayload(response);
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(payload, "Workspace authentication failed."));
+  }
+  if (String(payload?.account?.role || "").toLowerCase() !== "admin") {
+    throw new Error("Admin role required");
+  }
+  return payload.account;
+}
+
+async function loadAuthenticatedAccount() {
+  state.authChecking = true;
+  state.authError = "";
+  if (!accessToken) {
+    state.authChecking = false;
+    state.authenticated = false;
+    render();
+    return;
+  }
+  try {
+    currentAccount = await accountWorkspaceMe(accessToken);
+    state.currentAccount = currentAccount;
+    state.authenticated = true;
+    state.authChecking = false;
+    await Promise.all([fetchTickets(), fetchLatestRerouteJob()]);
+  } catch (error) {
+    clearAccountAuth();
+    state.authChecking = false;
+    state.authError = error instanceof Error ? error.message : "Workspace authentication failed.";
+  }
+  render();
+}
+
+async function handleAccountLogin(form) {
+  if (state.authChecking) return;
+  const data = new FormData(form);
+  state.authChecking = true;
+  state.authError = "";
+  render();
+  try {
+    const response = await fetch("/api/workspace/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: String(data.get("email") || "").trim(),
+        password: String(data.get("password") || ""),
+      }),
+    });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Invalid email or password."));
+    }
+    if (String(payload?.account?.role || "").toLowerCase() !== "admin") {
+      throw new Error("Admin role required");
+    }
+    accessToken = String(payload.access_token || "").trim();
+    currentAccount = payload.account;
+    if (!accessToken) throw new Error("Workspace login did not return an access token.");
+    writeStorage(ACCOUNT_ACCESS_TOKEN_KEY, accessToken);
+    writeStorage(ACCOUNT_ACCOUNT_KEY, currentAccount);
+    state.currentAccount = currentAccount;
+    state.authenticated = true;
+    state.authChecking = false;
+    await Promise.all([fetchTickets({ force: true }), fetchLatestRerouteJob()]);
+  } catch (error) {
+    clearAccountAuth();
+    state.authChecking = false;
+    state.authError = error instanceof Error ? error.message : "Account login failed.";
+  }
+  render();
+}
+
+function accountSignOut() {
+  clearAccountAuth();
+  state.authChecking = false;
+  state.authError = "";
+  state.activeItem = null;
+  state.history = [];
+  state.view = "create";
+  render();
+}
+
 function formatMessageTimestamp(value) {
   const date = new Date(String(value || ""));
   if (Number.isNaN(date.getTime())) return "Time unavailable";
@@ -524,6 +562,36 @@ function renderAiReplyState(item) {
   return `<div class="ai-reply-state ai-reply-state--attention" role="status" aria-live="polite">${escapeHtml(message)}</div>`;
 }
 
+function zendeskInternalCommentState(message) {
+  const raw = message?.zendesk_internal_comment
+    || (message?.meta && typeof message.meta === "object" ? message.meta.zendesk_internal_comment : null);
+  return raw && typeof raw === "object" ? raw : null;
+}
+
+function renderZendeskInternalCommentAction(message, messageId) {
+  const record = zendeskInternalCommentState(message);
+  const status = String(record?.status || "").trim().toLowerCase();
+  const isPending = state.zendeskCommentPendingMessageId === messageId;
+  if (status === "added") {
+    return `<div class="zendesk-comment-action zendesk-comment-action--added" role="status"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Added as internal comment${record.comment_id ? ` <span class="zendesk-comment-id">#${escapeHtml(record.comment_id)}</span>` : ""}</div>`;
+  }
+  if (status === "outcome_unknown") {
+    return `<div class="zendesk-comment-action zendesk-comment-action--unknown" role="alert"><span class="material-symbols-outlined" aria-hidden="true">warning</span>Result unknown. Verify Zendesk before retrying.</div>`;
+  }
+  const error = state.zendeskCommentError && state.zendeskCommentErrorMessageId === messageId
+    ? state.zendeskCommentError
+    : "";
+  return `
+    <div class="zendesk-comment-action">
+      <button class="ghost-button zendesk-comment-button" type="button" data-action="add-zendesk-internal-comment" data-message-id="${escapeHtml(messageId)}" ${isPending ? "disabled" : ""}>
+        <span class="material-symbols-outlined" aria-hidden="true">${isPending ? "progress_activity" : "note_add"}</span>
+        ${isPending ? "Adding..." : status === "failed" ? "Retry internal comment" : "Add as internal comment"}
+      </button>
+      ${error ? `<span class="zendesk-comment-error" role="alert">${escapeHtml(error)}</span>` : ""}
+    </div>
+  `;
+}
+
 function updateReplyPolling() {
   if (replyPollTimer) {
     window.clearTimeout(replyPollTimer);
@@ -553,7 +621,7 @@ function updateCommentPolling() {
     commentPollTimer = null;
   }
   const item = state.activeItem;
-  if (state.authStatus !== "ready" || state.view !== "detail" || !item) return;
+  if (!state.authenticated || state.view !== "detail" || !item) return;
   commentPollTimer = window.setTimeout(async () => {
     if (document.hidden || state.view !== "detail" || !state.activeItem) {
       updateCommentPolling();
@@ -758,6 +826,7 @@ function prefetchTicketDetails(items) {
     signal: controller.signal,
   })
     .then(async (response) => {
+      if (handleAccountAuthFailure(response)) return [];
       if (!response.ok) throw new Error("Could not preload Account Case details.");
       const payload = await response.json();
       const details = Array.isArray(payload.details) ? payload.details : [];
@@ -1569,11 +1638,13 @@ function renderMessageThread() {
     const rowClass = isCustomer ? "msg-row--customer" : "msg-row--assistant";
     const label = isCustomer ? "CUSTOMER REQUEST" : isAi ? "AI REPLY" : "SUPPORT NOTE";
     const timestamp = formatMessageTimestamp(msg.created_at);
+    const messageId = String(msg.message_id || msg.id || `${accountCaseIdentifier(item)}:${messages.indexOf(msg)}`);
     return `
       <div class="msg-row ${rowClass}">
         <div class="msg-bubble ${bubbleClass}">
           <div class="msg-header"><span class="msg-label">${escapeHtml(label)}</span><time datetime="${escapeHtml(msg.created_at || "")}">${escapeHtml(timestamp)}</time></div>
           <div class="msg-content">${renderMarkdownMessage(content)}</div>
+          ${isAi ? renderZendeskInternalCommentAction(msg, messageId) : ""}
         </div>
       </div>
     `;
@@ -2075,6 +2146,58 @@ async function submitReply() {
   }
 }
 
+async function addMessageAsZendeskInternalComment(messageId) {
+  const item = state.activeItem;
+  const normalizedMessageId = String(messageId || "").trim();
+  const caseId = accountCaseIdentifier(item);
+  if (!item || !caseId || !normalizedMessageId || state.zendeskCommentPendingMessageId) return;
+  state.zendeskCommentPendingMessageId = normalizedMessageId;
+  state.zendeskCommentError = "";
+  state.zendeskCommentErrorMessageId = "";
+  render();
+  try {
+    const response = await fetch(
+      `/api/account/cases/${encodeURIComponent(caseId)}/messages/${encodeURIComponent(normalizedMessageId)}/zendesk-internal-comment`,
+      authRequestInit({ method: "POST", cache: "no-store" }),
+    );
+    if (handleAccountAuthFailure(response)) return;
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Could not add the AI message as an internal comment."));
+    }
+    const refreshed = await fetchTicketDetail(caseId, { force: true });
+    if (refreshed) {
+      state.activeItem = refreshed;
+    } else if (state.activeItem && Array.isArray(state.activeItem.messages)) {
+      // Keep the confirmed write visible if the follow-up detail refresh is unavailable.
+      state.activeItem = {
+        ...state.activeItem,
+        messages: state.activeItem.messages.map((message) => {
+          const candidateId = String(message?.message_id || message?.id || "").trim();
+          if (candidateId !== normalizedMessageId) return message;
+          return {
+            ...message,
+            meta: {
+              ...(message.meta && typeof message.meta === "object" ? message.meta : {}),
+              zendesk_internal_comment: payload,
+            },
+          };
+        }),
+      };
+      cacheDetail(state.activeItem);
+    }
+    showToast("Added as Zendesk internal comment");
+  } catch (error) {
+    state.zendeskCommentError = error instanceof Error
+      ? error.message
+      : "Could not add the AI message as an internal comment.";
+    state.zendeskCommentErrorMessageId = normalizedMessageId;
+  } finally {
+    state.zendeskCommentPendingMessageId = "";
+    render();
+  }
+}
+
 function renderRerouteStatus() {
   const job = state.rerouteJob;
   if ((!job || job.status === "not_started") && !state.rerouteError) return "";
@@ -2190,53 +2313,9 @@ function renderRerouteConfirmation() {
   `;
 }
 
-function renderAccountAuthGate() {
-  if (state.authStatus === "checking") {
-    return `
-      <main class="account-auth-shell">
-        <section class="account-auth-card" role="status" aria-live="polite">
-          <div class="brand-mark"><span class="material-symbols-outlined">support_agent</span></div>
-          <p class="eyebrow">Account intake</p>
-          <h1>Checking workspace access</h1>
-          <p class="account-auth-copy">Verifying your Support Portal session...</p>
-        </section>
-      </main>
-    `;
-  }
-  if (state.authStatus === "forbidden") {
-    return `
-      <main class="account-auth-shell">
-        <section class="account-auth-card" role="alert">
-          <div class="brand-mark brand-mark--warning"><span class="material-symbols-outlined">lock</span></div>
-          <p class="eyebrow">Account intake</p>
-          <h1>Admin access required</h1>
-          <p class="account-auth-copy">This workspace is limited to Support Portal administrators. Engineer accounts cannot open Account Cases.</p>
-          <button class="primary-button" type="button" data-action="account-sign-out"><span class="material-symbols-outlined">logout</span>Sign out</button>
-        </section>
-      </main>
-    `;
-  }
-  return `
-    <main class="account-auth-shell">
-      <section class="account-auth-card">
-        <div class="brand-mark"><span class="material-symbols-outlined">support_agent</span></div>
-        <p class="eyebrow">Support Portal · Account intake</p>
-        <h1>Sign in to Account Cases</h1>
-        <p class="account-auth-copy">Admin workspace access is required to view case conversations, Zendesk comments, and rerun controls.</p>
-        <form class="account-login-form" data-account-login-form>
-          <label class="field"><span class="field-label">Workspace email</span><input class="input" type="email" name="email" autocomplete="username" value="${escapeHtml(state.loginEmail)}" required /></label>
-          <label class="field"><span class="field-label">Password</span><input class="input" type="password" name="password" autocomplete="current-password" required /></label>
-          <button class="primary-button" type="submit" ${state.isLoggingIn ? "disabled" : ""}><span class="material-symbols-outlined">login</span>${state.isLoggingIn ? "Signing in..." : "Sign in"}</button>
-        </form>
-        ${state.authError ? `<div class="error-banner" role="alert"><span class="material-symbols-outlined">error</span>${escapeHtml(state.authError)}</div>` : ""}
-      </section>
-    </main>
-  `;
-}
-
 function render() {
-  if (state.authStatus !== "ready") {
-    appRoot.innerHTML = renderAccountAuthGate();
+  if (!state.authenticated) {
+    appRoot.innerHTML = renderLogin();
     bind();
     return;
   }
@@ -2264,10 +2343,14 @@ function render() {
             <span class="material-symbols-outlined">sync</span>
             Rerun
           </button>
+          <button class="ghost-button account-signout-button" type="button" data-action="account-signout">
+            <span class="material-symbols-outlined" aria-hidden="true">logout</span>
+            Sign out
+          </button>
         </div>
         <div class="account-session">
           <span class="material-symbols-outlined" aria-hidden="true">verified_user</span>
-          <span><strong>${escapeHtml(state.account?.display_name || state.account?.email || "Admin")}</strong><small>Admin workspace</small></span>
+          <span><strong>${escapeHtml(state.currentAccount?.display_name || state.currentAccount?.email || "Admin")}</strong><small>Admin workspace</small></span>
           <button class="icon-button" type="button" data-action="account-sign-out" aria-label="Sign out"><span class="material-symbols-outlined">logout</span></button>
         </div>
         ${renderRerouteStatus()}
@@ -2299,7 +2382,7 @@ function render() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && state.authStatus === "ready") {
+  if (!document.hidden && state.authenticated) {
     updateReplyPolling();
     updateCommentPolling();
     void fetchTickets({ force: true, renderOnUpdate: true });
@@ -2350,11 +2433,16 @@ document.addEventListener("keydown", (event) => {
 
 function bind() {
   const loginForm = document.querySelector("[data-account-login-form]");
-  if (loginForm) loginForm.addEventListener("submit", handleAccountLogin);
-  document.querySelectorAll("[data-action='account-sign-out']").forEach((el) => {
-    el.addEventListener("click", signOutAccount);
+  if (loginForm) {
+    loginForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void handleAccountLogin(loginForm);
+    });
+    return;
+  }
+  document.querySelectorAll("[data-action='account-signout'], [data-action='account-sign-out']").forEach((el) => {
+    el.addEventListener("click", accountSignOut);
   });
-  if (state.authStatus !== "ready") return;
   const caseSearchForm = document.querySelector("[data-case-search-form]");
   if (caseSearchForm) caseSearchForm.addEventListener("submit", searchCaseByNumber);
   const caseSearchInput = document.querySelector("[data-case-search-input]");
@@ -2457,6 +2545,11 @@ function bind() {
   document.querySelectorAll("[data-action='submit-reply']").forEach((el) => {
     el.addEventListener("click", submitReply);
   });
+  document.querySelectorAll("[data-action='add-zendesk-internal-comment']").forEach((el) => {
+    el.addEventListener("click", () => {
+      void addMessageAsZendeskInternalComment(el.dataset.messageId || "");
+    });
+  });
   document.querySelectorAll("[data-action='submit-route-correction']").forEach((el) => {
     el.addEventListener("click", submitRouteCorrection);
   });
@@ -2494,4 +2587,4 @@ renderSharedComposerFormattingToolbarButtons(state.composerToolbarState);
 serializeRichComposerHtmlToMarkdown("");
 void composerRuntime;
 render();
-void initializeAccountAuth();
+void loadAuthenticatedAccount();
