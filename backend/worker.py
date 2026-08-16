@@ -60,6 +60,10 @@ from backend.services.account_automation_reconciliation import (
     reconcile_automation_execution_failure,
     reconciliation_reason_code,
 )
+from backend.services.account_automation_delivery import (
+    deliver_account_internal_email,
+    ensure_account_delivery_key,
+)
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -156,13 +160,22 @@ def _record_account_worker_failure(
     now = now_iso()
     if isinstance(case, dict):
         updated = dict(case)
+        reason_code = f"account_processing_{code}"[:160]
+        updated.update(
+            reconcile_automation_execution_failure(
+                updated,
+                reason_code=reason_code,
+                context={
+                    "policy_decision": "account_processing_failure_human_review",
+                    "failure_stage": stage,
+                    "failure_code": code,
+                    "failure_attempt_count": 4,
+                    "failure_incident_id": incident_id,
+                },
+            )
+        )
         updated.update(
             {
-                "automation_status": "human_review_required",
-                "execution_reason_code": f"account_processing_{code}"[:160],
-                "internal_email_send_status": "not_applicable",
-                "internal_email_send_reason": f"account_processing_{code}"[:160],
-                "customer_reply": None,
                 "failure_stage": stage,
                 "failure_code": code,
                 "failure_attempt_count": 4,
@@ -173,6 +186,13 @@ def _record_account_worker_failure(
         )
         classification = dict(updated.get("route_classification") or {})
         classification["handler_binding_status"] = "human_review"
+        classification.update(
+            {
+                "failure_stage": stage,
+                "failure_code": code,
+                "failure_incident_id": incident_id,
+            }
+        )
         classification["account_processing_failure"] = {
             "incident_id": incident_id,
             "stage": stage,
@@ -1243,52 +1263,76 @@ def _send_claimed_enablement_delivery(account_case: dict[str, Any]) -> dict[str,
             "reason": "template_upgrade_failed",
             "claimed": marked_manual,
         }
+    upgraded_payload = ensure_account_delivery_key(
+        payload,
+        handler="enablement",
+        account_case_id=account_case_id,
+    )
+    if upgraded_payload != payload:
+        payload = upgraded_payload
+        account_case["internal_email_payload"] = payload
+        account_case["updated_at"] = now_iso()
+        ticket_repository.save_account_case(account_case)
     delivery_key = str(payload.get("delivery_key") or "").strip()
     if not delivery_key:
-        return {"status": "failed", "reason": "missing_delivery_key", "claimed": False}
-    claim_token = uuid4().hex
-    attempt_payload = dict(payload)
-    attempt_payload["delivery_attempt_count"] = int(payload.get("delivery_attempt_count") or 0) + 1
-    attempt_payload["last_attempt_at"] = now_iso()
-    claimed = ticket_repository.claim_account_internal_email_delivery(
-        account_case_id,
-        delivery_key=delivery_key,
-        claim_token=claim_token,
-        claimed_at=now_iso(),
-        payload=attempt_payload,
+        return {"status": "not_ready", "reason": "missing_delivery_key", "claimed": False}
+    result = deliver_account_internal_email(
+        ticket_repository,
+        account_case_id=account_case_id,
+        payload=payload,
+        sender=send_enablement_internal_email,
     )
-    if not claimed:
-        return {"status": "claimed_elsewhere", "reason": "", "claimed": False}
-
-    result = send_enablement_internal_email(attempt_payload)
-    send_status = str(result.get("status") or "failed").strip() or "failed"
-    send_reason = str(result.get("reason") or "").strip()
-    resolved_to = str(result.get("resolved_to") or "").strip()
-    if resolved_to:
-        attempt_payload["resolved_to"] = resolved_to
-    attempt_payload.pop("delivery_claim_token", None)
-    completed = ticket_repository.complete_account_internal_email_delivery(
-        account_case_id,
-        delivery_key=delivery_key,
-        claim_token=claim_token,
-        payload=attempt_payload,
-        send_status=send_status,
-        send_reason=send_reason,
-        completed_at=now_iso(),
-    )
-    if not completed:
-        return {"status": "delivery_unknown", "reason": "delivery_state_not_committed", "claimed": True}
-
-    account_case["internal_email_payload"] = attempt_payload
-    account_case["internal_email_send_status"] = send_status
-    account_case["internal_email_send_reason"] = send_reason
-    account_case["updated_at"] = now_iso()
+    if result.persisted:
+        account_case["internal_email_payload"] = dict(result.payload)
+        account_case["internal_email_send_status"] = result.status
+        account_case["internal_email_send_reason"] = result.reason
+        account_case["updated_at"] = now_iso()
+    if result.status != "sent":
+        failure_code = reconciliation_reason_code(
+            handler="enablement",
+            phase="internal_email",
+            detail=result.status or "failed",
+        )
+        updated = reconcile_automation_execution_failure(
+            {
+                **account_case,
+                "internal_email_payload": dict(result.payload or {}) or None,
+                "internal_email_send_status": result.status,
+                "internal_email_send_reason": result.reason,
+            },
+            reason_code=failure_code,
+            context={
+                "failure_stage": "internal_email",
+                "failure_code": failure_code,
+                "delivery_state": result.delivery_state,
+            },
+        )
+        classification = dict(updated.get("route_classification") or {})
+        classification.update(
+            failure_stage="internal_email",
+            failure_code=failure_code,
+        )
+        updated["route_classification"] = classification
+        ticket_repository.save_account_case(updated)
+        notify_account_failure(
+            repository=ticket_repository,
+            incident_id=f"account-automation:{account_case_id}:internal_email",
+            stage="internal_email",
+            code=failure_code,
+            ticket_id=ticket_id or None,
+            account_case_id=account_case_id or None,
+            attempts=int((result.payload or {}).get("delivery_attempt_count") or 0),
+            detail=result.reason or result.status,
+            now=now_iso(),
+        )
     return {
-        "status": send_status,
-        "reason": send_reason,
-        "claimed": True,
+        "status": result.status,
+        "reason": result.reason,
+        "delivery_state": result.delivery_state,
+        "claimed": result.claimed,
+        "persisted": result.persisted,
         "upgraded": upgraded,
-        "payload": attempt_payload,
+        "payload": dict(result.payload),
     }
 
 
