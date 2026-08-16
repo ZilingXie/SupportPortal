@@ -38,6 +38,7 @@ from backend.services.automation_persona import AutomationPersonaError, Automati
 from backend.services.llm_factory import LlmInvocationError
 from backend.services.quota_field_extractor import QuotaFieldExtraction
 from backend.services.support_router import SupportResolution, SupportRouteDecision, _LlmRouteAttempt
+from backend.services.workspace_auth import WorkspacePrincipal
 
 
 def _successful_account_rerun_preflight() -> SimpleNamespace:
@@ -411,8 +412,15 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.repository.initialize()
         self.original_repository = main.ticket_repository
         self.original_worker_repository = worker.ticket_repository
+        self.original_dependency_overrides = dict(main.app.dependency_overrides)
         main.ticket_repository = self.repository
         worker.ticket_repository = self.repository
+        main.app.dependency_overrides[main.require_workspace_admin] = lambda: WorkspacePrincipal(
+            account_id="account-intake-test-admin",
+            role="admin",
+            display_name="Account Intake Test Admin",
+            expires_at=4_102_444_800,
+        )
         self.client = TestClient(main.app)
         # Keep API tests deterministic even when the local .env contains live routing credentials.
         self._llm_patcher = patch(
@@ -672,6 +680,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._account_stage_patcher.stop()
         self._llm_patcher.stop()
         self.client.close()
+        main.app.dependency_overrides.clear()
+        main.app.dependency_overrides.update(self.original_dependency_overrides)
         main.ticket_repository = self.original_repository
         worker.ticket_repository = self.original_worker_repository
 

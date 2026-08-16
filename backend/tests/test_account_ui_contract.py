@@ -417,6 +417,34 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('rel="noopener noreferrer"', app_source)
         self.assertIn('parsed.protocol === "http:"', app_source)
 
+    def test_account_app_uses_admin_workspace_session_and_internal_comment_action(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        main_source = Path("backend/main.py").read_text(encoding="utf-8")
+        zendesk_source = Path("backend/services/zendesk_comments.py").read_text(encoding="utf-8")
+
+        for marker in (
+            "supportportal_account_workspace_access_token",
+            "supportportal_account_workspace_account",
+            'fetch(\"/api/workspace/auth/login\"',
+            'fetch(\"/api/workspace/me\"',
+            "Admin role required",
+            "authRequestInit",
+            "handleAccountAuthFailure",
+            "Add as internal comment",
+            "Adding...",
+            "Added as internal comment",
+            "Retry internal comment",
+            "Result unknown. Verify Zendesk before retrying.",
+            "zendesk-internal-comment",
+            '"public": False',
+        ):
+            self.assertIn(marker, app_source if marker not in {'"public": False'} else zendesk_source)
+        self.assertIn("require_workspace_admin", main_source)
+        self.assertIn("account_case_id", main_source)
+        self.assertIn("message_id", main_source)
+        self.assertNotIn('localStorage.setItem("supportportal_workspace_access_token"', app_source)
+        self.assertNotIn('localStorage.setItem("supportportal_workspace_account"', app_source)
+
     def test_account_app_contains_filter_state_and_reply_composer(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
@@ -598,7 +626,10 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('window.addEventListener("pagehide"', app_source)
         self.assertIn('document.addEventListener("visibilitychange"', app_source)
         self.assertIn('cache: "no-store"', app_source)
-        self.assertNotIn("localStorage", app_source)
+        self.assertIn("supportportal_account_workspace_access_token", app_source)
+        self.assertIn("supportportal_account_workspace_account", app_source)
+        self.assertNotIn('"supportportal_workspace_access_token"', app_source)
+        self.assertNotIn('"supportportal_workspace_account"', app_source)
         self.assertNotIn("sessionStorage", app_source)
         self.assertNotIn("indexedDB", app_source)
         self.assertIn("detail-loading", app_source)
