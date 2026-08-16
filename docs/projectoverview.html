@@ -37,7 +37,7 @@
     button, input, select { font: inherit; }
     button, a { -webkit-tap-highlight-color: transparent; }
     a { color: inherit; text-decoration: none; }
-    .page { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+    .page { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
     .project-head { background: rgba(255, 249, 238, .9); border-bottom: 1px solid var(--line); padding: 22px 28px 0; }
     .head-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: start; max-width: 1380px; margin: 0 auto; }
     .title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -71,13 +71,7 @@
     .report-button:hover, .ghost-button:hover, .filter-button:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(23, 19, 13, .12); }
     .freshness { color: var(--muted); font: 11px/1.5 var(--mono); }
     .freshness.stale { color: var(--red); font-weight: 700; }
-    .workspace-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 22px; width: min(1380px, calc(100% - 40px)); margin: 0 auto; padding: 24px 0 46px; }
-    .sidebar { align-self: start; position: sticky; top: 18px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .72); box-shadow: var(--shadow); }
-    .sidebar-title { margin-bottom: 12px; font: 750 17px/1.2 ui-serif, Georgia, serif; }
-    .sidebar-link { display: block; padding: 9px 10px; border-radius: 6px; color: var(--muted); font-size: 13px; line-height: 1.35; }
-    .sidebar-link:hover, .sidebar-link.active { color: var(--ink); background: var(--surface-soft); }
-    .sidebar-rule { height: 1px; margin: 13px 0; background: var(--line); }
-    .sidebar-note { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .workspace-shell { width: min(1380px, calc(100% - 40px)); margin: 0 auto; padding: 24px 0 46px; }
     .content { min-width: 0; }
     .tabs { display: flex; gap: 5px; overflow-x: auto; padding: 0 0 10px; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
     .tab { flex: 0 0 auto; min-height: 37px; padding: 0 13px; border: 0; border-radius: 6px 6px 0 0; color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; font-weight: 750; }
@@ -93,7 +87,7 @@
     .select { min-width: 150px; }
     .notice { margin-bottom: 15px; padding: 11px 13px; border-left: 3px solid var(--orange); background: var(--surface-tint); color: #5c3b22; font-size: 13px; line-height: 1.5; }
     .notice.error { border-left-color: var(--red); background: rgba(185, 75, 56, .09); color: #7f2d24; }
-    .timeline, .aggregate-list, .topic-grid, .map-grid, .manual-grid, .report-grid { display: grid; gap: 12px; }
+    .timeline, .aggregate-list, .topic-list, .map-grid, .manual-grid, .report-grid { display: grid; gap: 12px; }
     .timeline-card, .aggregate-card, .topic-card, .map-card, .manual-card, .report-card { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .8); box-shadow: 0 8px 26px rgba(33, 24, 10, .04); }
     .timeline-card { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 16px; padding: 16px; }
     .timeline-date { color: var(--muted); font: 11px/1.5 var(--mono); }
@@ -108,16 +102,20 @@
     .chip.status-active, .chip.status-review { color: #925014; background: rgba(213, 111, 43, .13); }
     .chip.status-blocked { color: #8d2d22; background: rgba(185, 75, 56, .12); }
     .chip.status-planned { color: #225d8e; background: rgba(35, 104, 162, .11); }
-    .board { display: grid; grid-template-columns: repeat(5, minmax(170px, 1fr)); gap: 10px; align-items: start; overflow-x: auto; padding-bottom: 8px; }
-    .board-column { min-height: 250px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(243, 234, 216, .67); }
+    .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: start; overflow-x: auto; padding-bottom: 8px; }
+    .board-column { min-width: 0; min-height: 250px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(243, 234, 216, .67); }
     .board-column-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: var(--muted); font-size: 12px; font-weight: 800; }
     .board-column-head strong { color: var(--ink); font-size: 17px; }
-    .task-card { margin-bottom: 8px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); cursor: pointer; }
+    .task-card { display: block; width: 100%; min-width: 0; margin-bottom: 8px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--surface); cursor: pointer; text-align: left; }
     .task-card:last-child { margin-bottom: 0; }
-    .task-card:hover { border-color: var(--line-strong); transform: translateY(-1px); box-shadow: 0 7px 18px rgba(33, 24, 10, .09); }
-    .task-card h4 { margin-bottom: 6px; line-height: 1.35; }
-    .task-id { color: var(--muted); font: 10px var(--mono); }
-    .task-summary { margin: 6px 0 8px; color: #5d554a; font-size: 11px; line-height: 1.45; }
+    .task-card:hover, .task-card:focus-visible { border-color: var(--line-strong); transform: translateY(-1px); box-shadow: 0 7px 18px rgba(33, 24, 10, .09); outline: none; }
+    .task-card h4 { margin: 4px 0 0; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word; }
+    .task-id { display: block; color: var(--muted); font: 10px var(--mono); }
+    .meeting-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 17px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); background: rgba(255, 249, 238, .8); box-shadow: 0 8px 26px rgba(33, 24, 10, .04); cursor: pointer; text-align: left; }
+    .meeting-row:hover, .meeting-row:focus-visible { border-color: var(--line-strong); transform: translateY(-1px); box-shadow: 0 9px 28px rgba(33, 24, 10, .09); outline: none; }
+    .meeting-row-main { min-width: 0; }
+    .meeting-row h3 { margin-bottom: 4px; overflow-wrap: anywhere; }
+    .meeting-row-meta { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
     .aggregate-card { padding: 15px 17px; }
     .aggregate-card summary { cursor: pointer; list-style: none; }
     .aggregate-card summary::-webkit-details-marker { display: none; }
@@ -126,7 +124,6 @@
     .aggregate-body { padding-top: 14px; border-top: 1px solid var(--line); }
     .aggregate-body p, .aggregate-body li { color: #50483d; font-size: 13px; line-height: 1.6; }
     .aggregate-body ul { margin: 8px 0 0; padding-left: 20px; }
-    .topic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .topic-card, .map-card, .manual-card, .report-card { padding: 16px; }
     .topic-card { scroll-margin-top: 14px; }
     .topic-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
@@ -150,19 +147,19 @@
     .report-card.risk strong.report-number { color: var(--red); }
     .empty { padding: 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); text-align: center; font-size: 13px; }
     .footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
-    dialog { width: min(700px, calc(100% - 28px)); max-height: 88vh; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+    dialog { width: min(700px, calc(100% - 28px)); max-height: 88vh; padding: 0; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
     dialog::backdrop { background: rgba(23, 19, 13, .35); backdrop-filter: blur(2px); }
     .dialog-inner { padding: 22px; }
     .dialog-close { float: right; min-width: 32px; min-height: 32px; border: 1px solid var(--line); border-radius: 50%; background: transparent; cursor: pointer; }
+    .meeting-task-list { display: grid; gap: 7px; margin-top: 12px; }
+    .meeting-task-button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--surface-soft); cursor: pointer; text-align: left; }
+    .meeting-task-button:hover, .meeting-task-button:focus-visible { border-color: var(--line-strong); background: var(--surface-tint); outline: none; }
+    .meeting-task-title { min-width: 0; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
     .detail-grid { display: grid; grid-template-columns: 120px 1fr; gap: 8px 13px; margin: 16px 0; font-size: 13px; }
     .detail-grid dt { color: var(--muted); }
     .detail-grid dd { margin: 0; line-height: 1.5; }
     code { font-family: var(--mono); font-size: .9em; }
     @media (max-width: 1050px) {
-      .workspace-shell { grid-template-columns: 1fr; }
-      .sidebar { position: static; display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 8px; }
-      .sidebar-title, .sidebar-rule, .sidebar-note { display: none; }
-      .sidebar-link { flex: 0 0 auto; }
       .map-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 720px) {
@@ -175,8 +172,11 @@
       .panel-intro { display: block; }
       .panel-intro p { margin-top: 8px; }
       .timeline-card { grid-template-columns: 1fr; gap: 7px; }
-      .topic-grid, .manual-grid, .report-grid, .map-grid { grid-template-columns: 1fr; }
-      .board { grid-template-columns: repeat(5, minmax(205px, 1fr)); }
+      .manual-grid, .report-grid, .map-grid { grid-template-columns: 1fr; }
+      .board { grid-template-columns: repeat(5, minmax(240px, 1fr)); }
+      .meeting-row { align-items: flex-start; flex-direction: column; gap: 9px; }
+      .meeting-row-meta { justify-content: flex-start; }
+      .meeting-task-button { grid-template-columns: 1fr; gap: 5px; }
       .footer { display: block; }
       .footer span { display: block; margin-bottom: 6px; }
     }
@@ -199,7 +199,7 @@
           <div class="head-meta">
             <span>当前阶段 <strong id="currentMilestone">--</strong></span>
             <span>负责人 <strong id="projectOwner">--</strong></span>
-            <span>Topic <strong id="topicCount">--</strong></span>
+            <span>功能模块 <strong id="topicCount">--</strong></span>
             <span>Task <strong id="taskCount">--</strong></span>
           </div>
         </div>
@@ -215,16 +215,6 @@
     </header>
 
     <div class="workspace-shell">
-      <aside class="sidebar" aria-label="项目入口">
-        <div class="sidebar-title">项目资料</div>
-        <a class="sidebar-link active" href="#dynamic">当前项目动态</a>
-        <a class="sidebar-link" href="./roadmap.html">历史 Roadmap</a>
-        <a class="sidebar-link" href="./roadmap/meetings.html#ticketing-system-2026-08-10">历史 Meeting Archive</a>
-        <a class="sidebar-link" href="#manual">AI 维护入口</a>
-        <div class="sidebar-rule"></div>
-        <div class="sidebar-note">正式进度只来自 `docs/project/tasks/`。本页没有在线编辑能力，修改状态请通过 Git 记录。</div>
-      </aside>
-
       <main class="content">
         <nav class="tabs" id="tabs" aria-label="项目内容切换" role="tablist"></nav>
         <section class="tab-panel active" id="panel-dynamic" role="tabpanel" aria-labelledby="tab-dynamic"></section>
@@ -246,6 +236,10 @@
     <div class="dialog-inner" id="taskDialogContent"></div>
   </dialog>
 
+  <dialog id="meetingDialog" aria-labelledby="meetingDialogTitle">
+    <div class="dialog-inner" id="meetingDialogContent"></div>
+  </dialog>
+
   <script src="./projectoverview-data.js"></script>
   <script>
     (() => {
@@ -260,8 +254,8 @@
       const tabs = [
         { id: "dynamic", label: "项目动态" },
         { id: "plan", label: "任务看板" },
-        { id: "human-events", label: "交流记录" },
-        { id: "topics", label: "项目议题" },
+        { id: "human-events", label: "会议记录" },
+        { id: "topics", label: "功能模块" },
         { id: "system-map", label: "系统地图" },
         { id: "manual", label: "用户手册" },
         { id: "report", label: "汇报模式" }
@@ -280,6 +274,7 @@
       const taskMap = new Map(tasks.map((task) => [task.task_id, task]));
       const topicMap = new Map(topics.map((topic) => [topic.topic_id, topic]));
       const milestoneMap = new Map(milestones.map((milestone) => [milestone.milestone_id, milestone]));
+      const meetingMap = new Map(meetings.map((meeting) => [meeting.meeting_id, meeting]));
       const taskTopic = (task) => topicMap.get(task.topic_id);
       const taskMilestone = (task) => milestoneMap.get(task.milestone_id);
       const repoLink = (path) => {
@@ -322,6 +317,10 @@
         document.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => setTab(button.dataset.tab)));
       }
 
+      function bindTaskTriggers(root) {
+        root.querySelectorAll("[data-task-id]").forEach((trigger) => trigger.addEventListener("click", () => showTask(trigger.dataset.taskId)));
+      }
+
       function renderDynamic() {
         const prs = Array.isArray(DATA.pr_index?.prs) ? DATA.pr_index.prs : [];
         const summaries = DATA.pr_summaries?.summaries || {};
@@ -340,8 +339,9 @@
             </div>
           </article>`;
         }).join("");
-        document.getElementById("panel-dynamic").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">01 / Activity</div><h2>项目动态</h2><p>PR 是主要动态来源；Task 状态变化和 Meeting 只作为同一 registry 的辅助证据。未关联 Task 的 PR 会明确显示，避免把交付遗漏在时间线之外。</p></div></div><div class="notice">PR 快照：${escapeHtml(DATA.pr_index?.fetched_at || "尚未同步")} · 页面不读取 PR body，只使用公开元数据和脱敏摘要。</div><div class="timeline">${cards || `<div class="empty">暂无 PR 动态。</div>`}</div>`;
-        document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", () => showTask(button.dataset.taskId)));
+        const panel = document.getElementById("panel-dynamic");
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">01 / Activity</div><h2>项目动态</h2><p>PR 是主要动态来源；Task 状态变化和 Meeting 只作为同一 registry 的辅助证据。未关联 Task 的 PR 会明确显示，避免把交付遗漏在时间线之外。</p></div></div><div class="notice">PR 快照：${escapeHtml(DATA.pr_index?.fetched_at || "尚未同步")} · 页面不读取 PR body，只使用公开元数据和脱敏摘要。</div><div class="timeline">${cards || `<div class="empty">暂无 PR 动态。</div>`}</div>`;
+        bindTaskTriggers(panel);
       }
 
       function renderBoard() {
@@ -351,44 +351,47 @@
         });
         const columns = Object.entries(statusMeta).map(([status, meta]) => {
           const columnTasks = visible.filter((task) => task.status === status);
-          return `<section class="board-column" aria-label="${meta.label}"><div class="board-column-head"><span>${meta.label}</span><strong>${columnTasks.length}</strong></div>${columnTasks.map((task) => `<article class="task-card" tabindex="0" role="button" data-task-id="${escapeHtml(task.task_id)}"><span class="task-id">${escapeHtml(task.task_id)} · ${escapeHtml(task.priority || "unclassified")}</span><h4>${escapeHtml(task.title)}</h4><p class="task-summary">${escapeHtml(task.summary)}</p><div class="chips"><span class="chip">${escapeHtml(taskTopic(task)?.title || "未关联 Topic")}</span>${task.owner && task.owner !== "unassigned" ? `<span class="chip">${escapeHtml(task.owner)}</span>` : ""}</div></article>`).join("") || `<div class="empty">暂无 Task</div>`}</section>`;
+          return `<section class="board-column" aria-label="${meta.label}"><div class="board-column-head"><span>${meta.label}</span><strong>${columnTasks.length}</strong></div>${columnTasks.map((task) => `<button class="task-card" type="button" data-task-id="${escapeHtml(task.task_id)}" aria-label="打开 Task ${escapeHtml(task.task_id)}：${escapeHtml(task.title)}"><span class="task-id">${escapeHtml(task.task_id)}</span><h4>${escapeHtml(task.title)}</h4></button>`).join("") || `<div class="empty">暂无 Task</div>`}</section>`;
         }).join("");
-        document.getElementById("panel-plan").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">02 / Tasks</div><h2>任务看板</h2><p>每张卡片对应一个唯一 Task；状态只从 registry 读取。Topic、Milestone、owner 和 priority 是筛选维度，不会产生第二份状态。</p></div></div><div class="panel-tools"><input class="search" id="taskSearch" type="search" placeholder="搜索 Task、负责人、Topic 或下一步" value="${escapeHtml(state.query)}" aria-label="搜索 Task"><select class="select" id="topicFilter" aria-label="按 Topic 筛选"><option value="all">全部 Topic</option>${topics.map((topic) => `<option value="${escapeHtml(topic.topic_id)}" ${state.topic === topic.topic_id ? "selected" : ""}>${escapeHtml(topic.title)}</option>`).join("")}</select><select class="select" id="milestoneFilter" aria-label="按 Milestone 筛选"><option value="all">全部 Milestone</option>${milestones.map((milestone) => `<option value="${escapeHtml(milestone.milestone_id)}" ${state.milestone === milestone.milestone_id ? "selected" : ""}>${escapeHtml(milestone.title)}</option>`).join("")}</select></div><div class="board">${columns}</div>`;
+        const panel = document.getElementById("panel-plan");
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">02 / Tasks</div><h2>任务看板</h2><p>每张卡片对应一个唯一 Task；状态只从 registry 读取。功能模块、Milestone、负责人和优先级只作为筛选维度。</p></div></div><div class="panel-tools"><input class="search" id="taskSearch" type="search" placeholder="搜索 Task、负责人、功能模块或下一步" value="${escapeHtml(state.query)}" aria-label="搜索 Task"><select class="select" id="topicFilter" aria-label="按功能模块筛选"><option value="all">全部功能模块</option>${topics.map((topic) => `<option value="${escapeHtml(topic.topic_id)}" ${state.topic === topic.topic_id ? "selected" : ""}>${escapeHtml(topic.title)}</option>`).join("")}</select><select class="select" id="milestoneFilter" aria-label="按 Milestone 筛选"><option value="all">全部 Milestone</option>${milestones.map((milestone) => `<option value="${escapeHtml(milestone.milestone_id)}" ${state.milestone === milestone.milestone_id ? "selected" : ""}>${escapeHtml(milestone.title)}</option>`).join("")}</select></div><div class="board">${columns}</div>`;
         document.getElementById("taskSearch").addEventListener("input", (event) => { state.query = event.target.value; renderBoard(); });
         document.getElementById("topicFilter").addEventListener("change", (event) => { state.topic = event.target.value; renderBoard(); });
         document.getElementById("milestoneFilter").addEventListener("change", (event) => { state.milestone = event.target.value; renderBoard(); });
-        document.querySelectorAll("[data-task-id]").forEach((card) => { card.addEventListener("click", () => showTask(card.dataset.taskId)); card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") showTask(card.dataset.taskId); }); });
+        bindTaskTriggers(panel);
       }
 
       function renderMeetings() {
         const content = meetings.map((meeting) => {
           const meetingTasks = (meeting.task_ids || []).map((id) => taskMap.get(id)).filter(Boolean);
-          return `<details class="aggregate-card" id="meeting-${escapeHtml(meeting.meeting_id)}"><summary><div class="card-head"><div><h3>${escapeHtml(meeting.title)}</h3><div class="chips"><span class="chip">${escapeHtml(formatDate(meeting.date))}</span><span class="chip">${meetingTasks.length} 个关联 Task</span></div></div></div></summary><div class="aggregate-body"><p>${escapeHtml(meeting.summary || "暂无摘要")}</p><p><strong>参与人：</strong>${escapeHtml((meeting.participants || []).join("、") || "未记录")}</p><p><strong>原始记录：</strong>${(meeting.source_refs || []).map(sourceMarkup).join(" · ")}</p><div class="chips">${meetingTasks.map((task) => `<button class="chip" type="button" data-task-id="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)} · ${escapeHtml(formatStatus(task.status))}</button>`).join("")}</div></div></details>`;
+          return `<button class="meeting-row" id="meeting-${escapeHtml(meeting.meeting_id)}" type="button" data-meeting-id="${escapeHtml(meeting.meeting_id)}" aria-label="打开会议记录：${escapeHtml(meeting.title)}"><span class="meeting-row-main"><span class="section-kicker">Meeting</span><h3>${escapeHtml(meeting.title)}</h3></span><span class="meeting-row-meta"><span class="chip">${escapeHtml(formatDate(meeting.date))}</span><span class="chip">${meetingTasks.length} 个关联 Task</span></span></button>`;
         }).join("");
-        document.getElementById("panel-human-events").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">03 / Meetings</div><h2>交流记录</h2><p>Meeting 是不可变的讨论记录。它只负责保留背景、决定和未决问题，并通过 Task ID 连接当前进度。</p></div></div><div class="aggregate-list">${content || `<div class="empty">暂无 Meeting 记录。</div>`}</div>`;
-        document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", () => showTask(button.dataset.taskId)));
+        const panel = document.getElementById("panel-human-events");
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">03 / Meetings</div><h2>会议记录</h2><p>会议记录保留讨论背景、决定和未决问题，并通过关联 Task 连接当前进度。</p></div></div><div class="aggregate-list">${content || `<div class="empty">暂无会议记录。</div>`}</div>`;
+        panel.querySelectorAll("[data-meeting-id]").forEach((button) => button.addEventListener("click", () => showMeeting(button.dataset.meetingId)));
       }
 
       function renderTopics() {
         const content = topics.map((topic) => {
           const topicTasks = tasks.filter((task) => task.topic_id === topic.topic_id);
           const counts = Object.fromEntries(Object.keys(statusMeta).map((status) => [status, topicTasks.filter((task) => task.status === status).length]));
-          return `<article class="topic-card" id="topic-${escapeHtml(topic.topic_id)}"><div class="topic-head"><div><div class="section-kicker">Topic</div><h3>${escapeHtml(topic.title)}</h3></div><span class="chip">${topicTasks.length} Tasks</span></div><p class="topic-copy">${escapeHtml(topic.goal)}</p><div class="topic-meta">${Object.entries(statusMeta).map(([status, meta]) => counts[status] ? `<span class="chip status-${meta.className}">${meta.label} ${counts[status]}</span>` : "").join("")}</div><p class="topic-copy"><strong>入口：</strong>${escapeHtml((topic.surfaces || []).join("、") || "跨页面")}</p><p class="topic-copy"><strong>代码区域：</strong>${Object.values(topic.components || {}).flat().map((path) => sourceMarkup(path)).join(" · ")}</p><div class="topic-task-list">${topicTasks.slice(0, 8).map((task) => `<div class="topic-task"><span><button class="chip" type="button" data-task-id="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)}</button> ${escapeHtml(task.title)}</span><span>${statusChip(task.status)}</span></div>`).join("") || `<div class="empty">该 Topic 暂无 Task。</div>`}</div>${topicTasks.length > 8 ? `<p class="freshness">还有 ${topicTasks.length - 8} 个 Task，请使用任务看板筛选。</p>` : ""}</article>`;
+          return `<article class="topic-card" id="topic-${escapeHtml(topic.topic_id)}"><div class="topic-head"><div><div class="section-kicker">功能模块</div><h3>${escapeHtml(topic.title)}</h3></div><span class="chip">${topicTasks.length} 个 Task</span></div><p class="topic-copy">${escapeHtml(topic.goal)}</p><div class="topic-meta">${Object.entries(statusMeta).map(([status, meta]) => counts[status] ? `<span class="chip status-${meta.className}">${meta.label} ${counts[status]}</span>` : "").join("")}</div><p class="topic-copy"><strong>入口：</strong>${escapeHtml((topic.surfaces || []).join("、") || "跨页面")}</p><p class="topic-copy"><strong>代码区域：</strong>${Object.values(topic.components || {}).flat().map((path) => sourceMarkup(path)).join(" · ")}</p><div class="topic-task-list">${topicTasks.slice(0, 8).map((task) => `<div class="topic-task"><span><button class="chip" type="button" data-task-id="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)}</button> ${escapeHtml(task.title)}</span><span>${statusChip(task.status)}</span></div>`).join("") || `<div class="empty">该功能模块暂无 Task。</div>`}</div>${topicTasks.length > 8 ? `<p class="freshness">还有 ${topicTasks.length - 8} 个 Task，请使用任务看板筛选。</p>` : ""}</article>`;
         }).join("");
-        document.getElementById("panel-topics").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">04 / Topics</div><h2>项目议题</h2><p>Topic 是稳定的业务域，URL 只是它的 surface。这里展示目标、代码边界和同一 registry 下的 Task 汇总。</p></div></div><div class="topic-grid">${content}</div>`;
-        document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", () => showTask(button.dataset.taskId)));
+        const panel = document.getElementById("panel-topics");
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">04 / Modules</div><h2>功能模块</h2><p>功能模块是稳定的业务域，URL 是它的使用入口。这里展示目标、代码边界和同一 registry 下的 Task 汇总。</p></div></div><div class="topic-list">${content}</div>`;
+        bindTaskTriggers(panel);
       }
 
       function renderSystemMap() {
         const map = DATA.system_map || { layers: [], nodes: [], edges: [] };
         const layerCards = (map.layers || []).map((layer) => `<article class="map-card"><div class="section-kicker">${escapeHtml(layer)}</div><h3>${escapeHtml(layer === "surface" ? "UI / URL" : layer === "api" ? "API" : layer === "service" ? "Service" : layer === "data" ? "Repository / Storage" : layer === "external" ? "External" : "Tests")}</h3>${(map.nodes || []).filter((node) => node.layer === layer).map((node) => `<div class="map-node"><strong>${escapeHtml(node.label)}</strong>${node.path ? `<code>${escapeHtml(node.path)}</code>` : ""}</div>`).join("") || `<p class="freshness">暂无节点</p>`}</article>`).join("");
         const edges = (map.edges || []).map((edge) => { const from = (map.nodes || []).find((node) => node.id === edge.from); const to = (map.nodes || []).find((node) => node.id === edge.to); return `<li><strong>${escapeHtml(from?.label || edge.from)}</strong> → <strong>${escapeHtml(to?.label || edge.to)}</strong>：${escapeHtml(edge.label)}</li>`; }).join("");
-        document.getElementById("panel-system-map").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">05 / Architecture</div><h2>系统地图</h2><p>首版展示 Topic 到 UI、API、Service、Storage、External 和 Tests 的可读架构关系。完整函数级 CodeGraph 保留为点击后的工程视图，不占用领导默认视图。</p></div></div><div class="notice">架构快照基于 commit ${escapeHtml(String(DATA.source_base_commit || "").slice(0, 8))}；代码关系变化后重新生成 Overview。</div><div class="map-grid">${layerCards}</div><article class="map-card" style="margin-top:12px"><h3>连接关系</h3><ol class="edge-list">${edges || "<li>暂无关系。</li>"}</ol></article>`;
+        document.getElementById("panel-system-map").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">05 / Architecture</div><h2>系统地图</h2><p>首版展示功能模块到 UI、API、Service、Storage、External 和 Tests 的可读架构关系。完整函数级 CodeGraph 保留为点击后的工程视图，不占用领导默认视图。</p></div></div><div class="notice">架构快照基于 commit ${escapeHtml(String(DATA.source_base_commit || "").slice(0, 8))}；代码关系变化后重新生成 Overview。</div><div class="map-grid">${layerCards}</div><article class="map-card" style="margin-top:12px"><h3>连接关系</h3><ol class="edge-list">${edges || "<li>暂无关系。</li>"}</ol></article>`;
       }
 
       function renderManual() {
         const sections = (DATA.manual?.sections || []).map((section) => `<article class="manual-card"><div class="section-kicker">${escapeHtml(section.audience || "项目使用")}</div><h3>${escapeHtml(section.title)}</h3><p><strong>入口：</strong><code>${escapeHtml(section.entrypoint || "")}</code></p><ul>${(section.steps || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul><p style="margin-top:10px"><strong>依据：</strong>${(section.source_refs || []).map(sourceMarkup).join(" · ")}</p></article>`).join("");
-        const features = (DATA.features || []).map((section) => `<details class="aggregate-card"><summary><strong>${escapeHtml(section.title)}</strong><span class="chip">已完成 ${(section.completed || []).length} · 未完成 ${(section.planned || []).length}</span></summary><div class="aggregate-body"><h4>已完成能力</h4><ul>${(section.completed || []).slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h4 style="margin-top:12px">未完成能力</h4><ul>${(section.planned || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul></div></details>`).join("");
+        const features = (DATA.features || []).map((section) => `<details class="aggregate-card"><summary><strong>${escapeHtml(section.title)}</strong><span class="chip">已完成 ${(section.completed || []).length} · 未完成 ${(section.planned || []).length}</span></summary><div class="aggregate-body"><h4>已完成能力</h4><ul>${(section.completed || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul><h4 style="margin-top:12px">未完成能力</h4><ul>${(section.planned || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul></div></details>`).join("");
         document.getElementById("panel-manual").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">06 / Handbook</div><h2>用户手册</h2><p>这里回答“怎么使用项目”和“AI 下一步怎么开工”。产品能力继续从 feature list 读取，维护规则从 registry README 和项目规则读取。</p></div></div><div class="manual-grid">${sections}</div><h3 style="margin-top:25px">产品能力目录</h3><div class="aggregate-list">${features}</div>`;
       }
 
@@ -410,8 +413,26 @@
         location.hash = `task-${encodeURIComponent(taskId)}`;
         const dialog = document.getElementById("taskDialog");
         const evidence = taskEvidence(task).map((item) => item.url ? `<li><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.label || item.url)}</a></li>` : `<li>${escapeHtml(item.label || item.type)}</li>`).join("");
-        document.getElementById("taskDialogContent").innerHTML = `<button class="dialog-close" type="button" aria-label="关闭">×</button><div class="section-kicker">Task detail</div><h2 id="taskDialogTitle">${escapeHtml(task.task_id)} · ${escapeHtml(task.title)}</h2><div class="chips">${statusChip(task.status)}<span class="chip">${escapeHtml(taskTopic(task)?.title || "未关联 Topic")}</span><span class="chip">${escapeHtml(taskMilestone(task)?.title || "未关联 Milestone")}</span></div><dl class="detail-grid"><dt>负责人</dt><dd>${escapeHtml(task.owner || "unassigned")}</dd><dt>摘要</dt><dd>${escapeHtml(task.summary || "暂无")}</dd><dt>下一步</dt><dd>${escapeHtml(task.next_action || "—")}</dd><dt>验收条件</dt><dd>${(task.acceptance_criteria || []).map(escapeHtml).join("<br>") || "—"}</dd><dt>Blocker</dt><dd>${(task.blockers || []).map(escapeHtml).join("<br>") || "—"}</dd></dl><h3>Evidence</h3><ul class="edge-list">${evidence || "<li>暂无证据。</li>"}</ul><p class="freshness">来源：${(task.source_refs || []).map(sourceMarkup).join(" · ")}</p>`;
-        document.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
+        document.getElementById("taskDialogContent").innerHTML = `<button class="dialog-close" type="button" aria-label="关闭">×</button><div class="section-kicker">Task detail</div><h2 id="taskDialogTitle">${escapeHtml(task.task_id)} · ${escapeHtml(task.title)}</h2><div class="chips">${statusChip(task.status)}<span class="chip">${escapeHtml(taskTopic(task)?.title || "未关联功能模块")}</span><span class="chip">${escapeHtml(taskMilestone(task)?.title || "未关联 Milestone")}</span></div><dl class="detail-grid"><dt>负责人</dt><dd>${escapeHtml(task.owner || "unassigned")}</dd><dt>摘要</dt><dd>${escapeHtml(task.summary || "暂无")}</dd><dt>下一步</dt><dd>${escapeHtml(task.next_action || "—")}</dd><dt>验收条件</dt><dd>${(task.acceptance_criteria || []).map(escapeHtml).join("<br>") || "—"}</dd><dt>Blocker</dt><dd>${(task.blockers || []).map(escapeHtml).join("<br>") || "—"}</dd></dl><h3>Evidence</h3><ul class="edge-list">${evidence || "<li>暂无证据。</li>"}</ul><p class="freshness">来源：${(task.source_refs || []).map(sourceMarkup).join(" · ")}</p>`;
+        dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
+        if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+      }
+
+      function showMeeting(meetingId) {
+        const meeting = meetingMap.get(meetingId);
+        if (!meeting) return;
+        location.hash = `meeting-${encodeURIComponent(meetingId)}`;
+        const dialog = document.getElementById("meetingDialog");
+        const meetingTasks = (meeting.task_ids || []).map((id) => taskMap.get(id)).filter(Boolean);
+        document.getElementById("meetingDialogContent").innerHTML = `<button class="dialog-close" type="button" aria-label="关闭">×</button><div class="section-kicker">Meeting record</div><h2 id="meetingDialogTitle">${escapeHtml(meeting.title)}</h2><div class="chips"><span class="chip">${escapeHtml(formatDate(meeting.date))}</span><span class="chip">${meetingTasks.length} 个关联 Task</span></div><dl class="detail-grid"><dt>摘要</dt><dd>${escapeHtml(meeting.summary || "暂无摘要")}</dd><dt>参与人</dt><dd>${escapeHtml((meeting.participants || []).join("、") || "未记录")}</dd><dt>原始记录</dt><dd>${(meeting.source_refs || []).map(sourceMarkup).join(" · ") || "—"}</dd></dl><h3>关联 Task</h3><div class="meeting-task-list">${meetingTasks.map((task) => `<button class="meeting-task-button" type="button" data-task-id="${escapeHtml(task.task_id)}"><span class="task-id">${escapeHtml(task.task_id)}</span><span class="meeting-task-title">${escapeHtml(task.title)}</span>${statusChip(task.status)}</button>`).join("") || `<div class="empty">暂无关联 Task。</div>`}</div>`;
+        dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
+        dialog.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", () => {
+          dialog.close();
+          showTask(button.dataset.taskId);
+        }));
+        dialog.onclose = () => {
+          if (location.hash.startsWith("#meeting-")) history.replaceState(null, "", "#human-events");
+        };
         if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
       }
 
@@ -419,14 +440,15 @@
         const valid = tabs.some((tab) => tab.id === tabId) ? tabId : "dynamic";
         document.querySelectorAll(".tab").forEach((tab) => { const active = tab.dataset.tab === valid; tab.classList.toggle("active", active); tab.setAttribute("aria-selected", String(active)); });
         document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${valid}`));
-        if (location.hash !== `#${valid}` && !location.hash.startsWith("#task-")) history.replaceState(null, "", `#${valid}`);
+        const detailHash = ["#task-", "#meeting-", "#topic-"].some((prefix) => location.hash.startsWith(prefix));
+        if (location.hash !== `#${valid}` && !detailHash) history.replaceState(null, "", `#${valid}`);
       }
 
       function routeHash() {
         const raw = location.hash.slice(1);
         if (raw.startsWith("task-")) { setTab("plan"); if (!document.getElementById("taskDialog").open) showTask(decodeURIComponent(raw.slice(5))); return; }
         if (raw.startsWith("topic-")) { setTab("topics"); setTimeout(() => document.getElementById(raw)?.scrollIntoView(), 0); return; }
-        if (raw.startsWith("meeting-")) { setTab("human-events"); setTimeout(() => { const element = document.getElementById(raw); if (element) { element.open = true; element.scrollIntoView(); } }, 0); return; }
+        if (raw.startsWith("meeting-")) { setTab("human-events"); if (!document.getElementById("meetingDialog").open) showMeeting(decodeURIComponent(raw.slice(8))); return; }
         setTab(raw || "dynamic");
       }
 

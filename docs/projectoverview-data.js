@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 1,
-  "generated_at": "2026-08-16T13:32:46Z",
-  "source_base_commit": "f007a0a20eb48b0e7e46014d4ac705e49483f891",
-  "registry_digest": "2820c7d61340993b65ebb47da68703607a4839ab1b257eb78b9c322a1f1613db",
+  "generated_at": "2026-08-16T14:11:45Z",
+  "source_base_commit": "ad6aa1d3909a8760dc443afeb22c2ce41fced494",
+  "registry_digest": "420e053839f6c2de693afa5b5ac5dae73c2a7c8e3e6efc5c2a384118a02a0b98",
   "project": {
     "schema_version": 1,
     "project_id": "supportportal",
@@ -2719,17 +2719,34 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "topic_id": "platform-delivery",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
+      "status": "done",
       "priority": "unclassified",
       "owner": "Zac",
-      "summary": "实现 registry、生成器、汇总页面和旧 URL 兼容。",
-      "next_action": "实现 registry、生成器、汇总页面和旧 URL 兼容。",
+      "summary": "建立 Project Overview 单一维护入口，并优化任务、会议、功能模块和用户手册的展示与跳转。",
+      "next_action": "",
       "acceptance_criteria": [
-        "实现 registry、生成器、汇总页面和旧 URL 兼容。"
+        "项目资料侧栏移除后，Project Overview 在桌面和移动端均使用完整内容宽度。",
+        "任务看板卡片只显示 canonical Task ID 和完整标题，长标题不会越过卡片边界。",
+        "会议记录以单行卡片展示，点击后弹窗列出带完整标题的全部关联 Task，并可跳转到对应 Task。",
+        "功能模块使用统一用户可见命名和单列布局，同时保留 topics、topic_id 和原有 hash 深链。",
+        "用户手册展开后的已完成能力数量与标题统计一致。",
+        "file URL、正式静态路由、旧 Roadmap URL 和 Project Overview 数据校验保持可用。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Project Overview registry and route contract tests",
+          "command": "python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract backend.tests.test_dashboard_routes"
+        },
+        {
+          "type": "test",
+          "label": "Desktop and 390x844 browser verification for board, meetings, topics and handbook"
+        }
+      ],
       "source_refs": [
+        "docs/projectoverview.html",
+        "backend/tests/test_project_overview_contract.py",
         "docs/roadmap.html",
         "docs/feature_list.md"
       ],
@@ -2740,6 +2757,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-16",
+          "event": "implementation_started",
+          "summary": "开始优化 Project Overview 的页面结构、任务看板、会议弹窗、功能模块和能力目录。"
+        },
+        {
+          "at": "2026-08-16",
+          "event": "completed",
+          "summary": "完成 Project Overview 展示优化，并通过桌面、移动端、数据生成器和路由契约验证。"
         }
       ],
       "legacy_refs": []
